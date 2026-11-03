@@ -199,15 +199,28 @@ const viewOnly = f => async m => {
 };
 const captchaOps = {
     captcha: captchaLook,
-    captcha_frame: viewOnly(async () => {
+    // The whole page (the overlay), or with `crop` only the captcha and a margin around it, at
+    // most `max` pixels wide: what a chat's card shows, over the mesh or to a phone.
+    captcha_frame: viewOnly(async m => {
         const s = await captchaLook();
         if (!s.showing) return s;
         solving = true;
         fast();
-        const img = await win.webContents.capturePage(undefined, { stayHidden: true });
-        const { width, height } = img.getSize();
+        let crop;
+        if (m?.crop && s.rect) {
+            const pad = 24;
+            const x = Math.max(0, s.rect.x - pad), y = Math.max(0, s.rect.y - pad);
+            crop = { x, y, width: Math.min(WIDTH - x, s.rect.width + 2 * pad), height: Math.min(HEIGHT - y, s.rect.height + 2 * pad) };
+        }
+        let img = await win.webContents.capturePage(crop, { stayHidden: true });
+        let { width, height } = img.getSize();
         if (width < 1 || height < 1) throw new Error("capturePage returned an empty image");
-        return { ...s, width, height, mimeType: "image/jpeg", data: img.toJPEG(80).toString("base64") };
+        const max = Number(m?.max) > 0 ? Math.floor(Number(m.max)) : 0;
+        if (max > 0 && width > max) {
+            img = img.resize({ width: max, quality: "good" });
+            ({ width, height } = img.getSize());
+        }
+        return { ...s, width, height, crop: crop ?? { x: 0, y: 0, width: WIDTH, height: HEIGHT }, mimeType: "image/jpeg", data: img.toJPEG(crop ? 75 : 80).toString("base64") };
     }),
     captcha_input: viewOnly(async m => {
         const x = Math.round(Number(m.x)), y = Math.round(Number(m.y));

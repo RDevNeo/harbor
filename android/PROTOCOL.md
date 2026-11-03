@@ -462,7 +462,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | `footer` | nothing since 0.59.2: the end of a turn comes as `hidden` (its usage stays in Usage). Older hubs send its line here; draw nothing | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
 | `chat_link` (0.57) | a divider "`text` · Open chat" linking to another chat: at the top of a chat an agent opened with its `open_chat` tool ("Opened by the agent of “Fix login”"), and in the chat that opened it ("Opened “Docs pass”"). Tap: open `chat`; while `chat` is null (that chat hasn't reached this hub yet) draw just the text | `text`, `chat` (this hub's id, or the gid with `X-Harbor-Ids: global`; null when it isn't here), `gid` |
-| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (hubs 0.84 to 0.107, play and send glyphs; older apps: any fallback; hubs from 0.108 send neither, and hide `report`, `bot`, `process`, `wake` and `webhook` notices and agents' messages in a lead's chat too) are a lead handing work off: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown) | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (hubs 0.84 to 0.107, play and send glyphs; older apps: any fallback; hubs from 0.108 send neither, and hide `report`, `bot`, `process`, `wake` and `webhook` notices and agents' messages in a lead's chat too) are a lead handing work off: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown). Icon `captcha` (0.117; older apps: the plain pill) is a Discord captcha an agent's tool call hit, its `detail` a JSON string `{"captcha": "<id>", "state": "pending" \| "joined" \| "closed" \| "timeout" \| "stopped", "guild": "<name>" \| null}`: see [the chat's captcha](#a-chats-discord-captcha-post-v1chatschatcaptcha) for how it draws | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
 | `media` (0.50–0.83) | an image or video an agent showed with its `show_media` tool. Hubs from 0.84 don't send it (agents put `![caption](path)` in their reply instead; an old transcript's call comes as a `tool` card with its file in `images`); from older hubs draw it like a `text` card's `media`, or skip it | `media` (one entry), `caption`, `pending`, `images` |
@@ -1717,6 +1717,42 @@ drops anything outside the captcha. "Don't join" → `POST /v1/apps/discord/capt
 `captcha_end.outcome`: joined "Discord joined <guild>", closed "Not joined: the captcha was
 closed", timeout "Not joined: nobody solved the captcha in time", stopped "Not joined: Discord
 stopped".
+
+### A chat's Discord captcha: `POST /v1/chats/{chat}/captcha`
+
+From 0.117 (`404` before, and whenever no captcha waits for that chat). When an agent's Discord
+tool call hits a captcha, its chat gets a `notice` with icon `captcha` and `detail`
+`{"captcha": id, "state": "pending", "guild": …}`; when the captcha ends, a second one with the
+same `captcha` id and the final state (`joined`, `closed`, `timeout`, `stopped`; its `text` says
+it: "Captcha solved: joined X", "Nobody solved the captcha in 10 minutes: didn't join X").
+
+How the phone draws them (Chat.java, CaptchaCard.java), as the desktop does:
+- a `pending` notice with a later notice of the same `captcha` id: nothing;
+- a `pending` one without: the captcha card, "Discord needs a captcha", "To join <guild, or a
+  server>. Only the captcha takes your taps; Harbor never answers it for you.", the frame as wide
+  as the card with its shape kept, the page outside `rect` 35% black, "Being solved on <label>"
+  when `solver` is someone else, and "Don't join". While the call answers `404`: one line, "This
+  captcha isn't waiting any more." It shows even inside a folded run of tool calls;
+- any other state: the notice's `text` as a plain pill (a check for `joined`, a cross otherwise).
+
+The chat's own PC answers (the hub forwards by the chat's global id, as every `/v1/chats/` call).
+The body's `action`:
+- `{"action": "frame", "max": 720}` (the card's width in pixels): `{"captcha": id, "guild": …,
+  "data": "<base64 JPEG>" (may be missing: keep the last), "width": w, "height": h, "crop": {x, y,
+  width, height}, "rect": {x, y, width, height}, "solver": {"who", "label"} | null}`. The image is
+  w × h and shows `crop` of the page (page pixels); `rect` is the captcha, in page pixels. An
+  image point (ix, iy) is page (crop.x + ix * crop.width / w, crop.y + iy * crop.height / h); the
+  dimmed rect is the inverse. The phone asks about every 500 ms, one request at a time, only while
+  the card is on screen and the chat in front (every 2 s while it answers `404` or fails).
+- `{"action": "input", "kind": "down" | "move" | "up", "x": pageX, "y": pageY, "who": "phone:<id>",
+  "label": "<the phone's name>"}`: only for a press that starts inside `rect`; in order, moves only
+  the newest while pressed, an `up` always after a `down` (at the captcha's edge if the finger left
+  it). `who` is stable for the phone (its key's fingerprint, shortened). → `{"taken": bool,
+  "solver": …}`; `taken` false: someone else is solving it ("Being solved on <solver.label>").
+- `{"action": "cancel", "who": …}`: Don't join. The outcome comes as the chat's next notice.
+
+The "Discord needs a captcha" notification carries `chat` when the PC knows it: it opens that chat
+and scrolls to the card. Without a `chat` (key `discord-captcha`) it opens the captcha screen above.
 
 ### `GET /v1/app`
 

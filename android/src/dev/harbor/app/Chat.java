@@ -79,12 +79,18 @@ public class Chat extends Base implements Images.Gallery {
     private boolean loading, again, loaded, gone; // gone: deleted, keep no draft
     private long loadingAt; // when the load in flight started
     private TextView offNote;
+    /** In front (resumed): a captcha card asks for frames only then. */
+    private boolean front;
+    /** Opened from a captcha's notification: the first load scrolls to its card. */
+    private boolean toCaptcha;
+    private static final String CAPTCHA = "captcha";
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         if (noHub()) return;
         chatId = getIntent().getStringExtra("chat");
+        toCaptcha = b == null && getIntent().getBooleanExtra("captcha", false);
         render = new Render(this, null);
         LinearLayout root = frame("Chat", menuButton(), false);
         action(Ui.I_PANEL_RIGHT, v -> openRight()).setContentDescription("Team: agents, processes, wake-ups, webhooks");
@@ -188,6 +194,7 @@ public class Chat extends Base implements Images.Gallery {
     protected void onResume() {
         super.onResume();
         if (hub == null) return;
+        front = true;
         Update.shown(this, hub.id, chatId);
         load(!loaded);
         refreshState();
@@ -196,6 +203,7 @@ public class Chat extends Base implements Images.Gallery {
     @Override
     protected void onPause() {
         super.onPause();
+        front = false;
         if (comp.voice != null) comp.voice.cancel();
         if (composer == null || gone) return;
         typing(false, false);
@@ -395,6 +403,16 @@ public class Chat extends Base implements Images.Gallery {
         }
         if (running != wasRunning) for (Map.Entry<Integer, JSONObject> e : items.entrySet())
             if (e.getValue().optInt("group", -1) == e.getKey()) touched.add(e.getKey());
+        // A captcha's outcome came: its pending card above gives way to it.
+        for (int seq : new ArrayList<>(touched)) {
+            JSONObject d = items.get(seq) == null ? null : captchaOf(items.get(seq));
+            if (d == null || "pending".equals(d.optString("state"))) continue;
+            String cid = d.optString("captcha");
+            for (Map.Entry<Integer, JSONObject> e : items.headMap(seq).entrySet()) {
+                JSONObject o = captchaOf(e.getValue());
+                if (o != null && cid.equals(o.optString("captcha"))) touched.add(e.getKey());
+            }
+        }
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
         earlierButton();
         if (items.isEmpty()) { hintView = emptyView(); content.addView(hintView); }
@@ -403,7 +421,23 @@ public class Chat extends Base implements Images.Gallery {
         bars = r.optJSONObject("status");
         if (echo != null && !echo.isEmpty() && echo.settle(seen(), System.currentTimeMillis())) saveEcho(echoKey, echo);
         drawBars();
-        if (atBottom) toEnd();
+        View cap = toCaptcha ? content.findViewWithTag(CAPTCHA) : null;
+        if (cap != null) { toCaptcha = false; toView(cap); }
+        else if (atBottom) toEnd();
+        if (loaded) toCaptcha = false;
+    }
+
+    /** Scrolls the transcript to v's top once it's laid out. */
+    private void toView(View v) {
+        content.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override public void onGlobalLayout() {
+                content.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                int y = 0;
+                for (View x = v; x != null && x != content; x = x.getParent() instanceof View ? (View) x.getParent() : null) y += x.getTop();
+                scroll.scrollTo(0, Math.max(0, y - Ui.dp(8)));
+            }
+        });
+        content.requestLayout();
     }
 
     /** An empty chat: a lead says what the desktop says ("What should we work on?" and who
@@ -1380,9 +1414,29 @@ public class Chat extends Base implements Images.Gallery {
                 }
                 break;
             }
-            case "notice":
-                notice(wrap, it, seq);
+            case "notice": {
+                // A Discord captcha: live while it waits (and no later notice ended it), then
+                // nothing; its outcome is a plain line.
+                JSONObject cap = captchaOf(it);
+                if (cap == null) { notice(wrap, it, seq); break; }
+                String cid = cap.optString("captcha"), state = cap.optString("state");
+                if ("pending".equals(state)) {
+                    if (captchaEnded(cid, seq)) break;
+                    CaptchaCard card = new CaptchaCard(this, hub, chatId, cid, cap.isNull("guild") ? "" : cap.optString("guild"), () -> front);
+                    wrap.addView(card.view, Ui.fill());
+                    wrap.setTag(CAPTCHA);
+                } else {
+                    try {
+                        JSONObject line = new JSONObject(it.toString());
+                        line.remove("detail");
+                        line.put("icon", "joined".equals(state) ? "captcha-joined" : "captcha-not");
+                        notice(wrap, line, seq);
+                    } catch (org.json.JSONException e) {
+                        notice(wrap, it, seq);
+                    }
+                }
                 break;
+            }
             case "message": {
                 LinearLayout card = Ui.col(this);
                 card.setBackground(Ui.round(Ui.dark ? 0xff1d2a3a : 0xffeaf2fd, Ui.dark ? 0xff2c4766 : 0xffc4dafa, 16));
@@ -1421,7 +1475,31 @@ public class Chat extends Base implements Images.Gallery {
             wrap.addView(divider("Conversation fork", "Open fork", () -> open(this, hub, f)), Ui.margins(Ui.fill(), 0, 6, 0, 0));
         }
         if (wrap.getChildCount() == 0) wrap.setVisibility(View.GONE);
-        return grouped(it, wrap);
+        View out = grouped(it, wrap);
+        // A live captcha shows even inside a folded run of tool calls.
+        if (CAPTCHA.equals(wrap.getTag())) wrap.setVisibility(View.VISIBLE);
+        return out;
+    }
+
+    /** A Discord captcha notice's detail ({captcha, state, guild}), or null for any other card. */
+    static JSONObject captchaOf(JSONObject it) {
+        if (!"notice".equals(it.optString("kind")) || !"captcha".equals(it.optString("icon"))) return null;
+        try {
+            JSONObject d = it.optJSONObject("detail");
+            if (d == null) d = new JSONObject(it.optString("detail", ""));
+            return d.optString("captcha").isEmpty() ? null : d;
+        } catch (org.json.JSONException e) {
+            return null;
+        }
+    }
+
+    /** Whether a card after `seq` is captcha `id`'s outcome. */
+    private boolean captchaEnded(String id, int seq) {
+        for (JSONObject m : items.tailMap(seq, false).values()) {
+            JSONObject d = captchaOf(m);
+            if (d != null && id.equals(d.optString("captcha"))) return true;
+        }
+        return false;
     }
 
     /** The desktop's centred notice pill; expands to its detail, or opens its link. */
@@ -1443,6 +1521,8 @@ public class Chat extends Base implements Images.Gallery {
             case "worktree": glyph = Ui.I_FOLDER_GIT; break;
             // A lead's hand-offs: "api started: …", "Sent to api: …".
             case "started": glyph = Ui.I_PLAY; break;
+            // A Discord captcha's outcome (Chat.captchaOf).
+            case "captcha-not": glyph = Ui.I_CIRCLE_X; break;
             case "sent": glyph = Ui.I_SEND; break;
             default: glyph = Ui.I_CIRCLE_CHECK;
         }

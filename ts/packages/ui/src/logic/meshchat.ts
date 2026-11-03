@@ -4,6 +4,8 @@ import type { Mention } from "./mentions.ts";
 /** The hub's side of a chat homed on another PC (mesh.rs forwarding and leases), as the window uses it. */
 export interface ShellMesh {
   me(): string;
+  /** This PC's name in the mesh (windowmesh.ts `myName`). */
+  myName?(): string;
   home(c: Chat): { name: string; online: boolean } | null;
   peer(id: string): { name: string; online: boolean } | null;
   remote(id: number): { running: boolean; queued: number } | null;

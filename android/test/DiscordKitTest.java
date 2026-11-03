@@ -59,6 +59,22 @@ public class DiscordKitTest {
         f = DiscordKit.fit(1080, 0, 0, 0);
         same(f[0] + "x" + f[1], "1080x0", "no page yet");
 
+        // The chat card's frame: an image of a crop of the page, drawn at the view's size.
+        int[] crop = { 300, 50, 500, 600 };
+        p = DiscordKit.cropToPage(0, 0, 250, 300, crop);
+        same(p[0] + "," + p[1], "300,50", "the crop's corner");
+        p = DiscordKit.cropToPage(125, 150, 250, 300, crop);
+        same(p[0] + "," + p[1], "550,350", "the middle of the crop");
+        p = DiscordKit.cropToPage(10, 10, 0, 0, crop);
+        same(p[0] + "," + p[1], "0,0", "no view size yet");
+        float[] v = DiscordKit.pageToView(new int[] { 400, 100, 300, 400 }, crop, 250, 300);
+        same(v[0] + "," + v[1] + "," + v[2] + "," + v[3], "50.0,25.0,200.0,225.0", "the captcha on the view");
+        int[] back = DiscordKit.cropToPage(v[0], v[1], 250, 300, crop);
+        same(back[0] + "," + back[1], "400,100", "and back to the page");
+        same(DiscordKit.pageToView(null, crop, 250, 300), null, "no rect");
+        same(DiscordKit.cardIntro("Cats"), "To join Cats. Only the captcha takes your taps; Harbor never answers it for you.", "card intro");
+        same(DiscordKit.cardIntro(null), "To join a server. Only the captcha takes your taps; Harbor never answers it for you.", "card intro without a name");
+
         // The lines, as the desktop says them.
         same(DiscordKit.intro("Cats"), "To join Cats, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro");
         same(DiscordKit.intro(""), "To join a server, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro without a name");

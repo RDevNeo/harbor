@@ -66,7 +66,8 @@ export interface EngineHost {
   noteLimit?(chatId: number, account: string, waits: boolean, note: string): void;
   noteResumed?(chatId: number, account: string, text: string): void;
   /** A desktop notification about a usage cap or its warning. */
-  notify?(kind: string, key: string, title: string, body: string): void;
+  /** `chat`: the chat it's about (its gid), which the notification opens. */
+  notify?(kind: string, key: string, title: string, body: string, chat?: string): void;
   /** After a turn's end, for limits, recaps, pull requests and git status. */
   turnEnded?(chatId: number, stopped: boolean): void;
   /** The overlay profiles of chats commanded from other PCs, where a session may have been written (net's meshctx.rs). */

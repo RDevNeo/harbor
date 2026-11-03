@@ -3,6 +3,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { actions, type Card, groupLabel, groups, project } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
+import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
 import { type Part, parts } from "./logic/usertext.ts";
 import { type Block, blocks, escape, type Placed, place, registerBlock } from "./markdown.ts";
 import type { CardData, MdBlockData, MediaRow } from "./window.ts";
@@ -170,6 +171,7 @@ const NOTICE_ICONS: Record<string, IconName> = {
   users: "USERS",
   monitor: "MONITOR",
   lock: "LOCK",
+  captcha: "USER_CHECK",
 };
 
 function blank(seq: number): CardData {
@@ -196,7 +198,17 @@ export function stripDrawn(text: string, drawn: readonly string[]): string {
 /** The images a card shows, as the window draws them; none until they are decoded. */
 export type MediaOf = (c: Card) => MediaRow[];
 
-function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: MediaOf): CardData | null {
+/** Whether a captcha (by id) is known to wait no more: its card says so in one line. */
+export type CaptchaGone = (id: string) => boolean;
+
+/** A Discord captcha notice (logic/captchacard.ts `captchaRoles`): the live card, its outcome line, or nothing. */
+function captchaCard(d: CardData, c: Extract<Card, { kind: "notice" }>, r: CaptchaRole, gone: CaptchaGone): CardData | null {
+  if (r.role === "none") return null;
+  if (r.role === "card") return { ...d, kind: "captcha", actions: [], icon: ICONS.USER_CHECK, text: captchaText(r.note.guild), label: r.note.guild ?? "", detail: r.note.captcha, result: gone(r.note.captcha) ? "gone" : "" };
+  return { ...d, kind: "notice", icon: ICONS[r.note.state === "joined" ? "USER_CHECK" : "CIRCLE_SLASH"], text: c.text };
+}
+
+function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: MediaOf, captcha?: CaptchaRole, gone: CaptchaGone = () => false): CardData | null {
   const at = c.kind === "user" || c.kind === "text" ? c.at : 0;
   const d = { ...blank(seq), actions: c.kind === "user" || c.kind === "text" ? actions(c) : [], time: at > 0 ? clock(at, off) : "", media: mediaOf(c) };
   switch (c.kind) {
@@ -219,6 +231,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "chat_link":
       return { ...d, kind: "divider", icon: ICONS.BOT, text: c.text, label: "Open chat", url: `harbor:chat/${c.gid}` };
     case "notice": {
+      if (captcha !== undefined) return captchaCard(d, c, captcha, gone);
       const expandable = c.detail !== "" && !c.detail.startsWith("http");
       const opened = expandable && open.cards.has(seq);
       return {
@@ -247,8 +260,9 @@ function signature(it: Item, open: Opened, seq: number, media: string): string {
   return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
 }
 
-export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => []): CardData[] {
+export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false): CardData[] {
   const all = project(items, lead, forks);
+  const captchas = captchaRoles(items);
   const runs = groups(all);
   const visible = all.filter((s) => s.card.kind !== "hidden" && (s.group === null || s.group === s.seq));
   const from = visible.length > open.limit ? (visible[visible.length - open.limit]?.seq ?? 0) : 0;
@@ -269,10 +283,11 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     }
     const item = items[s.seq];
     const media = mediaOf(s.card);
-    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) : "";
+    const cap = captchas.get(s.seq);
+    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") : "";
     const hit = open.memo.get(s.seq);
     const same = hit !== undefined && hit.item === item && hit.sig === sig;
-    const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media);
+    const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media, cap, gone);
     if (item) {
       open.memo.set(s.seq, same && hit.joins ? { item, sig, data: c, joins: hit.joins } : { item, sig, data: c });
       built.add(s.seq);

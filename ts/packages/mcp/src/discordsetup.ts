@@ -605,9 +605,10 @@ export function account(): Account | undefined {
 
 /** A note for Harbor's notifications: the running app picks these up (discord.ts `watch`). */
 /** `key`: notifications with the same key replace each other; the phone opens the captcha for `discord-captcha`. */
-export function notice(title: string, body: string, key?: string): void {
+/** `extra`: `chat` (the chat it's about, this PC's id), and for that chat's transcript `captcha` (its card's state) and `line` (the card's text). */
+export function notice(title: string, body: string, key?: string, extra: Record<string, unknown> = {}): void {
   try {
-    appendFileSync(join(root(), "notices.jsonl"), `${JSON.stringify({ title, body, at: now(), ...(key !== undefined ? { key } : {}) })}\n`);
+    appendFileSync(join(root(), "notices.jsonl"), `${JSON.stringify({ title, body, at: now(), ...(key !== undefined ? { key } : {}), ...extra })}\n`);
   } catch {
     // a note nobody can read is not worth failing for
   }

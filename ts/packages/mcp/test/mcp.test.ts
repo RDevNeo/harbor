@@ -7,6 +7,7 @@ import {
   accountsIn,
   applyToken,
   blankCred,
+  claudeConfig,
   claudeServers,
   codexArgs,
   dec,
@@ -14,6 +15,7 @@ import {
   googleAuthUrl,
   googleSaveCode,
   integrate,
+  integrations,
   isCode,
   listenCallback,
   localFor,
@@ -213,4 +215,18 @@ test("a sign-in for an app that signs in with a key fails without side effects",
   mcp.dismiss("context7");
   expect(mcp.error("context7")).toBeUndefined();
   expect(mcp.pending("context7")).toBeUndefined();
+});
+
+test("Harbor's own apps learn which chat runs them: Discord shows that chat a captcha its call hits", async () => {
+  const was = integrations.discord;
+  integrations.discord = { signedIn: () => true, accountName: () => "Ana", signOut: () => {}, login: async () => {} };
+  try {
+    const p = await claudeConfig(42, [], true);
+    const m = (JSON.parse(readFileSync(p, "utf8")) as { mcpServers: Record<string, { args?: string[]; env?: Record<string, string> }> }).mcpServers;
+    expect(m.discord?.args).toEqual(["app", "discord"]);
+    expect(m.discord?.env).toEqual({ HARBOR_CHAT_ID: "42" });
+  } finally {
+    if (was === undefined) delete integrations.discord;
+    else integrations.discord = was;
+  }
 });

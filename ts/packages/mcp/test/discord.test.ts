@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { decode, fromDiscord, notes, serve, statusText, tools } from "../src/discord.ts";
+import { decode, fromDiscord, notes, postNotice, serve, statusText, tools } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
 import { sandbox } from "./discordkit.ts";
 
@@ -95,4 +95,22 @@ test("a tool list still coming when the input ends is answered before the server
     setup.configure({ shellRef: () => undefined });
     slow.stop(true);
   }
+});
+
+test("a captcha's notices go into its chat as the card and its outcome, and the notification opens that chat", () => {
+  const items: [number, string, string, string][] = [];
+  const told: unknown[][] = [];
+  const sink = {
+    chat: (id: number) => (id === 3 ? { id: 3, gid: "pc1:3" } : undefined),
+    notice: (id: number, icon: string, text: string, detail: string) => void items.push([id, icon, text, detail]),
+    changed: () => {},
+    notify: (...a: unknown[]) => void told.push(a),
+  };
+  postNotice({ kind: "discord", key: "discord-captcha", title: "Discord needs a captcha", body: "b", chat: 3, captcha: { captcha: "ab", state: "pending", guild: "G" }, line: "Discord needs a captcha to join G" }, sink);
+  expect(items).toEqual([[3, "captcha", "Discord needs a captcha to join G", '{"captcha":"ab","state":"pending","guild":"G"}']]);
+  expect(told[0]).toEqual(["discord", "discord-captcha", "Discord needs a captcha", "b", "pc1:3"]);
+  // A chat this PC doesn't have, or none: only the notification, which opens the overlay.
+  postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", chat: 9, captcha: { captcha: "cd", state: "pending", guild: null } }, sink);
+  expect(items.length).toBe(1);
+  expect(told[1]).toEqual(["discord", "discord-captcha", "t", "b"]);
 });

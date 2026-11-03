@@ -224,6 +224,10 @@ export async function claudeConfig(chatId: number, extra: [string, Json][], apps
   if (!apps) {
     for (const k of Object.keys(m)) if (app(k) !== undefined && signedIn(k)) delete m[k];
   }
+  // Harbor's own apps learn their chat: Discord shows a captcha its call hits in this chat.
+  for (const [k, v] of Object.entries(m)) {
+    if (app(k)?.mcp.kind === "harbor" && typeof v === "object" && v !== null && !Array.isArray(v)) m[k] = { ...v, env: { HARBOR_CHAT_ID: String(chatId) } };
+  }
   const p = join(privateDir(join(dir(), "run")), `claude-${chatId}.json`);
   try {
     writePrivate(p, JSON.stringify({ mcpServers: m }));

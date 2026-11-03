@@ -62,7 +62,10 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
   rect: () => ({ x: 0, y: 0, width: 10, height: 10 }),
   capture: () => ({ data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png", width: 10, height: 10, bytes: 9 }),
   captcha: () => ({ showing: plan().captcha?.showing ?? false, rect: plan().captcha?.showing ? { x: 400, y: 200, width: 300, height: 200 } : null, pending: { joined: plan().captcha?.joined ?? false } }),
-  captcha_frame: () => ({ showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, width: 1280, height: 720, mimeType: "image/jpeg", data: Buffer.from("jpeg").toString("base64") }),
+  captcha_frame: (m) =>
+    m.crop === true
+      ? { showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, crop: { x: 376, y: 176, width: 348, height: 248 }, width: Math.min(348, Number(m.max) || 348), height: 248, mimeType: "image/jpeg", data: Buffer.from("crop").toString("base64") }
+      : { showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, width: 1280, height: 720, mimeType: "image/jpeg", data: Buffer.from("jpeg").toString("base64") },
   captcha_input: (m) => ({ taken: m.x === 450 }),
   captcha_cancel: () => null,
   captcha_end: () => null,
@@ -74,7 +77,7 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
 
 createInterface({ input: process.stdin }).on("line", (line) => {
   const m = JSON.parse(line) as Record<string, unknown>;
-  log({ op: m.op, name: m.name, args: m.args, ...(m.kind !== undefined ? { kind: m.kind, x: m.x, y: m.y } : {}) });
+  log({ op: m.op, name: m.name, args: m.args, ...(m.kind !== undefined ? { kind: m.kind, x: m.x, y: m.y } : {}), ...(m.crop !== undefined ? { crop: m.crop, max: m.max } : {}) });
   if ((plan().silent ?? []).includes(String(m.op))) return;
   try {
     const f = ops[String(m.op)] ?? (cfg.mode === "scratch" ? (): unknown => plan().scratch?.[String(m.op)] ?? { scratch: m.op } : undefined);

@@ -539,6 +539,12 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       }
     }
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 4) {
+      // The chat's Discord captcha card (frame, pointer, Don't join): only where the chat's content may go.
+      if (m === "POST" && name === "captcha") {
+        if (chat.home !== "") return err(404, `This chat's captcha is on ${h.hub.mesh.nameOf(chat.home)}.`);
+        const r = await discord.chatCaptcha(chat.id, body(call));
+        return r.status === 200 ? ok(plain(r.body)) : err(r.status, String((r.body as { error?: unknown } | null)?.error ?? "no captcha"));
+      }
       if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
       if (m === "GET" && ["mention", "team", "slash", "tags"].includes(name)) return action(chat, name, call);
       if (m === "GET" && name === "move_targets") return ok(await moveTargets(chat));

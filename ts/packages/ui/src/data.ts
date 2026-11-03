@@ -55,7 +55,7 @@ export class Data {
       restoreDraft: (id, text, files, ms) => this.onRestoreDraft(id, text, files, ms.map(mentionOf)),
       noteLimit: (id, account, waits, note) => this.notifier.noteLimit(this.chat(id) ?? null, account, this.engine.accountLabel(account), waits, note),
       noteResumed: (id, account, text) => this.notifier.noteResumed(this.chat(id) ?? null, account, this.engine.accountLabel(account), text, this.engine.limits.limitSettings().notify),
-      notify: (kind, key, title, body) => this.notifier.post(kind, key, title, body, "", false),
+      notify: (kind, key, title, body, chat) => this.notifier.post(kind, key, title, body, chat ?? "", false),
       keepMedia: (text, cwd) => media.keep(text, cwd),
     });
   }

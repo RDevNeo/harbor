@@ -19,10 +19,18 @@ export interface CaptchaApi {
   cancel(): Promise<void>;
 }
 
+/** The host's status's captcha belongs to a chat: its card there is where it's solved, not this overlay.
+ * A status from before captchas had chats (no `chat`) has none. */
+export function inChat(status: unknown): boolean {
+  const c = typeof status === "object" && status !== null ? (status as { captcha?: unknown }).captcha : undefined;
+  return typeof c === "object" && c !== null && typeof (c as { chat?: unknown }).chat === "number";
+}
+
 const real: CaptchaApi = {
   // Nothing to look for unless the captcha view is on.
   signedIn: () => discord.captchaViewOn() && discord.signedIn(),
-  frame: discord.captchaFrame,
+  // Only a captcha with no chat comes up over the window.
+  frame: async () => (inChat(await discord.status()) ? undefined : discord.captchaFrame()),
   input: discord.captchaInput,
   cancel: discord.captchaCancel,
 };

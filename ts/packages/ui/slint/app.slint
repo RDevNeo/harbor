@@ -10,7 +10,7 @@ import { DeviceRow, TransferRow } from "devices.slint";
 import { FilesData, FileRow } from "files.slint";
 import { BrowserData } from "browser.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
-import { CaptchaView, CaptchaPill, CaptchaData } from "captcha.slint";
+import { CaptchaView, CaptchaPill, CaptchaData, ChatCaptchaData } from "captcha.slint";
 import { VideoView, VideoData } from "video.slint";
 import { TermKey } from "terminal.slint";
 import { Spin, Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge, Meter } from "widgets.slint";
@@ -530,6 +530,11 @@ export component AppWindow inherits Window {
     callback cap-wheel(float, float, float);
     callback cap-show(bool);
     callback cap-cancel();
+    // The open chat's captcha card: its newest frame (chatcaptcha.ts), and what the person does on it.
+    in property <ChatCaptchaData> chat-cap;
+    callback chat-cap-seen(string, bool);
+    callback chat-cap-pointer(string, string, float, float);
+    callback chat-cap-cancel(string);
     in property <bool> lb-open;
     in property <LightboxData> lb-data;
     callback lb-close();
@@ -936,6 +941,16 @@ export component AppWindow inherits Window {
                             }
                             copy-text(t) => {
                                 root.copy-text(t);
+                            }
+                            captcha: root.chat-cap;
+                            captcha-seen(id, on) => {
+                                root.chat-cap-seen(id, on);
+                            }
+                            captcha-pointer(id, kind, fx, fy) => {
+                                root.chat-cap-pointer(id, kind, fx, fy);
+                            }
+                            captcha-cancel(id) => {
+                                root.chat-cap-cancel(id);
                             }
                         }
                         if body.centred: Hero {

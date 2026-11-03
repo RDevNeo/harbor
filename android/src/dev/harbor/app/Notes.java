@@ -109,7 +109,8 @@ final class Notes {
         String title = n.optString("title") + (count > 1 ? " (" + count + ")" : "");
         String from = n.optString("from");
         Intent open;
-        if (!chat.isEmpty()) open = new Intent(c, Chat.class).putExtra("hub", h.id).putExtra("chat", chat);
+        // A Discord captcha for a chat's agent: the chat, scrolled to its captcha card.
+        if (!chat.isEmpty()) open = new Intent(c, Chat.class).putExtra("hub", h.id).putExtra("chat", chat).putExtra("captcha", "discord".equals(kind));
         else if (!url.isEmpty()) open = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
         // A Discord join waiting on a captcha: the captcha, on the PC it's on; other Discord
         // notes: its Discord sheet.

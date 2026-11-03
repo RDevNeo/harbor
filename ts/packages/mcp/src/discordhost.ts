@@ -1,4 +1,5 @@
 import { dlopen, FFIType } from "bun:ffi";
+import { randomBytes } from "node:crypto";
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
@@ -539,10 +540,19 @@ export function loadSaved(): Saved {
 
 /** A join waiting on a captcha only a person may solve: Harbor's window shows it. */
 export type Captcha = {
+  /** Names it in the chat's transcript, whose card follows it. */
+  id: string;
   guild: string | null;
   guildId: string | null;
   since: number;
+  /** The chat whose agent's call hit it (this PC's id); null: not known, the overlay shows it. */
+  chat: number | null;
 };
+
+/** Who is solving: one device at a time, until it goes quiet. */
+type Solver = { who: string; label: string; at: number };
+/** A solver's hold ends this long (seconds) after its last input. */
+export const SOLVER_HOLD = 20;
 
 /** How the last captcha ended. */
 export type CaptchaEnd = {
@@ -1113,7 +1123,7 @@ export class Host {
   }
 
   /** Reads a tool's arguments and runs it. */
-  async call(name: string, args: Json): Promise<Json> {
+  async call(name: string, args: Json, chat: number | null = null): Promise<Json> {
     await this.enter();
     const a: Obj = isObj(args) ? { ...args } : {};
     let v: Json;
@@ -1133,7 +1143,7 @@ export class Host {
     switch (name) {
       case "discord_join":
         if (get(v, "joined") === true) paceNote("join");
-        else if (get(v, "captchaRequired") === true) v = this.captchaFound(v);
+        else if (get(v, "captchaRequired") === true) v = this.captchaFound(v, chat);
         break;
       case "discord_leave":
         if (get(v, "left") === true) paceNote("leave");
@@ -1185,11 +1195,11 @@ export class Host {
 
 
   /** What the agent hears about a join behind a captcha, and whether Harbor shows it. */
-  private captchaFound(v: Json): Json {
+  private captchaFound(v: Json, chat: number | null): Json {
     const o: Obj = isObj(v) ? { ...v } : {};
     if (this.engine.captchaView?.() === true) {
-      this.captchaStart(v);
-      o.note = "Discord wants a captcha for this join, and only a person may solve it. Harbor has asked the user to solve it in Harbor and will tell them how it went; don't retry. discord_status says whether it's still waiting; discord_guilds shows the server once joined.";
+      this.captchaStart(v, chat);
+      o.note = `Discord wants a captcha for this join, and only a person may solve it. Harbor shows it to the user${chat !== null ? " in this chat" : ""} and will tell them how it went; don't retry. discord_status says whether it's still waiting; discord_guilds shows the server once joined.`;
       return o;
     }
     // The view is off: the join is the user's to make in their own Discord app.
@@ -1204,16 +1214,22 @@ export class Host {
    * A join is waiting on a captcha: the client stays awake and unfrozen while a person solves it
    * in Harbor's window, which the notice points to. Nothing here solves or clicks anything.
    */
-  private captchaStart(v: Json): void {
+  private captchaStart(v: Json, chat: number | null): void {
     if (this.st.captcha !== null) return;
     const g = get(v, "guild");
-    const c: Captcha = { guild: str(get(g, "name")) ?? null, guildId: str(get(g, "id")) ?? null, since: now() };
+    const c: Captcha = { id: randomBytes(6).toString("hex"), guild: str(get(g, "name")) ?? null, guildId: str(get(g, "id")) ?? null, since: now(), chat };
+    this.solver = null;
     this.set((st) => {
       st.captcha = c;
       st.captchaEnd = null;
       st.busy += 1;
     });
-    setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. Solve it in Harbor, on this PC or your phone; it's given up in ${CAPTCHA_WAIT / 60} minutes.`, "discord-captcha");
+    const where = chat !== null ? "Solve it in the chat, on any of your PCs or your phone" : "Solve it in Harbor, on this PC or your phone";
+    setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. ${where}; it's given up in ${CAPTCHA_WAIT / 60} minutes.`, "discord-captcha", {
+      chat,
+      captcha: { captcha: c.id, state: "pending", guild: c.guild },
+      line: `Discord needs a captcha to join ${c.guild ?? "a server"}`,
+    });
     background(() => this.captchaFollow(c));
   }
 
@@ -1246,22 +1262,65 @@ export class Host {
       st.busy -= 1;
       st.lastUse = now();
     });
+    this.solver = null;
     this.engine.ask({ op: "captcha_end" }, 5000).catch(() => {});
     const g = c.guild ?? "the server";
+    // The chat's card becomes this line: no frames are kept.
+    const card = (line: string): Obj => ({ chat: c.chat, captcha: { captcha: c.id, state: outcome, guild: c.guild }, line });
     switch (outcome) {
       case "joined":
         paceNote("join");
-        setup.notice("Discord: joined", `The captcha was solved: Discord joined ${g}.`, "discord-captcha");
+        setup.notice("Discord: joined", `The captcha was solved: Discord joined ${g}.`, "discord-captcha", card(`Captcha solved: joined ${g}`));
         break;
       case "closed":
-        setup.notice("Discord: not joined", `The captcha was closed, so Discord didn't join ${g}.`, "discord-captcha");
+        setup.notice("Discord: not joined", `The captcha was closed, so Discord didn't join ${g}.`, "discord-captcha", card(`Captcha closed: didn't join ${g}`));
         break;
       case "timeout":
-        setup.notice("Discord: not joined", `Nobody solved the captcha in ${CAPTCHA_WAIT / 60} minutes, so Discord didn't join ${g}.`, "discord-captcha");
+        setup.notice("Discord: not joined", `Nobody solved the captcha in ${CAPTCHA_WAIT / 60} minutes, so Discord didn't join ${g}.`, "discord-captcha", card(`Nobody solved the captcha in ${CAPTCHA_WAIT / 60} minutes: didn't join ${g}`));
         break;
       case "stopped":
-        setup.notice("Discord: not joined", `Discord stopped before the captcha was solved, so it didn't join ${g}.`, "discord-captcha");
+        setup.notice("Discord: not joined", `Discord stopped before the captcha was solved, so it didn't join ${g}.`, "discord-captcha", card(`Discord stopped before the captcha was solved: didn't join ${g}`));
         break;
+    }
+  }
+
+  private solver: Solver | null = null;
+
+  /**
+   * A chat's captcha card, from wherever the chat is open (this PC, another PC of the mesh, a
+   * phone): its frame (only the captcha and a margin around it), a person's pointer (one device at
+   * a time), or Don't join. Status 404: no captcha waits for that chat.
+   */
+  async chatCaptcha(chat: number, b: Json): Promise<{ status: number; body: Json }> {
+    const c = this.st.captcha;
+    if (c === null || c.chat !== chat) return { status: 404, body: { error: "No captcha is waiting in this chat." } };
+    const at = now();
+    const held = this.solver !== null && at - this.solver.at < SOLVER_HOLD ? this.solver : null;
+    const who = str(get(b, "who")) ?? "";
+    const label = str(get(b, "label")) ?? "another device";
+    switch (str(get(b, "action")) ?? "") {
+      case "frame": {
+        const max = typeof get(b, "max") === "number" ? Math.min(Math.max(get(b, "max") as number, 160), 1280) : 720;
+        const f = await this.engine.ask({ op: "captcha_frame", crop: true, max }, 10_000);
+        if (get(f, "showing") !== true) return { status: 200, body: { captcha: c.id, guild: c.guild, solver: held } };
+        return { status: 200, body: { captcha: c.id, guild: c.guild, data: get(f, "data") ?? null, width: get(f, "width") ?? 0, height: get(f, "height") ?? 0, crop: get(f, "crop") ?? null, rect: get(f, "rect") ?? null, solver: held } };
+      }
+      case "input": {
+        // Two places at once would fight over one pointer: the first keeps it while it's busy.
+        if (held !== null && held.who !== who) return { status: 200, body: { taken: false, solver: held } };
+        const kind = str(get(b, "kind")) ?? "";
+        if (!["down", "up", "move"].includes(kind)) return { status: 400, body: { error: "kind: down, up or move" } };
+        const n = (k: string): number => (typeof get(b, k) === "number" ? (get(b, k) as number) : Number.NaN);
+        const r = await this.engine.ask({ op: "captcha_input", kind, x: n("x"), y: n("y") }, 5000);
+        const taken = get(r, "taken") === true;
+        if (taken && who !== "") this.solver = { who, label, at };
+        return { status: 200, body: { taken, solver: this.solver !== null && at - this.solver.at < SOLVER_HOLD ? this.solver : null } };
+      }
+      case "cancel":
+        await this.engine.ask({ op: "captcha_cancel" }, 5000);
+        return { status: 200, body: {} };
+      default:
+        return { status: 400, body: { error: "action: frame, input or cancel" } };
     }
   }
 
@@ -1497,7 +1556,7 @@ export class Host {
           r = this.status();
           break;
         case "call":
-          r = await this.call(str(get(req, "name")) ?? "", get(req, "args"));
+          r = await this.call(str(get(req, "name")) ?? "", get(req, "args"), uint(get(req, "chat")) ?? null);
           break;
         case "rect":
         case "capture":
@@ -1507,6 +1566,9 @@ export class Host {
         case "captcha_input":
         case "captcha_cancel":
           r = await this.captchaOp(op, req);
+          break;
+        case "chat_captcha":
+          r = await this.chatCaptcha(uint(get(req, "chat")) ?? -1, get(req, "body") ?? {});
           break;
         case "signin":
           if (get(req, "accept") !== true) throw new Error("Sign-in needs the warning accepted first.");

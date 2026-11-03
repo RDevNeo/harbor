@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Discord: a captcha now shows inside the chat whose agent hit it, as a card you can solve from
+  anywhere that chat is open: the desktop of the PC running Discord, the desktop of any other PC of
+  your mesh, or the phone. The card shows just the captcha, live while you look at it; one device
+  solves at a time (the others see who), and Don't join closes it. When it's done the card becomes
+  a one-line outcome (joined, closed, or given up), with nothing of the captcha kept. The
+  notification opens that chat. A captcha whose chat isn't known still opens the full-window view.
+
 ## [0.118.0] - 2026-11-02
 
 ### Added

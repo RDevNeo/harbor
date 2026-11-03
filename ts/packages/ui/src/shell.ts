@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
@@ -41,6 +41,8 @@ import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
+import { ChatCaptcha, FRAME_W, hereCaptcha, noChatCaptcha } from "./chatcaptcha.ts";
+import { fakeCaptcha } from "./fakecaptcha.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
@@ -204,6 +206,9 @@ export class Shell {
     this.captcha.start();
   }
   private captcha: CaptchaPane | null = null;
+  /** HARBOR_FAKE_CAPTCHA (screenshots): a captcha card with no Discord. */
+  private readonly fakeCap = fakeCaptcha();
+  private readonly chatCap: ChatCaptcha;
   private media: typeof import("@harbor/media") | null = null;
   private voice: import("@harbor/media").voiceCtl.VoiceCtl | null = null;
   private images: import("@harbor/media").images.Images | null = null;
@@ -274,6 +279,25 @@ export class Shell {
         this.openChat(id);
       },
     });
+    // The open chat's Discord captcha card: frames while it's on screen, from this PC's Discord or the chat's home PC.
+    const mesh = hub.mesh ?? solo;
+    win.chat_cap = noChatCaptcha;
+    this.chatCap = new ChatCaptcha({
+      call: this.fakeCap?.call ?? ((c, body) => (c.home === "" ? hereCaptcha(c.id, body) : mesh.forward(c, "POST", ["captcha"], body))),
+      chat: () => (this.view === "chat" && this.page === null ? this.data.chat(this.chatId) : undefined),
+      looking: () => win.window.visible && !win.window.minimized,
+      decode: async (b) => (this.media ? (await this.media.images.decodeBytes(b, Math.round(FRAME_W * 2 * win.scale_factor))).image : null),
+      me: () => {
+        const host = hostname().split(".")[0] ?? "";
+        return { who: mesh.me() || `pc:${host}`, label: mesh.myName?.() || host };
+      },
+      show: (d) => (win.chat_cap = d),
+      changed: () => this.refreshCards(),
+      max: () => Math.round(FRAME_W * win.scale_factor),
+    });
+    win.chat_cap_seen = (id, on) => this.chatCap.seen(id, on);
+    win.chat_cap_pointer = (id, kind, fx, fy) => this.chatCap.pointer(id, kind, fx, fy);
+    win.chat_cap_cancel = (id) => this.chatCap.cancel(id);
     // A default saved on a provider Harbor dropped reads as Claude's defaults.
     const dropped = !providers.knownAccount(data.store.get("default_account") ?? "claude");
     const get = (k: string, d: string) => (dropped ? d : (data.store.get(k) ?? d));
@@ -687,7 +711,8 @@ export class Shell {
   }
 
   private items(id: number): Item[] {
-    return this.data.items(id);
+    const items = this.data.items(id);
+    return this.fakeCap ? this.fakeCap.items(items) : items;
   }
 
   private get engine() {
@@ -988,6 +1013,7 @@ export class Shell {
       sync(this.cards, []);
       sync(this.liveBlocks, []);
       this.win.live_seq = -1;
+      this.chatCap.cards(null, []);
       this.mediaRows?.sweep();
       return;
     }
@@ -999,7 +1025,7 @@ export class Shell {
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined);
+    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined, (id) => this.chatCap.gone(id));
     if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);
@@ -1009,6 +1035,7 @@ export class Shell {
     );
     rows?.sweep();
     sync(this.cards, withQueue(this.live(next, running), queue), sameCard);
+    this.chatCap.cards(chat.id, next.filter((c) => c.kind === "captcha").map((c) => c.detail));
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
 
@@ -1886,6 +1913,8 @@ export class Shell {
 
   tick(): void {
     this.tickMesh();
+    // A captcha card on screen takes frames again once the window is back.
+    this.chatCap.wake();
     // devices.rs: phones' "last seen" and PCs' online state change by themselves.
     if (this.devicesShown()) this.refreshDevices();
     this.voice?.poll();
@@ -2175,6 +2204,7 @@ export class Shell {
     this.surfaces.dispose();
     this.videoPane?.shutdown();
     this.captcha?.stop();
+    this.chatCap.stop();
     for (const [id, run] of this.engine.turns) {
       this.engine.persist(id);
       run.turn?.release();

@@ -60,6 +60,26 @@ final class DiscordKit {
         return new int[] { w, h };
     }
 
+    /** A point on a view (vw × vh pixels) showing an image of the page's `crop` (x, y, width,
+     *  height in page pixels) in the page's own pixels, rounded: crop.x + x * crop.width / vw. */
+    static int[] cropToPage(float x, float y, int vw, int vh, int[] crop) {
+        if (vw <= 0 || vh <= 0 || crop == null) return new int[] { 0, 0 };
+        return new int[] { Math.round(crop[0] + x * crop[2] / vw), Math.round(crop[1] + y * crop[3] / vh) };
+    }
+
+    /** The inverse for a page rectangle (x, y, width, height): {left, top, right, bottom} on the
+     *  view; null without a rect or a crop. */
+    static float[] pageToView(int[] rect, int[] crop, int vw, int vh) {
+        if (rect == null || crop == null || crop[2] <= 0 || crop[3] <= 0) return null;
+        float sx = (float) vw / crop[2], sy = (float) vh / crop[3];
+        return new float[] { (rect[0] - crop[0]) * sx, (rect[1] - crop[1]) * sy, (rect[0] + rect[2] - crop[0]) * sx, (rect[1] + rect[3] - crop[1]) * sy };
+    }
+
+    /** The chat card's line under its title (the desktop's). */
+    static String cardIntro(String guild) {
+        return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild) + ". Only the captcha takes your taps; Harbor never answers it for you.";
+    }
+
     /** The captcha screen's line under its title (the desktop's, with taps for clicks). */
     static String intro(String guild) {
         return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild)

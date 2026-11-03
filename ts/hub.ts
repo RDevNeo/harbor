@@ -641,7 +641,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     noteLimit: (id, account, waits, note) => notifier.noteLimit(eng().chat(id) ?? null, account, eng().accountLabel(account), waits, note),
     noteResumed: (id, account, text) => notifier.noteResumed(eng().chat(id) ?? null, account, eng().accountLabel(account), text, eng().limits.limitSettings().notify),
-    notify: (kind, key, title, body) => notifier.post(kind, key, title, body, "", false),
+    notify: (kind, key, title, body, chat) => notifier.post(kind, key, title, body, chat ?? "", false),
   };
   const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
     on: () => hub.mesh.on,
@@ -651,7 +651,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, accounts: () => accounts, ...host, ...own });
   const live = engine;
-  const stopDiscord = o.discordNotices === true && !offline ? discord.watch((n) => live.host.notify?.(n.kind, n.key, n.title, n.body)) : () => {};
+  // A captcha the chat's agent hit goes into that chat's transcript (its card, then its outcome), and the notification opens that chat.
+  const stopDiscord =
+    o.discordNotices === true && !offline
+      ? discord.watch((n) =>
+          discord.postNotice(n, {
+            chat: (id) => live.chat(id),
+            notice: (id, icon, text, detail) => live.notice(id, icon, text, detail),
+            changed: (id) => live.host.changed?.(id),
+            notify: (kind, key, title, body, chat) => live.host.notify?.(kind, key, title, body, chat),
+          }),
+        )
+      : () => {};
   const funnel = new Funnel(() => providers.which("tailscale") !== null, () => live.hookPort);
   const moveAccounts = (): MovePcAccount[] =>
     accounts.map((a) => ({

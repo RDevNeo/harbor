@@ -157,7 +157,8 @@ public class DiscordCaptcha extends Base {
         return null;
     }
 
-    private static Bitmap decode(String data) {
+    /** A frame's `data` (base64 JPEG, maybe a data: URL) as a bitmap; null: none or unreadable. */
+    static Bitmap decode(String data) {
         if (data == null || data.isEmpty()) return null;
         int comma = data.startsWith("data:") ? data.indexOf(',') : -1;
         try {

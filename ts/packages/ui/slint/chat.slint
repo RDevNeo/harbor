@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Glyph, Spinner, Btn, TipArea } from "widgets.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
+import { CaptchaCard, ChatCaptchaData } from "captcha.slint";
 
 export struct MediaRow {
     image: image,
@@ -1025,6 +1026,11 @@ export component Transcript {
     callback open-media(string);
     callback copy-text(string);
     callback queue-menu(int, length, length);
+    // The open chat's Discord captcha card (cards.ts "captcha"): its newest frame, and what the person does.
+    in property <ChatCaptchaData> captcha;
+    callback captcha-seen(string, bool);
+    callback captcha-pointer(string, string, float, float);
+    callback captcha-cancel(string);
     // Scrolled within a screen of the top while earlier cards wait: the shell builds a page more.
     callback near-top();
     out property <bool> at-end: -list.content-y + list.height >= list.content-height - 48px;
@@ -1109,7 +1115,7 @@ export component Transcript {
             x: root.side;
             width: root.column;
             alignment: start;
-            for c in root.cards: Rectangle {
+            for c in root.cards: cell := Rectangle {
                 property <length> h: row.preferred-height;
                 min-height: h;
                 max-height: h;
@@ -1194,6 +1200,23 @@ export component Transcript {
                             root.queue-menu(seq, x, y);
                         }
                     }
+                    if c.kind == "captcha": CaptchaCard {
+                        id: c.detail;
+                        text: c.text;
+                        gone: c.result == "gone";
+                        data: root.captcha;
+                        avail: root.column;
+                        on-screen: root.visible && cell.y + cell.height + list.content-y > 0 && cell.y + list.content-y < list.height;
+                        seen(on) => {
+                            root.captcha-seen(c.detail, on);
+                        }
+                        pointer(kind, fx, fy) => {
+                            root.captcha-pointer(c.detail, kind, fx, fy);
+                        }
+                        cancel => {
+                            root.captcha-cancel(c.detail);
+                        }
+                    }
                     if c.kind == "queue-more": HorizontalLayout {
                         alignment: end;
                         padding-bottom: 4px + root.gap;
@@ -1207,7 +1230,7 @@ export component Transcript {
                             }
                         }
                     }
-                    if c.kind != "space" && c.kind != "status" && c.kind != "earlier" && c.kind != "steering" && c.kind != "queue-head" && c.kind != "queued" && c.kind != "queue-more": CardView {
+                    if c.kind != "space" && c.kind != "status" && c.kind != "earlier" && c.kind != "steering" && c.kind != "queue-head" && c.kind != "queued" && c.kind != "queue-more" && c.kind != "captcha": CardView {
                         card: c;
                         avail: root.column;
                         running: root.running;

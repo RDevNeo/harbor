@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { attachment, captchaCancel, captchaFrame, captchaInput, statusText, status } from "../src/discord.ts";
+import { attachment, captchaCancel, captchaFrame, captchaInput, chatCaptcha, statusText, status } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
 import { type Started, fakeLog, mcpClient, plan, rig, startHost, toolText, until } from "./discordkit.ts";
 
@@ -328,4 +328,40 @@ test("with the captcha view on (the default), a join that needs a captcha holds 
   expect(readFileSync(join(r.root, "pace.json"), "utf8")).toBe("[]");
   plan(r.root, { calls: { discord_join: { joined: true } } });
   await h.host.handle({ op: "stop" });
+}, 30_000);
+
+test("a captcha in a chat: its card's frames, one solver at a time, and the chat told how it ended", async () => {
+  await quiet();
+  writeFileSync(join(r.root, "pace.json"), "[]");
+  rmSync(join(r.root, "notices.jsonl"), { force: true });
+  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "7", name: "Devs" } } }, captcha: { showing: true, joined: false } });
+  process.env.HARBOR_CHAT_ID = "42";
+  try {
+    const v = JSON.parse(await call("discord_join", { invite: "devs", apply: true })) as Record<string, unknown>;
+    expect(String(v.note)).toContain("in this chat");
+  } finally {
+    delete process.env.HARBOR_CHAT_ID;
+  }
+  const st = (): Record<string, unknown> => h.host.status() as Record<string, unknown>;
+  const c = st().captcha as Record<string, unknown>;
+  expect(c).toMatchObject({ guild: "Devs", chat: 42 });
+  const notices = (): Record<string, unknown>[] => readFileSync(join(r.root, "notices.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(notices()[0]).toMatchObject({ chat: 42, key: "discord-captcha", captcha: { captcha: c.id, state: "pending", guild: "Devs" }, line: "Discord needs a captcha to join Devs" });
+  // Another chat has no captcha.
+  expect(await chatCaptcha(7, { action: "frame" })).toMatchObject({ status: 404 });
+  const f = await chatCaptcha(42, { action: "frame", max: 300 });
+  expect(f).toMatchObject({ status: 200, body: { captcha: c.id, guild: "Devs", width: 300, crop: { x: 376, y: 176 }, rect: { x: 400, y: 200 }, solver: null } });
+  expect(ops("captcha_frame").at(-1)).toMatchObject({ crop: true, max: 300 });
+  // The first device to press holds the pointer; another one is told who has it.
+  expect(await chatCaptcha(42, { action: "input", kind: "down", x: 450, y: 250, who: "pc:a", label: "Desk" })).toMatchObject({ body: { taken: true, solver: { who: "pc:a", label: "Desk" } } });
+  expect(await chatCaptcha(42, { action: "input", kind: "down", x: 450, y: 250, who: "phone:b", label: "Phone" })).toMatchObject({ body: { taken: false, solver: { label: "Desk" } } });
+  expect(ops("captcha_input").length).toBe(2);
+  expect((await chatCaptcha(42, { action: "frame" })).body).toMatchObject({ solver: { label: "Desk" } });
+  plan(r.root, { captcha: { showing: false, joined: true } });
+  await until(() => st().captcha === null, 5000);
+  const end = notices().at(-1);
+  expect(end).toMatchObject({ chat: 42, captcha: { captcha: c.id, state: "joined" }, line: "Captcha solved: joined Devs" });
+  expect(await chatCaptcha(42, { action: "frame" })).toMatchObject({ status: 404 });
+  await quiet();
+  plan(r.root, { calls: { discord_join: { joined: true } } });
 }, 30_000);

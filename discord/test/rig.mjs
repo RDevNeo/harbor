@@ -301,7 +301,7 @@ await scenario("captcha", async () => {
     if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
     let r = await mcp.tool("discord_join", { invite: "captcha1", apply: true });
     let j = JSON.parse(r.text);
-    check(j.captchaRequired === true && j.joined === false && j.note.includes("solve it in Harbor"), "a join behind a captcha says so", r.text);
+    check(j.captchaRequired === true && j.joined === false && j.note.includes("Harbor shows it to the user"), "a join behind a captcha says so", r.text);
     const on = renderers();
     check(on === 1, "the view runs the client without site isolation: one page process", on);
     let s = await status();
@@ -334,6 +334,33 @@ await scenario("captcha", async () => {
     check(s.captcha_end?.outcome === "closed", "Don't join closes it, unjoined", JSON.stringify(s.captcha_end));
     r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000009" });
     check(JSON.parse(r.text).alreadyAbsent === true, "and the server it was for isn't joined", r.text);
+});
+
+await scenario("captcha-chat", async () => {
+    account();
+    write("pace.json", "[]");
+    if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
+    // The agent of chat 5 makes the call: Harbor sets its chat in the MCP server's environment.
+    env.HARBOR_CHAT_ID = "5";
+    const m = new Mcp();
+    await m.rpc("initialize", {});
+    const r = await m.tool("discord_join", { invite: "captcha33", apply: true });
+    check(JSON.parse(r.text).note.includes("in this chat"), "the agent hears the captcha shows in its chat", r.text);
+    const cc = async (chat, body) => (await hostOp({ op: "chat_captcha", chat, body }))?.result;
+    let f = await cc(5, { action: "frame", max: 200 });
+    check(f?.status === 200 && f.body.width <= 200 && f.body.crop?.width >= 300 && f.body.data?.length > 300, "the chat's card gets a small frame of just the captcha", JSON.stringify({ ...f?.body, data: f?.body?.data?.length }));
+    check((await cc(6, { action: "frame" }))?.status === 404, "another chat gets nothing");
+    const x = f.body.rect.x + 150, y = f.body.rect.y + 100;
+    const a = await cc(5, { action: "input", kind: "move", x, y, who: "pc:a", label: "Desk" });
+    const b = await cc(5, { action: "input", kind: "down", x, y, who: "phone:b", label: "Phone" });
+    check(a?.body?.taken === true && b?.body?.taken === false && b.body.solver?.label === "Desk", "one device solves at a time", JSON.stringify([a, b]));
+    for (const kind of ["down", "up"]) await cc(5, { action: "input", kind, x, y, who: "pc:a", label: "Desk" });
+    await until(async () => (await status()).captcha === null, 15000, "the captcha to end");
+    const notes = fs.readFileSync(app + "/notices.jsonl", "utf8").trim().split("\n").map(l => JSON.parse(l));
+    check(notes[0].chat === 5 && notes[0].captcha?.state === "pending" && notes.at(-1).chat === 5 && notes.at(-1).captcha?.state === "joined", "the chat gets the card, then its outcome", JSON.stringify(notes.map(n => [n.chat, n.captcha?.state])));
+    check((await cc(5, { action: "frame" }))?.status === 404, "and the card's frames stop");
+    m.close();
+    delete env.HARBOR_CHAT_ID;
 });
 
 await scenario("pacing", async () => {

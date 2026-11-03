@@ -210,7 +210,27 @@ export function signOut(): void {
   request({ op: "signout" }, SHORT).catch(() => {});
 }
 
-export type Notify = (n: { kind: string; key: string; title: string; body: string }) => void;
+export type Notify = (n: { kind: string; key: string; title: string; body: string; chat?: number; captcha?: Obj; line?: string }) => void;
+
+export type NoticeOf = Parameters<Notify>[0];
+
+/** What the app does with one of the host's notices (`watch`): a captcha's card or outcome goes into its chat, and the notification opens that chat. */
+export interface NoticeSink {
+  chat(id: number): { id: number; gid: string } | undefined;
+  notice(id: number, icon: string, text: string, detail: string): void;
+  changed(id: number): void;
+  notify(kind: string, key: string, title: string, body: string, chat?: string): void;
+}
+
+export function postNotice(n: NoticeOf, to: NoticeSink): void {
+  const c = n.chat !== undefined ? to.chat(n.chat) : undefined;
+  if (c && n.captcha !== undefined) {
+    to.notice(c.id, "captcha", n.line ?? n.title, JSON.stringify(n.captcha));
+    to.changed(c.id);
+  }
+  if (c) to.notify(n.kind, n.key, n.title, n.body, c.gid);
+  else to.notify(n.kind, n.key, n.title, n.body);
+}
 
 /**
  * Posts what the host wanted the user to know as Harbor notifications: the host has no hub, so
@@ -229,7 +249,17 @@ export function watch(notify: Notify, everyMs = 5000): () => void {
     for (const line of text.split("\n")) {
       const n = parse(line);
       if (!isObj(n)) continue;
-      notify({ kind: "discord", key: str(n.key) ?? `discord:${JSON.stringify(n.at ?? null)}`, title: str(n.title) ?? "Discord", body: str(n.body) ?? "" });
+      const chat = uint(n.chat);
+      const captcha = get(n, "captcha");
+      notify({
+        kind: "discord",
+        key: str(n.key) ?? `discord:${JSON.stringify(n.at ?? null)}`,
+        title: str(n.title) ?? "Discord",
+        body: str(n.body) ?? "",
+        ...(chat !== undefined ? { chat } : {}),
+        ...(isObj(captcha) ? { captcha } : {}),
+        ...(typeof n.line === "string" ? { line: n.line } : {}),
+      });
     }
   }, everyMs);
   return () => clearInterval(timer);
@@ -328,7 +358,30 @@ export const run = (): Promise<void> => serve(process.stdin, process.stdout);
 
 const WAIT = 700_000;
 
-const pageCall = (name: string, args: Json): Promise<Json> => request({ op: "call", name, args }, WAIT);
+/** The chat whose agent runs this server (Harbor sets it in the turn's MCP config): a captcha its call hits shows there. */
+const ownChat = (): number | null => {
+  const n = Number.parseInt(process.env.HARBOR_CHAT_ID ?? "", 10);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+};
+
+const pageCall = (name: string, args: Json): Promise<Json> => request({ op: "call", name, args, chat: ownChat() }, WAIT);
+
+/**
+ * A chat's captcha card: its frame, a person's pointer, or Don't join (`body.action`: frame, input,
+ * cancel), for a chat of this PC. The desktop calls it for its own chats; other PCs and phones
+ * reach it through the chat's own route (`/v1/chats/<id>/captcha`), so the frames go only where the
+ * chat's content goes. Doesn't start anything: no host, no captcha (404).
+ */
+export async function chatCaptcha(chatId: number, body: Record<string, unknown>): Promise<{ status: number; body: unknown }> {
+  let r: Json;
+  try {
+    r = await ask(setup.socket(), { op: "chat_captcha", chat: chatId, body: JSON.parse(JSON.stringify(body)) as Json }, 15_000);
+  } catch {
+    return { status: 404, body: { error: "No captcha is waiting in this chat." } };
+  }
+  const status = uint(get(r, "status")) ?? 500;
+  return { status, body: get(r, "body") ?? null };
+}
 
 export async function call(name: string, args: Json): Promise<Json> {
   try {

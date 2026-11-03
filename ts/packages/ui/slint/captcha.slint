@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
-import { Btn, Spinner } from "widgets.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, Spinner } from "widgets.slint";
 
 // What the Discord app's hidden page shows while a join waits on a captcha.
 export struct CaptchaData {
@@ -162,6 +163,189 @@ export component CaptchaPill inherits Rectangle {
             variant: primary;
             clicked => {
                 root.show();
+            }
+        }
+    }
+}
+
+// The newest frame of the open chat's captcha card (chatcaptcha.ts): the card whose captcha is `id` draws it.
+export struct ChatCaptchaData {
+    id: string,
+    has-frame: bool,
+    image: image,
+    // The image's own pixels: the card keeps its aspect.
+    width: float,
+    height: float,
+    // The captcha on the image, as fractions of it: the rest is dimmed and takes no clicks.
+    rx: float,
+    ry: float,
+    rw: float,
+    rh: float,
+    // "Being solved on <PC>" while another device holds it.
+    solving: string,
+}
+
+// A Discord join in this chat waits on a captcha: its frames in the transcript, the person's pointer back
+// to it from here, from another PC of the mesh, or from the phone. `gone`: the host has none waiting.
+export component CaptchaCard {
+    in property <string> id;
+    in property <string> text;
+    in property <bool> gone;
+    in property <ChatCaptchaData> data;
+    in property <length> avail;
+    // On screen in the transcript: frames flow only then.
+    in property <bool> on-screen;
+    callback seen(bool);
+    // kind ("move", "down", "up"), then fractions of the image.
+    callback pointer(string, float, float);
+    callback cancel();
+    property <bool> mine: root.data.id == root.id && root.id != "";
+    property <length> frame-w: min(root.avail - 26px, 460px);
+    changed on-screen => {
+        root.seen(root.on-screen);
+    }
+    init => {
+        root.seen(root.on-screen);
+    }
+    min-height: inner.min-height;
+    preferred-height: inner.preferred-height;
+    inner := VerticalLayout {
+        padding-bottom: Theme.compact ? 8px : 12px;
+        if root.gone: HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            height: 26px;
+            Glyph {
+                width: 13px;
+                icon: Icons.user-check;
+                size: 13px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: "This captcha isn't waiting any more.";
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+        }
+        if !root.gone: HorizontalLayout {
+            alignment: start;
+            Rectangle {
+                width: root.frame-w + 26px;
+                min-height: box.min-height;
+                preferred-height: box.preferred-height;
+                background: Theme.bg200;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                box := VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        height: 28px;
+                        Glyph {
+                            width: 14px;
+                            icon: Icons.user-check;
+                            size: 14px;
+                            color: Theme.amber-900;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "Discord needs a captcha";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Btn {
+                            text: "Don't join";
+                            tip: "Closes the captcha: the server isn't joined";
+                            size: xs;
+                            variant: secondary;
+                            clicked => {
+                                root.cancel();
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.text;
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        wrap: word-wrap;
+                    }
+                    if root.mine && root.data.solving != "": HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Glyph {
+                            width: 13px;
+                            icon: Icons.monitor;
+                            size: 13px;
+                            color: Theme.amber-900;
+                        }
+                        Text {
+                            text: root.data.solving;
+                            font-size: 13px;
+                            color: Theme.amber-900;
+                            vertical-alignment: center;
+                        }
+                    }
+                    frame := Rectangle {
+                        width: root.frame-w;
+                        height: root.mine && root.data.has-frame ? root.frame-w * root.data.height / max(root.data.width, 1) : 160px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.gray-100;
+                        clip: true;
+                        if !(root.mine && root.data.has-frame): Spinner {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            radius: 10px;
+                            color: Theme.subtle;
+                        }
+                        if root.mine && root.data.has-frame: Rectangle {
+                            Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: root.data.image;
+                                image-fit: fill;
+                            }
+                            // The page around the captcha, dimmed: nothing there takes a click.
+                            Rectangle {
+                                background: black.with-alpha(0.35);
+                            }
+                            Rectangle {
+                                x: root.data.rx * parent.width;
+                                y: root.data.ry * parent.height;
+                                width: root.data.rw * parent.width;
+                                height: root.data.rh * parent.height;
+                                clip: true;
+                                Image {
+                                    x: -parent.x;
+                                    y: -parent.y;
+                                    width: frame.width;
+                                    height: frame.height;
+                                    source: root.data.image;
+                                    image-fit: fill;
+                                }
+                            }
+                            TouchArea {
+                                mouse-cursor: self.mouse-x >= root.data.rx * self.width && self.mouse-x < (root.data.rx + root.data.rw) * self.width && self.mouse-y >= root.data.ry * self.height && self.mouse-y < (root.data.ry + root.data.rh) * self.height ? MouseCursor.pointer : MouseCursor.default;
+                                moved => {
+                                    root.pointer("move", self.mouse-x / self.width, self.mouse-y / self.height);
+                                }
+                                pointer-event(e) => {
+                                    if e.kind == PointerEventKind.move && !self.pressed {
+                                        root.pointer("move", self.mouse-x / self.width, self.mouse-y / self.height);
+                                    }
+                                    if (e.kind == PointerEventKind.down || e.kind == PointerEventKind.up) && e.button == PointerEventButton.left {
+                                        root.pointer(e.kind == PointerEventKind.down ? "down" : "up", self.mouse-x / self.width, self.mouse-y / self.height);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
