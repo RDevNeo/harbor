@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.136.1] - 2026-11-03
+
 ### Fixed
 - The sidebar's workspace filter no longer shows another PC's projects under your own workspace
   (desktop and phone). A project that wasn't moved to a workspace is in the workspace of the PC its
