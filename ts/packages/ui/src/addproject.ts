@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "@harbor/agents";
+import { addFolder, gitRemote } from "@harbor/net";
+import { homedir } from "node:os";
 import { home, repoDir, type Store } from "@harbor/store";
 import { type Act, AddProject, cloneCommand, cloneError, type Disk, githubSlug, nameProblem, type PaletteKey, parseGhList, type Row, STEP_LABEL, type StatusTone, untrustedKey } from "./logic/addproject.ts";
 import type { Pixels } from "./logos.ts";
@@ -131,7 +133,7 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
       ap.error = `Not a folder: ${ap.tilde(dir)}`;
       return false;
     }
-    hooks.added(store.addRepo(dir));
+    hooks.added(addFolder(store, dir, gitRemote(dir), homedir()));
     hooks.done();
     return true;
   };

@@ -27,6 +27,12 @@ export interface Placement {
   repos: ReadonlyMap<number, string>;
   /** Share with workspace…: the extra workspaces each shows in too (only those shared; left out: none). */
   shared?: Shares;
+  /**
+   * The other PCs of this PC's owner, by mesh id: copies of their chats follow their project's
+   * move and shares (`carried`) as this PC's own chats do. Another person's chats don't: sharing
+   * or moving a project takes the project there, not everyone's chats in it. Left out: none.
+   */
+  mates?: ReadonlySet<string>;
 }
 
 /** Share with workspace…: workspace ids a chat or project shows in besides its own, the same three ways as `Placement`. */
@@ -37,6 +43,7 @@ export interface Shares {
 }
 
 export const NO_PLACEMENT: Placement = { chats: new Map(), carried: new Map(), repos: new Map() };
+const NO_MATES: ReadonlySet<string> = new Set();
 
 /** A share list as kept in a column: ids joined by commas, each once, none empty. */
 export function shareList(v: unknown): string[] {
@@ -374,6 +381,35 @@ export class Store {
     return num((this.db.query("SELECT id FROM repos WHERE path=?1").get(path) as Row).id);
   }
 
+  /**
+   * Folds project `from` into `into`, the same project listed twice: `from`'s chats, webhooks and
+   * processes go to `into`, which keeps its own path, folder and place in the order, and takes
+   * what it lacks of `from`'s main chat and remote (and, with `placement`, of its workspace and
+   * shares); then `from` goes.
+   */
+  foldRepo(from: number, into: number, placement: boolean): void {
+    if (from === into) return;
+    this.db.transaction(() => {
+      const f = this.db.query("SELECT main_chat, workspace, shared, remote, settled FROM repos WHERE id=?1").get(from) as Row | null;
+      if (!f) return;
+      for (const t of ["chats", "webhooks", "procs"]) this.db.query(`UPDATE ${t} SET repo_id=?2 WHERE repo_id=?1`).run(from, into);
+      this.db
+        .query(
+          `UPDATE repos SET
+             main_chat = CASE WHEN main_chat = 0 THEN ?2 ELSE main_chat END,
+             workspace = CASE WHEN workspace = '' AND ?6 THEN ?3 ELSE workspace END,
+             shared = CASE WHEN shared = '' AND ?6 THEN ?4 ELSE shared END,
+             remote = CASE WHEN remote = '' THEN ?5 ELSE remote END,
+             settled = MIN(settled, ?7)
+           WHERE id=?1`,
+        )
+        .run(into, num(f.main_chat), text(f.workspace), text(f.shared), text(f.remote), placement ? 1 : 0, num(f.settled));
+      this.db.query("DELETE FROM repos WHERE id=?1").run(from);
+      for (const k of [`project_pc:${from}`, `project_moved:${from}`, `project_settled:${from}`]) this.del(k);
+    })();
+    this.saved.clear();
+  }
+
   removeRepo(id: number): void {
     this.db.query("DELETE FROM repos WHERE id=?1").run(id);
     this.saved.clear();
@@ -425,8 +461,11 @@ export class Store {
       if (text(r.workspace) !== "") repos.set(num(r.id), text(r.workspace));
       list(shared.repos, num(r.id), r.shared);
     }
-    return { chats, carried, repos, shared };
+    return { chats, carried, repos, shared, mates: this.mates() };
   }
+
+  /** The other PCs of this PC's owner (`Placement.mates`); the hub sets it from the account's directory. */
+  mates: () => ReadonlySet<string> = () => NO_MATES;
 
   /** Chat `id`'s own shares (Share with workspace…): the workspaces it shows in besides its own. */
   setChatShares(id: number, ws: readonly string[]): void {

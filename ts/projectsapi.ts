@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { statSync } from "node:fs";
-import { type Call, err, type Json, ok, type Reply } from "./packages/net/src/index.ts";
+import { addFolder, type Call, err, gitRemote, type Json, ok, type Reply } from "./packages/net/src/index.ts";
+import { homedir } from "node:os";
 import { type Repo, repoDir, type Store } from "./packages/store/src/index.ts";
 import { ICONS } from "./packages/ui/src/icons.ts";
 import { type Act, AddProject, type Disk, type GhList, nameProblem, type Row, STEP_LABEL, type Step, untrustedKey } from "./packages/ui/src/logic/addproject.ts";
@@ -100,15 +101,7 @@ function isDir(p: string): boolean {
   }
 }
 
-/** origin's URL of the repository in `dir` ("" without one). */
-function gitOrigin(dir: string): string {
-  try {
-    const r = Bun.spawnSync(["git", "-C", dir, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] });
-    return r.exitCode === 0 ? r.stdout.toString().trim() : "";
-  } catch {
-    return "";
-  }
-}
+const gitOrigin = gitRemote;
 
 /** An act as the phone sends it back: null when it isn't one. */
 export function parseAct(v: unknown): Act | null {
@@ -299,9 +292,9 @@ export class ProjectsApi {
   /** `dir` as a project here (the one it already is, or a new one). */
   private added(dir: string, global: boolean): Record<string, Json> {
     const known = this.h.store.repos().find((r) => r.path === dir || repoDir(r) === dir);
-    const id = known ? known.id : this.h.store.addRepo(dir);
     const remote = (this.h.origin ?? gitOrigin)(dir);
-    if (!known && remote !== "") this.h.store.setRepoRemote(id, remote);
+    // Another PC's project that this folder is a folder of takes it, instead of a second row (projectfold.ts).
+    const id = known ? known.id : addFolder(this.h.store, dir, remote, homedir());
     this.h.reload();
     this.h.touch();
     const r = this.h.store.repos().find((x) => x.id === id);

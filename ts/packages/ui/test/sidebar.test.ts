@@ -91,8 +91,11 @@ test("a_moved_chat_or_project_shows_under_the_workspace_it_was_moved_to", () => 
   expect(chatWorkspace(byId(6) as TestChat, byId, place, "a", pcs)).toBe("b");
   expect(chatWorkspace(byId(1) as TestChat, byId, place, "a", pcs)).toBe("a");
   expect(chatWorkspace(sub, byId, { ...place, chats: new Map([[1, "b"]]) }, "a", pcs)).toBe("b");
-  // A copy follows its project as its home PC says it (`carried`), not this PC's project.
-  expect(chatWorkspace(byId(5) as TestChat, byId, { ...place, carried: new Map([[5, "c"]]), repos: new Map([[1, "a"]]) }, "a", pcs)).toBe("c");
+  // A copy of this owner's other PC follows its project as its home PC says it (`carried`), not this PC's project.
+  const carried = { ...place, carried: new Map([[5, "c"]]), repos: new Map([[1, "a"]]) };
+  expect(chatWorkspace(byId(5) as TestChat, byId, { ...carried, mates: new Set(["ts:b"]) }, "a", pcs)).toBe("c");
+  // Someone else's copy doesn't: their chat stays in its PC's workspace, wherever the project went.
+  expect(chatWorkspace(byId(5) as TestChat, byId, carried, "a", pcs)).toBe("b");
   // Filtered to a, the moved ones leave at once; chat 2 comes in.
   const a = inWorkspaces(t, ["a"], "a", pcs, chats, place);
   expect(a.threads).toEqual([]);
@@ -111,7 +114,10 @@ test("a_shared_chat_or_project_shows_under_its_owner_and_each_workspace_it_is_sh
   const byId = (id: number) => all.find((c) => c.id === id);
   // Thread 3 (this PC's, so a's) shared with b; project 2 (a's) shared with c; copy 5 (b's PC) carries its project's share with c; lead 1 shared with d.
   const shared = { chats: new Map([[3, ["b"]], [1, ["d"]], [6, ["e"]]]), carried: new Map([[5, ["c"]]]), repos: new Map([[2, ["c"]]]) };
-  const place = { chats: new Map<number, string>(), carried: new Map<number, string>(), repos: new Map<number, string>(), shared };
+  // ts:b is another PC of this owner's: its copies follow their project's shares.
+  const place = { chats: new Map<number, string>(), carried: new Map<number, string>(), repos: new Map<number, string>(), shared, mates: new Set(["ts:b"]) };
+  // Someone else's copy doesn't take its project's shares: sharing a project shares the project, not their chats.
+  expect(sharedWith(byId(5) as TestChat, byId, { ...place, mates: new Set<string>() })).toEqual({ all: [], inherited: [] });
   // Owner unchanged; shares are extra. A sub-agent's are its lead's; a project's chats get the project's plus their own.
   expect(chatWorkspace(byId(3) as TestChat, byId, place, "a", pcs)).toBe("a");
   expect(sharedWith(sub, byId, place)).toEqual({ all: ["d"], inherited: [] });
@@ -300,6 +306,27 @@ test("this_pcs_projects_stay_in_its_workspace", () => {
   expect(inWorkspaces(t, only("a"), "a", pcs, chats).projects.map((p) => p.id)).toEqual([1, 3, 4, 5]);
   expect(inWorkspaces(t, only("a"), "a", pcs, chats, undefined, pcOf).projects.map((p) => p.id)).toEqual([1]);
   expect(projectWorkspace(1, { chats: new Map(), carried: new Map(), repos: new Map() }, null, "a", pcs)).toBe("a");
+});
+
+test("a_shared_project_brings_the_project_not_the_other_persons_chats", () => {
+  // Sam's project, moved by Sam to Ana's workspace "ana" and shared with Sam's own "sam"; each of them has a chat in it.
+  const t = emptyTree({ projects: [place(1, false, null, [1, 2])] });
+  const shares = { chats: new Map<number, string[]>(), carried: new Map([[1, ["sam"]], [2, ["sam"]]]), repos: new Map([[1, ["sam"]]]) };
+  // On Ana's PC (in "ana"): Sam's chat 1 is a copy that carries the project's move and share; Ana's chat 2 is her own.
+  const anaChats = [fromPc(1, 1, "ts:sam"), fromPc(2, 1, "")];
+  const onAna = { chats: new Map<number, string>(), carried: new Map([[1, "ana"]]), repos: new Map([[1, "ana"]]), shared: shares };
+  const ana = inWorkspaces(t, only("ana"), "ana", new Map([["ts:sam", "sam"]]), anaChats, onAna, () => "ts:sam");
+  expect(ana.projects.map((p) => [p.id, p.chats])).toEqual([[1, [2]]]);
+  // On Sam's PC (in "sam"): the project row (shared with "sam") and Sam's own chat, not Ana's copy.
+  const samChats = [fromPc(1, 1, ""), fromPc(2, 1, "ts:ana")];
+  const onSam = { chats: new Map<number, string>(), carried: new Map([[2, "ana"]]), repos: new Map([[1, "ana"]]), shared: { ...shares, carried: new Map([[2, ["sam"]]]) } };
+  const sam = inWorkspaces(t, only("sam"), "sam", new Map([["ts:ana", "ana"]]), samChats, onSam);
+  expect(sam.projects.map((p) => [p.id, p.chats])).toEqual([[1, [1]]]);
+  // Sam's chat goes with the project to "ana" on Sam's own PC, as moved: Ana's chat is in "ana" by its PC anyway.
+  expect(inWorkspaces(t, only("ana"), "sam", new Map([["ts:ana", "ana"]]), samChats, onSam).projects.map((p) => [p.id, p.chats])).toEqual([[1, [1, 2]]]);
+  // A chat shared on its own still shows where it was shared.
+  const own = { ...onAna, shared: { ...shares, chats: new Map([[1, ["ana"]]]) } };
+  expect(inWorkspaces(t, only("ana"), "ana", new Map([["ts:sam", "sam"]]), anaChats, own, () => "ts:sam").projects.map((p) => [p.id, p.chats])).toEqual([[1, [1, 2]]]);
 });
 
 function none(): Map<number, number> {

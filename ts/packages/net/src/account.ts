@@ -180,6 +180,14 @@ export function directoryPcWorkspaces(d: AccountDirectory): Map<string, string> 
   return out;
 }
 
+/** The other PCs of account `me` the directory lists (by mesh id, `self` left out): store.ts `Placement.mates`. */
+export function directoryMates(d: AccountDirectory, me: string, self: string): Set<string> {
+  const out = new Set<string>();
+  if (me === "") return out;
+  for (const p of [...d.workspaces.flatMap((w) => w.pcs), ...d.peers]) if (p.owner === me && p.id !== "" && p.id !== self) out.add(p.id);
+  return out;
+}
+
 export function workspaceOwner(w: AccountWorkspace): boolean {
   return w.role === "owner";
 }

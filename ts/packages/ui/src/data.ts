@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Account, Engine, type EngineHost, providers } from "@harbor/agents";
 import { media } from "@harbor/media";
-import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
+import { addFolder, Desktop, gitRemote, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { dictate } from "@harbor/media";
 import { repoDir, sidebartree, type Chat, type Item, type Mention as StoreMention, type Repo, type Store, type Timer } from "@harbor/store";
 import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
@@ -189,7 +189,7 @@ export class Data {
     if (!existsSync(path) || !statSync(path).isDirectory()) return null;
     const known = this.repos.find((r) => r.path === path);
     if (known) return known.id;
-    const id = this.store.addRepo(path);
+    const id = addFolder(this.store, path, gitRemote(path), homedir());
     this.engine.reload();
     return this.repo(id) ? id : null;
   }

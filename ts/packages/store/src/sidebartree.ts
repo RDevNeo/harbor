@@ -21,7 +21,8 @@ export type PlacedChat = Pick<SidebarChat, "id" | "role" | "repoId" | "home"> & 
 
 /**
  * The workspace Move to workspace… put chat `c` in, "" for none (its home PC's applies): its own,
- * else its project's (a copy's as its home PC says it); a sub-agent's is its lead's.
+ * else its project's (a copy's as its home PC says it, and only when that PC is this owner's:
+ * another person's chats stay in their PC's workspace); a sub-agent's is its lead's.
  */
 export function movedTo<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined, p: Placement): string {
   let x = c;
@@ -32,7 +33,7 @@ export function movedTo<C extends PlacedChat>(c: C, chat: (id: number) => C | un
   }
   const own = p.chats.get(x.id);
   if (own !== undefined) return own;
-  if (x.home !== "") return p.carried.get(x.id) ?? "";
+  if (x.home !== "") return follows(x, p) ? (p.carried.get(x.id) ?? "") : "";
   return x.repoId === null ? "" : (p.repos.get(x.repoId) ?? "");
 }
 
@@ -48,6 +49,11 @@ export function carriedProjects(chats: readonly Pick<SidebarChat, "id" | "repoId
   return out;
 }
 
+/** Whether copy `c` follows its project's move and shares: a chat of another PC of this PC's owner (`Placement.mates`), not someone else's. */
+function follows(c: Pick<SidebarChat, "home">, p: Placement): boolean {
+  return p.mates?.has(c.home) === true;
+}
+
 function leadOf<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined): C {
   let x = c;
   for (let hop = 0; hop < 8 && x.role === "sub" && x.parent !== null; hop++) {
@@ -60,14 +66,15 @@ function leadOf<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined)
 
 /**
  * The workspaces Share with workspace… shares chat `c` with, besides the one it's in: its own
- * shares and its project's (a copy's as its home PC says them); a sub-agent's are its lead's.
+ * shares and its project's (a copy's as its home PC says them, only for this owner's PCs: a
+ * project shared with you brings the project, not other people's chats in it); a sub-agent's are its lead's.
  * `inherited` is the project's part alone.
  */
 export function sharedWith<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined, p: Placement): { all: string[]; inherited: string[] } {
   const s = p.shared;
   if (!s) return { all: [], inherited: [] };
   const x = leadOf(c, chat);
-  const inherited = [...((x.home !== "" ? s.carried.get(x.id) : x.repoId === null ? undefined : s.repos.get(x.repoId)) ?? [])];
+  const inherited = [...((x.home !== "" ? (follows(x, p) ? s.carried.get(x.id) : undefined) : x.repoId === null ? undefined : s.repos.get(x.repoId)) ?? [])];
   return { all: [...new Set([...(s.chats.get(x.id) ?? []), ...inherited])], inherited };
 }
 

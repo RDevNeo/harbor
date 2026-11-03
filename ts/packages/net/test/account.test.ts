@@ -10,6 +10,7 @@ import {
   accountDecide,
   b64urlDecode,
   b64urlEncode,
+  directoryMates,
   directoryPcWorkspaces,
   emptyDirectory,
   pcScope,
@@ -81,6 +82,14 @@ describe("account.rs tests", () => {
     const got = directoryPcWorkspaces(d);
     expect(got.size).toBe(2);
     expect([got.get("ts:desk"), got.get("ts:other")]).toEqual(["a", "b"]);
+  });
+
+  test("the_directory_says_which_other_pcs_are_this_owners", () => {
+    const pc = (id: string, owner: string) => ({ fp: "", id, name: "", addrs: [], owner, owner_name: "", seen: 0, version: "" });
+    const dir = (id: string, pcs: ReturnType<typeof pc>[]): AccountDir => ({ ...ws(id), members: [], pcs, devices: [], invites: [] });
+    const d: AccountDirectory = { at: 0, peers: [pc("ts:laptop", "u_me"), pc("ts:theirs", "u_sam")], workspaces: [dir("a", [pc("ts:desk", "u_me"), pc("ts:lab", "u_me")]), dir("b", [pc("ts:other", "u_sam")])] };
+    expect([...directoryMates(d, "u_me", "ts:desk")].sort()).toEqual(["ts:lab", "ts:laptop"]);
+    expect(directoryMates(d, "", "ts:desk").size).toBe(0);
   });
 
   test("workspace_and_revocation", () => {

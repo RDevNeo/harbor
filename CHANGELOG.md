@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Sharing a project with a workspace (or moving it to one) shares the project, not everyone's chats
+  in it: each person sees their own chats in a shared project, and another person's chats show
+  only where they are themselves (their PC's workspace, or where that chat was moved or shared on
+  its own). Your chats on your other PCs still go along with your project.
+
+### Fixed
+- A project listed twice, once as another PC's and once as this PC's folder of it, is one row: the
+  same Git remote, or for a project without Git the same name in the same place under the home
+  folder (where Harbor would put a copy of it), makes it the same project. Rows listed twice
+  already join at start (this PC's keeps its folder and takes every chat, and the other PC's
+  sharing when it was shared with this PC's workspace); adding a folder of another PC's project
+  gives that project its folder here instead of a second row.
+
 ## [0.136.1] - 2026-11-03
 
 ### Fixed

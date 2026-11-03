@@ -1,4 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
@@ -32,6 +33,9 @@ import {
   err,
   hostPort,
   hostname,
+  addFolder,
+  directoryMates,
+  foldProjects,
   directoryPcWorkspaces,
   scopeHas,
   scopeHasDevice,
@@ -251,6 +255,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const env = o.env ?? process.env;
   const offline = isOffline(env);
   const store = o.store ?? Store.open(dataDir(env));
+  // A project listed twice (another PC's, and this PC's folder of it): one row, before anything reads them.
+  for (const [theirs, mine] of foldProjects(store, env.HOME ?? homedir())) console.error(`harbor: project ${theirs} (another PC's) is project ${mine} here: folded into it`);
   const state = stateDir(env);
   const id = loadOrCreate(state);
   const me = readMe(store, env);
@@ -295,6 +301,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const meshAddrs = () => addrs().map((a) => (parseIp(a) ? hostPort(a, port) : a));
   const account = new AccountService({ kv: store, stateDir: state, identity: () => id, me: () => hub.mesh.me, addrs: meshAddrs, version: o.version, env });
   account.load();
+  // Copies of this owner's other PCs' chats follow their project's move and shares; other people's don't.
+  let matesAt: [unknown, string, string, ReadonlySet<string>] | null = null;
+  store.mates = () => {
+    const d = account.directory();
+    const me = account.account()?.id ?? "";
+    const self = hub.mesh.me.id;
+    if (matesAt === null || matesAt[0] !== d || matesAt[1] !== me || matesAt[2] !== self) matesAt = [d, me, self, directoryMates(d, me, self)];
+    return matesAt[3];
+  };
   // Messages saved before 0.115 have only their sender's label: the bubbles match it with these.
   knowDevices({
     pcs: () => [[hub.mesh.me.name, account.ownerName() ?? ""], ...[...hub.mesh.peers.values()].map((p) => [p.name, p.owner] as const)],
@@ -855,8 +870,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     addProject: (dir, name, remote) => {
       const known = store.repos().find((r) => repoDir(r) === dir);
-      const id = known ? known.id : store.addRepo(dir);
-      if (remote !== "") store.setRepoRemote(id, remote);
+      const id = known ? known.id : addFolder(store, dir, remote, env.HOME ?? homedir());
+      if (remote !== "" && (known || store.repos().find((r) => r.id === id)?.remote === "")) store.setRepoRemote(id, remote);
       if (name !== "") store.setRepoName(id, name);
       store.set(`project_moved:${id}`, "");
       projectsChanged();

@@ -34,3 +34,4 @@ export * as preview from "./preview.ts";
 export * from "./foldercopy.ts";
 export * from "./projectmove.ts";
 export * from "./projectmoverun.ts";
+export * from "./projectfold.ts";
