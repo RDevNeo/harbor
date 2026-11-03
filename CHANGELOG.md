@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.136.0] - 2026-11-03
+
 ### Changed
 - Videos are much lighter on the window: frames are now drawn on a thread of their own, at the size
   the picture takes on screen (never above the video's own size, and fewer pixels for 60 fps
