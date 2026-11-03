@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.116.2] - 2026-11-02
+
 ### Fixed
 - Discord: installed copies listed no Discord tools at all. The app fetched its Discord shell at the
   runtime's version (which can be older than the app, and isn't a release tag), got nothing, and
