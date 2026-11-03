@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.117.0] - 2026-11-02
+
 ### Added
 - Chats: a message written on the phone app or on another PC now says who wrote it and where, in a
   small row over the bubble: a phone or PC icon and the person's name (their Google account on a
