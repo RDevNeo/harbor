@@ -281,7 +281,7 @@ export class ProjectMove {
   blocker(repo: number): string | null {
     const r = this.repo(repo);
     if (!r) return "that project isn't on this PC any more";
-    if (!this.d.mesh.on) return "this PC doesn't share chats with other PCs (Settings › Devices)";
+    if (!this.d.mesh.on) return "this PC doesn't share chats with other PCs (Settings › Workspace)";
     const moving = this.d.movepc.local.projects.get(repo);
     if (moving) return `it's moving to ${moving[1]}`;
     if (!isDir(repoDir(r))) return `its folder (${tildeOf(this.d.home, repoDir(r))}) isn't on this PC`;

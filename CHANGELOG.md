@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Settings › Workspace and Settings › Devices are one page, Workspace: a device is just another
+  machine of the workspace. Under People each person has a card with their PCs (online or when last
+  seen, their Harbor version; this PC with Rename) and their phones (Sign out for your own, or
+  anyone's when you own the workspace). The invite field and pending invitations stay below; PCs you
+  share through another workspace come next, and devices added by SSH before (with Remove) last,
+  only when there are any. Links and menus that opened Devices open Workspace.
+- The phone's "No other PCs" notes say to invite the PC's owner to your workspace instead of pairing.
+
 ## [0.131.1] - 2026-11-03
 
 ### Fixed

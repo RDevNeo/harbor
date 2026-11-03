@@ -3,7 +3,7 @@ import { memory } from "./packages/agents/src/index.ts";
 import { hostLabel, type RemoteHost, shellFamily } from "./packages/net/src/index.ts";
 
 export interface DeviceMemDeps {
-  /** The devices of Settings › Devices, with whether each is online (null: never tested). */
+  /** The devices of Settings › Workspace, with whether each is online (null: never tested). */
   devices(): [RemoteHost, boolean | null][];
   /** This PC's and the mesh's PCs' ids and names: those aren't asked over SSH. */
   harbors(): { ids: string[]; names: string[] };

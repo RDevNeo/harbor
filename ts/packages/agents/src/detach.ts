@@ -820,7 +820,7 @@ export function unreachable(line: string): [string, string] | undefined {
 
 export function unreachableText(name: string, host: string, why: string, tries: number, tookMs: number): string {
   let what = "its name didn't resolve";
-  let ask = "Is it on and on the same network, and is the name right in Settings › Devices?";
+  let ask = "Is it on and on the same network, and is the name right in Settings › Workspace?";
   if (why.startsWith("No route to host")) [what, ask] = ["no route to host", "Is it on and on the same network?"];
   else if (why.startsWith("Connection timed out") || why.startsWith("Operation timed out")) [what, ask] = ["it didn't answer", "Is it on, awake and on the same network?"];
   else if (why.startsWith("Connection refused")) [what, ask] = ["it refused the connection", "Is its SSH server (Remote Login on a Mac) on?"];

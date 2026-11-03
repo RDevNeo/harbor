@@ -313,7 +313,7 @@ describe("movepc beyond the Rust tests", () => {
     const base = { foreignHome: null, isSub: false, meshOn: true, movingTo: null, chats: [lead, sub] };
     expect(movePcBlocker(base)).toBeNull();
     expect(movePcBlocker({ ...base, foreignHome: "desk" })).toBe("this chat is desk's: move it from there");
-    expect(movePcBlocker({ ...base, meshOn: false })).toBe("this PC doesn't share chats with other PCs (Settings › Devices)");
+    expect(movePcBlocker({ ...base, meshOn: false })).toBe("this PC doesn't share chats with other PCs (Settings › Workspace)");
     expect(movePcBlocker({ ...base, chats: [lead, { ...sub, running: true }] })).toBe("its sub-agent helper is running: move it once its turn ends");
     expect(movePcBlocker({ ...base, chats: [lead, { ...sub, claude: false }] })).toBe("its sub-agent helper isn't a Claude chat: only Claude chats move to another PC for now");
     expect(movePcBlocker({ ...base, chats: [lead, { ...sub, device: "ssh:1" }] })).toBe("its sub-agent helper runs on another device than its lead");

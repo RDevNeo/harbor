@@ -1,6 +1,6 @@
 import { ICONS } from "../icons.ts";
 
-export type Tab = "account" | "general" | "notifications" | "appearance" | "keybindings" | "voice" | "providers" | "integrations" | "secrets" | "devices";
+export type Tab = "account" | "general" | "notifications" | "appearance" | "keybindings" | "voice" | "providers" | "integrations" | "secrets";
 
 interface TabInfo {
   label: string;
@@ -11,7 +11,7 @@ interface TabInfo {
 
 /** Settings' tabs in the sidebar's order (pages.rs `Tab::ALL`); the key is the slug in snapshots and HARBOR_VIEW. */
 export const TABS: Record<Tab, TabInfo> = {
-  account: { label: "Workspace", icon: ICONS.USER_ROUND, keywords: "account google sign in sign out login logout workspace invite people members team email pcs" },
+  account: { label: "Workspace", icon: ICONS.USER_ROUND, keywords: "account google sign in sign out login logout workspace invite people members team email pcs devices machines phones android mobile rename name share run agents elsewhere" },
   general: { label: "General", icon: ICONS.SLIDERS, keywords: "auto fix merge background autostart login startup updates version" },
   notifications: { label: "Notifications", icon: ICONS.BELL, keywords: "notify notifications alerts popups desktop finished needs input ci checks limit offline" },
   appearance: { label: "Appearance", icon: ICONS.PALETTE, keywords: "theme dark light omarchy colours colors density compact comfortable" },
@@ -20,13 +20,12 @@ export const TABS: Record<Tab, TabInfo> = {
   providers: { label: "Providers", icon: ICONS.BOT, keywords: "accounts claude codex cursor gemini sign in login models default" },
   integrations: { label: "Integrations", icon: ICONS.PLUG, keywords: "apps mcp servers sign in tools" },
   secrets: { label: "Secrets", icon: ICONS.LOCK, keywords: "keys api keys tokens passwords environment variables env credentials" },
-  devices: { label: "Devices", icon: ICONS.MONITOR, keywords: "remote machines pcs phones android mobile pair code share run agents elsewhere rename name" },
 };
 
-export const TAB_ORDER: readonly Tab[] = ["general", "account", "notifications", "appearance", "keybindings", "voice", "providers", "integrations", "secrets", "devices"];
+export const TAB_ORDER: readonly Tab[] = ["general", "account", "notifications", "appearance", "keybindings", "voice", "providers", "integrations", "secrets"];
 
 /** Pages that were folded into others: their old slugs still open where the content went. */
-const MOVED: Record<string, Tab> = { phones: "devices", webhooks: "general" };
+const MOVED: Record<string, Tab> = { devices: "account", phones: "account", webhooks: "general" };
 
 export function tabFromSlug(s: string): Tab | null {
   return TAB_ORDER.find((t) => t === s) ?? (Object.hasOwn(MOVED, s) ? (MOVED[s] ?? null) : null);

@@ -811,7 +811,7 @@ final class Sidebar {
     }
 
     /** Your workspaces' PCs: switch to another. Below, every PC they reach with its
-     *  Harbor version, and Update when one is behind (the desktop's Settings › Devices). */
+     *  Harbor version, and Update when one is behind (the desktop's Settings › Workspace). */
     private void pcs() {
         Sheet s = new Sheet(a, "PCs");
         LinearLayout c = s.card();

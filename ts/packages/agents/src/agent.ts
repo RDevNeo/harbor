@@ -229,7 +229,7 @@ export const ownContext = (): Context => ({ overlay: null, signedIn: false, note
 export interface RemoteSpec {
   ssh: string[];
   host: string;
-  /** Its name in Settings › Devices, for errors. */
+  /** Its name in Settings › Workspace, for errors. */
   name: string;
   family: string;
   dir: string;

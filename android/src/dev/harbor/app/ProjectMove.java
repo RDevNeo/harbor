@@ -45,7 +45,7 @@ final class ProjectMove {
                 String no = t.isNull("why") ? "" : t.optString("why", "");
                 o.add(new Sheet.Option(t.optString("id"), t.optString("name", t.optString("id")), no.isEmpty() ? "Goes there with its chats" : no, no.isEmpty()));
             }
-            if (o.isEmpty()) { Ui.toast(a, why.isEmpty() ? "No other PCs: pair one in Settings › Devices on a PC" : "Can't move it: " + why); return; }
+            if (o.isEmpty()) { Ui.toast(a, why.isEmpty() ? "No other PCs yet: invite their owner to your workspace (Settings › Workspace on a PC)" : "Can't move it: " + why); return; }
             String note = why.isEmpty()
                     ? "Its folder and its chats go to the PC you pick and go on there. Harbor shows what it copies before it starts."
                     : "Can't move now: " + why;

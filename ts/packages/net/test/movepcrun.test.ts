@@ -233,7 +233,7 @@ describe("movepcrun: the sender", () => {
       await expect(a.move.movePc(sub.id, b.mesh.me.id)).rejects.toThrow("a sub-agent moves with its lead: move the lead");
       await expect(a.move.movePc(lead.id, "pc:nobody")).rejects.toThrow("that PC isn't one of this PC's");
       a.mesh.on = false;
-      await expect(a.move.movePc(lead.id, b.mesh.me.id)).rejects.toThrow("this PC doesn't share chats with other PCs (Settings › Devices)");
+      await expect(a.move.movePc(lead.id, b.mesh.me.id)).rejects.toThrow("this PC doesn't share chats with other PCs (Settings › Workspace)");
       a.mesh.on = true;
       const old = a.mesh.peers.get(b.mesh.me.id);
       if (old) old.moves = false;
@@ -294,7 +294,7 @@ describe("movepcrun: the sender", () => {
       expect(json).toEqual({ why: null, targets: t.targets });
       a.mesh.on = false;
       const off = await a.move.targets(lead.id);
-      expect(off.why).toBe("this PC doesn't share chats with other PCs (Settings › Devices)");
+      expect(off.why).toBe("this PC doesn't share chats with other PCs (Settings › Workspace)");
       expect(new Set(off.targets.map((x) => x.why))).toEqual(new Set([off.why]));
     } finally {
       clean(a);

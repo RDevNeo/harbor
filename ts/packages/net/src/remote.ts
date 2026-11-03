@@ -105,7 +105,7 @@ export function newHost(p: Partial<RemoteHost> = {}): RemoteHost {
   return { id: "", name: "", host: "", user: "", port: 0, icon: "", dir: "", bridge: false, commands: false, device_files: false, hidden: false, os: "", aka: [], ...p };
 }
 
-/** Settings › Devices, stored as JSON in the kv table. */
+/** Settings › Workspace, stored as JSON in the kv table. */
 export interface RemoteConfig {
   /** Before 0.14: "connect through Tailscale"; kept so old settings read. */
   tailscale: boolean;

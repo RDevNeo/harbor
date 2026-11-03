@@ -105,6 +105,8 @@ import {
   outgoingCtx,
   knowDevices,
   chatLink as chatLinkOf,
+  fakeAccount,
+  newPeer,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
@@ -248,6 +250,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const me = readMe(store, env);
   const portText = store.get("api_port") ?? "";
   const port = /^\d+$/.test(portText) ? Number(portText) : 47930;
+  // Screenshots only: a signed-in look (account.ts fakeAccount), written before the phones' tokens are read.
+  const fakeOnline = env.HARBOR_FAKE_ACCOUNT ? fakeAccount(store, env.HARBOR_FAKE_ACCOUNT, id.fp) : [];
   const hub = new Hub(loadTokens(store), port);
   hub.mesh.me = me;
   hub.enabled = true;
@@ -545,6 +549,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   mesh.reread();
   // Screenshots only (ram.ts fakePeers, a rig's own data): PCs that are on, with their free memory, in every PC list.
+  for (const fp of fakeOnline) {
+    const pc = account.directory().peers.find((p) => p.fp === fp);
+    if (pc) hub.mesh.peers.set(pc.id || fp, newPeer({ id: pc.id || fp, name: pc.name, fp, online: true, version: pc.version }));
+  }
   const shotPeers = fakePeers(env.HARBOR_FAKE_PEERS);
   if (shotPeers.length > 0) {
     store.set("mesh_enabled", "1");
@@ -568,7 +576,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (chat.device === "") return null;
     const cfg = loadRemote(store);
     const h = remotes.find(cfg, remotes.tailnetCached(), chat.device);
-    if (h === null) throw new Error("This chat's device isn't in Settings › Devices anymore. Add it again, or start a new chat on this PC.");
+    if (h === null) throw new Error("This chat's device isn't in Settings › Workspace anymore. Add it again, or start a new chat on this PC.");
     if (account.kind !== "Claude") throw new Error(`Only Claude Code runs on other devices so far; this chat uses ${account.kind}.`);
     const repo = chat.repoId === null ? undefined : store.repos().find((r) => r.id === chat.repoId);
     const project = repo ? repoDir(repo) : null;
@@ -659,7 +667,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     runSettings: {
       accounts: () => accounts,
       modelsFor: (k) => providers.staticModels(k),
-      // The devices of Settings › Devices; Tailscale's PCs and paired ones aren't offered from the phone yet.
+      // The devices of Settings › Workspace; Tailscale's PCs and paired ones aren't offered from the phone yet.
       devices: () => loadRemote(store).devices.map((h) => h.id),
       setFast: (on) => {
         if (engine) engine.fast = on;
@@ -1066,7 +1074,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     deviceEnv: { hub, peer: (key) => hub.mesh.peers.get(key) ?? null },
     deviceHost: (d) => {
       if (isPhoneDevice(d)) return null;
-      // surface.rs device_host: as Settings › Devices knows it, else the PC with the defaults.
+      // surface.rs device_host: as Settings › Workspace knows it, else the PC with the defaults.
       const cfg = loadRemote(store);
       const h = remotes.find(cfg, remotes.tailnetCached(), d.key) ?? newHost({ id: d.key, name: d.name, host: d.ip, bridge: true });
       return { shell: remotes.shellArgv(cfg, h, null), ssh: deviceSshArgs(remotes, cfg, h) };

@@ -350,7 +350,7 @@ export class Api {
     const segs = segments(req.path);
     const is = (...p: string[]) => segs.length === p.length && p.every((x, i) => segs[i] === x);
     if (segs[0] === "relay" && req.method === "POST") {
-      if (!hub.mesh.on) return sendJson(w, 403, { error: "this PC doesn't share its chats (Settings › Devices)" });
+      if (!hub.mesh.on) return sendJson(w, 403, { error: "this PC doesn't share its chats (Settings › Workspace)" });
       return this.d.relay(peer, req, r, w);
     }
     const onlyPaired = () => {

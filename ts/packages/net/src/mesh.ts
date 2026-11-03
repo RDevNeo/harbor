@@ -98,7 +98,7 @@ export function readMe(kv: Kv, env: Record<string, string | undefined> = process
   return { id, name: env.HARBOR_MESH_NAME ?? (cleanPcName(kv.get(PC_NAME_KEY) ?? "") || label(id)) };
 }
 
-/** Kv: the name this PC's owner gave it (Settings › Devices). Only shown: the id (`mesh_id`) and the keys stay. */
+/** Kv: the name this PC's owner gave it (Settings › Workspace). Only shown: the id (`mesh_id`) and the keys stay. */
 export const PC_NAME_KEY = "mesh_name";
 /** Kv of the code pairing removed in 0.131: dropped at start. */
 export const OLD_ALLOWED_KEY = "mesh_allowed";
@@ -273,13 +273,13 @@ export class Mesh {
   async serve(from: ConnPeer, req: Request, r: Reader): Promise<Reply> {
     const hub = this.d.hub;
     const shared = hub.mesh;
-    if (!shared.on) return err(403, "this PC doesn't share its chats (Settings › Devices)");
+    if (!shared.on) return err(403, "this PC doesn't share its chats (Settings › Workspace)");
     const segs = segments(req.path);
     const is = (m: string, ...p: string[]) => req.method === m && segs.length === p.length && p.every((x, i) => segs[i] === x);
     const peer = this.who(from, req);
     if (peer === null) {
       const me = shared.me.name;
-      return { status: 403, body: { error: `${me} doesn't share chats with this PC yet: pair them in Settings › Devices`, harbor: true, name: me } };
+      return { status: 403, body: { error: `${me} doesn't share chats with this PC yet: pair them in Settings › Workspace`, harbor: true, name: me } };
     }
     if (is("GET", "mesh", "v1", "hello")) {
       const x = this.d.app.helloExtra();

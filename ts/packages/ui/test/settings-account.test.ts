@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { AccountDir, AccountDirectory, AccountPendingInvite, AccountStatus, AccountUser } from "@harbor/net";
+import { newHost, newPeer, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { accountBlocks, accountTab, type AccountHost, type AccountPort } from "../src/logic/settings-account.ts";
 import type { Block } from "../src/logic/settings-blocks.ts";
+import type { DevicesHost } from "../src/logic/settings-devices.ts";
 
 const NOW = 1_000_000;
 const MINE = "a".repeat(64);
@@ -94,6 +95,12 @@ function signedIn(role: "owner" | "member"): Fake {
 
 const kinds = (b: Block[]) => b.map((x) => x.kind);
 const titles = (b: Block[]) => b.filter((x) => x.kind === "title").map((x) => x.title);
+/** The People section: one card (list) per person, the person first, then their devices. */
+const peopleCards = (b: Block[]) => {
+  const at = b.findIndex((x) => x.title === "People");
+  const end = b.findIndex((x, i) => i > at && x.kind !== "list");
+  return b.slice(at + 1, end < 0 ? undefined : end).filter((x) => x.kind === "list");
+};
 const buttonKeys = (b: Block[]) => b.flatMap((x) => [...x.buttons, ...x.rows.flatMap((r) => r.buttons)]).map((x) => x.key);
 
 describe("accountui.rs account_tab", () => {
@@ -135,10 +142,10 @@ describe("accountui.rs account_tab", () => {
   test("signed_in_member_sees_people_and_pcs_without_the_invite_form", () => {
     const f = signedIn("member");
     const b = accountBlocks(host(f, [OTHER]));
-    expect(titles(b)).toEqual(["This PC's workspace", "People", "PCs", "Your other workspaces"]);
+    expect(titles(b)).toEqual(["Home", "People", "PCs", "Your other workspaces"]);
     expect(b.some((x) => x.kind === "form")).toBe(false);
-    const people = b[b.findIndex((x) => x.title === "People") + 1];
-    expect(people?.rows.map((r) => [r.title, r.side.map((s) => s.text), r.buttons.map((x) => x.label)])).toEqual([
+    expect(peopleCards(b).map((c) => c.rows.length)).toEqual([1, 1]);
+    expect(peopleCards(b).map((c) => c.rows[0]).map((r) => [r?.title, r?.side.map((s) => s.text), r?.buttons.map((x) => x.label)])).toEqual([
       ["Ana (you)", ["Member"], ["Leave"]],
       ["leo@example.com", ["Member"], []],
     ]);
@@ -154,9 +161,9 @@ describe("accountui.rs account_tab", () => {
   test("an_owner_invites_and_removes", () => {
     const f = signedIn("owner");
     const b = accountBlocks(host(f));
-    const people = b[b.findIndex((x) => x.title === "People") + 1];
-    expect(people?.rows[0]?.buttons.map((x) => x.label)).toEqual(["Leave"]);
-    expect(people?.rows[1]?.buttons.map((x) => x.label)).toEqual(["Remove"]);
+    const people = peopleCards(b).map((c) => c.rows[0]);
+    expect(people[0]?.buttons.map((x) => x.label)).toEqual(["Leave"]);
+    expect(people[1]?.buttons.map((x) => x.label)).toEqual(["Remove"]);
     const form = b.find((x) => x.kind === "form");
     expect(form?.fields.map((x) => x.hint)).toEqual(["name@example.com"]);
     expect(form?.submit.label).toBe("Invite");
@@ -189,7 +196,7 @@ describe("accountui.rs account_tab", () => {
   test("this_pc_can_be_taken_out_but_not_moved_from_here", () => {
     const f = signedIn("member");
     const b = accountBlocks(host(f));
-    const rows = b[b.findIndex((x) => x.title === "This PC's workspace") + 1]?.rows ?? [];
+    const rows = b[b.findIndex((x) => x.title === "Home") + 1]?.rows ?? [];
     expect(rows.map((r) => r.title)).not.toContain("Move this PC");
     expect(rows[1]?.title).toBe("Take this PC out");
   });
@@ -243,5 +250,76 @@ describe("accountui.rs account_tab", () => {
     expect(tab.submitted("invite", ["nobody"])).toBe("");
     expect(tab.submitted("invite", ["  Mia@Example.COM "])).toBe("");
     expect(f.calls).toEqual(["invite w1 mia@example.com"]);
+  });
+});
+
+describe("one Workspace page: each person with their PCs and phones", () => {
+  const pc = (fp: string, name: string, owner: string, owner_name: string, via: string[], seen = NOW - 60) => ({ fp, id: `pc:${name}`, name, addrs: [], owner, owner_name, seen, version: "0.131.0", via });
+  function devicesOf(calls: string[]): DevicesHost {
+    return {
+      now: () => NOW,
+      me: () => ({ id: "pc:a", name: "desk" }),
+      myFp: () => MINE,
+      versionLabel: () => "0.132.0",
+      peers: () => [pc(OTHER, "laptop", "u2", "Leo", ["Home"]), pc("c".repeat(64), "render", "u9", "Kai", ["Studio"], NOW - 5)],
+      meshPeers: () => [newPeer({ id: "pc:laptop", fp: OTHER, online: true, version: "0.132.0" })],
+      rename: (n) => calls.push(`rename ${n}`),
+      copy: (t) => calls.push(`copy ${t.slice(0, 4)}`),
+      phones: () => [
+        { fp: "d".repeat(64), name: "Pixel", account: "u1", accountName: "Ana" },
+        { fp: "e".repeat(64), name: "Galaxy", account: "u2", accountName: "Leo" },
+      ],
+      signOutPhone: (fp) => calls.push(`signout ${fp.slice(0, 4)}`),
+      ssh: { devices: () => [[newHost({ id: "ssh:1", name: "Build PC", host: "10.0.0.3" }), false]], remove: (id) => calls.push(`ssh ${id}`) },
+    };
+  }
+
+  test("people cards list their PCs and phones; PCs shared through another workspace and SSH devices follow", () => {
+    const f = signedIn("member");
+    const b = accountBlocks({ ...host(f), devices: devicesOf([]) });
+    expect(titles(b)).toEqual(["Home", "People", "Through your other workspaces", "Your other workspaces", "Other devices"]);
+    expect(peopleCards(b).map((c) => c.rows.map((r) => [r.title, r.badges.map((x) => x.text), r.line]))).toEqual([
+      [
+        ["Ana (you)", [], "ana@example.com"],
+        ["desk", ["This PC"], "Harbor 0.132.0 · key aaaa aaaa aaaa aaaa"],
+        ["Pixel", [], "Phone · key dddd dddd dddd dddd"],
+      ],
+      [
+        ["leo@example.com", [], "leo@example.com"],
+        ["laptop", ["Online"], "Harbor 0.132.0"],
+        ["Galaxy", [], "Phone · key eeee eeee eeee eeee"],
+      ],
+    ]);
+    // A member signs out their own phone only; the owner any.
+    expect(peopleCards(b).map((c) => c.rows.at(-1)?.buttons.map((x) => x.key))).toEqual([[`phone_signout:${"d".repeat(64)}`], []]);
+    const shared = b[b.findIndex((x) => x.title === "Through your other workspaces") + 1];
+    expect(shared?.rows.map((r) => [r.title, r.line])).toEqual([["render", "Kai · Harbor 0.131.0 · seen just now"]]);
+    expect(b.at(-1)?.rows.map((r) => [r.title, r.buttons.map((x) => x.key)])).toEqual([["Build PC", ["ssh_remove:ssh:1"]]]);
+    expect(titles(b)).not.toContain("PCs");
+  });
+
+  test("Rename opens its form under this PC's card; the device buttons reach the host", () => {
+    const calls: string[] = [];
+    const f = signedIn("owner");
+    const tab = accountTab({ ...host(f), devices: devicesOf(calls) });
+    tab.pressed("rename");
+    const b = tab.blocks();
+    const at = b.findIndex((x) => x.key === "rename");
+    expect(b[at - 1]?.rows[1]?.title).toBe("desk");
+    expect(b[at]?.fields[0]?.text).toBe("desk");
+    tab.submitted("rename", ["Studio PC"]);
+    expect(tab.blocks().some((x) => x.key === "rename")).toBe(false);
+    tab.pressed("copy_key");
+    tab.pressed(`phone_signout:${"e".repeat(64)}`);
+    tab.pressed("ssh_remove:ssh:1");
+    expect(calls).toEqual(["rename Studio PC", "copy aaaa", "signout eeee", "ssh ssh:1"]);
+    // The owner may sign out anyone's phone.
+    expect(peopleCards(tab.blocks()).map((c) => c.rows.at(-1)?.buttons.length)).toEqual([1, 1]);
+  });
+
+  test("signed out, this PC and the SSH devices still show", () => {
+    const f = new Fake();
+    const b = accountBlocks({ ...host(f), devices: devicesOf([]) });
+    expect(titles(b)).toEqual(["This PC", "Other devices"]);
   });
 });

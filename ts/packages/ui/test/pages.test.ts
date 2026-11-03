@@ -3,9 +3,11 @@ import { MemKv } from "@harbor/net";
 import { tabFromSlug, TAB_ORDER, TABS } from "../src/logic/pages.ts";
 import { generalSections, navTabs, setGeneral } from "../src/logic/settings.ts";
 
-test("Settings has ten pages, General then Workspace, with old phone links reaching Devices", () => {
-  expect(TAB_ORDER.map((t) => TABS[t].label)).toEqual(["General", "Workspace", "Notifications", "Appearance", "Keybindings", "Voice", "Providers", "Integrations", "Secrets", "Devices"]);
-  expect(tabFromSlug("phones")).toBe("devices");
+test("Settings has nine pages, General then Workspace, with old Devices and Phones links reaching Workspace", () => {
+  expect(TAB_ORDER.map((t) => TABS[t].label)).toEqual(["General", "Workspace", "Notifications", "Appearance", "Keybindings", "Voice", "Providers", "Integrations", "Secrets"]);
+  expect(tabFromSlug("devices")).toBe("account");
+  expect(tabFromSlug("phones")).toBe("account");
+  expect(navTabs("android").map((t) => t.slug)).toEqual(["account"]);
   expect(tabFromSlug("webhooks")).toBe("general");
   expect(tabFromSlug("nope")).toBeNull();
   expect(navTabs("microphone").map((t) => t.slug)).toEqual(["voice"]);

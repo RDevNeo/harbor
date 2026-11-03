@@ -90,7 +90,7 @@ public class Settings extends Base {
         LinearLayout here = card(col);
         here.addView(Ui.cardRow(this, Ui.I_GLOBE, "Address", hub.host + ":" + hub.port, Ui.FG, null), Ui.fill());
         here.addView(Ui.gap(this));
-        // The keys this connection is encrypted with (compare the PC's with Settings › Devices there).
+        // The keys this connection is encrypted with (compare the PC's with Settings › Workspace there).
         String keys = (hub.fp.isEmpty() ? "PC key not known yet" : "PC " + shortFp(hub.fp)) + " · this phone " + shortFp(Net.myFp());
         here.addView(Ui.cardRow(this, Ui.I_LOCK, "Encrypted with", keys, Ui.FG, null), Ui.fill());
         here.addView(Ui.gap(this));
@@ -488,7 +488,7 @@ public class Settings extends Base {
 
     private Sheet peopleSheet;
 
-    /** The desktop's Settings › Devices › People and memory: this PC's owner, GitHub login and
+    /** The desktop's Settings › Workspace › People and memory: this PC's owner, GitHub login and
      *  whether their instructions and memory go with their chats on other PCs, then every PC. */
     private void people() {
         Ui.bg(this, () -> hub.get("/v1/people"), this::showPeople);

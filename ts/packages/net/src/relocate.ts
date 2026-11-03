@@ -235,7 +235,7 @@ export function relocateBlocker(i: RelocateBlockerInput): string | null {
     if (lead && x.device !== lead.device) return `its sub-agent ${x.name} runs on another device`;
   }
   if (lead && lead.device !== "") {
-    if (i.leadDevice === null) return "its device isn't in Settings › Devices anymore, so its session can't be fetched";
+    if (i.leadDevice === null) return "its device isn't in Settings › Workspace anymore, so its session can't be fetched";
     if (shellFamily(i.leadDevice.os) === "windows") return "Windows devices can't hand a started chat over yet";
   }
   return null;
@@ -265,7 +265,7 @@ export function relocateWhy(i: RelocateWhyInput): string | null {
       if (shellFamily(p.host.os) === "windows") return "Windows devices can't take a started chat yet";
       return i.place.online === false ? "it's offline" : null;
     case "hub":
-      if (!i.meshOn) return "this PC doesn't share chats with other PCs (Settings › Devices)";
+      if (!i.meshOn) return "this PC doesn't share chats with other PCs (Settings › Workspace)";
       if (!p.peer.online) return "it's off or out of reach";
       if (!p.peer.moves) return "it runs an older Harbor: update it first";
       if (!p.peer.accounts.some((a) => a[2] === "claude")) return "it has no Claude account";

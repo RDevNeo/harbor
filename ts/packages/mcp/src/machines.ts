@@ -149,13 +149,13 @@ export async function serveTool(peer: string, body: unknown): Promise<Reply> {
   const me = hostname();
   const no = (why: string): Reply => ok({ ok: false, content: [{ type: "text", text: why }] });
   if (tool === "github") {
-    if (!(level === "full" || (SHARE.github && proven))) return no(`${me} doesn't let this PC's chats use its GitHub login (its owner can allow it in Settings › Devices)`);
+    if (!(level === "full" || (SHARE.github && proven))) return no(`${me} doesn't let this PC's chats use its GitHub login (its owner can allow it in Settings › Workspace)`);
     const r = await gh(args, level === "full");
     return ok({ ok: r.ok, content: [{ type: "text", text: r.text }] });
   }
   if (!TOOLS.includes(tool)) return err(400, "no such tool");
   if (!allows(level, tool)) {
-    return no(`${me} doesn't allow \`${tool}\` for this PC's chats: it shares ${label(level).toLowerCase()}. Its owner can change that in Settings › Devices there.`);
+    return no(`${me} doesn't allow \`${tool}\` for this PC's chats: it shares ${label(level).toLowerCase()}. Its owner can change that in Settings › Workspace there.`);
   }
   const roots = projects.map(([, p]) => p);
   const name = argStr(body, "project") ?? "";

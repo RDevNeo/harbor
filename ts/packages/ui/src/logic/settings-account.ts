@@ -1,6 +1,7 @@
 import { agoShort, inviteNote, short as keyShort, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, copy, field, form, gap, list, row, rows, status, title, type Block, type BlockRow, type BlockTab } from "./settings-blocks.ts";
+import { devicesPressed, devicesSubmitted, newDevicesState, otherDevices, pcRow, phoneRow, renameForm, thisPcRow, type DevicesHost, type DevicesState } from "./settings-devices.ts";
 
 /** The part of `AccountService` this tab reads and presses. */
 export interface AccountPort {
@@ -31,6 +32,8 @@ export interface AccountHost {
   openUrl(url: string): void;
   /** Unix seconds. */
   now(): number;
+  /** The machines shown under each person (this PC, the peer PCs, the phones); none in a bare rig. */
+  devices?: DevicesHost;
 }
 
 const SIGN_OUT_TIP = "Signs this PC out. It stays in its workspace, so its people's phones and PCs keep reaching it.";
@@ -38,8 +41,16 @@ const ACCEPT_TIP = "Join this workspace: its PCs and chats reach you on every de
 
 const roleBadge = (owner: boolean) => badge(owner ? "Owner" : "Member");
 
-/** accountui.rs `account_tab`. */
-export function accountBlocks(host: AccountHost): Block[] {
+/** This PC, then (while it's renamed) the rename form: what the page shows of this PC outside a person's card. */
+function thisPc(d: DevicesHost | undefined, ds: DevicesState): Block[] {
+  if (!d) return [];
+  return [title("This PC"), list([thisPcRow(d, ds)], ""), ...(ds.renaming ? [renameForm(d)] : [])];
+}
+
+/** The Workspace page: the account, the workspace, its people each with their PCs and phones, invitations, the
+ * other workspaces and the devices added by SSH. */
+export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesState()): Block[] {
+  const d = host.devices;
   const acc = host.account;
   const st = acc.status();
   const ago = (t: number) => (agoShort(t, host.now()) === "now" ? "just now" : `${agoShort(t, host.now())} ago`);
@@ -56,6 +67,7 @@ export function accountBlocks(host: AccountHost): Block[] {
     );
     if (st.signingIn && st.url !== "") out.push(status(badge(""), "Waiting for the browser.", { before: 14, buttons: [btn("open_page", "Open the page again")] }));
     if (!acc.configured()) out.push(copy("This build of Harbor has no account service set up (a development build).", 12, { before: 14 }));
+    out.push(...thisPc(d, ds), ...(d ? otherDevices(d, []) : []));
     return out;
   }
   const who = me.name === "" ? me.email : me.name;
@@ -80,8 +92,8 @@ export function accountBlocks(host: AccountHost): Block[] {
 
   const ws = acc.workspace();
   const dir = acc.directory();
-  out.push(title("This PC's workspace"));
   if (st.pick || ws === "") {
+    out.push(title("This PC's workspace"));
     out.push(copy("Pick the workspace this PC belongs to: its people get all of this PC's chats.", 14));
     out.push(
       list(
@@ -90,32 +102,43 @@ export function accountBlocks(host: AccountHost): Block[] {
         { before: 14 },
       ),
     );
+    out.push(...thisPc(d, ds), ...(d ? otherDevices(d, []) : []));
     return out;
   }
   const here: AccountDir | undefined = dir.workspaces.find((w) => w.id === ws);
   const name = here?.name ?? me.workspaces.find((w) => w.id === ws)?.name ?? "";
   const owner = here?.role === "owner";
-  const lines: BlockRow[] = [row(name, { desc: "Everyone in this workspace controls all of its PCs and sees all of their chats, from their own PCs and phones.", badges: [roleBadge(owner)] })];
+  out.push(title(name === "" ? "This PC's workspace" : name));
+  const lines: BlockRow[] = [row("Everyone here shares their PCs", { desc: "Each person's PCs and phones are below: everyone in this workspace reaches all of them and their chats.", badges: [roleBadge(owner)] })];
   lines.push(row("Take this PC out", { desc: "It leaves the workspace: its people's phones and PCs stop reaching it.", buttons: [btn("leave_pc", "Take out", { variant: "destructive", enabled: !st.busy })] }));
   out.push(rows(lines));
   if (!here) {
     out.push(copy("Fetching the workspace…", 13, { before: 14 }));
+    out.push(...thisPc(d, ds));
     return out;
   }
 
   out.push(title("People"));
-  out.push(
-    list(
-      here.members.map((m) => {
-        const self = m.id === me.id;
-        const buttonsOf = [];
-        if (owner && !self) buttonsOf.push(btn(`remove:${m.id}`, "Remove", { variant: "destructive", enabled: !st.busy }));
-        if (self && !here.personal) buttonsOf.push(btn(`remove:${m.id}`, "Leave", { variant: "destructive", enabled: !st.busy }));
-        return row(`${m.name === "" ? m.email : m.name}${self ? " (you)" : ""}`, { icon: ICONS.USER_ROUND, line: m.email, side: [roleBadge(m.role === "owner")], buttons: buttonsOf });
-      }),
-      "",
-    ),
-  );
+  // This PC's owner: the account that registered it in the directory, else whoever is signed in here.
+  const mine = host.myFp();
+  const myOwner = dir.workspaces.flatMap((w) => w.pcs).find((p) => p.fp === mine)?.owner || me.id;
+  const peers = d ? d.peers().filter((p) => p.fp !== mine) : [];
+  const phones = d ? d.phones() : [];
+  here.members.forEach((m, i) => {
+    const self = m.id === me.id;
+    const buttonsOf = [];
+    if (owner && !self) buttonsOf.push(btn(`remove:${m.id}`, "Remove", { variant: "destructive", enabled: !st.busy }));
+    if (self && !here.personal) buttonsOf.push(btn(`remove:${m.id}`, "Leave", { variant: "destructive", enabled: !st.busy }));
+    const card: BlockRow[] = [row(`${m.name === "" ? m.email : m.name}${self ? " (you)" : ""}`, { icon: ICONS.USER_ROUND, line: m.email, side: [roleBadge(m.role === "owner")], buttons: buttonsOf })];
+    if (d) {
+      if (m.id === myOwner) card.push(thisPcRow(d, ds));
+      for (const pc of peers.filter((p) => p.owner === m.id)) card.push(pcRow(d, pc));
+      for (const ph of phones.filter((p) => p.account === m.id)) card.push(phoneRow(ph, owner || self));
+    }
+    out.push(list(card, "", { before: i === 0 ? 0 : 10 }));
+    if (d && m.id === myOwner && ds.renaming) out.push(renameForm(d));
+  });
+  if (d && !here.members.some((m) => m.id === myOwner)) out.push(...thisPc(d, ds));
   if (owner) {
     out.push(form("invite", [field("email", "name@example.com", { width: 260 })], btn("invite", "Invite", { icon: ICONS.PLUS, variant: "primary", enabled: !st.busy }), { before: 16 }));
     out.push(
@@ -128,20 +151,29 @@ export function accountBlocks(host: AccountHost): Block[] {
     here.invites.forEach((inv, i) => out.push(status(badge(""), `Invited ${inv.email} · ${ago(inv.at)}${inviteNote(inv)}`, { before: i === 0 ? 14 : 8, buttons: [btn(`cancel_invite:${inv.id}`, "", { icon: ICONS.X, variant: "muted", tip: "Cancel the invitation", enabled: !st.busy })] })));
   }
 
-  out.push(title("PCs"));
-  const mine = host.myFp();
-  const online = host.onlineFps();
-  out.push(
-    list(
-      here.pcs.map((p) => {
-        const by = p.owner_name === "" ? "" : ` · added by ${p.owner_name}`;
-        const v = p.version === "" ? "" : ` · Harbor ${p.version}`;
-        const badges = p.fp === mine ? [badge("This PC", "green")] : online.has(p.fp) ? [badge("Online", "green")] : [];
-        return row(p.name, { icon: ICONS.MONITOR, lead: 32, badges, line: `key ${keyShort(p.fp)}${by}${v} · checked in ${ago(p.seen)}` });
-      }),
-      "None yet.",
-    ),
-  );
+  // Without the devices (a bare rig): the directory's PCs of this workspace, as a plain list.
+  if (!d) {
+    out.push(title("PCs"));
+    const online = host.onlineFps();
+    out.push(
+      list(
+        here.pcs.map((p) => {
+          const by = p.owner_name === "" ? "" : ` · added by ${p.owner_name}`;
+          const v = p.version === "" ? "" : ` · Harbor ${p.version}`;
+          const badges = p.fp === mine ? [badge("This PC", "green")] : online.has(p.fp) ? [badge("Online", "green")] : [];
+          return row(p.name, { icon: ICONS.MONITOR, lead: 32, badges, line: `key ${keyShort(p.fp)}${by}${v} · checked in ${ago(p.seen)}` });
+        }),
+        "None yet.",
+      ),
+    );
+  }
+
+  // PCs this PC trusts through another workspace you share with their owner.
+  const outside = peers.filter((p) => !here.members.some((m) => m.id === p.owner));
+  if (d && outside.length > 0) {
+    out.push(title("Through your other workspaces"));
+    out.push(list(outside.map((pc) => pcRow(d, pc, true)), ""));
+  }
 
   const rest = dir.workspaces.filter((x) => x.id !== ws);
   if (rest.length > 0) {
@@ -151,7 +183,7 @@ export function accountBlocks(host: AccountHost): Block[] {
         rest.map((o) =>
           row(o.name, {
             icon: ICONS.USERS,
-            line: `${o.members.length} people · ${o.pcs.length} PCs`,
+            line: `${o.members.length === 1 ? "1 person" : `${o.members.length} people`} · ${o.pcs.length === 1 ? "1 PC" : `${o.pcs.length} PCs`}`,
             side: [roleBadge(o.role === "owner")],
             buttons: o.personal ? [] : [btn(`leave:${o.id}`, "Leave", { variant: "destructive", enabled: !st.busy })],
           }),
@@ -160,6 +192,7 @@ export function accountBlocks(host: AccountHost): Block[] {
       ),
     );
   }
+  if (d) out.push(...otherDevices(d, peers));
   return out;
 }
 
@@ -180,7 +213,9 @@ function banners(st: AccountStatus, signedIn: boolean, ago: (t: number) => strin
 /** The tab's controls over `host`. */
 export function accountTab(host: AccountHost): BlockTab {
   const acc = host.account;
+  const ds = newDevicesState();
   const press = (key: string): void => {
+    if (host.devices && devicesPressed(host.devices, ds, key)) return;
     const at = key.indexOf(":");
     const verb = at < 0 ? key : key.slice(0, at);
     const id = at < 0 ? "" : key.slice(at + 1);
@@ -201,11 +236,12 @@ export function accountTab(host: AccountHost): BlockTab {
     else if (verb === "cancel_invite" && dir) void acc.cancelInvite(dir.id, id);
   };
   return {
-    blocks: () => accountBlocks(host),
+    blocks: () => accountBlocks(host, ds),
     pressed: press,
     toggled: () => {},
     edited: () => {},
     submitted(key, values) {
+      if (host.devices && devicesSubmitted(host.devices, ds, key, values)) return "";
       const email = (values[0] ?? "").trim().toLowerCase();
       const dir = acc.directory().workspaces.find((w) => w.id === acc.workspace());
       if (key === "invite" && dir && email.includes("@") && !acc.status().busy) void acc.invite(dir.id, email);

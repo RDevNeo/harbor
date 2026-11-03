@@ -225,7 +225,7 @@ public class Chats extends Base {
                 String no = t.isNull("why") ? "" : t.optString("why", "");
                 o.add(new Sheet.Option(t.optString("id"), t.optString("name", t.optString("id")), no.isEmpty() ? "Goes on there" : no, no.isEmpty()));
             }
-            if (o.isEmpty()) { Ui.toast(a, "No other PCs: pair one in Settings › Devices on a PC"); return; }
+            if (o.isEmpty()) { Ui.toast(a, "No other PCs yet: invite their owner to your workspace (Settings › Workspace on a PC)"); return; }
             String note = why.isEmpty()
                     ? "The chat and its sub-agents move with their Claude sessions and go on there. Its project must be on that PC, with no uncommitted changes here."
                     : "Can't move now: " + why;

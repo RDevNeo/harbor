@@ -106,7 +106,7 @@ export function offeredFile(cfg: UpdateConfig, kind: string, id: string): string
 
 export function refuses(cfg: UpdateConfig, fullAccess: boolean, offer?: { kind?: unknown }): string | null {
   if (!enabled(cfg)) return "previews are off on this PC";
-  if (!fullAccess) return "this PC doesn't give that one full access (Settings › Devices)";
+  if (!fullAccess) return "this PC doesn't give that one full access (Settings › Workspace)";
   if (offer !== undefined && offer.kind !== "bundle") return "that preview is a build of the Rust app, which this PC can't run";
   return null;
 }

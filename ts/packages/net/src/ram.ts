@@ -96,7 +96,7 @@ export function ramText(mb: number): string {
 export const autoKey = (gid: string): string => `auto_pc:${gid}`;
 
 /** HARBOR_FAKE_PEERS=[id=]name:MB,… (screenshots only, `scripts/shot --env`): PCs that are on, with a Claude account and that much free
- * memory, in the Runs on menu and Auto's pick. `id=` stands in for a PC the data already knows (a device of Settings › Devices
+ * memory, in the Runs on menu and Auto's pick. `id=` stands in for a PC the data already knows (a device of Settings › Workspace
  * with its own name). Nothing else knows of them; unset, there are none. */
 export function fakePeers(spec: string | undefined): Peer[] {
   const out: Peer[] = [];

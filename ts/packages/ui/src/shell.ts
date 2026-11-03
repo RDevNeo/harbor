@@ -536,7 +536,7 @@ export class Shell {
       const fb = this.filesOf(d === "right" ? "right" : "bottom");
       if (fb && p.trim() !== "") fb.go(p.trim());
     };
-    w.device_settings = () => void this.pages.openSettings("devices");
+    w.device_settings = () => void this.pages.openSettings("account");
     w.transfers_clear = () => {
       this.transfers = clearDeviceTransfers(this.transfers);
       this.refreshDevices();
@@ -2753,8 +2753,8 @@ export class Shell {
     const runRows = this.hub.runOnRows(chat, current, kind);
     const rows = runRows.map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));
     const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Runs on"), kind: "caption" }, ...rows];
-    if (runRows.filter((r) => r.id !== AUTO_DEVICE).length === 1) items.push(this.label("No other PCs yet: pair one in Settings › Devices, or add one by SSH."));
-    items.push(this.separator(), this.item("Manage devices…", () => void this.pages.openSettings("devices"), { icon: ICONS.SETTINGS }));
+    if (runRows.filter((r) => r.id !== AUTO_DEVICE).length === 1) items.push(this.label("No other PCs yet: pair one in Settings › Workspace, or add one by SSH."));
+    items.push(this.separator(), this.item("Manage devices…", () => void this.pages.openSettings("account"), { icon: ICONS.SETTINGS }));
     this.popup("device", x, y, items, 300, true);
   }
 
@@ -2816,7 +2816,7 @@ export class Shell {
       items.push(why === "" ? { ...native("Move to project…", () => {}, { badge: "submenu" }), sub: () => this.moveMenu(id) } : native("Move to project…", () => {}, { enabled: false, desc: why }));
       // movepc.rs `move_pc_menu`: greyed out with why when the chat can't go to any PC.
       const mv = this.hub.moveTargets(id);
-      const off = mv.targets.length === 0 ? (mv.why ?? "No other PCs: pair one in Settings › Devices") : mv.why;
+      const off = mv.targets.length === 0 ? (mv.why ?? "No other PCs: pair one in Settings › Workspace") : mv.why;
       items.push(off === null ? { ...native("Move to PC…", () => {}, { badge: "submenu" }), sub: () => this.movePcMenu(id) } : native("Move to PC…", () => {}, { enabled: false, desc: off }));
       const ws = this.hub.moves?.chatMenu(id) ?? null;
       if (ws !== null) items.push(ws.why === null ? { ...native("Move to workspace…", () => {}, { badge: "submenu" }), sub: () => this.wsMoveMenu("chat", id) } : native("Move to workspace…", () => {}, { enabled: false, desc: ws.why }));
@@ -2998,7 +2998,7 @@ export class Shell {
       const t = await ask({ step: "targets" });
       const targets = (Array.isArray(t.targets) ? t.targets : []) as { id: string; name: string; why: string | null }[];
       if (targets.length === 0 || (typeof t.why === "string" && t.why !== "")) {
-        fail(new Error(typeof t.why === "string" && t.why !== "" ? t.why : "No other PCs: pair one in Settings › Devices"));
+        fail(new Error(typeof t.why === "string" && t.why !== "" ? t.why : "No other PCs: pair one in Settings › Workspace"));
         return;
       }
       const go = (pc: string) => () =>

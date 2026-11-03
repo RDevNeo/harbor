@@ -331,6 +331,28 @@ export function seedWorkspace(kv: Kv, pcs: { fp: string; addrs?: string[]; id?: 
   kv.set("account_dir", JSON.stringify({ at: 1, workspaces: [{ id: ws, name: "Rig", role: "owner", personal: true, members: [], pcs: list, devices: [], invites: [] }], peers: list.map((p) => ({ ...p, via: ["Rig"] })) }));
 }
 
+/** Screenshots only (HARBOR_FAKE_ACCOUNT=<json file>, ram.ts's fakePeers alike): a signed-in look from a file
+ * `{account, ws, directory, phones?: [{name, account, account_name}], online?: [fp]}` written into the rig's own kv
+ * (kv `account`, `account_ws`, `account_dir`, phones as `api_tokens`); "SELF" stands for this PC's key. Returns the
+ * keys to show online. Nothing is fetched or signed: the account loop doesn't run without account.json. */
+export function fakeAccount(kv: Kv, path: string, mine: string): string[] {
+  let v: Record<string, unknown>;
+  try {
+    v = need(JSON.parse(readFileSync(path, "utf8").replaceAll("SELF", mine)) as unknown);
+  } catch {
+    return [];
+  }
+  if (isObj(v.account)) kv.set("account", JSON.stringify(v.account));
+  if (typeof v.ws === "string") kv.set("account_ws", v.ws);
+  if (isObj(v.directory)) kv.set("account_dir", JSON.stringify(v.directory));
+  const phones = Array.isArray(v.phones) ? v.phones.filter(isObj) : [];
+  if (phones.length > 0) {
+    const tokens = phones.map((p, i) => ({ token: `fake-${i}`, name: textOf(p, "name"), created: 0, group: `fake-${i}`, fp: createHash("sha256").update(`fake-phone-${i}`).digest("hex"), account: textOf(p, "account"), account_name: textOf(p, "account_name") }));
+    kv.set("api_tokens", JSON.stringify(tokens));
+  }
+  return Array.isArray(v.online) ? v.online.filter((x): x is string => typeof x === "string") : [];
+}
+
 /** This PC's workspace's PCs as last fetched (kv `account_dir`), for commands that run without the account loop (`harbor nc`). */
 export function cachedMeshPeers(kv: Kv, mine: string): Allowed[] {
   const dir = tryParse(kv.get("account_dir"), parseDirectory) ?? emptyDirectory();

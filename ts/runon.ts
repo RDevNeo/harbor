@@ -164,7 +164,7 @@ export class RunOn {
     return best === null || best.id === "" ? best : { ...best, name: this.nameOf(best.id) };
   }
 
-  /** A place's name as the Runs on menu's rows show it: a device's own name (Settings › Devices) before the name its
+  /** A place's name as the Runs on menu's rows show it: a device's own name (Settings › Workspace) before the name its
    * Harbor gives itself; `here` for this PC (""). */
   nameOf(id: string, here = "This PC"): string {
     if (id === "") return here;
@@ -258,7 +258,7 @@ export class RunOn {
     const target = placeOf(to, hosts, devs)?.place;
     if (!target) throw new Error("no such device");
     const source = placeOf(lead.device, hosts, devs)?.place;
-    if (!source) throw new Error("its device isn't in Settings › Devices anymore");
+    if (!source) throw new Error("its device isn't in Settings › Workspace anymore");
     const from = source.kind === "device" ? this.devOf(lead, source.host) : null;
     const toDev = target.kind === "device" ? this.devOf(lead, target.host) : null;
     const chats = [lead, ...this.subsOf(chatId)];

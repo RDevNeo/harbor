@@ -133,7 +133,7 @@ export interface PhoneDeps {
   commits?: (chat: Chat) => CommitLookup | null;
   /** What a PATCH of a chat's account, model, effort, access, device or fast mode is checked against. */
   runSettings?: RunSettings;
-  /** Settings › Devices as the desktop lists them: the configured SSH devices and the tailnet's PCs, with whether each is online (null: not known). */
+  /** Settings › Workspace as the desktop lists them: the configured SSH devices and the tailnet's PCs, with whether each is online (null: not known). */
   devices?: () => [RemoteHost, boolean | null][];
   /** The pull request of the branch a chat works on, as chat JSON `pr` says it (null: none); a copy's as its home PC says it. */
   pr?: (chat: Chat) => Json;

@@ -649,7 +649,7 @@ export interface BlockerInput {
 export function movePcBlocker(i: BlockerInput): string | null {
   if (i.foreignHome !== null) return `this chat is ${i.foreignHome}'s: move it from there`;
   if (i.isSub) return "a sub-agent moves with its lead: move the lead";
-  if (!i.meshOn) return "this PC doesn't share chats with other PCs (Settings › Devices)";
+  if (!i.meshOn) return "this PC doesn't share chats with other PCs (Settings › Workspace)";
   if (i.movingTo !== null) return `it's moving to ${i.movingTo}`;
   const lead = i.chats[0];
   for (const x of i.chats) {

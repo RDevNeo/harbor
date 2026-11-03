@@ -206,7 +206,7 @@ export function paletteItems(p: PaletteInput): Item[] {
       v.push(paletteItem(`chat:${c.id}`, "chats", ICONS.MESSAGE, "message", title, detail, { kind: "chat", id: c.id }, "", c.updated));
     }
   }
-  for (const d of p.devices) v.push(paletteItem(`device:${d.id}`, "devices", ICONS.MONITOR, "monitor", d.name, "Settings › Devices", { kind: "settings", tab: "devices" }, "device pc host"));
+  for (const d of p.devices) v.push(paletteItem(`device:${d.id}`, "devices", ICONS.MONITOR, "monitor", d.name, "Settings › Workspace", { kind: "settings", tab: "account" }, "device pc host"));
   v.push(paletteItem("page:prs", "pages", ICONS.PR_OPEN, "pr", "Pull requests", "GitHub", { kind: "prs" }, "prs review"));
   v.push(paletteItem("page:issues", "pages", ICONS.CIRCLE_DOT, "issue", "Issues", "GitHub", { kind: "issues" }, "bugs"));
   for (const t of TAB_ORDER) v.push(paletteItem(`settings:${t}`, "pages", TABS[t].icon, "settings", TABS[t].label, "Settings", { kind: "settings", tab: t }, `settings preferences ${TABS[t].keywords}`));
