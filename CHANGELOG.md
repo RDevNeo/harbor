@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.132.1] - 2026-11-03
+
 ### Fixed
 - Harbor's windows group under the pinned Harbor icon in GNOME's dock (and other docks and
   taskbars) instead of showing as a separate "Unknown" app: they now carry the app id `harbor`,
