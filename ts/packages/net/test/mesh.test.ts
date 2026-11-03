@@ -15,6 +15,7 @@ import { StoreReplica, type StoreReplicaOptions, sameRemote } from "../src/meshs
 import { relayServe } from "../src/relay.ts";
 import { admit, allowedKey, cleanAddrs, downOf, label, loadAllowed, peerId, type Allowed, type Node } from "../src/shared.ts";
 import { generateIdentity, type Identity } from "../src/tls.ts";
+import type { Json } from "../src/wire.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-mesh-"));
 const stops: (() => void)[] = [];
@@ -324,7 +325,7 @@ interface Pc {
   heard: (number | null)[];
 }
 
-async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number): Promise<Pc> {
+async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number, memory?: (chat: number | null) => Json): Promise<Pc> {
   const id = generateIdentity();
   const store = Store.openAt(join(tmp, `${name}.db`));
   const hub = new Hub([], 0);
@@ -342,6 +343,7 @@ async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number
     uploadsDir: join(tmp, name),
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "")),
     ...(ram === undefined ? {} : { ram: () => ram }),
+    ...(memory ? { memory } : {}),
   });
   hub.mesh.on = true;
   api = new Api({
@@ -377,6 +379,26 @@ async function until(f: () => boolean, ms = 15_000): Promise<boolean> {
 }
 
 describe("two TypeScript PCs", () => {
+  test("memory: a PC answers with its numbers, one before the route answers nothing", async () => {
+    const asked: (number | null)[] = [];
+    const a = await pc("gamma", undefined, undefined, (chat) => {
+      asked.push(chat);
+      return { ram: { total: 16, used: 8, swap_total: 0, swap_used: 0 }, running: 1, top: [], ...(chat === null ? {} : { chat: { parts: [] } }) };
+    });
+    const b = await pc("delta");
+    const own = a.store.createChat(blankChat({ title: "Mine", role: "lead", name: "lead" }));
+    setHello("pc:gamma", "gamma", a.id);
+    await a.mesh.pairJoin(`127.0.0.1:${b.port}`, showCode(b.store).code);
+    a.mesh.start();
+    b.mesh.start();
+    expect(await until(() => b.hub.mesh.peer("pc:gamma")?.online === true && a.hub.mesh.peer("pc:delta")?.online === true)).toBe(true);
+    expect(await b.mesh.memoryOf("pc:gamma", null)).toEqual({ ram: { total: 16, used: 8, swap_total: 0, swap_used: 0 }, running: 1, top: [] });
+    expect((await b.mesh.memoryOf("pc:gamma", own.id))?.chat).toEqual({ parts: [] });
+    expect(asked).toEqual([null, own.id]);
+    expect(await a.mesh.memoryOf("pc:delta", null)).toBeNull();
+    expect(await a.mesh.memoryOf("pc:nobody", null)).toBeNull();
+  }, 30_000);
+
   test("pair with a code, then each holds a copy of the other's chat, and edits follow", async () => {
     const a = await pc("alpha", undefined, 5120);
     const b = await pc("beta");

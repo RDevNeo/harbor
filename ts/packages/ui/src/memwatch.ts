@@ -1,0 +1,118 @@
+// Samples memory only while the window shows it: the sidebar gauge, the open chat's pill, their popovers.
+import type { Chat } from "@harbor/store";
+import { bytesText, chatRows, deviceRows, low, type Mem, type MemRow, parseMem, partsTotal, type PcMem, type Ram, ramFrac, ramText, usedText } from "./logic/mempop.ts";
+
+export interface MemWatchDeps {
+  /** This PC's RAM alone (cheap: /proc/meminfo). */
+  ram(): Ram | null;
+  /** This PC's numbers and, for one of its own chats, that chat's parts (memory.snapshot: a /proc scan). */
+  local(chat: number | null): unknown;
+  /** The chat on screen. */
+  chat(): Chat | undefined;
+  /** The window is on screen. */
+  looking(): boolean;
+  pcName(): string;
+  homeName(c: Chat): string;
+  /** The other PCs and their numbers (null without a mesh). */
+  peers: (() => Promise<{ name: string; online: boolean; mem: unknown }[]>) | null;
+  /** A copy's numbers from its home PC. */
+  chatMemory: ((c: Chat) => Promise<unknown>) | null;
+  show(v: { chat: string; pc: string; frac: number; low: boolean; tip: string }): void;
+  /** The popover on screen ("mem-chat", "mem-devices" or another). */
+  popId(): string;
+  rows(rows: MemRow[]): void;
+}
+
+/** Numbers this old get read again. */
+const FRESH_MS = 5_000;
+/** A copy's numbers come over the network: less often. */
+const REMOTE_MS = 10_000;
+
+export class MemWatch {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private key = "";
+  private at = 0;
+  private remote: { chat: number; mem: Mem | null; at: number } | null = null;
+  private remoteAsking = false;
+  private peers: PcMem[] | null = null;
+  private peersAt = 0;
+  private peersAsking = false;
+
+  constructor(private readonly d: MemWatchDeps) {}
+
+  /** Polled: the window has no event for a popover opening or the chat changing that reaches here. */
+  start(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      const key = this.screenKey();
+      if (key !== this.key || Date.now() - this.at >= FRESH_MS) this.sample();
+    }, 1_000);
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  private screenKey(): string {
+    return `${this.d.looking()}|${this.d.chat()?.id ?? ""}|${this.d.popId()}`;
+  }
+
+  /** Reads the numbers now and shows them (also into a memory popover that's open). */
+  sample(): void {
+    this.key = this.screenKey();
+    this.at = Date.now();
+    if (!this.d.looking()) return;
+    const pop = this.d.popId();
+    const c = this.d.chat();
+    const own = c !== undefined && c.home === "";
+    const here = own || pop === "mem-devices" ? parseMem(this.d.local(own ? c.id : null)) : { ram: this.d.ram(), running: 0, top: [], parts: null };
+    const r = here?.ram ?? null;
+    const chatMem = c === undefined ? null : own ? here : this.remoteOf(c);
+    const total = chatMem?.parts ? partsTotal(chatMem.parts) : 0;
+    this.d.show({
+      chat: total > 0 ? bytesText(total) : "",
+      pc: r ? usedText(r) : "",
+      frac: r ? ramFrac(r) : 0,
+      low: r ? low(r) : false,
+      tip: r ? `Memory on ${this.d.pcName() || "this PC"}: ${ramText(r)}${low(r) ? ". Low on memory" : ""}` : "",
+    });
+    if (pop === "mem-chat" && c) this.d.rows(chatMem ? chatRows(chatMem, own ? this.d.pcName() : this.d.homeName(c)) : chatRows({ ram: null, running: 0, top: [], parts: [] }, this.d.homeName(c)));
+    if (pop === "mem-devices") this.d.rows(this.devices(here));
+  }
+
+  /** A copy's numbers, asked of its home PC at most every REMOTE_MS. */
+  private remoteOf(c: Chat): Mem | null {
+    const r = this.remote?.chat === c.id ? this.remote : null;
+    if ((!r || Date.now() - r.at >= REMOTE_MS) && !this.remoteAsking && this.d.chatMemory) {
+      this.remoteAsking = true;
+      void this.d
+        .chatMemory(c)
+        .catch(() => null)
+        .then((v) => {
+          this.remote = { chat: c.id, mem: parseMem(v), at: Date.now() };
+          this.remoteAsking = false;
+          if (this.d.chat()?.id === c.id) this.sample();
+        });
+    }
+    return r?.mem ?? null;
+  }
+
+  private devices(here: Mem | null): MemRow[] {
+    const ask = this.d.peers;
+    if (ask && !this.peersAsking && Date.now() - this.peersAt >= FRESH_MS) {
+      this.peersAsking = true;
+      void ask()
+        .catch(() => [])
+        .then((list) => {
+          this.peers = list.map((p) => ({ name: p.name, online: p.online, mem: parseMem(p.mem) }));
+          this.peersAt = Date.now();
+          this.peersAsking = false;
+          if (this.d.popId() === "mem-devices") this.sample();
+        });
+    }
+    const rows = deviceRows({ name: this.d.pcName() || "This PC", online: true, mem: here }, this.peers ?? []);
+    if (this.peers === null && ask) rows.push({ kind: "usage-note", icon: "", label: "Asking your other PCs…", desc: "", checked: false, enabled: false, badge: "", value: 0 });
+    return rows;
+  }
+}

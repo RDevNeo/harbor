@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Memory, per chat and per PC. A chat's top bar shows how much memory it uses (its agent, its
+  subagents and the processes started for it, like dev servers) in a pill after the branch, hidden
+  while nothing of it runs. Click the pill to see each of them and the RAM of the PC it runs on. A
+  chat whose home is another PC gets its numbers from that PC.
+- The sidebar's footer shows this PC's memory as a small gauge (amber from 80%, red from 90% or
+  when it's swapping). Click it to see every PC of the mesh, this PC first: its RAM, how many chats
+  are running and the chats using the most, with "Low on memory" in red when one runs short. A PC on
+  an older Harbor shows without numbers. Numbers are read only while they're on screen.
+
 ### Removed
 - Settings › Usage is gone, on the desktop and the phone. What Harbor does at a limit, the caps and
   the warnings keep the values they had; the sidebar's gauge still shows each Claude account's

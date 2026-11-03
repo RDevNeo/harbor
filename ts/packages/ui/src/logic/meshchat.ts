@@ -24,6 +24,10 @@ export interface ShellMesh {
   draft?(id: number): DraftIn | null;
   /** A message went out of the window's composer: the chat's draft empties everywhere. */
   sent?(id: number): void;
+  /** The other PCs and their memory (windowmesh.ts `memory`). */
+  memory?(): Promise<{ name: string; online: boolean; mem: Record<string, unknown> | null }[]>;
+  /** A copy's memory at its home PC (windowmesh.ts `chatMemory`). */
+  chatMemory?(c: Chat): Promise<Record<string, unknown> | null>;
   /** Calls back with the chats whose state moved, for as long as the window lives. */
   watch?(changed: (chats: number[]) => void): void;
 }

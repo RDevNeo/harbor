@@ -19,3 +19,4 @@ export * as commits from "./commits.ts";
 export * as fork from "./fork.ts";
 export * as autowork from "./autowork.ts";
 export { Work } from "./work.ts";
+export * as memory from "./memory.ts";

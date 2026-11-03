@@ -1,0 +1,111 @@
+import { Theme } from "theme.slint";
+import { TipArea } from "widgets.slint";
+
+// Lucide "memory-stick", drawn: the bundled lucide.ttf subset has no such glyph.
+export component MemIcon {
+    in property <color> color: Theme.subtle;
+    in property <length> size: 14px;
+    width: size;
+    height: size;
+    Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: root.color;
+        stroke-width: root.size >= 15px ? 1.6px : 1.35px;
+        fill: transparent;
+        commands: "M 12 12 V 10 M 12 18 V 16 M 16 12 V 10 M 16 18 V 16 M 2 11 H 3.5 M 20 18 V 16 M 20.5 11 H 22 M 4 18 V 16 M 8 12 V 10 M 8 18 V 16 M 4 6 H 20 A 2 2 0 0 1 22 8 V 14 A 2 2 0 0 1 20 16 H 4 A 2 2 0 0 1 2 14 V 8 A 2 2 0 0 1 4 6 Z";
+    }
+}
+
+export component MiniBar {
+    in property <float> frac;
+    in property <bool> neutral;
+    in property <bool> low;
+    property <float> f: max(0, min(1, frac));
+    height: 4px;
+    Rectangle {
+        border-radius: self.height / 2;
+        background: Theme.gray-300;
+    }
+    Rectangle {
+        x: 0;
+        width: parent.width * root.f;
+        border-radius: self.height / 2;
+        background: root.neutral ? Theme.gray-900 : root.low || root.f >= 0.9 ? Theme.red-800 : root.f >= 0.8 ? Theme.amber-800 : Theme.gray-900;
+    }
+}
+
+// The chat's memory in the top bar: icon and figure; `open` while its popover shows.
+export component MemPill {
+    in property <string> text;
+    in property <string> tip;
+    in property <bool> open;
+    callback clicked(length, length);
+    property <bool> hover: area.has-hover || open;
+    height: 24px;
+    width: label.preferred-width + 14px + 6px + 18px;
+    Rectangle {
+        background: root.hover ? Theme.accent : Theme.gray-100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 12px;
+    }
+    MemIcon {
+        x: 9px;
+        size: 14px;
+        color: root.hover ? Theme.fg : Theme.subtle;
+    }
+    label := Text {
+        x: 9px + 14px + 6px;
+        text: root.text;
+        font-size: 12px;
+        color: root.hover ? Theme.fg : Theme.gray-900;
+        vertical-alignment: center;
+    }
+    area := TipArea {
+        tip: root.tip;
+        clicked => {
+            root.clicked(self.absolute-position.x, self.absolute-position.y + self.height);
+        }
+    }
+}
+
+// This PC's memory in the sidebar's footer: icon, how much is used and a bar; the mesh's PCs on click.
+export component MemGauge inherits TipArea {
+    in property <string> text;
+    in property <float> frac;
+    in property <bool> low;
+    in property <bool> open;
+    width: row.preferred-width + 12px;
+    Rectangle {
+        background: root.has-hover || root.open ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+    }
+    row := HorizontalLayout {
+        x: 6px;
+        spacing: 6px;
+        MemIcon {
+            y: (parent.height - self.height) / 2;
+            size: 14px;
+            color: root.low ? Theme.red-900 : root.has-hover || root.open ? Theme.fg : Theme.subtle;
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            Text {
+                text: root.text;
+                font-size: 11.5px;
+                color: root.low ? Theme.red-900 : root.has-hover || root.open ? Theme.fg : Theme.subtle;
+                horizontal-alignment: center;
+            }
+            MiniBar {
+                width: 40px;
+                height: 3px;
+                frac: root.frac;
+                low: root.low;
+            }
+        }
+    }
+}

@@ -71,6 +71,8 @@ export interface MeshDeps {
   };
   env?: Record<string, string | undefined>;
   wake?: () => void;
+  /** `GET /mesh/v1/memory`: this PC's RAM and the chats holding memory, with one of its own chats' parts when asked. */
+  memory?: (chat: number | null) => Json;
 }
 
 /** `tailscale status --json`, or an empty object when Tailscale isn't installed or doesn't answer. */
@@ -350,6 +352,11 @@ export class Mesh {
       const v = /^-?\d+$/.test(c) ? this.d.app.items(Number(c), since) : null;
       return v === null ? err(404, "no such chat") : ok(v);
     }
+    if (is("GET", "mesh", "v1", "memory") && this.d.memory) {
+      const c = query(req, "chat") ?? "";
+      const chat = /^\d+$/.test(c) && !shared.foreign.has(Number(c)) ? Number(c) : null;
+      return ok(this.d.memory(chat));
+    }
     if (is("GET", "mesh", "v1", "notes")) {
       const since = uint(query(req, "since"));
       if (!this.d.notes) return err(404, "unknown mesh call");
@@ -546,6 +553,18 @@ export class Mesh {
       const a = await httpPart(d, "GET", `/mesh/v1/media?path=${encodeURIComponent(path)}`, null, range === null ? "" : partOf(range), 120_000);
       if (!(a.status === 200 || a.status === 206) || !(a.ctype.startsWith("video/") || a.ctype.startsWith("image/"))) return null;
       return a.range !== "" ? { status: a.status, ctype: a.ctype, body: a.body, range: a.range } : { status: a.status, ctype: a.ctype, body: a.body };
+    } catch {
+      return null;
+    }
+  }
+
+  /** A peer's `GET /mesh/v1/memory` (`chat`: that PC's id for one of its chats); null when it's off, slow or too old to say. */
+  async memoryOf(peerId: string, chat: number | null): Promise<Record<string, unknown> | null> {
+    const p = this.d.hub.mesh.peer(peerId);
+    if (!p?.online || !this.d.hub.mesh.on) return null;
+    try {
+      const [status, v] = await http({ ...dest(p), as: this.d.id() ?? undefined }, "GET", `/mesh/v1/memory${chat === null ? "" : `?chat=${chat}`}`, null, 5_000);
+      return status === 200 && typeof v === "object" && v !== null && !Array.isArray(v) && "ram" in v ? (v as Record<string, unknown>) : null;
     } catch {
       return null;
     }

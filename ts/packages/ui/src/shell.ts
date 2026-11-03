@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
-import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
+import { type Account, chatpr, git, type Kind, memory, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
 import { AUTO_DEVICE, CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
@@ -22,6 +22,8 @@ import { isImage } from "./logic/images.ts";
 import { Keys, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
+import { MemWatch } from "./memwatch.ts";
+import { fakeMemory } from "./fakememory.ts";
 import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
 import { control } from "@harbor/mcp";
@@ -222,6 +224,7 @@ export class Shell {
   /** HARBOR_FAKE_CAPTCHA (screenshots): a captcha card with no Discord. */
   private readonly fakeCap = fakeCaptcha();
   private readonly chatCap: ChatCaptcha;
+  private readonly memWatch: MemWatch;
   private media: typeof import("@harbor/media") | null = null;
   private voice: import("@harbor/media").voiceCtl.VoiceCtl | null = null;
   private images: import("@harbor/media").images.Images | null = null;
@@ -328,6 +331,34 @@ export class Shell {
       scale: () => win.scale_factor,
     });
     win.chat_cap_seen = (id, on, w) => this.chatCap.seen(id, on, w);
+    const fakeMem = fakeMemory();
+    this.memWatch = new MemWatch({
+      ram: () => memory.ram(),
+      local: (chat) => {
+        const v = memory.snapshot(memory.engineSource(this.engine), chat);
+        return fakeMem ? fakeMem.local(v, chat !== null) : v;
+      },
+      chat: () => (this.view === "chat" && this.page === null ? this.data.chat(this.chatId) : undefined),
+      looking: () => win.window.visible && !win.window.minimized,
+      pcName: () => mesh.myName?.() || hostname().split(".")[0] || "",
+      homeName: (c) => mesh.home(c)?.name ?? c.home,
+      peers: fakeMem ? () => fakeMem.peers((mesh.peers?.() ?? []).map((p) => p.name)) : mesh.memory ? () => mesh.memory?.() ?? Promise.resolve([]) : null,
+      chatMemory: mesh.chatMemory ? (c) => mesh.chatMemory?.(c) ?? Promise.resolve(null) : null,
+      show: (v) => {
+        if (win.chat_mem !== v.chat) win.chat_mem = v.chat;
+        if (win.pc_mem !== v.pc) win.pc_mem = v.pc;
+        if (Math.abs(win.pc_mem_frac - v.frac) >= 0.005) win.pc_mem_frac = v.frac;
+        if (win.pc_mem_low !== v.low) win.pc_mem_low = v.low;
+        if (win.pc_mem_tip !== v.tip) win.pc_mem_tip = v.tip;
+      },
+      popId: () => win.pop_id,
+      rows: (rows) => {
+        this.popActions = rows.map(() => () => {});
+        this.popSubs = rows.map(() => null);
+        sync(this.popItems, rows);
+      },
+    });
+    this.memWatch.start();
     win.chat_cap_pointer = (id, kind, fx, fy) => this.chatCap.pointer(id, kind, fx, fy);
     win.chat_cap_cancel = (id) => this.chatCap.cancel(id);
     // A default saved on a provider Harbor dropped reads as Claude's defaults.
@@ -443,6 +474,11 @@ export class Shell {
     w.palette = () => this.openPalette();
     w.filter = (x, y) => this.filterMenu(x, y);
     w.usage = (x, y) => (w.pop_id === "usage" ? this.closePopup() : this.usageMenu(x, y));
+    w.mem_pop = (id, x, y) => {
+      if (w.pop_id === id) return this.closePopup();
+      this.popup(id, x, y, [], 300, id === "mem-devices");
+      this.memWatch.sample();
+    };
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
     w.reorder = (id, target, above) => this.reorder(id, target, above);
@@ -2388,7 +2424,7 @@ export class Shell {
     w.pop_w = width;
     w.pop_above = above;
     w.pop_native = native;
-    w.pop_spacing = id === "effort" || id === "usage" ? 0 : 8;
+    w.pop_spacing = id === "effort" || id === "usage" || id.startsWith("mem-") ? 0 : 8;
     w.pop_id = id;
   }
 

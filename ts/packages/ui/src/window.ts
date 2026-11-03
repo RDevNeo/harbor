@@ -259,7 +259,7 @@ export interface FileRow {
 }
 
 export interface PopItem {
-  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native" | "usage-account" | "usage-window" | "usage-note";
+  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native" | "usage-account" | "usage-window" | "usage-note" | "mem-row" | "mem-ram" | "mem-warn";
   icon: string;
   label: string;
   desc: string;
@@ -378,6 +378,12 @@ export interface AppWindow extends slint.ComponentHandle {
   settle_project: (id: number, on: boolean) => void;
   snooze: (key: string, x: number, y: number) => void;
   usage: (x: number, y: number) => void;
+  mem_pop: (id: string, x: number, y: number) => void;
+  chat_mem: string;
+  pc_mem: string;
+  pc_mem_frac: number;
+  pc_mem_low: boolean;
+  pc_mem_tip: string;
   chat_menu: (id: number, x: number, y: number) => void;
   project_menu: (id: number, x: number, y: number) => void;
   searched: (q: string) => void;

@@ -8,7 +8,7 @@ import { WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
-import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
+import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { discord, Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
@@ -540,6 +540,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     apkCode: () => apkInfo()?.code ?? 0,
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "Harbor is starting")),
     notes: { last: () => notes.last(), ownSince: (s) => { const [n, l] = notes.ownSince(s); return [n.map(noteJson), l]; } },
+    memory: (chat) => memory.snapshot(engine ? memory.engineSource(engine) : { chats: [], runner: () => null, procs: [] }, chat) as Json,
     env,
   });
   mesh.reread();

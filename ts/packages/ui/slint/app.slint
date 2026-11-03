@@ -25,6 +25,7 @@ import { PrsBus, PrsPage } from "prs.slint";
 import { IssuesBus, IssuesPage } from "issues.slint";
 import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
+import { MemPill, MiniBar } from "memory.slint";
 
 export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
@@ -108,6 +109,10 @@ component TopBar {
     callback pane(string);
     callback project-clicked(length, length);
     callback parent-clicked();
+    // The chat's memory ("" hides the pill), and its breakdown's popover.
+    in property <string> mem;
+    in property <bool> mem-open;
+    callback mem-clicked(length, length);
     height: 46px;
     HorizontalLayout {
         padding-left: 18px;
@@ -203,6 +208,18 @@ component TopBar {
                 color: Theme.subtle;
                 overflow: elide;
                 vertical-alignment: center;
+            }
+            if root.mem != "": VerticalLayout {
+                alignment: center;
+                padding-left: 4px;
+                MemPill {
+                    text: root.mem;
+                    tip: "Memory this chat's agents and processes use";
+                    open: root.mem-open;
+                    clicked(x, y) => {
+                        root.mem-clicked(x, y);
+                    }
+                }
             }
             Rectangle {
                 horizontal-stretch: 1;
@@ -337,6 +354,13 @@ export component AppWindow inherits Window {
 
     in-out property <bool> dark <=> Theme.dark;
     in-out property <bool> compact <=> Theme.compact;
+    // Memory: the open chat's ("" hides its pill) and this PC's (the sidebar's gauge); `mem-pop` opens either's popover.
+    in property <string> chat-mem;
+    in property <string> pc-mem;
+    in property <float> pc-mem-frac;
+    in property <bool> pc-mem-low;
+    in property <string> pc-mem-tip;
+    callback mem-pop(string, length, length);
     in property <string> view: "draft";
     in property <bool> palette-open;
     in property <bool> add-project-open;
@@ -791,6 +815,13 @@ export component AppWindow inherits Window {
                     usage(x, y) => {
                         root.usage(x, y);
                     }
+                    mem: root.pc-mem;
+                    mem-frac: root.pc-mem-frac;
+                    mem-low: root.pc-mem-low;
+                    mem-tip: root.pc-mem-tip;
+                    mem-pop(x, y) => {
+                        root.mem-pop("mem-devices", x, y);
+                    }
                     ws-filter(x, y) => {
                         root.ws-filter(x, y);
                     }
@@ -845,6 +876,11 @@ export component AppWindow inherits Window {
                         }
                         parent-clicked => {
                             root.parent-clicked();
+                        }
+                        mem: root.view == "chat" ? root.chat-mem : "";
+                        mem-open: root.pop-id == "mem-chat";
+                        mem-clicked(x, y) => {
+                            root.mem-pop("mem-chat", x, y);
                         }
                     }
                     if root.view == "draft" || root.view == "chat": Separator { }
@@ -1538,6 +1574,87 @@ export component AppWindow inherits Window {
                                 Meter {
                                     frac: it.value;
                                 }
+                            }
+                            // A chat's process, or a PC's chat: name, kind, figure and its share as a thin bar.
+                            if it.kind == "mem-row": VerticalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                padding-top: 5px;
+                                padding-bottom: 5px;
+                                spacing: 5px;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    if it.icon != "": Text {
+                                        width: 14px;
+                                        text: it.icon;
+                                        font-family: "lucide";
+                                        font-size: 13px;
+                                        color: Theme.subtle;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: it.label;
+                                        font-size: 13px;
+                                        color: Theme.fg;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    if it.badge != "": Text {
+                                        text: it.badge;
+                                        font-size: 12px;
+                                        color: Theme.subtle;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: it.desc;
+                                        font-size: 12px;
+                                        color: Theme.gray-900;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                MiniBar {
+                                    height: 3px;
+                                    frac: it.value;
+                                    neutral: true;
+                                }
+                            }
+                            // "mem-ram": `checked` = low on memory.
+                            if it.kind == "mem-ram": VerticalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                padding-top: 4px;
+                                padding-bottom: 4px;
+                                spacing: 4px;
+                                HorizontalLayout {
+                                    Text {
+                                        text: it.label;
+                                        font-size: 12px;
+                                        color: Theme.subtle;
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                    }
+                                    Text {
+                                        text: it.desc;
+                                        font-size: 12px;
+                                        color: it.checked ? Theme.red-900 : Theme.subtle;
+                                    }
+                                }
+                                Meter {
+                                    frac: it.value;
+                                    amber-at: 0.8;
+                                    red-at: it.checked ? 0 : 0.9;
+                                }
+                            }
+                            if it.kind == "mem-warn": Text {
+                                height: 26px;
+                                x: 8px;
+                                text: it.label;
+                                font-size: 13px;
+                                color: Theme.red-900;
+                                vertical-alignment: center;
                             }
                             if it.kind == "usage-note": Text {
                                 height: 26px;

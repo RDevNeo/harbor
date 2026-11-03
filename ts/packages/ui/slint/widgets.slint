@@ -777,6 +777,8 @@ export component FileChip {
 
 export component Meter {
     in property <float> frac;
+    in property <float> amber-at: 0.6;
+    in property <float> red-at: 0.85;
     property <float> f: max(0, min(1, frac));
     height: 6px;
     Rectangle {
@@ -787,7 +789,7 @@ export component Meter {
         x: 0;
         width: parent.width * root.f;
         border-radius: 3px;
-        background: root.f > 0.85 ? Theme.red-800 : root.f > 0.6 ? Theme.amber-800 : Theme.gray-1000;
+        background: root.f > root.red-at ? Theme.red-800 : root.f > root.amber-at ? Theme.amber-800 : Theme.gray-1000;
     }
 }
 

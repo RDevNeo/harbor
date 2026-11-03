@@ -1,6 +1,7 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Btn, Glyph, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
+import { MemGauge } from "memory.slint";
 
 export struct SideRow {
     kind: string,
@@ -362,6 +363,13 @@ export component Sidebar inherits Rectangle {
     callback filter(length, length);
     // Over the gauge, in window coordinates.
     callback usage(length, length);
+    // This PC's memory ("" hides the gauge): figure, share used, low on memory, tooltip.
+    in property <string> mem;
+    in property <float> mem-frac;
+    in property <bool> mem-low;
+    in property <string> mem-tip;
+    // Over the memory gauge, in window coordinates.
+    callback mem-pop(length, length);
     callback ws-filter(length, length);
     callback ws-all();
     in property <bool> can-drag;
@@ -692,6 +700,16 @@ export component Sidebar inherits Rectangle {
             }
             Rectangle {
                 horizontal-stretch: 1;
+            }
+            if root.mem != "": MemGauge {
+                text: root.mem;
+                frac: root.mem-frac;
+                low: root.mem-low;
+                open: root.pop-id == "mem-devices";
+                tip: root.mem-tip;
+                clicked => {
+                    root.mem-pop(self.absolute-position.x, self.absolute-position.y);
+                }
             }
             Btn {
                 icon: Icons.gauge;

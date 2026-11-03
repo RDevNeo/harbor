@@ -134,6 +134,17 @@ export class WindowMesh {
     return [...m.peers.values()].map((p) => ({ name: p.name, online: p.online && m.on }));
   }
 
+  /** The other PCs and their memory (`GET /mesh/v1/memory` there; null while off or on a Harbor too old to say). */
+  async memory(): Promise<{ name: string; online: boolean; mem: Record<string, unknown> | null }[]> {
+    const m = this.d.hub.mesh;
+    return Promise.all([...m.peers.values()].map(async (p) => ({ name: p.name, online: p.online && m.on, mem: await this.d.mesh.memoryOf(p.id, null) })));
+  }
+
+  /** A copy's memory at its home PC, with the chat's parts there. */
+  chatMemory(c: Chat): Promise<Record<string, unknown> | null> {
+    return c.home === "" ? Promise.resolve(null) : this.d.mesh.memoryOf(c.home, c.homeId);
+  }
+
   remote(id: number): RemoteState | null {
     return this.d.replica.remote.get(id) ?? null;
   }
