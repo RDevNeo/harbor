@@ -944,19 +944,6 @@ describe("actions from Settings", () => {
     await r.svc.tick();
     expect(callPaths(r.calls)).toContain("POST /v1/session");
   });
-
-  test("taking the PC out of its workspace deletes its entry and clears the workspace", async () => {
-    const r = await ready();
-    await r.svc.tick(true);
-    expect(r.svc.workspace()).toBe("org_personal");
-    r.world.directory = { at: Date.now(), workspaces: [] };
-    await r.svc.leaveWorkspace();
-    expect(r.calls.find((c) => c.method === "DELETE")?.path).toBe(`/v1/pcs/${r.fp}`);
-    expect(r.svc.workspace()).toBe("");
-    expect(r.kv.get("account_ws")).toBe("");
-    expect(r.kv.get("account_dir")).toBe(JSON.stringify({ at: r.svc.directory().at, workspaces: [], peers: [] }));
-    expect(r.svc.directory().workspaces).toEqual([]);
-  });
 });
 
 describe("cache and command line", () => {

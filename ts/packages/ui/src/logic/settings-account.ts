@@ -15,7 +15,6 @@ export interface AccountPort {
   cancelSignIn(): void;
   signOut(): void;
   chooseWorkspace(ws: string): Promise<void>;
-  leaveWorkspace(): Promise<void>;
   invite(ws: string, email: string): Promise<void>;
   acceptInvite(id: string): Promise<void>;
   declineInvite(id: string): Promise<void>;
@@ -108,17 +107,14 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
   const here: AccountDir | undefined = dir.workspaces.find((w) => w.id === ws);
   const name = here?.name ?? me.workspaces.find((w) => w.id === ws)?.name ?? "";
   const owner = here?.role === "owner";
-  out.push(title(name === "" ? "This PC's workspace" : name));
-  const lines: BlockRow[] = [row("Everyone here shares their PCs", { desc: "Each person's PCs and phones are below: everyone in this workspace reaches all of them and their chats.", badges: [roleBadge(owner)] })];
-  lines.push(row("Take this PC out", { desc: "It leaves the workspace: its people's phones and PCs stop reaching it.", buttons: [btn("leave_pc", "Take out", { variant: "destructive", enabled: !st.busy })] }));
-  out.push(rows(lines));
+  // The people of this PC's workspace, each with their PCs and phones, under the workspace's name and your role in it.
+  out.push(title(`${name === "" ? "This PC's workspace" : name} · ${owner ? "Owner" : "Member"}`));
   if (!here) {
-    out.push(copy("Fetching the workspace…", 13, { before: 14 }));
+    out.push(copy("Fetching the workspace…", 13));
     out.push(...thisPc(d, ds));
     return out;
   }
 
-  out.push(title("People"));
   // This PC's owner: the account that registered it in the directory, else whoever is signed in here.
   const mine = host.myFp();
   const myOwner = dir.workspaces.flatMap((w) => w.pcs).find((p) => p.fp === mine)?.owner || me.id;
@@ -227,7 +223,6 @@ export function accountTab(host: AccountHost): BlockTab {
     else if (key === "signout") acc.signOut();
     else if (key === "open_page") host.openUrl(acc.status().url);
     else if (busy) return;
-    else if (key === "leave_pc") void acc.leaveWorkspace();
     else if (verb === "accept") void acc.acceptInvite(id);
     else if (verb === "decline") void acc.declineInvite(id);
     else if (verb === "use" || verb === "move") void acc.chooseWorkspace(id);

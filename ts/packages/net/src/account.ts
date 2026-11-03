@@ -1348,20 +1348,6 @@ export class AccountService {
     });
   }
 
-  /** Takes this PC out of its workspace (a member may; the directory forgets it). */
-  leaveWorkspace(): Promise<void> {
-    return this.runAction(async (token) => {
-      try {
-        await this.service("DELETE", `/v1/pcs/${encodeURIComponent(this.myFp())}`, token);
-      } catch (e) {
-        const f = asFail(e);
-        if (f.kind !== "refused") throw f;
-      }
-      this.setAccount(this.acct, "");
-      this.setStatus((s) => (s.pick = (this.acct?.workspaces.length ?? 0) > 1));
-    });
-  }
-
   invite(ws: string, email: string): Promise<void> {
     return this.runAction(async (token) => {
       await this.service("POST", `/v1/workspaces/${encodeURIComponent(ws)}/invites`, token, { email: email.trim() });

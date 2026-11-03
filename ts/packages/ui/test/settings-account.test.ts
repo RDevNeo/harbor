@@ -49,9 +49,6 @@ class Fake implements AccountPort {
   async chooseWorkspace(w: string) {
     this.calls.push(`choose ${w}`);
   }
-  async leaveWorkspace() {
-    this.calls.push("leave");
-  }
   async invite(w: string, email: string) {
     this.calls.push(`invite ${w} ${email}`);
   }
@@ -97,7 +94,7 @@ const kinds = (b: Block[]) => b.map((x) => x.kind);
 const titles = (b: Block[]) => b.filter((x) => x.kind === "title").map((x) => x.title);
 /** The People section: one card (list) per person, the person first, then their devices. */
 const peopleCards = (b: Block[]) => {
-  const at = b.findIndex((x) => x.title === "People");
+  const at = b.findIndex((x) => x.title.startsWith("Home · "));
   const end = b.findIndex((x, i) => i > at && x.kind !== "list");
   return b.slice(at + 1, end < 0 ? undefined : end).filter((x) => x.kind === "list");
 };
@@ -142,7 +139,7 @@ describe("accountui.rs account_tab", () => {
   test("signed_in_member_sees_people_and_pcs_without_the_invite_form", () => {
     const f = signedIn("member");
     const b = accountBlocks(host(f, [OTHER]));
-    expect(titles(b)).toEqual(["Home", "People", "PCs", "Your other workspaces"]);
+    expect(titles(b)).toEqual(["Home · Member", "PCs", "Your other workspaces"]);
     expect(b.some((x) => x.kind === "form")).toBe(false);
     expect(peopleCards(b).map((c) => c.rows.length)).toEqual([1, 1]);
     expect(peopleCards(b).map((c) => c.rows[0]).map((r) => [r?.title, r?.side.map((s) => s.text), r?.buttons.map((x) => x.label)])).toEqual([
@@ -193,12 +190,16 @@ describe("accountui.rs account_tab", () => {
     ]);
   });
 
-  test("this_pc_can_be_taken_out_but_not_moved_from_here", () => {
-    const f = signedIn("member");
+  test("the people come right under the workspace's name and your role: no explainer, no Take out", () => {
+    const f = signedIn("owner");
     const b = accountBlocks(host(f));
-    const rows = b[b.findIndex((x) => x.title === "Home") + 1]?.rows ?? [];
-    expect(rows.map((r) => r.title)).not.toContain("Move this PC");
-    expect(rows[1]?.title).toBe("Take this PC out");
+    const at = b.findIndex((x) => x.title === "Home · Owner");
+    expect(at).toBe(1);
+    expect(b[at + 1]?.rows[0]?.title).toBe("Ana (you)");
+    const all = b.flatMap((x) => x.rows.map((r) => r.title));
+    expect(all).not.toContain("Take this PC out");
+    expect(all).not.toContain("Everyone here shares their PCs");
+    expect(buttonKeys(b)).not.toContain("leave_pc");
   });
 
   test("invitations_are_accepted_or_declined", () => {
@@ -230,15 +231,14 @@ describe("accountui.rs account_tab", () => {
   test("presses_do_what_the_buttons_say", () => {
     const f = signedIn("owner");
     const tab = accountTab(host(f));
-    for (const k of ["signout", "leave_pc", "move:w2", "remove:u2", "leave:w2", "cancel_invite:i1"]) tab.pressed(k);
-    expect(f.calls).toEqual(["signOut", "leave", "choose w2", "remove w1 u2", "remove w2 u1", "cancelInvite w1 i1"]);
+    for (const k of ["signout", "move:w2", "remove:u2", "leave:w2", "cancel_invite:i1"]) tab.pressed(k);
+    expect(f.calls).toEqual(["signOut", "choose w2", "remove w1 u2", "remove w2 u1", "cancelInvite w1 i1"]);
   });
 
   test("nothing_runs_while_an_action_is_busy", () => {
     const f = signedIn("owner");
     f.st = { ...quiet(), busy: true };
     const tab = accountTab(host(f));
-    tab.pressed("leave_pc");
     tab.pressed("remove:u2");
     expect(f.calls).toEqual([]);
     expect(buttonKeys(accountBlocks(host(f))).length).toBeGreaterThan(0);
@@ -277,7 +277,7 @@ describe("one Workspace page: each person with their PCs and phones", () => {
   test("people cards list their PCs and phones; PCs shared through another workspace and SSH devices follow", () => {
     const f = signedIn("member");
     const b = accountBlocks({ ...host(f), devices: devicesOf([]) });
-    expect(titles(b)).toEqual(["Home", "People", "Through your other workspaces", "Your other workspaces", "Other devices"]);
+    expect(titles(b)).toEqual(["Home · Member", "Through your other workspaces", "Your other workspaces", "Other devices"]);
     expect(peopleCards(b).map((c) => c.rows.map((r) => [r.title, r.badges.map((x) => x.text), r.line]))).toEqual([
       [
         ["Ana (you)", [], "ana@example.com"],
