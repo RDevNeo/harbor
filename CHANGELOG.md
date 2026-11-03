@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.120.1] - 2026-11-03
+
 ### Fixed
 - A steer sent while a Claude turn was still starting (or just as it ended) reached the agent twice
   and showed twice in the chat. Claude Code takes a steer written before its request is out into the
