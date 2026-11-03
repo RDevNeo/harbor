@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Videos are much lighter on the window: frames are now drawn on a thread of their own, at the size
+  the picture takes on screen (never above the video's own size, and fewer pixels for 60 fps
+  videos; the window scales them up on the GPU), with a cheaper scaler, into two buffers that are
+  reused instead of new memory per frame. A frame that can't be shown in time is skipped instead of
+  queued. A 1080p 60 fps clip in a 1400x900 window: the window's thread went from 99 % of a core
+  (the whole UI waiting on video) to about 39 %, dropped frames from 222 to 0, and the memory it
+  took no longer grows while it plays; a small clip from 22 % to 6 %.
+
+### Fixed
+- A phone video filmed upright (stored turned a quarter) crashed Harbor when it played: the
+  picture is now drawn as the file stores it and turned by the window.
+
 ## [0.135.0] - 2026-11-03
 
 ### Changed

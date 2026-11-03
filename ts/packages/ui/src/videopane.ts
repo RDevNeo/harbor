@@ -41,6 +41,8 @@ export class VideoPane {
   private overBar = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private size: readonly [number, number] = [0, 0];
+  /** What `vid_data.has_frame` says, without reading the struct back from the window on every frame. */
+  private hasFrame = false;
 
   constructor(private readonly d: VideoPaneDeps) {
     const w = d.win;
@@ -48,8 +50,9 @@ export class VideoPane {
       host: {
         repaint: () => this.refresh(),
         frame: (f) => {
+          // The window copies it here: the buffer goes straight back to the renderer.
           w.vid_frame = { width: f.width, height: f.height, data: new Uint8Array(f.data.buffer, f.data.byteOffset, f.data.byteLength) };
-          if (!w.vid_data.has_frame) this.refresh();
+          if (!this.hasFrame) this.refresh();
         },
         fullscreen: () => w.window.fullscreen,
         setFullscreen: (on) => {
@@ -97,6 +100,7 @@ export class VideoPane {
       if (w.vid_open) {
         w.vid_open = false;
         w.vid_frame = noPixels;
+        this.hasFrame = false;
         this.stopTimer();
         this.viewer.persistVolume(this.d.store);
       }
@@ -176,7 +180,9 @@ export class VideoPane {
       name: this.d.pkg.images.imageName(key),
       index: view?.index ?? 0,
       count: view?.gallery.length ?? 1,
+      rotate: s?.rotate ?? 0,
     };
     w.vid_data = data;
+    this.hasFrame = data.has_frame;
   }
 }

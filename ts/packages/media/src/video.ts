@@ -7,7 +7,6 @@ import {
   FORMAT_FLAG,
   FORMAT_INT64,
   FORMAT_STRING,
-  FrameTarget,
   globalLibrary,
   hasSymbol,
   LibmpvUnavailable,
@@ -17,9 +16,11 @@ import {
   Mpv,
   type PropertyValue,
   pipewireVersion,
-  SwRenderer,
 } from "./libmpv.ts";
 import { check as mediaCheck, located, saveRemote } from "./media.ts";
+import { type Frame, RenderStartTimeout, RenderWorker } from "./videorender.ts";
+
+export type { Frame };
 
 export { LibmpvUnavailable };
 
@@ -29,6 +30,21 @@ export const NUDGE = 5;
 export const VOLUME_STEP = 5;
 export const STOP_WAIT_MS = 1000;
 export const WAIT_FOR_PLAYER_MS = 300_000;
+/**
+ * Frames are drawn in software, on the renderer's thread: at most this many pixels (1080p) and never more than the
+ * picture's own or the room it has on screen. The window scales that up on its GPU.
+ */
+export const MAX_PICTURE = 1920 * 1080;
+/**
+ * Each frame is copied into the window and uploaded to its GPU on the window's thread, about 0.6 % of a core per
+ * million pixels a second here: frames get at most this many pixels a second (720p at 60 fps, 1810x1018 at 30).
+ */
+export const MAX_PIXEL_RATE = 1280 * 720 * 60;
+
+/** The most pixels a frame may have at `fps` (unknown: taken as 30). */
+export function pixelBudget(fps: number): number {
+  return Math.min(MAX_PICTURE, MAX_PIXEL_RATE / (fps > 0 && Number.isFinite(fps) ? fps : 30));
+}
 export const WARN_NO_MPV = "Harbor's video player isn't here yet, so this opened in your video player";
 
 export const PIPEWIRE_MIN: Version = [0, 3, 65];
@@ -143,6 +159,11 @@ export const OPTIONS: readonly (readonly [string, string])[] = [
   ["osd-bar", "no"],
   // Frames are drawn into CPU memory, so a hardware decoder has to copy them back.
   ["hwdec", "auto-copy-safe"],
+  // Pictures are drawn at most at their own size, so a scaler only shrinks: bilinear does that well, Lanczos (the
+  // default) costs a few times more for no difference on screen.
+  ["sws-scaler", "bilinear"],
+  ["sws-fast", "yes"],
+  ["video-rotate", "no"],
   ["idle", "yes"],
   ["keep-open", "yes"],
   ["hr-seek", "yes"],
@@ -161,6 +182,11 @@ export const WATCH: readonly (readonly [string, number])[] = [
   ["eof-reached", FORMAT_FLAG],
   ["dwidth", FORMAT_INT64],
   ["idle-active", FORMAT_FLAG],
+  ["dheight", FORMAT_INT64],
+  // mpv's software renderer can't turn a picture (and a quarter turn overran its buffer): it draws the file's own
+  // orientation (`video-rotate=no`) and the window turns the image.
+  ["video-dec-params/rotate", FORMAT_INT64],
+  ["container-fps", FORMAT_DOUBLE],
 ];
 
 const ID_POS = 0;
@@ -169,6 +195,9 @@ const ID_PAUSE = 2;
 const ID_EOF = 3;
 const ID_WIDTH = 4;
 const ID_IDLE = 5;
+const ID_HEIGHT = 6;
+const ID_ROTATE = 7;
+const ID_FPS = 8;
 const ID_STATS = 100;
 
 const STATS = ["hwdec-current", "video-codec", "frame-drop-count", "decoder-frame-drop-count", "vo-delayed-frame-count", "avsync", "estimated-vf-fps"] as const;
@@ -232,11 +261,42 @@ export interface State {
   /** mpv has no video open, so ending the renderer won't wait for it. */
   stopped: boolean;
   hasVideo: boolean;
+  /** The picture's size as drawn (aspect applied, not the turn); 0 until known. */
+  width: number;
+  height: number;
+  rotate: number;
+  /** Frames a second as the file says; 0 until known. */
+  fps: number;
   stats: string[];
 }
 
 export function freshState(paused: boolean): State {
-  return { stage: { kind: "starting" }, pos: 0, dur: 0, paused, ended: false, started: false, stopped: false, hasVideo: false, stats: STATS.map(() => "") };
+  return { stage: { kind: "starting" }, pos: 0, dur: 0, paused, ended: false, started: false, stopped: false, hasVideo: false, width: 0, height: 0, rotate: 0, fps: 0, stats: STATS.map(() => "") };
+}
+
+/** The size to draw frames at: the picture fitted into `area` (both in pixels), never larger than itself or `max` pixels. */
+export function pictureSize(area: readonly [number, number], picture: readonly [number, number], max = MAX_PICTURE): [number, number] {
+  const [aw, ah] = [Math.max(area[0], 1), Math.max(area[1], 1)];
+  const [pw, ph] = picture[0] > 0 && picture[1] > 0 ? picture : [aw, ah];
+  const k = Math.min(aw / pw, ah / ph, 1, Math.sqrt(max / (pw * ph)));
+  return [Math.max(Math.round(pw * k), 1), Math.max(Math.round(ph * k), 1)];
+}
+
+/** What the picture looks like on screen: a quarter turn swaps its sides. */
+export function shownSize(st: Pick<State, "width" | "height" | "rotate">): [number, number] {
+  return st.rotate % 180 === 90 ? [st.height, st.width] : [st.width, st.height];
+}
+
+/**
+ * The size to draw frames at, in the file's own orientation, for `area` on screen. Its width is a multiple of 8:
+ * swscale's fast paths want that (4K drawn 1810 wide took 29 ms a frame, 1808 wide 8 ms).
+ */
+export function drawSize(area: readonly [number, number], st: Pick<State, "width" | "height" | "rotate" | "fps">): [number, number] {
+  const [sw, sh] = pictureSize(area, shownSize(st), pixelBudget(st.fps));
+  const [w, h] = st.rotate % 180 === 90 ? [sh, sw] : [sw, sh];
+  if (w < 16 || w % 8 === 0) return [w, h];
+  const aligned = w - (w % 8);
+  return [aligned, Math.max(Math.round((h * aligned) / w), 1)];
 }
 
 /** A window out of sight gets no frames, so a playing video notices by itself. */
@@ -249,6 +309,7 @@ export function changed(st: State, id: number, p: { format: number; value: Prope
   if (p.format === 0 || p.value === null) {
     if (id !== ID_WIDTH) return false;
     st.hasVideo = false;
+    st.width = 0;
     return true;
   }
   const v = p.value;
@@ -267,6 +328,16 @@ export function changed(st: State, id: number, p: { format: number; value: Prope
       break;
     case ID_WIDTH:
       st.hasVideo = typeof v === "number" && v > 0;
+      st.width = typeof v === "number" ? Math.max(v, 0) : 0;
+      break;
+    case ID_HEIGHT:
+      st.height = typeof v === "number" ? Math.max(v, 0) : 0;
+      break;
+    case ID_ROTATE:
+      st.rotate = typeof v === "number" ? ((v % 360) + 360) % 360 : 0;
+      break;
+    case ID_FPS:
+      st.fps = typeof v === "number" ? v : 0;
       break;
     case ID_IDLE:
       st.stopped = v === true;
@@ -307,13 +378,6 @@ export async function fileOf(key: string, fetch?: Fetch): Promise<Playable> {
     return saved === null ? fail("the PC this chat runs on is off or doesn't have it") : playable(saved);
   }
   return playable(key);
-}
-
-/** RGBA, straight alpha, `width` x `height`: what a Slint image takes. Valid until the next frame. */
-export interface Frame {
-  readonly width: number;
-  readonly height: number;
-  readonly data: Uint8ClampedArray;
 }
 
 export interface Host {
@@ -365,6 +429,8 @@ export interface Snapshot {
   drag: number | null;
   closing: boolean;
   picture: boolean;
+  /** Degrees the frames are turned (clockwise) to be shown. */
+  rotate: number;
 }
 
 interface Env {
@@ -388,18 +454,13 @@ class Player {
   drawn = false;
   size: readonly [number, number] = [0, 0];
   private mpv: Mpv | null = null;
-  private renderer: SwRenderer | null = null;
-  private target: FrameTarget | null = null;
+  private renderer: RenderWorker | null = null;
   private finished = false;
   private seenAt: number;
   private pending = false;
-  private rendering = false;
-  private forceRender = false;
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
   private loadPath = "";
   private frames = 0;
-  private renderMs = 0;
-  private renderMax = 0;
 
   constructor(
     readonly key: string,
@@ -462,18 +523,24 @@ class Player {
     } catch {
       return this.setStage({ kind: "failed", why: "mpv didn't start" });
     }
-    let renderer: SwRenderer;
+    let renderer: RenderWorker;
+    const began = performance.now();
     try {
-      renderer = SwRenderer.create(engine.lib, mpv);
-    } catch {
-      mpv.destroy();
+      renderer = await RenderWorker.start(engine.path, mpv, (f) => this.show(f));
+    } catch (e) {
+      note(`${this.key}: the renderer didn't start: ${e instanceof Error ? e.message : String(e)}`);
+      // (A worker that never answered may still be inside libmpv: then the core is left alone.)
+      if (!(e instanceof RenderStartTimeout)) mpv.destroy();
       return this.setStage({ kind: "failed", why: "mpv can't draw in this window" });
+    }
+    note(`${this.key}: renderer started in ${(performance.now() - began).toFixed(1)} ms`);
+    if (this.finished) {
+      void renderer.stop().then((s) => s !== null && mpv.destroy());
+      return;
     }
     this.mpv = mpv;
     this.renderer = renderer;
-    this.target = new FrameTarget();
     mpv.onWakeup(() => this.wake());
-    renderer.onFrame(() => this.frameDue());
     WATCH.forEach(([name, format], id) => mpv.observe(id, name, format));
     if (logFile() !== null) STATS.forEach((name, i) => mpv.observe(ID_STATS + i, name, FORMAT_STRING));
     this.cmds.unshift({ kind: "load" });
@@ -535,7 +602,10 @@ class Player {
       repaint = this.event(mpv, e) || repaint;
     }
     if (outOfSight(!this.state.paused, this.unseen())) mpv.setProperty("pause", "yes");
-    if (repaint) this.env.host.repaint();
+    if (repaint) {
+      this.retarget();
+      this.env.host.repaint();
+    }
     this.reapIfDone();
   }
 
@@ -547,8 +617,7 @@ class Player {
         return true;
       case "playbackRestart":
         st.started = true;
-        this.forceRender = true;
-        this.frameDue();
+        this.renderer?.force();
         return true;
       case "idle":
         st.stopped = true;
@@ -564,36 +633,25 @@ class Player {
     }
   }
 
-  frameDue(): void {
-    if (this.rendering || this.finished) return;
-    this.rendering = true;
-    setImmediate(() => {
-      this.rendering = false;
-      this.renderNow();
-    });
-  }
-
   resize(width: number, height: number): void {
     this.size = [Math.max(Math.round(width), 1), Math.max(Math.round(height), 1)];
-    this.frameDue();
+    this.retarget();
   }
 
-  private renderNow(): void {
-    const { renderer, target } = this;
-    if (this.finished || renderer === null || target === null || this.size[0] < 1) return;
-    const resized = target.resize(this.size[0], this.size[1]);
-    const fresh = renderer.hasNewFrame();
-    if (!fresh && !resized && !this.forceRender) return;
-    this.forceRender = false;
-    const t = performance.now();
-    const code = renderer.render(target);
-    const took = performance.now() - t;
+  /** Frames are drawn at the picture's size on screen; nothing is drawn (or allocated) before the picture is known. */
+  private retarget(): void {
+    const r = this.renderer;
+    const st = this.state;
+    if (r === null || this.finished || !st.hasVideo || st.width < 1 || st.height < 1 || this.size[0] < 1) return;
+    const [w, h] = drawSize(this.size, st);
+    r.resize(w, h);
+  }
+
+  private show(f: Frame): void {
+    if (this.finished) return;
     this.frames += 1;
-    this.renderMs += took;
-    this.renderMax = Math.max(this.renderMax, took);
-    if (code < 0) return;
     this.drawn ||= this.state.started;
-    if (this.drawn && this.state.hasVideo) this.env.host.frame({ width: target.width, height: target.height, data: target.rgba });
+    if (this.drawn && this.state.hasVideo) this.env.host.frame(f);
   }
 
   close(): void {
@@ -616,22 +674,33 @@ class Player {
     if (this.closing && !this.finished && (this.state.stopped || this.env.now() - this.closedAt >= STOP_WAIT_MS)) this.env.reap(this);
   }
 
+  /** The renderer is freed on its thread first, then the core (libmpv's order); the next video doesn't wait for that. */
   finish(): void {
     if (this.finished) return;
     this.finished = true;
     if (this.stopTimer) clearTimeout(this.stopTimer);
-    const t = performance.now();
-    this.renderer?.free();
-    this.renderer = null;
-    if (logFile() !== null) {
-      const avg = this.renderMs / Math.max(this.frames, 1);
-      note(`${this.key}: ${this.frames} frames drawn, ${avg.toFixed(2)} ms avg, ${this.renderMax.toFixed(2)} ms max; renderer freed in ${(performance.now() - t).toFixed(2)} ms`);
-      note(`${this.key}: ${STATS.map((n, i) => `${n}=${this.state.stats[i]}`).join(", ")}`);
-    }
-    this.mpv?.destroy();
+    const { mpv, renderer, key, frames } = this;
+    const stats = this.state.stats.slice();
     this.mpv = null;
-    this.target?.free();
-    this.target = null;
+    this.renderer = null;
+    if (renderer === null) {
+      mpv?.destroy();
+      return;
+    }
+    const t = performance.now();
+    void renderer.stop().then((s) => {
+      if (logFile() !== null) {
+        const took = (performance.now() - t).toFixed(2);
+        note(s === null ? `${key}: the renderer didn't stop` : `${key}: ${s.frames} frames drawn (${frames} shown), ${s.avg.toFixed(2)} ms avg, ${s.max.toFixed(2)} ms max; renderer freed in ${took} ms`);
+        note(`${key}: ${STATS.map((n, i) => `${n}=${stats[i]}`).join(", ")}`);
+      }
+      if (s !== null) {
+        mpv?.destroy();
+      } else {
+        // It may still be inside libmpv: the core is left to it, silent and still.
+        mpv?.command("stop");
+      }
+    });
   }
 }
 
@@ -739,6 +808,7 @@ export class Viewer implements VideoHooks {
       drag: p.drag,
       closing: p.closing,
       picture: p.drawn && s.hasVideo,
+      rotate: s.rotate,
     };
   }
 

@@ -137,6 +137,7 @@ export interface VideoData {
   name: string;
   index: number;
   count: number;
+  rotate: number;
 }
 
 export interface MediaRow {

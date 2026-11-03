@@ -24,6 +24,8 @@ export struct VideoData {
     name: string,
     index: int,
     count: int,
+    // Frames come as the file stores them: the picture is turned this many degrees (clockwise) to be shown.
+    rotate: int,
 }
 
 component IconButton inherits Rectangle {
@@ -132,10 +134,15 @@ export component VideoView inherits Rectangle {
             root.moved();
         }
         if root.data.has-frame: Image {
-            width: root.width;
-            height: root.height;
+            property <bool> quarter: Math.mod(root.data.rotate, 180) == 90;
+            width: self.quarter ? root.height : root.width;
+            height: self.quarter ? root.width : root.height;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            transform-rotation: root.data.rotate * 1deg;
             source: root.frame;
-            image-fit: fill;
+            // Frames come at the picture's own aspect, at most its size on screen: the GPU scales them.
+            image-fit: contain;
         }
         if !root.data.has-frame && root.data.poster-w > 0px: Image {
             property <float> k: min(root.width / root.data.poster-w, root.height / root.data.poster-h);

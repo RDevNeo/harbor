@@ -124,6 +124,63 @@ test("watched properties are mirrored, the position alone asks for no repaint", 
   expect(st.stats[1]).toBe("h264");
 });
 
+test("the picture's size and turn are mirrored: a quarter turn swaps its sides", () => {
+  const st = v.freshState(false);
+  v.changed(st, 4, { format: 4, value: 1920 });
+  v.changed(st, 6, { format: 4, value: 1080 });
+  expect(v.shownSize(st)).toEqual([1920, 1080]);
+  v.changed(st, 7, { format: 4, value: 90 });
+  expect(v.shownSize(st)).toEqual([1080, 1920]);
+  v.changed(st, 7, { format: 4, value: -180 });
+  expect(st.rotate).toBe(180);
+  expect(v.shownSize(st)).toEqual([1920, 1080]);
+  v.changed(st, 4, { format: 0, value: null });
+  expect([st.hasVideo, st.width]).toEqual([false, 0]);
+});
+
+test("frames are drawn at the picture's size on screen, never above its own size or the pixel cap", () => {
+  // A 1080p picture in a 1400x900 window: as wide as the window, its own aspect.
+  expect(v.pictureSize([1400, 900], [1920, 1080])).toEqual([1400, 788]);
+  // A tiny clip in a big window isn't blown up here: the window scales it.
+  expect(v.pictureSize([1400, 900], [160, 90])).toEqual([160, 90]);
+  // 4K on a 4K screen: capped at 1080p's pixels.
+  expect(v.pictureSize([3840, 2160], [3840, 2160])).toEqual([1920, 1080]);
+  // Portrait in a landscape window: the height decides.
+  expect(v.pictureSize([1400, 900], [1080, 1920])).toEqual([506, 900]);
+  // Nothing known yet: the area itself, within the cap.
+  expect(v.pictureSize([800, 600], [0, 0])).toEqual([800, 600]);
+  expect(v.pictureSize([0, 0], [1920, 1080])).toEqual([1, 1]);
+});
+
+test("frames get fewer pixels the more of them come each second", () => {
+  expect(v.pixelBudget(60)).toBe(1280 * 720);
+  expect(v.pixelBudget(30)).toBe(1280 * 720 * 2);
+  expect(v.pixelBudget(0)).toBe(1280 * 720 * 2);
+  expect(v.pixelBudget(10)).toBe(1920 * 1080);
+  // 1080p60 in a 2560x1440 window: about 720p, its own aspect.
+  expect(v.pictureSize([2560, 1440], [1920, 1080], v.pixelBudget(60))).toEqual([1280, 720]);
+  const st = v.freshState(false);
+  v.changed(st, 8, { format: 5, value: 59.94 });
+  expect(st.fps).toBe(59.94);
+});
+
+test("a turned picture is drawn as the file stores it, sized for how it shows", () => {
+  const st = { ...v.freshState(false), width: 640, height: 360, rotate: 270, fps: 30 };
+  // Shown 360x640 in 1400x900: 360x640 fits; drawn 640x360, the window turns it.
+  expect(v.drawSize([1400, 900], st)).toEqual([640, 360]);
+  // In 300x300 it shows 169x300, so it is drawn 300x169 (296 wide: a multiple of 8).
+  expect(v.drawSize([300, 300], st)).toEqual([296, 167]);
+  expect(v.drawSize([300, 300], { ...st, rotate: 180 })).toEqual([296, 167]);
+  // 4K at 30 fps in a 2560x1440 window: 1810x1018 by the budget, drawn 1808 wide.
+  expect(v.drawSize([2560, 1440], { width: 3840, height: 2160, rotate: 0, fps: 30 })).toEqual([1808, 1017]);
+  expect(v.coreOptions({ paused: false, volume: 100, blind: false, own: null, log: null })).toContainEqual(["video-rotate", "no"]);
+});
+
+test("the software scaler only shrinks, so it is a cheap one", () => {
+  const o = v.coreOptions({ paused: false, volume: 100, blind: false, own: null, log: null });
+  expect(o).toContainEqual(["sws-scaler", "bilinear"]);
+});
+
 test("the core's options follow the player and the mode", () => {
   const plain = v.coreOptions({ paused: true, volume: 40, blind: false, own: null, log: null });
   expect(plain.at(-2)).toEqual(["volume", "40"]);
@@ -139,6 +196,7 @@ test("the core's options follow the player and the mode", () => {
 
 interface Log {
   frames: v.Frame[];
+  buffers: ArrayBufferLike[];
   repaints: number;
   external: string[];
   toasts: string[];
@@ -148,12 +206,15 @@ interface Log {
 }
 
 function host(): { log: Log; host: v.Host } {
-  const log: Log = { frames: [], repaints: 0, external: [], toasts: [], shut: 0, full: false, fullCalls: [] };
+  const log: Log = { frames: [], buffers: [], repaints: 0, external: [], toasts: [], shut: 0, full: false, fullCalls: [] };
   return {
     log,
     host: {
       repaint: () => void log.repaints++,
-      frame: (f) => void log.frames.push({ width: f.width, height: f.height, data: f.data.slice() }),
+      frame: (f) => {
+        log.frames.push({ width: f.width, height: f.height, data: f.data.slice() });
+        log.buffers.push(f.data.buffer);
+      },
       fullscreen: () => log.full,
       setFullscreen: (on) => {
         log.full = on;
@@ -317,7 +378,7 @@ test("a file that is not a video fails with a reason", async () => {
   viewer.shutdown();
 });
 
-const live = { dir: "", clip: "" };
+const live = { dir: "", clip: "", turned: "" };
 // The tests below play a real clip: they need ffmpeg to make it and a libmpv to play it (Harbor's own
 // or the system's libmpv.so.2). A machine without them (the release image, Ubuntu 22.04) skips them.
 // Probed in another process: loading the player here would change what the tests above see.
@@ -336,13 +397,15 @@ beforeAll(async () => {
   live.dir = tmp("live");
   live.clip = join(live.dir, "clip.mp4");
   await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", live.clip]);
+  live.turned = join(live.dir, "turned.mp4");
+  await ffmpeg(["-display_rotation", "90", "-i", live.clip, "-c", "copy", live.turned]);
 });
 
-async function playing(): Promise<{ viewer: v.Viewer; log: Log }> {
+async function playing(clip = live.clip): Promise<{ viewer: v.Viewer; log: Log }> {
   const h = host();
   const viewer = new v.Viewer({ host: h.host });
   viewer.resize(320, 240);
-  viewer.open(live.clip, undefined, true);
+  viewer.open(clip, undefined, true);
   await until("frames", () => h.log.frames.length >= 3, 10_000, () => viewer.seen());
   return { viewer, log: h.log };
 }
@@ -356,9 +419,36 @@ test.skipIf(!canPlay)("libmpv draws frames into RGBA buffers: size, opaque pictu
   expect(first.data[mid + 3]).toBe(255);
   const last = log.frames.at(-1)!;
   expect(Buffer.compare(Buffer.from(first.data), Buffer.from(last.data))).not.toBe(0);
+  // Drawn on the renderer's thread into two buffers that are used again: no frame allocates.
+  const homes = new Set(log.buffers);
+  expect(homes.size).toBeLessThanOrEqual(2);
   const snap = viewer.snapshot();
   expect(snap?.picture).toBe(true);
   expect(snap?.dur).toBeGreaterThan(1.5);
+  viewer.shutdown();
+});
+
+test.skipIf(!canPlay)("frames follow the picture's room on screen, never above its own size", async () => {
+  const { viewer, log } = await playing();
+  viewer.resize(1280, 1000);
+  await Bun.sleep(150);
+  const n = log.frames.length;
+  await until("more frames", () => log.frames.length > n + 2, 5000, () => viewer.seen());
+  expect([log.frames.at(-1)!.width, log.frames.at(-1)!.height]).toEqual([320, 240]);
+  viewer.resize(200, 100);
+  // 133x100 fits; drawn 128 wide (a multiple of 8).
+  await until("smaller frames", () => log.frames.at(-1)!.width === 128, 5000, () => viewer.seen());
+  expect(log.frames.at(-1)!.height).toBe(96);
+  expect(log.frames.at(-1)!.data.length).toBe(128 * 96 * 4);
+  viewer.shutdown();
+});
+
+test.skipIf(!canPlay)("a turned video is drawn in the file's orientation and the window is told the turn", async () => {
+  const { viewer, log } = await playing(live.turned);
+  // Shown 240x320 in 320x240: 180x240 on screen, drawn 240x180.
+  await until("sized frames", () => log.frames.at(-1)!.width === 240, 5000, () => viewer.seen());
+  expect(log.frames.at(-1)!.height).toBe(180);
+  expect((viewer.snapshot()?.rotate ?? 0) % 180).toBe(90);
   viewer.shutdown();
 });
 
