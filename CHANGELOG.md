@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.126.0] - 2026-11-03
+
 ### Added
 - Settings › Providers has an on/off switch on each account. An account that's off on this PC is
   never used: it isn't in the model menu, the phone's account list, list_models, spawn_agent or
