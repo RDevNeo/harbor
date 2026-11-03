@@ -27,6 +27,8 @@ export type Event =
   | { type: "exited"; ok: boolean; dir: string }
   /** Claude took in a user message written to a running turn (`--replay-user-messages`). */
   | { type: "userEcho"; text: string }
+  /** Claude's request is out (its reply started streaming): a steer written now cuts into it. */
+  | { type: "querying" }
   /** The account hit a usage limit: its window, when it resets (Unix time) if known, and the CLI's sentence. */
   | { type: "limit"; kind: string; resetsAt: number | null; text: string }
   /** Live quota seen in a Claude turn: per window, utilization (0–1) and reset time. */
@@ -631,6 +633,7 @@ export function parseClaude(v: unknown): Event[] {
   }
   if (ty === "stream_event") {
     const e = at(v, "event");
+    if (at(e, "type") === "message_start") return [{ type: "querying" }];
     if (at(e, "type") !== "content_block_delta") return [];
     const dt = at(e, "delta", "type");
     if (dt === "text_delta") return [{ type: "textDelta", text: str(at(e, "delta", "text")) }];

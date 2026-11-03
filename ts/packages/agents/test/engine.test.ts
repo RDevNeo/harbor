@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Chat, type Item, Store } from "@harbor/store";
@@ -44,6 +44,7 @@ for await (const chunk of Bun.stdin.stream()) {
     buf = buf.slice(i + 1);
     const text = JSON.parse(line).message.content.at(-1).text;
     out({ type: "user", isReplay: true, message: { content: [{ type: "text", text }] } });
+    out({ type: "stream_event", event: { type: "message_start" } });
     if (text.includes("slow")) await Bun.sleep(700);
     if (text.includes("limit")) {
       out({ type: "assistant", error: "rate_limit", quotaLimits: { rateLimitType: "five_hour", resetsAt: Math.floor(Date.now() / 1000) + 3600 }, message: { content: [{ type: "text", text: "You've hit your limit" }] } });
@@ -60,14 +61,111 @@ chmodSync(fake, 0o755);
 
 const account: Account = { id: "claude", kind: "Claude", name: "Claude", email: "", badge: "CL", plan: "", configDir: null, bin: fake, loggedIn: true, usage: [] };
 
+// Claude Code 2.1.316 around steers. A prompt with \`takein\` takes 1.5 s to be taken in before its request
+// goes out (hooks, MCP servers). A "now" steer written while the request is out cuts it short and runs
+// next, once; one written while the prompt is still taken in goes into the turn at its first tool AND runs
+// again as the next turn (the agent gets it twice, echoed twice). \`twice\`: echoed twice all the same.
+// \`nostream\`: the request never says it started. What the agent got: race-<session>.log, a line each.
+const race = join(base, "claude-race");
+writeFileSync(
+  race,
+  `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+const a = process.argv;
+const flag = (f) => (a.includes(f) ? a[a.indexOf(f) + 1] : undefined);
+const sid = flag("--session-id") ?? flag("--resume") ?? "s";
+const got = (t) => appendFileSync(${JSON.stringify(base)} + "/race-" + sid + ".log", t + "\\n");
+const out = (v) => process.stdout.write(JSON.stringify(v) + "\\n");
+const echo = (text) => out({ type: "user", isReplay: true, message: { content: [{ type: "text", text }] } });
+const result = (ok) => out(ok ? { type: "result", subtype: "success", total_cost_usd: 0, duration_ms: 3, num_turns: 1, usage: {} } : { type: "result", subtype: "error_during_execution", is_error: true, usage: {} });
+const reply = (t) => { out({ type: "assistant", message: { content: [{ type: "text", text: "echo: " + t }] } }); result(true); };
+out({ type: "system", subtype: "init", session_id: sid, mcp_servers: [] });
+const lines = [];
+let closed = false;
+let wake = () => {};
+(async () => {
+  let buf = "";
+  for await (const chunk of Bun.stdin.stream()) {
+    buf += new TextDecoder().decode(chunk);
+    let i;
+    while ((i = buf.indexOf("\\n")) >= 0) {
+      const v = JSON.parse(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+      lines.push({ text: v.message.content.at(-1).text, now: v.priority === "now" });
+      wake();
+    }
+  }
+  closed = true;
+  wake();
+})();
+const next = async () => {
+  while (lines.length === 0 && !closed) await new Promise((r) => (wake = r));
+  return lines.shift();
+};
+const steer = () => {
+  const i = lines.findIndex((l) => l.now);
+  return i < 0 ? null : lines.splice(i, 1)[0];
+};
+let carry = null;
+for (;;) {
+  const m = carry ?? (await next());
+  carry = null;
+  if (!m) break;
+  if (m.text.includes("takein")) await Bun.sleep(1500);
+  const early = steer();
+  got(m.text);
+  if (!m.text.includes("nostream")) {
+    echo(m.text);
+    out({ type: "stream_event", event: { type: "message_start" } });
+  }
+  if (early) {
+    got(early.text);
+    echo(early.text);
+    result(true);
+    got(early.text);
+    echo(early.text);
+    reply(early.text);
+    continue;
+  }
+  if (m.text.includes("twice")) {
+    result(true);
+    echo(m.text);
+  }
+  const end = Date.now() + (m.text.includes("slow") ? 700 : 0);
+  let cut = null;
+  while (!cut && Date.now() < end) {
+    await Bun.sleep(10);
+    cut = steer();
+  }
+  if (cut) {
+    result(false);
+    carry = cut;
+    continue;
+  }
+  if (m.text.includes("nostream")) echo(m.text);
+  reply(m.text);
+}
+`,
+);
+chmodSync(race, 0o755);
+
+/** What the race CLI's agent got in chat \`c\`'s session, a line each. */
+const gotBy = (c: Chat): string[] => {
+  try {
+    return readFileSync(join(base, `race-${c.sessionId}.log`), "utf8").split("\n").filter((l) => l !== "");
+  } catch {
+    return [];
+  }
+};
+
 let n = 0;
 
 /** Its own data folder each, so its own turns folder: chat ids repeat across temp stores. */
-function setup(): { e: Engine; store: Store; changed: (number | null)[] } {
+function setup(bin = fake): { e: Engine; store: Store; changed: (number | null)[] } {
   process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
   const store = Store.openTemp();
   const changed: (number | null)[] = [];
-  const host: EngineHost = { store, accounts: () => [account], changed: (id) => changed.push(id) };
+  const host: EngineHost = { store, accounts: () => [{ ...account, bin }], changed: (id) => changed.push(id) };
   return { e: new Engine(host), store, changed };
 }
 
@@ -135,6 +233,8 @@ describe("a chat's turn", () => {
     e.send(c.id, "slow first");
     await until("the runner", () => e.turnOf(c.id) !== null);
     e.send(c.id, "and the square", { mode: "steer" });
+    // Written once Claude's request is out.
+    await until("the steer written", () => e.queued(c.id)[0]?.written === true);
     expect(e.queued(c.id).map((q) => [q.text, q.written, q.intent])).toEqual([["and the square", true, STEER]]);
     await until("the turn's end", () => !e.running(c.id));
     expect(texts(e.transcript(c.id).items)).toEqual(["user: slow first", "echo: slow first", "user: and the square", "echo: and the square"]);
@@ -143,6 +243,70 @@ describe("a chat's turn", () => {
     expect(steer?.kind === "user" && steer.intent).toBe(STEER);
     store.close();
   });
+
+  test("a steer sent while Claude still takes in the prompt waits for its request and reaches the agent once", async () => {
+    const { e, store } = setup(race);
+    const c = newChat(store);
+    e.reload();
+    e.send(c.id, "takein slow first");
+    await until("the runner", () => e.turnOf(c.id) !== null, 20000);
+    e.send(c.id, "and the square", { mode: "steer" });
+    // Not written yet: Claude would take it into the turn and run it again after.
+    expect(e.queueJson(c.id)).toEqual([{ id: expect.any(Number), text: "and the square", files: [], sending: false, intent: STEER }]);
+    await until("the steer written", () => e.queued(c.id)[0]?.written === true, 20000);
+    await until("the turn's end", () => !e.running(c.id), 20000);
+    expect(gotBy(c)).toEqual(["takein slow first", "and the square"]);
+    expect(texts(e.transcript(c.id).items)).toEqual(["user: takein slow first", "error: error_during_execution", "user: and the square", "echo: and the square"]);
+    const steer = e.transcript(c.id).items.find((i) => i.kind === "user" && i.text === "and the square");
+    expect(steer?.kind === "user" && steer.intent).toBe(STEER);
+    expect(e.queued(c.id)).toEqual([]);
+    store.close();
+  }, 60000);
+
+  test("a steer Claude echoes twice, around the turn's result, shows once", async () => {
+    const { e, store } = setup(race);
+    const c = newChat(store);
+    e.reload();
+    e.send(c.id, "slow first");
+    await until("the runner", () => e.turnOf(c.id) !== null, 20000);
+    e.send(c.id, "twice please", { mode: "steer" });
+    await until("the turn's end", () => !e.running(c.id), 20000);
+    expect(texts(e.transcript(c.id).items).filter((t) => t.startsWith("user:"))).toEqual(["user: slow first", "user: twice please"]);
+    expect(texts(store.items(c.id)).filter((t) => t === "user: twice please")).toHaveLength(1);
+    store.close();
+  }, 60000);
+
+  test("a steer written just as the turn gives its result reaches the agent once and shows once", async () => {
+    for (const wait of [600, 700, 800]) {
+      const { e, store } = setup(race);
+      const c = newChat(store);
+      e.reload();
+      e.send(c.id, "slow first");
+      await until("the runner", () => e.turnOf(c.id) !== null, 20000);
+      await Bun.sleep(wait);
+      e.send(c.id, "late one", { mode: "steer" });
+      // The app's tick sends what waits for an idle chat (a steer that came once the input closed).
+      await until("the turn's end", () => (e.queueDrain(), !e.running(c.id) && e.queued(c.id).length === 0), 20000);
+      await until("the late one's reply", () => texts(e.transcript(c.id).items).includes("echo: late one"), 20000);
+      expect(gotBy(c).filter((t) => t === "late one")).toHaveLength(1);
+      expect(texts(e.transcript(c.id).items).filter((t) => t === "user: late one")).toHaveLength(1);
+      store.close();
+    }
+  }, 60000);
+
+  test("a steer whose turn ends before its request says so goes as the next message, once", async () => {
+    const { e, store } = setup(race);
+    const c = newChat(store);
+    e.reload();
+    e.send(c.id, "takein nostream first");
+    await until("the runner", () => e.turnOf(c.id) !== null, 20000);
+    e.send(c.id, "and then", { mode: "steer" });
+    await until("the turn's end", () => !e.running(c.id) && e.queued(c.id).length === 0, 20000);
+    await until("its reply", () => texts(e.transcript(c.id).items).includes("echo: and then"), 20000);
+    expect(gotBy(c)).toEqual(["takein nostream first", "and then"]);
+    expect(texts(e.transcript(c.id).items).filter((t) => t.startsWith("user:"))).toEqual(["user: takein nostream first", "user: and then"]);
+    store.close();
+  }, 60000);
 
   test("a queued follow-up runs after the result in the same process", async () => {
     const { e, store } = setup();

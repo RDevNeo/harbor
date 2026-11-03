@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- A steer sent while a Claude turn was still starting (or just as it ended) reached the agent twice
+  and showed twice in the chat. Claude Code takes a steer written before its request is out into the
+  turn and then runs it again as the next one, so Harbor now holds such a steer (it shows as
+  "Steering…") until the request is out, or sends it as the next message if the turn ends first. A
+  steer Claude echoes twice shows once, and one whose first echo Harbor took for the turn's own
+  prompt is no longer sent a second time.
+
 ## [0.120.0] - 2026-11-03
 
 ### Added

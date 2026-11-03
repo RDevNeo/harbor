@@ -249,6 +249,9 @@ describe("event streams", () => {
       { type: "limit", kind: "seven_day", resetsAt: 9, text: "" },
     ]);
     expect(agent.parseClaude({ type: "user", isReplay: true, message: { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] } })).toEqual([{ type: "userEcho", text: "a\nb" }]);
+    // Its request is out: what a steer waits for.
+    expect(agent.parseClaude({ type: "stream_event", event: { type: "message_start", message: {} }, parent_tool_use_id: null })).toEqual([{ type: "querying" }]);
+    expect(agent.parseClaude({ type: "stream_event", event: { type: "message_start" }, parent_tool_use_id: "toolu_1" })).toEqual([]);
   });
 
   test("Codex", () => {

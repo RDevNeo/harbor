@@ -127,11 +127,20 @@ const UNDO_GRACE_MS = 5000;
 /** Tool inputs and outputs beyond this keep their start and end. */
 export const TOOL_TEXT_MAX = 64 * 1024;
 
+/** What Claude sends once its request is out (a steer written before that can reach the agent twice). */
+const QUERYING = new Set<Event["type"]>(["querying", "textDelta", "thinkingDelta", "textFinal", "thinkingFinal", "tool", "userEcho"]);
+
 interface Running {
   /** Null while its runner starts. */
   turn: Turn | null;
   /** Unix ms the turn started (a picked-up one: when it really started). */
   at: number;
+  /** Claude's request is out, so a steer written now cuts into it. Off while Claude still takes in a
+   *  prompt (its start, a follow-up after a result): a steer written then reaches the agent twice,
+   *  into the turn and again as the next one (Claude Code 2.1.316). */
+  querying?: boolean;
+  /** Steers and follow-ups this process took in, by text: Claude can echo one twice. */
+  took?: string[];
 }
 
 export class Engine {
@@ -560,7 +569,7 @@ export class Engine {
     // A stopped turn's end that came after the chat's next turn started: that one goes on.
     const current = this.turns.get(id);
     if (ev.type === "exited" && current !== undefined && current !== from) return;
-    if (this.queueEvent(id, ev) || this.limits.limitEvent(id, limitEvent(ev))) return;
+    if (this.queueEvent(id, ev, from) || this.limits.limitEvent(id, limitEvent(ev))) return;
     const exited = ev.type === "exited" ? !this.turns.has(id) : null;
     this.applyEvent(id, ev);
     if (exited !== null) {
@@ -991,7 +1000,7 @@ export class Engine {
   /** Undoes the last send if nothing came of it yet; false when there is none. Only Claude turns can be rewound. */
   tryUndo(id: number): boolean {
     // A steer on its way in would be left without its turn: it stops instead.
-    if (this.queued(id).some((q) => q.written)) return false;
+    if (this.queued(id).some((q) => q.written || steering(q))) return false;
     const s = this.undoStarted.get(id);
     const run = this.turns.get(id);
     const undoable = s !== undefined && run !== undefined && s.turn === run && s.jsonl !== null && this.nothingYet(id, s);
@@ -1185,16 +1194,12 @@ export class Engine {
       // Can't be steered, or its input just closed: it goes next.
       q.intent = "";
       this.insertNext(id, q);
+    } else if (how === "active" && !this.turns.get(id)?.querying) {
+      // Claude is still taking in the prompt: the steer waits for its request (steerHeld), or goes next.
+      this.insertNext(id, q);
     } else if (how === "active") {
-      const wrote = this.turnOf(id)?.writeNow(queuedPrompt(q, this.said(id, q.text, q.files), this.mentions(q.mentions)), q.files) ?? false;
-      if (wrote) {
-        q.written = true;
-        this.queue.list(id).push(q);
-      } else {
-        q.intent = "";
-        q.note = NOT_LANDED;
-        this.insertNext(id, q);
-      }
+      if (this.writeSteer(id, q)) this.queue.list(id).push(q);
+      else this.insertNext(id, q);
     } else {
       // Codex: stopped and waited for, so the resumed session is settled; its exit is dropped.
       const r = this.turns.get(id);
@@ -1215,27 +1220,57 @@ export class Engine {
     this.changed(id);
   }
 
+  /** Writes steer `q` into the running Claude turn; one that can't be written goes next, said so. */
+  private writeSteer(id: number, q: Queued): boolean {
+    const wrote = this.turnOf(id)?.writeNow(queuedPrompt(q, this.said(id, q.text, q.files), this.mentions(q.mentions)), q.files) ?? false;
+    if (wrote) q.written = true;
+    else {
+      q.intent = "";
+      q.note = NOT_LANDED;
+    }
+    return wrote;
+  }
+
+  /** Claude's request is out: the steers that waited for it go in now, in order. */
+  private steerHeld(id: number): void {
+    for (const q of this.queued(id)) if (!q.written && steering(q)) this.writeSteer(id, q);
+    this.changed(id);
+  }
+
+  /** After what is on its way in and the steers waiting for the request, before the rest. */
   private insertNext(id: number, q: Queued): void {
     const list = this.queue.list(id);
     let at = 0;
-    while (at < list.length && list[at]?.written) at++;
+    while (at < list.length && (list[at]?.written || steering(list[at] as Queued))) at++;
     list.splice(at, 0, q);
   }
 
   /** Agent events that move the queue; true when consumed here. */
-  private queueEvent(id: number, ev: Event): boolean {
+  private queueEvent(id: number, ev: Event, from: Running | null = null): boolean {
+    const run = this.turns.get(id);
+    const mine = run !== undefined && (from === null || run === from) ? run : undefined;
     if (ev.type === "result") {
+      // Claude takes in what comes next before its next request: steers wait for that.
+      if (mine) mine.querying = false;
       // A steer written but not taken in yet: this result ends the segment it cut short.
       if (!this.queued(id).some((q) => q.written) && !this.queue.held.has(id)) this.deliverNext(id);
       // Nothing left to deliver: the input closes and Claude exits.
       if (!this.queued(id).some((q) => q.written)) this.turnOf(id)?.closeInput();
       return false;
     }
+    if (mine && !mine.querying && QUERYING.has(ev.type)) {
+      mine.querying = true;
+      if (this.queued(id).some((q) => !q.written && steering(q))) this.steerHeld(id);
+    }
+    if (ev.type === "querying") return true;
     if (ev.type !== "userEcho") return false;
     const list = this.queue.list(id);
     const found = list.findIndex((q) => q.written && ev.text.includes(q.text.trim()));
     const tr = this.transcript(id);
-    if (found < 0 && ev.text.trim() !== "") {
+    // Claude can echo a steer twice (taken into the turn, then run again as the next one): it shows once.
+    const again = found < 0 ? (mine?.took ?? []).findIndex((t) => t !== "" && ev.text.includes(t)) : -1;
+    if (again >= 0) mine?.took?.splice(again, 1);
+    else if (found < 0 && ev.text.trim() !== "") {
       // Replayed after a restart: a message Claude took in earlier left the queue already.
       tr.items.push({ kind: "user", text: ev.text, files: [], at: now(), mentions: [], sender: "", intent: "" });
       tr.pendingText = null;
@@ -1243,6 +1278,7 @@ export class Engine {
     }
     if (found >= 0) {
       const [m] = list.splice(found, 1) as [Queued];
+      if (mine) (mine.took ??= []).push(m.text.trim());
       tr.items.push(queuedItem(m));
       tr.pendingText = null;
       tr.pendingThinking = null;
@@ -1258,6 +1294,8 @@ export class Engine {
     const q = this.queued(id).find((x) => !x.written);
     const turn = this.turnOf(id);
     if (!q || !turn) return;
+    // A steer that waited for a request that never came: it is simply the next message.
+    q.intent = "";
     if (turn.write(queuedPrompt(q, this.said(id, q.text, q.files), this.mentions(q.mentions)), q.files)) {
       q.written = true;
       q.editing = "";
@@ -1276,7 +1314,8 @@ export class Engine {
     const steers: Queued[] = [];
     for (let i = list.length - 1; i >= 0; i--) {
       const q = list[i] as Queued;
-      if (!q.written) continue;
+      // Written ones, and steers still waiting for the request.
+      if (!q.written && !steering(q)) continue;
       q.written = false;
       if (steering(q)) {
         steers.unshift(q);
@@ -1378,10 +1417,11 @@ export class Engine {
     const all = this.queue.chats.get(id) ?? [];
     this.queue.chats.delete(id);
     this.queue.held.delete(id);
-    const keep = all.filter((q) => q.written && this.turns.has(id));
+    const going = (q: Queued): boolean => (q.written || steering(q)) && this.turns.has(id);
+    const keep = all.filter(going);
     if (keep.length > 0) this.queue.chats.set(id, keep);
     this.changed(id);
-    return all.filter((q) => !(q.written && this.turns.has(id)));
+    return all.filter((q) => !going(q));
   }
 
   /** The `queue` of the chat status (PROTOCOL.md): waiting messages and steers in flight. */
