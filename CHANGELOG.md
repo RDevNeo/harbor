@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.4] - 2026-11-03
+
 ### Fixed
 - Settling or unsettling a project now reaches your other PCs and phones at once. Before, its
   chats stayed as they were there (settled after an unsettle, or the other way round) until some
