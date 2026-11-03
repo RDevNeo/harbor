@@ -501,6 +501,14 @@ await scenario("pacing", async () => {
     check(r.text.includes('"joined": true') && seen.join.length === joins + 2, "a second join right after goes too: joins aren't paced", r.text);
     r = await mcp.tool("discord_join", { invite: "abcde" });
     check(r.text.includes("dryRun"), "a dry run joins nothing", r.text);
+    // Leaving isn't paced either: both servers just joined go, one right after the other.
+    const leaves = seen.leave.length;
+    for (const id of ["300000000000000003", "300000000000000004"]) {
+        r = await mcp.tool("discord_leave", { guildId: id, apply: true });
+        check(!r.text.includes("Paced") && r.text.includes('"left": true'), "a leave right after another goes: leaves aren't paced", r.text);
+    }
+    await sleep(300);
+    check(seen.leave.length === leaves + 2, "both reached Discord", seen.leave.length - leaves);
     write("pace.json", [["dm", Math.floor(Date.now() / 1000) - 10]]);
     r = await mcp.tool("discord_dm_open", { userId: "100000000000000009" });
     check(r.text.includes("Paced") && seen.dm.length === dms, "a new DM right after another is refused", r.text);

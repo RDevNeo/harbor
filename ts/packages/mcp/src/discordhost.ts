@@ -390,9 +390,9 @@ export function hasSwap(): boolean {
 
 
 /**
- * What Discord's spam filter watches: leaving servers, new DMs, bursts of uploads, floods of
- * messages. Each limit is a count in a window and a gap between two. Joining servers isn't paced:
- * the user asked for that (a join behind a captcha waits for a person anyway).
+ * What Discord's spam filter watches: new DMs, bursts of uploads, floods of messages. Each limit is
+ * a count in a window and a gap between two. Joining and leaving servers aren't paced: the user
+ * asked for that (a join behind a captcha waits for a person anyway).
  */
 interface Limit {
   kind: string;
@@ -403,7 +403,6 @@ interface Limit {
 }
 
 const LIMITS: Limit[] = [
-  { kind: "leave", label: "server leaves", gap: 300, hour: 3, day: 6 },
   { kind: "dm", label: "new DMs", gap: 120, hour: 4, day: 10 },
   { kind: "upload", label: "file uploads", gap: 20, hour: 15, day: 60 },
   { kind: "send", label: "messages", gap: 1, hour: 120, day: 600 },
@@ -437,10 +436,7 @@ const isGo = (p: Pace): boolean => "go" in p;
 
 /** What a tool call counts as, before it's made. */
 export function paceKind(name: string, args: Json): string | undefined {
-  const apply = get(args, "apply") === true;
   switch (name) {
-    case "discord_leave":
-      return apply ? "leave" : undefined;
     case "discord_send":
       return items(get(args, "files")).length > 0 ? "upload" : "send";
     case "discord_react":
@@ -1214,9 +1210,6 @@ export class Host {
     switch (name) {
       case "discord_join":
         if (get(v, "captchaRequired") === true) v = this.captchaFound(v, chat);
-        break;
-      case "discord_leave":
-        if (get(v, "left") === true) paceNote("leave");
         break;
       case "discord_dm_open":
         if (get(v, "created") === true) paceNote("dm");

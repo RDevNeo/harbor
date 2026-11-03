@@ -33,29 +33,28 @@ test("reads_swap_from_meminfo: reads swap from meminfo", () => {
   expect(swapIn("MemTotal:  8000 kB\n")).toBe(false);
 });
 
-test("pace_holds_back_leaves_dms_and_bursts: pace holds back leaves, DMs and bursts, never joins", () => {
+test("pace_holds_back_dms_and_bursts_never_joins_or_leaves: pace holds back DMs and bursts, never joins or leaves", () => {
   const log = (k: string, ago: number[], now: number): [string, number][] => ago.map((a) => [k, now - a]);
   const now = 1_000_000;
-  // Joins aren't paced at all, however many and however close.
+  // Joins and leaves aren't paced at all, however many and however close.
   expect(pace("join", log("join", [1, 2, 3, 60, 120, 400, 800, 1200], now), now)).toEqual({ go: true });
-  expect(pace("leave", [], now)).toEqual({ go: true });
-  expect(pace("leave", log("leave", [60], now), now)).toHaveProperty("refuse");
-  expect(pace("leave", log("leave", [301], now), now)).toEqual({ go: true });
-  expect(pace("leave", log("leave", [400, 800, 1200], now), now)).toHaveProperty("refuse");
-  expect(pace("leave", log("leave", [4000, 8000, 12000, 16000, 20000, 24000], now), now)).toHaveProperty("refuse");
+  expect(pace("leave", log("leave", [1, 2, 3, 60, 120, 400, 800, 1200], now), now)).toEqual({ go: true });
+  expect(pace("dm", [], now)).toEqual({ go: true });
+  expect(pace("dm", log("dm", [60], now), now)).toHaveProperty("refuse");
+  expect(pace("dm", log("dm", [121], now), now)).toEqual({ go: true });
   expect(pace("dm", log("leave", [60], now), now)).toEqual({ go: true });
   expect(pace("dm", log("dm", [121, 500, 900, 1300], now), now)).toHaveProperty("refuse");
   expect(pace("upload", log("upload", [5], now), now)).toHaveProperty("refuse");
   expect(pace("send", log("send", [0], now), now)).toEqual({ wait: 1 });
   expect(pace("other", [], now)).toEqual({ go: true });
-  const p = pace("leave", log("leave", [60], now), now);
-  expect("refuse" in p ? p.refuse : "").toContain("4 min");
+  const p = pace("dm", log("dm", [60], now), now);
+  expect("refuse" in p ? p.refuse : "").toContain("1 min");
 });
 
 test("dry_runs_and_reads_arent_paced: dry runs and reads aren't paced", () => {
   expect(paceKind("discord_join", { invite: "x" })).toBeUndefined();
   expect(paceKind("discord_join", { apply: true })).toBeUndefined();
-  expect(paceKind("discord_leave", { apply: true })).toBe("leave");
+  expect(paceKind("discord_leave", { apply: true })).toBeUndefined();
   expect(paceKind("discord_leave", {})).toBeUndefined();
   expect(paceKind("discord_send", { content: "hi" })).toBe("send");
   expect(paceKind("discord_send", { files: [{}] })).toBe("upload");

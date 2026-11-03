@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Discord: leaving servers is no longer paced either. Harbor used to space leaves 5 minutes apart
+  and cap them at 3 an hour and 6 a day; now agents leave when asked (still only with `apply: true`,
+  after a dry run). New DMs, uploads and bursts of messages are still paced as before.
+
 ## [0.121.6] - 2026-11-03
 
 ### Fixed
