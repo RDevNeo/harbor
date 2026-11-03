@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.6] - 2026-11-03
+
+### Fixed
+- The sidebar's workspace menu can pick an account's only workspace, or tick every one, on the
+  desktop and the phone: checking them all no longer turned straight back into All (All also shows
+  the PCs that are in no workspace).
+
 ## [0.119.5] - 2026-11-02
 
 ### Fixed
