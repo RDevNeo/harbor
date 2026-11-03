@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.132.0] - 2026-11-03
+
 ### Changed
 - Settings › Workspace and Settings › Devices are one page, Workspace: a device is just another
   machine of the workspace. Under People each person has a card with their PCs (online or when last
