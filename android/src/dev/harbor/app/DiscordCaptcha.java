@@ -159,11 +159,21 @@ public class DiscordCaptcha extends Base {
 
     /** A frame's `data` (base64 JPEG, maybe a data: URL) as a bitmap; null: none or unreadable. */
     static Bitmap decode(String data) {
+        byte[] b = jpeg(data);
+        if (b == null) return null;
+        try {
+            return BitmapFactory.decodeByteArray(b, 0, b.length);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** A frame's `data` as the JPEG's bytes; null: none or not base64. */
+    static byte[] jpeg(String data) {
         if (data == null || data.isEmpty()) return null;
         int comma = data.startsWith("data:") ? data.indexOf(',') : -1;
         try {
-            byte[] b = android.util.Base64.decode(comma >= 0 ? data.substring(comma + 1) : data, android.util.Base64.DEFAULT);
-            return BitmapFactory.decodeByteArray(b, 0, b.length);
+            return android.util.Base64.decode(comma >= 0 ? data.substring(comma + 1) : data, android.util.Base64.DEFAULT);
         } catch (Exception e) {
             return null;
         }

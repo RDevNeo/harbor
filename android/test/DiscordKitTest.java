@@ -75,6 +75,18 @@ public class DiscordKitTest {
         same(DiscordKit.cardIntro("Cats"), "To join Cats. Only the captcha takes your taps; Harbor never answers it for you.", "card intro");
         same(DiscordKit.cardIntro(null), "To join a server. Only the captcha takes your taps; Harbor never answers it for you.", "card intro without a name");
 
+        // The frame loop's pace: at most ~15 calls a second, older PCs every 500 ms.
+        same(DiscordKit.nextCall(true, 1000, 1010), 56, "a quick answer waits out the 66 ms");
+        same(DiscordKit.nextCall(true, 1000, 1200), 0, "a long-poll answer: at once");
+        same(DiscordKit.nextCall(false, 1000, 1100), 400, "an older PC: every 500 ms");
+        same(DiscordKit.nextCall(false, 1000, 1700), 0, "a slow older PC: at once");
+        // Laid out again only when the frame's shape changes.
+        same(DiscordKit.reshapes(0, 0, 720, 540), true, "the first frame sets the height");
+        same(DiscordKit.reshapes(720, 540, 720, 540), false, "same size: drawn only");
+        same(DiscordKit.reshapes(720, 540, 360, 270), false, "same shape, smaller: drawn only");
+        same(DiscordKit.reshapes(720, 540, 720, 600), true, "a new shape: laid out");
+        same(DiscordKit.reshapes(720, 540, 0, 0), false, "no size: nothing");
+
         // The lines, as the desktop says them.
         same(DiscordKit.intro("Cats"), "To join Cats, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro");
         same(DiscordKit.intro(""), "To join a server, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro without a name");

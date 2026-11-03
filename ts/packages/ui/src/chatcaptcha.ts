@@ -2,12 +2,15 @@ import { discord } from "@harbor/mcp";
 import type { Chat } from "@harbor/store";
 import type { Pixels } from "./logos.ts";
 import { type Box, clampTo, type Frame, frame, inBox, rectOnImage, type Solver, solver, solvingLine, toPage } from "./logic/captchacard.ts";
-import { type ChatCaptchaData, noPixels } from "./window.ts";
+import type { ChatCaptchaData } from "./window.ts";
 
-/** How often a captcha card on screen asks for a frame; and while there's none to show (or the call failed). */
-export const FRAME_MS = 400;
+/** Frames come by long-poll (`after`: the last seq; the host answers on the next repaint or after WAIT_MS):
+ * a request starts at least GAP_MS after the one before (about 20 a second at most), and after a failure
+ * or a 404 only IDLE_MS later. */
+export const GAP_MS = 50;
+export const WAIT_MS = 2000;
 export const IDLE_MS = 2000;
-/** The card's frame is at most this wide (logical px). */
+/** The card's frame is at most this wide (logical px); its width until the card says. */
 export const FRAME_W = 460;
 
 /** One call for a chat's captcha, here or at the chat's home PC: `{action: "frame" | "input" | "cancel", ...}`. */
@@ -22,23 +25,32 @@ export interface ChatCaptchaDeps {
   chat(): Chat | undefined;
   /** The window is shown: frames flow only while someone can see them. */
   looking(): boolean;
-  /** A frame (JPEG) as the window draws it; null while images can't be decoded yet. */
+  /** A frame (JPEG) as the window draws it, decoded off the main loop; null while images can't be decoded yet. */
   decode(bytes: Uint8Array): Promise<Pixels | null>;
   /** This device for the host: who holds the captcha (`pc:<id>`) and its name. */
   me(): { who: string; label: string };
+  /** The card's fields; called only when one changed. */
   show(d: ChatCaptchaData): void;
+  /** A new frame: only the image changes. */
+  image(p: Pixels): void;
   /** Which captchas are known to wait no more changed: the cards are built again. */
   changed(): void;
-  /** The frame's width to ask for, in image px. */
-  max(): number;
+  /** Physical pixels per logical pixel: the frame asked for is the card's real pixel width. */
+  scale(): number;
+  /** Tests: the clock and the pauses. */
+  now?(): number;
+  sleep?(ms: number): Promise<void>;
 }
 
-export const noChatCaptcha: ChatCaptchaData = { id: "", has_frame: false, image: noPixels, width: 0, height: 0, rx: 0, ry: 0, rw: 0, rh: 0, solving: "" };
+export const noChatCaptcha: ChatCaptchaData = { id: "", has_frame: false, width: 0, height: 0, rx: 0, ry: 0, rw: 0, rh: 0, solving: "" };
+
+const sameData = (a: ChatCaptchaData, b: ChatCaptchaData): boolean => (Object.keys(a) as (keyof ChatCaptchaData)[]).every((k) => a[k] === b[k]);
 
 /**
- * The open chat's Discord captcha card: its frames while it is on screen (one call in flight, about every
- * FRAME_MS), and the person's pointer on it back to the PC running Discord. Only points inside the captcha
- * go; presses keep their order, moves only the newest. Nothing is kept once the card leaves.
+ * The open chat's Discord captcha card: its frames while it is on screen, by long-poll (one request in
+ * flight, the next as soon as one answers), and the person's pointer on it back to the PC running Discord,
+ * on its own path: frames never wait for input, nor input for frames. Only points inside the captcha go;
+ * presses keep their order, moves only the newest. Nothing is kept once the card leaves.
  */
 export class ChatCaptcha {
   private chatId: number | null = null;
@@ -46,10 +58,23 @@ export class ChatCaptcha {
   private live: string[] = [];
   private readonly onScreen = new Set<string>();
   private readonly ended = new Set<string>();
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private busy = false;
+  /** The frame loop runs (a request in flight, or a pause before the next); which one, and the epoch it serves. */
+  private running = false;
+  private loopId = 0;
+  private loopEpoch = -1;
   private stopped = false;
+  /** Bumped when what's shown starts over: an answer or a decode from before is dropped. */
+  private epoch = 0;
+  /** The repaint of the newest image this card has or decodes (0: none: the next answer has data). A `same`
+   * answer doesn't move it; a decode that fails puts it back to 0. */
+  private seq = 0;
+  private lastStart = -Infinity;
+  /** The card's frame width, logical px. */
+  private width = FRAME_W;
   private data: ChatCaptchaData = noChatCaptcha;
+  /** The newest frame waiting for its decode, while one decodes. */
+  private next: Frame | null = null;
+  private decoding = false;
   /** What the image shown covers of the page, and where the captcha is (page px). */
   private crop: Box | null = null;
   private rect: Box | null = null;
@@ -77,49 +102,70 @@ export class ChatCaptcha {
     this.wake();
   }
 
-  /** A card came on screen or left it. */
-  seen(id: string, on: boolean): void {
+  /** A card came on screen or left it; `width`: its frame's width (logical px). */
+  seen(id: string, on: boolean, width = this.width): void {
     // Kept even before the cards' ids come (`cards`): only live ones count.
     if (on) this.onScreen.add(id);
     else this.onScreen.delete(id);
+    if (width > 0) this.width = width;
     this.wake();
   }
 
-  /** Looks again when it can: a card on screen in the open chat, the window shown. */
+  /** Starts the frame loop when it can: a card on screen in the open chat, the window shown. */
   wake(): void {
-    if (this.stopped || this.busy || this.timer !== null || !this.watching()) return;
-    this.later(0);
+    // A loop still waiting on an answer for what was shown before (another chat) is left to drop it.
+    if (this.stopped || (this.running && this.loopEpoch === this.epoch) || !this.watching()) return;
+    const id = ++this.loopId;
+    this.running = true;
+    this.loopEpoch = this.epoch;
+    void this.loop(id).finally(() => {
+      if (this.loopId === id) this.running = false;
+    });
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = null;
+    this.epoch++;
+  }
+
+  /** The loop runs (tests). */
+  get looping(): boolean {
+    return this.running;
   }
 
   private watching(): boolean {
-    return this.live.some((id) => this.onScreen.has(id)) && this.chatId !== null && this.d.chat()?.id === this.chatId && this.d.looking();
+    return !this.stopped && this.live.some((id) => this.onScreen.has(id)) && this.chatId !== null && this.d.chat()?.id === this.chatId && this.d.looking();
   }
 
-  private later(ms: number): void {
-    if (this.stopped) return;
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.look();
-    }, ms);
+  private now(): number {
+    return this.d.now?.() ?? performance.now();
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return this.d.sleep?.(ms) ?? Bun.sleep(ms);
+  }
+
+  /** The image's width to ask for: the card's real pixels. */
+  max(): number {
+    return Math.max(1, Math.round(this.width * this.d.scale()));
   }
 
   private reset(): void {
+    this.epoch++;
+    this.seq = 0;
+    this.next = null;
     this.crop = null;
     this.rect = null;
     this.solver = null;
     this.pressed = false;
     this.move = null;
-    if (this.data !== noChatCaptcha) {
-      this.data = noChatCaptcha;
-      this.d.show(this.data);
-    }
+    this.set(noChatCaptcha);
+  }
+
+  private set(d: ChatCaptchaData): void {
+    if (sameData(d, this.data)) return;
+    this.data = d;
+    this.d.show(d);
   }
 
   private mark(ids: readonly string[], on: boolean): void {
@@ -133,56 +179,109 @@ export class ChatCaptcha {
     if (changed) this.d.changed();
   }
 
-  /** One frame: stops (until `wake`) once nobody looks. */
-  async look(): Promise<void> {
-    const c = this.d.chat();
-    if (this.stopped || this.busy || c === undefined || !this.watching()) return;
-    this.busy = true;
-    let next = FRAME_MS;
-    try {
-      const r = await this.d.call(c, { action: "frame", max: this.d.max() });
-      if (c.id !== this.chatId) return;
-      const f = r.status === 200 ? frame(r.body) : null;
-      if (r.status === 404) {
-        this.mark(this.live, true);
-        if (this.data.id !== "") this.reset();
-        next = IDLE_MS;
-      } else if (f === null) next = IDLE_MS;
-      else {
-        // The chat's captcha is f's: any other card of it waits no more.
-        this.mark(
-          this.live.filter((id) => id !== f.captcha),
-          true,
-        );
-        this.mark([f.captcha], false);
-        if (this.live.includes(f.captcha)) await this.frame(f);
-        else next = IDLE_MS;
+  /** Long-polls frames until nobody looks; a request that comes back after that is dropped. */
+  private async loop(id: number): Promise<void> {
+    while (id === this.loopId && this.watching()) {
+      const wait = this.lastStart + GAP_MS - this.now();
+      if (wait > 0) {
+        await this.sleep(wait);
+        continue;
       }
-    } catch {
-      next = IDLE_MS;
-    } finally {
-      this.busy = false;
+      const c = this.d.chat();
+      if (c === undefined) return;
+      const epoch = this.epoch;
+      this.lastStart = this.now();
+      let r: { status: number; body: unknown } | null = null;
+      try {
+        r = await this.d.call(c, { action: "frame", max: this.max(), after: this.seq, wait: WAIT_MS });
+      } catch {
+        // backs off below
+      }
+      if (id !== this.loopId) return;
+      if (epoch !== this.epoch || c.id !== this.chatId) {
+        this.loopEpoch = this.epoch;
+        continue;
+      }
+      if (!this.watching()) return;
+      const fine = this.answer(r);
+      this.loopEpoch = this.epoch;
+      if (!fine) await this.sleep(IDLE_MS);
     }
-    if (this.watching()) this.later(next);
   }
 
-  private async frame(f: Frame): Promise<void> {
-    this.solver = f.solver;
-    const d: ChatCaptchaData = { ...(this.data.id === f.captcha ? this.data : noChatCaptcha), id: f.captcha, solving: solvingLine(f.solver, this.d.me().who) };
-    if (f.data !== null && f.width > 0 && f.height > 0) {
-      const image = await this.d.decode(Buffer.from(f.data, "base64"));
-      if (image !== null) {
-        Object.assign(d, { image, has_frame: true, width: f.width, height: f.height });
-        this.crop = f.crop;
-      }
+  /** One answer; false: wait IDLE_MS before the next. */
+  private answer(r: { status: number; body: unknown } | null): boolean {
+    if (r === null) return false;
+    if (r.status === 404) {
+      this.mark(this.live, true);
+      if (this.data.id !== "") this.reset();
+      return false;
     }
-    this.rect = f.rect;
-    if (this.crop !== null) {
-      const r = this.rect === null ? { x: 0, y: 0, width: 0, height: 0 } : rectOnImage(this.rect, this.crop);
+    const b = r.body as { same?: unknown; captcha?: unknown } | null;
+    const f = r.status === 200 ? frame(b !== null && typeof b === "object" && b.same === true && b.captcha === undefined ? { ...b, captcha: this.data.id } : b) : null;
+    if (f === null) return false;
+    // The chat's captcha is f's: any other card of it waits no more.
+    this.mark(
+      this.live.filter((id) => id !== f.captcha),
+      true,
+    );
+    this.mark([f.captcha], false);
+    if (!this.live.includes(f.captcha)) return false;
+    if (f.captcha !== this.data.id) {
+      this.reset();
+      this.set({ ...noChatCaptcha, id: f.captcha });
+    }
+    this.meta(f);
+    if (!f.same && f.data !== null && f.width > 0 && f.height > 0) {
+      this.seq = f.seq;
+      // Decoded off the loop: a newer frame while one decodes takes the older one's place.
+      this.next = f;
+      if (!this.decoding) void this.drain();
+    }
+    return true;
+  }
+
+  /** Who holds it and where the captcha is: they come with every answer, the image only with some. */
+  private meta(f: Frame): void {
+    this.solver = f.solver;
+    if (f.rect !== null) this.rect = f.rect;
+    const d = { ...this.data, solving: solvingLine(this.solver, this.d.me().who) };
+    if (this.crop !== null && this.rect !== null) {
+      const r = rectOnImage(this.rect, this.crop);
       Object.assign(d, { rx: r.x, ry: r.y, rw: r.width, rh: r.height });
     }
-    this.data = d;
-    this.d.show(d);
+    this.set(d);
+  }
+
+  private async drain(): Promise<void> {
+    this.decoding = true;
+    try {
+      while (this.next !== null) {
+        const f = this.next;
+        this.next = null;
+        const epoch = this.epoch;
+        let image: Pixels | null = null;
+        try {
+          image = await this.d.decode(Buffer.from(f.data ?? "", "base64"));
+        } catch {
+          // the next frame tries again
+        }
+        if (epoch !== this.epoch || f.captcha !== this.data.id) continue;
+        if (image === null) {
+          // Not drawn (images not loaded yet, a bad frame): the next answer brings one again.
+          if (this.next === null) this.seq = 0;
+          continue;
+        }
+        this.crop = f.crop;
+        this.d.image(image);
+        // The slot keeps the first frame's aspect: later frames only swap the image.
+        const first = !this.data.has_frame;
+        this.set({ ...this.data, has_frame: true, width: first ? f.width : this.data.width, height: first ? f.height : this.data.height });
+        this.meta(f);
+      }
+    } finally {
+      this.decoding = false;
+    }
   }
 
   /** The person's pointer on card `id`'s frame, as fractions of the image. */
@@ -241,9 +340,7 @@ export class ChatCaptcha {
     void this.d
       .call(c, { action: "cancel", who: this.d.me().who })
       .catch(() => undefined)
-      .finally(() => {
-        if (!this.busy) this.later(0);
-      });
+      .finally(() => this.wake());
   }
 
   /** Waits for the pointer events sent so far (tests). */

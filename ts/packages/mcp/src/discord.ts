@@ -389,7 +389,7 @@ const pageCall = (name: string, args: Json): Promise<Json> => request({ op: "cal
 export async function chatCaptcha(chatId: number, body: Record<string, unknown>): Promise<{ status: number; body: unknown }> {
   let r: Json;
   try {
-    r = await ask(setup.socket(), { op: "chat_captcha", chat: chatId, body: JSON.parse(JSON.stringify(body)) as Json }, 15_000);
+    r = await ask(setup.socket(), { op: "chat_captcha", chat: chatId, body: JSON.parse(JSON.stringify(body)) as Json }, 20_000);
   } catch {
     return { status: 404, body: { error: "No captcha is waiting in this chat." } };
   }

@@ -92,7 +92,7 @@ function open(offscreen) {
     });
     if (offscreen) {
         w.webContents.setFrameRate(IDLE_FPS);
-        w.webContents.on("paint", () => {});
+        w.webContents.on("paint", (_e, dirty, image) => { if (w === win) painted(dirty, image); });
     }
     w.webContents.setUserAgent(UA);
     w.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -186,6 +186,41 @@ async function during(name, run) {
  * that person's pointer goes through, but only onto the captcha itself and only while one is
  * showing. Nothing here clicks by itself. */
 let solving = false, solveRect = null, solveAt = 0, pressed = false;
+
+/* A chat's card sees the captcha live: every paint that touches it is a new frame (`seq`), and a
+ * card's request waits for the next one (`after`) instead of asking on a timer. Frames are cut
+ * from the paint itself (no capture), encoded once per size, and nothing is sent when nothing
+ * changed. While a captcha shows the page draws at SOLVE_FPS. */
+const SOLVE_FPS = 30;
+const live = { seq: 0, image: null, wake: [], encoded: null };
+const cropOf = r => {
+    if (!r) return null;
+    const pad = 24;
+    const x = Math.max(0, r.x - pad), y = Math.max(0, r.y - pad);
+    return { x, y, width: Math.min(WIDTH - x, r.width + 2 * pad), height: Math.min(HEIGHT - y, r.height + 2 * pad) };
+};
+const meets = (a, b) => !!a && !!b && a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+function painted(dirty, image) {
+    if (!solving) return;
+    live.image = image;
+    if (!meets(dirty, cropOf(solveRect)) && live.seq > 0) return;
+    live.seq++;
+    for (const w of live.wake.splice(0)) w();
+}
+/** The captcha's part of the newest paint, at most `max` wide; the same seq and size are encoded once. */
+function liveFrame(crop, max) {
+    const key = `${live.seq}:${max}:${crop.x},${crop.y},${crop.width},${crop.height}`;
+    if (live.encoded?.key === key) return live.encoded.frame;
+    let img = live.image.crop(crop);
+    let { width, height } = img.getSize();
+    if (max > 0 && width > max) {
+        img = img.resize({ width: max, quality: "good" });
+        ({ width, height } = img.getSize());
+    }
+    const frame = { width, height, data: img.toJPEG(70).toString("base64") };
+    live.encoded = { key, frame };
+    return frame;
+}
 async function captchaLook() {
     const s = await run("$harbor.captcha()");
     solveRect = s.showing ? s.rect : null;
@@ -206,6 +241,19 @@ const captchaOps = {
         if (!s.showing) return s;
         solving = true;
         fast();
+        // A card that has seen frame `after` waits here for the next one (or says nothing changed).
+        if (m?.crop && s.rect && Number.isInteger(m.after)) {
+            win.webContents.setFrameRate(SOLVE_FPS);
+            const crop = cropOf(s.rect);
+            if (live.seq <= m.after || !live.image) {
+                if (!live.image) win.webContents.invalidate();
+                const wait = Math.min(Math.max(Number(m.wait) || 2000, 100), 8000);
+                await new Promise(r => { const t = setTimeout(r, wait); live.wake.push(() => { clearTimeout(t); r(); }); });
+            }
+            if (!live.image || live.seq <= m.after) return { ...s, crop, seq: live.seq, same: true };
+            const max = Number(m.max) > 0 ? Math.floor(Number(m.max)) : 0;
+            return { ...s, crop, seq: live.seq, mimeType: "image/jpeg", ...liveFrame(crop, max) };
+        }
         let crop;
         if (m?.crop && s.rect) {
             const pad = 24;
@@ -241,11 +289,16 @@ const captchaOps = {
     }),
     // Discord's own way out of its captcha dialog; the join it held fails.
     captcha_cancel: viewOnly(async () => {
+        // A click on the captcha leaves the keyboard in its frame, where Discord's dialog never hears the key.
+        await run("document.activeElement?.blur?.(); window.focus(); true").catch(() => {});
         win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
         win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
     }),
     captcha_end: async () => {
         solving = false;
+        live.image = null;
+        live.encoded = null;
+        for (const w of live.wake.splice(0)) w();
         solveRect = null;
         pressed = false;
         busy();

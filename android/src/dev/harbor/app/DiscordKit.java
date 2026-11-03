@@ -75,6 +75,25 @@ final class DiscordKit {
         return new float[] { (rect[0] - crop[0]) * sx, (rect[1] - crop[1]) * sy, (rect[0] + rect[2] - crop[0]) * sx, (rect[1] + rect[3] - crop[1]) * sy };
     }
 
+    /** The chat card's frame loop: the PC holds a call up to WAIT ms until the captcha repaints;
+     *  a call starts at most every MIN_GAP ms (about 15 frames a second); BACKOFF after an error
+     *  or no captcha; OLD_GAP for PCs that answer at once (no `seq`: before the long-poll). */
+    static final int WAIT = 2000, MIN_GAP = 66, BACKOFF = 2000, OLD_GAP = 500;
+
+    /** How long to wait before the next frame call, the last one having started at `started`
+     *  (ms, same clock as `now`); longPoll: the PC answered with a `seq`. */
+    static long nextCall(boolean longPoll, long started, long now) {
+        return Math.max(0, (longPoll ? MIN_GAP : OLD_GAP) - (now - started));
+    }
+
+    /** Whether a frame of w × h changes the view's shape from one of was w × was h (then it's
+     *  laid out again; otherwise only drawn). */
+    static boolean reshapes(int wasW, int wasH, int w, int h) {
+        if (w <= 0 || h <= 0) return false;
+        if (wasW <= 0 || wasH <= 0) return true;
+        return Math.abs((long) w * wasH - (long) h * wasW) * 100 > (long) wasW * wasH; // more than 1%
+    }
+
     /** The chat card's line under its title (the desktop's). */
     static String cardIntro(String guild) {
         return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild) + ". Only the captcha takes your taps; Harbor never answers it for you.";

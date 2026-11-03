@@ -104,6 +104,10 @@ export interface Frame {
   crop: Box;
   rect: Box | null;
   solver: Solver | null;
+  /** The host's count of the captcha's repaints: the next long-poll asks for one after it. */
+  seq: number;
+  /** Nothing repainted since `after`: no data, the image shown stays. */
+  same: boolean;
 }
 
 export function frame(v: unknown): Frame | null {
@@ -121,6 +125,8 @@ export function frame(v: unknown): Frame | null {
     crop: box(o.crop) ?? { x: 0, y: 0, width, height },
     rect: box(o.rect),
     solver: solver(o.solver),
+    seq: num(o.seq) ?? 0,
+    same: o.same === true,
   };
 }
 

@@ -1356,9 +1356,16 @@ export class Host {
     switch (str(get(b, "action")) ?? "") {
       case "frame": {
         const max = typeof get(b, "max") === "number" ? Math.min(Math.max(get(b, "max") as number, 160), 1280) : 720;
-        const f = await this.engine.ask({ op: "captcha_frame", crop: true, max }, 10_000);
-        if (get(f, "showing") !== true) return { status: 200, body: { captcha: c.id, guild: c.guild, solver: held } };
-        return { status: 200, body: { captcha: c.id, guild: c.guild, data: get(f, "data") ?? null, width: get(f, "width") ?? 0, height: get(f, "height") ?? 0, crop: get(f, "crop") ?? null, rect: get(f, "rect") ?? null, solver: held } };
+        // `after`: the frame the card has; the answer waits (up to `wait` ms) for the next one.
+        const after = uint(get(b, "after"));
+        const wait = typeof get(b, "wait") === "number" ? Math.min(Math.max(get(b, "wait") as number, 100), 8000) : 2000;
+        const f = await this.engine.ask({ op: "captcha_frame", crop: true, max, ...(after !== undefined ? { after, wait } : {}) }, (after !== undefined ? wait : 0) + 10_000);
+        const solver = this.solver !== null && now() - this.solver.at < SOLVER_HOLD ? this.solver : null;
+        if (get(f, "showing") !== true) return { status: 200, body: { captcha: c.id, guild: c.guild, solver } };
+        const seq = uint(get(f, "seq"));
+        const common = { captcha: c.id, guild: c.guild, crop: get(f, "crop") ?? null, rect: get(f, "rect") ?? null, solver, ...(seq !== undefined ? { seq } : {}) };
+        if (get(f, "same") === true) return { status: 200, body: { ...common, same: true } };
+        return { status: 200, body: { ...common, data: get(f, "data") ?? null, width: get(f, "width") ?? 0, height: get(f, "height") ?? 0 } };
       }
       case "input": {
         // Two places at once would fight over one pointer: the first keeps it while it's busy.

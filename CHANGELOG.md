@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Discord: a captcha card in a chat is fluid. The card asks for the next frame and gets it as soon as
+  the captcha changes, instead of asking on a timer: on one PC a click shows in about 60 ms instead
+  of about 300 ms, and a moving captcha plays at up to 20 frames a second on the desktop and 15 on
+  the phone, instead of about 2. Nothing is sent while nothing changes. Frames come straight from
+  what the hidden page draws, sized to the card, and the phone decodes them off its screen thread.
+
+### Fixed
+- Discord: "Don't join" could do nothing after a click inside the captcha (the keyboard stayed in
+  the captcha's frame, where Discord's dialog never heard it).
+
 ## [0.119.3] - 2026-11-02
 
 ### Fixed

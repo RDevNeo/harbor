@@ -292,10 +292,11 @@ export class Shell {
         return { who: mesh.me() || `pc:${host}`, label: mesh.myName?.() || host };
       },
       show: (d) => (win.chat_cap = d),
+      image: (p) => (win.chat_cap_frame = p),
       changed: () => this.refreshCards(),
-      max: () => Math.round(FRAME_W * win.scale_factor),
+      scale: () => win.scale_factor,
     });
-    win.chat_cap_seen = (id, on) => this.chatCap.seen(id, on);
+    win.chat_cap_seen = (id, on, w) => this.chatCap.seen(id, on, w);
     win.chat_cap_pointer = (id, kind, fx, fy) => this.chatCap.pointer(id, kind, fx, fy);
     win.chat_cap_cancel = (id) => this.chatCap.cancel(id);
     // A default saved on a provider Harbor dropped reads as Claude's defaults.

@@ -532,7 +532,8 @@ export component AppWindow inherits Window {
     callback cap-cancel();
     // The open chat's captcha card: its newest frame (chatcaptcha.ts), and what the person does on it.
     in property <ChatCaptchaData> chat-cap;
-    callback chat-cap-seen(string, bool);
+    in property <image> chat-cap-frame;
+    callback chat-cap-seen(string, bool, float);
     callback chat-cap-pointer(string, string, float, float);
     callback chat-cap-cancel(string);
     in property <bool> lb-open;
@@ -943,8 +944,9 @@ export component AppWindow inherits Window {
                                 root.copy-text(t);
                             }
                             captcha: root.chat-cap;
-                            captcha-seen(id, on) => {
-                                root.chat-cap-seen(id, on);
+                            captcha-frame: root.chat-cap-frame;
+                            captcha-seen(id, on, w) => {
+                                root.chat-cap-seen(id, on, w);
                             }
                             captcha-pointer(id, kind, fx, fy) => {
                                 root.chat-cap-pointer(id, kind, fx, fy);

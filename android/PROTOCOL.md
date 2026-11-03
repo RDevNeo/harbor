@@ -1737,13 +1737,20 @@ How the phone draws them (Chat.java, CaptchaCard.java), as the desktop does:
 
 The chat's own PC answers (the hub forwards by the chat's global id, as every `/v1/chats/` call).
 The body's `action`:
-- `{"action": "frame", "max": 720}` (the card's width in pixels): `{"captcha": id, "guild": …,
-  "data": "<base64 JPEG>" (may be missing: keep the last), "width": w, "height": h, "crop": {x, y,
-  width, height}, "rect": {x, y, width, height}, "solver": {"who", "label"} | null}`. The image is
-  w × h and shows `crop` of the page (page pixels); `rect` is the captcha, in page pixels. An
-  image point (ix, iy) is page (crop.x + ix * crop.width / w, crop.y + iy * crop.height / h); the
-  dimmed rect is the inverse. The phone asks about every 500 ms, one request at a time, only while
-  the card is on screen and the chat in front (every 2 s while it answers `404` or fails).
+- `{"action": "frame", "max": 720, "after": 0, "wait": 2000}` (`max`: the card's width in pixels;
+  the PC never upscales past the crop's width): `{"captcha": id, "seq": n, "guild": …, "data":
+  "<base64 JPEG>" (may be missing: keep the last), "width": w, "height": h, "crop": {x, y, width,
+  height}, "rect": {x, y, width, height}, "solver": {"who", "label"} | null}`. A long-poll: the PC
+  answers as soon as the captcha's area repaints after frame `after` (0: at once), or after `wait`
+  ms with `"same": true` and no `data` (keep the bitmap, ask again at once). The image is w × h and
+  shows `crop` of the page (page pixels); `rect` is the captcha, in page pixels. An image point
+  (ix, iy) is page (crop.x + ix * crop.width / w, crop.y + iy * crop.height / h); the dimmed rect
+  is the inverse. The phone (CaptchaCard.java) keeps one call in flight, `after` the last `seq`,
+  starting one at most every 66 ms (about 15 frames a second), only while the card is on screen
+  and the chat in front (every 2 s while it answers `404` or fails; every 500 ms from a PC whose
+  answers have no `seq`, from before the long-poll). It decodes each JPEG on the network thread
+  into a reused bitmap and only redraws the frame (no layout) on the UI thread, dropping a frame a
+  newer one overtook.
 - `{"action": "input", "kind": "down" | "move" | "up", "x": pageX, "y": pageY, "who": "phone:<id>",
   "label": "<the phone's name>"}`: only for a press that starts inside `rect`; in order, moves only
   the newest while pressed, an `up` always after a `down` (at the captcha's edge if the finger left

@@ -1028,7 +1028,8 @@ export component Transcript {
     callback queue-menu(int, length, length);
     // The open chat's Discord captcha card (cards.ts "captcha"): its newest frame, and what the person does.
     in property <ChatCaptchaData> captcha;
-    callback captcha-seen(string, bool);
+    in property <image> captcha-frame;
+    callback captcha-seen(string, bool, float);
     callback captcha-pointer(string, string, float, float);
     callback captcha-cancel(string);
     // Scrolled within a screen of the top while earlier cards wait: the shell builds a page more.
@@ -1205,10 +1206,11 @@ export component Transcript {
                         text: c.text;
                         gone: c.result == "gone";
                         data: root.captcha;
+                        frame: root.captcha-frame;
                         avail: root.column;
                         on-screen: root.visible && cell.y + cell.height + list.content-y > 0 && cell.y + list.content-y < list.height;
-                        seen(on) => {
-                            root.captcha-seen(c.detail, on);
+                        seen(on, w) => {
+                            root.captcha-seen(c.detail, on, w);
                         }
                         pointer(kind, fx, fy) => {
                             root.captcha-pointer(c.detail, kind, fx, fy);

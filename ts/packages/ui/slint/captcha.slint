@@ -172,8 +172,7 @@ export component CaptchaPill inherits Rectangle {
 export struct ChatCaptchaData {
     id: string,
     has-frame: bool,
-    image: image,
-    // The image's own pixels: the card keeps its aspect.
+    // The first frame's size: the image's slot keeps this aspect while frames swap in (chat-cap-frame).
     width: float,
     height: float,
     // The captcha on the image, as fractions of it: the rest is dimmed and takes no clicks.
@@ -195,17 +194,23 @@ export component CaptchaCard {
     in property <length> avail;
     // On screen in the transcript: frames flow only then.
     in property <bool> on-screen;
-    callback seen(bool);
+    // The newest frame alone: it changes many times a second, nothing else does.
+    in property <image> frame;
+    // On screen or not, and the frame's width (logical px): the PC sends frames that wide.
+    callback seen(bool, float);
     // kind ("move", "down", "up"), then fractions of the image.
     callback pointer(string, float, float);
     callback cancel();
     property <bool> mine: root.data.id == root.id && root.id != "";
     property <length> frame-w: min(root.avail - 26px, 460px);
     changed on-screen => {
-        root.seen(root.on-screen);
+        root.seen(root.on-screen, root.frame-w / 1px);
+    }
+    changed frame-w => {
+        root.seen(root.on-screen, root.frame-w / 1px);
     }
     init => {
-        root.seen(root.on-screen);
+        root.seen(root.on-screen, root.frame-w / 1px);
     }
     min-height: inner.min-height;
     preferred-height: inner.preferred-height;
@@ -307,7 +312,7 @@ export component CaptchaCard {
                             Image {
                                 width: parent.width;
                                 height: parent.height;
-                                source: root.data.image;
+                                source: root.frame;
                                 image-fit: fill;
                             }
                             // The page around the captcha, dimmed: nothing there takes a click.
@@ -325,7 +330,7 @@ export component CaptchaCard {
                                     y: -parent.y;
                                     width: frame.width;
                                     height: frame.height;
-                                    source: root.data.image;
+                                    source: root.frame;
                                     image-fit: fill;
                                 }
                             }

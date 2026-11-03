@@ -77,11 +77,12 @@ export interface CaptchaData {
 }
 
 /** The newest frame of a chat's captcha card (`detail` of its card is `id`): chatcaptcha.ts fills it. */
+/** A chat's captcha card (`detail` of its card is `id`), as chatcaptcha.ts last set it: changes only when
+ * its fields do. The frames themselves go to `chat_cap_frame`, so a new one swaps only the image. */
 export interface ChatCaptchaData {
   id: string;
   has_frame: boolean;
-  image: Pixels;
-  /** The image's own pixels: the card keeps its aspect. */
+  /** The first frame's size: the image's slot keeps this aspect. */
   width: number;
   height: number;
   /** The captcha on the image, as fractions of its width and height: outside it is dimmed and takes no clicks. */
@@ -543,8 +544,9 @@ export interface AppWindow extends slint.ComponentHandle {
   cap_show: (shown: boolean) => void;
   cap_cancel: () => void;
   chat_cap: ChatCaptchaData;
-  /** A captcha card came on screen or left it (its captcha id). */
-  chat_cap_seen: (id: string, on: boolean) => void;
+  chat_cap_frame: Pixels;
+  /** A captcha card came on screen or left it (its captcha id), and its frame's width (logical px). */
+  chat_cap_seen: (id: string, on: boolean, width: number) => void;
   /** The pointer on a card's frame: kind ("move", "down", "up"), then fractions of the image. */
   chat_cap_pointer: (id: string, kind: string, fx: number, fy: number) => void;
   chat_cap_cancel: (id: string) => void;

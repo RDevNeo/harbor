@@ -3,6 +3,7 @@ package dev.harbor.app;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -23,10 +24,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** A Discord captcha waiting on a chat's agent, solved inside the chat (the desktop's captcha
  *  card; hub `POST /v1/chats/{chat}/captcha`, android/PROTOCOL.md). Chat draws it for a pending
- *  captcha notice without a later one of the same captcha. Frames come about twice a second, one
- *  request at a time, only while the card is on screen and the chat in front; taps on the captcha
- *  go back to the page as presses. Someone else solving it: "Being solved on <label>". No captcha
- *  waiting (404): one line instead. */
+ *  captcha notice without a later one of the same captcha. Frames: one call at a time that the PC
+ *  answers as soon as the captcha repaints (a long-poll, `after` the last `seq`), at most about
+ *  15 a second, only while the card is on screen and the chat in front; each JPEG is decoded on
+ *  the network thread into a reused bitmap and only drawn on the UI thread (no layout per frame).
+ *  Taps on the captcha go back to the page as presses on their own queue, never behind a frame.
+ *  Someone else solving it: "Being solved on <label>". No captcha waiting (404): one line. */
 final class CaptchaCard {
     interface Front { boolean now(); }
 
@@ -39,10 +42,23 @@ final class CaptchaCard {
     private final TextView sub, solver, loading, goneLine;
     private final LinearLayout full;
     private final TextView dontJoin;
-    private boolean attached, busy;
-    private final Runnable tick = this::tick;
+    private boolean attached;
     private boolean pressed;
     private final AtomicReference<int[]> nextMove = new AtomicReference<>();
+
+    // The frame loop: `gen` bumped stops it (a call in flight finishes, its answer is dropped).
+    private volatile int gen;
+    private boolean looping; // UI thread
+    private final Runnable watch = this::watch;
+    /** The card's width in pixels: the frame the PC sends (it never upscales past the crop). */
+    private volatile int maxW;
+    /** Bitmaps free to decode into: never the one drawn, nor the one drawn just before it (the
+     *  render thread may still be reading it). */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Bitmap> free = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private Bitmap shownBefore; // UI thread
+    /** The newest answer not drawn yet ({answer, bitmap or null}); older ones are dropped. */
+    private final Object lock = new Object();
+    private Object[] pending;
 
     /** Presses of every card go out in order, one at a time. */
     private static final ExecutorService INPUT = Executors.newSingleThreadExecutor();
@@ -58,6 +74,7 @@ final class CaptchaCard {
         this.chat = chat;
         this.id = id;
         this.front = front;
+        maxW = Math.max(320, a.getResources().getDisplayMetrics().widthPixels - Ui.dp(68));
         view = Ui.col(a);
         view.setBackground(Ui.round(Ui.CARD, Ui.LINE, 16));
         view.setPadding(Ui.dp(14), Ui.dp(12), Ui.dp(14), Ui.dp(12));
@@ -74,6 +91,7 @@ final class CaptchaCard {
         frame = new Frame(a);
         frame.setOnTouchListener((v, e) -> touch(e));
         box.addView(frame, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL));
+        box.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> { if (r - l > 0) maxW = r - l; });
         loading = Ui.text(a, "Loading the captcha…", 13, Ui.G700);
         loading.setGravity(Gravity.CENTER);
         loading.setPadding(0, Ui.dp(28), 0, Ui.dp(28));
@@ -95,8 +113,16 @@ final class CaptchaCard {
         if (was != null) show((JSONObject) was[0], (Bitmap) was[1]);
 
         view.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-            @Override public void onViewAttachedToWindow(View v) { attached = true; Ui.main.removeCallbacks(tick); Ui.main.post(tick); }
-            @Override public void onViewDetachedFromWindow(View v) { attached = false; Ui.main.removeCallbacks(tick); }
+            @Override public void onViewAttachedToWindow(View v) {
+                attached = true;
+                Ui.main.removeCallbacks(watch);
+                Ui.main.post(watch);
+            }
+            @Override public void onViewDetachedFromWindow(View v) {
+                attached = false;
+                Ui.main.removeCallbacks(watch);
+                stop();
+            }
         });
     }
 
@@ -110,60 +136,131 @@ final class CaptchaCard {
         return front.now() && view.isShown() && view.getGlobalVisibleRect(r);
     }
 
-    private void tick() {
-        if (!attached || busy) return;
-        if (!onScreen()) { Ui.main.postDelayed(tick, 1000); return; }
-        busy = true;
-        long t0 = System.currentTimeMillis();
-        int w = frame.getWidth() > 0 ? frame.getWidth() : view.getWidth() > 0 ? view.getWidth() - Ui.dp(28) : a.getResources().getDisplayMetrics().widthPixels - Ui.dp(68);
-        int max = Math.max(320, Math.min(1280, w));
-        Ui.pool.execute(() -> {
-            JSONObject r = null;
-            int code = 0;
+    /** Every 300 ms while attached: the loop runs exactly while the card is on screen. */
+    private void watch() {
+        if (!attached) return;
+        boolean want = onScreen();
+        if (want && !looping) {
+            looping = true;
+            int my = ++gen;
+            Ui.pool.execute(() -> loop(my));
+        } else if (!want && looping) {
+            stop();
+        }
+        Ui.main.postDelayed(watch, 300);
+    }
+
+    private void stop() {
+        looping = false;
+        gen++;
+    }
+
+    /** The frame loop, on a pool thread: one call in flight, the next `after` the last `seq`. */
+    private void loop(int my) {
+        long after = 0;
+        while (my == gen) {
+            long t0 = android.os.SystemClock.uptimeMillis();
+            JSONObject r;
             try {
-                r = hub.call("POST", "/v1/chats/" + chat + "/captcha", new JSONObject().put("action", "frame").put("max", max), 10_000);
-            } catch (Hub.ApiError e) {
-                code = e.code;
+                JSONObject body = new JSONObject().put("action", "frame").put("max", maxW).put("after", after).put("wait", DiscordKit.WAIT);
+                r = hub.call("POST", "/v1/chats/" + chat + "/captcha", body, Hub.TIMEOUT);
             } catch (Exception e) {
-                code = -1;
+                if (my != gen) return;
+                if (e instanceof Hub.ApiError && ((Hub.ApiError) e).code == 404) Ui.main.post(() -> { if (my == gen) gone(); });
+                pause(DiscordKit.BACKOFF);
+                continue;
             }
-            Bitmap b = r == null ? null : DiscordCaptcha.decode(r.optString("data", ""));
-            JSONObject got = r;
-            int fc = code;
-            Ui.main.post(() -> {
-                busy = false;
-                if (got != null) {
-                    Object[] keep;
-                    synchronized (last) {
-                        Object[] was = last.get(key());
-                        keep = new Object[] { got, b != null ? b : was == null ? null : was[1] };
-                        last.put(key(), keep);
-                    }
-                    if (!a.isDestroyed()) show(got, (Bitmap) keep[1]);
-                } else if (fc == 404) {
-                    gone();
-                }
-                if (!attached) return;
-                long wait = got != null ? Math.max(0, 500 - (System.currentTimeMillis() - t0)) : 2000;
-                Ui.main.postDelayed(tick, wait);
-            });
-        });
+            if (my != gen) return;
+            boolean longPoll = r.has("seq");
+            if (longPoll) after = r.optLong("seq");
+            // The JPEG is decoded here, off the UI thread; a `same` answer has none.
+            Bitmap b = r.optBoolean("same") ? null : decode(r.optString("data", ""));
+            deliver(my, r, b);
+            pause(DiscordKit.nextCall(longPoll, t0, android.os.SystemClock.uptimeMillis()));
+        }
+    }
+
+    private static void pause(long ms) {
+        if (ms <= 0) return;
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) { }
+    }
+
+    /** data into a bitmap of `free` when one fits, else a new one. */
+    private Bitmap decode(String data) {
+        byte[] jpeg = DiscordCaptcha.jpeg(data);
+        if (jpeg == null) return null;
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inMutable = true;
+        o.inBitmap = free.poll();
+        try {
+            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o);
+        } catch (IllegalArgumentException e) {
+            o.inBitmap = null; // too small for this frame
+            try { return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o); } catch (Exception x) { return null; }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Hands an answer to the UI thread; one not drawn yet is replaced (its bitmap kept when the
+     *  newer one brings none). */
+    private void deliver(int my, JSONObject r, Bitmap b) {
+        boolean post;
+        synchronized (lock) {
+            post = pending == null;
+            if (pending != null && pending[1] != null) {
+                if (b == null) b = (Bitmap) pending[1];
+                else free.offer((Bitmap) pending[1]); // never drawn
+            }
+            pending = new Object[] { r, b };
+        }
+        if (post) Ui.main.post(() -> draw(my));
+    }
+
+    private void draw(int my) {
+        Object[] p;
+        synchronized (lock) { p = pending; pending = null; }
+        if (p == null) return;
+        JSONObject r = (JSONObject) p[0];
+        Bitmap b = (Bitmap) p[1];
+        if (my != gen || a.isDestroyed()) {
+            if (b != null) free.offer(b);
+            return;
+        }
+        synchronized (last) {
+            Object[] was = last.get(key());
+            last.put(key(), new Object[] { r, b != null ? b : was == null ? null : was[1] });
+        }
+        Bitmap old = b != null ? frame.bmp : null;
+        show(r, b);
+        if (old != null && old != b) {
+            // The one drawn before this one goes back to `free` a frame later.
+            if (shownBefore != null) free.offer(shownBefore);
+            shownBefore = old;
+        }
     }
 
     private static int[] box(JSONObject o) {
         return o == null ? null : new int[] { o.optInt("x"), o.optInt("y"), o.optInt("width"), o.optInt("height") };
     }
 
+    /** An answer on the card: only what changed is touched; a new bitmap is only drawn. */
     private void show(JSONObject r, Bitmap b) {
-        full.setVisibility(View.VISIBLE);
-        goneLine.setVisibility(View.GONE);
-        if (r.has("guild")) sub.setText(DiscordKit.cardIntro(r.isNull("guild") ? "" : r.optString("guild")));
+        if (full.getVisibility() != View.VISIBLE) full.setVisibility(View.VISIBLE);
+        if (goneLine.getVisibility() != View.GONE) goneLine.setVisibility(View.GONE);
+        if (r.has("guild")) setText(sub, DiscordKit.cardIntro(r.isNull("guild") ? "" : r.optString("guild")));
         int iw = r.optInt("width"), ih = r.optInt("height");
         int[] crop = box(r.optJSONObject("crop"));
         if (crop == null && iw > 0 && ih > 0) crop = new int[] { 0, 0, iw, ih };
-        frame.set(iw, ih, crop, box(r.optJSONObject("rect")), b);
-        if (frame.bmp != null) loading.setVisibility(View.GONE);
-        solver(r.optJSONObject("solver"));
+        int[] rect = box(r.optJSONObject("rect"));
+        if (iw > 0 && ih > 0) frame.set(iw, ih, crop, rect != null ? rect : frame.rect, b);
+        else if (b != null) frame.set(frame.iw, frame.ih, frame.crop, frame.rect, b);
+        if (frame.bmp != null && loading.getVisibility() != View.GONE) loading.setVisibility(View.GONE);
+        if (r.has("solver")) solver(r.optJSONObject("solver"));
+    }
+
+    private static void setText(TextView t, String s) {
+        if (!s.contentEquals(t.getText())) t.setText(s);
     }
 
     /** Someone else solving it (another phone, a PC): said under the frame. */
@@ -171,8 +268,9 @@ final class CaptchaCard {
         String who = s == null ? "" : s.optString("who");
         String label = s == null ? "" : s.optString("label");
         boolean other = s != null && !who.equals(me());
-        solver.setText("Being solved on " + (label.isEmpty() ? "another device" : label));
-        solver.setVisibility(other ? View.VISIBLE : View.GONE);
+        if (other) setText(solver, "Being solved on " + (label.isEmpty() ? "another device" : label));
+        int vis = other ? View.VISIBLE : View.GONE;
+        if (solver.getVisibility() != vis) solver.setVisibility(vis);
     }
 
     private void gone() {
@@ -308,8 +406,9 @@ final class CaptchaCard {
             dim.setColor(0x59000000);
         }
 
+        /** A frame: laid out again only for the first bitmap or a new shape, else only drawn. */
         void set(int w, int h, int[] cr, int[] r, Bitmap b) {
-            boolean resize = w != iw || h != ih || (bmp == null && b != null);
+            boolean resize = DiscordKit.reshapes(iw, ih, w, h) || (bmp == null && b != null);
             iw = w;
             ih = h;
             crop = cr;

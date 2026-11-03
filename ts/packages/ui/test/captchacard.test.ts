@@ -6,6 +6,7 @@ import { inChat } from "../src/captchapane.ts";
 import { ChatCaptcha, type ChatCaptchaDeps } from "../src/chatcaptcha.ts";
 import { fakeCaptcha, pngSize } from "../src/fakecaptcha.ts";
 import { captchaNote, captchaRoles, clampTo, frame, inBox, rectOnImage, solvingLine, toPage } from "../src/logic/captchacard.ts";
+import type { Pixels } from "../src/logos.ts";
 import type { ChatCaptchaData } from "../src/window.ts";
 
 const note = (id: string, state: string, text = `captcha ${state}`, guild: string | null = "Big Server"): Item => ({ kind: "notice", icon: "captcha", text, detail: JSON.stringify({ captcha: id, state, guild }) });
@@ -64,7 +65,8 @@ test("image points to page pixels, and the captcha on the image", () => {
 });
 
 test("a frame answer, and who holds it", () => {
-  expect(frame({ captcha: "a", width: 10, height: 5 })).toEqual({ captcha: "a", guild: null, data: null, width: 10, height: 5, crop: { x: 0, y: 0, width: 10, height: 5 }, rect: null, solver: null });
+  expect(frame({ captcha: "a", width: 10, height: 5 })).toEqual({ captcha: "a", guild: null, data: null, width: 10, height: 5, crop: { x: 0, y: 0, width: 10, height: 5 }, rect: null, solver: null, seq: 0, same: false });
+  expect(frame({ captcha: "a", seq: 9, same: true })).toMatchObject({ seq: 9, same: true, data: null });
   expect(frame({})).toBeNull();
   expect(solvingLine(null, "pc:me")).toBe("");
   expect(solvingLine({ who: "pc:me", label: "Me" }, "pc:me")).toBe("");
@@ -79,75 +81,219 @@ test("the overlay stays away from a captcha that has a chat", () => {
 });
 
 const chat = { id: 7, home: "" } as Chat;
-const pixels = { width: 1, height: 1, data: new Uint8Array(4) };
+type Answer = { status: number; body: unknown };
 
-function rig(answers: { status: number; body: unknown }[]) {
-  const calls: Record<string, unknown>[] = [];
+/** A ChatCaptcha on a fake chatCaptcha and a virtual clock: frame answers come from `answers`, and once
+ * they run out a request waits (`held`) until the test answers it. */
+function rig(answers: Answer[], o: { holdDecode?: boolean } = {}) {
+  const calls: (Record<string, unknown> & { t: number })[] = [];
   const shown: ChatCaptchaData[] = [];
+  const images: Pixels[] = [];
+  const decoded: string[] = [];
+  const decodes: (() => void)[] = [];
+  let held: ((a: Answer) => void) | null = null;
   let looking = true;
+  let open = chat;
+  let failing = 0;
   let changed = 0;
+  let t = 1000;
   const deps: ChatCaptchaDeps = {
-    call: async (_c, body) => {
-      calls.push(body);
+    call: async (c, body) => {
+      calls.push({ ...body, t, chat: c.id });
       if (body.action !== "frame") return { status: 200, body: body.action === "input" ? { taken: true, solver: { who: "pc:me", label: "Me" } } : {} };
-      return answers.shift() ?? { status: 404, body: {} };
+      const a = answers.shift();
+      return a ?? new Promise<Answer>((done) => (held = done));
     },
-    chat: () => chat,
+    chat: () => open,
     looking: () => looking,
-    decode: async () => pixels,
+    decode: async (b) => {
+      const name = Buffer.from(b).toString();
+      if (failing > 0) {
+        failing--;
+        return null;
+      }
+      if (o.holdDecode) await new Promise<void>((done) => decodes.push(done));
+      decoded.push(name);
+      return { width: name.length, height: 1, data: new Uint8Array(4 * name.length) };
+    },
     me: () => ({ who: "pc:me", label: "Me" }),
     show: (d) => shown.push(d),
+    image: (p) => images.push(p),
     changed: () => changed++,
-    max: () => 460,
+    scale: () => 2,
+    now: () => t,
+    sleep: async (ms) => {
+      t += ms;
+      await Promise.resolve();
+    },
   };
   const cap = new ChatCaptcha(deps);
-  return { cap, calls, shown, changed: () => changed, hide: () => (looking = false) };
+  const frames = () => calls.filter((c) => c.action === "frame");
+  /** The request waiting now, to answer later. */
+  const take = () => {
+    const h = held;
+    held = null;
+    return (a: Answer) => h?.(a);
+  };
+  const answer = (a: Answer) => take()(a);
+  return { cap, calls, frames, shown, images, decoded, decodes, answer, changed: () => changed, hide: () => (looking = false), held: () => held !== null, open: (c: Chat) => (open = c), take, failDecode: (n: number) => (failing = n) };
 }
 
-const ok = (extra: Record<string, unknown> = {}) => ({ status: 200, body: { captcha: "a", guild: "G", data: "AAAA", width: 400, height: 300, crop: { x: 0, y: 0, width: 800, height: 600 }, rect: { x: 200, y: 150, width: 400, height: 300 }, solver: null, ...extra } });
+const flush = () => Bun.sleep(2);
+const b64 = (s: string) => Buffer.from(s).toString("base64");
+const ok = (extra: Record<string, unknown> = {}): Answer => ({ status: 200, body: { captcha: "a", guild: "G", data: b64("A"), width: 400, height: 300, crop: { x: 0, y: 0, width: 800, height: 600 }, rect: { x: 200, y: 150, width: 400, height: 300 }, solver: null, seq: 1, ...extra } });
+const same = (seq: number): Answer => ({ status: 200, body: { captcha: "a", guild: "G", width: 400, height: 300, crop: { x: 0, y: 0, width: 800, height: 600 }, rect: { x: 200, y: 150, width: 400, height: 300 }, solver: null, seq, same: true } });
 
-test("frames come only while the card is on screen and the window shown", async () => {
-  const r = rig([ok(), ok()]);
+test("frames long-poll: after the last seq, the card's real pixel width, no decode for `same`", async () => {
+  const r = rig([ok({ seq: 3 }), same(3), same(3), ok({ seq: 5, data: b64("B") })]);
   r.cap.cards(7, ["a"]);
-  await Bun.sleep(10);
+  await flush();
   expect(r.calls).toEqual([]);
-  r.cap.seen("a", true);
-  await Bun.sleep(10);
-  expect(r.calls).toEqual([{ action: "frame", max: 460 }]);
+  r.cap.seen("a", true, 300);
+  await flush();
+  expect(r.frames().map((c) => [c.after, c.max, c.wait])).toEqual([
+    [0, 600, 2000],
+    [3, 600, 2000],
+    [3, 600, 2000],
+    [3, 600, 2000],
+    [5, 600, 2000],
+  ]);
+  expect(r.decoded).toEqual(["A", "B"]);
+  expect(r.images.length).toBe(2);
   expect(r.shown.at(-1)).toMatchObject({ id: "a", has_frame: true, width: 400, height: 300, rx: 0.25, ry: 0.25, rw: 0.5, rh: 0.5, solving: "" });
-  r.cap.seen("a", false);
-  await Bun.sleep(450);
-  expect(r.calls.length).toBe(1);
   r.cap.stop();
+  r.answer(same(5));
 });
 
-test("404: the card's captcha waits no more", async () => {
+test("a frame that couldn't be drawn is asked for again: after 0", async () => {
+  const r = rig([ok({ seq: 4 }), same(4)]);
+  r.failDecode(1);
+  r.cap.cards(7, ["a"]);
+  r.cap.seen("a", true);
+  await flush();
+  expect(r.frames().map((c) => c.after)).toEqual([0, 0, 0]);
+  r.cap.stop();
+  r.answer(same(0));
+});
+
+test("at most one request every 50 ms, even when answers come at once", async () => {
+  const r = rig([ok(), same(1), same(1), same(1)]);
+  r.cap.cards(7, ["a"]);
+  r.cap.seen("a", true);
+  await flush();
+  const starts = r.frames().map((c) => c.t);
+  expect(starts.length).toBe(5);
+  for (let i = 1; i < starts.length; i++) expect((starts[i] ?? 0) - (starts[i - 1] ?? 0)).toBeGreaterThanOrEqual(50);
+  r.cap.stop();
+  r.answer(same(1));
+});
+
+test("hidden: the loop stops, and the answer still on its way is dropped", async () => {
+  const r = rig([]);
+  r.cap.cards(7, ["a"]);
+  r.cap.seen("a", true);
+  await flush();
+  expect(r.held()).toBe(true);
+  r.hide();
+  r.answer(ok());
+  await flush();
+  expect(r.decoded).toEqual([]);
+  expect(r.shown).toEqual([]);
+  expect(r.frames().length).toBe(1);
+  expect(r.cap.looping).toBe(false);
+});
+
+test("scrolled away: no new request after the one in flight", async () => {
+  const r = rig([]);
+  r.cap.cards(7, ["a"]);
+  r.cap.seen("a", true);
+  await flush();
+  r.cap.seen("a", false);
+  r.answer(same(0));
+  await flush();
+  expect(r.frames().length).toBe(1);
+  expect(r.cap.looping).toBe(false);
+  // Back on screen: it starts again.
+  r.cap.seen("a", true);
+  await flush();
+  expect(r.frames().length).toBe(2);
+  r.cap.stop();
+  r.answer(same(0));
+});
+
+test("another chat: its frames start at once; the old chat's answer is dropped", async () => {
+  const r = rig([]);
+  r.cap.cards(7, ["a"]);
+  r.cap.seen("a", true);
+  await flush();
+  const old = r.take();
+  const other = { id: 8, home: "" } as Chat;
+  r.open(other);
+  r.cap.cards(8, ["z"]);
+  r.cap.seen("z", true);
+  await flush();
+  expect(r.frames().map((c) => [c.chat, c.after])).toEqual([
+    [7, 0],
+    [8, 0],
+  ]);
+  old(ok());
+  await flush();
+  expect(r.decoded).toEqual([]);
+  expect(r.cap.gone("a")).toBe(false);
+  expect(r.frames().length).toBe(2);
+  r.cap.stop();
+  r.answer(same(0));
+});
+
+test("404: the card's captcha waits no more, and the next ask is 2 s later", async () => {
   const r = rig([{ status: 404, body: {} }]);
   r.cap.cards(7, ["a"]);
   r.cap.seen("a", true);
-  await Bun.sleep(10);
+  await flush();
   expect(r.cap.gone("a")).toBe(true);
   expect(r.changed()).toBe(1);
+  const [first, second] = r.frames();
+  expect((second?.t ?? 0) - (first?.t ?? 0)).toBeGreaterThanOrEqual(2000);
   r.cap.stop();
+  r.answer(same(0));
+});
+
+test("a frame that comes while one decodes takes the place of the one waiting; the slot keeps the first aspect", async () => {
+  const r = rig([ok({ data: b64("A") }), ok({ seq: 2, data: b64("BB"), width: 400, height: 200 }), ok({ seq: 3, data: b64("CCC"), width: 400, height: 200 })], { holdDecode: true });
+  r.cap.cards(7, ["a"]);
+  r.cap.seen("a", true);
+  await flush();
+  expect(r.held()).toBe(true);
+  expect(r.decodes.length).toBe(1);
+  r.decodes.shift()?.();
+  await flush();
+  r.decodes.shift()?.();
+  await flush();
+  expect(r.decoded).toEqual(["A", "CCC"]);
+  expect(r.images.map((p) => p.width)).toEqual([1, 3]);
+  expect(r.shown.at(-1)).toMatchObject({ width: 400, height: 300 });
+  r.cap.stop();
+  r.answer(same(3));
 });
 
 test("another captcha in the answer: the older card's is gone; another device holding it is said", async () => {
   const r = rig([ok({ captcha: "b", solver: { who: "phone:1", label: "Pixel" } })]);
   r.cap.cards(7, ["a", "b"]);
   r.cap.seen("a", true);
-  await Bun.sleep(10);
+  await flush();
   expect(r.cap.gone("a")).toBe(true);
   expect(r.cap.gone("b")).toBe(false);
   expect(r.shown.at(-1)).toMatchObject({ id: "b", solving: "Being solved on Pixel" });
   r.cap.stop();
+  r.answer(same(1));
 });
 
-test("only points inside the captcha go, in page pixels: presses in order, moves the newest", async () => {
+test("only points inside the captcha go, in page pixels, while a frame request waits", async () => {
   const r = rig([ok()]);
   r.cap.cards(7, ["a"]);
   r.cap.seen("a", true);
-  await Bun.sleep(10);
-  r.cap.stop();
+  await flush();
+  expect(r.held()).toBe(true);
   r.cap.pointer("a", "down", 0.1, 0.1); // outside: nothing
   r.cap.pointer("a", "move", 0.3, 0.3);
   r.cap.pointer("a", "move", 0.4, 0.4);
@@ -162,14 +308,16 @@ test("only points inside the captcha go, in page pixels: presses in order, moves
     ["down", 400, 300, "pc:me", "Me"],
     ["up", 599, 300, "pc:me", "Me"],
   ]);
+  r.cap.stop();
+  r.answer(same(1));
 });
 
 test("Don't join asks the host to close it", async () => {
-  const r = rig([ok()]);
+  const r = rig([]);
   r.cap.cards(7, ["a"]);
   r.cap.cancel("a");
-  await Bun.sleep(10);
-  expect(r.calls).toContainEqual({ action: "cancel", who: "pc:me" });
+  await flush();
+  expect(r.calls).toContainEqual(expect.objectContaining({ action: "cancel", who: "pc:me" }));
   r.cap.stop();
 });
 
@@ -185,7 +333,13 @@ test("the fake: a pending notice after the chat's items, frames until Don't join
   if (f === null) throw new Error("no fake");
   const items = f.items([user("hi")]);
   expect(captchaRoles(items).get(1)?.role).toBe("card");
-  expect((await f.call(chat, { action: "frame" })).status).toBe(200);
+  const first = (await f.call(chat, { action: "frame", after: 0 })).body as { seq: number; data?: string };
+  expect(first.data).toBeDefined();
+  // Nothing repainted: `same` after the wait; a press repaints it and answers the poll waiting.
+  expect(await f.call(chat, { action: "frame", after: first.seq, wait: 10 })).toMatchObject({ status: 200, body: { same: true, seq: first.seq } });
+  const poll = f.call(chat, { action: "frame", after: first.seq, wait: 2000 });
+  await f.call(chat, { action: "input", kind: "down", x: 1, y: 1, who: "pc:me", label: "Me" });
+  expect(((await poll).body as { data?: string; seq: number }).seq).toBe(first.seq + 1);
   await f.call(chat, { action: "cancel" });
   expect((await f.call(chat, { action: "frame" })).status).toBe(404);
   expect(fakeCaptcha({})).toBeNull();

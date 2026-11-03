@@ -352,6 +352,13 @@ test("a captcha in a chat: its card's frames, one solver at a time, and the chat
   const f = await chatCaptcha(42, { action: "frame", max: 300 });
   expect(f).toMatchObject({ status: 200, body: { captcha: c.id, guild: "Devs", width: 300, crop: { x: 376, y: 176 }, rect: { x: 400, y: 200 }, solver: null } });
   expect(ops("captcha_frame").at(-1)).toMatchObject({ crop: true, max: 300 });
+  // A card that has a frame waits for the next one; nothing new is just its seq, without the image.
+  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "7", name: "Devs" } } }, captcha: { showing: true, joined: false, seq: 4 } });
+  expect(await chatCaptcha(42, { action: "frame", max: 300, after: 3, wait: 500 })).toMatchObject({ status: 200, body: { seq: 4, data: Buffer.from("live").toString("base64"), crop: { x: 376 } } });
+  expect(ops("captcha_frame").at(-1)).toMatchObject({ crop: true, after: 3, wait: 500 });
+  const same = await chatCaptcha(42, { action: "frame", max: 300, after: 4 });
+  expect(same.body).toMatchObject({ seq: 4, same: true });
+  expect((same.body as Record<string, unknown>).data).toBeUndefined();
   // The first device to press holds the pointer; another one is told who has it.
   expect(await chatCaptcha(42, { action: "input", kind: "down", x: 450, y: 250, who: "pc:a", label: "Desk" })).toMatchObject({ body: { taken: true, solver: { who: "pc:a", label: "Desk" } } });
   expect(await chatCaptcha(42, { action: "input", kind: "down", x: 450, y: 250, who: "phone:b", label: "Phone" })).toMatchObject({ body: { taken: false, solver: { label: "Desk" } } });

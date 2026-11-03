@@ -18,7 +18,7 @@ type Plan = {
   /** Tools whose call fails, with the page's error. */
   throws?: Record<string, string>;
   /** A captcha on the page: whether it shows, and whether the join it held has landed. */
-  captcha?: { showing: boolean; joined: boolean; error?: string };
+  captcha?: { showing: boolean; joined: boolean; error?: string; seq?: number };
 };
 
 const cfg = JSON.parse(process.env.HARBOR_DISCORD ?? "{}") as { mode: string; data: string; page: string; vencord: string; url: string | null };
@@ -63,7 +63,11 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
   capture: () => ({ data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png", width: 10, height: 10, bytes: 9 }),
   captcha: () => ({ showing: plan().captcha?.showing ?? false, rect: plan().captcha?.showing ? { x: 400, y: 200, width: 300, height: 200 } : null, pending: { joined: plan().captcha?.joined ?? false, error: plan().captcha?.error ?? null } }),
   captcha_frame: (m) =>
-    m.crop === true
+    m.crop === true && typeof m.after === "number"
+      ? (plan().captcha?.seq ?? 1) > m.after
+        ? { showing: true, rect: { x: 400, y: 200, width: 300, height: 200 }, crop: { x: 376, y: 176, width: 348, height: 248 }, seq: plan().captcha?.seq ?? 1, width: 348, height: 248, mimeType: "image/jpeg", data: Buffer.from("live").toString("base64") }
+        : { showing: true, rect: { x: 400, y: 200, width: 300, height: 200 }, crop: { x: 376, y: 176, width: 348, height: 248 }, seq: plan().captcha?.seq ?? 1, same: true }
+      : m.crop === true
       ? { showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, crop: { x: 376, y: 176, width: 348, height: 248 }, width: Math.min(348, Number(m.max) || 348), height: 248, mimeType: "image/jpeg", data: Buffer.from("crop").toString("base64") }
       : { showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, width: 1280, height: 720, mimeType: "image/jpeg", data: Buffer.from("jpeg").toString("base64") },
   captcha_input: (m) => ({ taken: m.x === 450 }),
@@ -77,7 +81,7 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
 
 createInterface({ input: process.stdin }).on("line", (line) => {
   const m = JSON.parse(line) as Record<string, unknown>;
-  log({ op: m.op, name: m.name, args: m.args, ...(m.kind !== undefined ? { kind: m.kind, x: m.x, y: m.y } : {}), ...(m.crop !== undefined ? { crop: m.crop, max: m.max } : {}) });
+  log({ op: m.op, name: m.name, args: m.args, ...(m.kind !== undefined ? { kind: m.kind, x: m.x, y: m.y } : {}), ...(m.crop !== undefined ? { crop: m.crop, max: m.max, after: m.after, wait: m.wait } : {}) });
   if ((plan().silent ?? []).includes(String(m.op))) return;
   try {
     const f = ops[String(m.op)] ?? (cfg.mode === "scratch" ? (): unknown => plan().scratch?.[String(m.op)] ?? { scratch: m.op } : undefined);

@@ -43,6 +43,12 @@ const server = http.createServer((req, res) => {
         return;
     }
     // hCaptcha's frame: one button, pressed only by a real click inside it.
+    // An image grid like hCaptcha's: a real click toggles a cell; a bar moves while it waits (frame rate).
+    if (u.pathname === "/hcaptcha.com/grid") {
+        res.setHeader("content-type", "text/html");
+        const anim = u.searchParams.has("anim") ? "animation:m 1s linear infinite" : "";
+        return res.end(`<!doctype html><style>body{margin:0;background:#fff;font:12px sans-serif}#g{display:grid;grid-template-columns:repeat(3,100px);gap:0}#g div{height:60px;background:#8ab}#g div.on{background:#e74}#bar{height:20px;width:20px;background:#333;${anim}}@keyframes m{from{margin-left:0}to{margin-left:280px}}</style><div id="g">${"<div></div>".repeat(9)}</div><div id="bar"></div><script>for(const d of document.querySelectorAll("#g div"))d.addEventListener("click",e=>{if(e.isTrusted)d.classList.toggle("on")});</script>`);
+    }
     if (u.pathname === "/hcaptcha.com/challenge") {
         res.setHeader("content-type", "text/html");
         return res.end(`<!doctype html><body style="margin:0;background:#fff"><button style="width:300px;height:200px" onclick="if (event.isTrusted) { navigator.sendBeacon('/rig/solved', '{}'); parent.postMessage('solved', '*'); }">I am human</button>`);
@@ -362,6 +368,71 @@ await scenario("captcha-chat", async () => {
     const notes = fs.readFileSync(app + "/notices.jsonl", "utf8").trim().split("\n").map(l => JSON.parse(l));
     check(notes[0].chat === 5 && notes[0].captcha?.state === "pending" && notes.at(-1).chat === 5 && notes.at(-1).captcha?.state === "joined", "the chat gets the card, then its outcome", JSON.stringify(notes.map(n => [n.chat, n.captcha?.state])));
     check((await cc(5, { action: "frame" }))?.status === 404, "and the card's frames stop");
+    m.close();
+    delete env.HARBOR_CHAT_ID;
+});
+
+// Not a check of behaviour but a measure: how fluid a chat's captcha card is, for the timer poll
+// the cards used (400 ms) and the long-poll (`after`), against the same fake grid.
+await scenario("captcha-perf", async () => {
+    account();
+    write("pace.json", "[]");
+    env.HARBOR_CHAT_ID = "5";
+    const m = new Mcp();
+    await m.rpc("initialize", {});
+    const cc = async (body) => (await hostOp({ op: "chat_captcha", chat: 5, body }))?.result;
+    const hash = d => (d ? d.length + ":" + d.slice(-64) : "");
+    const avg = a => Math.round(a.reduce((x, y) => x + y, 0) / Math.max(1, a.length));
+    const out = {};
+    // Frame rate, with something moving in the captcha.
+    await m.tool("discord_join", { invite: "captchagridanim1", apply: true });
+    let f = await cc({ action: "frame", max: 460 });
+    const lat = [], bytes = [];
+    for (let i = 0; i < 10; i++) { const t = Date.now(); f = await cc({ action: "frame", max: 460 }); lat.push(Date.now() - t); bytes.push(f?.body?.data?.length ?? 0); }
+    out.frameRequestMs = avg(lat); out.frameBytes = Math.round(avg(bytes) * 3 / 4);
+    let n = 0, last = "", t0 = Date.now();
+    while (Date.now() - t0 < 3000) { const r = await cc({ action: "frame", max: 460 }); if (hash(r?.body?.data) !== last) { n++; last = hash(r?.body?.data); } await sleep(400); }
+    out.pollFps = +(n / 3).toFixed(1);
+    const first = await cc({ action: "frame", max: 460, after: 0 });
+    if (first?.body?.seq !== undefined) {
+        n = 0; let seq = first.body.seq; t0 = Date.now();
+        const lpLat = [], lpBytes = [];
+        while (Date.now() - t0 < 3000) { const t = Date.now(); const r = await cc({ action: "frame", max: 460, after: seq }); if (r?.body?.seq !== undefined && r.body.seq !== seq && r.body.data) { n++; seq = r.body.seq; lpLat.push(Date.now() - t); lpBytes.push(r.body.data.length); } }
+        out.longPollFps = +(n / 3).toFixed(1); out.longPollFrameMs = avg(lpLat); out.longPollBytes = Math.round(avg(lpBytes) * 3 / 4);
+    }
+    await cc({ action: "cancel", who: "pc:a" });
+    await until(async () => (await status()).captcha === null, 15000, "the first captcha to end");
+    // Tap to visible change, on a still grid.
+    write("pace.json", "[]");
+    await m.tool("discord_join", { invite: "captchagrid22", apply: true });
+    f = await cc({ action: "frame", max: 460 });
+    const rect = f.body.rect;
+    const cells = [[50, 30], [150, 30], [250, 30], [50, 90], [150, 90], [250, 90]];
+    const tapPoll = [], tapLong = [], inputMs = [];
+    for (const [i, [cx, cy]] of cells.entries()) {
+        const x = rect.x + cx, y = rect.y + cy;
+        const longPoll = i % 2 === 1;
+        let before = await cc(longPoll ? { action: "frame", max: 460, after: 0 } : { action: "frame", max: 460 });
+        const t = Date.now();
+        for (const kind of ["move", "down", "up"]) await cc({ action: "input", kind, x, y, who: "pc:a", label: "Desk" });
+        inputMs.push(Date.now() - t);
+        if (longPoll) {
+            let seq = before.body.seq;
+            for (;;) { const r = await cc({ action: "frame", max: 460, after: seq }); if (r?.body?.data && hash(r.body.data) !== hash(before.body.data)) break; seq = r?.body?.seq ?? seq; if (Date.now() - t > 5000) break; }
+            tapLong.push(Date.now() - t);
+        } else {
+            await sleep(Math.random() * 400);
+            for (;;) { const r = await cc({ action: "frame", max: 460 }); if (hash(r?.body?.data) !== hash(before.body.data)) break; if (Date.now() - t > 5000) break; await sleep(400); }
+            tapPoll.push(Date.now() - t);
+        }
+    }
+    out.inputMs = avg(inputMs); out.tapToChangePollMs = avg(tapPoll);
+    if (tapLong.length) out.tapToChangeLongPollMs = avg(tapLong);
+    console.log("       measured:", JSON.stringify(out));
+    check(out.longPollFps >= 10, "the card gets 10+ frames a second while the captcha moves", out.longPollFps);
+    check(out.tapToChangeLongPollMs < 200, "a click shows in the card in under 200 ms (same PC)", out.tapToChangeLongPollMs);
+    await cc({ action: "cancel", who: "pc:a" });
+    await until(async () => (await status()).captcha === null, 15000, "the second captcha to end");
     m.close();
     delete env.HARBOR_CHAT_ID;
 });

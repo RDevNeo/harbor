@@ -81,7 +81,7 @@
                 const id = "30000000000000000" + inviteKey.length;
                 report("join", { inviteKey });
                 // As on Discord: the join waits for a captcha a person solves, in hCaptcha's own frame.
-                if (inviteKey.startsWith("captcha")) await captcha();
+                if (inviteKey.startsWith("captcha")) await captcha(inviteKey.startsWith("captchagridanim") ? "grid?anim=1" : inviteKey.startsWith("captchagrid") ? "grid" : "challenge");
                 memberOf[id] = { id, name: "Joined " + inviteKey };
             },
         },
@@ -102,11 +102,11 @@
     };
     stores.Reactions.a = async (c, m, e) => { void '"MESSAGE_REACTION_ADD"'; report("react", { c, m, e }); };
     stores.Reactions.b = async () => { void '"MESSAGE_REACTION_REMOVE"'; };
-    function captcha() {
+    function captcha(kind) {
         return new Promise((resolve, reject) => {
             const f = document.createElement("iframe");
             // Another site, as hCaptcha is: its own frame process.
-            f.src = rig.replace("127.0.0.1", "localhost") + "/hcaptcha.com/challenge";
+            f.src = rig.replace("127.0.0.1", "localhost") + "/hcaptcha.com/" + kind;
             f.style.cssText = "position:fixed;left:400px;top:200px;width:300px;height:200px;border:0";
             document.body.append(f);
             const done = ok => { f.remove(); removeEventListener("message", heard); removeEventListener("keydown", esc); ok ? resolve() : reject(new Error("captcha closed")); };
