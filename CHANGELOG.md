@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.2] - 2026-11-03
+
 ### Fixed
 - Discord: an update could lose a captcha that was waiting for you: the join didn't happen, and
   neither the card nor `discord_status` said anything. An update now waits until the captcha ends
