@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- A chat that Auto moved to another PC says "Auto → <PC>" on that PC too (the composer's Runs on
+  chip, the phone's Device row and chat header), not only on the PC it came from. The move tells
+  the receiving PC that Auto chose it; a move picked by hand, or one from a PC that doesn't say,
+  isn't Auto's. A chat Auto placed on the PC you're looking at is named by that PC's own name
+  ("Auto → desk") on the desktop as on the phone, instead of "Auto → This PC".
+
 ## [0.130.0] - 2026-11-03
 
 ### Changed

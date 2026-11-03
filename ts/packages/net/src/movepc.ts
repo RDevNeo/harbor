@@ -580,6 +580,8 @@ export async function sendHandoff(h: MoveHandoff, deps: MoveSendDeps = {}): Prom
 /** One chat of the handoff, as the app holds it. */
 export interface MoveChat {
   gid: string;
+  /** Auto chose the receiving PC. Missing on older peers: false. */
+  auto_placed?: boolean;
   title: string;
   session_id: string;
   started: boolean;
@@ -916,11 +918,12 @@ export function movedHereDetail(i: {
 }
 
 /** A received chat (one entry of `move.json`) as the fields a chat here gets. */
-export function receivedChat(m: unknown): { gid: string; title: string; session_id: string; started: boolean; model: string; effort: string; access: string; settled: boolean; retired: boolean; role: string; parent: string | null; name: string; items: unknown } {
+export function receivedChat(m: unknown): { gid: string; auto_placed: boolean; title: string; session_id: string; started: boolean; model: string; effort: string; access: string; settled: boolean; retired: boolean; role: string; parent: string | null; name: string; items: unknown } {
   const o = obj(m);
   const s = (k: string) => str(o[k]) ?? "";
   return {
     gid: s("gid"),
+    auto_placed: o.auto_placed === true,
     title: s("title"),
     session_id: s("session_id"),
     started: bool(o.started) ?? false,

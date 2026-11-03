@@ -768,6 +768,10 @@ export class Store {
     settingChanged(k);
   }
 
+  del(k: string): void {
+    this.db.query("DELETE FROM kv WHERE k=?1").run(k);
+  }
+
   /** Every key starting with `prefix`, with its value (non-empty ones only). */
   withPrefix(prefix: string): [string, string][] {
     const rows = this.db.query("SELECT k, v FROM kv WHERE substr(k, 1, length(?1)) = ?1 AND v != ''").all(prefix) as Row[];

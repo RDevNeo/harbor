@@ -197,8 +197,17 @@ export class RunOn {
       this.d.engine.changed(chatId);
       return { to: best.id, name, moved: false };
     }
-    await this.relocate(chatId, best.id);
+    // Recorded before the move starts in the background, so the chip says "Auto → <PC>" the moment it's there; a move
+    // that can't start puts back what was there.
+    const previous = this.d.store.get(autoKey(c.gid));
     this.markAuto(c.gid, best.id);
+    try {
+      await this.relocate(chatId, best.id, true);
+    } catch (e) {
+      if (previous === null) this.d.store.del(autoKey(c.gid));
+      else this.d.store.set(autoKey(c.gid), previous);
+      throw e;
+    }
     return { to: best.id, name, moved: true };
   }
 
@@ -219,7 +228,7 @@ export class RunOn {
   }
 
   /** "Auto → <PC>" for a chat Auto placed, while it's still there; null otherwise (`here`: this PC's own name for itself). */
-  autoLabel(c: Chat, here = "This PC"): string | null {
+  autoLabel(c: Chat, here = this.hereName()): string | null {
     const placed = c.gid === "" ? null : this.d.store.get(autoKey(c.gid));
     if (placed === null || placed === undefined) return null;
     const at = c.home !== "" ? c.home : c.device;
@@ -236,12 +245,14 @@ export class RunOn {
   }
 
   /** relocate.rs `relocate`: the chat's sessions go to `to` ("" this PC, a device, a mesh PC), then it runs there. Resolves with the place's name once started; the outcome is a notice in the chat. */
-  async relocate(chatId: number, to: string): Promise<string> {
+  async relocate(chatId: number, to: string, auto = false): Promise<string> {
     const w = this.why(chatId, to);
     if (w !== null) throw new Error(w);
     const lead = this.d.engine.chat(chatId);
     if (!lead) throw new Error("no such chat");
     if (to === lead.device) return "";
+    // A hand-picked place isn't Auto's, even where an earlier Auto pick (one that didn't get there) pointed.
+    if (!auto && lead.gid !== "" && this.d.store.get(autoKey(lead.gid)) === to) this.d.store.del(autoKey(lead.gid));
     const hosts = this.d.hosts();
     const devs = this.devices();
     const target = placeOf(to, hosts, devs)?.place;
@@ -267,7 +278,7 @@ export class RunOn {
     void relocateRun({ from, to: toDev, sessions, check }, { home: this.d.home, dataDir: this.d.dataDir, overlays: this.d.overlays }).then(
       () => {
         this.d.mover.local.relocating.delete(chatId);
-        void this.relocated(chatId, ids, to, target, srcName, dstName);
+        void this.relocated(chatId, ids, to, target, srcName, dstName, auto);
       },
       (e: unknown) => {
         this.d.mover.local.relocating.delete(chatId);
@@ -292,12 +303,12 @@ export class RunOn {
   }
 
   /** The sessions are where the next turn looks: the chat runs there from now on. */
-  private async relocated(chatId: number, ids: readonly number[], to: string, target: RelocatePlace, from: string, name: string): Promise<void> {
+  private async relocated(chatId: number, ids: readonly number[], to: string, target: RelocatePlace, from: string, name: string, auto = false): Promise<void> {
     const old = this.d.engine.chat(chatId)?.device ?? "";
     this.setDevices(ids, target.kind === "hub" ? "" : to);
     if (target.kind === "hub") {
       try {
-        await this.d.mover.movePc(chatId, target.peer.id);
+        await this.d.mover.movePc(chatId, target.peer.id, auto);
       } catch (e) {
         this.setDevices(ids, old);
         const text = relocateFailedText(name, e instanceof Error ? e.message : String(e));

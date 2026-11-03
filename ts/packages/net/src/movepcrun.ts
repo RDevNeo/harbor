@@ -5,6 +5,7 @@ import { blankChat, parseAccess, parseItem, parseRole, repoDir, type Chat, type 
 import type { Call } from "./api.ts";
 import { err, type Reply } from "./http.ts";
 import { now } from "./kv.ts";
+import { autoKey } from "./ram.ts";
 import { itemValue } from "./meshstore.ts";
 import type { Mesh } from "./mesh.ts";
 import {
@@ -123,7 +124,7 @@ export class MovePc {
   /** Where the outcome of a handoff is said besides the chat's notice (the window's toast). */
   onToast: (text: string) => void = () => {};
   /** A chat on an SSH device: its sessions come here first, then on (relocate.rs, set by the hub). */
-  relocate: ((chatId: number, pc: string) => Promise<string>) | null = null;
+  relocate: ((chatId: number, pc: string, auto?: boolean) => Promise<string>) | null = null;
   readonly target: MoveTargetApp;
   private readonly asked = new Map<number, { at: number; result: MoveTargets | null }>();
   private readonly codes = new Map<number, { at: number; error: string | null }>();
@@ -267,8 +268,9 @@ export class MovePc {
     }
   }
 
-  /** Starts handing `chatId` (and its sub-agents) over to PC `pc`. Resolves with the PC's name; the outcome comes later (a notice in the chat; the chat turns into a copy of that PC's). */
-  async movePc(chatId: number, pc: string): Promise<string> {
+  /** Starts handing `chatId` (and its sub-agents) over to PC `pc`. Resolves with the PC's name; the outcome comes later (a notice in the chat; the chat turns into a copy of that PC's).
+   * `auto`: Runs on › Auto chose `pc`; the target remembers that too (move.json `auto_placed`). */
+  async movePc(chatId: number, pc: string, auto = false): Promise<string> {
     const c = this.chat(chatId);
     if (c && c.home !== "") return this.moveFromHome(c, pc);
     const { blocker, targets } = this.plainTargets(chatId);
@@ -281,7 +283,7 @@ export class MovePc {
     if (!c) throw new Error("no such chat");
     if (c.device !== "") {
       if (this.relocate === null) throw new Error(`it runs on the device ${c.device}: bring it to this PC first, then move it`);
-      return this.relocate(chatId, pc);
+      return this.relocate(chatId, pc, auto);
     }
     const engine = this.d.engine;
     const worktree = engine.worktreeOf(c);
@@ -289,7 +291,10 @@ export class MovePc {
     // Nothing is awaited from here to the moment the move is recorded: a second call sees it.
     const again = this.blocker(chatId);
     if (again !== null) throw new Error(again);
-    const handoff = this.handoffOf(c, peer, t.name, code, worktree !== null && code.worktree ? [worktree, code.branch, code.remote] : null, null);
+    const handoff = this.handoffOf(c, peer, t.name, code, worktree !== null && code.worktree ? [worktree, code.branch, code.remote] : null, null, auto);
+    // Auto's marker says where it put the chat: a hand-picked move to that PC isn't Auto's (an earlier Auto move there failed).
+    if (auto) this.d.store.set(autoKey(c.gid), pc);
+    else if (this.d.store.get(autoKey(c.gid)) === pc) this.d.store.del(autoKey(c.gid));
     this.local.moving.set(c.gid, [pc, t.name]);
     this.local.sending.add(c.gid);
     this.save();
@@ -303,7 +308,7 @@ export class MovePc {
   }
 
   /** What's sent for chat `c` (and its sub-agents); `project`: a project move's, whose folder is at `at` there already. */
-  private handoffOf(c: Chat, peer: Peer, peerName: string, code: MoveCode, push: [string, string, string] | null, project: { at: string; branch: string | null } | null): MoveHandoff {
+  private handoffOf(c: Chat, peer: Peer, peerName: string, code: MoveCode, push: [string, string, string] | null, project: { at: string; branch: string | null } | null, auto = false): MoveHandoff {
     const engine = this.d.engine;
     const chats = [c, ...this.subs(c.id)];
     for (const x of chats) if (!this.account(x.account)) throw new Error("an account of the chat is gone");
@@ -314,6 +319,7 @@ export class MovePc {
     );
     const list: MoveChat[] = chats.map((x) => ({
       gid: x.gid,
+      ...(auto && x.id === c.id ? { auto_placed: true } : {}),
       title: x.title,
       session_id: x.sessionId,
       started: x.started,
@@ -604,6 +610,10 @@ export class MovePc {
         store.setHome(existing.id, "", 0);
         id = existing.id;
       } else id = store.createChat(c).id;
+      // The sender's target id becomes this PC ("") here. Clear an older marker on a copy
+      // when a manual move, or an older peer without the flag, brings the chat back.
+      if (r.auto_placed) store.set(autoKey(r.gid), "");
+      else store.del(autoKey(r.gid));
       const items = arr(r.items)
         .map((x) => parseItem(JSON.stringify(x)))
         .filter((x): x is Item => x !== null);

@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newHost, newPeer, type Peer, type RemoteHost } from "../packages/net/src/index.ts";
-import { blankChat, Store } from "../packages/store/src/index.ts";
+import { err } from "../packages/net/src/http.ts";
+import { Hub } from "../packages/net/src/hub.ts";
+import { MemKv } from "../packages/net/src/kv.ts";
+import { Mesh } from "../packages/net/src/mesh.ts";
+import { StoreReplica } from "../packages/net/src/meshstore.ts";
+import { PhoneRoutes } from "../packages/net/src/phone.ts";
+import { generateIdentity } from "../packages/net/src/tls.ts";
+import { blankChat, Store, type Chat } from "../packages/store/src/index.ts";
 import { RunOn, type RunOnDeps } from "../runon.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-autopc-"));
@@ -97,8 +104,9 @@ describe("Runs on › Auto (runon.ts)", () => {
     const plain = store.createChat(blankChat({ title: "plain", role: "lead", name: "lead" }));
     run.markAuto(here.gid, "");
     run.markAuto("g-there", "pc:a");
-    expect(run.autoLabel(here)).toBe("Auto → This PC");
-    expect(run.autoLabel(here, "desk")).toBe("Auto → desk");
+    // This PC by the name it gives itself, as the phone shows it.
+    expect(run.autoLabel(here)).toBe("Auto → desk");
+    expect(run.autoLabel(here, "home-desk")).toBe("Auto → home-desk");
     expect(run.autoLabel(there)).toBe("Auto → laptop");
     expect(run.autoLabel(plain)).toBeNull();
     // Moved elsewhere afterwards: no longer Auto's place.
@@ -140,13 +148,14 @@ describe("Runs on › Auto (runon.ts)", () => {
     ]);
     expect(rows[1]?.desc).toBe("Most free memory now: Sam-Laptop · 12.3 GB free");
     // The move itself is relocate's, the one a pick of that PC runs.
-    const moves: [number, string][] = [];
-    run.relocate = async (chatId: number, to: string) => {
-      moves.push([chatId, to]);
+    const moves: [number, string, boolean | undefined, string | null][] = [];
+    run.relocate = async (chatId: number, to: string, auto?: boolean) => {
+      // The handoff (move.json's `auto_placed`) is built after this: Auto's choice is recorded already.
+      moves.push([chatId, to, auto, store.get("auto_pc:g-started")]);
       return "Sam-Laptop";
     };
     expect(await run.relocateAuto(c.id, "Claude")).toEqual({ to: "pc:a", name: "Sam-Laptop", moved: true });
-    expect(moves).toEqual([[c.id, "pc:a"]]);
+    expect(moves).toEqual([[c.id, "pc:a", true, "pc:a"]]);
     // Once there (this PC's copy has its home on that PC), the composer says so.
     expect(run.autoLabel({ ...c, home: "pc:a" })).toBe("Auto → Sam-Laptop");
     // Not a choice for Codex chats, nor while it's running (the reason shows).
@@ -168,6 +177,58 @@ describe("Runs on › Auto (runon.ts)", () => {
     expect(run.autoWhy(c.id, "Claude")).toBeNull();
     expect(await run.relocateAuto(c.id, "Claude")).toEqual({ to: "", name: "desk", moved: false });
     expect(called).toBe(false);
-    expect(run.autoLabel(c)).toBe("Auto → This PC");
+    expect(run.autoLabel(c)).toBe("Auto → desk");
+  }, SLOW);
+
+  test("a move Auto can't start puts back the marker that was there", async () => {
+    const { run } = rig({ here: 2048, peers: [peer("pc:a", "laptop", 12_595, { moves: true })] });
+    const c = store.createChat(blankChat({ title: "r", role: "lead", name: "lead", account: "claude", started: true, gid: "g-roll" }));
+    run.relocate = async () => {
+      throw new Error("laptop can't take it");
+    };
+    await expect(run.relocateAuto(c.id, "Claude")).rejects.toThrow("laptop can't take it");
+    expect(store.get("auto_pc:g-roll")).toBeNull();
+    // An earlier Auto pick (this PC) comes back as it was.
+    run.markAuto("g-roll", "");
+    await expect(run.relocateAuto(c.id, "Claude")).rejects.toThrow("laptop can't take it");
+    expect(store.get("auto_pc:g-roll")).toBe("");
+    expect(run.autoLabel(c)).toBe("Auto → desk");
+  }, SLOW);
+
+  test("a hand-picked move drops an Auto marker that points where it goes", async () => {
+    const { run } = rig({ here: 2048, peers: [peer("pc:a", "laptop", 12_595, { moves: true })] });
+    const c = store.createChat(blankChat({ title: "m", role: "lead", name: "lead", account: "claude", started: true, gid: "g-manual" }));
+    // An Auto move to the laptop that never got there left its marker.
+    run.markAuto("g-manual", "pc:a");
+    await run.relocate(c.id, "pc:a").catch(() => "");
+    expect(store.get("auto_pc:g-manual")).toBeNull();
+    // A marker for somewhere else stays (Auto put it here; the label goes once it isn't here).
+    run.markAuto("g-manual", "");
+    await run.relocate(c.id, "pc:a").catch(() => "");
+    expect(store.get("auto_pc:g-manual")).toBe("");
+  }, SLOW);
+
+  test("a chat another PC's Auto moved here says Auto → this PC, on the desktop and the phone alike", () => {
+    const { run } = rig({ here: 2048, peers: [peer("pc:a", "laptop", 12_595)], devices: [samDevice()] });
+    // What the target's adopt (movepcrun take) leaves: its own chat (home ""), Auto's place "" (this PC).
+    const c = store.createChat(blankChat({ title: "moved", role: "lead", name: "lead", account: "claude", started: true, gid: "g-arrived" }));
+    store.set("auto_pc:g-arrived", "");
+    expect(run.autoLabel(c)).toBe("Auto → desk");
+    const hub = new Hub([], 0);
+    hub.mesh.me = { id: "pc:desk", name: "desk" };
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const auto = {
+      pick: (kind: string) => run.autoPick(kind),
+      resolve: (device: string, kind: string) => run.resolve(device, kind),
+      mark: (gid: string, place: string) => run.markAuto(gid, place),
+      label: (x: Chat, here: string) => run.autoLabel(x, here),
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, auto });
+    const label = (x: Chat) => (routes.chatJson(x, true) as { auto_label: unknown }).auto_label;
+    expect(label(c)).toBe("Auto → desk");
+    // Moved on by hand afterwards (this PC's copy of the laptop's chat): no label.
+    expect(label({ ...c, home: "pc:a", homeId: 5 })).toBeNull();
+    expect(run.autoLabel({ ...c, home: "pc:a", homeId: 5 })).toBeNull();
   }, SLOW);
 });

@@ -391,6 +391,83 @@ describe("movepcrun: the sender", () => {
     }
   });
 
+  test("a move Auto chose tells the target, which remembers it as Auto's; a hand-picked move back drops it", async () => {
+    const a = pc("a");
+    const b = pc("b");
+    try {
+      meet(a, b);
+      meet(b, a);
+      const { lead } = seed(a);
+      const sent: unknown[] = [];
+      const link = wire(a, b);
+      useSend(a, {
+        askEveryMs: 0,
+        http: async (d, method, path, body, wait) => {
+          if (path.startsWith("/mesh/v1/upload") && path.includes("move.json")) sent.push(JSON.parse(Buffer.from(body?.data ?? "").toString("utf8")));
+          return link.http(d, method, path, body, wait);
+        },
+      });
+      // B already had a stale marker for the sub-agent: a move that doesn't say Auto for it clears it.
+      b.store.set("auto_pc:g-sub", "pc:x");
+      expect(await a.move.movePc(lead.id, b.mesh.me.id, true)).toBe("b");
+      // The sender records Auto's choice at the moment the move is recorded.
+      expect(a.store.get("auto_pc:g-lead")).toBe("pc:b");
+      await until("the copies", () => a.store.chats().find((c) => c.id === lead.id)?.home === "pc:b");
+      // Only the lead carries the flag.
+      const chats = (sent[0] as { chats: { gid: string; auto_placed?: boolean }[] }).chats;
+      expect(chats.map((c) => [c.gid, c.auto_placed])).toEqual([
+        ["g-lead", true],
+        ["g-sub", undefined],
+      ]);
+      // On B the chat is its own (home ""), Auto's place: this PC ("").
+      const bLead = b.store.chats().find((c) => c.gid === "g-lead");
+      expect(bLead).toMatchObject({ home: "", device: "" });
+      expect(b.store.get("auto_pc:g-lead")).toBe("");
+      expect(b.store.get("auto_pc:g-sub")).toBeNull();
+      // A's copy still says Auto put it on B.
+      expect(a.store.get("auto_pc:g-lead")).toBe("pc:b");
+
+      // Moved back by hand: A's chat is its own again and no longer Auto's; B's copy keeps its marker for "" (not where the
+      // chat is now, so it shows no label).
+      useSend(b, wire(b, a));
+      await until("b sees the chat idle", () => b.move.blocker(bLead?.id ?? 0) === null);
+      expect(await b.move.movePc(bLead?.id ?? 0, a.mesh.me.id)).toBe("a");
+      await until("back on a", () => a.store.chats().find((c) => c.id === lead.id)?.home === "");
+      expect(a.store.get("auto_pc:g-lead")).toBeNull();
+      expect(b.store.get("auto_pc:g-lead")).toBe("");
+    } finally {
+      clean(a, b);
+    }
+  });
+
+  test("a hand-picked move isn't Auto's: no flag, and a marker left by an Auto move that failed is dropped", async () => {
+    const a = pc("a");
+    const b = pc("b");
+    try {
+      meet(a, b);
+      const { lead } = seed(a);
+      const sent: unknown[] = [];
+      const link = wire(a, b);
+      useSend(a, {
+        askEveryMs: 0,
+        http: async (d, method, path, body, wait) => {
+          if (path.startsWith("/mesh/v1/upload") && path.includes("move.json")) sent.push(JSON.parse(Buffer.from(body?.data ?? "").toString("utf8")));
+          return link.http(d, method, path, body, wait);
+        },
+      });
+      a.store.set("auto_pc:g-lead", "pc:b");
+      // An older peer's move.json has no field at all: the target clears what it had.
+      b.store.set("auto_pc:g-lead", "");
+      expect(await a.move.movePc(lead.id, b.mesh.me.id)).toBe("b");
+      expect(a.store.get("auto_pc:g-lead")).toBeNull();
+      await until("the copies", () => a.store.chats().find((c) => c.id === lead.id)?.home === "pc:b");
+      expect((sent[0] as { chats: Record<string, unknown>[] }).chats.some((c) => "auto_placed" in c)).toBe(false);
+      expect(b.store.get("auto_pc:g-lead")).toBeNull();
+    } finally {
+      clean(a, b);
+    }
+  });
+
   test("a move without an answer stays pending, and the target's chat list settles it", async () => {
     const make = async () => {
       const a = pc("a");
