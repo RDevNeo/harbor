@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.0] - 2026-11-03
+
 ### Added
 - Move to PC… for whole projects, on the desktop (the project row's menu) and the phone (the
   project sheet). Pick another PC of yours; Harbor says first where the project will go there,
