@@ -189,7 +189,7 @@ export class Engine {
 
   constructor(readonly host: EngineHost) {
     this.reload();
-    const info = (a: Account): limits.AccountInfo => ({ id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage, usageAt: a.usageAt ?? null });
+    const info = (a: Account): limits.AccountInfo => ({ id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage, usageAt: a.usageAt ?? null, plan: a.plan });
     this.limits = new limits.Limits({
       store: host.store,
       chat: (id) => this.chat(id),

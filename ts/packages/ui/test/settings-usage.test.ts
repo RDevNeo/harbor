@@ -71,6 +71,16 @@ test("usage shows a window's number, its reset and the summary of a cap", () => 
   expect(v.groups[0]?.cards[1]?.summary).toBe("No caps: Harbor uses this account up to the provider's own limits.");
 });
 
+test("usage offers no 5-hour row or cap for an Ultra account", () => {
+  const usage = [{ label: "5-hour", percent: 0, resetsAt: null }, { label: "Weekly", percent: 0.08, resetsAt: null }];
+  const accounts = [claude("claude", { plan: "Ultra", usage }), claude("claude2", { usage })];
+  const { lim } = rig(accounts);
+  lim.ctl.setCap("claude", "5h", 50);
+  const cards = usageData(input(accounts, lim)).groups[0]?.cards ?? [];
+  expect(cards.map((c) => c.windows.map((w) => w.label))).toEqual([["Weekly"], ["5-hour", "Weekly"]]);
+  expect(cards[0]?.summary).toBe("No caps: Harbor uses this account up to the provider's own limits.");
+});
+
 test("usage names a window with no data since its reset", () => {
   const accounts = [claude("claude", { usage: [{ label: "5h", percent: 0.9, resetsAt: NOW - 60 }] })];
   const { lim } = rig(accounts);

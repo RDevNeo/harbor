@@ -59,6 +59,7 @@ export interface AccountInfo {
   configDir: string | null;
   usage: UsageWindow[];
   usageAt?: number | null;
+  plan?: string;
 }
 
 /** How notices name an account: a Claude account by its own name, others by provider. */

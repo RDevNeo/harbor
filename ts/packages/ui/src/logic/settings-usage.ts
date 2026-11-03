@@ -91,7 +91,7 @@ export interface UsageInput {
 
 /** An account as limits.ts names it. */
 export function accountInfo(a: providers.Account): limits.AccountInfo {
-  return { id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: providers.short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage };
+  return { id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: providers.short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage, usageAt: a.usageAt ?? null, plan: a.plan };
 }
 
 const warnText = (p: number): string => (p === 0 ? "Off" : `${p}%`);

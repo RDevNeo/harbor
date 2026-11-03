@@ -136,6 +136,11 @@ export function mergeWindows(monitor: readonly UsageWindow[], live: readonly Quo
   return [...v.filter((w) => w.key === "5h"), ...v.filter((w) => w.key !== "5h")];
 }
 
+/** An older usage monitor and older turns still report a 5-hour window for Ultra, which has only weekly ones. */
+export function hasFiveHour(plan: string): boolean {
+  return plan.trim().toLowerCase() !== "ultra";
+}
+
 type Caps = Record<string, Record<string, number>>;
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -157,7 +162,8 @@ export class UsageCtl {
     const monitorAt = a?.usageAt ?? null;
     const quotaAt = this.limits.quotaAt.get(account);
     const monitorNewer = monitorAt !== null && quotaAt !== undefined && monitorAt > quotaAt;
-    return mergeWindows(a?.usage ?? [], this.limits.quota.get(account) ?? [], monitorNewer, this.limits.now());
+    const v = mergeWindows(a?.usage ?? [], this.limits.quota.get(account) ?? [], monitorNewer, this.limits.now());
+    return hasFiveHour(a?.plan ?? "") ? v : v.filter((w) => w.key !== "5h");
   }
 
   /** Every Claude account on this PC, for the usage read-out: a profile that isn't signed in has no usage (Settings ›

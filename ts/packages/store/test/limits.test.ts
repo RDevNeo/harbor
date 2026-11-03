@@ -280,6 +280,26 @@ test("an Ultra account: no 5-hour window when the newer monitor read has none, w
   expect(keyLabel("Weekly")).toEqual(["week", "Weekly"]);
 });
 
+test("an Ultra plan has no 5-hour window, nor a cap on one, though an older monitor and turns still report it", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  // What an older agents-usage-monitor writes for an Ultra account: its "Max 20x" plan and a made-up 5-hour 0%.
+  const usage = [{ label: "5-hour", percent: 0, resetsAt: null }, { label: "Weekly", percent: 0.08, resetsAt: h.clock + 86400 }];
+  h.accountsList = [acct("claude", { plan: "Ultra", usage, usageAt: h.clock - 60 }), acct("claude2", { plan: "Max", usage, usageAt: h.clock - 60 })];
+  l.ctl.setCap("claude", "5h", 50);
+  l.limitEvent(c.id, { type: "quota", windows: [["five_hour", 0.6, h.clock + 3600]] });
+  expect(l.ctl.windows("claude").map((w) => w.key)).toEqual(["week"]);
+  expect(l.ctl.readings([{ id: "claude", kind: "Claude", short: "Claude · FS", email: "", plan: "Ultra", installed: true, loggedIn: true }])[0]?.windows.map((w) => w.label)).toEqual(["Weekly"]);
+  expect(l.ctl.overCap("claude")).toBeUndefined();
+  expect(l.usageOf("claude")).toEqual([0.08, 0]);
+  expect(l.ctl.windows("claude2").map((w) => [w.key, w.used])).toEqual([
+    ["5h", 0],
+    ["week", 0.08],
+  ]);
+  h.accountsList[0] = { ...(h.accountsList[0] as AccountInfo), plan: "" };
+  expect(l.ctl.windows("claude").map((w) => w.key)).toEqual(["5h", "week"]);
+});
+
 test("list_models' line: the plan, then only the windows the account has", () => {
   const at = 1_000_000;
   expect(quotaText("Ultra", [{ key: "week", label: "Weekly", used: 1, resetsAt: at + 86400 * 3 + 3600 }], at)).toBe("Ultra · Weekly 100% used (resets in 3d 1h)");
