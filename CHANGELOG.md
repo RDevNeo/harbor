@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.124.5] - 2026-11-03
+
 ### Changed
 - Harbor uses less memory the longer it runs. Its native libraries (the window, images, the
   database) no longer get a new memory pool for each thread that works for them, and the memory
