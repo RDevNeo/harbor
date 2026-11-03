@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.122.0] - 2026-11-03
+
 ### Added
 - Share with workspace…: every chat's and every project's menu, on the desktop (right-click a row)
   and on the phone (a chat's menu, a project's sheet), has it right after Move to workspace…. It's
