@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.130.1] - 2026-11-03
+
 ### Fixed
 - A chat that Auto moved to another PC says "Auto → <PC>" on that PC too (the composer's Runs on
   chip, the phone's Device row and chat header), not only on the PC it came from. The move tells
