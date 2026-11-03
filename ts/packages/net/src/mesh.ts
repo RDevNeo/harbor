@@ -8,8 +8,8 @@ import { err, header, ok, parseJson, query, readBody, segments, type Reader, typ
 import type { Hub, PairedPhone } from "./hub.ts";
 import { isLoopback, parseIp, routeTo, type Ip } from "./ip.ts";
 import { kvJson, now, type Kv } from "./kv.ts";
-import { allowedJson, cleanAddrs, dest, downOf, label, loadAllowed, newPeer, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer } from "./shared.ts";
-import { codeKey, connect, DEFAULT_PORT, hostPort, newCode, normalizeCode, normalizeFp, privateIp, proof, proofOk, tailnetIp, Throttle, type Identity } from "./tls.ts";
+import { cleanAddrs, dest, downOf, label, newPeer, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer } from "./shared.ts";
+import { connect, DEFAULT_PORT, hostPort, normalizeFp, tailnetIp, type Identity } from "./tls.ts";
 import { Ordered, type Json } from "./wire.ts";
 import { PIECE_BYTES } from "./foldercopy.ts";
 import { PROJECT_MOVES_VERSION } from "./projectmove.ts";
@@ -20,8 +20,6 @@ export type Sender = [label: string, device: string, who?: string, via?: SentVia
 
 const POLL = 20_000;
 const CALL_WAIT = 60_000;
-export const CODE_TTL = 600;
-const CODE_TRIES = 5;
 const PEERS_KEY = "mesh_peers";
 /** movepc.rs VERSION: this PC takes moved chats from peers that say at least this. */
 export const MOVES_VERSION = 1;
@@ -102,6 +100,9 @@ export function readMe(kv: Kv, env: Record<string, string | undefined> = process
 
 /** Kv: the name this PC's owner gave it (Settings › Devices). Only shown: the id (`mesh_id`) and the keys stay. */
 export const PC_NAME_KEY = "mesh_name";
+/** Kv of the code pairing removed in 0.131: dropped at start. */
+export const OLD_ALLOWED_KEY = "mesh_allowed";
+export const OLD_PAIR_KEY = "mesh_pair";
 export const PC_NAME_MAX = 40;
 
 /** A typed PC name as kept: no control characters, spaces collapsed, at most PC_NAME_MAX characters. */
@@ -114,33 +115,6 @@ export function cleanPcName(name: string): string {
 export function renamePc(kv: Kv, name: string, env: Record<string, string | undefined> = process.env): Me {
   kv.set(PC_NAME_KEY, cleanPcName(name));
   return readMe(kv, env);
-}
-
-export interface PairCode {
-  code: string;
-  expires: number;
-  tries: number;
-  paired: string;
-}
-
-export function loadCode(kv: Kv): PairCode | null {
-  const v = kvJson<unknown>(kv, "mesh_pair", null);
-  if (typeof v !== "object" || v === null) return null;
-  const o = v as Record<string, unknown>;
-  if (typeof o.code !== "string" || typeof o.expires !== "number") return null;
-  return { code: o.code, expires: o.expires, tries: typeof o.tries === "number" ? o.tries : 0, paired: typeof o.paired === "string" ? o.paired : "" };
-}
-
-function saveCode(kv: Kv, c: PairCode): void {
-  kv.set("mesh_pair", JSON.stringify({ code: c.code, expires: c.expires, tries: c.tries, paired: c.paired }));
-}
-
-/** A new pairing code, saved for the listener; sharing turns on. */
-export function showCode(kv: Kv): PairCode {
-  const c = { code: newCode(), expires: now() + CODE_TTL, tries: 0, paired: "" };
-  saveCode(kv, c);
-  kv.set("mesh_enabled", "1");
-  return c;
 }
 
 function peerJson(p: Peer): Ordered {
@@ -217,14 +191,14 @@ type Target = { kind: "key"; fp: string } | { kind: "plain"; addr: string };
 const targetKey = (t: Target) => (t.kind === "key" ? `fp:${t.fp}` : `addr:${t.addr}`);
 
 export class Mesh {
-  readonly pairTries = new Throttle(10, 60_000);
   private running = new Set<string>();
   private loop: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
 
   constructor(readonly d: MeshDeps) {
     d.hub.mesh.workspacePeers = d.workspacePeers ?? (() => []);
-    d.hub.mesh.allowed = loadAllowed(d.kv);
+    // PCs paired by code before 0.131 aren't trusted anymore: only the workspace's directory says who is a peer.
+    for (const k of [OLD_ALLOWED_KEY, OLD_PAIR_KEY]) if ((d.kv.get(k) ?? "") !== "") d.kv.set(k, "");
     for (const [k, p] of loadPeers(d.kv)) d.hub.mesh.peers.set(k, p);
   }
 
@@ -236,18 +210,9 @@ export class Mesh {
     return this.d.id()?.fp ?? "";
   }
 
-  /** Changes the allowed list: kv `mesh_allowed` is the truth (a terminal writes it too). */
-  updateAllowed(f: (list: Allowed[]) => void): void {
-    const list = loadAllowed(this.d.kv);
-    f(list);
-    this.d.kv.set("mesh_allowed", allowedJson(list));
-    this.d.hub.mesh.allowed = list;
-  }
-
-  /** kv `mesh_enabled` and `mesh_allowed` again (they may change from a terminal). */
+  /** Sharing with the workspace's PCs is always on. */
   reread(): void {
     this.d.hub.mesh.on = true;
-    this.d.hub.mesh.allowed = loadAllowed(this.d.kv);
   }
 
   private savePeers(): void {
@@ -311,7 +276,6 @@ export class Mesh {
     if (!shared.on) return err(403, "this PC doesn't share its chats (Settings › Devices)");
     const segs = segments(req.path);
     const is = (m: string, ...p: string[]) => req.method === m && segs.length === p.length && p.every((x, i) => segs[i] === x);
-    if (is("POST", "mesh", "v1", "pair")) return this.pairServe(from, req, r);
     const peer = this.who(from, req);
     if (peer === null) {
       const me = shared.me.name;
@@ -445,75 +409,6 @@ export class Mesh {
     return this.d.app.route({ method: req.method, path: segs, query: req.query, body, token: "", device: peer, global: false });
   }
 
-  /** `POST /mesh/v1/pair`: the caller proves the code for both keys of this connection; each side allows the other. */
-  private async pairServe(from: ConnPeer, req: Request, r: Reader): Promise<Reply> {
-    if (from.via.kind !== "tls" || from.via.fp === null) return err(403, "pairing needs TLS and a key");
-    const theirs = from.via.fp;
-    if (!privateIp(from.ip)) return err(403, "pairing is for your own network");
-    if (!this.pairTries.hit(from.ip)) return err(429, "too many tries: wait a minute");
-    const body = await this.json(r, req);
-    const code = loadCode(this.d.kv);
-    if (!code || code.paired !== "" || code.expires <= now() || code.tries >= CODE_TRIES) return err(404, "no pairing code is shown on this PC (or it ran out): show a new one");
-    const mine = this.myFp();
-    const key = codeKey(code.code);
-    if (theirs === mine || !proofOk(key, "join", mine, theirs, typeof body.proof === "string" ? body.proof : "")) {
-      code.tries += 1;
-      saveCode(this.d.kv, code);
-      return err(403, "wrong code");
-    }
-    const name = cut(body.name, 60);
-    const id = cut(body.id, 80);
-    const addrs = cleanAddrs(Array.isArray(body.addrs) ? body.addrs : []);
-    const port = typeof body.port === "number" && Number.isInteger(body.port) && body.port >= 0 && body.port <= 65535 ? body.port : DEFAULT_PORT;
-    const here = hostPort(from.ip, port);
-    const list = [here, ...addrs.filter((a) => a !== here)];
-    this.updateAllowed((l) => {
-      const keep = l.filter((a) => a.fp !== theirs && (id === "" || a.id !== id));
-      l.length = 0;
-      l.push(...keep, { node: "", name, fp: theirs, id, addrs: list });
-    });
-    code.paired = name === "" ? "a PC" : name;
-    saveCode(this.d.kv, code);
-    return ok({ ...(this.aboutMe() as Record<string, Json>), proof: proof(key, "host", mine, theirs) });
-  }
-
-  /** This PC typed `code` shown on the PC at `addr` ("host[:port]"); both end up allowing each other. */
-  async pairJoin(addr: string, codeText: string): Promise<Allowed> {
-    const code = normalizeCode(codeText);
-    if (code.length !== 10) throw new Error("a pairing code has 10 letters and digits");
-    const a = addr.trim();
-    const sa = socketAddr(a);
-    const target = sa ? sa.text : parseIp(a) ? hostPort(a, DEFAULT_PORT) : a.includes(":") ? a : `${a}:${DEFAULT_PORT}`;
-    const t = socketAddr(target);
-    const id = this.d.id();
-    if (!id) throw new Error("no TLS identity");
-    let host: string;
-    let sock: import("node:tls").TLSSocket;
-    try {
-      const c = await connect({ id, pin: null, host: t ? t.ip : target.split(":")[0] ?? target, port: t ? t.port : DEFAULT_PORT });
-      host = c.fp;
-      sock = c.sock;
-    } catch (e) {
-      throw new Error(`${target} didn't answer: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    const key = codeKey(code);
-    const me = this.d.hub.mesh.me;
-    const body = jsonBody({ proof: proof(key, "join", host, id.fp), id: me.id, name: me.name, addrs: this.d.myAddrs(), port: this.d.hub.port });
-    const ans = await exchange(sock, target, "POST", "/mesh/v1/pair", { ctype: body.ctype, data: Buffer.from(String(body.data)) });
-    const v = obj(ans.body.length > 0 ? JSON.parse(Buffer.from(ans.body).toString()) : null);
-    if (ans.status !== 200) throw new Error(typeof v.error === "string" ? v.error : `${target} answered ${ans.status}`);
-    if (!proofOk(key, "host", host, id.fp, typeof v.proof === "string" ? v.proof : "")) throw new Error("the PC that answered doesn't know the code: not paired");
-    const used = t ? t.text : target;
-    const addrs = [used, ...cleanAddrs(Array.isArray(v.addrs) ? v.addrs : []).filter((x) => x !== used)];
-    const entry: Allowed = { node: "", name: cut(v.name, 60), fp: host, id: cut(v.id, 80), addrs };
-    this.updateAllowed((l) => {
-      const keep = l.filter((x) => x.fp !== entry.fp && (entry.id === "" || x.id !== entry.id));
-      l.length = 0;
-      l.push(...keep, entry);
-    });
-    return entry;
-  }
-
   /** Pairings removed on another PC: their phones' tokens here go too. */
   mergeRevoked(groups: string[]): void {
     const hub = this.d.hub;
@@ -608,13 +503,11 @@ export class Mesh {
     return { hubs: out };
   }
 
-  /** The peers to follow now: keys on the allowed list and the workspace's, plus loopback test peers. */
+  /** The peers to follow now: the PCs of this PC's workspace (its directory), plus loopback test peers. */
   targets(): Target[] {
     const shared = this.d.hub.mesh;
-    const allowed = [...shared.allowed];
-    for (const a of shared.workspacePeers()) if (!allowed.some((x) => x.fp === a.fp)) allowed.push(a);
     const mine = this.myFp();
-    const v: Target[] = allowed.filter((a) => a.fp !== "" && a.fp !== mine).map((a) => ({ kind: "key", fp: a.fp }));
+    const v: Target[] = shared.workspacePeers().filter((a) => a.fp !== "" && a.fp !== mine).map((a) => ({ kind: "key", fp: a.fp }));
     for (const a of (this.env("HARBOR_MESH_PEERS") ?? "").split(",").map((x) => x.trim()).filter((x) => x !== "")) {
       const sa = socketAddr(a);
       const ip = sa ? parseIp(sa.ip) : null;
@@ -623,11 +516,26 @@ export class Mesh {
     return v;
   }
 
+  /** Peers kept from before that aren't this PC's workspace's PCs anymore (paired by code before 0.131, or a PC that
+   * left the workspace) go from every list: Runs on, the phone's PCs, versions. Screenshot rigs' fake peers stay. */
+  forgetStrangers(): void {
+    if (this.env("HARBOR_FAKE_PEERS") !== undefined) return;
+    const shared = this.d.hub.mesh;
+    let gone = false;
+    for (const [k, p] of shared.peers) {
+      if (p.fp === "" || shared.allowedFp(p.fp) !== null) continue;
+      shared.peers.delete(k);
+      gone = true;
+    }
+    if (gone) this.savePeers();
+  }
+
   /** Starts following peers (every 5 s new targets get a worker); sharing is kv `mesh_enabled`. */
   start(): void {
     if (this.loop) return;
     const tick = () => {
       this.reread();
+      this.forgetStrangers();
       if (!this.d.hub.mesh.on) return;
       for (const t of this.targets()) {
         const k = targetKey(t);
@@ -727,21 +635,8 @@ export class Mesh {
       const hport = typeof hello.port === "number" ? hello.port : null;
       const addrs = cleanAddrs(Array.isArray(hello.addrs) ? hello.addrs : []);
       if ((addrs.length === 0 || hport === null) && !used.via) addrs.unshift(used.addr);
-      if (target.kind === "key") {
-        const name = cut(hello.name, 60);
-        const a = shared.allowedFp(target.fp);
-        const keep = [...(used.via ? [] : [used.addr]), ...addrs.filter((x) => x !== used.addr)];
-        if (a && (a.id !== id || a.name !== name || JSON.stringify(a.addrs) !== JSON.stringify(keep))) {
-          this.updateAllowed((l) => {
-            const e = l.find((x) => x.fp === target.fp);
-            if (e) {
-              e.id = id;
-              e.name = name;
-              e.addrs = keep;
-            }
-          });
-        }
-      }
+      // The address that answered is tried first next time (the directory's may be older).
+      if (target.kind === "key" && !used.via) shared.hint(target.fp, used.addr);
       const p = shared.peers.get(id) ?? newPeer({ id });
       p.name = typeof hello.name === "string" ? hello.name : "";
       if (!used.via) p.addr = used.addr;

@@ -279,7 +279,7 @@ describe("movepcrun: the sender", () => {
       add("pc:old", { online: true, moves: false, accounts: [["claude", "Claude", "claude"]] });
       add("pc:codex", { online: true, moves: true, accounts: [["codex", "Codex", "codex"]] });
       add("pc:off", { online: false, fp: "fp-off" });
-      a.mesh.allowed.push({ node: "", name: "off", fp: "fp-off", id: "pc:off", addrs: [] });
+      a.mesh.workspacePeers = () => [{ node: "", name: "off", fp: "fp-off", id: "pc:off", addrs: [] }];
       a.mesh.down.set("pc:off", "harbor");
       add("pc:gone", { online: false, fp: "fp-gone" });
       const t = await a.move.targets(lead.id);

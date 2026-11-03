@@ -496,16 +496,7 @@ async function directory(req, env) {
       return {
         ...w,
         members,
-        pcs: pcs.results.map((r) => ({
-          fp: r.fp,
-          id: r.pid,
-          name: r.name,
-          addrs: JSON.parse(r.addrs || '[]'),
-          owner: r.owner,
-          owner_name: r.owner_name,
-          seen: r.seen,
-          version: r.version,
-        })),
+        pcs: pcs.results.map(pcJson),
         devices: devs.results.map((r) => r.fp),
         invites: inv.results,
       };
@@ -523,7 +514,41 @@ async function directory(req, env) {
       }),
     ),
   );
-  return json({ at: Date.now(), workspaces });
+  return json({ at: Date.now(), workspaces, peers: await membershipPeers(env, p, workspaces) });
+}
+
+function pcJson(r) {
+  return {
+    fp: r.fp,
+    id: r.pid,
+    name: r.name,
+    addrs: JSON.parse(r.addrs || '[]'),
+    owner: r.owner,
+    owner_name: r.owner_name,
+    seen: r.seen,
+    version: r.version,
+  };
+}
+
+/** The PCs this PC trusts: every PC whose owner (the account that registered it) is a member of a
+ *  workspace this PC's owner is a member of. Symmetric (both sides see the same shared workspace),
+ *  and gone as soon as either leaves it or is removed. `via`: the names of the shared workspaces.
+ *  `mine` holds the caller's workspaces with their members already. */
+async function membershipPeers(env, p, mine) {
+  const self = p.kind === 'pc' && p.dev ? await env.DB.prepare(`SELECT owner FROM pcs WHERE fp=?`).bind(p.dev).first() : null;
+  const owner = self?.owner || p.sub;
+  const theirs =
+    owner === p.sub
+      ? mine
+      : await Promise.all((await liveWs(env, owner)).slice(0, 20).map(async (w) => ({ ...w, members: await orgMembers(env, w.id) })));
+  const via = new Map();
+  for (const w of theirs) for (const m of w.members) if (m.id) via.set(m.id, [...(via.get(m.id) || []), w.name]);
+  const ids = [...via.keys()].slice(0, 500);
+  if (ids.length === 0) return [];
+  const rows = await env.DB.prepare(`SELECT * FROM pcs WHERE owner IN (${ids.map(() => '?').join(',')}) ORDER BY name`)
+    .bind(...ids)
+    .all();
+  return rows.results.filter((r) => r.fp !== p.dev).map((r) => ({ ...pcJson(r), via: [...new Set(via.get(r.owner) || [])] }));
 }
 
 /** `{no_account: true, near?}` when no Harbor account has this verified address; null when one

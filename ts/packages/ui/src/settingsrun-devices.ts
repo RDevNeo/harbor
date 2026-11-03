@@ -1,4 +1,4 @@
-import { renamePc, setHelloName, allowedJson, allowedKey, hostPort, lanAddrs, loadAllowed, loadCode, loadRemote, loadTokens, newTailnet, normalizeFp, readMe, remoteDevices, saveRemote, short as keyShort, showCode, type AccountService, type Hub, type Mesh } from "@harbor/net";
+import { loadRemote, loadTokens, newTailnet, readMe, remoteDevices, renamePc, saveRemote, setHelloName, short as keyShort, type AccountService, type Hub, type Mesh } from "@harbor/net";
 import { harborVersion } from "@harbor/mcp";
 import { type Store } from "@harbor/store";
 import { homedir } from "node:os";
@@ -16,19 +16,17 @@ export interface SettingsRuntime {
 }
 
 export function devicesHost(store: Store, refresh: () => void, myFp: () => string, copy: (text: string) => void, runtime?: SettingsRuntime): DevicesHost {
-  const port = () => runtime?.hub.port ?? Number(store.get("api_port") ?? "47930");
-  let busy = false;
-  let result: { ok: boolean; text: string } | null = null;
   return {
     kv: store,
     now: () => Math.floor(Date.now() / 1000),
+    inWorkspace: () => runtime?.account.signedIn() === true && runtime.account.workspace() !== "",
     mesh: {
-      me: () => runtime?.hub.mesh.me ?? readMe(store), myFp,
+      me: () => runtime?.hub.mesh.me ?? readMe(store),
+      myFp,
       versionLabel: () => runtime?.version ?? harborVersion(),
+      // The PCs whose owner shares a workspace with this PC's owner (the directory's peers): the ones it trusts.
+      pcs: () => (runtime?.account.directory().peers ?? []).filter((p) => p.fp !== "" && p.fp !== myFp()),
       peers: () => [...(runtime?.hub.mesh.peers.values() ?? [])],
-      allowed: () => loadAllowed(store),
-      seen: () => runtime?.hub.mesh.seen ?? new Map(),
-      addrs: () => lanAddrs().map((a) => hostPort(a, port())),
       rename(name) {
         const me = renamePc(store, name);
         if (runtime) {
@@ -40,29 +38,6 @@ export function devicesHost(store: Store, refresh: () => void, myFp: () => strin
         refresh();
       },
       copy,
-      allow(key, name, allow) {
-        const change = (all: ReturnType<typeof loadAllowed>) => {
-          const keep = all.filter((a) => allowedKey(a) !== key && a.node !== key);
-          if (allow) keep.push({ node: normalizeFp(key) ? "" : key, fp: normalizeFp(key) ?? "", name, id: "", addrs: [] });
-          all.splice(0, all.length, ...keep);
-        };
-        if (runtime) runtime.mesh.updateAllowed(change);
-        else { const all = loadAllowed(store); change(all); store.set("mesh_allowed", allowedJson(all)); }
-        refresh();
-      },
-    },
-    pair: {
-      shown: () => loadCode(store),
-      show: () => { showCode(store); return null; },
-      cancel: () => store.set("mesh_pair", ""), busy: () => busy, result: () => result,
-      join(addr, code) {
-        if (!runtime || busy) return;
-        busy = true; result = null;
-        void runtime.mesh.pairJoin(addr, code).then(
-          (pc) => { result = { ok: true, text: `Paired with ${pc.name || addr}.` }; },
-          (e: unknown) => { result = { ok: false, text: e instanceof Error ? e.message : String(e) }; },
-        ).finally(() => { busy = false; refresh(); });
-      },
     },
     phones: () => {
       const acc = runtime?.account;

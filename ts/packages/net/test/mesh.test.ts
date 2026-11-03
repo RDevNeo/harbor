@@ -10,10 +10,10 @@ import { http, httpPart, setHello } from "../src/client.ts";
 import { err, type Request } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
-import { cleanPcName, forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, renamePc, parseWhois, partOf, showCode, startsTurn, statusNode } from "../src/mesh.ts";
+import { cleanPcName, forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, renamePc, parseWhois, partOf, startsTurn, statusNode } from "../src/mesh.ts";
 import { StoreReplica, type StoreReplicaOptions, sameRemote } from "../src/meshstore.ts";
 import { relayServe } from "../src/relay.ts";
-import { admit, allowedKey, cleanAddrs, downOf, label, loadAllowed, peerId, type Allowed, type Node } from "../src/shared.ts";
+import { allowedKey, cleanAddrs, downOf, label, newPeer, peerId, type Allowed, type Node } from "../src/shared.ts";
 import { generateIdentity, type Identity } from "../src/tls.ts";
 import type { Json } from "../src/wire.ts";
 
@@ -84,30 +84,14 @@ describe("mesh.rs", () => {
 
   test("who_gets_in", () => {
     const whois = (id: string, user: number, tags: unknown) => ({ Node: { StableID: id, Name: `${id}.example.ts.net.`, Tags: tags }, UserProfile: { ID: user } });
-    const me: Node = { id: "nME", label: "me", user: 42, tagged: false };
     const same = parseWhois(whois("nA", 42, null)) as Node;
     const other = parseWhois(whois("nB", 7, null)) as Node;
     const tagged = parseWhois(whois("nC", 42, ["tag:home"])) as Node;
     expect([same.label, same.user, same.tagged]).toEqual(["nA", 42, false]);
-    expect(admit(me, same, [])).toBe(true);
-    expect(admit(me, other, [])).toBe(false);
-    expect(admit(me, tagged, [])).toBe(false);
-    const allowed: Allowed[] = [
-      { node: "nB", name: "b", fp: "", id: "", addrs: [] },
-      { node: "nC", name: "c", fp: "", id: "", addrs: [] },
-    ];
-    expect(admit(me, other, allowed) && admit(me, tagged, allowed)).toBe(true);
-    const taggedMe = { ...me, tagged: true };
-    expect(admit(taggedMe, same, [])).toBe(false);
-    expect(admit(taggedMe, same, [{ node: "nA", name: "", fp: "", id: "", addrs: [] }])).toBe(true);
-    expect(admit(null, { id: "", label: "", user: null, tagged: false }, allowed)).toBe(false);
     expect(parseWhois({})).toBeNull();
   });
 
-  test("allowed_list_reads_entries_from_before_keys", () => {
-    const old = loadAllowed(new MemKv({ mesh_allowed: '[{"node":"nB","name":"laptop"}]' }));
-    expect(old[0]).toEqual({ node: "nB", name: "laptop", fp: "", id: "", addrs: [] });
-    expect(allowedKey(old[0] as Allowed)).toBe("nB");
+  test("a_trusted_pc_goes_by_its_id_or_its_key", () => {
     const a: Allowed = { node: "", name: "", fp: "c".repeat(64), id: "", addrs: [] };
     expect(allowedKey(a)).toBe("c".repeat(64));
     expect(peerId(a)).toBe(`fp:${"c".repeat(16)}`);
@@ -124,7 +108,7 @@ describe("mesh.rs", () => {
     const hub = new Hub([], 0);
     const m = meshOf(hub);
     const fp = "d".repeat(64);
-    hub.mesh.allowed = [{ node: "", fp, id: "pc:laptop", name: "laptop", addrs: ["10.0.0.7:47931"] }];
+    hub.mesh.workspacePeers = () => [{ node: "", fp, id: "pc:laptop", name: "laptop", addrs: ["10.0.0.7:47931"] }];
     const at = (via: import("../src/hub.ts").Via) => ({ ip: "10.0.0.8", via });
     expect(m.who(at({ kind: "tls", fp }), req())).toBe("pc:laptop");
     expect(hub.mesh.hints.get(fp)).toEqual(["10.0.0.8:47931"]);
@@ -388,6 +372,14 @@ async function until(f: () => boolean, ms = 15_000): Promise<boolean> {
   return f();
 }
 
+/** Both PCs sign in to one workspace: each finds the other in its directory, the only way PCs trust each other. */
+function oneWorkspace(...pcs: { id: Identity; hub: Hub; port: number }[]): void {
+  for (const x of pcs) {
+    const others = pcs.filter((y) => y !== x).map((y): Allowed => ({ node: "", name: label(y.hub.mesh.me.id), fp: y.id.fp, id: y.hub.mesh.me.id, addrs: [`127.0.0.1:${y.port}`] }));
+    x.hub.mesh.workspacePeers = () => others;
+  }
+}
+
 describe("two TypeScript PCs", () => {
   test("memory: a PC answers with its numbers, one before the route answers nothing", async () => {
     const asked: (number | null)[] = [];
@@ -398,7 +390,7 @@ describe("two TypeScript PCs", () => {
     const b = await pc("delta");
     const own = a.store.createChat(blankChat({ title: "Mine", role: "lead", name: "lead" }));
     setHello("pc:gamma", "gamma", a.id);
-    await a.mesh.pairJoin(`127.0.0.1:${b.port}`, showCode(b.store).code);
+    oneWorkspace(a, b);
     a.mesh.start();
     b.mesh.start();
     expect(await until(() => b.hub.mesh.peer("pc:gamma")?.online === true && a.hub.mesh.peer("pc:delta")?.online === true)).toBe(true);
@@ -409,21 +401,14 @@ describe("two TypeScript PCs", () => {
     expect(await a.mesh.memoryOf("pc:nobody", null)).toBeNull();
   }, 30_000);
 
-  test("pair with a code, then each holds a copy of the other's chat, and edits follow", async () => {
+  test("PCs of one workspace each hold a copy of the other's chat, and edits follow", async () => {
     const a = await pc("alpha", undefined, 5120);
     const b = await pc("beta");
     const item = (t: string): Item => ({ kind: "text", text: t, at: 1 });
     const own = a.store.createChat(blankChat({ title: "On alpha", role: "lead", name: "lead" }));
     a.store.saveItems(own.id, [item("one")]);
-    // Pairing: B shows a code, A types it. Each side ends up allowing the other.
-    const code = showCode(b.store);
     setHello("pc:alpha", "alpha", a.id);
-    const entry = await a.mesh.pairJoin(`127.0.0.1:${b.port}`, code.code.toLowerCase());
-    expect(entry.fp).toBe(b.id.fp);
-    expect(loadAllowed(b.store).map((x) => x.fp)).toEqual([a.id.fp]);
-    expect(loadAllowed(a.store)[0]?.addrs[0]).toBe(`127.0.0.1:${b.port}`);
-    // A used code is gone; a wrong code is refused and counted.
-    expect(a.mesh.pairJoin(`127.0.0.1:${b.port}`, code.code)).rejects.toThrow("no pairing code");
+    oneWorkspace(a, b);
     a.replica.reload();
     a.mesh.start();
     b.mesh.start();
@@ -465,9 +450,8 @@ describe("two TypeScript PCs", () => {
     const b = await pc("delta");
     const lead = a.store.createChat(blankChat({ title: "Lead", role: "lead", name: "lead" }));
     const sub = a.store.createChat(blankChat({ title: "Usage", role: "sub", name: "usage-ts", parent: lead.id }));
-    const code = showCode(b.store);
     setHello("pc:gamma", "gamma", a.id);
-    await a.mesh.pairJoin(`127.0.0.1:${b.port}`, code.code.toLowerCase());
+    oneWorkspace(a, b);
     a.replica.reload();
     a.mesh.start();
     b.mesh.start();
@@ -488,5 +472,25 @@ describe("two TypeScript PCs", () => {
     a.replica.touch(sub.id);
     expect(await until(() => !e.live(cs))).toBe(true);
     expect(e.teamStarted(cl)).toBeNull();
+  }, 30_000);
+
+  test("a PC outside the workspace gets nothing, and one that leaves it is forgotten", async () => {
+    const a = await pc("eps");
+    const b = await pc("zeta");
+    a.store.createChat(blankChat({ title: "Private", role: "lead", name: "lead" }));
+    setHello("pc:eps", "eps", a.id);
+    // Only zeta lists eps: eps doesn't list zeta, so it refuses zeta's calls and follows nobody.
+    b.hub.mesh.workspacePeers = () => [{ node: "", name: "eps", fp: a.id.fp, id: "pc:eps", addrs: [`127.0.0.1:${a.port}`] }];
+    a.replica.reload();
+    a.mesh.start();
+    b.mesh.start();
+    expect(a.mesh.targets()).toEqual([]);
+    await Bun.sleep(1500);
+    expect(b.store.chats().some((c) => c.home === "pc:eps")).toBe(false);
+    expect(b.hub.mesh.peer("pc:eps")?.online ?? false).toBe(false);
+    // A peer kept from before (paired by code, say) that isn't in the directory goes from the lists.
+    a.hub.mesh.peers.set("pc:old", newPeer({ id: "pc:old", fp: "e".repeat(64) }));
+    a.mesh.forgetStrangers();
+    expect(a.hub.mesh.peer("pc:old")).toBeNull();
   }, 30_000);
 });

@@ -321,10 +321,12 @@ export class Store {
   static openAt(path: string): Store {
     const db = new Database(path, { create: true });
     // WAL with synchronous=NORMAL syncs at checkpoints, not on every commit: a power cut can lose
-    // the last commits but never corrupts the database.
+    // the last commits but never corrupts the database. temp_store=MEMORY: statement journals
+    // (INSERT OR REPLACE) and sorts stay off /tmp, so a full /tmp can't fail writes here.
     db.exec(`PRAGMA busy_timeout=5000;
       PRAGMA journal_mode=WAL;
       PRAGMA synchronous=NORMAL;
+      PRAGMA temp_store=MEMORY;
       PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS repos(
         id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, name TEXT NOT NULL);

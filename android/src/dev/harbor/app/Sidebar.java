@@ -810,7 +810,7 @@ final class Sidebar {
         });
     }
 
-    /** Paired PCs: switch to another, or pair one more. Below, every PC they reach with its
+    /** Your workspaces' PCs: switch to another. Below, every PC they reach with its
      *  Harbor version, and Update when one is behind (the desktop's Settings › Devices). */
     private void pcs() {
         Sheet s = new Sheet(a, "PCs");
@@ -832,11 +832,6 @@ final class Sidebar {
             if (h.id.equals(a.hub.id)) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
             c.addView(r, Ui.fill());
         }
-        if (!first) c.addView(Ui.gap(a));
-        c.addView(Ui.cardRow(a, null, "Pair another PC", "scan its code in Settings › Phones", Ui.FG, v -> {
-            s.dismiss();
-            a.startActivity(new Intent(a, Hubs.class).putExtra("pair", true));
-        }), Ui.fill());
 
         TextView head = Ui.text(a, "Harbor on your PCs", 14, Ui.G700);
         head.setPadding(Ui.dp(6), Ui.dp(4), Ui.dp(6), Ui.dp(8));

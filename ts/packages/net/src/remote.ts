@@ -1020,6 +1020,7 @@ export interface RemoteDeps {
   /** The program's path when it is installed. Default: none installed. */
   which?: (bin: string) => string | null;
   /** The paired PCs and what the mesh knows of them (api::Hub); null before the hub is up. */
+  /** The trusted PCs (this PC's workspace's, from the directory) and the mesh's peers. */
   mesh?: () => { allowed: Allowed[]; peers: Map<string, Peer> } | null;
   /** A text file's content (~/.ssh/config, /etc/hostname); null when unreadable. Default: the real file system. */
   readFile?: (path: string) => string | null;

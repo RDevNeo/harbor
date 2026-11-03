@@ -463,7 +463,7 @@ describe("the phone API's chats (api.rs App side)", () => {
         const r = verifyHarborToken(t, keys, Math.floor(Date.now() / 1000));
         if (!r.ok) throw new Error(r.error);
         if (r.value.dev !== fp) throw new Error("this sign-in belongs to another device");
-        const why = accountDecide(r.value, "org_a", { at: 0, workspaces: [] });
+        const why = accountDecide(r.value, "org_a", { at: 0, peers: [], workspaces: [] });
         if (why) throw new Error(why);
         return r.value;
       },

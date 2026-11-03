@@ -78,7 +78,7 @@ export interface Node {
   tagged: boolean;
 }
 
-/** A PC the user allowed: by key fingerprint, or (before 0.13) by Tailscale node id. kv `mesh_allowed`. */
+/** A PC this PC trusts: one of its workspace's PCs, from the account directory (by key fingerprint). */
 export interface Allowed {
   node: string;
   name: string;
@@ -110,30 +110,6 @@ export type Down = "harbor" | "pc";
 /** From the errors of trying each address: one refused means the PC is up without Harbor. */
 export function downOf(errors: string[]): Down {
   return errors.some((e) => e.includes("refused") || e.includes("os error 111") || e.includes("ECONNREFUSED")) ? "harbor" : "pc";
-}
-
-/** Whether node `n` may share chats: allowed by the user, or an untagged node of the same Tailscale user. */
-export function admit(me: Node | null, n: Node, allowed: Allowed[]): boolean {
-  if (n.id === "") return false;
-  return allowed.some((a) => a.node === n.id) || (me !== null && !me.tagged && !n.tagged && me.user !== null && me.user === n.user);
-}
-
-function asAllowed(v: unknown): Allowed | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o = v as Record<string, unknown>;
-  const s = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : "");
-  const addrs = Array.isArray(o.addrs) ? o.addrs.filter((a): a is string => typeof a === "string") : [];
-  return { node: s("node"), name: s("name"), fp: s("fp"), id: s("id"), addrs };
-}
-
-export function loadAllowed(kv: Kv): Allowed[] {
-  const v = kvJson<unknown>(kv, "mesh_allowed", []);
-  return Array.isArray(v) ? v.map(asAllowed).filter((a): a is Allowed => a !== null) : [];
-}
-
-/** Serialized in mesh.rs's field order (serde writes struct fields in declaration order). */
-export function allowedJson(list: Allowed[]): string {
-  return JSON.stringify(list.map((a) => ({ node: a.node, name: a.name, fp: a.fp, id: a.id, addrs: a.addrs })));
 }
 
 /** A socket address as Rust's SocketAddr prints it, or null. */
@@ -185,7 +161,6 @@ export class Shared {
   gids = new Map<number, string>();
   homes = new Map<number, [string, number]>();
   node: Node | null = null;
-  allowed: Allowed[] = [];
   seen = new Map<string, Seen>();
   hints = new Map<string, string[]>();
   down = new Map<string, Down>();
@@ -193,14 +168,10 @@ export class Shared {
   /** The workspace's PCs from the account directory (account.rs `mesh_peers`). */
   workspacePeers: () => Allowed[] = () => [];
 
-  admits(n: Node): boolean {
-    return admit(this.node, n, this.allowed);
-  }
-
-  /** The allowed entry of a key: paired by hand, or a PC of this PC's workspace. */
+  /** The entry of a key when it's one of this PC's workspace's PCs: the only PCs it trusts. */
   allowedFp(fp: string): Allowed | null {
     if (fp === "") return null;
-    return this.allowed.find((a) => a.fp === fp) ?? this.workspacePeers().find((a) => a.fp === fp) ?? null;
+    return this.workspacePeers().find((a) => a.fp === fp) ?? null;
   }
 
   hint(fp: string, addr: string): void {

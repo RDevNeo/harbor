@@ -36,14 +36,12 @@ describe("harbor (main.rs)", () => {
     expect(code).toBe(text.startsWith("player: ") ? 0 : 1);
   });
 
-  test("mesh on, allow and remove write the kv a running Harbor re-reads", async () => {
-    expect(await harbor(["mesh", "on"])).toEqual([0, "sharing chats with your other PCs: on\n", ""]);
-    const fp = "ab".repeat(32);
-    const [c1, o1] = await harbor(["mesh", "allow", fp]);
-    expect([c1, o1]).toEqual([0, "allowed abab abab abab abab\n"]);
-    const [c2, o2] = await harbor(["mesh", "remove", fp]);
-    expect([c2, o2]).toEqual([0, "removed abab abab abab abab\n"]);
-    expect((await harbor(["mesh", "join", "x"]))[0]).toBe(2);
+  test("mesh status runs; the pairing commands are gone", async () => {
+    const [code, out] = await harbor(["mesh", "status"]);
+    expect(code).toBe(0);
+    expect(out).toContain("this workspace's PCs:");
+    expect((await harbor(["mesh", "pair"]))[0]).toBe(2);
+    expect((await harbor(["mesh", "join", "x", "y"]))[0]).toBe(2);
   });
 
   test("nc pipes stdin to a host's port and back", async () => {

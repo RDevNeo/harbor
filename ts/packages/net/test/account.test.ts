@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  cachedMeshPeers,
   AccountFail,
   AccountService,
   accountDecide,
@@ -71,7 +72,7 @@ describe("account.rs tests", () => {
   test("the_directory_says_each_pcs_workspace", () => {
     const pc = (id: string) => ({ fp: "", id, name: "", addrs: [], owner: "", owner_name: "", seen: 0, version: "" });
     const dir = (id: string, pcs: ReturnType<typeof pc>[]): AccountDir => ({ ...ws(id), members: [], pcs, devices: [], invites: [] });
-    const d: AccountDirectory = { at: 0, workspaces: [dir("a", [pc("ts:desk"), pc("")]), dir("b", [pc("ts:other")])] };
+    const d: AccountDirectory = { at: 0, peers: [], workspaces: [dir("a", [pc("ts:desk"), pc("")]), dir("b", [pc("ts:other")])] };
     const got = directoryPcWorkspaces(d);
     expect(got.size).toBe(2);
     expect([got.get("ts:desk"), got.get("ts:other")]).toEqual(["a", "b"]);
@@ -80,11 +81,11 @@ describe("account.rs tests", () => {
   test("workspace_and_revocation", () => {
     const now = 1_800_000_000;
     const c = parsed(claims(now));
-    const empty: AccountDirectory = { at: 0, workspaces: [] };
+    const empty: AccountDirectory = { at: 0, peers: [], workspaces: [] };
     expect(accountDecide(c, "", empty)).not.toBeNull();
     expect(accountDecide(c, "org_b", empty)).not.toBeNull();
     expect(accountDecide(c, "org_a", empty)).toBeNull();
-    const dir: AccountDirectory = { at: (now - 100) * 1000, workspaces: [{ ...ws("org_a"), members: [], pcs: [], devices: [], invites: [] }] };
+    const dir: AccountDirectory = { at: (now - 100) * 1000, peers: [], workspaces: [{ ...ws("org_a"), members: [], pcs: [], devices: [], invites: [] }] };
     const only = dir.workspaces[0];
     if (!only) throw new Error("no workspace");
     expect(accountDecide(c, "org_a", dir)).toBeNull();
@@ -219,7 +220,7 @@ function serviceHandler(w: World): (c: Call) => Reply {
     }
     if (c.auth.startsWith("clerk-access")) return { status: 401, body: { error: "Harbor token only", signin: true } };
     if (key === "POST /v1/pcs") return w.pcsRefusal ? { status: 403, body: w.pcsRefusal } : { status: 200, body: { ok: true } };
-    if (key === "GET /v1/directory") return { status: w.directoryStatus, body: w.directory };
+    if (key === "GET /v1/directory") return { status: w.directoryStatus, body: withPeers(w.directory) };
     if (key === "GET /v1/invites") return { status: 200, body: { invites: w.invites } };
     if (key === "GET /v1/settings") return { status: 200, body: { settings: { theme: { v: "dark", at: 5 } }, at: 5 } };
     if (key === "PUT /v1/settings") return { status: 200, body: { settings: get(c.json, "set"), at: 6 } };
@@ -359,6 +360,13 @@ async function signedIn(r: Rig): Promise<void> {
   expect(r.svc.signedIn()).toBe(true);
   r.calls.length = 0;
   r.clerkCalls.length = 0;
+}
+
+/** As the service answers: without `peers` given, the PCs of the directory's workspaces (their owners share them). */
+function withPeers(d: unknown): unknown {
+  if (typeof d !== "object" || d === null || "peers" in d || !Array.isArray((d as { workspaces?: unknown }).workspaces)) return d;
+  const ws = (d as { workspaces: { name?: string; pcs?: unknown[] }[] }).workspaces;
+  return { ...d, peers: ws.flatMap((w) => (Array.isArray(w.pcs) ? w.pcs : []).map((p) => ({ ...(p as object), via: [w.name ?? ""] }))) };
 }
 
 function workspaceDir(r: Rig, over: Partial<AccountDir> = {}): AccountDir {
@@ -591,7 +599,7 @@ describe("the account loop", () => {
   test("registers the PC, fetches the directory and the invitations, and caches the directory", async () => {
     const r = rig();
     await signedIn(r);
-    const dir: AccountDirectory = { at: Date.now(), workspaces: [workspaceDir(r)] };
+    const dir: AccountDirectory = { at: Date.now(), workspaces: [workspaceDir(r)], peers: [] };
     r.world.directory = dir;
     r.world.invites = [{ id: "inv_1", ws: "org_x", ws_name: "X", inviter_name: "Pat", email: "sam@example.com", at: 7 }];
     await r.svc.tick(true);
@@ -617,6 +625,21 @@ describe("the account loop", () => {
     expect(r.svc.knownDevice(PHONE_FP)).toBe(true);
     expect(r.svc.knownDevice(OTHER_FP)).toBe(true);
     expect(r.svc.knownDevice("ee".repeat(32))).toBe(false);
+  });
+
+  test("trust is the directory's peers alone: a co-member's PC elsewhere is in, a PC it doesn't list is out", async () => {
+    const r = rig();
+    await signedIn(r);
+    const far = "ef".repeat(32);
+    const peer = { fp: far, id: "ts:far", name: "Far", addrs: ["10.0.0.9:47930"], owner: "user_2", owner_name: "Pat", seen: 1, version: "9.9.9", via: ["Sam's workspace"] };
+    r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r)], peers: [peer] };
+    await r.svc.tick(true);
+    expect(r.svc.meshPeers()).toEqual([{ node: "", name: "Far", fp: far, id: "ts:far", addrs: ["10.0.0.9:47930"] }]);
+    expect(r.svc.knownDevice(far)).toBe(true);
+    expect(cachedMeshPeers(r.kv, r.fp).map((p) => p.fp)).toEqual([far]);
+    r.world.directory = { at: Date.now() + 1000, workspaces: [workspaceDir(r)], peers: [] };
+    await r.svc.tick(true);
+    expect(r.svc.meshPeers()).toEqual([]);
   });
 
   test("phones are admitted by their token, the workspace and the cached directory", async () => {
@@ -931,7 +954,7 @@ describe("actions from Settings", () => {
     expect(r.calls.find((c) => c.method === "DELETE")?.path).toBe(`/v1/pcs/${r.fp}`);
     expect(r.svc.workspace()).toBe("");
     expect(r.kv.get("account_ws")).toBe("");
-    expect(r.kv.get("account_dir")).toBe(JSON.stringify({ at: r.svc.directory().at, workspaces: [] }));
+    expect(r.kv.get("account_dir")).toBe(JSON.stringify({ at: r.svc.directory().at, workspaces: [], peers: [] }));
     expect(r.svc.directory().workspaces).toEqual([]);
   });
 });

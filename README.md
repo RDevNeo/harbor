@@ -17,8 +17,8 @@ behind the window. Linux only (x86_64 and aarch64, glibc 2.35+).
   its PCs and chats from their own PCs and phones. Settings follow your account.
 - **Your phone and other PCs**: Harbor for Android (`android/`) and Harbor on your other PCs share
   chats over your own network, every connection mutual TLS pinned to each device's own key. The
-  PCs and phones of a workspace find each other through it: no pairing (PCs outside it can still
-  pair with a one-time code, `harbor mesh pair`). PCs find each other on
+  PCs and phones of a workspace find each other through it, and a PC shares chats only with the
+  PCs of its own workspace: there is no pairing. PCs find each other on
   the network, ask the router to open Harbor's port (UPnP, NAT-PMP, PCP; or use a port forward you
   set: `harbor net forward <port>`, `harbor net name <ddns name>`; `harbor net` shows the result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
   or other software. The phone has the same built-in browser (Servo) for links in chats.

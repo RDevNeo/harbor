@@ -16,7 +16,7 @@ class Fake implements AccountPort {
   user: AccountUser | null = null;
   pending: AccountPendingInvite[] = [];
   ws = "";
-  dir: AccountDirectory = { at: 0, workspaces: [] };
+  dir: AccountDirectory = { at: 0, peers: [], workspaces: [] };
   isConfigured = true;
   status() {
     return this.st;
@@ -88,7 +88,7 @@ function signedIn(role: "owner" | "member"): Fake {
   const f = new Fake();
   f.user = { id: "u1", email: "ana@example.com", name: "Ana", image: "", workspaces: [ws("w1", "Home", role), ws("w2", "Studio", "member"), ws("w3", "Mine", "owner", true)] };
   f.ws = "w1";
-  f.dir = { at: 0, workspaces: [dirOf(role), { ...dirOf("member"), ...ws("w2", "Studio", "member"), members: [], pcs: [] }, { ...dirOf("owner"), ...ws("w3", "Mine", "owner", true) }] };
+  f.dir = { at: 0, peers: [], workspaces: [dirOf(role), { ...dirOf("member"), ...ws("w2", "Studio", "member"), members: [], pcs: [] }, { ...dirOf("owner"), ...ws("w3", "Mine", "owner", true) }] };
   return f;
 }
 

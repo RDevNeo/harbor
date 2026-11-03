@@ -59,6 +59,8 @@ export interface AccountPc {
   owner_name: string;
   seen: number;
   version: string;
+  /** In `peers`: the names of the workspaces this PC's owner shares with that PC's owner. */
+  via?: string[];
 }
 
 export interface AccountInvite {
@@ -95,6 +97,9 @@ export interface AccountDir extends AccountWorkspace {
 export interface AccountDirectory {
   at: number;
   workspaces: AccountDir[];
+  /** The PCs this PC trusts: every PC whose owner is a member of a workspace this PC's owner is a member of (the service
+   * works it out, both ways alike). The only PCs it shares chats with, relays to and lets move chats here. */
+  peers: AccountPc[];
 }
 
 /** Who is signed in here (kv `account`): no secrets. */
@@ -169,7 +174,7 @@ export function workspaceOwner(w: AccountWorkspace): boolean {
 }
 
 export function emptyDirectory(): AccountDirectory {
-  return { at: 0, workspaces: [] };
+  return { at: 0, workspaces: [], peers: [] };
 }
 
 type Obj = Record<string, unknown>;
@@ -270,6 +275,11 @@ function parsePending(v: unknown): AccountPendingInvite {
   };
 }
 
+function parsePeer(v: unknown): AccountPc {
+  const o = need(v);
+  return { ...parsePc(o), via: strs(o, "via") };
+}
+
 function parseDir(v: unknown): AccountDir {
   const o = need(v);
   return {
@@ -283,7 +293,7 @@ function parseDir(v: unknown): AccountDir {
 
 function parseDirectory(v: unknown): AccountDirectory {
   const o = need(v);
-  return { at: int(o, "at"), workspaces: list(o, "workspaces", parseDir) };
+  return { at: int(o, "at"), workspaces: list(o, "workspaces", parseDir), peers: list(o, "peers", parsePeer) };
 }
 
 function parseUser(v: unknown): AccountUser {
@@ -306,6 +316,25 @@ function tryParse<T>(text: string | null, f: (v: unknown) => T): T | null {
   } catch {
     return null;
   }
+}
+
+/** The directory's peers other than `mine`: the only PCs this PC trusts (it shares chats with them, relays to them). */
+function peersOf(d: AccountDirectory, mine: string): Allowed[] {
+  return d.peers.filter((p) => p.fp !== "" && p.fp !== mine).map((p) => ({ node: "", name: p.name, fp: p.fp, id: p.id, addrs: [...p.addrs] }));
+}
+
+/** Rigs and tests: a one-workspace directory in kv, as the account loop leaves it after a sign-in, listing these PCs
+ * (this PC among them or not): they are the PCs this one trusts. */
+export function seedWorkspace(kv: Kv, pcs: { fp: string; addrs?: string[]; id?: string; name?: string }[], ws = "org_rig"): void {
+  kv.set("account_ws", ws);
+  const list = pcs.map((p) => ({ fp: p.fp, id: p.id ?? "", name: p.name ?? "", addrs: p.addrs ?? [], owner: "", owner_name: "", seen: 0, version: "" }));
+  kv.set("account_dir", JSON.stringify({ at: 1, workspaces: [{ id: ws, name: "Rig", role: "owner", personal: true, members: [], pcs: list, devices: [], invites: [] }], peers: list.map((p) => ({ ...p, via: ["Rig"] })) }));
+}
+
+/** This PC's workspace's PCs as last fetched (kv `account_dir`), for commands that run without the account loop (`harbor nc`). */
+export function cachedMeshPeers(kv: Kv, mine: string): Allowed[] {
+  const dir = tryParse(kv.get("account_dir"), parseDirectory) ?? emptyDirectory();
+  return peersOf(dir, mine);
 }
 
 function pending(v: unknown): AccountPendingInvite[] {
@@ -748,16 +777,13 @@ export class AccountService {
 
   /** The other PCs of this PC's workspace, as entries of the mesh's allowed list: they link with this one without pairing. */
   meshPeers(): Allowed[] {
-    const d = this.myDir();
-    if (!d) return [];
-    const mine = this.myFp();
-    return d.pcs.filter((p) => p.fp !== "" && p.fp !== mine).map((p) => ({ node: "", name: p.name, fp: p.fp, id: p.id, addrs: [...p.addrs] }));
+    return peersOf(this.dir, this.myFp());
   }
 
   /** A key this PC's workspace knows (a PC or a member's device): it may complete a TLS handshake from the internet. */
   knownDevice(fp: string): boolean {
     const d = this.myDir();
-    return d !== undefined && (d.devices.includes(fp) || d.pcs.some((p) => p.fp === fp));
+    return this.dir.peers.some((p) => p.fp === fp) || (d !== undefined && (d.devices.includes(fp) || d.pcs.some((p) => p.fp === fp)));
   }
 
   /** The owner name this PC says it has: the signed-in account's. */

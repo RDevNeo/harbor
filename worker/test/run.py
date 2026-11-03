@@ -406,6 +406,20 @@ def main():
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     check("owner's invite list is empty after joining", d["workspaces"][0]["invites"] == [])
 
+    # peers by membership: a PC of pat's own workspace and sam's desk trust each other once pat is a member of sam's
+    pat_box = Device("pc", "pat-box")
+    pb_j, _ = sess_ok("pat@example.com", pat_box)
+    pb_ws = [w for w in pb_j["workspaces"] if w["personal"]][0]["id"]
+    st, js, _, _ = http("POST", W + "/v1/pcs", {"ws": pb_ws, "id": "pc:pat-box", "name": "pat-box", "addrs": ["10.0.0.9:47930"]}, token=pb_j["token"])
+    check("pat registers a PC in her own workspace", st == 200, js)
+    _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
+    peers = {x["name"]: x for x in d.get("peers", [])}
+    check("peers: sam's desk sees pat's PC through the shared workspace", "pat-box" in peers and peers["pat-box"]["via"] == ["Sam's workspace"]
+          and "desk" not in peers, d.get("peers"))
+    _, d, _, _ = http("GET", W + "/v1/directory", token=pb_j["token"])
+    peers = {x["name"]: x for x in d.get("peers", [])}
+    check("peers: symmetric, pat's PC sees sam's desk, not itself", "desk" in peers and "pat-box" not in peers, d.get("peers"))
+
     # Option A
     eve_j, _ = sess_ok("eve@example.com", pc)
     eve_pc = eve_j["token"]
@@ -449,6 +463,9 @@ def main():
     check("members: non-owner cannot remove another member", st == 403, js)
     st, js, _, _ = http("DELETE", W + f"/v1/workspaces/{sam_ws}/members/{pat_uid}", token=sam_pc)
     check("members: owner removes a member", st == 200 and js == {"ok": True}, js)
+    # sam's desk was moved by pat above (Option A), so it's pat's now: ask from sam's own phone
+    _, d, _, _ = http("GET", W + "/v1/directory", token=sam_phone)
+    check("peers: removing the member revokes her PC", "pat-box" not in [x["name"] for x in d.get("peers", [])], d.get("peers"))
     _, d, _, _ = http("GET", W + "/v1/directory", token=pat_t)
     check("removed member's directory no longer lists that workspace", all(w["id"] != sam_ws for w in d["workspaces"]))
     http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "alice@example.com"}, token=sam_pc)

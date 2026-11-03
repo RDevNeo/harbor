@@ -4,6 +4,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { startHub } from "../hub.ts";
+import { seedWorkspace } from "../packages/net/src/index.ts";
 import { machines } from "../packages/mcp/src/index.ts";
 import { blankChat, dataDir, Store } from "../packages/store/src/index.ts";
 
@@ -17,9 +18,9 @@ if (cmd === "seed") {
   s.setQuiet("net_map", "0");
   const list = allow.split(",").filter((x) => x !== "").map((x) => {
     const [fp = "", addr = ""] = x.split("=");
-    return { node: "", name: "", fp, id: "", addrs: [addr] };
+    return { fp, addrs: [addr] };
   });
-  s.setQuiet("mesh_allowed", JSON.stringify(list));
+  seedWorkspace(s, list);
   const repo = s.addRepo(project);
   if (title !== "") s.createChat(blankChat({ repoId: repo, title, account: "claude", model: "claude-opus-5-5", effort: "medium", access: "full", role: "lead", name: "lead" }));
   s.close();

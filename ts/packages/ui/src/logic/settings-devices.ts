@@ -1,5 +1,5 @@
-import { agoShort, allowedKey, hostLabel, normalizeFp, short as keyShort } from "@harbor/net";
-import type { Allowed, Kv, Me, PairCode, Peer, RemoteHost, Seen } from "@harbor/net";
+import { agoShort, hostLabel, short as keyShort } from "@harbor/net";
+import type { AccountPc, Kv, Me, Peer, RemoteHost } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, copy, field, form, list, row, title, type Block, type BlockRow, type BlockTab } from "./settings-blocks.ts";
 
@@ -7,30 +7,21 @@ export interface MeshHost {
   me(): Me;
   myFp(): string;
   versionLabel(): string;
+  /** The PCs whose owner shares a workspace with this PC's owner (the directory's peers): the only PCs it trusts. */
+  pcs(): AccountPc[];
+  /** The mesh's peers, for whether a PC answers now. */
   peers(): Peer[];
-  allowed(): Allowed[];
-  seen(): ReadonlyMap<string, Seen>;
-  allow(key: string, name: string, allow: boolean): void;
   /** Gives this PC another name ("": back to the default); its id and key stay. */
   rename(name: string): void;
-  addrs(): string[];
   copy(text: string): void;
-}
-
-export interface PairHost {
-  shown(): PairCode | null;
-  show(): string | null;
-  cancel(): void;
-  busy(): boolean;
-  join(addr: string, code: string): void;
-  result(): { ok: boolean; text: string } | null;
 }
 
 export interface DevicesHost {
   kv: Kv;
   now(): number;
   mesh: MeshHost;
-  pair: PairHost;
+  /** Whether this PC is signed in to a workspace (otherwise the list says where to do it). */
+  inWorkspace(): boolean;
   phones(): BlockRow[];
   signOut(fp: string): void;
   ssh: {
@@ -40,39 +31,44 @@ export interface DevicesHost {
 }
 
 export interface DevicesState {
-  pairAddr: string;
   /** The rename form is open under the list. */
   renaming: boolean;
 }
-export const newDevicesState = (): DevicesState => ({ pairAddr: "", renaming: false });
+export const newDevicesState = (): DevicesState => ({ renaming: false });
+
+/** A workspace PC's line: online now (the mesh hears it), else when the directory or the mesh last saw it. */
+function pcRow(pc: AccountPc, peer: Peer | undefined, now: number): BlockRow {
+  const online = peer?.online ?? false;
+  const seen = Math.max(peer?.seen ?? 0, pc.seen);
+  const status = online ? "Online" : seen > 0 ? `Last seen ${agoShort(seen, now)} ago` : "Offline";
+  const version = peer?.version || pc.version;
+  const via = pc.via && pc.via.length > 0 ? ` (${pc.via.join(", ")})` : "";
+  const owner = pc.owner_name !== "" ? ` · ${pc.owner_name}${via}` : via !== "" ? ` ·${via}` : "";
+  return row(pc.name || peer?.name || "PC", {
+    icon: ICONS.MONITOR,
+    desc: `${status}${version ? ` · Harbor ${version}` : ""}${owner}`,
+    badges: [badge(online ? "Online" : "Offline", online ? "green" : "gray")],
+  });
+}
 
 function deviceRows(h: DevicesHost, st: DevicesState): BlockRow[] {
   const m = h.mesh;
-  const lines = [row(`${m.me().name} (this PC)`, {
-    icon: ICONS.MONITOR,
-    desc: `Harbor ${m.versionLabel()} · key ${keyShort(m.myFp())}`,
-    buttons: [
-      btn("rename", "Rename", { enabled: !st.renaming, tip: "The name your other PCs and phones show for this PC" }),
-      btn("copy_key", "", { icon: ICONS.COPY, variant: "muted", tip: "Copy this PC's full key" }),
-    ],
-  })];
-  const peers = m.peers();
-  const keys = new Map<string, string>();
-  for (const a of m.allowed()) keys.set(allowedKey(a), a.name);
-  for (const p of peers) keys.set(p.fp || p.node || p.id, p.name);
-  for (const [key, name] of keys) {
-    const p = peers.find((p) => p.fp === key || p.node === key || p.id === key);
-    const last = p?.seen ?? 0;
-    const status = p?.online ? "Online" : last > 0 ? `Last seen ${agoShort(last, h.now())} ago` : "Offline";
-    lines.push(row(name || p?.name || "PC", {
+  const lines = [
+    row(`${m.me().name} (this PC)`, {
       icon: ICONS.MONITOR,
-      desc: `${status}${p?.version ? ` · Harbor ${p.version}` : ""}${normalizeFp(key) ? ` · key ${keyShort(key)}` : ""}`,
-      badges: [badge(p?.online ? "Online" : "Offline", p?.online ? "green" : "gray")],
-      buttons: [btn(`remove:${key}`, "Remove", { variant: "destructive" })],
-    }));
-  }
+      desc: `Harbor ${m.versionLabel()} · key ${keyShort(m.myFp())}`,
+      buttons: [
+        btn("rename", "Rename", { enabled: !st.renaming, tip: "The name your other PCs and phones show for this PC" }),
+        btn("copy_key", "", { icon: ICONS.COPY, variant: "muted", tip: "Copy this PC's full key" }),
+      ],
+    }),
+  ];
+  const peers = m.peers();
+  const now = h.now();
+  for (const pc of m.pcs()) lines.push(pcRow(pc, peers.find((p) => p.fp === pc.fp), now));
+  // Devices added by SSH before (they still run chats); listed so they can be removed.
   for (const [d, online] of h.ssh.devices()) {
-    if (peers.some((p) => p.id === d.id || p.name === hostLabel(d))) continue;
+    if (m.pcs().some((p) => p.id === d.id || p.name === hostLabel(d))) continue;
     lines.push(row(hostLabel(d), { icon: ICONS.MONITOR, desc: `SSH · ${online === true ? "Online" : online === false ? "Offline" : "Status unknown"}`, buttons: [btn(`ssh_remove:${d.id}`, "Remove", { variant: "destructive" })] }));
   }
   lines.push(...h.phones());
@@ -80,31 +76,23 @@ function deviceRows(h: DevicesHost, st: DevicesState): BlockRow[] {
 }
 
 export function devicesBlocks(h: DevicesHost, st: DevicesState): Block[] {
-  const shown = h.pair.shown();
-  const now = h.now();
-  let first: BlockRow;
-  if (shown?.paired) first = row(`Paired with ${shown.paired}`, { buttons: [btn("pair_cancel", "Done")] });
-  else if (shown && (shown.tries >= 5 || shown.expires <= now)) first = row("The code expired", { buttons: [btn("pair_show", "New code", { variant: "primary" })] });
-  else if (shown) {
-    const left = Math.max(0, shown.expires - now);
-    first = row(`Code  ${shown.code}`, { desc: `On the other PC, enter this code and address ${h.mesh.addrs()[0] ?? "(no network)"} · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`, buttons: [btn("pair_cancel", "Cancel")] });
-  } else first = row("Show a code", { desc: "Show a one-time code to enter on your other PC.", buttons: [btn("pair_show", "Show a code", { variant: "primary" })] });
-  const result = h.pair.result();
-  return [
-    title("Your devices", 11), list(deviceRows(h, st), ""),
-    ...(st.renaming
-      ? [form("rename", [field("name", "This PC's name", { text: h.mesh.me().name, min: 1 })], btn("rename_save", "Save", { variant: "primary" }), {
-          before: 8,
-          frame: "header",
-          title: "Rename this PC",
-          desc: "Your other PCs, your phones and your workspace show this name. Its key and id stay the same.",
-          cancel: btn("rename_cancel", "Cancel"),
-        })]
-      : []),
-    title("Pair a device"), list([first], ""),
-    form("pair", [field("addr", "Its address (e.g. 10.0.0.12)", { min: 1, text: st.pairAddr }), field("code", "Code", { mono: true, width: 160, min: 10 })], btn("pair", h.pair.busy() ? "Pairing…" : "Pair", { variant: "primary", enabled: !h.pair.busy() }), { before: 16, frame: "header", title: "Enter a code", desc: "The address and code shown on your other PC." }),
-    ...(result ? [copy(result.ok ? result.text : `Not paired: ${result.text}`, 13, { before: 8 })] : []),
-  ];
+  const out: Block[] = [title("Your devices", 11), list(deviceRows(h, st), "")];
+  if (st.renaming) {
+    out.push(
+      form("rename", [field("name", "This PC's name", { text: h.mesh.me().name, min: 1 })], btn("rename_save", "Save", { variant: "primary" }), {
+        before: 8,
+        frame: "header",
+        title: "Rename this PC",
+        desc: "Your other PCs, your phones and your workspace show this name. Its key and id stay the same.",
+        cancel: btn("rename_cancel", "Cancel"),
+      }),
+    );
+  }
+  const note = h.inWorkspace()
+    ? "This PC shares chats with the PCs of everyone who shares a workspace with you. Invite someone to your workspace (Settings › Workspace) and their PCs show here."
+    : "Sign in and pick a workspace (Settings › Workspace): this PC then shares chats with that workspace's PCs.";
+  out.push(copy(note, 13, { before: 10 }));
+  return out;
 }
 
 export function devicesTab(h: DevicesHost): BlockTab {
@@ -115,9 +103,6 @@ export function devicesTab(h: DevicesHost): BlockTab {
       if (key === "copy_key") h.mesh.copy(h.mesh.myFp());
       else if (key === "rename") st.renaming = true;
       else if (key === "rename_cancel") st.renaming = false;
-      else if (key === "pair_show") h.pair.show();
-      else if (key === "pair_cancel") h.pair.cancel();
-      else if (key.startsWith("remove:")) h.mesh.allow(key.slice(7), "", false);
       else if (key.startsWith("signout:")) h.signOut(key.slice(8));
       else if (key.startsWith("ssh_remove:")) h.ssh.remove(key.slice(11));
     },
@@ -127,11 +112,6 @@ export function devicesTab(h: DevicesHost): BlockTab {
       if (key === "rename") {
         h.mesh.rename(values[0] ?? "");
         st.renaming = false;
-        return "";
-      }
-      if (key === "pair") {
-        st.pairAddr = (values[0] ?? "").trim();
-        h.pair.join(st.pairAddr, values[1] ?? "");
       }
       return "";
     },

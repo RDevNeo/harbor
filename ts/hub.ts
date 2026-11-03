@@ -558,7 +558,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     runner: systemRunner,
     selfExe: () => process.execPath,
     which: (bin) => providers.which(bin),
-    mesh: () => ({ allowed: hub.mesh.allowed, peers: hub.mesh.peers }),
+    mesh: () => ({ allowed: hub.mesh.workspacePeers(), peers: hub.mesh.peers }),
     lanAddrs: () => lanAddrs(env),
   });
   await remotes.refresh();

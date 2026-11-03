@@ -39,10 +39,9 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
   answers plain HTTP on its Tailscale interface, from Tailscale addresses (apps before 0.13; they
   can only update themselves there).
-- A TLS client without a known key gets nothing but `GET /app.apk` and PC pairing
-  (`POST /mesh/v1/pair`). From outside private networks (a public IPv6, a forwarded port) the
-  handshake itself needs a key the hub knows: a PC of its workspace or paired by hand, or a
-  device of one of the workspace's members (the directory's `devices`). Failed authentications
+- A TLS client without a known key gets nothing but `GET /app.apk`. From outside private networks
+  (a public IPv6, a forwarded port) the handshake itself needs a key the hub knows: one of its
+  peers, a PC of its workspace, or a device of one of the workspace's members (the directory's `devices`). Failed authentications
   are counted per address (IPv6 per /64): past 30 a minute, connections are closed without an
   answer. At most 12 connections per address at once.
 - Request bodies need `Content-Length` (no chunked encoding). JSON bodies ≤ 2 MB, uploads ≤ 200 MB.
@@ -131,11 +130,13 @@ phone): then `403`/`401`. A PC in no workspace, or in another one, takes nobody 
    {"at": 1730000000000, "workspaces": [{"id", "name", "role", "personal",
      "members": [{"id", "name", "email", "role"}],
      "pcs": [{"fp", "id", "name", "addrs", "owner", "owner_name", "seen", "version"}],
-     "devices": ["<fp>", …], "invites": [{"id", "email", "at"}]}]}
+     "devices": ["<fp>", …], "invites": [{"id", "email", "at"}]}],
+    "peers": [{"fp", "id", "name", "addrs", "owner", "owner_name", "seen", "version", "via": ["<workspace name>"]}]}
    ```
-   (`invites` only for owners). PCs cache it (kv `account_dir`) and link with the workspace's
-   other PCs without pairing (mesh.rs); phones turn each workspace into a hub entry whose PCs
-   are its endpoints.
+   (`invites` only for owners). `peers` (from 0.131): every PC whose owner is a member of a
+   workspace the calling PC's owner is a member of (`via`: those workspaces), in any workspace;
+   the calling PC itself left out. PCs cache it (kv `account_dir`) and share chats with exactly
+   these PCs, no pairing; phones turn each workspace into a hub entry whose PCs are its endpoints.
    Pending invitations may include `no_account: true` when no account has that verified address,
    and `near` with a suggested address of someone already in the owner's workspaces. An absent
    flag also covers an unavailable account lookup; invitations remain valid for future sign-ins.
@@ -1937,39 +1938,24 @@ mesh), so moving to any hub that answers is enough.
 While sharing is on, each Harbor sends a UDP datagram every 30 s (and at once when asked) to
 `239.255.71.30:47930` and the broadcast address, port 47930:
 `{"harbor": 1, "t": "here"|"ask", "id", "name", "fp", "port", "v"}`. Nothing in it is trusted:
-for a paired PC it's one more address to try (pinned to its key), an unpaired one is listed in
-Settings › Devices to pair with a code, and `harbor mesh join <name> <code>` looks names up this way.
+for a peer it's one more address to try (pinned to its key); others are ignored.
 
 ### Hub to hub (`/mesh/v1/…`)
 
 PCs talk on the same listener (port 47930) over the same mutual TLS, each showing its own key.
-A caller is accepted when its key's fingerprint is on this PC's allowed list (kv `mesh_allowed`
-= `[{fp, name, id, addrs, node}]`: Settings › Devices, `harbor mesh allow <fingerprint>`, or
-pairing below). No token. A PC only follows peers it allows, so two PCs share once each allows
-the other. A caller that isn't allowed gets `403 {"error", "harbor": true, "name"}`. Sharing is
-kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s. Requests say who sends
+A caller is accepted when its key's fingerprint is one of this PC's peers: `GET /v1/directory`
+`peers` (as last fetched), every PC whose owner (the account that registered it) is a member of a
+workspace this PC's owner is a member of, so both sides see each other alike and leaving or being
+removed from the shared workspace ends it. No token. A PC only follows its peers. A caller that
+isn't one gets `403 {"error", "harbor": true, "name"}`. Code pairing (`POST /mesh/v1/pair`, kv
+`mesh_allowed` and `mesh_pair`) is gone since 0.131: the old allowed list is cleared at start and
+trusts nobody. Requests say who sends
 them in `X-Harbor-Id` and `X-Harbor-Name` (for the other side's Settings, never for access).
 
 A peer is found by its key, not its address: its `hello` lists its addresses (`addrs`,
 "host:port"), a PC that calls in leaves its address, and while Tailscale is installed its peer
 list adds the tailnet addresses. Each is tried, pinned to the peer's key, until one answers.
 
-- `POST /mesh/v1/pair` `{proof, id, name, addrs, port}` (any TLS client with a key): the caller
-  typed the one-time code this PC shows (kv `mesh_pair` = `{code, expires, tries, paired}`;
-  Settings › Devices › Show a code, or `harbor mesh pair`). `K = PBKDF2-HMAC-SHA256(code
-  without dashes, uppercase, O→0 I/L→1; salt "harbor-pair-v1"; 100 000 rounds)`; the caller
-  sends `proof = HMAC-SHA256(K, "harbor-pair-v1\njoin\n<host fp>\n<caller fp>")` with the
-  fingerprints it saw in this very TLS connection, and checks the answer's
-  `proof = HMAC-SHA256(K, "harbor-pair-v1\nhost\n<host fp>\n<caller fp>")`. A man in the middle
-  shows another key, so neither proof fits. On success both add each other to `mesh_allowed`;
-  the answer is `{proof, fp, id, name, addrs, port}`. The code is good for 10 minutes, once;
-  `403` wrong code (5 of those void it), `404` no code shown, `429` more than 10 tries a minute
-  from one address.
-- `POST /mesh/v1/enroll` `{fp, id, name, addrs, port}` → `{fp, id, name, addrs, port}`: only in
-  plain HTTP over Tailscale, from a PC allowed by Tailscale node before 0.13 (`tailscale whois`
-  names it): the two swap keys, which go into their allowed entries. From then on that PC gets
-  only `hello` and `enroll` in plain HTTP; everything else needs TLS with its key. `409` when
-  another key is already on file for it (pair again).
 - `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port, owner, github, owner_suggested}`
   (`phones`: its phone access is on; also in each chats answer; `fp`, `addrs`, `port`: its key
   and addresses; from 0.44 `owner` and `github`: who owns the PC, for the who is who; from 0.47

@@ -5,6 +5,27 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- PCs trust each other through workspace membership: two PCs share chats (copies, Runs on, Auto,
+  moving chats and projects, relaying) when their owners (the accounts that signed them in) are
+  both members of at least one workspace. Inviting someone to your workspace is enough: their PCs
+  and yours become peers without moving any PC, and removing them or leaving ends it. The account
+  service works out each PC's peers (`GET /v1/directory` `peers`); it's the only thing a PC trusts.
+- Settings › Devices lists this PC (Rename), those peer PCs with their owner, the shared workspace,
+  whether they're online and their Harbor version, and the signed-in phones. Other PCs have no
+  Remove: the membership decides.
+- `harbor mesh` (status) lists the peers; `harbor nc` relays through them.
+
+### Fixed
+- Harbor's database keeps SQLite's temporary data in memory: with /tmp full, writes such as the
+  workspace directory's refresh could fail, leaving a PC on a directory many minutes old.
+
+### Removed
+- Pairing PCs with a code: Settings › Devices' Pair a device (Show a code, Enter a code), the mesh's
+  pairing call and `harbor mesh pair`, `join`, `allow`, `remove`, `on` and `off`. PCs paired that
+  way are no longer trusted for it (the stored list is deleted at start); each PC keeps its key.
+- The phone's "Pair another PC" row (it pointed at a page that no longer exists).
+
 ## [0.130.1] - 2026-11-03
 
 ### Fixed

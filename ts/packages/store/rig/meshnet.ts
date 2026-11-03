@@ -1,3 +1,4 @@
+import { seedWorkspace } from "../../net/src/account.ts";
 import { blankChat, dataDir, stateDir, Store } from "../src/index.ts";
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -14,9 +15,9 @@ if (cmd === "fp") {
   if (allow !== "") {
     const list = allow.split(",").map((x) => {
       const [fp = "", addr = ""] = x.split("=");
-      return { node: "", name: "", fp, id: "", addrs: [addr] };
+      return { fp, addrs: [addr] };
     });
-    s.setQuiet("mesh_allowed", JSON.stringify(list));
+    seedWorkspace(s, list);
   }
   if (title !== "") {
     const c = s.createChat(blankChat({ title, account: "claude", model: "claude-opus-5-5", effort: "medium", access: "full", role: "lead" }));

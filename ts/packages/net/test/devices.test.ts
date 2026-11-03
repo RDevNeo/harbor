@@ -174,7 +174,7 @@ describe("devices beyond the Rust tests", () => {
     const hub = new Hub([tok("t1", "g1", "Pixel")], 0);
     hub.mesh.on = true;
     hub.enabled = true;
-    hub.mesh.allowed = [
+    hub.mesh.workspacePeers = () => [
       { node: "", name: "desk", fp: "fp1", id: "pc:desk", addrs: [`${ip(192, 0, 2, 5)}:7878`] },
       { node: "", name: "lap", fp: "fp2", id: "pc:lap", addrs: [] },
     ];

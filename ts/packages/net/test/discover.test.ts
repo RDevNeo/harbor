@@ -108,7 +108,7 @@ describe("discover", () => {
     expect(discoverParse(m, "fd00::7")?.lan.addr).toBe("[fd00::7]:47931");
     // A paired PC's announcement is an address to try; an unpaired one is listed.
     const shared = new Shared();
-    shared.allowed = [{ node: "", name: "", fp, id: "", addrs: [] }];
+    shared.workspacePeers = () => [{ node: "", name: "", fp, id: "", addrs: [] }];
     const table = new Map<string, LanHarbor>();
     discoverRecord(shared, l, table);
     expect(shared.hints.get(fp)).toEqual([`${FIVE}:47931`]);
@@ -143,7 +143,7 @@ describe("discover", () => {
   test("two Harbors find each other: ask, then here", async () => {
     const [pa, pb] = [await freePort(), await freePort()];
     const sharedA = new Shared();
-    sharedA.allowed = [{ node: "", name: "b", fp: fpB, id: "", addrs: [] }];
+    sharedA.workspacePeers = () => [{ node: "", name: "b", fp: fpB, id: "", addrs: [] }];
     const sharedB = new Shared();
     const tableA = new Map<string, LanHarbor>();
     const tableB = new Map<string, LanHarbor>();

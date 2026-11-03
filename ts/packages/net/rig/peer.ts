@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { blankChat, Store, type Item } from "@harbor/store";
-import { Api, Hub, loadOrCreate, Mesh, PhoneRoutes, StoreReplica, relayServe, setHello, type Allowed } from "@harbor/net";
+import { Api, Hub, cachedMeshPeers, loadOrCreate, Mesh, PhoneRoutes, StoreReplica, relayServe, seedWorkspace, setHello } from "@harbor/net";
 
 const dir = process.env.DIR ?? "";
 const port = Number(process.env.PORT ?? "47931");
@@ -10,14 +10,14 @@ mkdirSync(dir, { recursive: true });
 const store = Store.open(join(dir, "data"));
 const id = loadOrCreate(dir);
 console.log(`fp ${id.fp}`);
-const allowed: Allowed[] = (process.env.ALLOW ?? "")
+const allowed = (process.env.ALLOW ?? "")
   .split(",")
   .filter((x) => x !== "")
   .map((x) => {
     const [fp = "", addr = ""] = x.split("=");
-    return { node: "", name: "", fp, id: "", addrs: [addr] };
+    return { fp, addrs: [addr] };
   });
-store.set("mesh_allowed", JSON.stringify(allowed));
+seedWorkspace(store, allowed);
 store.set("mesh_enabled", "1");
 if (process.env.SEED) {
   const c = store.createChat(blankChat({ title: process.env.SEED, account: "claude", model: "claude-opus-5-5", effort: "medium", access: "full", role: "lead", name: "lead" }));
@@ -35,7 +35,7 @@ setHello(hub.mesh.me.id, hub.mesh.me.name, id);
 const replica = new StoreReplica({ store, hub, version: "0.0.0-ts" });
 let api: Api;
 let phone: PhoneRoutes;
-const mesh = new Mesh({
+const mesh = new Mesh({ workspacePeers: () => cachedMeshPeers(store, id.fp),
   hub,
   kv: store,
   id: () => id,
