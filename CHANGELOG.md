@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.120.2] - 2026-11-03
+
 ### Changed
 - Claude usage follows Anthropic's 2026-10-30 plans: "Max 20x" shows as Ultra and "Max 5x" as Max
   (also from an older usage monitor that still says the old names, and from the login's own tier
