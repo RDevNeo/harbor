@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.125.0] - 2026-11-03
+
 ### Changed
 - MCP servers cost nothing until an agent calls one of their tools. Claude Code connects every
   server at the start of every turn; Harbor now answers that handshake (`initialize`, the tool,
