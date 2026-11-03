@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.120.3] - 2026-11-03
+
 ### Fixed
 - Discord: a captcha's challenge (the bigger frame hCaptcha opens after its checkbox, such as "drag
   the letter to the place where it fits") was squeezed into the checkbox's shape, which combed its
