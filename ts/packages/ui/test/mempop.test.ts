@@ -7,7 +7,7 @@ const ram = (used: number, total: number, swap = 0) => ({ total: total * GB, use
 
 describe("memory popovers", () => {
   test("figures", () => {
-    expect([bytesText(412 * MB), bytesText(1.15 * GB), bytesText(16 * GB), bytesText(10)]).toEqual(["412 MB", "1.2 GB", "16 GB", "1 MB"]);
+    expect([bytesText(412 * MB), bytesText(1.15 * GB), bytesText(16 * GB), bytesText(10), bytesText(0)]).toEqual(["412 MB", "1.2 GB", "16 GB", "1 MB", "0 MB"]);
     const r = { total: 16 * GB, used: 9.8 * GB, swapTotal: 0, swapUsed: 0 };
     expect([usedText(r), ramText(r)]).toEqual(["9.8 GB", "9.8 of 16 GB  ·  61%"]);
     expect(usedText({ ...r, used: 5 * GB })).toBe("5.0 GB");
@@ -38,6 +38,39 @@ describe("memory popovers", () => {
     ]);
     expect(rows[1]?.value).toBe(0.75);
     expect(chatRows({ ram: null, running: 0, top: [], parts: [] }, "").map((r) => r.label)).toEqual(["This chat", "Nothing of this chat is running now."]);
+  });
+
+  test("a lead between turns: listed idle, the chat at 0 MB", () => {
+    const m = parseMem({ ram: ram(4, 16), running: 0, top: [], chat: { parts: [{ kind: "agent", label: "Lead · Claude", bytes: 0, idle: true }] } });
+    if (!m) throw new Error("no numbers");
+    expect(m.parts).toEqual([{ kind: "agent", label: "Lead · Claude", bytes: 0, idle: true }]);
+    expect(chatRows(m, "").map((r) => [r.kind, r.label, r.badge || r.desc])).toEqual([
+      ["usage-account", "This chat", "0 MB"],
+      ["mem-row", "Lead · Claude", "Idle"],
+      ["separator", "", ""],
+      ["mem-ram", "This PC", "4 of 16 GB  ·  25%"],
+    ]);
+  });
+
+  test("a Runs on device over SSH: its RAM and the chats running there, or why there are none", () => {
+    const mac = parseMem({ ram: ram(9, 16), running: 2, top: [] });
+    const rows = deviceRows({ name: "desk", online: true, mem: null }, [
+      { name: "mac", online: true, mem: mac, ssh: true },
+      { name: "pi", online: true, mem: null, ssh: true, note: "No numbers: it didn't answer over SSH." },
+      { name: "new", online: true, mem: null, ssh: true, asking: true },
+    ]).slice(3);
+    expect(rows.map((r) => [r.kind, r.label, r.badge || r.desc])).toEqual([
+      ["separator", "", ""],
+      ["usage-account", "mac", "SSH"],
+      ["mem-ram", "RAM", "9 of 16 GB  ·  56%"],
+      ["separator", "", ""],
+      ["usage-account", "pi", "SSH"],
+      ["usage-note", "No numbers: it didn't answer over SSH.", ""],
+      ["separator", "", ""],
+      ["usage-account", "new", "SSH"],
+      ["usage-note", "Asking…", ""],
+    ]);
+    expect(rows[1]?.desc).toBe("2 chats running");
   });
 
   test("the PCs' popover: this PC first, then off, older and answering PCs", () => {

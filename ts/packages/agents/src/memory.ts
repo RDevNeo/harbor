@@ -1,6 +1,7 @@
 // What a chat's processes and this PC hold in memory, read from /proc only when something shows it.
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
+import type { Kind } from "./providers.ts";
 
 /** Bytes. */
 export interface Ram {
@@ -21,6 +22,30 @@ export function parseMeminfo(text: string): Ram | null {
   if (total === null || avail === null || total <= 0) return null;
   const swapTotal = kb("SwapTotal") ?? 0;
   return { total, used: Math.max(0, total - avail), swapTotal, swapUsed: Math.max(0, swapTotal - (kb("SwapFree") ?? swapTotal)) };
+}
+
+/** The shell line that prints a device's RAM over SSH: /proc/meminfo on Linux, sysctl and vm_stat on macOS. */
+export const DEVICE_RAM_SH = "cat /proc/meminfo 2>/dev/null || { sysctl hw.memsize vm.swapusage; vm_stat; }";
+
+/** DEVICE_RAM_SH's output. macOS's used is what Activity Monitor calls Memory Used: app memory, wired and compressed. */
+export function parseDeviceRam(text: string): Ram | null {
+  const linux = parseMeminfo(text);
+  if (linux) return linux;
+  const total = Number(text.match(/^hw\.memsize:\s*(\d+)/m)?.[1] ?? NaN);
+  const page = Number(text.match(/page size of (\d+) bytes/)?.[1] ?? NaN);
+  if (!(total > 0) || !(page > 0)) return null;
+  const pages = (name: string): number | null => {
+    const m = text.match(new RegExp(`^${name}:\\s+(\\d+)`, "m"));
+    return m?.[1] === undefined ? null : Number(m[1]);
+  };
+  const anon = pages("Anonymous pages");
+  const app = anon !== null ? Math.max(0, anon - (pages("Pages purgeable") ?? 0)) : (pages("Pages active") ?? 0);
+  const used = (app + (pages("Pages wired down") ?? 0) + (pages("Pages occupied by compressor") ?? 0)) * page;
+  const mb = (k: string): number => {
+    const m = text.match(new RegExp(`vm\\.swapusage:.*?${k} = ([\\d.]+)([KMG])`));
+    return m?.[1] === undefined ? 0 : Number(m[1]) * 1024 ** ({ K: 1, M: 2, G: 3 }[m[2] as "K" | "M" | "G"] ?? 2);
+  };
+  return { total, used: Math.min(total, used), swapTotal: mb("total"), swapUsed: mb("used") };
 }
 
 export function ram(): Ram | null {
@@ -108,6 +133,8 @@ export interface MemPart {
   kind: "agent" | "sub" | "proc";
   label: string;
   bytes: number;
+  /** The chat's own agent between turns (a lead waiting on its subagents, say): nothing of it runs. */
+  idle?: boolean;
 }
 
 /** What the engine knows of a chat's processes. */
@@ -115,16 +142,21 @@ export interface MemSource {
   chats: readonly { id: number; title: string; name: string; role: string; parent: number | null; home: string; retired: boolean }[];
   /** A chat's running turn: its runner's pid and the agent's kind. */
   runner(id: number): { pid: number; kind: string } | null;
+  /** For its row between turns ("": unknown). */
+  kind?(id: number): Kind | "";
   procs: readonly { name: string; lead: number; owner: number; pid: number }[];
 }
 
-/** A chat's processes: its agent, its subagents' (for a lead) and the processes started for it. */
+/** A chat's processes: its agent (listed between turns too, idle), its subagents' (for a lead) and the processes started for it. */
 export function chatParts(src: MemSource, id: number, t: ProcTable, seen: Set<number> = new Set()): MemPart[] {
   const chat = src.chats.find((c) => c.id === id);
   if (!chat) return [];
   const out: MemPart[] = [];
   const own = src.runner(id);
-  if (own) out.push({ kind: "agent", label: `${chat.role === "lead" ? "Lead" : "Agent"} · ${own.kind}`, bytes: treeBytes(t, [own.pid], seen) });
+  const who = chat.role === "lead" ? "Lead" : "Agent";
+  const ownBytes = own ? treeBytes(t, [own.pid], seen) : 0;
+  const kind = own?.kind ?? src.kind?.(id) ?? "";
+  const agent: MemPart = { kind: "agent", label: kind === "" ? who : `${who} · ${kind}`, bytes: ownBytes };
   if (chat.role === "lead") {
     for (const s of src.chats) {
       if (s.parent !== id || s.role !== "sub" || s.retired) continue;
@@ -137,7 +169,9 @@ export function chatParts(src: MemSource, id: number, t: ProcTable, seen: Set<nu
     // Its process group (npm → node → vite…), and anything it forked into another group.
     out.push({ kind: "proc", label: p.name, bytes: treeBytes(t, [p.pid, ...(t.groups.get(p.pid) ?? [])], seen) });
   }
-  return out.filter((p) => p.bytes > 0).sort((a, b) => b.bytes - a.bytes);
+  const rest = out.filter((p) => p.bytes > 0).sort((a, b) => b.bytes - a.bytes);
+  // A lead ends its turn once its subagents are off: it still heads the breakdown, idle.
+  return ownBytes > 0 ? [agent, ...rest].sort((a, b) => b.bytes - a.bytes) : [{ ...agent, idle: true }, ...rest];
 }
 
 export interface MemChat {
@@ -174,12 +208,17 @@ export function snapshot(src: MemSource, chat: number | null, top = 5): Record<s
 
 /** The engine's view of its chats, for the functions above. */
 export function engineSource(e: {
-  chats: MemSource["chats"];
+  chats: readonly (MemSource["chats"][number] & { account: string })[];
   turns: ReadonlyMap<number, { turn: { meta: { pid: number; kind: string } } | null }>;
   procs: MemSource["procs"];
+  account(id: string): { kind: Kind } | undefined;
 }): MemSource {
   return {
     chats: e.chats,
+    kind: (id) => {
+      const c = e.chats.find((x) => x.id === id);
+      return c ? (e.account(c.account)?.kind ?? "") : "";
+    },
     runner: (id) => {
       const m = e.turns.get(id)?.turn?.meta;
       return m && m.pid > 0 ? { pid: m.pid, kind: m.kind } : null;

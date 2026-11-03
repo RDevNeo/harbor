@@ -107,6 +107,7 @@ import {
   chatLink as chatLinkOf,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
+import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
 import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
@@ -673,9 +674,19 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
     },
   });
+  const deviceMemory = new DeviceMemory({
+    devices: () => {
+      const ids = new Set(loadRemote(store).devices.map((h) => h.id));
+      return deviceList().filter(([h]) => ids.has(h.id));
+    },
+    harbors: () => ({ ids: [hub.mesh.me.id, ...hub.mesh.peers.keys()], names: [hub.mesh.me.name, hostname(), ...[...hub.mesh.peers.values()].map((p) => p.name)] }),
+    read: (h) => sshOutput([...remotes.sshOpts(loadRemote(store), h), h.host, memory.DEVICE_RAM_SH]),
+    running: (device) => (engine ? [...engine.turns.keys()].filter((id) => engine?.chat(id)?.device === device).length : 0),
+  });
   const windowMesh = new WindowMesh({
     hub,
     mesh,
+    devices: deviceMemory,
     replica,
     phone,
     env,

@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { hostname } from "node:os";
 import { dest, draftEmpty, draftFileOf, err, POLL, resolveUpload, safeName, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
 import type { Chat } from "./packages/store/src/index.ts";
+import type { DeviceMem, DeviceMemory } from "./devicemem.ts";
 
 export interface WindowMeshDeps {
   hub: Hub;
@@ -16,6 +17,7 @@ export interface WindowMeshDeps {
   env?: Record<string, string | undefined>;
   /** The hub's uploads folder: the window's attached files go there (hard-linked) so the chat's other devices get them. */
   uploadsDir?: string;
+  devices?: DeviceMemory;
 }
 
 /** A chat's shared composer draft as the window takes it (`files`: paths here; null: keep the window's own). */
@@ -134,10 +136,12 @@ export class WindowMesh {
     return [...m.peers.values()].map((p) => ({ name: p.name, online: p.online && m.on }));
   }
 
-  /** The other PCs and their memory (`GET /mesh/v1/memory` there; null while off or on a Harbor too old to say). */
-  async memory(): Promise<{ name: string; online: boolean; mem: Record<string, unknown> | null }[]> {
+  /** The other PCs and their memory (`GET /mesh/v1/memory` there; null while off or on a Harbor too old to say), then the
+   *  Runs on devices that aren't Harbor PCs, read over SSH. */
+  async memory(): Promise<({ name: string; online: boolean; mem: Record<string, unknown> | null } | DeviceMem)[]> {
     const m = this.d.hub.mesh;
-    return Promise.all([...m.peers.values()].map(async (p) => ({ name: p.name, online: p.online && m.on, mem: await this.d.mesh.memoryOf(p.id, null) })));
+    const pcs = await Promise.all([...m.peers.values()].map(async (p) => ({ name: p.name, online: p.online && m.on, mem: await this.d.mesh.memoryOf(p.id, null) })));
+    return [...pcs, ...(this.d.devices?.list() ?? [])];
   }
 
   /** A copy's memory at its home PC, with the chat's parts there. */

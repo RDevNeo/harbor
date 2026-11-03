@@ -13,8 +13,8 @@ export interface MemWatchDeps {
   looking(): boolean;
   pcName(): string;
   homeName(c: Chat): string;
-  /** The other PCs and their numbers (null without a mesh). */
-  peers: (() => Promise<{ name: string; online: boolean; mem: unknown }[]>) | null;
+  /** The other PCs and their numbers (null without a mesh), then Runs on devices reached over SSH (`ssh`). */
+  peers: (() => Promise<{ name: string; online: boolean; mem: unknown; asking?: boolean; note?: string; ssh?: boolean }[]>) | null;
   /** A copy's numbers from its home PC. */
   chatMemory: ((c: Chat) => Promise<unknown>) | null;
   show(v: { chat: string; pc: string; frac: number; low: boolean; tip: string }): void;
@@ -69,9 +69,8 @@ export class MemWatch {
     const here = own || pop === "mem-devices" ? parseMem(this.d.local(own ? c.id : null)) : { ram: this.d.ram(), running: 0, top: [], parts: null };
     const r = here?.ram ?? null;
     const chatMem = c === undefined ? null : own ? here : this.remoteOf(c);
-    const total = chatMem?.parts ? partsTotal(chatMem.parts) : 0;
     this.d.show({
-      chat: total > 0 ? bytesText(total) : "",
+      chat: c === undefined ? "" : chatMem ? bytesText(partsTotal(chatMem.parts ?? [])) : "—",
       pc: r ? usedText(r) : "",
       frac: r ? ramFrac(r) : 0,
       low: r ? low(r) : false,
@@ -105,7 +104,7 @@ export class MemWatch {
       void ask()
         .catch(() => [])
         .then((list) => {
-          this.peers = list.map((p) => ({ name: p.name, online: p.online, mem: parseMem(p.mem) }));
+          this.peers = list.map((p) => ({ name: p.name, online: p.online, mem: parseMem(p.mem), asking: p.asking === true, note: p.note ?? "", ssh: p.ssh === true }));
           this.peersAt = Date.now();
           this.peersAsking = false;
           if (this.d.popId() === "mem-devices") this.sample();

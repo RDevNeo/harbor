@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chatParts, type MemSource, parseMeminfo, parseStat, type ProcTable, ram, snapshot, topChats, treeBytes } from "../src/memory.ts";
+import { chatParts, engineSource, type MemSource, parseDeviceRam, parseMeminfo, parseStat, type ProcTable, ram, snapshot, topChats, treeBytes } from "../src/memory.ts";
 
 const MB = 1024 * 1024;
 
@@ -55,6 +55,61 @@ describe("memory", () => {
       { id: 1, title: "chat 1", bytes: 370 * MB },
       { id: 4, title: "chat 4", bytes: 70 * MB },
     ]);
+  });
+
+  test("a lead between turns still heads its breakdown, idle, with its subagents' numbers after it", () => {
+    const t = table({ 200: [1, 200, 90], 300: [1, 300, 10] });
+    const src: MemSource = {
+      chats: [chat(1, { role: "lead" }), chat(2, { role: "sub", parent: 1, name: "memfix" })],
+      runner: (id) => (id === 2 ? { pid: 200, kind: "Claude" } : null),
+      kind: (id) => (id === 1 ? "Claude" : ""),
+      procs: [{ name: "vite", lead: 1, owner: 1, pid: 300 }],
+    };
+    expect(chatParts(src, 1, t)).toEqual([
+      { kind: "agent", label: "Lead · Claude", bytes: 0, idle: true },
+      { kind: "sub", label: "memfix", bytes: 90 * MB },
+      { kind: "proc", label: "vite", bytes: 10 * MB },
+    ]);
+    // Running again: its own tree, sorted with the rest.
+    const t2 = table({ 100: [1, 100, 150], 101: [100, 101, 140], 200: [1, 200, 90] });
+    expect(chatParts({ ...src, runner: (id) => ({ 1: { pid: 100, kind: "Claude" }, 2: { pid: 200, kind: "Claude" } })[id] ?? null, procs: [] }, 1, t2)).toEqual([
+      { kind: "agent", label: "Lead · Claude", bytes: 290 * MB },
+      { kind: "sub", label: "memfix", bytes: 90 * MB },
+    ]);
+    // Its idle row adds nothing to the PC's top chats.
+    expect(topChats(src, t)).toEqual([{ id: 1, title: "chat 1", bytes: 100 * MB }]);
+    const { kind: _, ...noKind } = src;
+    expect(chatParts(noKind, 1, t)[0]?.label).toBe("Lead");
+  });
+
+  test("the engine's view: a running turn's runner, an idle chat's kind from its account", () => {
+    const src = engineSource({
+      chats: [{ ...chat(1, { role: "lead" }), account: "claude2" }, { ...chat(2), account: "codex" }],
+      turns: new Map([[2, { turn: { meta: { pid: 42, kind: "Codex" } } }]]),
+      procs: [],
+      account: (id) => (id === "claude2" ? { kind: "Claude" } : id === "codex" ? { kind: "Codex" } : undefined),
+    });
+    expect([src.runner(1), src.runner(2), src.kind?.(1), src.kind?.(9)]).toEqual([null, { pid: 42, kind: "Codex" }, "Claude", ""]);
+  });
+
+  test("a device's RAM over SSH: Linux's meminfo, or macOS's sysctl and vm_stat", () => {
+    expect(parseDeviceRam("MemTotal: 8000000 kB\nMemAvailable: 2000000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n")?.used).toBe(6000000 * 1024);
+    const mac = [
+      "hw.memsize: 17179869184",
+      "vm.swapusage: total = 2048.00M  used = 512.50M  free = 1535.50M  (encrypted)",
+      "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
+      "Pages free:                                5000.",
+      "Pages active:                            200000.",
+      "Pages inactive:                          190000.",
+      "Pages wired down:                        100000.",
+      "Pages purgeable:                          10000.",
+      "Anonymous pages:                         250000.",
+      "Pages occupied by compressor:             50000.",
+    ].join("\n");
+    expect(parseDeviceRam(mac)).toEqual({ total: 17179869184, used: (240000 + 100000 + 50000) * 16384, swapTotal: 2048 * MB, swapUsed: 512.5 * MB });
+    // No Anonymous pages line (older macOS): active pages are the apps'.
+    expect(parseDeviceRam(mac.replace(/Anonymous pages:.*\n/, ""))?.used).toBe((200000 + 100000 + 50000) * 16384);
+    expect(parseDeviceRam("zsh: command not found")).toBeNull();
   });
 
   test("this PC's own numbers read", () => {

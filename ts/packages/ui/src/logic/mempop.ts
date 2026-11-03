@@ -12,6 +12,7 @@ export interface MemPart {
   kind: string;
   label: string;
   bytes: number;
+  idle?: boolean;
 }
 
 export interface Mem {
@@ -46,15 +47,16 @@ export function parseMem(v: unknown): Mem | null {
   const ram = r && num(r.total) > 0 ? { total: num(r.total), used: num(r.used), swapTotal: num(r.swap_total), swapUsed: num(r.swap_used) } : null;
   const top = Array.isArray(o.top) ? o.top.flatMap((t) => (rec(t) ? [{ title: String(rec(t)?.title ?? ""), bytes: num(rec(t)?.bytes) }] : [])) : [];
   const c = rec(o.chat);
-  const parts = c && Array.isArray(c.parts) ? c.parts.flatMap((p) => (rec(p) ? [{ kind: String(rec(p)?.kind ?? ""), label: String(rec(p)?.label ?? ""), bytes: num(rec(p)?.bytes) }] : [])) : null;
+  const parts = c && Array.isArray(c.parts) ? c.parts.flatMap((p) => (rec(p) ? [{ kind: String(rec(p)?.kind ?? ""), label: String(rec(p)?.label ?? ""), bytes: num(rec(p)?.bytes), ...(rec(p)?.idle === true ? { idle: true } : {}) }] : [])) : null;
   return { ram, running: num(o.running), top, parts };
 }
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
 
-/** "412 MB", "1.2 GB", "16 GB". */
+/** "0 MB", "412 MB", "1.2 GB", "16 GB". */
 export function bytesText(b: number): string {
+  if (b <= 0) return "0 MB";
   if (b >= GB) {
     const g = b / GB;
     return `${g >= 10 ? Math.round(g) : Math.round(g * 10) / 10} GB`;
@@ -97,7 +99,7 @@ export function chatRows(mem: Mem, pc: string): MemRow[] {
   if (parts.length === 0) out.push(row("usage-note", "Nothing of this chat is running now."));
   for (const p of parts) {
     const icon = p.kind === "proc" ? ICONS.TERMINAL : ICONS.BOT;
-    out.push(row("mem-row", p.label, { icon, badge: p.kind === "sub" ? "subagent" : p.kind === "proc" ? "process" : "", desc: bytesText(p.bytes), value: total > 0 ? p.bytes / total : 0 }));
+    out.push(row("mem-row", p.label, { icon, badge: p.kind === "sub" ? "subagent" : p.kind === "proc" ? "process" : "", desc: p.idle ? "Idle" : bytesText(p.bytes), value: total > 0 ? p.bytes / total : 0 }));
   }
   if (mem.ram) {
     out.push(row("separator"), ...ramRows(mem.ram, pc === "" ? "This PC" : pc));
@@ -121,6 +123,10 @@ export interface PcMem {
   mem: Mem | null;
   /** Still being asked. */
   asking?: boolean;
+  /** A Runs on device reached over SSH, not a Harbor PC: its RAM, and this PC's chats running there. */
+  ssh?: boolean;
+  /** Why there are no numbers, said instead of the older-Harbor note. */
+  note?: string;
 }
 
 /** The gauge's popover: this PC first, then every other PC with its RAM and the chats holding the most. */
@@ -128,10 +134,10 @@ export function deviceRows(here: PcMem, others: readonly PcMem[], topN = 3): Mem
   const out = [row("label", "Memory")];
   const pc = (p: PcMem, me: boolean) => {
     const desc = !p.online ? "Off" : p.mem ? runningText(p.mem.running) : "";
-    out.push(row("usage-account", p.name, { badge: me ? "This PC" : "", desc }));
+    out.push(row("usage-account", p.name, { badge: me ? "This PC" : p.ssh ? "SSH" : "", desc }));
     if (!p.online) return;
     if (!p.mem) {
-      out.push(row("usage-note", p.asking ? "Asking…" : "No numbers: its Harbor is older."));
+      out.push(row("usage-note", p.asking ? "Asking…" : p.note || "No numbers: its Harbor is older."));
       return;
     }
     if (p.mem.ram) out.push(...ramRows(p.mem.ram, "RAM"));

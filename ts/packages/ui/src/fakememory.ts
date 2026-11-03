@@ -4,7 +4,7 @@ const GB = 1024 ** 3;
 
 export interface FakeMemory {
   local(real: unknown, chat: boolean): unknown;
-  peers(names: readonly string[]): Promise<{ name: string; online: boolean; mem: unknown }[]>;
+  peers(names: readonly string[]): Promise<{ name: string; online: boolean; mem: unknown; ssh?: boolean }[]>;
 }
 
 export function fakeMemory(env: Record<string, string | undefined> = process.env): FakeMemory | null {
@@ -26,13 +26,15 @@ export function fakeMemory(env: Record<string, string | undefined> = process.env
     },
     async peers(names) {
       const list = names.length > 0 ? names.slice(0, 3) : ["studio-pc", "laptop"];
-      return list.map((name, i) => {
+      const pcs = list.map((name, i) => {
         const lowOne = i === list.length - 1 && list.length > 1;
         const total = lowOne ? 16 * GB : 32 * GB;
         const ram = { total, used: lowOne ? 14.6 * GB : 12.3 * GB, swap_total: 4 * GB, swap_used: lowOne ? 1.2 * GB : 0 };
         const t = lowOne ? [{ title: "Build the APK", bytes: 2.4 * GB }, { title: "Video player", bytes: 640 * MB }] : [{ title: "Discord bot", bytes: 530 * MB }];
         return { name, online: true, mem: { ram, running: t.length, top: t } };
       });
+      const mac = { name: "MacBook Air", online: true, ssh: true, mem: { ram: { total: 16 * GB, used: 9.1 * GB, swap_total: 2 * GB, swap_used: 0 }, running: 2, top: [] } };
+      return [...pcs, mac];
     },
   };
 }

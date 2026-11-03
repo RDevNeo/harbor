@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- The memory pill shows on every chat now, reading "0 MB" while nothing of the chat runs (a dash
+  while a chat's home PC hasn't answered yet). Its breakdown always lists the chat's own agent: a
+  lead that ended its turn while its subagents work shows as "Lead · Claude" with "Idle" instead of
+  being left out.
+
+### Fixed
+- The PCs popover of the sidebar's memory gauge left out the devices of Runs on that aren't Harbor
+  PCs, like a Mac reached over SSH. They're listed now, marked SSH, with their RAM (read over SSH
+  while the popover is open, Linux and macOS) and how many of this PC's chats run there.
+
 ## [0.124.2] - 2026-11-03
 
 ### Fixed
