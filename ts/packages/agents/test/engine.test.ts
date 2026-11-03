@@ -417,6 +417,17 @@ describe("the queue (queue.rs)", () => {
     expect(sentFrom("", "pc:me", true)).toContain("the PC running Harbor");
     expect(sentFrom("Pixel", "tok:0000abcd", false)).toContain("phone ('Pixel')");
     expect(sentFrom("desk", "pc:desk", false)).toContain("Harbor on 'desk', another PC");
+    // The phone calling this PC straight, or through another PC, has no device id: `via` says it's a phone.
+    expect(sentFrom("Pixel (Sam)", "", false, "desk", "phone")).toBe("[The user sent this from the Harbor app on their phone ('Pixel (Sam)'), not from this PC.]\n\n");
+    // Typed on another PC.
+    expect(sentFrom("laptop (Sam)", "", false, "desk", "pc")).toContain("Harbor on 'laptop (Sam)', another PC");
+    expect(sentFrom("laptop", "tok:1", false, "desk", "pc")).toContain("another PC");
+    // Without `via` (old queued entries, older peers) the device id decides.
+    expect(sentFrom("Pixel", "tok:1", false, "desk", undefined)).toContain("phone ('Pixel')");
+    expect(sentFrom("laptop", "", false, "desk", null)).toContain("another PC");
+    // A queued message takes `via` too.
+    expect(queuedPrompt({ ...q(2, "hi"), sender: "Pixel", device: "", via: "phone" }, "hi", "")).toContain("phone ('Pixel')");
+    expect(queuedPrompt({ ...q(3, "hi"), sender: "laptop", device: "", via: "pc" }, "hi", "")).toContain("another PC");
     // A queued slash command still starts its prompt.
     const m = { ...q(1, "/review"), sender: "Pixel", device: "tok:1" };
     expect(queuedPrompt(m, "/review", "").startsWith("/review\n\n[The user sent this")).toBe(true);

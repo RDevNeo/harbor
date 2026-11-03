@@ -5,6 +5,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- A message sent from the phone app now tells the agent it came from your phone, also when the
+  phone reaches the PC directly or through another PC. It said "another PC" with the phone's name.
+
 ## [0.119.0] - 2026-11-02
 
 ### Added

@@ -922,7 +922,7 @@ export class Engine {
         break;
       }
     }
-    const from = sentFrom(sender, device, back, this.host.hostname?.());
+    const from = sentFrom(sender, device, back, this.host.hostname?.(), sender !== "" ? opts.via : undefined);
     const at = now();
     tr.items.push(withWho({ kind: "user", text, files: [...files], at, mentions, sender, intent: "" }, opts.who, opts.via));
     const quoted = `${from}${this.mentions(mentions)}`;

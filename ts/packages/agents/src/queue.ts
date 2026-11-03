@@ -39,17 +39,20 @@ export interface Queued {
   editing: string;
 }
 
-/** Where a message was written, for the agent (which otherwise takes the user to be at this PC). */
-export function sentFrom(sender: string, device: string, back: boolean, hostname = "this PC"): string {
+/** Where a message was written, for the agent (which otherwise takes the user to be at this PC).
+ *  `via` says phone or PC (also for a phone's message another PC forwards); without it (old queued
+ *  entries, older peers) a phone's device id is the only hint. */
+export function sentFrom(sender: string, device: string, back: boolean, hostname = "this PC", via?: SentVia | null): string {
   if (sender === "") return back ? `[The user sent this from '${hostname}', the PC running Harbor.]\n\n` : "";
-  return device.startsWith("tok:")
+  const phone = via ? via === "phone" : device.startsWith("tok:");
+  return phone
     ? `[The user sent this from the Harbor app on their phone ('${sender}'), not from this PC.]\n\n`
     : `[The user sent this from Harbor on '${sender}', another PC, not from this one.]\n\n`;
 }
 
 /** What the agent gets for a queued message: mentioned messages quoted first, then the text as `said`. */
 export function queuedPrompt(q: Queued, said: string, mentions: string): string {
-  const from = sentFrom(q.sender, q.device, false);
+  const from = sentFrom(q.sender, q.device, false, undefined, q.via);
   // A slash command only runs at the start: where it came from follows it.
   if (said.startsWith("/") && from !== "") return `${mentions}${said}\n\n${from.trimEnd()}`;
   return `${from}${mentions}${said}`;
