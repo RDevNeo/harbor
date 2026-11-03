@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.131.1] - 2026-11-03
+
 ### Fixed
 - An image waiting in the composer opens in the image viewer wherever its tile is clicked or
   tapped, its number and the edge around the picture included, and the viewer browses the
