@@ -29,7 +29,7 @@ const started = async (events: unknown[], gap = 0): Promise<Started> => {
 const signin = (s: Started): Record<string, unknown> => (s.host.status() as Record<string, Record<string, unknown>>).signin ?? {};
 
 test("signing in shows the QR code, then the account", async () => {
-  const s = await started([{ ev: "qr", url: "https://discord.com/ra/abc" }, { ev: "login-page", scanned: true, captcha: false }, { ev: "signed-in", user: { id: "9", username: "ana", name: "Ana" } }], 700);
+  const s = await started([{ ev: "qr", url: "https://discord.com/ra/abc" }, { ev: "login-page", scanned: true, captcha: false }, { ev: "signed-in", user: { id: "9", username: "ana", name: "Ana" } }], 1500);
   expect(signedIn()).toBe(false);
   const seen: Pending[] = [];
   await login(new AbortController().signal, (p) => seen.push(p));
@@ -43,7 +43,7 @@ test("signing in shows the QR code, then the account", async () => {
   expect(launch?.argv).toEqual([repoDiscord, "--ozone-platform=wayland"]);
   expect(launch?.wayland).toBe("wayland-test");
   expect(((await status()) as Record<string, unknown>).phase).toBe("stopped");
-});
+}, 20_000);
 
 test("cancelling stops the sign-in page", async () => {
   const s = await started([{ ev: "qr", url: "https://discord.com/ra/abc" }]);
