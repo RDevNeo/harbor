@@ -5,6 +5,27 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Each turn on this PC runs in a systemd user scope of its own, under `harbor-turns.slice` (at most
+  half the RAM for all turns together, throttled from 35%, lower CPU weight than the desktop). What
+  a turn leaves running (background commands, servers its agent detached) now ends with the turn,
+  and Stop ends all of it. Under memory pressure systemd-oomd stops one turn instead of all of
+  Harbor, and Harbor itself asks oomd to be picked last. Turns still outlive a Harbor update. Where
+  there is no systemd --user (macOS, containers), turns start as before; `HARBOR_TURN_SCOPE=0`
+  turns the scopes off.
+- Harbor and each turn's runner follow a turn's output and input through file-change events
+  (inotify) instead of looking every 60 ms, with a look every half second all the same: about
+  30 fewer wake-ups a second per running turn.
+- Agents are told never to wait inside a turn for more than about 30 s (no sleep loops, no polling or
+  `gh run watch`): a waiting turn holds hundreds of MB, so they start the slow thing with
+  start_process and end the turn.
+
+### Fixed
+- The agents package's tests no longer leave fake Claude processes behind spinning at full CPU when
+  a test run ends or dies: the fakes exit with their input or their parent, and each suite kills
+  what it started.
+
+
 ## [0.126.0] - 2026-11-03
 
 ### Added

@@ -10,6 +10,7 @@ import type { Account } from "../src/providers.ts";
 import * as team from "../src/team.ts";
 import { teamTool } from "../src/tools.ts";
 import { Work } from "../src/work.ts";
+import { GUARD, reap } from "./reap.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-engine-"));
 const env = { XDG_STATE_HOME: process.env.XDG_STATE_HOME, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
@@ -18,6 +19,8 @@ beforeAll(() => {
   process.env.XDG_DATA_HOME = join(base, "data");
 });
 afterAll(() => {
+  // Runners are detached and outlive the test that started them: none may outlive the suite.
+  reap(base);
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -31,11 +34,12 @@ const fake = join(base, "claude");
 writeFileSync(
   fake,
   `#!/usr/bin/env bun
-const a = process.argv;
+${GUARD()}const a = process.argv;
 const sid = a[a.indexOf("--session-id") + 1] ?? a[a.indexOf("--resume") + 1] ?? "s";
 const out = (v) => process.stdout.write(JSON.stringify(v) + "\\n");
 out({ type: "system", subtype: "init", session_id: sid, mcp_servers: [] });
 let buf = "";
+try {
 for await (const chunk of Bun.stdin.stream()) {
   buf += new TextDecoder().decode(chunk);
   let i;
@@ -55,6 +59,10 @@ for await (const chunk of Bun.stdin.stream()) {
     out({ type: "result", subtype: "success", total_cost_usd: 0, duration_ms: 3, num_turns: 1, usage: { input_tokens: 1, output_tokens: 1 } });
   }
 }
+} catch {
+  // stdin broke: nobody is left to answer
+}
+process.exit(0);
 `,
 );
 chmodSync(fake, 0o755);
@@ -71,7 +79,7 @@ writeFileSync(
   race,
   `#!/usr/bin/env bun
 import { appendFileSync } from "node:fs";
-const a = process.argv;
+${GUARD()}const a = process.argv;
 const flag = (f) => (a.includes(f) ? a[a.indexOf(f) + 1] : undefined);
 const sid = flag("--session-id") ?? flag("--resume") ?? "s";
 const got = (t) => appendFileSync(${JSON.stringify(base)} + "/race-" + sid + ".log", t + "\\n");
@@ -85,15 +93,19 @@ let closed = false;
 let wake = () => {};
 (async () => {
   let buf = "";
-  for await (const chunk of Bun.stdin.stream()) {
-    buf += new TextDecoder().decode(chunk);
-    let i;
-    while ((i = buf.indexOf("\\n")) >= 0) {
-      const v = JSON.parse(buf.slice(0, i));
-      buf = buf.slice(i + 1);
-      lines.push({ text: v.message.content.at(-1).text, now: v.priority === "now" });
-      wake();
+  try {
+    for await (const chunk of Bun.stdin.stream()) {
+      buf += new TextDecoder().decode(chunk);
+      let i;
+      while ((i = buf.indexOf("\\n")) >= 0) {
+        const v = JSON.parse(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+        lines.push({ text: v.message.content.at(-1).text, now: v.priority === "now" });
+        wake();
+      }
     }
+  } catch {
+    // stdin broke, or a line that isn't a message (a recap's prompt): the input is over
   }
   closed = true;
   wake();
@@ -145,6 +157,7 @@ for (;;) {
   if (m.text.includes("nostream")) echo(m.text);
   reply(m.text);
 }
+process.exit(0);
 `,
 );
 chmodSync(race, 0o755);
@@ -253,7 +266,8 @@ describe("a chat's turn", () => {
     e.send(c.id, "and the square", { mode: "steer" });
     // Not written yet: Claude would take it into the turn and run it again after.
     expect(e.queueJson(c.id)).toEqual([{ id: expect.any(Number), text: "and the square", files: [], sending: false, intent: STEER }]);
-    await until("the steer written", () => e.queued(c.id)[0]?.written === true, 20000);
+    // Written, or already taken in: with file events the whole round trip can fit between two looks.
+    await until("the steer written", () => e.queued(c.id)[0]?.written === true || texts(e.transcript(c.id).items).includes("user: and the square"), 20000);
     await until("the turn's end", () => !e.running(c.id), 20000);
     expect(gotBy(c)).toEqual(["takein slow first", "and the square"]);
     expect(texts(e.transcript(c.id).items)).toEqual(["user: takein slow first", "error: error_during_execution", "user: and the square", "echo: and the square"]);

@@ -12,6 +12,8 @@ import {
   readSync,
   rmSync,
   statSync,
+  type FSWatcher,
+  watch,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -20,8 +22,12 @@ import { lend, token, unlend } from "./oauth.ts";
 import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from "./paths.ts";
 import { alive, cmdline, myUid, ownerOf, parentOf, pids, procStart, startedAt } from "./procfs.ts";
 import { bin, KINDS, which } from "./providers.ts";
+import * as turnscope from "./turnscope.ts";
 
+/** Polling, where a folder can't be watched (one deleted under its runner). */
 export const POLL_MS = 60;
+/** With a watch: a look this often all the same, for what inotify doesn't report (a runner that died). */
+export const SLOW_MS = 500;
 /** Sent to a chat whose turn was cut off while Harbor was away. */
 export const RESTARTED =
   "[harbor] Your previous turn was cut off (the computer restarted or its process was killed). Continue the task from where you stopped.";
@@ -172,9 +178,12 @@ export async function spawn(cmd: Cmd, input: string | null, keepInput: boolean, 
     if (!keepInput) writeFileSync(join(dir, "in.closed"), "");
   }
   // setsid -f: the runner gets its own session and isn't Harbor's child, so neither a reload
-  // nor Harbor exiting reaches it.
-  const r = Bun.spawnSync(["setsid", "-f", ...selfArgv(), "turn", dir], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  if (r.exitCode === null) throw new Error("couldn't start setsid");
+  // nor Harbor exiting reaches it. Where systemd --user runs, in a scope of its own (turnscope.ts).
+  const runner = ["setsid", "-f", ...selfArgv(), "turn", dir];
+  if (!(await turnscope.start(runner, dir, meta.chat_id))) {
+    const r = Bun.spawnSync(runner, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    if (r.exitCode === null) throw new Error("couldn't start setsid");
+  }
   const t = Date.now();
   let pid: number | undefined;
   for (;;) {
@@ -215,6 +224,62 @@ export function closeInput(dir: string): void {
 
 export function inputOpen(dir: string): boolean {
   return existsSync(join(dir, "in")) && !existsSync(join(dir, "in.closed"));
+}
+
+/** Wakes on any change in a folder (inotify, through fs.watch) and at least every SLOW_MS all the
+ *  same, so a missed event costs one slow look, never a hang. A folder that can't be watched is polled. */
+export class Waker {
+  private w: FSWatcher | null = null;
+  private pending = false;
+  private wake: (() => void) | null = null;
+
+  constructor(dir: string) {
+    try {
+      this.w = watch(dir, () => this.poke());
+      this.w.on("error", () => {
+        this.w?.close();
+        this.w = null;
+        this.poke();
+      });
+    } catch {
+      this.w = null;
+    }
+  }
+
+  get watching(): boolean {
+    return this.w !== null;
+  }
+
+  poke(): void {
+    this.pending = true;
+    const w = this.wake;
+    this.wake = null;
+    w?.();
+  }
+
+  /** Returns at once if something changed since the last wait, else at the next change or after the timeout (`maxMs` caps it). */
+  async wait(maxMs = Number.POSITIVE_INFINITY): Promise<void> {
+    if (!this.pending) {
+      const ms = Math.min(this.w !== null ? SLOW_MS : POLL_MS, maxMs);
+      await new Promise<void>((r) => {
+        const t = setTimeout(() => {
+          this.wake = null;
+          r();
+        }, ms);
+        this.wake = () => {
+          clearTimeout(t);
+          r();
+        };
+      });
+    }
+    this.pending = false;
+  }
+
+  close(): void {
+    this.w?.close();
+    this.w = null;
+    this.poke();
+  }
 }
 
 /** Reads whole lines appended to a file since the last look. */
@@ -285,31 +350,39 @@ function fdOf(pid: number, dir: string, name: string): string | undefined {
   return undefined;
 }
 
+/** What the runner wrote to `exit`: "" while there is none (or it is being written). */
+function exitCode(dir: string): string {
+  try {
+    return readFileSync(join(dir, "exit"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Resolves to whether the turn exited cleanly; `stop` ends the following early and leaves the turn alone. */
 export async function follow(dir: string, meta: Meta, line: (l: string) => void, err: (l: string) => void, stop?: () => boolean): Promise<boolean> {
   // A folder deleted under a live runner: its output is still open in the runner.
   const file = (name: string): string => (existsSync(join(dir, name)) ? join(dir, name) : fdOf(meta.pid, dir, name) ?? join(dir, name));
   const out = new Tail(file("out"));
   const errs = new Tail(file("err"));
+  const waker = new Waker(dir);
   try {
     for (;;) {
-      // Checked before reading, so nothing written before the exit is missed.
-      const done = existsSync(join(dir, "exit")) || !alive(meta.pid, meta.pid_start);
+      // Checked before reading, so nothing written before the exit is missed. An `exit` seen the
+      // moment it is made (the watch wakes on its creation) may not hold its code yet.
+      const done = exitCode(dir) !== "" || !alive(meta.pid, meta.pid_start);
       const a = out.lines(line);
       const b = errs.lines(err);
       if (done) {
         out.lines(line);
         errs.lines(err);
-        try {
-          return readFileSync(join(dir, "exit"), "utf8").trim() === "0";
-        } catch {
-          return false;
-        }
+        return exitCode(dir) === "0";
       }
       if (stop?.()) return false;
-      if (!a && !b) await sleep(POLL_MS);
+      if (!a && !b) await waker.wait();
     }
   } finally {
+    waker.close();
     out.close();
     errs.close();
   }
@@ -483,7 +556,14 @@ function size(path: string): number {
 type Child = ReturnType<typeof Bun.spawn<"pipe", number, "pipe">>;
 type SpawnOpts = Parameters<typeof Bun.spawn>[1];
 
-/** `harbor turn <dir>`: runs the agent described in `<dir>/cmd.json`. */
+/** The `harbor turn <dir>` command: the turn, then whatever it left running in its scope goes with it. */
+export async function turn(args: readonly string[]): Promise<void> {
+  await run(args);
+  const dir = args[0];
+  if (dir !== undefined) await turnscope.endOwn(dir);
+}
+
+/** Runs the agent described in `<dir>/cmd.json`. */
 export async function run(args: readonly string[]): Promise<void> {
   const dir = args[0];
   if (dir === undefined) return;
@@ -636,6 +716,12 @@ function which_(name: string, path: string | undefined): string | null {
 function feed(child: Child, dir: string): { gone: boolean } {
   const flag = { gone: false };
   const sink = child.stdin;
+  const waker = new Waker(dir);
+  // An agent that exited reads nothing more: the feed ends with it.
+  void child.exited.then(() => {
+    flag.gone = true;
+    waker.poke();
+  });
   void (async () => {
     let pos = 0;
     const buf = Buffer.alloc(65536);
@@ -671,10 +757,10 @@ function feed(child: Child, dir: string): { gone: boolean } {
         }
         return;
       } else {
-        await sleep(POLL_MS);
+        await waker.wait();
       }
     }
-  })();
+  })().finally(() => waker.close());
   return flag;
 }
 
@@ -774,7 +860,20 @@ function overlayInUse(overlay: string, runner: number): boolean {
 }
 
 /** ssh doesn't exit while a forwarded channel stays open, so without this cut a remote turn whose agent is done would never end. */
-export async function waitRemote(child: { readonly pid: number; readonly exitCode: number | null; readonly signalCode: unknown; kill(sig?: number | NodeJS.Signals): void }, dir: string): Promise<number> {
+export async function waitRemote(
+  child: { readonly pid: number; readonly exitCode: number | null; readonly signalCode: unknown; readonly exited?: Promise<unknown>; kill(sig?: number | NodeJS.Signals): void },
+  dir: string,
+): Promise<number> {
+  const waker = new Waker(dir);
+  void child.exited?.then(() => waker.poke());
+  try {
+    return await waitRemoteOn(child, dir, waker);
+  } finally {
+    waker.close();
+  }
+}
+
+async function waitRemoteOn(child: Parameters<typeof waitRemote>[0], dir: string, waker: Waker): Promise<number> {
   const out = join(dir, "out");
   let seen = 0;
   let partial = Buffer.alloc(0);
@@ -830,6 +929,6 @@ export async function waitRemote(child: { readonly pid: number; readonly exitCod
       appendTo(join(dir, "err"), `harbor: the agent there exited ${Math.floor((Date.now() - ended[1]) / 1000)} s ago and ssh still held the connection open; closed it\n`);
       return ended[0];
     }
-    await sleep(POLL_MS);
+    await waker.wait(ended === undefined ? undefined : Math.max(1, ended[1] + timing.lingerMs - Date.now()));
   }
 }

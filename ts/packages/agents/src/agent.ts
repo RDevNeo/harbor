@@ -6,6 +6,7 @@ import * as detach from "./detach.ts";
 import { arr, at, bool, compact, f64, firstLine, i64, isNull, obj, optStr, parse, pretty, str, takeChars, u64 } from "./json.ts";
 import { dataDir, home, now, privateDir, randomHex, selfArgv, socketPath, writePrivate } from "./paths.ts";
 import { alive, killTree } from "./procfs.ts";
+import * as turnscope from "./turnscope.ts";
 import { type Account, accountEnv, binStr, childPath, defaultEffort, kindOf, type Kind } from "./providers.ts";
 
 export type Event =
@@ -173,7 +174,10 @@ export class Turn {
     } catch {
       // the kill below still happens; a later Harbor then reads it as cut off
     }
+    // Read while the runner lives: the scope also holds what the agent's commands detached.
+    const scope = aliveMeta(this.meta) ? turnscope.scopeOf(this.meta.pid, this.dir) : undefined;
     if (aliveMeta(this.meta)) killTree(this.meta.pid);
+    turnscope.end(this.dir, scope);
     detach.takeBack(this.dir, this.meta.pid);
   }
 
@@ -577,6 +581,8 @@ function followTurn(dir: string, meta: detach.Meta, sink: Sink, wake: (ended: bo
       () => turn.released,
     );
     if (turn.released) return;
+    // A runner that died without writing how the turn ended didn't clear its scope either.
+    if (!existsSync(join(dir, "exit"))) turnscope.end(dir, undefined);
     const g = savedGrant(dir);
     if (g) integrations.bridge?.revoke(g.token);
     sink(id, { type: "exited", ok, dir });

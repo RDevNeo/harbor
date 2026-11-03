@@ -5,11 +5,13 @@ import { join } from "node:path";
 import * as detach from "../src/detach.ts";
 import { compact } from "../src/json.ts";
 import { procStart } from "../src/procfs.ts";
+import { reap } from "./reap.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-detach-"));
 const saved = { ...detach.timing };
 beforeAll(() => Object.assign(detach.timing, { retryForMs: 2000, retryFirstMs: 100, lingerMs: 1000 }));
 afterAll(() => {
+  reap(base);
   Object.assign(detach.timing, saved);
   rmSync(base, { recursive: true, force: true });
 });
