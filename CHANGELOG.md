@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.124.0] - 2026-11-03
+
 ### Added
 - Memory, per chat and per PC. A chat's top bar shows how much memory it uses (its agent, its
   subagents and the processes started for it, like dev servers) in a pill after the branch, hidden
