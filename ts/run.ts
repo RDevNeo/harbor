@@ -156,6 +156,24 @@ export async function runApp(o: RunOptions): Promise<number> {
       deviceHost: run.deviceHost,
       moveTargets: (chatId: number) => run.move.targetsNow(chatId),
       movePc: (chatId: number, peerId: string) => run.move.movePc(chatId, peerId),
+      moves: {
+        chatMenu: (id: number) => {
+          const c = run.store.chat(id);
+          return c ? run.moves.chatMenu(c) : null;
+        },
+        projectMenu: (id: number) => {
+          const r = run.store.repos().find((x) => x.id === id);
+          return r ? run.moves.projectMenu(r) : null;
+        },
+        moveChat: async (id: number, ws: string) => {
+          const c = run.store.chat(id);
+          return c ? run.moves.moveChat(c, ws) : { status: 404, body: { error: "no such chat" } };
+        },
+        moveProject: async (id: number, ws: string) => {
+          const r = run.store.repos().find((x) => x.id === id);
+          return r ? run.moves.moveProject(r, ws) : { status: 404, body: { error: "no such project" } };
+        },
+      },
       mesh: run.windowMesh,
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },

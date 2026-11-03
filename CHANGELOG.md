@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Move to workspace…: every chat's and every project's menu, on the desktop (right-click a row) and
+  on the phone (a chat's menu, a project's sheet), lists the signed-in account's workspaces with the
+  one it's in ticked, and a way back to its PC's own workspace once it was moved. The sidebar's
+  workspace filter then shows it under the workspace it was moved to: with the old one picked it
+  disappears at once, and a notice ("Moved to Team workspace") says so even under All. A project's
+  chats follow it unless a chat was moved on its own; sub-agents stay with their lead. The choice is
+  the same on every PC and phone: it's kept with the chat on its home PC (a project's on the PC
+  whose folder it is), a move made on another PC goes there first, and the mesh carries it to every
+  copy. It's placement only: who and which PCs can reach a chat, and what the mesh copies, don't
+  change. Greyed with why when nobody is signed in or the account has a single workspace.
+
 ## [0.119.7] - 2026-11-03
 
 ### Changed

@@ -68,10 +68,16 @@ seed.set("api_port", String(port));
 seed.set("api_enabled", "1");
 seed.set("api_tokens", JSON.stringify([{ token, name: "Rig phone", created: t0, group: "", fp: "" }]));
 seed.set("onboarded", "1");
+// Signed in to a made-up account with two workspaces (Move to workspace…, the drawer's filter).
+const pcs = (id: string) => [{ fp: "", id, name: id.slice(3) }];
+seed.set("account", JSON.stringify({ id: "user_rig", email: "sam@example.com", name: "Sam Rivera", workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true }, { id: "org_team", name: "Team workspace", role: "member" }] }));
+seed.set("account_ws", "org_sam");
+seed.set("account_dir", JSON.stringify({ at: t0 * 1000, workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true, pcs: pcs("pc:rig-pc") }, { id: "org_team", name: "Team workspace", role: "member", pcs: [] }] }));
 
 const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-web.git"));
 const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));
 const notes = seed.addRepo(project("field-notes", null));
+seed.setRepoWorkspace(notes, "org_team");
 
 const chat = (over: Partial<import("../packages/store/src/index.ts").Chat>, items: Item[]) => {
   const c = seed.createChat(blankChat({ model: "claude-opus-5-5", effort: "medium", started: true, sessionId: crypto.randomUUID(), ...over }));

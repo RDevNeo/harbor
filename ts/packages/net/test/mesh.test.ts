@@ -173,6 +173,9 @@ describe("mesh.rs", () => {
       ["POST", "v1/chats/7/snooze"],
       ["DELETE", "v1/chats/7/snooze"],
       ["GET", "v1/snooze"],
+      // Move to workspace…: WorkspaceMoves sends a copy's home itself, then keeps it here too.
+      ["POST", "v1/chats/7/workspace"],
+      ["GET", "v1/chats/7/workspaces"],
     ] as const)
       expect(forHome(m, p.split("/"))).toBe(false);
   });
@@ -211,6 +214,38 @@ describe("mesh.rs", () => {
     expect(remotes.get(away)).toBe("git@example.org:o/app.git");
     expect(remotes.get(here)).toBe("git@example.org:me/mine.git");
     store.close();
+  });
+
+  test("move to workspace goes with the chat JSON: the chat's own and its project's, to every copy", async () => {
+    const home = Store.openAt(join(tmp, "ws-home.db"));
+    const repo = home.addRepo("/nowhere/home/app");
+    const lead = home.createChat(blankChat({ repoId: repo, title: "lead", role: "lead" }));
+    const other = home.createChat(blankChat({ repoId: repo, title: "other", role: "lead" }));
+    home.setChatWorkspace(lead.id, "org_b");
+    home.setRepoWorkspace(repo, "org_c");
+    const sent = (await new StoreReplica({ store: home, hub: new Hub([], 0), version: "t" }).chats(0, true)).chats as { id: number; workspace: string; project: { workspace: string } }[];
+    expect(sent.map((c) => [c.id, c.workspace, c.project.workspace])).toEqual([[lead.id, "org_b", "org_c"], [other.id, "", "org_c"]]);
+    const copy = Store.openAt(join(tmp, "ws-copy.db"));
+    const mine = copy.addRepo(tmp);
+    copy.setRepoWorkspace(mine, "org_mine");
+    const replica = new StoreReplica({ store: copy, hub: new Hub([], 0), version: "t" });
+    await replica.applyChats("pc:home", 1, { full: true, chats: sent });
+    const local = (hid: number) => copy.chats().find((c) => c.homeId === hid)?.id ?? -1;
+    let place = copy.placement();
+    expect(place.chats.get(local(lead.id))).toBe("org_b");
+    expect(place.chats.has(local(other.id))).toBe(false);
+    expect(place.carried.get(local(lead.id))).toBe("org_c");
+    expect(place.carried.get(local(other.id))).toBe("org_c");
+    // The project there (no folder here) takes it too; this PC's own project keeps its own.
+    const away = copy.repos().find((r) => r.path === "/nowhere/home/app")?.id ?? -1;
+    expect(place.repos.get(away)).toBe("org_c");
+    expect(place.repos.get(mine)).toBe("org_mine");
+    // Moved back at home: the copies hear it with the next list (an older PC sends no field: none).
+    await replica.applyChats("pc:home", 1, { full: true, chats: sent.map((c) => ({ ...c, workspace: "", project: { ...c.project, workspace: "" } })) });
+    place = copy.placement();
+    expect([place.chats.size, place.carried.size, place.repos.get(away)]).toEqual([0, 0, undefined]);
+    home.close();
+    copy.close();
   });
 
   test("a chat's published cwd is where its agent works, its worktree before its project", async () => {

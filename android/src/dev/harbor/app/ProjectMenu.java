@@ -53,6 +53,7 @@ final class ProjectMenu {
             case "external": return Ui.I_EXTERNAL;
             case "archive": return Ui.I_ARCHIVE;
             case "unarchive": return Ui.I_ARCHIVE;
+            case "users": return Ui.I_USERS;
             default: return null;
         }
     }
@@ -134,6 +135,10 @@ final class ProjectMenu {
                 break;
             case "unsettle_project":
                 Ui.bg(a, () -> run(hub, pid, act, null), r -> { Ui.toast(a, "“" + m.optString("name", "Project") + "” is back"); after.run(); });
+                break;
+            case "move_workspace":
+                Chats.moveWorkspace(a, m.optJSONObject("workspaces"), m.optString("name", "Project"),
+                        ws -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "workspace").put("workspace", ws)), after);
                 break;
             case "remove":
                 Ui.dialog(a).setTitle("Remove project?")

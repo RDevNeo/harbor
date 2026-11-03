@@ -4,6 +4,7 @@ import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
 import { ProjectClones } from "./projectclones.ts";
 import { ProjectsApi } from "./projectsapi.ts";
+import { WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
@@ -29,6 +30,7 @@ import {
   err,
   hostPort,
   hostname,
+  directoryPcWorkspaces,
   hostLabel,
   osLabel,
   remoteDir,
@@ -149,6 +151,8 @@ export interface RunningHub {
   funnel: Funnel;
   prs: chatpr.ChatPrs;
   account: AccountService;
+  /** Move to workspace… for chats and projects. */
+  moves: WorkspaceMoves;
   /** What else holds a worktree folder's rename back: the window's terminals open in it. */
   setBusyIn(f: (dir: string) => string | null): void;
   /** What the window does when a phone changes a project's icon or removes it. */
@@ -285,7 +289,29 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const projectClones = new ProjectClones({ store, engine: () => eng(), hub, mesh: () => mesh, phone: () => phone, touch: () => hub.touch(null, true) });
   const clones = projectClones.state;
+  const moves = new WorkspaceMoves({
+    store,
+    workspaces: () => ({ all: account.workspaces(), mine: account.workspace(), pcs: directoryPcWorkspaces(account.directory()) }),
+    pcName: (id) => hub.mesh.nameOf(id),
+    forward: (id, method, path, body) => {
+      const p = hub.mesh.on ? hub.mesh.peer(id) : null;
+      if (!p) return Promise.resolve(err(404, "that PC isn't one of this mesh's"));
+      if (!p.online) return Promise.resolve(err(409, `${p.name} is off: try again when it's back`));
+      return mesh.forward(dest(p), p.name, method, path, body, [], [hub.mesh.me.name, ""], null);
+    },
+    touch: (chat) => {
+      if (chat === null) {
+        hub.touch(null, true);
+        engine?.storeChanged(null);
+      } else {
+        // The mesh list re-reads where chats are (StoreReplica.chats reloads): a bump is enough.
+        hub.touch(chat, true);
+        engine?.changed(chat);
+      }
+    },
+  });
   const projects = new ProjectsApi({
+    moves,
     store,
     reload: () => engine?.reload(),
     touch: () => hub.touch(null, true),
@@ -580,7 +606,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       },
     },
     openedFrom: (chat, gid, title) => eng().notice(chat, "chat", openchat.openedBy(title), `${openchat.LINK}${gid}`),
-    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
+    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, moves, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
     profileCheck: profileCheckNow,
     bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),
@@ -886,6 +912,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     funnel,
     prs,
     account,
+    moves,
     devices: () => {
       const me = hub.mesh.me;
       const peers = [...hub.mesh.peers.values()];

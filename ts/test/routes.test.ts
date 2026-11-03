@@ -135,6 +135,23 @@ test("a_chat_is_snoozed_woken_settled_and_retitled_from_a_phone", async () => {
   expect(main).toMatchObject({ ok: true, chat: { settled: false } });
 });
 
+test("a_phone_moves_a_chat_to_a_workspace_only_when_the_account_has_some", async () => {
+  const c = h.store.createChat(blankChat({ title: "Placed", account: "claude", role: "lead", name: "lead", repoId: chat }));
+  h.engine.reload();
+  const [st, menu] = await json("GET", `/v1/chats/${c.id}/workspaces`);
+  expect(st).toBe(200);
+  expect(menu).toEqual({ why: expect.stringMatching(/Sign in/), items: [] });
+  expect((await json("POST", `/v1/chats/${c.id}/workspace`, { workspace: "org_x" }))[0]).toBe(400);
+  expect((await json("POST", `/v1/chats/${c.id}/workspace`, { workspace: 5 }))[0]).toBe(400);
+  // Clearing is always fine; the phone's chat JSON says where it was moved ("": its PC's).
+  expect((await json("POST", `/v1/chats/${c.id}/workspace`, { workspace: "" }))[1]).toMatchObject({ ok: true, workspace: "" });
+  h.store.setChatWorkspace(c.id, "org_b");
+  const [, state] = await json("GET", "/v1/state");
+  expect((state.chats as { id: unknown; workspace: unknown }[]).find((x) => x.id === c.id)?.workspace).toBe("org_b");
+  expect((state.projects as { id: unknown; workspace: unknown }[]).find((p) => p.id === chat)?.workspace).toBe("");
+  h.store.setChatWorkspace(c.id, "");
+});
+
 test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
   const lead = h.store.createChat(blankChat({ title: "Lead", account: "claude", role: "lead", name: "lead", repoId: chat }));
   const sub = h.store.createChat(blankChat({ title: "Task", account: "claude", role: "sub", parent: lead.id, name: "worker" }));
@@ -185,7 +202,11 @@ test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
   const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
   expect(st).toBe(200);
   expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
-  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Settle project", "Remove from Harbor"]);
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Settle project", "Remove from Harbor"]);
+  // Not signed in: greyed with why, and nothing to pick.
+  expect((menu.items as { act: string }[]).find((i) => i.act === "move_workspace")).toMatchObject({ enabled: false, desc: expect.stringMatching(/Sign in/) });
+  expect(menu.workspaces).toEqual({ why: expect.stringMatching(/Sign in/), items: [] });
+  expect((await json("POST", "/v1/projects/do", { project: pid, act: "workspace", workspace: "org_x" }))[0]).toBe(400);
   const [gone] = await json("POST", "/v1/projects/do", { project: pid, act: "remove" });
   expect(gone).toBe(200);
   const [, state] = await json("GET", "/v1/state");

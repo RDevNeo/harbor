@@ -1,5 +1,5 @@
 import { dayLabel } from "./cost.ts";
-import type { Role } from "./store.ts";
+import type { Placement, Role } from "./store.ts";
 
 const divEuclid = (a: number, b: number): number => Math.floor(a / b);
 const remEuclid = (a: number, b: number): number => ((a % b) + b) % b;
@@ -14,6 +14,26 @@ export interface SidebarChat {
   role: Role;
   /** The PC whose Harbor owns the chat; "" is this one. */
   home: string;
+}
+
+/** A chat as Move to workspace… places it: a sub-agent follows its lead. */
+export type PlacedChat = Pick<SidebarChat, "id" | "role" | "repoId" | "home"> & { parent: number | null };
+
+/**
+ * The workspace Move to workspace… put chat `c` in, "" for none (its home PC's applies): its own,
+ * else its project's (a copy's as its home PC says it); a sub-agent's is its lead's.
+ */
+export function movedTo<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined, p: Placement): string {
+  let x = c;
+  for (let hop = 0; hop < 8 && x.role === "sub" && x.parent !== null; hop++) {
+    const lead = chat(x.parent);
+    if (!lead) break;
+    x = lead;
+  }
+  const own = p.chats.get(x.id);
+  if (own !== undefined) return own;
+  if (x.home !== "") return p.carried.get(x.id) ?? "";
+  return x.repoId === null ? "" : (p.repos.get(x.repoId) ?? "");
 }
 
 /** A project in the sidebar `Tree`. */

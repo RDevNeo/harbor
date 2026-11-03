@@ -826,7 +826,7 @@ export function startsTurn(method: string, tail: string[]): boolean {
 export function forHome(method: string, p: string[]): boolean {
   if (p.length < 3 || p[0] !== "v1" || p[1] !== "chats") return false;
   const sub = p[3] ?? "";
-  return (["POST", "PATCH", "DELETE"].includes(method) && !["move", "mention", "snooze", "main"].includes(sub)) || (method === "GET" && ["slash", "commit", "move_targets"].includes(sub));
+  return (["POST", "PATCH", "DELETE"].includes(method) && !["move", "mention", "snooze", "main", "workspace"].includes(sub)) || (method === "GET" && ["slash", "commit", "move_targets"].includes(sub));
 }
 
 /** No route leads to `addr` from this PC (Linux): Bun calls that "connection refused", which would read as Harbor not running there. */

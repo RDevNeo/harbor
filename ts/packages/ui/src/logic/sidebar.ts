@@ -1,4 +1,4 @@
-import { sidebartree } from "@harbor/store";
+import { NO_PLACEMENT, type Placement, sidebartree } from "@harbor/store";
 import type { IconName } from "../icons.ts";
 import { ago } from "./app.ts";
 import { dayLabel, divEuclid, remEuclid } from "./cost.ts";
@@ -22,8 +22,9 @@ export interface Workspace {
 }
 
 export type Place = sidebartree.Place;
+export type PlacedChat = sidebartree.PlacedChat;
 export type Tree = sidebartree.Tree;
-export const { isMainOf, tree } = sidebartree;
+export const { isMainOf, movedTo, tree } = sidebartree;
 
 /** What's picked of the workspace filter `stored` (ids joined by commas) among `all`: gone ids drop out, and none is All (empty). Every one isn't All: a PC in no workspace shows only under All. */
 export function picked(stored: string, all: readonly Workspace[]): string[] {
@@ -40,21 +41,74 @@ export function toggled(stored: string, id: string, all: readonly Workspace[]): 
   return picked(on.join(","), all).join(",");
 }
 
-/** What's left of `t` under the workspace filter on `ws`: a chat is in its home PC's workspace (`mine` for this PC's, `pcs` for the others'); this PC's projects are in its workspace, another keeps a project while one of its unsettled leads is there. */
-export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: ReadonlyMap<string, string>, chats: readonly SidebarChat[]): Tree {
-  const of = (home: string) => (home === "" ? mine : (pcs.get(home) ?? ""));
+/**
+ * What's left of `t` under the workspace filter on `ws`. A chat is where Move to workspace… put it
+ * (`place`: its own, its lead's, its project's), else in its home PC's workspace (`mine` for this
+ * PC's, `pcs` for the others'). A project is in the workspace it was moved to, else this PC's; it
+ * also shows in another while one of its unsettled leads is there.
+ */
+export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: ReadonlyMap<string, string>, chats: readonly (SidebarChat & { parent: number | null })[], place: Placement = NO_PLACEMENT): Tree {
+  const byId = new Map(chats.map((c) => [c.id, c]));
   const shown = (w: string) => ws.includes(w);
-  const ours = chats.filter((c) => shown(of(c.home)));
+  const ours = chats.filter((c) => shown(chatWorkspace(c, (id) => byId.get(id), place, mine, pcs)));
   const ids = new Set(ours.map((c) => c.id));
   const repos = new Set(ours.filter((c) => !c.settled && c.role === "lead" && c.repoId !== null).map((c) => c.repoId));
   const keep = (list: number[]) => list.filter((c) => ids.has(c));
+  const own = (p: number) => shown(place.repos.get(p) ?? mine);
   return {
-    projects: t.projects.filter((p) => shown(mine) || repos.has(p.id)).map((p) => ({ ...p, chats: keep(p.chats) })),
+    projects: t.projects.filter((p) => own(p.id) || repos.has(p.id)).map((p) => ({ ...p, chats: keep(p.chats) })),
     threads: keep(t.threads),
     settled: keep(t.settled),
     snoozed: keep(t.snoozed),
-    settledProjects: t.settledProjects.filter((p) => shown(mine) || ours.some((c) => c.repoId === p)),
+    settledProjects: t.settledProjects.filter((p) => own(p) || ours.some((c) => c.repoId === p)),
   };
+}
+
+/** The workspace chat `c` shows in: where it was moved, else its home PC's ("" for a PC in none). */
+export function chatWorkspace<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined, place: Placement, mine: string, pcs: ReadonlyMap<string, string>): string {
+  const moved = movedTo(c, chat, place);
+  if (moved !== "") return moved;
+  return c.home === "" ? mine : (pcs.get(c.home) ?? "");
+}
+
+/** One row of a Move to workspace… menu: picking it stores `id` as the item's own workspace ("": none, `base` applies). */
+export interface MoveItem {
+  id: string;
+  /** The workspace it ends up in. */
+  to: string;
+  label: string;
+  hint: string;
+  /** It's there now. */
+  on: boolean;
+  /** The row back to its PC's workspace. */
+  back: boolean;
+}
+
+/**
+ * Move to workspace… for a chat or project: the account's workspaces with the one it's in now
+ * ticked, then, when it's away from its PC's workspace `pcWs`, a row back to it. `own` is the
+ * item's own assignment, `base` where it is without one (a chat: its project's or its PC's; a
+ * project: its PC's): a pick of `base` clears `own`. `why` says why there's nothing to pick (no
+ * account, a single workspace); the item is then greyed with it.
+ */
+export function moveMenu(all: readonly Workspace[], own: string, base: string, pcWs: string, pcName: string): { why: string | null; items: MoveItem[] } {
+  if (all.length === 0) return { why: "Sign in with Google in Settings › Account to use workspaces", items: [] };
+  if (all.length === 1) return { why: "Your account has one workspace: add or join another in Settings › Account", items: [] };
+  const now = own !== "" ? own : base;
+  const store = (to: string) => (to === base ? "" : to);
+  const items: MoveItem[] = all.map((w) => ({ id: store(w.id), to: w.id, label: w.name, hint: w.id === pcWs ? `${pcName}'s workspace` : "", on: w.id === now, back: false }));
+  if (pcWs !== "" && now !== pcWs) {
+    const home = all.find((w) => w.id === pcWs);
+    items.push({ id: store(pcWs), to: pcWs, label: home ? `Back to ${home.name}` : `Back to ${pcName}'s workspace`, hint: "Where its PC is", on: false, back: true });
+  }
+  return { why: null, items };
+}
+
+/** The notice after a move: "Moved to Team workspace". */
+export function movedNotice(all: readonly Workspace[], to: string): string {
+  const name = all.find((w) => w.id === to)?.name ?? "";
+  if (name === "") return "Moved back to its PC's workspace";
+  return /workspace/i.test(name) ? `Moved to ${name}` : `Moved to the workspace ${name}`;
 }
 
 /** Last activity of a project: its newest chat's update. */

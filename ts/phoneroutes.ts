@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { worktree as wt } from "./packages/agents/src/index.ts";
 import type { ProjectClones } from "./projectclones.ts";
 import type { ProjectsApi } from "./projectsapi.ts";
+import type { WorkspaceMoves } from "./workspacemoves.ts";
 import type { Target, Worktrees } from "./worktrees.ts";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -37,6 +38,8 @@ export interface RouteHost {
   worktrees: Worktrees;
   projectClones: ProjectClones;
   projects: ProjectsApi;
+  /** Move to workspace… (`/v1/chats/{id}/workspace`, `/workspaces`). */
+  moves?: WorkspaceMoves;
   wantPr(chat: number): void;
 }
 
@@ -539,6 +542,8 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       }
     }
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 4) {
+      const moved = (name === "workspace" || name === "workspaces") && h.moves ? await h.moves.route(call, chat) : null;
+      if (moved) return moved;
       // The chat's Discord captcha card (frame, pointer, Don't join): only where the chat's content may go.
       if (m === "POST" && name === "captcha") {
         if (chat.home !== "") return err(404, `This chat's captcha is on ${h.hub.mesh.nameOf(chat.home)}.`);

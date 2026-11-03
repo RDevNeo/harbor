@@ -43,6 +43,8 @@ final class Sidebar {
     private boolean showSettled;
     private String filter; // project id, "" = all
     private WsFilter scope = new WsFilter(new ArrayList<>(), "", null, new HashMap<>()); // as last drawn
+    /** Where Move to workspace… put each project, by id ("": not moved; hubs before 0.120 send none). */
+    private final Map<String, String> projectWs = new HashMap<>();
 
     Sidebar(Base a, String current) {
         this.a = a;
@@ -172,10 +174,14 @@ final class Sidebar {
         list.removeAllViews();
 
         Map<String, String> projects = new LinkedHashMap<>(); // in the desktop sidebar's order
+        projectWs.clear();
         JSONArray pa = st.optJSONArray("projects");
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
             JSONObject p = pa.optJSONObject(i);
-            if (p != null) projects.put(p.optString("id"), p.optString("name"));
+            if (p != null) {
+                projects.put(p.optString("id"), p.optString("name"));
+                projectWs.put(p.optString("id"), p.optString("workspace", ""));
+            }
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
         Map<String, String> workspaces = Account.workspaces(a);
@@ -227,8 +233,9 @@ final class Sidebar {
             JSONObject c = ca.optJSONObject(i);
             if (c == null || "sub".equals(c.optString("role"))) continue; // a lead's subagents live inside its chat, as on the desktop
             String pid = c.isNull("project_id") ? "" : c.optString("project_id");
-            if ("lead".equals(c.optString("role")) && !c.optBoolean("settled")) scope.saw(c.optString("home"), pid);
-            if (!scope.shows(c.optString("home")) && !c.optBoolean("main")) continue;
+            String moved = c.optString("workspace", "");
+            if ("lead".equals(c.optString("role")) && !c.optBoolean("settled")) scope.saw(c.optString("home"), moved, pid);
+            if (!scope.shows(c.optString("home"), moved) && !c.optBoolean("main")) continue;
             if (!filter.isEmpty() && !filter.equals(pid)) continue;
             if (!q.isEmpty() && !c.optString("title").toLowerCase().contains(q) && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             byId.put(c.optString("id"), c);
@@ -299,7 +306,7 @@ final class Sidebar {
             // A project without chats yet shows too (hubs from 0.88: its header starts the main
             // chat), as the desktop's sidebar lists it; a search shows it when its name matches.
             boolean bare = g.getValue().isEmpty() && main == null;
-            if (!scope.showsProject(g.getKey()) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
+            if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), "")) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
                     && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
             if (!first) divider();
             first = false;
@@ -316,7 +323,7 @@ final class Sidebar {
         JSONArray sp = tree == null ? null : tree.optJSONArray("settled_projects");
         for (int i = 0; sp != null && i < sp.length(); i++) {
             String pid = sp.optString(i);
-            if (!scope.showsProject(pid) || (!filter.isEmpty() && !filter.equals(pid))) continue;
+            if (!scope.showsProject(pid, projectWs.getOrDefault(pid, "")) || (!filter.isEmpty() && !filter.equals(pid))) continue;
             if (!q.isEmpty() && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             settledProjects.add(pid);
         }
@@ -733,7 +740,7 @@ final class Sidebar {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("", "All projects", "", true));
         for (Map.Entry<String, String> p : projects.entrySet()) {
-            if (scope.showsProject(p.getKey())) o.add(new Sheet.Option(p.getKey(), p.getValue(), "", true));
+            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""))) o.add(new Sheet.Option(p.getKey(), p.getValue(), "", true));
         }
         o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
         Sheet.pick(a, "Projects", null, o, filter, id -> {

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { blankChat, digest, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
+import { blankChat, digest, NO_PLACEMENT, type Placement, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, type Reply } from "./http.ts";
 import { draftFromJson, draftJson, previewTail, type Hub, type SharedDraft } from "./hub.ts";
@@ -102,6 +102,7 @@ export class StoreReplica implements MeshApp {
   private looked = new Map<number, number>();
   private list: Chat[] = [];
   private repos: Repo[] = [];
+  private place: Placement = NO_PLACEMENT;
 
   constructor(readonly o: StoreReplicaOptions) {
     this.reload();
@@ -111,6 +112,7 @@ export class StoreReplica implements MeshApp {
   reload(): void {
     this.list = this.o.store.chats();
     this.repos = this.o.store.repos();
+    this.place = this.o.store.placement();
     const m = this.o.hub.mesh;
     m.gids.clear();
     m.foreign.clear();
@@ -173,7 +175,8 @@ export class StoreReplica implements MeshApp {
       id: c.id,
       gid: c.gid,
       title: c.title,
-      project: r ? { name: r.name, path: r.path, remote: r.remote } : null,
+      project: r ? { name: r.name, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "" } : null,
+      workspace: this.place.chats.get(c.id) ?? "",
       account: c.account,
       model: c.model,
       effort: c.effort,
@@ -254,16 +257,28 @@ export class StoreReplica implements MeshApp {
     const remote = s(p, "remote");
     const found =
       this.repos.find((r) => r.path === path) ?? this.repos.find((r) => sameRemote(r.remote, remote)) ?? this.repos.find((r) => name !== "" && r.name === name);
+    // A project whose folder is another PC's takes the workspace that PC moved it to; one here keeps its own.
+    const ws = typeof p.workspace === "string" ? p.workspace : null;
+    const adopt = (id: number) => {
+      if (ws !== null && (this.place.repos.get(id) ?? "") !== ws) {
+        this.o.store.setRepoWorkspace(id, ws);
+        this.place = this.o.store.placement();
+      }
+    };
     if (found) {
-      if (!existsSync(repoDir(found)) && remote !== "" && found.remote !== remote) {
-        this.o.store.setRepoRemote(found.id, remote);
-        this.repos = this.o.store.repos();
+      if (!existsSync(repoDir(found))) {
+        if (remote !== "" && found.remote !== remote) {
+          this.o.store.setRepoRemote(found.id, remote);
+          this.repos = this.o.store.repos();
+        }
+        adopt(found.id);
       }
       return found.id;
     }
     const id = this.o.store.addRepo(path);
     if (remote !== "") this.o.store.setRepoRemote(id, remote);
     this.repos = this.o.store.repos();
+    if (!existsSync(path)) adopt(id);
     return id;
   }
 
@@ -306,6 +321,15 @@ export class StoreReplica implements MeshApp {
       const made = this.o.store.createChat(c);
       id = made.id;
       this.list.push(made);
+    }
+    // Move to workspace…: the chat's own and its project's, as its home PC has them (older PCs send neither).
+    const own = typeof m.workspace === "string" ? m.workspace : "";
+    const carried = m.project !== null && m.project !== undefined ? s(obj(m.project), "workspace") : "";
+    const moved = (this.place.chats.get(id) ?? "") !== own || (this.place.carried.get(id) ?? "") !== carried;
+    if (moved) {
+      this.o.store.setChatWorkspace(id, own);
+      this.o.store.setCarriedWorkspace(id, carried);
+      this.place = this.o.store.placement();
     }
     mesh.ids.set(`${peer}\0${hid}`, id);
     mesh.foreign.add(id);

@@ -8,3 +8,10 @@ test("project_menu_matches_sidebar_rs_order", () => {
   expect(labels(null, false, false)).toEqual(["Open terminal", "— Refresh icon", "Choose icon…", "— Settle project", "Remove from Harbor"]);
   expect(labels(null, false, false, true)).toEqual(["Open terminal", "— Refresh icon", "Choose icon…", "— Unsettle project", "Remove from Harbor"]);
 });
+
+test("project_menu_offers_move_to_workspace_greyed_with_why", () => {
+  const items = (moveWhy: string | null) => projectMenu({ remote: null, main: false, customIcon: false, moveWhy });
+  expect(items(null).map((i) => (i.sep ? `— ${i.label}` : i.label))).toEqual(["Open terminal", "— Refresh icon", "Choose icon…", "— Move to workspace…", "Settle project", "Remove from Harbor"]);
+  expect(items(null).find((i) => i.act === "move_workspace")?.off).toBeUndefined();
+  expect(items("Sign in first").find((i) => i.act === "move_workspace")).toMatchObject({ off: true, desc: "Sign in first" });
+});

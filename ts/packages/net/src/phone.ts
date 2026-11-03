@@ -1,6 +1,6 @@
 import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
-import { blankChat, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type SentVia, type Store } from "@harbor/store";
+import { blankChat, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
@@ -443,7 +443,8 @@ export class PhoneRoutes {
     return global ? c.gid : c.id;
   }
 
-  chatJson(c: Chat, global: boolean): Json {
+  /** `place`: where Move to workspace… put chats and projects (read once for a whole list). */
+  chatJson(c: Chat, global: boolean, place: Placement = this.d.store.placement()): Json {
     const hub = this.d.hub;
     const repos = this.d.store.repos();
     const parent = c.parent === null ? null : (this.d.store.chat(c.parent) ?? null);
@@ -482,6 +483,8 @@ export class PhoneRoutes {
       pr: this.d.pr?.(c) ?? null,
       snoozed_until_ms: this.snoozeUntil(`c${c.id}`) === null ? null : (this.snoozeUntil(`c${c.id}`) ?? 0) * 1000,
       snoozed_label: sidebartree.snoozedLabel(this.snoozeUntil(`c${c.id}`), now(), utcOffset(now())),
+      // The workspace it was moved to (its own, its lead's or its project's); "": its home PC's.
+      workspace: sidebartree.movedTo(c, (id) => this.d.store.chat(id), place),
     };
   }
 
@@ -564,6 +567,7 @@ export class PhoneRoutes {
     const repos = this.d.store.repos();
     const pid = (id: number) => (global ? (repos.find((r) => r.id === id)?.path ?? id) : id);
     const settledRepos = this.d.store.settledProjects();
+    const place = this.d.store.placement();
     const placed = sidebartree.tree(repos.map((r) => r.id), chats, this.d.store.mainChats(), (key) => this.snoozeUntil(key) !== null, new Set(settledRepos.keys()));
     const idsOf = (list: number[]): Json[] => list.map((id) => this.idOf(chats.find((c) => c.id === id) as Chat, global));
     const tree = {
@@ -612,8 +616,8 @@ export class PhoneRoutes {
       hub_name: me.name === "" ? hostname() : me.name,
       you,
       rev: hub.rev(),
-      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id) })),
-      chats: chats.map((c) => this.chatJson(c, global)),
+      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: place.repos.get(r.id) ?? "" })),
+      chats: chats.map((c) => this.chatJson(c, global, place)),
       tree,
       accounts,
       models: perKind((k) => (cat?.models(k) ?? []).map((m) => ({ id: m.id, label: m.label, more: m.more }))),

@@ -35,7 +35,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
-import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { chatIdle, inWorkspaces, type MoveItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
@@ -1074,7 +1074,7 @@ export class Shell {
     const shown = picked(d.store.get("sidebar_workspace") ?? "", ws.all);
     const settledRepos = d.store.settledProjects();
     const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t, new Set(settledRepos.keys()));
-    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats);
+    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, d.store.placement());
     const list = sidebarList(tr, d.chats, d.repos, this.query);
     const rows: SideRow[] = [];
     const chatRow = (c: Chat, kind: "thread" | "loose"): SideRow => {
@@ -2473,6 +2473,8 @@ export class Shell {
       const mv = this.hub.moveTargets(id);
       const off = mv.targets.length === 0 ? (mv.why ?? "No other PCs: pair one in Settings › Devices") : mv.why;
       items.push(off === null ? native("Move to PC…", () => this.movePcMenu(id, x, y), { badge: "submenu" }) : native("Move to PC…", () => {}, { enabled: false, desc: off }));
+      const ws = this.hub.moves?.chatMenu(id) ?? null;
+      if (ws !== null) items.push(ws.why === null ? native("Move to workspace…", () => this.wsMoveMenu("chat", id, x, y), { badge: "submenu" }) : native("Move to workspace…", () => {}, { enabled: false, desc: ws.why }));
     }
     items.push(native("Delete", () => this.deleteDialog(id)));
     this.popup("chat", x, y, items, 240, false, true);
@@ -2500,6 +2502,29 @@ export class Shell {
       );
     const items = this.hub.moveTargets(id).targets.map((t) => this.item(t.name, go(t.id), { icon: ICONS.MONITOR, desc: t.why ?? "Goes on there", enabled: t.why === null }));
     setTimeout(() => this.popup("move-pc", x, y, items, 240), 0);
+  }
+
+  /** Move to workspace…: the account's workspaces, the one it's in ticked, then back to its PC's. */
+  private wsMoveMenu(kind: "chat" | "project", id: number, x: number, y: number): void {
+    const m = this.hub.moves;
+    const menu = m ? (kind === "chat" ? m.chatMenu(id) : m.projectMenu(id)) : null;
+    if (!m || menu === null || menu.why !== null) return;
+    const go = (ws: string) => () =>
+      void (kind === "chat" ? m.moveChat(id, ws) : m.moveProject(id, ws)).then(
+        (r) => {
+          const b = (r.body ?? {}) as { notice?: unknown; error?: unknown };
+          this.toast(r.status < 300 ? String(b.notice ?? "Moved") : `Couldn't move it: ${String(b.error ?? r.status)}`);
+          this.data.reload();
+          this.refreshAll();
+        },
+        (e: unknown) => this.toast(`Couldn't move it: ${e instanceof Error ? e.message : String(e)}`),
+      );
+    const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Move to workspace"), kind: "caption" }];
+    for (const it of menu.items) {
+      if (it.back) items.push(this.separator());
+      items.push(this.item(it.label, it.on ? () => {} : go(it.id), { icon: it.back ? ICONS.HOUSE : ICONS.USERS, desc: it.hint, checked: it.on }));
+    }
+    setTimeout(() => this.popup("move-ws", x, y, items, 260), 0);
   }
 
   /** sidebar.rs `move_menu`: the chat and its sub-agents to another project, or none. */
@@ -2553,14 +2578,18 @@ export class Shell {
       },
       settle_project: () => this.settleProject(id, true),
       unsettle_project: () => this.settleProject(id, false),
+      move_workspace: () => this.wsMoveMenu("project", id, x, y),
       remove: () => this.removeRepoDialog(id),
     };
+    const ws = this.hub.moves?.projectMenu(id) ?? null;
     const items: (PopItem & { act?: () => void })[] = [];
-    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled })) {
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}) })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
       if (it.icon !== "") extra.icon = it.icon;
       if (it.desc !== "") extra.desc = it.desc;
+      if (it.off === true) extra.enabled = false;
+      if (it.act === "move_workspace") extra.badge = it.off === true ? "" : "submenu";
       items.push(native(it.label, acts[it.act], extra));
     }
     this.popup("project-row", x, y, items, 260, false, true);
@@ -3265,6 +3294,16 @@ export interface ShellHub extends PageHub {
   player?: import("@harbor/media").video.PlayerSource;
   /** Chats homed on other PCs and the leases (mesh.rs); none without a hub. */
   mesh?: ShellMesh;
+  /** Move to workspace… (workspacemoves.ts); none without a hub. */
+  moves?: ShellMoves;
+}
+
+/** Move to workspace… as the window asks it: a menu (null: no such chat or project) and the move, answered as the phone API answers it. */
+export interface ShellMoves {
+  chatMenu(id: number): { why: string | null; items: MoveItem[] } | null;
+  projectMenu(id: number): { why: string | null; items: MoveItem[] } | null;
+  moveChat(id: number, ws: string): Promise<{ status: number; body: unknown }>;
+  moveProject(id: number, ws: string): Promise<{ status: number; body: unknown }>;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

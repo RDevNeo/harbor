@@ -5,7 +5,7 @@ import { ICONS } from "../icons.ts";
  * phone's project sheet are both built from this list, so they offer the same things in the
  * same order with the same words.
  */
-export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "settle_project" | "unsettle_project" | "remove";
+export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "settle_project" | "unsettle_project" | "move_workspace" | "remove";
 
 export interface ProjectMenuItem {
   act: ProjectAct;
@@ -15,6 +15,8 @@ export interface ProjectMenuItem {
   desc: string;
   /** A line goes above it. */
   sep: boolean;
+  /** Greyed out, with why (`desc` says it). */
+  off?: boolean;
 }
 
 export interface ProjectMenuInput {
@@ -26,13 +28,15 @@ export interface ProjectMenuInput {
   customIcon: boolean;
   /** The project is settled (it's under Settled). */
   settled?: boolean;
+  /** Move to workspace…: why there's nothing to pick (no account, a single workspace), null when there is; left out: not offered. */
+  moveWhy?: string | null;
 }
 
 export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
   const out: ProjectMenuItem[] = [];
   let sep = false;
-  const add = (act: ProjectAct, label: string, icon = "", desc = ""): void => {
-    out.push({ act, label, icon, desc, sep: sep && out.length > 0 });
+  const add = (act: ProjectAct, label: string, icon = "", desc = "", off = false): void => {
+    out.push({ act, label, icon, desc, sep: sep && out.length > 0, ...(off ? { off } : {}) });
     sep = false;
   };
   add("terminal", "Open terminal", ICONS.TERMINAL);
@@ -51,6 +55,7 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
   add("choose_icon", "Choose icon…");
   if (p.customIcon) add("website_icon", "Use website icon");
   sep = true;
+  if (p.moveWhy !== undefined) add("move_workspace", "Move to workspace…", ICONS.USERS, p.moveWhy ?? "It and its chats show under that workspace", p.moveWhy !== null);
   if (p.settled === true) add("unsettle_project", "Unsettle project", ICONS.UNARCHIVE, "It and the chats settled with it come back");
   else add("settle_project", "Settle project", ICONS.ARCHIVE, "It and its chats go to Settled; a new chat or new activity in it brings it back");
   add("remove", "Remove from Harbor");

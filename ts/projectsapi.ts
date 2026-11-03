@@ -11,6 +11,7 @@ import { parseSnooze } from "./packages/ui/src/logic/sidebar.ts";
 import { sidebartree } from "./packages/store/src/index.ts";
 import { webUrl } from "./packages/agents/src/git.ts";
 import { githubRepo } from "./packages/agents/src/worktree.ts";
+import { choiceJson, type WorkspaceMoves } from "./workspacemoves.ts";
 
 /**
  * "Add project" from a phone (`/v1/projects*`): the desktop's own palette (logic/addproject.ts)
@@ -46,6 +47,8 @@ export interface ProjectsHost {
   settled?: (repo: number, on: boolean) => void;
   /** The file a phone uploaded (`POST /v1/upload`'s id), or null. */
   uploadPath?: (id: string) => string | null;
+  /** Move to workspace… (workspacemoves.ts). */
+  moves?: WorkspaceMoves;
 }
 
 const STEPS: readonly Step[] = ["sources", "new", "local", "url", "github"];
@@ -72,9 +75,10 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.EXTERNAL, "external"],
   [ICONS.ARCHIVE, "archive"],
   [ICONS.UNARCHIVE, "unarchive"],
+  [ICONS.USERS, "users"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "move_workspace", "remove"];
 const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -138,7 +142,7 @@ export class ProjectsApi {
     if (sub === "menu" || sub === "do") {
       const r = this.repoOf(b.project);
       if (r === null) return err(404, "that project isn't on this PC any more");
-      return sub === "menu" ? ok(this.menu(r, call.global)) : this.run(r, b);
+      return sub === "menu" ? ok(this.menu(r, call.global)) : this.run(r, b, call.from !== undefined && call.from !== null);
     }
     if (sub === "job") return this.job(str(b.job), call.global);
     return this.act(b, call.global);
@@ -340,13 +344,14 @@ export class ProjectsApi {
     const main = this.h.mainChat?.(r.id, global) ?? null;
     const until = this.snoozeOf(`r${r.id}`);
     const settled = this.h.store.settledProjects().has(r.id);
-    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false, settled }).map((it): Json => {
-      const off = it.act === "terminal";
+    const moves = this.h.moves?.projectMenu(r) ?? null;
+    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false, settled, ...(moves ? { moveWhy: moves.why } : {}) }).map((it): Json => {
+      const off = it.act === "terminal" || it.off === true;
       return {
         act: it.act,
         label: it.label,
         icon: MENU_ICONS.get(it.icon) ?? "",
-        desc: off ? `It opens in Harbor's window on ${this.pcName()}` : it.desc,
+        desc: it.act === "terminal" ? `It opens in Harbor's window on ${this.pcName()}` : it.desc,
         sep: it.sep,
         enabled: !off,
       };
@@ -362,6 +367,8 @@ export class ProjectsApi {
       main,
       snoozed: until === null ? null : `until ${sidebartree.snoozeLabel(until, now(), zone(now()))}`,
       settled,
+      // Move to workspace…'s list (null: a Harbor without it).
+      workspaces: moves ? choiceJson(moves) : null,
       row: settled ? [] : [
         { act: "new_chat", label: "New chat in this project", icon: "plus" },
         { act: "snooze", label: "Snooze", icon: "clock" },
@@ -371,9 +378,12 @@ export class ProjectsApi {
   }
 
   /** One of the project sheet's acts that runs on the PC: icons, Snooze, Remove from Harbor. */
-  private async run(r: Repo, b: Record<string, unknown>): Promise<Reply> {
+  private async run(r: Repo, b: Record<string, unknown>, forwarded = false): Promise<Reply> {
     const act = str(b.act);
     switch (act) {
+      case "workspace":
+        if (!this.h.moves) return err(409, "this Harbor can't move projects to a workspace");
+        return this.h.moves.moveProject(r, b.workspace, forwarded);
       case "refresh_icon":
       case "website_icon":
       case "choose_icon": {
@@ -422,7 +432,7 @@ export class ProjectsApi {
         return ok({ ok: true, snoozed_until_ms: until * 1000, snoozed_label: sidebartree.snoozeLabel(until, at, off) });
       }
       default:
-        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze, settle_project, unsettle_project or remove");
+        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze, settle_project, unsettle_project, workspace or remove");
     }
   }
 

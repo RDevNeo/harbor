@@ -5,8 +5,11 @@ import {
   type SidebarChat,
   type Tree,
   type Workspace,
+  chatWorkspace,
   inWorkspaces,
   isMainOf,
+  moveMenu,
+  movedNotice,
   parseSnooze,
   picked,
   reordered,
@@ -67,6 +70,55 @@ test("several_workspaces_show_what_each_of_them_has", () => {
   got = inWorkspaces(t, ["b", "gone"], "a", pcs, chats);
   // This PC's workspace isn't among them.
   expect(got.projects).toEqual([place(1, false, null, [2])]);
+});
+
+test("a_moved_chat_or_project_shows_under_the_workspace_it_was_moved_to", () => {
+  const [t, chats, pcs] = workspaceTree();
+  const sub = { ...chat(7, 1, "sub", 7), parent: 1 };
+  const all = [...chats, sub];
+  const byId = (id: number) => all.find((c) => c.id === id);
+  // Chat 3 (this PC's thread) moved to b; project 2 (this PC's) moved to b; chat 2 (b's PC) moved to a.
+  const place = { chats: new Map([[3, "b"], [2, "a"]]), carried: new Map<number, string>(), repos: new Map([[2, "b"]]) };
+  // Its own, else its project's, else its PC's; a sub-agent's is its lead's.
+  expect(chatWorkspace(byId(3) as TestChat, byId, place, "a", pcs)).toBe("b");
+  expect(chatWorkspace(byId(6) as TestChat, byId, place, "a", pcs)).toBe("b");
+  expect(chatWorkspace(byId(1) as TestChat, byId, place, "a", pcs)).toBe("a");
+  expect(chatWorkspace(sub, byId, { ...place, chats: new Map([[1, "b"]]) }, "a", pcs)).toBe("b");
+  // A copy follows its project as its home PC says it (`carried`), not this PC's project.
+  expect(chatWorkspace(byId(5) as TestChat, byId, { ...place, carried: new Map([[5, "c"]]), repos: new Map([[1, "a"]]) }, "a", pcs)).toBe("c");
+  // Filtered to a, the moved ones leave at once; chat 2 comes in.
+  const a = inWorkspaces(t, ["a"], "a", pcs, chats, place);
+  expect(a.threads).toEqual([]);
+  expect(a.projects).toEqual([place1([1, 2])]);
+  // Filtered to b, they're there: project 2 with its main chat, chat 3 among the threads.
+  const b = inWorkspaces(t, ["b"], "a", pcs, chats, place);
+  expect(b.threads).toEqual([3]);
+  expect(b.projects.map((p) => p.id)).toEqual([2]);
+  expect(b.settled).toEqual([5]);
+});
+
+function place1(chats: number[]): Place {
+  return place(1, false, null, chats);
+}
+
+test("move_to_workspace_lists_the_accounts_workspaces_and_the_way_back", () => {
+  const all = [{ id: "a", name: "Sam's workspace" }, { id: "b", name: "Team" }];
+  expect(moveMenu([], "", "a", "a", "desk").why).toMatch(/Sign in/);
+  expect(moveMenu(all.slice(0, 1), "", "a", "a", "desk").why).toMatch(/one workspace/);
+  // Where it is ticked; its PC's marked; no way back while it's there.
+  const home = moveMenu(all, "", "a", "a", "desk");
+  expect(home.why).toBeNull();
+  expect(home.items).toEqual([
+    { id: "", to: "a", label: "Sam's workspace", hint: "desk's workspace", on: true, back: false },
+    { id: "b", to: "b", label: "Team", hint: "", on: false, back: false },
+  ]);
+  // Moved: the way back clears its own.
+  const moved = moveMenu(all, "b", "a", "a", "desk");
+  expect(moved.items.map((i) => [i.label, i.on, i.id])).toEqual([["Sam's workspace", false, ""], ["Team", true, "b"], ["Back to Sam's workspace", false, ""]]);
+  // In a moved project: back to its PC's is a workspace of its own.
+  expect(moveMenu(all, "", "b", "a", "desk").items.at(-1)).toEqual({ id: "a", to: "a", label: "Back to Sam's workspace", hint: "Where its PC is", on: false, back: true });
+  expect(movedNotice(all, "a")).toBe("Moved to Sam's workspace");
+  expect(movedNotice(all, "b")).toBe("Moved to the workspace Team");
 });
 
 test("the_picked_workspaces_drop_what_is_gone", () => {

@@ -17,6 +17,18 @@ export interface Repo {
   local: string | null;
 }
 
+/** Where Move to workspace… put chats and projects (`Store.placement`): only those it moved. */
+export interface Placement {
+  /** A chat's own workspace. */
+  chats: ReadonlyMap<number, string>;
+  /** A copy's project's workspace, as its home PC says it. */
+  carried: ReadonlyMap<number, string>;
+  /** A project's workspace. */
+  repos: ReadonlyMap<number, string>;
+}
+
+export const NO_PLACEMENT: Placement = { chats: new Map(), carried: new Map(), repos: new Map() };
+
 export function repoDir(r: Pick<Repo, "path" | "local">): string {
   return r.local ?? r.path;
 }
@@ -218,6 +230,10 @@ function migrate(db: Database): void {
     num((db.query(`SELECT COUNT(*) AS n FROM pragma_table_info('${table}') WHERE name='${col}'`).get() as Row).n) > 0;
   if (!has("repos", "main_chat")) db.exec("ALTER TABLE repos ADD COLUMN main_chat INTEGER NOT NULL DEFAULT 0;");
   if (!has("chats", "retired")) db.exec("ALTER TABLE chats ADD COLUMN retired INTEGER NOT NULL DEFAULT 0;");
+  // Move to workspace: a chat's own, the project's a copy came with (its home PC's), a project's.
+  if (!has("chats", "workspace")) db.exec("ALTER TABLE chats ADD COLUMN workspace TEXT NOT NULL DEFAULT '';");
+  if (!has("chats", "project_workspace")) db.exec("ALTER TABLE chats ADD COLUMN project_workspace TEXT NOT NULL DEFAULT '';");
+  if (!has("repos", "workspace")) db.exec("ALTER TABLE repos ADD COLUMN workspace TEXT NOT NULL DEFAULT '';");
 }
 
 function chatFrom(r: Row): Chat {
@@ -353,6 +369,37 @@ export class Store {
 
   setMainChat(repo: number, chat: number | null): void {
     this.db.query("UPDATE repos SET main_chat=?2 WHERE id=?1").run(repo, chat ?? 0);
+  }
+
+  /**
+   * The workspaces chats and projects were moved to (Move to workspace…), only those set: `chats`
+   * a chat's own, `carried` the project's a copy came with from its home PC, `repos` a project's.
+   */
+  placement(): Placement {
+    const chats = new Map<number, string>();
+    const carried = new Map<number, string>();
+    for (const r of this.db.query("SELECT id, workspace, project_workspace FROM chats WHERE workspace != '' OR project_workspace != ''").all() as Row[]) {
+      if (text(r.workspace) !== "") chats.set(num(r.id), text(r.workspace));
+      if (text(r.project_workspace) !== "") carried.set(num(r.id), text(r.project_workspace));
+    }
+    const repos = new Map<number, string>();
+    for (const r of this.db.query("SELECT id, workspace FROM repos WHERE workspace != ''").all() as Row[]) repos.set(num(r.id), text(r.workspace));
+    return { chats, carried, repos };
+  }
+
+  /** Chat `id`'s own workspace ("": none, its project's or its PC's applies). */
+  setChatWorkspace(id: number, ws: string): void {
+    this.db.query("UPDATE chats SET workspace=?2 WHERE id=?1").run(id, ws);
+  }
+
+  /** A copy's project's workspace, as its home PC says it. */
+  setCarriedWorkspace(id: number, ws: string): void {
+    this.db.query("UPDATE chats SET project_workspace=?2 WHERE id=?1").run(id, ws);
+  }
+
+  /** Project `id`'s workspace ("": its PC's). */
+  setRepoWorkspace(id: number, ws: string): void {
+    this.db.query("UPDATE repos SET workspace=?2 WHERE id=?1").run(id, ws);
   }
 
   /** Settled projects (`repos.settled`, unused since the Rust schema 7): project id → when, in seconds. */

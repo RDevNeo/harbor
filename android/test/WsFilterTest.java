@@ -66,6 +66,22 @@ public class WsFilterTest {
         WsFilter withHere = new WsFilter(Arrays.asList("a", "b"), "ts:desk", "a", pcs);
         check(withHere.shows("") && withHere.shows("ts:other") && withHere.showsProject("/p"), "the answering PC's among them");
 
+        // Move to workspace…: where it was moved, before its home PC's (logic/sidebar.ts's test).
+        WsFilter inA = new WsFilter(Arrays.asList("a"), "ts:desk", "a", pcs);
+        check(!inA.shows("", "b"), "this PC's chat moved to b leaves a");
+        check(inA.shows("ts:other", "a"), "another workspace's chat moved to a comes in");
+        check(inA.shows("ts:desk", ""), "not moved: its PC's");
+        check(!inA.showsProject("/moved", "b"), "this PC's project moved to b leaves a");
+        inA.saw("ts:other", "a", "/theirs");
+        check(inA.showsProject("/theirs", ""), "a project with a chat moved here shows");
+        check(inA.showsProject("/kept", ""), "a project not moved stays in the PC's");
+        WsFilter inB = new WsFilter(Arrays.asList("b"), "ts:desk", "a", pcs);
+        check(inB.shows("", "b") && inB.showsProject("/moved", "b"), "and they show under b");
+        inB.saw("", "a", "/mine");
+        check(!inB.showsProject("/mine", ""), "a project whose chats were moved to a doesn't come along");
+        WsFilter allOf = new WsFilter(new ArrayList<>(), "ts:desk", "a", pcs);
+        check(allOf.shows("", "b") && allOf.showsProject("/moved", "b"), "under All everything still shows");
+
         // The same picks and toggles as src/sidebar.rs's tests.
         List<String> ids = Arrays.asList("a", "b", "c");
         same(WsFilter.picked("", ids), "[]", "All");

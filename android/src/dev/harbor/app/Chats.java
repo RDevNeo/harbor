@@ -107,6 +107,8 @@ public class Chats extends Base {
         // Hubs from 0.88 say which chat is its project's main chat: any other lead of a project can become it.
         if (!sub && c.has("main") && !c.optBoolean("main") && !c.isNull("project_id")) items.add("Make main chat");
         if (!sub) items.add("Move to PC…");
+        // Hubs from 0.120 say where Move to workspace… put a chat.
+        if (!sub && c.has("workspace")) items.add("Move to workspace…");
         items.add("Delete");
         Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items.toArray(new String[0]), (d, w) -> {
             String it = items.get(w);
@@ -115,6 +117,8 @@ public class Chats extends Base {
                     r -> { if (settled) after.run(); else landAfterSettle(a, hub, id, after); });
             else if (it.startsWith("Snooze")) Snooze.sheet(a, hub, c, after);
             else if (it.equals("Move to PC…")) movePc(a, hub, c, after);
+            else if (it.equals("Move to workspace…")) moveWorkspace(a, hub, "/v1/chats/" + id + "/workspaces", c.optString("title", "Chat"),
+                    ws -> hub.call("POST", "/v1/chats/" + id + "/workspace", new JSONObject().put("workspace", ws)), after);
             else if (it.equals("Make main chat")) Ui.bg(a, () -> hub.call("POST", "/v1/chats/" + id + "/main", new JSONObject()),
                     r -> { Ui.toast(a, "Its project's header opens it now"); after.run(); });
             else Ui.dialog(a).setTitle("Delete this chat?")
@@ -223,6 +227,36 @@ public class Chats extends Base {
             Sheet.pick(a, "Move to PC", note, o, null, pc -> Ui.bg(a,
                     () -> hub.call("POST", "/v1/chats/" + id + "/move_pc", new JSONObject().put("pc", pc)),
                     r2 -> { Ui.toast(a, "Moving to " + r2.optString("to", "the PC") + "…"); after.run(); }));
+        });
+    }
+
+    interface Move { JSONObject to(String workspace) throws Exception; }
+
+    /** Move to workspace… for a chat (`GET menu`) or a project (its menu's `workspaces`): the
+     *  desktop's list, the account's workspaces with the one it's in ticked, then the way back to
+     *  its PC's. Greyed with why (a toast here) when there's nothing to pick. */
+    static void moveWorkspace(Base a, Hub hub, String menu, String title, Move move, Runnable after) {
+        Ui.bg(a, () -> hub.call("GET", menu, null), m -> moveWorkspace(a, m, title, move, after));
+    }
+
+    static void moveWorkspace(Base a, JSONObject m, String title, Move move, Runnable after) {
+        String why = m == null || m.isNull("why") ? "" : m.optString("why", "");
+        JSONArray its = m == null ? null : m.optJSONArray("items");
+        if (!why.isEmpty() || its == null || its.length() == 0) { Ui.toast(a, why.isEmpty() ? "Nothing to move it to" : why); return; }
+        List<Sheet.Option> o = new ArrayList<>();
+        String current = null;
+        for (int i = 0; i < its.length(); i++) {
+            JSONObject it = its.optJSONObject(i);
+            if (it == null) continue;
+            if (it.optBoolean("on")) current = String.valueOf(i);
+            o.add(new Sheet.Option(String.valueOf(i), it.optString("label"), it.optString("hint"), true));
+        }
+        String now = current;
+        Sheet.pick(a, "Move to workspace", "“" + title + "” shows under the workspace you pick. Who can reach it doesn't change.", o, current, pick -> {
+            if (pick.equals(now)) return;
+            JSONObject it = its.optJSONObject(Integer.parseInt(pick));
+            if (it == null) return;
+            Ui.bg(a, () -> move.to(it.optString("id")), r -> { Ui.toast(a, r.optString("notice", "Moved")); after.run(); });
         });
     }
 
