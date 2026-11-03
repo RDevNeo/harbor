@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.123.0] - 2026-11-03
+
 ### Added
 - "Auto" in the composer's Runs on menu, on the desktop and the phone: a new chat starts on the
   PC with the most free memory (MemAvailable, averaged over the last 10 minutes), among the PCs
