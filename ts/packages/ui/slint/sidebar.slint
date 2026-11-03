@@ -18,6 +18,10 @@ export struct SideRow {
     pr: string,
     pr-tip: string,
     tip: string,
+    // A project row's hint after its name: the PC that holds its folder when it isn't here.
+    place: string,
+    // `place` names a PC (else it's this PC's folder, for two projects with one name).
+    place-pc: bool,
 }
 
 component ThreadRow {
@@ -56,7 +60,7 @@ component ThreadRow {
         }
         title := Text {
             x: root.indented ? 8px : 32px;
-            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px);
+            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px) - (root.data.place != "" ? place.width + 6px : 0px);
             width: min(self.preferred-width, max(self.room, 10px));
             text: root.data.title;
             font-size: 14px;
@@ -64,6 +68,26 @@ component ThreadRow {
             color: Theme.fg;
             overflow: elide;
             vertical-alignment: center;
+        }
+        // A settled project's PC, when its folder isn't here (the project row's hint).
+        place := HorizontalLayout {
+            visible: root.data.place != "";
+            x: title.x + title.width + 6px;
+            width: root.data.place != "" ? min(self.preferred-width, 106px) : 0px;
+            spacing: 3px;
+            Glyph {
+                width: 12px;
+                icon: root.data.place-pc ? Icons.monitor : Icons.folder;
+                size: 12px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: root.data.place;
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
         }
         if root.data.worktree != "": TipArea {
             x: title.x + title.width + 5px;
@@ -215,15 +239,36 @@ component ProjectRow {
             color: Theme.fg;
         }
     }
-    Text {
+    HorizontalLayout {
         x: 32px;
         width: parent.width - 32px - (root.hovering ? 64px : status.preferred-width + 16px);
-        text: root.data.title;
-        font-size: 14px;
-        font-weight: root.data.active ? 500 : 400;
-        color: Theme.fg;
-        overflow: elide;
-        vertical-alignment: center;
+        spacing: 6px;
+        Text {
+            text: root.data.title;
+            font-size: 14px;
+            font-weight: root.data.active ? 500 : 400;
+            color: Theme.fg;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        if root.data.place != "": HorizontalLayout {
+            spacing: 3px;
+            horizontal-stretch: 1;
+            Glyph {
+                width: 12px;
+                icon: root.data.place-pc ? Icons.monitor : Icons.folder;
+                size: 12px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: root.data.place;
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
     }
     status := StatusView {
         visible: !root.hovering;

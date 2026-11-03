@@ -282,6 +282,16 @@ export class StoreReplica implements MeshApp {
     return id;
   }
 
+  /**
+   * Which PC holds project `repo`'s folder, for when no copy of its chats is left here to say it:
+   * the first PC whose chats arrive in it, then the one that names the project by the same path.
+   */
+  private rememberPc(repo: number, peer: string, path: string): void {
+    const was = this.o.store.projectPc(repo);
+    if (was === peer) return;
+    if (was === "" || this.repos.find((r) => r.id === repo)?.path === path) this.o.store.setProjectPc(repo, peer);
+  }
+
   private upsert(peer: string, m: Record<string, unknown>): number | null {
     const hid = int(m.id);
     if (hid === null) return null;
@@ -291,6 +301,7 @@ export class StoreReplica implements MeshApp {
     const existing = existingId === null ? null : (this.list.find((c) => c.id === existingId) ?? null);
     if (existing && existing.home === "") return null;
     const repo = m.project === null || m.project === undefined ? null : this.repoFor(obj(m.project));
+    if (repo !== null) this.rememberPc(repo, peer, s(obj(m.project), "path"));
     const parentHid = int(m.parent);
     const c: Chat = blankChat({
       id: existingId ?? 0,

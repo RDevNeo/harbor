@@ -2,7 +2,7 @@ import { existsSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
-import { ProjectClones } from "./projectclones.ts";
+import { type ProjectPlace, ProjectClones } from "./projectclones.ts";
 import { ProjectsApi } from "./projectsapi.ts";
 import { WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
@@ -170,6 +170,8 @@ export interface RunningHub {
   /** A paired PC's terminal (ssh into it) and its ssh options for the file browser; null for phones. */
   deviceHost(d: PairedDevice): { shell: string[]; ssh: string[] } | null;
   services: Services;
+  /** Where a project's folder is when it isn't on this PC (null: it's here). */
+  projectPlace(repo: number): ProjectPlace | null;
   stop(): Promise<void>;
 }
 
@@ -248,6 +250,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   hub.mesh.me = me;
   hub.enabled = store.get("api_enabled") === "1";
   hub.loadRemembered(store);
+  // Whoever settles or unsettles a chat or a project (the window, a phone, the project menu's
+  // API, new activity waking a settled project), other PCs and phones hear of each chat at once.
+  const stopSettled = store.onSettled((chat) => hub.touch(chat, true));
   setHello(me.id, me.name, id);
   const notes = new Notes();
   const notifier = new Notifier({ notes });
@@ -602,6 +607,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const phone = new PhoneRoutes({
     ctx: ctxFor,
+    projectPlace: (repo) => projectClones.place(repo),
     store,
     hub,
     replica,
@@ -1035,6 +1041,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return { shell: remotes.shellArgv(cfg, h, null), ssh: deviceSshArgs(remotes, cfg, h) };
     },
     services,
+    projectPlace: (repo) => projectClones.place(repo),
     stop: async () => {
       clearInterval(tick);
       if (engineTimer) clearTimeout(engineTimer);
@@ -1045,6 +1052,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       clearInterval(refresh);
       services?.stop();
       stopDiscord();
+      stopSettled();
       mesh.stop();
       disc?.stop();
       stopMap();

@@ -274,6 +274,8 @@ export class Store {
   private saved = new Map<number, bigint[]>();
   /** Per chat, its saved transcript's length and digest as peers compare them; dropped when it's written. */
   private sums = new Map<number, { count: number; digest: bigint }>();
+  /** Told after a chat's `settled` flag changed (its id), or a project's (null). */
+  private settledHooks = new Set<(chat: number | null) => void>();
 
   private constructor(db: Database) {
     this.db = db;
@@ -407,6 +409,15 @@ export class Store {
     this.db.query("UPDATE repos SET workspace=?2 WHERE id=?1").run(id, ws);
   }
 
+  /** The PC of the mesh project `repo`'s copies last came from ("" none): where its folder is when it isn't on this PC. */
+  projectPc(repo: number): string {
+    return this.get(`project_pc:${repo}`) ?? "";
+  }
+
+  setProjectPc(repo: number, pc: string): void {
+    if (this.projectPc(repo) !== pc) this.set(`project_pc:${repo}`, pc);
+  }
+
   /** Settled projects (`repos.settled`, unused since the Rust schema 7): project id → when, in seconds. */
   settledProjects(): Map<number, number> {
     const rows = this.db.query("SELECT id, settled FROM repos WHERE settled != 0").all() as Row[];
@@ -427,6 +438,7 @@ export class Store {
       for (const c of leads) this.saveChat({ ...c, settled: true });
       this.db.query("UPDATE repos SET settled=?2 WHERE id=?1").run(repo, Math.max(at, 1, ...all.map((c) => c.updated)));
       this.set(key, JSON.stringify(leads.map((c) => c.id)));
+      this.settledChanged(null);
       return;
     }
     this.db.query("UPDATE repos SET settled=0 WHERE id=?1").run(repo);
@@ -435,6 +447,28 @@ export class Store {
       if (c && c.repoId === repo && c.settled) this.saveChat({ ...c, settled: false });
     }
     this.set(key, "");
+    this.settledChanged(null);
+  }
+
+  /**
+   * `f` hears every change of a chat's `settled` flag (the chat's id) and of a project's (null),
+   * whoever made it: a chat's own settle, a project's settle or unsettle, new activity waking a
+   * settled project. The hub announces them, so other PCs and phones see them at once.
+   * Returns the way to stop listening.
+   */
+  onSettled(f: (chat: number | null) => void): () => void {
+    this.settledHooks.add(f);
+    return () => this.settledHooks.delete(f);
+  }
+
+  private settledChanged(chat: number | null): void {
+    for (const f of this.settledHooks) {
+      try {
+        f(chat);
+      } catch {
+        // A listener's failure doesn't undo the save.
+      }
+    }
   }
 
   /** The chats settling project `repo` settled. */
@@ -452,14 +486,15 @@ export class Store {
    * with a newer time than the settle. The active chat comes back with it when the settle had
    * settled it (`c` is changed in place, so the caller's copy agrees); the others stay settled.
    */
-  private wake(c: Chat, created: boolean): void {
-    if (c.repoId === null) return;
+  private wake(c: Chat, created: boolean): boolean {
+    if (c.repoId === null) return false;
     const at = num((this.db.query("SELECT settled FROM repos WHERE id=?1").get(c.repoId) as Row | null)?.settled ?? 0);
-    if (at === 0 || (created ? foreign(c) : c.updated <= at)) return;
+    if (at === 0 || (created ? foreign(c) : c.updated <= at)) return false;
     const back = this.settledWith(c.repoId).includes(c.id);
     this.db.query("UPDATE repos SET settled=0 WHERE id=?1").run(c.repoId);
     this.set(`project_settled:${c.repoId}`, "");
     if (back && c.settled) c.settled = false;
+    return true;
   }
 
   saveRepoMeta(r: Pick<Repo, "id" | "sort">): void {
@@ -582,18 +617,21 @@ export class Store {
       )
       .run(c.repoId, c.title, c.sessionId, +c.started, c.account, c.model, c.effort, c.access, +c.settled, c.updated, c.role, c.parent, c.name, c.device, c.gid, c.home, c.homeId, +c.retired);
     c.id = Number(r.lastInsertRowid);
-    this.wake(c, true);
+    if (this.wake(c, true)) this.settledChanged(null);
     return c;
   }
 
   saveChat(c: Chat): void {
-    this.wake(c, false);
+    const woke = this.wake(c, false);
+    const was = this.db.query("SELECT settled FROM chats WHERE id=?1").get(c.id) as Row | null;
     this.db
       .query(
         `UPDATE chats SET repo_id=?2, title=?3, session_id=?4, started=?5, account=?6, model=?7, effort=?8,
            access=?9, settled=?10, updated=?11, device=?12, role=?13, parent=?14, name=?15, retired=?16 WHERE id=?1`,
       )
       .run(c.id, c.repoId, c.title, c.sessionId, +c.started, c.account, c.model, c.effort, c.access, +c.settled, c.updated, c.device, c.role, c.parent, c.name, +c.retired);
+    if (woke) this.settledChanged(null);
+    if (was !== null && (num(was.settled) !== 0) !== c.settled) this.settledChanged(c.id);
   }
 
   /** Which PC owns a chat ("" and 0: this one), after it moved between PCs. */

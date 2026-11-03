@@ -31,6 +31,10 @@ export interface SideRow {
   pr: "" | "open" | "draft" | "merged" | "closed";
   pr_tip: string;
   tip: string;
+  /** A project row's hint after its name: the PC that holds its folder when it isn't here (projectplace.ts). */
+  place: string;
+  /** `place` names a PC (else this PC's folder). */
+  place_pc: boolean;
 }
 
 export interface MdBlockData {

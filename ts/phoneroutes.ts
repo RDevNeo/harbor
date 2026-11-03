@@ -50,7 +50,7 @@ const plain = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
 const body = (c: Call): Record<string, unknown> => (typeof c.body === "object" && c.body !== null && !Array.isArray(c.body) ? (c.body as Record<string, unknown>) : {});
 
 export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Promise<Reply | null> {
-  const composer = composerRoutes({ store: h.store, engine: h.engine, phone: h.phone, homeName: (c) => (c.home !== "" ? h.hub.mesh.nameOf(c.home) : h.hub.mesh.me.name), touch: () => h.hub.touch(null, true) });
+  const composer = composerRoutes({ store: h.store, engine: h.engine, phone: h.phone, homeName: (c) => (c.home !== "" ? h.hub.mesh.nameOf(c.home) : h.hub.mesh.me.name), touch: () => h.hub.touch(null, true), place: (repo) => h.projectClones.place(repo) });
   const resolve = (ref: string): Chat | null => {
     const id = /^-?\d+$/.test(ref) ? Number(ref) : h.hub.mesh.byGid(ref);
     return id === null ? null : (h.engine().chat(id) ?? null);

@@ -324,3 +324,33 @@ test("notices with an icon are read from every chat, in order, and nothing else"
   ]);
   expect(s.noticeDetails("nothing")).toEqual([]);
 });
+
+test("every change of a chat's settled flag is heard, whoever made it", () => {
+  const dir = tmp();
+  const s = open(join(dir, "harbor.db"));
+  const repo = s.addRepo(dir);
+  const a = s.createChat(blankChat({ repoId: repo, title: "a", role: "lead" }));
+  const b = s.createChat(blankChat({ repoId: repo, title: "b", role: "lead" }));
+  const heard: (number | null)[] = [];
+  const stop = s.onSettled((c) => heard.push(c));
+  const at = Math.floor(Date.now() / 1000) + 100;
+  s.settleProject(repo, true, at);
+  expect(heard).toEqual([a.id, b.id, null]);
+  heard.length = 0;
+  s.settleProject(repo, false);
+  expect(heard.filter((x) => x !== null).sort()).toEqual([a.id, b.id].sort());
+  expect(heard).toContain(null);
+  // A save that leaves the flag alone says nothing.
+  heard.length = 0;
+  s.saveChat({ ...(s.chat(a.id) ?? a), title: "renamed" });
+  expect(heard).toEqual([]);
+  // New activity waking a settled project: the project and the chat that came back.
+  s.settleProject(repo, true, at);
+  heard.length = 0;
+  s.saveChat({ ...(s.chat(a.id) ?? a), updated: at + 5 });
+  expect(heard).toEqual([null, a.id]);
+  stop();
+  heard.length = 0;
+  s.saveChat({ ...(s.chat(a.id) ?? a), settled: true });
+  expect(heard).toEqual([]);
+});

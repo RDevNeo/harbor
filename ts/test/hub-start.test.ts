@@ -129,3 +129,79 @@ test("every turn gets the machines server while the mesh has other PCs, on this 
     h.hub.mesh.on = false;
   }
 });
+
+test("settling or unsettling a project announces each chat it changed, from every path", async () => {
+  const dir = join(root, "home", "settle-me");
+  mkdirSync(dir, { recursive: true });
+  const repo = h.store.addRepo(dir);
+  const lead = (title: string) => h.store.createChat({ ...blankChat(), repoId: repo, role: "lead", name: "lead", title });
+  const a = lead("A");
+  const b = lead("B");
+  h.engine.reload();
+  const changedSince = async (since: number): Promise<{ changed_chats: number[]; state_changed: boolean }> => {
+    const [st, text] = await call("GET", `/v1/events?since=${since}`);
+    expect(st).toBe(200);
+    return JSON.parse(text);
+  };
+  // The phone's (and the project sheet's) way: /v1/projects/do.
+  let since = h.hub.rev();
+  const [st, text] = await call("POST", "/v1/projects/do", JSON.stringify({ project: dir, act: "settle_project" }));
+  expect([st, JSON.parse(text)]).toEqual([200, { ok: true, settled: true }]);
+  let ev = await changedSince(since);
+  expect(ev.changed_chats).toEqual(expect.arrayContaining([a.id, b.id]));
+  expect(ev.state_changed).toBe(true);
+  since = h.hub.rev();
+  await call("POST", "/v1/projects/do", JSON.stringify({ project: dir, act: "unsettle_project" }));
+  ev = await changedSince(since);
+  expect(ev.changed_chats).toEqual(expect.arrayContaining([a.id, b.id]));
+  expect([h.store.chat(a.id)?.settled, h.store.chat(b.id)?.settled]).toEqual([false, false]);
+  // The window's way: straight on the store, with no touch of its own.
+  since = h.hub.rev();
+  h.store.settleProject(repo, true, Math.floor(Date.now() / 1000) + 100);
+  expect(h.hub.chatRev(a.id)).toBeGreaterThan(since);
+  expect(h.hub.chatRev(b.id)).toBeGreaterThan(since);
+  // New activity in the settled project brings that chat back: announced too.
+  since = h.hub.rev();
+  const fresh = h.store.chat(a.id);
+  if (!fresh) throw new Error("gone");
+  h.store.saveChat({ ...fresh, updated: Math.floor(Date.now() / 1000) + 200 });
+  expect(h.store.chat(a.id)?.settled).toBe(false);
+  ev = await changedSince(since);
+  expect(ev.changed_chats).toContain(a.id);
+  expect(ev.state_changed).toBe(true);
+  // A chat's own settle, from any caller.
+  since = h.hub.rev();
+  h.store.saveChat({ ...(h.store.chat(a.id) ?? fresh), settled: true });
+  expect(h.hub.chatRev(a.id)).toBeGreaterThan(since);
+  // A save that leaves the flag alone announces nothing by itself.
+  since = h.hub.rev();
+  h.store.saveChat({ ...(h.store.chat(b.id) ?? fresh), title: "B renamed" });
+  expect(h.hub.chatRev(b.id)).toBeLessThanOrEqual(since);
+});
+
+test("a project whose folder is on another PC says which one, to the phone and the window", async () => {
+  const away = h.store.addRepo("/home/someone-else/Documents/blox");
+  const mine = join(root, "home", "Documents", "blox");
+  mkdirSync(mine, { recursive: true });
+  const here = h.store.addRepo(mine);
+  h.store.setProjectPc(away, "pc-9");
+  h.hub.mesh.on = true;
+  h.hub.mesh.peers.set("pc-9", newPeer({ id: "pc-9", name: "Laptop", online: true }));
+  try {
+    h.engine.reload();
+    expect(h.projectPlace(here)).toBeNull();
+    expect(h.projectPlace(away)).toEqual({ pc: "pc-9", name: "Laptop", online: true });
+    const [st, text] = await call("GET", "/v1/state");
+    expect(st).toBe(200);
+    const projects = (JSON.parse(text) as { projects: { id: number; here: boolean; pc: string; pc_name: string; pc_online: boolean }[] }).projects;
+    expect(projects.find((p) => p.id === away)).toMatchObject({ here: false, pc: "pc-9", pc_name: "Laptop", pc_online: true });
+    expect(projects.find((p) => p.id === here)).toMatchObject({ here: true, pc: "", pc_name: "" });
+    // A chat started here anyway says where the folder is, not only that it's missing.
+    const c = h.store.createChat({ ...blankChat(), repoId: away, role: "lead", name: "lead", title: "x" });
+    h.engine.reload();
+    expect(h.engine.host.missingFolder?.(c) ?? "").toContain("it's on Laptop");
+  } finally {
+    h.hub.mesh.peers.delete("pc-9");
+    h.hub.mesh.on = false;
+  }
+});

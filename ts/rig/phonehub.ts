@@ -83,6 +83,8 @@ const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-we
 const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));
 const notes = seed.addRepo(project("field-notes", null));
 seed.setRepoWorkspace(notes, "org_team");
+// Another PC's acme-web, its folder there: the row names that PC (projectplace.ts, Place.java).
+seed.setProjectPc(seed.addRepo("/home/someone/projects/acme-web"), "pc:studio");
 
 const chat = (over: Partial<import("../packages/store/src/index.ts").Chat>, items: Item[]) => {
   const c = seed.createChat(blankChat({ model: "claude-opus-5-5", effort: "medium", started: true, sessionId: crypto.randomUUID(), ...over }));

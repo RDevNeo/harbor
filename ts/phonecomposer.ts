@@ -6,6 +6,7 @@ import { forkable } from "./packages/agents/src/fork.ts";
 import { githubRepo } from "./packages/mcp/src/github/prs.ts";
 import * as chatmention from "./packages/ui/src/logic/chatmention.ts";
 import * as palette from "./packages/ui/src/logic/palette.ts";
+import { type Place, placeLine } from "./packages/ui/src/logic/projectplace.ts";
 import * as slash from "./packages/ui/src/logic/slash.ts";
 import * as tags from "./packages/ui/src/logic/tags.ts";
 
@@ -15,6 +16,8 @@ export interface ComposerHost {
   phone: () => PhoneRoutes;
   homeName(c: Chat): string;
   touch(): void;
+  /** Where a project's folder is when it isn't on this PC (null: it's here). */
+  place?: (repo: number) => Place | null;
 }
 
 interface Probe {
@@ -195,7 +198,7 @@ export function composerRoutes(h: ComposerHost) {
   const paletteItems = (current: number | null): palette.Item[] => {
     const e = h.engine();
     return palette.paletteItems({
-      repos: e.repos.map((r) => ({ id: r.id, name: r.name, dir: tilde(repoDir(r)) })),
+      repos: e.repos.map((r) => ({ id: r.id, name: r.name, dir: placeLine(h.place?.(r.id) ?? null, tilde(repoDir(r))) })),
       chats: e.chats.map((c) => ({ id: c.id, title: c.title, role: c.role, parent: c.parent, name: c.name, repoId: c.repoId, settled: c.settled, updated: c.updated })),
       devices: loadRemote(h.store).devices.map((d) => ({ id: d.id, name: d.name })),
       current,

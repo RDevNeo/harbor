@@ -15,6 +15,15 @@ export interface ProjectClonesHost {
   touch: () => void;
 }
 
+/** Where a project's folder is when it isn't on this PC (`pc` "": not known). */
+export interface ProjectPlace {
+  pc: string;
+  name: string;
+  online: boolean;
+}
+
+const HERE_MS = 3000;
+
 const say = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export class ProjectClones {
@@ -39,17 +48,44 @@ export class ProjectClones {
     return this.e.repos.map((r) => ({ id: r.id, name: r.name, path: r.path, dir: repoDir(r), remote: r.remote }));
   }
 
+  /** The PC that holds project `repo`: the home of a copy of its chats, else the one its copies came from (MeshStore). */
   owner(repo: number): [string, string] | null {
-    return cloneProjectOwner(repo, this.e.chats.map((c) => ({ repoId: c.repoId, foreign: c.home !== "", home: c.home, homeName: this.homeName(c) })));
+    const found = cloneProjectOwner(repo, this.e.chats.map((c) => ({ repoId: c.repoId, foreign: c.home !== "", home: c.home, homeName: this.homeName(c) })));
+    if (found !== null) return found;
+    const pc = this.h.store.projectPc(repo);
+    return pc === "" || pc === this.h.hub.mesh.me.id ? null : [pc, this.h.hub.mesh.nameOf(pc)];
   }
+
+  /**
+   * Where project `repo`'s folder is when it isn't on this PC (null: it's here, or no such
+   * project): the PC that holds it (`pc` "" when none is known), by name, and whether it's on.
+   */
+  place(repo: number): ProjectPlace | null {
+    const r = this.e.repo(repo);
+    if (!r || this.here(repoDir(r))) return null;
+    const o = this.owner(r.id);
+    if (o === null) return { pc: "", name: "", online: false };
+    return { pc: o[0], name: o[1], online: this.h.hub.mesh.peer(o[0])?.online === true };
+  }
+
+  /** Whether a folder is on this PC, looked at most every few seconds (the sidebar asks on each repaint). */
+  private here(dir: string): boolean {
+    const t = Date.now();
+    const k = this.seen.get(dir);
+    if (k && t - k.at < HERE_MS) return k.here;
+    const here = isDir(dir);
+    this.seen.set(dir, { at: t, here });
+    return here;
+  }
+
+  private seen = new Map<string, { at: number; here: boolean }>();
 
   missingFolder(chat: Chat): string | null {
     const w = this.e.worktreeOf(chat);
     if (w !== null && !isDir(w)) return `This thread's worktree (${w}) is gone. Start a new chat in the project to go on.`;
     const r = this.e.repo(chat.repoId);
     if (!r || isDir(repoDir(r))) return null;
-    const own = this.e.chats.find((c) => c.repoId === r.id && c.home !== "");
-    const o = own ? this.h.hub.mesh.nameOf(own.home) : null;
+    const o = this.owner(r.id)?.[1] ?? null;
     if (o !== null && r.remote === "") return `${r.name}'s folder (${r.path}) isn't on this PC: it's on ${o}, and it has no Git remote to clone. Start the chat with ${o} as its device, or pick the folder that holds it here.`;
     if (o !== null) return `${r.name}'s folder (${r.path}) isn't on this PC: it's on ${o}. Start the chat with ${o} as its device, or clone the project here.`;
     return `${r.name}'s folder (${r.path}) isn't on this PC. Clone or move the project back, or pick another project.`;

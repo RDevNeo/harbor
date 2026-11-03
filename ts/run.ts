@@ -180,6 +180,7 @@ export async function runApp(o: RunOptions): Promise<number> {
         return st?.state === "running" ? `Moving to ${st.toName}: ${st.stage}` : null;
       },
       mesh: run.windowMesh,
+      projectPlace: (repo: number) => run.projectPlace(repo),
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
     };

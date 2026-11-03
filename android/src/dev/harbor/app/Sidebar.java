@@ -524,7 +524,9 @@ final class Sidebar {
         String mainId = main == null ? null : main.optString("id");
         h.setBackground(mainId != null && mainId.equals(current) ? Ui.press(Ui.G100, 0, 10) : Ui.press(0, 0, 10));
         h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
-        h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, mains ? Ui.FG : Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
+        String where = key.isEmpty() ? "" : Place.hint(st, key);
+        if (where.isEmpty()) h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, mains ? Ui.FG : Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
+        else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), mains ? Ui.FG : Ui.G700), new LinearLayout.LayoutParams(0, -2, 1));
         if (main != null) status(h, main, you);
         boolean busy = false;
         for (JSONObject c : cs) busy |= working(c) || Hub.queued(c) > 0;
@@ -548,7 +550,7 @@ final class Sidebar {
             });
         }
         if (mains) {
-            h.setContentDescription((name == null ? "Project" : name) + (main != null ? ", main chat" : ", start its main chat"));
+            h.setContentDescription((name == null ? "Project" : name) + (where.isEmpty() ? "" : ", on " + where) + (main != null ? ", main chat" : ", start its main chat"));
             h.setOnClickListener(v -> { if (main != null) open(mainId); else newChat(key, true); });
             // The desktop row's buttons and right-click menu: a long press, or the ⋯.
             h.setOnLongClickListener(v -> { projectMenu(key, name, main); return true; });
@@ -585,8 +587,23 @@ final class Sidebar {
     }
 
     /** A settled project under Settled (the desktop's settled project row). */
+    /** A project's name and, smaller after it, the PC that holds its folder (`pc`), or the
+     *  folder's parent of one of two projects with a name (Place.hint). */
+    private LinearLayout titleWithPlace(String name, String where, boolean pc, int color) {
+        LinearLayout t = Ui.row(a);
+        t.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, color)), new LinearLayout.LayoutParams(-2, -2, 0));
+        t.addView(Ui.icon(a, pc ? Ui.I_MONITOR : Ui.I_FOLDER, 11, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(13), Ui.dp(13)), 6, 0, 3, 0));
+        TextView w = Ui.text(a, where, 11, Ui.G600);
+        w.setSingleLine(true);
+        w.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.addView(w, new LinearLayout.LayoutParams(0, -2, 1));
+        return t;
+    }
+
     private View settledProjectRow(String pid, String name) {
         String title = name == null || name.isEmpty() ? "Project" : name;
+        String where = Place.hint(st, pid);
+        if (!where.isEmpty()) title = title + " · " + where;
         LinearLayout r = Ui.listRow(a, Ui.I_FOLDER, Ui.G700, title, Ui.G700);
         r.setBackground(Ui.press(0, 0, 12));
         r.setContentDescription(title + ", settled project");
@@ -740,7 +757,7 @@ final class Sidebar {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("", "All projects", "", true));
         for (Map.Entry<String, String> p : projects.entrySet()) {
-            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""))) o.add(new Sheet.Option(p.getKey(), p.getValue(), "", true));
+            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""))) o.add(new Sheet.Option(p.getKey(), p.getValue(), Place.hint(st, p.getKey()), true));
         }
         o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
         Sheet.pick(a, "Projects", null, o, filter, id -> {

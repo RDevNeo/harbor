@@ -248,6 +248,27 @@ describe("mesh.rs", () => {
     copy.close();
   });
 
+  test("a project made from another PC's chats remembers that PC, even once no copy is left", async () => {
+    const store = Store.openAt(join(tmp, "place.db"));
+    const replica = new StoreReplica({ store, hub: new Hub([], 0), version: "t" });
+    const copy = (id: number, path: string) => ({ id, gid: `p${id}`, title: "t", project: { path, name: "blox", remote: "" } });
+    await replica.applyChats("pc:laptop", 1, { chats: [copy(1, "/home/someone/Documents/blox")] });
+    const made = store.repos().find((r) => r.path === "/home/someone/Documents/blox");
+    if (!made) throw new Error("no project made");
+    expect(store.projectPc(made.id)).toBe("pc:laptop");
+    // Another PC's copy that only matches by name doesn't take it over; one naming the same folder does.
+    await replica.applyChats("pc:desk", 1, { chats: [{ id: 7, gid: "p7", title: "t", project: { path: "/srv/blox", name: "blox", remote: "" } }] });
+    expect(store.projectPc(made.id)).toBe("pc:laptop");
+    await replica.applyChats("pc:desk", 1, { chats: [copy(8, "/home/someone/Documents/blox")] });
+    expect(store.projectPc(made.id)).toBe("pc:desk");
+    // Every copy gone: still remembered.
+    await replica.applyChats("pc:desk", 2, { full: true, chats: [] });
+    await replica.applyChats("pc:laptop", 2, { full: true, chats: [] });
+    expect(store.chats().filter((c) => c.repoId === made.id)).toEqual([]);
+    expect(store.projectPc(made.id)).toBe("pc:desk");
+    store.close();
+  });
+
   test("a chat's published cwd is where its agent works, its worktree before its project", async () => {
     const store = Store.openAt(join(tmp, "cwd.db"));
     const repo = store.addRepo(tmp);

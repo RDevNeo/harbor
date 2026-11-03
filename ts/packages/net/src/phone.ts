@@ -146,6 +146,8 @@ export interface PhoneDeps {
   move?: PhoneMove;
   /** This PC's instructions and memory for a call that may start a turn on another PC, with `repo`'s memory (meshctx.ts `outgoingCtx`). */
   ctx?: (repo: number | null) => Json;
+  /** Where a project's folder is when it isn't on this PC (null: it's here); its `pc` is a mesh PC's id ("": none known). */
+  projectPlace?: (repo: number) => { pc: string; name: string; online: boolean } | null;
   /** A started chat moved between this PC, its devices and other PCs (relocate.rs). */
   relocate?: { why(chatId: number, to: string): string | null; relocate(chatId: number, to: string): Promise<string> };
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
@@ -616,7 +618,7 @@ export class PhoneRoutes {
       hub_name: me.name === "" ? hostname() : me.name,
       you,
       rev: hub.rev(),
-      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: place.repos.get(r.id) ?? "" })),
+      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: place.repos.get(r.id) ?? "", ...this.placeJson(r.id) })),
       chats: chats.map((c) => this.chatJson(c, global, place)),
       tree,
       accounts,
@@ -635,6 +637,16 @@ export class PhoneRoutes {
   }
 
   /** A phone looking at `c` (senders.ts Viewer): its own messages show no sender row, the home PC's its owner. */
+  /**
+   * A project's place in `/v1/state`: `here` false when its folder isn't on this PC, then `pc`
+   * and `pc_name` say which PC holds it ("" when none is known) and `pc_online` whether it's on.
+   * Two projects with one name are told apart by it, and a new chat in it starts on that PC.
+   */
+  private placeJson(repo: number): Record<string, Json> {
+    const p = this.d.projectPlace?.(repo) ?? null;
+    return p === null ? { here: true, pc: "", pc_name: "", pc_online: false } : { here: false, pc: p.pc, pc_name: p.name, pc_online: p.online };
+  }
+
   viewer(c: Chat, token: string, device: string): Viewer {
     const hub = this.d.hub;
     const peer = c.home === "" ? null : hub.mesh.peer(c.home);

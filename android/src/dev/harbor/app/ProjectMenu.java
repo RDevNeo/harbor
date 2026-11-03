@@ -61,6 +61,9 @@ final class ProjectMenu {
 
     private static void sheet(Base a, Hub hub, String pid, String name, JSONObject m, NewChat newChat, Runnable after, Gone gone) {
         String title = m.optString("name", name == null || name.isEmpty() ? "Project" : name);
+        // Its folder on another PC (or one of two projects with this name): which one, as on the row.
+        String where = Place.hint(Hub.states.get(hub.id), pid);
+        if (!where.isEmpty()) title = title + " · " + where;
         Sheet s = new Sheet(a, title);
         String snoozed = m.isNull("snoozed") ? "" : m.optString("snoozed");
 

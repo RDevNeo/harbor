@@ -5,19 +5,29 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
-<<<<<<< HEAD
+### Fixed
+- Settling or unsettling a project now reaches your other PCs and phones at once. Before, its
+  chats stayed as they were there (settled after an unsettle, or the other way round) until some
+  later full sync, minutes later. The same went for a chat settled from the desktop or the
+  phone's composer, for "Make main chat", and for new activity bringing a settled project back.
+- A project whose folder is on another PC of yours now says which: its sidebar row shows that
+  PC's name, and so do its tooltip, its menu, the command palette and, on the phone, the drawer,
+  the project sheet and the project pickers. Two projects with one name can be told apart (one of
+  this PC's own shows the folder it's in). A new chat in such a project starts on that PC, on the
+  desktop and the phone, and the composer says so before you send; when that PC is off or not
+  known, the composer says where the project lives instead of the chat failing after the message.
+
+### Changed
+- No more "N changed" badge beside the branch name in the chat's top bar, nor "· N changed"
+  after the branch on the phone: the branch shows alone. Reading a project's git status no longer
+  walks its untracked files.
+
 ## [0.121.3] - 2026-11-03
 
 ### Fixed
 - Desktop: a message with more images than fit across its card (four from the phone, say) drew the
   last thumbnails past the card's right edge. Thumbnails now wrap into rows inside the card, in your
   messages and in replies alike, at any window width.
-=======
-### Changed
-- No more "N changed" badge beside the branch name in the chat's top bar, nor "· N changed"
-  after the branch on the phone: the branch shows alone. Reading a project's git status no longer
-  walks its untracked files.
->>>>>>> 2ff759e (No more "N changed" badge beside the branch, on the desktop and the phone)
 
 ## [0.121.2] - 2026-11-03
 

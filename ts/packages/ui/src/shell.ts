@@ -36,6 +36,7 @@ import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
 import { chatIdle, inWorkspaces, type MoveItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
@@ -136,6 +137,8 @@ export class Shell {
   private draftRepo: number | null = null;
   /** The draft is the project's page: its first message starts the project's main chat. */
   private draftMain = false;
+  /** Projects whose folder is on another PC for which This PC was picked in the draft's Runs on. */
+  private draftHere = new Set<number>();
   private sel: Sel;
   private opened = new Map<number, Opened>();
   private drafts = new Map<number, string>();
@@ -1075,6 +1078,15 @@ export class Shell {
     const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t, new Set(settledRepos.keys()));
     const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, d.store.placement());
     const list = sidebarList(tr, d.chats, d.repos, this.query);
+    const clash = clashingNames(d.repos);
+    // A project whose folder isn't here names its PC; one of two with a name, its folder.
+    const where = (id: number, name: string): { place: string; place_pc: boolean; tip: string } => {
+      const repo = d.repo(id);
+      if (!repo) return { place: "", place_pc: false, tip: "" };
+      const dir = tilde(repo.local ?? repo.path, homedir());
+      const at = this.placeOf(id);
+      return { place: placeHint(at, dir, clash.has(name)), place_pc: at !== null, tip: placeLine(at, dir) };
+    };
     const rows: SideRow[] = [];
     const chatRow = (c: Chat, kind: "thread" | "loose"): SideRow => {
       const until = snoozed.get(`c${c.id}`) ?? null;
@@ -1092,6 +1104,8 @@ export class Shell {
         snoozed: until !== null && until > t,
         ...this.marks(c),
         tip: "",
+        place: "",
+        place_pc: false,
       };
     };
     for (const p of list.projects) {
@@ -1099,7 +1113,6 @@ export class Shell {
       const mainChat = main === null ? undefined : d.chat(main);
       const wakeUps = d.timers.some((x) => p.chats.some((c) => c.id === x.chatId) || x.chatId === main);
       const idle = projectIdle(wakeUps);
-      const repo = d.repo(p.repo.id);
       const selected = (main !== null && this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftMain && this.draftRepo === p.repo.id);
       rows.push({
         kind: "project",
@@ -1116,17 +1129,16 @@ export class Shell {
         worktree_tip: "",
         pr: "",
         pr_tip: "",
-        tip: repo ? tilde(repo.local ?? repo.path, homedir()) : "",
+        ...where(p.repo.id, p.repo.name),
       });
       for (const c of p.chats) rows.push(chatRow(c, "thread"));
     }
     if (list.loose.length > 0) {
-      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "" });
+      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "", place: "", place_pc: false });
       for (const c of list.loose) rows.push(chatRow(c, "loose"));
     }
     sync(this.rows, rows, sameSideRow);
     const projectRow = (r: { id: number; name: string }): SideRow => {
-      const repo = d.repo(r.id);
       return {
         kind: "settled-project",
         id: r.id,
@@ -1142,7 +1154,7 @@ export class Shell {
         worktree_tip: "",
         pr: "",
         pr_tip: "",
-        tip: repo ? tilde(repo.local ?? repo.path, homedir()) : "",
+        ...where(r.id, r.name),
       };
     };
     const settledRows = [...list.settledProjects.map(projectRow), ...list.settled.map((c) => chatRow(c, "loose"))];
@@ -1266,6 +1278,14 @@ export class Shell {
     );
   }
 
+  /** The draft's line about its project's folder being on another PC ("" when it's here). */
+  private draftLine(): string {
+    const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
+    const p = this.draftPlace();
+    if (!repo || p === null) return "";
+    return draftPlaceLine(repo.name, p, this.draftTarget() ?? (this.sel.device === "" ? null : this.sel.device)) ?? "";
+  }
+
   private refreshComposer(): void {
     this.refreshMentions();
     const repo = this.currentRepo();
@@ -1306,7 +1326,7 @@ export class Shell {
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: this.view === "chat" ? this.meshChat.typing(this.chatId) : "",
       notice: "",
-      remote: this.meshChat.runsOn(open),
+      remote: this.view === "chat" ? this.meshChat.runsOn(open) : this.draftLine(),
       error: this.meshChat.error(this.key()),
       can_resume_reply: this.view === "chat" && !running && !resume && !editing && draftEmpty && open !== undefined && this.items(open.id).length > 0,
     };
@@ -1676,10 +1696,12 @@ export class Shell {
       return;
     }
     const joinsMain = this.view !== "chat" && this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
-    if (this.view !== "chat" && joinsMain === null && this.sel.device !== "") {
+    // A project whose folder is on another PC starts its chat there (draftTarget).
+    const startOn = this.view !== "chat" && joinsMain === null ? (this.draftTarget() ?? this.sel.device) : "";
+    if (startOn !== "") {
       const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
       const body = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: this.sel.account, model: this.sel.model, effort: this.sel.effort, access: this.sel.access, text };
-      if (this.meshChat.create(this.sel.device, body, files, this.draftRepo, DRAFT, { text, mentions })) {
+      if (this.meshChat.create(startOn, body, files, this.draftRepo, DRAFT, { text, mentions })) {
         clear();
         this.refreshAll();
         return;
@@ -2373,7 +2395,29 @@ export class Shell {
   /** The chat (null: the draft) the composer's device menu is for, and the device it's on. */
   private deviceOf(): [number | null, string] {
     const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
-    return c ? [c.id, c.device] : [null, this.sel.device];
+    return c ? [c.id, c.device] : [null, this.draftTarget() ?? this.sel.device];
+  }
+
+  /** Where project `repo`'s folder is when it isn't on this PC (null: it's here). */
+  private placeOf(repo: number): Place | null {
+    return this.hub.projectPlace?.(repo) ?? null;
+  }
+
+  /** The draft's project's place, when the draft starts a chat of its own in it (not its main chat). */
+  private draftPlace(): Place | null {
+    if (this.view !== "draft" || this.draftRepo === null) return null;
+    if (this.draftMain && this.data.mainChat(this.draftRepo) !== null) return null;
+    return this.placeOf(this.draftRepo);
+  }
+
+  /**
+   * The PC a new chat starts on when the draft's project folder isn't here: the PC that holds it,
+   * while it's on, unless a device is picked or This PC was picked for the project.
+   */
+  private draftTarget(): string | null {
+    const p = this.draftPlace();
+    if (p === null || p.pc === "" || !p.online || this.sel.device !== "" || this.draftHere.has(this.draftRepo ?? -1)) return null;
+    return p.pc;
   }
 
   private deviceLabel(kind: string): string {
@@ -2398,11 +2442,18 @@ export class Shell {
     const started = chat !== null && this.data.chat(chat)?.started === true;
     const pick = (id: string) => () => {
       if (id === current) return;
+      const place = chat === null ? this.draftPlace() : null;
       if (started && chat !== null) {
         void this.hub.relocate(chat, id).then(
           (name) => this.toast(`Moving to ${name}…`),
           (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
         );
+      } else if (place !== null && this.draftRepo !== null && (id === "" || id === place.pc)) {
+        // The project's own PC, or This PC instead of it: for this project's drafts, not the default device.
+        if (id === "") this.draftHere.add(this.draftRepo);
+        else this.draftHere.delete(this.draftRepo);
+        if (this.sel.device !== "") this.setSel({ device: "" });
+        this.refreshComposer();
       } else this.setSel({ device: id });
     };
     const rows = this.hub.runOnRows(chat, current, kind).map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));
@@ -2583,6 +2634,10 @@ export class Shell {
     };
     const ws = this.hub.moves?.projectMenu(id) ?? null;
     const items: (PopItem & { act?: () => void })[] = [];
+    // A project whose folder is on another PC says which, over its options.
+    const place = this.placeOf(id);
+    const r = this.data.repo(id);
+    if (place !== null && r) items.push({ ...this.label(placeLine(place, tilde(r.local ?? r.path, homedir()))), kind: "caption" });
     for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
@@ -3122,7 +3177,7 @@ export class Shell {
     this.pages.openPalette(
       () =>
         paletteItems({
-          repos: this.data.repos.map((r) => ({ id: r.id, name: r.name, dir: tilde(r.local ?? r.path, homedir()) })),
+          repos: this.data.repos.map((r) => ({ id: r.id, name: r.name, dir: placeLine(this.placeOf(r.id), tilde(r.local ?? r.path, homedir())) })),
           chats: this.data.chats.map((c) => ({ id: c.id, title: c.title, role: c.role, parent: c.parent, name: c.name, repoId: c.repoId, settled: c.settled, updated: c.updated })),
           devices: [],
           current: chat?.id ?? null,
@@ -3377,6 +3432,8 @@ export interface ShellHub extends PageHub {
   mesh?: ShellMesh;
   /** Move to workspace… (workspacemoves.ts); none without a hub. */
   moves?: ShellMoves;
+  /** Where a project's folder is when it isn't on this PC (null: it's here; projectclones.ts `place`). */
+  projectPlace?: (repo: number) => Place | null;
 }
 
 /** Move to workspace… as the window asks it: a menu (null: no such chat or project) and the move, answered as the phone API answers it. */

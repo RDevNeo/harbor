@@ -27,7 +27,10 @@ public class NewChat extends Base {
     private Attach attach;
     private Run run;
     private WorkBar work;
-    private TextView project, mainNote;
+    private TextView project, mainNote, placeNote;
+    /** The device was set because the project's folder is on that PC (Place.startOn), not
+     *  picked; `picked`: the Device was picked for this project, so it stays. */
+    private boolean autoDevice, picked;
     /** Opened from a project's header while it has no main chat (hubs from 0.88): the first
      *  message starts that project's main chat, as on the desktop's project page. */
     private String mainOf;
@@ -61,6 +64,10 @@ public class NewChat extends Base {
         mainNote.setGravity(Gravity.CENTER);
         mainNote.setVisibility(View.GONE);
         mid.addView(mainNote, Ui.margins(Ui.fill(), 0, 4, 0, 0));
+        placeNote = Ui.text(this, "", 13, Ui.G600);
+        placeNote.setGravity(Gravity.CENTER);
+        placeNote.setVisibility(View.GONE);
+        mid.addView(placeNote, Ui.margins(Ui.fill(), 0, 4, 0, 0));
         // The prompt, and the slash and tag menus floating over its bottom, as in a chat.
         FrameLayout stage = new FrameLayout(this);
         stage.addView(mid, frameFill());
@@ -140,9 +147,18 @@ public class NewChat extends Base {
         if (asked != null && getIntent().getBooleanExtra("main", false)) mainOf = asked;
         // A project just made on another PC of the mesh (NewProject): its chats run there.
         String on = getIntent().getStringExtra("device");
-        if (on != null) run.device = on;
+        if (on != null) { run.device = on; picked = true; }
+        placeDevice(run);
         run.normalize();
         show();
+    }
+
+    /** A project whose folder is on another PC starts its chats there, unless a device was picked. */
+    private void placeDevice(Run r) {
+        if (picked) return;
+        String on = Place.startOn(r.st, r.project);
+        if (on != null && (r.device.isEmpty() || autoDevice)) { r.device = on; autoDevice = true; }
+        else if (on == null && autoDevice) { r.device = ""; autoDevice = false; }
     }
 
     /** The same picks over a fresh state. */
@@ -152,6 +168,7 @@ public class NewChat extends Base {
             r.project = run.project; r.account = run.account; r.model = run.model;
             r.effort = run.effort; r.access = run.access; r.device = run.device; r.fast = run.fast;
         }
+        placeDevice(r);
         r.normalize();
         return r;
     }
@@ -198,6 +215,9 @@ public class NewChat extends Base {
         run.badges(comp);
         project.setText(run.projectLabel() + "  ▾");
         mainNote.setVisibility(main() ? View.VISIBLE : View.GONE);
+        String where = Place.note(st, run.project, run.device);
+        placeNote.setText(where);
+        placeNote.setVisibility(where.isEmpty() ? View.GONE : View.VISIBLE);
         // A worktree is this PC's: not for a chat that runs on another device.
         work.project = run.device.isEmpty() ? run.project : "";
         work.load();
@@ -210,7 +230,7 @@ public class NewChat extends Base {
 
     private void change(String field, Object v) {
         switch (field) {
-            case "project": run.project = (String) v; break;
+            case "project": run.project = (String) v; picked = false; placeDevice(run); break;
             case "account": {
                 String old = run.kind();
                 run.account = (String) v;
@@ -220,7 +240,7 @@ public class NewChat extends Base {
             case "model": run.model = (String) v; break;
             case "effort": run.effort = (String) v; break;
             case "access": run.access = (String) v; break;
-            case "device": run.device = (String) v; break;
+            case "device": run.device = (String) v; picked = true; autoDevice = false; break;
             case "fast": run.fast = (Boolean) v; break;
         }
         run.normalize();
@@ -235,7 +255,7 @@ public class NewChat extends Base {
         JSONArray p = st.optJSONArray("projects");
         if (p != null) for (int i = 0; i < p.length(); i++) {
             JSONObject j = p.optJSONObject(i);
-            if (j != null) o.add(new Sheet.Option(j.optString("id"), j.optString("name"), j.optString("path"), true));
+            if (j != null) o.add(new Sheet.Option(j.optString("id"), j.optString("name"), Place.line(j), true));
         }
         o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
         Sheet.pick(this, "Project", null, o, run.project, id -> { if (ADD.equals(id)) NewProject.open(this, hub); else change("project", id); });
@@ -247,7 +267,8 @@ public class NewChat extends Base {
         if (text.isEmpty() && !attach.any()) { Ui.toast(this, "Write the first message"); return; }
         if (attach.busy()) { Ui.toast(this, "Still uploading…"); return; }
         if (run.account.isEmpty()) { Ui.toast(this, "This PC has no account to run with"); return; }
-        prefs().edit().putString("project", run.project).putString("device", run.device).putString("account", run.account)
+        // A device set for the project's own PC isn't the next chat's pick.
+        prefs().edit().putString("project", run.project).putString("device", autoDevice ? "" : run.device).putString("account", run.account)
                 .putString("model", run.model).putString("effort", run.effort).putString("access", run.access).apply();
         starting = true;
         comp.busy(true);
