@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.124.3] - 2026-11-03
+
 ### Changed
 - The memory pill shows on every chat now, reading "0 MB" while nothing of the chat runs (a dash
   while a chat's home PC hasn't answered yet). Its breakdown always lists the chat's own agent: a
