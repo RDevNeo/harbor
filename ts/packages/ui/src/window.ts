@@ -597,6 +597,8 @@ export interface AppWindow extends slint.ComponentHandle {
   scroll_to_end(): void;
   transcript_key(k: "up" | "down" | "home" | "end"): void;
   copy_text(t: string): void;
+  /** The title the compositor shows ("Harbor"; HARBOR_WINDOW_TITLE when set). */
+  window_title: string;
 }
 
 function isCtor(v: unknown): v is new () => AppWindow {
@@ -619,7 +621,10 @@ export async function loadWindow(): Promise<AppWindow> {
   const ui = slint.loadFile(join(await uiDir(), "app.slint"), { style: "fluent" });
   const ctor = Reflect.get(ui, "AppWindow");
   if (!isCtor(ctor)) throw new Error("app.slint has no AppWindow");
-  return new ctor();
+  const win = new ctor();
+  const title = process.env.HARBOR_WINDOW_TITLE;
+  if (title) win.window_title = title;
+  return win;
 }
 
 export const blankStatus = (): StatusData => ({ kind: "text", text: "", icon: "", color: "transparent" });

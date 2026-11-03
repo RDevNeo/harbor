@@ -32,10 +32,17 @@ ends with a screenshot of each screen it touches, before you report done:
   in its reply to the user: a subagent's images reach the user only that way.
 - Shots of real chats may be shown in chat but never committed: they hold personal data (even
   `--empty` ones show this PC's home path on some pages).
-- To try it live on the user's own window: `scripts/preview --note "what changed"` builds the app
-  bundle here and switches this PC's Harbor to it (only where the owner turned previews on, which
-  isn't yours to do; the restart can end your Bash call, so it's your last step);
-  `scripts/preview back` returns to the release.
+- To let the user try a change: `scripts/preview --note "what changed"` opens a "Harbor preview · …"
+  window beside their own Harbor, which it never restarts: this tree from source, on a copy of their
+  data, with no network and a read-only home, on Hyprland's hidden `special:scratchpad` without
+  focus, and one quiet "ready" notification. Tell the user Super+S shows and hides it. `--watch`
+  restarts it in place on every save under `ts/` (about 2 s), `scripts/preview stop` closes it, and
+  it closes by itself after 30 idle minutes; `scripts/preview status` has its log.
+- `scripts/preview --swap` restarts the user's own window into this tree instead: only when the user
+  asks for exactly that (and where the owner turned previews on; the restart can end your Bash
+  call, so it's your last step). `scripts/preview back` returns it to the release.
+- Shots and previews run at nice 19 and idle disk priority on the last two cores
+  (`HARBOR_RIG_CPUS=2,3` picks others): the PC stays the user's.
 - Phone UI (`android/`) isn't covered yet: the APK comes from `scripts/boat/android --out DIR`;
   say the change is unseen rather than describing it as shown.
 

@@ -327,7 +327,9 @@ component Hero {
 }
 
 export component AppWindow inherits Window {
-    title: "Harbor";
+    // HARBOR_WINDOW_TITLE (scripts/preview: "Harbor preview · …"), so a preview is never taken for the real window.
+    in property <string> window-title: "Harbor";
+    title: root.window-title;
     icon: @image-url("");
     preferred-width: 1400px;
     preferred-height: 900px;

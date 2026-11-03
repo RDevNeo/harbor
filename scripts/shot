@@ -25,6 +25,7 @@ Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
   --fresh       copy harbor.db again (a cleaned copy is otherwise reused for 10 minutes)
   --idle MIN    --watch stops by itself after MIN minutes without a save (default 30)
   --trace       log every frame while waiting; --keep keeps the scratch folder
+It runs at nice 19 and idle disk priority on the last two cores (HARBOR_RIG_CPUS=2,3 picks others, all: any).
 Examples:
   scripts/shot                                 the last chat
   scripts/shot --view settings:usage --empty   Settings › Usage with no personal data
@@ -35,6 +36,9 @@ EOF
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 ts=$root/ts
+# Everything below (sway, Bun, the app) at the lowest CPU and disk priority, on two cores (scripts/rig.sh).
+. "$root/scripts/rig.sh"
+rig_quiet "$0" "$@"
 base=${HOME}/.cache/harbor-shots
 watchpid=$base/.watch-$(printf %s "$root" | md5sum | cut -c1-12).pid
 # Ends a rig: unshare ignores SIGTERM and the namespace's first process takes only SIGKILL from outside,
@@ -183,27 +187,13 @@ now() { date +%s.%N; }
 secs() { python3 -I -c "print(f'{$2-$1:.1f}')"; }
 t0=$(now)
 
-# bun install only when the lockfile changed since the last shot of this tree.
-stamp=$base/.installed-$(printf %s "$root" | md5sum | cut -c1-12)
-lock=$(cat "$ts/bun.lock" "$ts/package.json" | md5sum | cut -c1-32)
-if [ ! -d "$ts/node_modules" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$lock" ]; then
-  (cd "$ts" && "$bun" install --frozen-lockfile > "$tmp/install.log" 2>&1) || { cat "$tmp/install.log" >&2; echo "shot: bun install failed" >&2; exit 1; }
-  echo "$lock" > "$stamp"
-fi
+rig_install "$bun" "$ts" "$root"
 
 # The data: a cleaned copy of harbor.db (copydb.ts), kept for 10 minutes or while the real one is unchanged.
 db=""
-real="${XDG_DATA_HOME:-$HOME/.local/share}/harbor/harbor.db"
-if [ $empty = 0 ] && [ -f "$real" ]; then
-  db=$base/.db/harbor.db
-  key="$(stat -c '%Y %s' "$real" "$real-wal" 2>/dev/null | tr '\n' ' ')"
-  if [ $fresh = 1 ] || [ ! -f "$db" ] || { [ "$(cat "$base/.db/key" 2>/dev/null)" != "$key" ] && [ -n "$(find "$db" -mmin +10)" ]; }; then
-    mkdir -p "$base/.db"; chmod 700 "$base/.db"; rm -f "$db.new"
-    (cd "$ts" && "$bun" packages/ui/src/copydb.ts "$real" "$db.new") && mv "$db.new" "$db" && echo "$key" > "$base/.db/key"
-    echo "shot: copied harbor.db in $(secs "$t0" "$(now)") s" >&2
-  fi
-elif [ $empty = 0 ]; then
-  echo "shot: no harbor.db on this PC: starting empty" >&2
+if [ $empty = 0 ]; then
+  db=$(rig_db "$bun" "$ts" $fresh)
+  [ -n "$db" ] || echo "shot: no harbor.db on this PC: starting empty" >&2
 fi
 
 # HARBOR_POINTER takes the window's logical pixels; the PNG is scaled by the UI zoom (Ctrl+=) the data holds.

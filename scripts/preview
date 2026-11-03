@@ -1,34 +1,285 @@
 #!/bin/bash
-# Puts this working tree (uncommitted changes included) on this PC's own Harbor window as a live
-# preview: builds harbor-app.js here with Bun (seconds) and hands it to the running Harbor, which
-# restarts into it. Previews must be on (`harbor preview on`): that's the owner's choice, this
-# script never turns them on. `scripts/preview back` returns to the release.
+# Lets the user try this working tree (uncommitted changes included) in a "Harbor preview" window beside
+# their own Harbor, which is never restarted. The preview runs from source with Bun on a copy of harbor.db,
+# with no network at all (a network namespace of its own, HARBOR_OFFLINE=1), its own data and runtime
+# folders and control socket, a read-only home, no D-Bus and no notifications or tray of its own.
+# Hyprland opens it on a special workspace without focus (Omarchy's scratchpad: Super+S shows and hides
+# it), so nothing on the screen moves; one quiet notification says it's ready. It runs at the lowest
+# priority on two cores (scripts/rig.sh) and closes after 30 idle minutes (no save, not looked at),
+# with `scripts/preview stop`, or when its window is closed.
 #
-# The restart ends long Bash calls of agents running under Harbor: the push is this script's last
-# step and it doesn't wait for the restart unless asked (--wait). `scripts/preview status` says how it went.
+# --swap is the old live preview: it restarts this PC's own Harbor window into a build of this tree. Only
+# when the user asks for exactly that.
 set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/preview [--note TEXT] [--wait] [--build-only DIR]
-       scripts/preview back      return this PC's window to the release
-       scripts/preview status    what this PC's window runs now
-  --note TEXT       what changed, shown with the preview (default: the last commit's subject)
-  --wait            wait until the new window is on screen (the restart may end the caller)
-  --build-only DIR  build DIR/harbor-app.js and stop (no push)
+Usage: scripts/preview [--note TEXT] [--watch] [options]   open (or reopen) the preview window
+       scripts/preview stop      close it
+       scripts/preview status    is it up, where, and its log
+       scripts/preview --swap [--note TEXT] [--wait]       restart this PC's OWN window into this tree
+       scripts/preview back      return this PC's own window to the release (after --swap)
+       scripts/preview --build-only DIR                    build DIR/harbor-app.js and stop
+  --note TEXT   what changed: in the window's title and the notification (default: the last commit's subject)
+  --watch       restart the preview in place on every save under ts/ (its .ts and .slint files)
+  --view V      the screen it opens on (as scripts/shot: chat:ID, settings:TAB, prs, issues, draft)
+  --empty       fresh empty data instead of a copy of harbor.db; --fresh: copy harbor.db again
+  --idle MIN    close after MIN minutes without a save and without being looked at (default 30)
+  --wait        (--swap) wait until the new window is on screen (the restart may end the caller)
+The window opens on special:scratchpad (HARBOR_PREVIEW_WORKSPACE=name picks another): Super+S on Omarchy.
 EOF
   exit 2
 }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 ts=$root/ts
-harbor=$(command -v harbor || true)
-[ -n "$harbor" ] || [ "${1:-}" = --build-only ] || { echo "preview: no harbor command: Harbor isn't installed on this PC" >&2; exit 1; }
+. "$root/scripts/rig.sh"
+rig_quiet "$0" "$@"
+
+bun=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
+rig=$HOME/.cache/harbor-preview/$(printf %s "$root" | md5sum | cut -c1-12)
+ws=${HARBOR_PREVIEW_WORKSPACE:-scratchpad}
+
+# This rig's app processes, by the variable each one carries (never by a command-line pattern).
+apps() { grep -lzx "HARBOR_PREVIEW_APP=$rig" /proc/[0-9]*/environ 2>/dev/null | cut -d/ -f3; true; }
+supervisor() { local p; p=$(cat "$rig/sup.pid" 2>/dev/null || true)
+  [ -n "$p" ] && grep -qzx "HARBOR_PREVIEW_SUP=$rig" "/proc/$p/environ" 2>/dev/null && echo "$p"; true; }
+stopapp() { local left="" p
+  p=$(apps); [ -n "$p" ] || return 0
+  kill $p 2>/dev/null || true
+  for _ in $(seq 50); do left=$(apps); [ -z "$left" ] && return 0; sleep 0.1; done
+  kill -9 $left 2>/dev/null || true; }
+# Runs a command (for sh -c) through Hyprland, so it belongs to the session and not to the caller; with
+# "rules", on special:$ws without taking focus.
+hypr() { local lua legacy out
+  if [ "${2:-}" = rules ]; then
+    lua="hl.dsp.exec_cmd([==[$1]==], { workspace = \"special:$ws silent\", no_initial_focus = true, focus_on_activate = false })"
+    legacy="[workspace special:$ws silent; noinitialfocus] $1"
+  else
+    lua="hl.dsp.exec_cmd([==[$1]==])" legacy=$1
+  fi
+  out=$(hyprctl dispatch "$lua" 2>&1 || true); [ "$out" = ok ] && return 0
+  out=$(hyprctl dispatch exec "$legacy" 2>&1 || true); [ "$out" = ok ] && return 0
+  echo "preview: Hyprland refused to start it: $out" >&2; return 1; }
+# "window ADDRESS WORKSPACE" for the app's window, then "looked" when it's in front or its workspace is shown.
+seen() { python3 -I -c 'import json, subprocess, sys
+pids = set(int(p) for p in sys.argv[2:])
+q = lambda w: json.loads(subprocess.run(["hyprctl", "-j", w], capture_output=True, text=True).stdout or "null")
+win = [c for c in q("clients") or [] if c.get("pid") in pids]
+if win:
+    print("window", win[0]["address"], win[0]["workspace"]["name"])
+    shown = any((m.get("specialWorkspace") or {}).get("name") == sys.argv[1] for m in q("monitors") or [])
+    if shown or (q("activewindow") or {}).get("pid") in pids: print("looked")' "special:$ws" $(apps); }
 
 case ${1:-} in
-  back) exec "$harbor" preview back ;;
-  status) exec "$harbor" preview status ;;
+  back|status|stop|--swap|--build-only|--supervise|--app|--inner) mode=$1; [ "$mode" = --build-only ] || shift ;;
+  *) mode=open ;;
 esac
+
+# ---- Inside the namespaces (run by --app): no network, a read-only home, then the app. ----
+if [ $mode = --inner ]; then
+  . "$rig/conf"
+  mount -t sysfs sysfs /sys 2>/dev/null || true
+  [ "$(ls /sys/class/net)" = lo ] || { echo "preview: refused: not in a network namespace with only lo" >&2; exit 99; }
+  ip link set lo up 2>/dev/null || true
+  # Nothing under the home changes (the copied data points at real projects); the rig and Bun's cache stay writable.
+  mount --bind "$HOME" "$HOME" && mount -o remount,bind,ro "$HOME" || { echo "preview: refused: can't make $HOME read-only" >&2; exit 99; }
+  for d in "$rig" "$rig_base/.bun"; do mount --bind "$d" "$d" && mount -o remount,bind,rw "$d" || { echo "preview: refused: can't open $d" >&2; exit 99; }; done
+  echo $$ > "$rig/app.pid"
+  title="Harbor preview${note:+ · $note}"
+  # Its own notify-send and xdg-open, which do nothing: no note may pass for the real Harbor's, and a
+  # link must not start a browser with no network.
+  cd "$ts"
+  env -i HOME="$rig/home" XDG_DATA_HOME="$rig/data" XDG_STATE_HOME="$rig/state.d" XDG_CONFIG_HOME="$rig/cfg" XDG_CACHE_HOME="$rig/cache" \
+    XDG_RUNTIME_DIR="$rig/run" WAYLAND_DISPLAY="$PREVIEW_WAYLAND" TMPDIR="$rig/tmp" HARBOR_SOCK="$rig/run/harbor.sock" HARBOR_OFFLINE=1 \
+    HARBOR_LISTEN=127.0.0.1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_WINDOW_TITLE="${title:0:140}" HARBOR_PREVIEW_APP="$rig" \
+    ${view:+HARBOR_VIEW="$view"} ${PREVIEW_TOKEN:+HL_EXEC_RULE_TOKEN="$PREVIEW_TOKEN"} ${XCURSOR_THEME:+XCURSOR_THEME="$XCURSOR_THEME"} \
+    ${XCURSOR_SIZE:+XCURSOR_SIZE="$XCURSOR_SIZE"} DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent PATH="$rig/bin:/usr/bin:/bin" \
+    TZ="$tz" LANG="${LANG:-C.UTF-8}" BUN_RUNTIME_TRANSPILER_CACHE_PATH="$rig_base/.bun" "$bun" harbor.ts &
+  child=$!
+  echo $child > "$rig/bun.pid"
+  trap 'kill -TERM $child 2>/dev/null || true' TERM INT HUP
+  rc=0; wait $child || rc=$?
+  while kill -0 $child 2>/dev/null; do rc=0; wait $child || rc=$?; done
+  echo $rc > "$rig/app.exit"
+  exit $rc
+fi
+
+# ---- Started by Hyprland for the supervisor: into the namespaces. ----
+if [ $mode = --app ]; then
+  run=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} wl=${WAYLAND_DISPLAY:-wayland-1}
+  [[ $wl = /* ]] || wl=$run/$wl
+  PREVIEW_WAYLAND=$wl PREVIEW_TOKEN=${HL_EXEC_RULE_TOKEN:-} exec unshare -Urnm "$0" --inner
+fi
+
+# ---- The supervisor (started by Hyprland, logs to preview.log): opens the app, restarts it, closes it. ----
+if [ $mode = --supervise ]; then
+  . "$rig/conf"
+  echo $$ > "$rig/sup.pid"
+  say() { echo "preview: $(date +%H:%M:%S) $*"; }
+  watcher="" sleeper=""
+  ending() { trap - TERM INT HUP; kill $watcher $sleeper 2>/dev/null || true; stopapp; rm -f "$rig/sup.pid"; echo "down $1" > "$rig/state"; say "$1"; exit 0; }
+  trap 'ending "stopped"' TERM INT HUP
+  rm -rf "$rig/data" "$rig/home" "$rig/state.d" "$rig/cfg" "$rig/cache" "$rig/run" "$rig/tmp" "$rig/bin"
+  mkdir -p "$rig/data/harbor" "$rig/home" "$rig/state.d" "$rig/cfg" "$rig/cache" "$rig/run" "$rig/tmp" "$rig/bin"; chmod 700 "$rig/run"
+  for c in notify-send xdg-open gio; do printf '#!/bin/sh\nexit 0\n' > "$rig/bin/$c"; chmod 755 "$rig/bin/$c"; done
+  if [ -n "$db" ] && [ -f "$db" ]; then
+    cp --reflink=auto "$db" "$rig/data/harbor/harbor.db"
+    # Closing the window ends the preview instead of keeping it running in the background.
+    (cd "$ts" && "$bun" -e 'import { Database } from "bun:sqlite";
+new Database(process.argv.at(-1)).run("INSERT OR REPLACE INTO kv (k, v) VALUES (?1, ?2)", ["bg_keep", "0"]);' "$rig/data/harbor/harbor.db") ||
+      say "couldn't turn off background mode in the copy"
+  fi
+  first=$notify pids=""
+  launch() {
+    local t0 cur="" i=0
+    rm -f "$rig/app.pid" "$rig/bun.pid" "$rig/app.exit"; t0=$(date +%s.%N)
+    hypr "exec env HARBOR_PREVIEW_APP=$(printf %q "$rig") $(printf %q "$root/scripts/preview") --app >> $(printf %q "$rig/app.log") 2>&1" rules || return 1
+    while [ $i -lt 400 ]; do
+      i=$((i + 1)); sleep 0.1
+      [ -f "$rig/app.exit" ] && { say "it exited ($(cat "$rig/app.exit")) before its window came up:"; tail -20 "$rig/app.log"; return 1; }
+      cur=$(seen | sed -n 's/^window //p'); [ -n "$cur" ] && break
+    done
+    [ -n "$cur" ] || { say "its window never came up:"; tail -20 "$rig/app.log"; stopapp; return 1; }
+    set -- $cur
+    if [ "$2" != "special:$ws" ]; then
+      # The exec rule didn't hold (an older Hyprland?): moved there without following it.
+      hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:$ws\", follow = false, window = \"address:$1\" })" > /dev/null 2>&1 ||
+        hyprctl dispatch movetoworkspacesilent "special:$ws,address:$1" > /dev/null 2>&1 || true
+      say "it opened on $2: moved to special:$ws"
+    fi
+    say "up in $(python3 -I -c "import time; print(round(time.time()-$t0,1))") s: window $1 on special:$ws, pid $(cat "$rig/bun.pid" 2>/dev/null)"
+    echo "up $1 special:$ws $(cat "$rig/bun.pid" 2>/dev/null)" > "$rig/state"
+    if [ "$first" = 1 ]; then
+      first=0
+      notify-send -a "Harbor preview" -u low -t 6000 "Harbor preview ready: ${note:0:100}" "Super+S shows it (special:$ws)" 2>/dev/null || true
+    fi
+  }
+  down=0 miss=0
+  launch || { [ "$watch" = 1 ] || ending "it didn't start"; down=1; say "waiting for the next save"; }
+  if [ "$watch" = 1 ]; then
+    # Saves made while it restarts wait in the pipe; tests, rigs and node_modules don't count.
+    esc=$(printf %s "$ts" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+    exec 3< <(inotifywait -m -q -r -e close_write,moved_to,create,delete --exclude "^$esc/(.*/)?(node_modules|test|rig|\.[^/]*)(/|$)" --format '%w%f' "$ts" 2>/dev/null)
+    watcher=$!
+  fi
+  last=$(date +%s)
+  while :; do
+    if [ "$watch" = 1 ]; then
+      if read -r -t 30 changed <&3; then
+        # A save often comes as a few events (an editor's temp file, then the rename): they settle first.
+        while read -r -t 0.3 more <&3; do case $more in *.ts|*.slint) changed=$more ;; esac; done
+        case $changed in *.ts|*.slint) ;; *) continue ;; esac
+        say "${changed#"$ts"/} changed: restarting"
+        stopapp; down=0 miss=0; last=$(date +%s)
+        launch || { down=1; say "waiting for the next save"; }
+        continue
+      fi
+    else
+      sleep 30 & sleeper=$!; wait $sleeper || true; sleeper=""
+    fi
+    if [ $down = 0 ]; then
+      s=$(seen)
+      if [ -n "$s" ]; then
+        miss=0; [[ $s != *looked* ]] || last=$(date +%s)
+      elif [ -n "$(apps)" ] && [ $((miss += 1)) -lt 2 ]; then
+        :  # no window twice in a row before it counts as closed (one hyprctl hiccup isn't)
+      else
+        code=$(cat "$rig/app.exit" 2>/dev/null || true)
+        { [ -n "$(apps)" ] || [ "$code" = 0 ]; } && ending "its window was closed"
+        [ "$watch" = 1 ] || ending "it exited (${code:-?})"
+        say "it exited (${code:-?}): waiting for the next save"; tail -20 "$rig/app.log"; down=1
+      fi
+    fi
+    [ $(($(date +%s) - last)) -lt $((idle * 60)) ] || ending "closed: no save and no look for $idle min"
+  done
+fi
+
+# ---- What the caller runs. ----
+case $mode in
+  stop)
+    p=$(supervisor)
+    if [ -n "$p" ]; then
+      kill "$p"; for _ in $(seq 100); do [ -d "/proc/$p" ] || break; sleep 0.1; done
+      echo "preview: closed" >&2
+    else
+      echo "preview: not running for $root" >&2
+    fi
+    stopapp; exit 0 ;;
+  status)
+    if [ -n "$(supervisor)" ] && [ "$(cut -d' ' -f1 "$rig/state" 2>/dev/null)" = up ]; then
+      read -r _ addr where pid < "$rig/state"
+      echo "preview: up: window $addr on $where (Super+S shows it), pid $pid$(grep -q '^watch=1' "$rig/conf" && echo ', restarts on every save' || true)"
+    else
+      echo "preview: not running ($(cat "$rig/state" 2>/dev/null || echo never started))"
+    fi
+    [ ! -f "$rig/preview.log" ] || { echo "--- $rig/preview.log"; tail -8 "$rig/preview.log"; }
+    if command -v harbor > /dev/null; then echo "--- this PC's own window"; harbor preview status || true; fi
+    exit 0 ;;
+esac
+
+if [ $mode = open ]; then
+  note="" watch=0 view="" empty=0 fresh=0 idle=30
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --note) note=${2?--note needs text}; shift 2 ;;
+      --watch) watch=1; shift ;;
+      --view) view=${2:?--view needs a value}; shift 2 ;;
+      --empty) empty=1; shift ;;
+      --fresh) fresh=1; shift ;;
+      --idle) idle=${2:?}; shift 2 ;;
+      -h|--help) usage ;;
+      *) echo "preview: unknown option $1" >&2; usage ;;
+    esac
+  done
+  [[ $idle =~ ^[0-9]+$ ]] || { echo "preview: --idle wants minutes" >&2; exit 2; }
+  [ -z "$view" ] || [[ $view =~ ^[a-z]+(:[A-Za-z0-9_-]+)?$ ]] || { echo "preview: bad --view $view" >&2; exit 2; }
+  if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] || ! command -v hyprctl > /dev/null; then
+    echo "preview: the preview window needs Hyprland (it opens on a hidden special workspace there); show the change with scripts/shot" >&2; exit 1
+  fi
+  for need in "$bun:Bun (bun.sh)" "$(command -v unshare || true):unshare (util-linux)" "$(command -v python3 || true):python3" \
+    "$([ $watch = 0 ] && echo /bin/true || command -v inotifywait || true):inotifywait (inotify-tools) for --watch"; do
+    [ -x "${need%%:*}" ] || { echo "preview: needs ${need#*:}, not found" >&2; exit 1; }
+  done
+  rig_install "$bun" "$ts" "$root"
+  db=""; [ $empty = 1 ] || db=$(rig_db "$bun" "$ts" $fresh)
+  mkdir -p "$rig" "$rig_base/.bun"; chmod 700 "$rig" "$rig_base"
+  # A preview of this tree that's up already is replaced in place, with no second notification.
+  notify=1
+  p=$(supervisor)
+  if [ -n "$p" ]; then
+    notify=0; kill "$p"; for _ in $(seq 100); do [ -d "/proc/$p" ] || break; sleep 0.1; done
+  fi
+  stopapp
+  dirty=$([ -n "$(git -C "$root" status --porcelain -- ts 2>/dev/null)" ] && echo "+" || true)
+  [ -n "$note" ] || note=$(git -C "$root" log -1 --format=%s 2>/dev/null || echo "this tree")${dirty:+ (+ uncommitted changes)}
+  tz=${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}
+  printf 'root=%q\nts=%q\nbun=%q\nnote=%q\nview=%q\nwatch=%q\nidle=%q\nws=%q\ndb=%q\nnotify=%q\ntz=%q\n' \
+    "$root" "$ts" "$bun" "$note" "$view" "$watch" "$idle" "$ws" "$db" "$notify" "$tz" > "$rig/conf"
+  echo "starting" > "$rig/state"; : > "$rig/app.log"
+  [ ! -f "$rig/preview.log" ] || { tail -n 300 "$rig/preview.log" > "$rig/preview.log.new"; mv "$rig/preview.log.new" "$rig/preview.log"; }
+  echo "--- $(date '+%F %T') $note" >> "$rig/preview.log"
+  t0=$(date +%s.%N)
+  hypr "exec env HARBOR_PREVIEW_SUP=$(printf %q "$rig") HARBOR_PREVIEW_WORKSPACE=$(printf %q "$ws") $(printf %q "$root/scripts/preview") --supervise >> $(printf %q "$rig/preview.log") 2>&1" || exit 1
+  for _ in $(seq 600); do
+    case $(cut -d' ' -f1 "$rig/state" 2>/dev/null) in up|down) break ;; esac
+    sleep 0.1
+  done
+  read -r st addr where pid < "$rig/state" || true
+  if [ "$st" = up ]; then
+    echo "preview: \"Harbor preview · $note\" is up on $where in $(python3 -I -c "import time; print(round(time.time()-$t0,1))") s (window $addr, pid $pid): Super+S shows and hides it." >&2
+    echo "preview: $([ $watch = 1 ] && echo 'it restarts in place on every save under ts/; ' || true)scripts/preview stop closes it; it closes by itself after $idle idle minutes. Log: $rig/preview.log" >&2
+    exit 0
+  fi
+  echo "preview: FAILED ($st${addr:+ $addr}${where:+ $where}):" >&2; tail -25 "$rig/preview.log" >&2
+  [ $watch = 1 ] && [ -n "$(supervisor)" ] && echo "preview: still watching: the next save tries again (scripts/preview stop ends it)" >&2
+  exit 1
+fi
+
+# ---- --swap: this PC's own window restarts into a build of this tree (only when the user asks for it). ----
+harbor=$(command -v harbor || true)
+[ -n "$harbor" ] || [ $mode = --build-only ] || { echo "preview: no harbor command: Harbor isn't installed on this PC" >&2; exit 1; }
+[ $mode != back ] || exec "$harbor" preview back
 
 note="" wait=0 only=""
 while [ $# -gt 0 ]; do
@@ -41,7 +292,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-bun=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
 [ -x "$bun" ] || { echo "preview: Bun not found (bun.sh, or BUN=/path/to/bun)" >&2; exit 1; }
 
 version=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ts/package.json" | head -1)
@@ -55,7 +305,7 @@ if [ -z "$only" ]; then
   case $st in
     *'"managed":false'*) echo "preview: this Harbor wasn't installed by install.sh: it can't take previews" >&2; exit 1 ;;
     *'"on":true'*) ;;
-    *) echo "preview: previews are off on this PC. Turning them on is the owner's choice (harbor preview on); not done. Show the change with scripts/shot instead." >&2; exit 3 ;;
+    *) echo "preview: previews are off on this PC. Turning them on is the owner's choice (harbor preview on); not done. Use scripts/preview (the separate window) instead." >&2; exit 3 ;;
   esac
   release=$(cat "$lib/VERSION" 2>/dev/null || "$harbor" --version | awk '{print $2}')
   older=$("$bun" -e 'const p = (v: string) => v.replace(/^v/, "").split("-")[0]!.split(".").map(Number);
@@ -88,7 +338,7 @@ fi
 
 # Old builds go; the newest few stay for `harbor preview push` by hand.
 ls -1dt "$HOME"/.cache/harbor-previews/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
-echo "preview: pushing $id to this PC's window: it restarts into it now. Back to the release: scripts/preview back" >&2
+echo "preview: pushing $id to this PC's OWN window: it restarts into it now. Back to the release: scripts/preview back" >&2
 args=(preview push "$out/harbor-app.js" --id "$id" --note "${note:0:120}")
 [ $wait = 0 ] || args+=(--wait)
 exec "$harbor" "${args[@]}"
