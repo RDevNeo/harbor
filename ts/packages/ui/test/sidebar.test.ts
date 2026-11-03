@@ -10,6 +10,11 @@ import {
   isMainOf,
   moveMenu,
   movedNotice,
+  shareLine,
+  shareMark,
+  shareMenu,
+  sharedNotice,
+  sharedWith,
   parseSnooze,
   picked,
   reordered,
@@ -95,6 +100,57 @@ test("a_moved_chat_or_project_shows_under_the_workspace_it_was_moved_to", () => 
   expect(b.threads).toEqual([3]);
   expect(b.projects.map((p) => p.id)).toEqual([2]);
   expect(b.settled).toEqual([5]);
+});
+
+test("a_shared_chat_or_project_shows_under_its_owner_and_each_workspace_it_is_shared_with", () => {
+  const [t, chats, pcs] = workspaceTree();
+  const sub = { ...chat(7, 1, "sub", 7), parent: 1 };
+  const all = [...chats, sub];
+  const byId = (id: number) => all.find((c) => c.id === id);
+  // Thread 3 (this PC's, so a's) shared with b; project 2 (a's) shared with c; copy 5 (b's PC) carries its project's share with c; lead 1 shared with d.
+  const shared = { chats: new Map([[3, ["b"]], [1, ["d"]], [6, ["e"]]]), carried: new Map([[5, ["c"]]]), repos: new Map([[2, ["c"]]]) };
+  const place = { chats: new Map<number, string>(), carried: new Map<number, string>(), repos: new Map<number, string>(), shared };
+  // Owner unchanged; shares are extra. A sub-agent's are its lead's; a project's chats get the project's plus their own.
+  expect(chatWorkspace(byId(3) as TestChat, byId, place, "a", pcs)).toBe("a");
+  expect(sharedWith(sub, byId, place)).toEqual({ all: ["d"], inherited: [] });
+  expect(sharedWith(byId(6) as TestChat, byId, place)).toEqual({ all: ["e", "c"], inherited: ["c"] });
+  expect(sharedWith(byId(5) as TestChat, byId, place)).toEqual({ all: ["c"], inherited: ["c"] });
+  // Under its owner it's still there; under b, the shared thread comes in (with b's own chats).
+  expect(inWorkspaces(t, ["a"], "a", pcs, chats, place).threads).toEqual([3]);
+  const b = inWorkspaces(t, ["b"], "a", pcs, chats, place);
+  expect(b.threads).toEqual([3]);
+  expect(b.projects.map((p) => [p.id, p.chats])).toEqual([[1, [2]]]);
+  // Under c: project 2 (shared) with its main chat, and the copy that carries its project's share.
+  const c = inWorkspaces(t, ["c"], "a", pcs, chats, place);
+  expect(c.projects.map((p) => [p.id, p.chats])).toEqual([[2, []]]);
+  expect(c.threads).toEqual([]);
+  expect(c.settled).toEqual([5]);
+  // Under d: lead 1 alone brings its project along (an unsettled lead is there).
+  const d = inWorkspaces(t, ["d"], "a", pcs, chats, place);
+  expect(d.projects.map((p) => [p.id, p.chats])).toEqual([[1, [1]]]);
+  // A move elsewhere keeps the shares: moved to b, thread 3 still shows under b (owner) and not under a.
+  const moved = { ...place, chats: new Map([[3, "b"]]) };
+  expect(inWorkspaces(t, ["a"], "a", pcs, chats, moved).threads).toEqual([]);
+});
+
+test("share_with_workspace_is_a_checklist_with_the_owner_fixed_and_the_projects_shares_locked", () => {
+  const all = [{ id: "a", name: "Sam's workspace" }, { id: "b", name: "Team" }, { id: "c", name: "Ops workspace" }];
+  expect(shareMenu([], "a", []).why).toMatch(/Sign in/);
+  expect(shareMenu(all.slice(0, 1), "a", []).why).toMatch(/one workspace/);
+  const m = shareMenu(all, "a", ["b"], ["c"]);
+  expect(m.why).toBeNull();
+  expect(m.line).toBe("Owned by Sam's workspace · shared with Team, Ops workspace");
+  expect(m.items.map((i) => [i.id, i.on, i.owner, i.locked])).toEqual([["a", true, true, false], ["b", true, false, false], ["c", true, false, true]]);
+  expect(shareMenu(all, "b", []).line).toBe("Owned by Team · not shared");
+  // The owner never counts as a share (one moved to a workspace it was shared with).
+  expect(shareLine(all, "b", ["b"])).toBe("Owned by Team · not shared");
+  expect(sharedNotice(all, "b", true)).toBe("Shared with Team");
+  expect(sharedNotice(all, "b", false)).toBe("No longer shared with Team");
+  // The mark: plain when its owner is picked or under All; "here" when it shows only because it's shared.
+  expect(shareMark(all, "a", [], ["b"])).toEqual({ shared: "", shared_tip: "" });
+  expect(shareMark(all, "a", ["b"], [])).toEqual({ shared: "shared", shared_tip: "Owned by Sam's workspace · shared with Team" });
+  expect(shareMark(all, "a", ["b"], ["a", "b"]).shared).toBe("shared");
+  expect(shareMark(all, "a", ["b"], ["b"])).toEqual({ shared: "here", shared_tip: "Shown here because it's shared. Owned by Sam's workspace · shared with Team" });
 });
 
 function place1(chats: number[]): Place {

@@ -9,6 +9,9 @@ import { WorkspaceMoves } from "../workspacemoves.ts";
 const tmp = mkdtempSync(join(tmpdir(), "harbor-wsmove-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
+// A sandbox whose disk loads on first touch takes seconds to open a store: past bun's 5 s default.
+const SLOW = 30_000;
+
 const ALL = [
   { id: "org_a", name: "Sam's workspace" },
   { id: "org_b", name: "Team workspace" },
@@ -54,7 +57,7 @@ test("a_chat_of_this_pc_moves_here_and_its_peers_hear_of_it", async () => {
   expect(moves.chatMenu(sub).why).toMatch(/lead/);
   signOut();
   expect(moves.chatMenu(c).why).toMatch(/Sign in/);
-});
+}, SLOW);
 
 test("a_copys_move_goes_to_its_home_pc_first_then_shows_here", async () => {
   const { store, moves, sent } = rig();
@@ -67,7 +70,7 @@ test("a_copys_move_goes_to_its_home_pc_first_then_shows_here", async () => {
   // Forwarded here from another PC, any id its account knows is taken.
   const own = store.createChat(blankChat({ title: "own", role: "lead" }));
   expect((await moves.moveChat(own, "org_elsewhere", true)).status).toBe(200);
-});
+}, SLOW);
 
 test("a_copys_move_fails_when_its_home_pc_cant_take_it", async () => {
   const { store, moves } = rig(() => ({ status: 404, body: { error: "no such call" } }));
@@ -80,7 +83,7 @@ test("a_copys_move_fails_when_its_home_pc_cant_take_it", async () => {
   const d = off.store.createChat(blankChat({ title: "copy", role: "lead", home: "pc:other", homeId: 41 }));
   expect((await off.moves.moveChat(d, "org_a")).status).toBe(409);
   expect(off.store.placement().chats.size).toBe(0);
-});
+}, SLOW);
 
 test("a_project_moves_where_its_folder_is_and_its_chats_follow", async () => {
   const { store, moves, sent, touched } = rig();
@@ -103,4 +106,76 @@ test("a_project_moves_where_its_folder_is_and_its_chats_follow", async () => {
   expect((await moves.moveProject(repo, "org_a")).status).toBe(200);
   expect(sent).toEqual([{ peer: "pc:other", method: "POST", path: ["v1", "projects", "do"], body: { project: "/nowhere/other/app", act: "workspace", workspace: "org_a" } }]);
   expect(store.placement().repos.get(away)).toBe("org_a");
-});
+}, SLOW);
+
+test("a_chat_is_shared_with_another_workspace_and_keeps_its_owner", async () => {
+  const { store, moves, sent, touched, signOut } = rig();
+  const repo = store.addRepo(tmp);
+  const c = store.createChat(blankChat({ repoId: repo, title: "t", role: "lead" }));
+  // The owner is shown, not a toggle; the others start unticked.
+  expect(moves.chatShares(c).items.map((i) => [i.label, i.on, i.owner])).toEqual([["Sam's workspace", true, true], ["Team workspace", false, false]]);
+  const r = await moves.shareChat(c, "org_b", true);
+  expect(r.body).toEqual({ ok: true, shared: ["org_b"], notice: "Shared with Team workspace" });
+  expect(sent).toEqual([]);
+  expect(touched).toEqual([c.id]);
+  expect(moves.chatIn(c)).toBe("org_a");
+  expect(moves.chatShares(c).line).toBe("Owned by Sam's workspace · shared with Team workspace");
+  // Its owner can't be a share; bad input and a sub-agent are refused.
+  expect((await moves.shareChat(c, "org_a", true)).status).toBe(409);
+  expect((await moves.shareChat(c, "org_zzz", true)).status).toBe(400);
+  expect((await moves.shareChat(c, "org_b", "yes")).status).toBe(400);
+  const sub = store.createChat(blankChat({ repoId: repo, title: "s", role: "sub", parent: c.id }));
+  expect((await moves.shareChat(sub, "org_b", true)).status).toBe(409);
+  expect(moves.chatShares(sub).why).toMatch(/lead/);
+  // Moved to the workspace it was shared with: the share goes, it's the owner now.
+  await moves.moveChat(c, "org_b");
+  expect(store.placement().shared?.chats.has(c.id)).toBe(false);
+  expect(moves.chatShares(c).line).toBe("Owned by Team workspace · not shared");
+  await moves.shareChat(c, "org_a", true);
+  expect((await moves.shareChat(c, "org_a", false)).body).toMatchObject({ shared: [], notice: "No longer shared with Sam's workspace" });
+  signOut();
+  expect(moves.chatShares(c).why).toMatch(/Sign in/);
+}, SLOW);
+
+test("a_copys_share_goes_to_its_home_pc_first_and_fails_when_it_cant_take_it", async () => {
+  const { store, moves, sent } = rig();
+  const c = store.createChat(blankChat({ title: "copy", role: "lead", home: "pc:other", homeId: 41 }));
+  expect((await moves.shareChat(c, "org_a", true)).status).toBe(200);
+  expect(sent).toEqual([{ peer: "pc:other", method: "POST", path: ["v1", "chats", "41", "share"], body: { workspace: "org_a", on: true } }]);
+  expect(store.placement().shared?.chats.get(c.id)).toEqual(["org_a"]);
+  const old = rig(() => ({ status: 404, body: { error: "no such call" } }));
+  const d = old.store.createChat(blankChat({ title: "copy", role: "lead", home: "pc:other", homeId: 41 }));
+  const r = await old.moves.shareChat(d, "org_a", true);
+  expect(r.status).toBe(409);
+  expect(String((r.body as { error: string }).error)).toMatch(/other runs an older Harbor/);
+  expect(old.store.placement().shared?.chats.size).toBe(0);
+  // Forwarded here from another PC: any id its account knows is taken.
+  const own = store.createChat(blankChat({ title: "own", role: "lead" }));
+  expect((await moves.shareChat(own, "org_elsewhere", true, true)).status).toBe(200);
+}, SLOW);
+
+test("a_project_is_shared_where_its_folder_is_and_its_chats_get_its_shares", async () => {
+  const { store, moves, sent, touched } = rig();
+  const here = store.addRepo(tmp);
+  const a = store.createChat(blankChat({ repoId: here, title: "a", role: "lead" }));
+  const repo = store.repos().find((x) => x.id === here)!;
+  expect((await moves.shareProject(repo, "org_b", true)).body).toMatchObject({ ok: true, shared: ["org_b"], notice: "Shared with Team workspace" });
+  expect(sent).toEqual([]);
+  expect(touched).toContain(a.id);
+  expect(touched).toContain(null);
+  // Its chat gets it, locked (it's the project's), and keeps its owner.
+  expect(moves.chatShares(a).items.map((i) => [i.label, i.on, i.owner, i.locked])).toEqual([["Sam's workspace", true, true, false], ["Team workspace", true, false, true]]);
+  expect(moves.chatIn(a)).toBe("org_a");
+  expect((await moves.shareProject(repo, "org_a", true)).status).toBe(409);
+  // Moved where it was shared: the share goes.
+  await moves.moveProject(repo, "org_b");
+  expect(store.placement().shared?.repos.has(here)).toBe(false);
+  // Another PC's folder: there first.
+  const away = store.addRepo("/nowhere/other/app");
+  store.createChat(blankChat({ repoId: away, title: "copy", role: "lead", home: "pc:other", homeId: 9 }));
+  const there = store.repos().find((x) => x.id === away)!;
+  expect(moves.projectShares(there).items.map((i) => [i.label, i.owner])).toEqual([["Sam's workspace", false], ["Team workspace", true]]);
+  expect((await moves.shareProject(there, "org_a", true)).status).toBe(200);
+  expect(sent).toEqual([{ peer: "pc:other", method: "POST", path: ["v1", "projects", "do"], body: { project: "/nowhere/other/app", act: "share", workspace: "org_a", on: true } }]);
+  expect(store.placement().shared?.repos.get(away)).toEqual(["org_a"]);
+}, SLOW);

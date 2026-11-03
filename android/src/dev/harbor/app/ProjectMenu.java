@@ -54,6 +54,7 @@ final class ProjectMenu {
             case "archive": return Ui.I_ARCHIVE;
             case "unarchive": return Ui.I_ARCHIVE;
             case "users": return Ui.I_USERS;
+            case "link": return Ui.I_LINK;
             case "monitor": return Ui.I_MONITOR;
             default: return null;
         }
@@ -143,6 +144,11 @@ final class ProjectMenu {
             case "move_workspace":
                 Chats.moveWorkspace(a, m.optJSONObject("workspaces"), m.optString("name", "Project"),
                         ws -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "workspace").put("workspace", ws)), after);
+                break;
+            case "share_workspace":
+                Chats.shareWorkspace(a, m.optJSONObject("shares"), m.optString("name", "Project"),
+                        () -> { JSONObject again = hub.call("POST", "/v1/projects/menu", new JSONObject().put("project", pid)); return again == null ? null : again.optJSONObject("shares"); },
+                        (ws, on) -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "share").put("workspace", ws).put("on", on)), after);
                 break;
             case "move_pc":
                 ProjectMove.show(a, hub, pid, m.optString("name", "Project"), after);

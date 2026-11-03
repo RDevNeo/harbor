@@ -35,8 +35,8 @@ import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
-import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
-import { chatIdle, inWorkspaces, type MoveItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
+import { chatIdle, chatWorkspace, inWorkspaces, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -1124,8 +1124,20 @@ export class Shell {
     const shown = picked(d.store.get("sidebar_workspace") ?? "", ws.all);
     const settledRepos = d.store.settledProjects();
     const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t, new Set(settledRepos.keys()));
-    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, d.store.placement());
+    const placed = d.store.placement();
+    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, placed);
     const list = sidebarList(tr, d.chats, d.repos, this.query);
+    // Share with workspace…'s mark: a chat's own shares (a project's chats show it on the project's row).
+    const byId = new Map(d.chats.map((c) => [c.id, c]));
+    const chatShared = (c: Chat, kind: "thread" | "loose"): Pick<SideRow, "shared" | "shared_tip"> => {
+      const s = sharedWith(c, (id) => byId.get(id), placed);
+      if (s.all.length === 0 || (kind === "thread" && s.all.every((x) => s.inherited.includes(x)))) return { shared: "", shared_tip: "" };
+      return shareMark(ws.all, chatWorkspace(c, (id) => byId.get(id), placed, ws.mine, ws.pcs), s.all, shown);
+    };
+    const projectShared = (id: number): Pick<SideRow, "shared" | "shared_tip"> => {
+      const s = placed.shared?.repos.get(id) ?? [];
+      return s.length === 0 ? { shared: "", shared_tip: "" } : shareMark(ws.all, this.hub.moves?.projectIn(id) ?? (placed.repos.get(id) ?? ws.mine), s, shown);
+    };
     const clash = clashingNames(d.repos);
     // A project whose folder isn't here names its PC; one of two with a name, its folder.
     const where = (id: number, name: string): { place: string; place_pc: boolean; tip: string } => {
@@ -1151,6 +1163,7 @@ export class Shell {
         settled: c.settled,
         snoozed: until !== null && until > t,
         ...this.marks(c),
+        ...chatShared(c, kind),
         tip: "",
         place: "",
         place_pc: false,
@@ -1178,11 +1191,12 @@ export class Shell {
         pr: "",
         pr_tip: "",
         ...where(p.repo.id, p.repo.name),
+        ...projectShared(p.repo.id),
       });
       for (const c of p.chats) rows.push(chatRow(c, "thread"));
     }
     if (list.loose.length > 0) {
-      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "", place: "", place_pc: false });
+      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "", place: "", place_pc: false, shared: "", shared_tip: "" });
       for (const c of list.loose) rows.push(chatRow(c, "loose"));
     }
     sync(this.rows, rows, sameSideRow);
@@ -1203,6 +1217,7 @@ export class Shell {
         pr: "",
         pr_tip: "",
         ...where(r.id, r.name),
+        ...projectShared(r.id),
       };
     };
     const settledRows = [...list.settledProjects.map(projectRow), ...list.settled.map((c) => chatRow(c, "loose"))];
@@ -2676,6 +2691,8 @@ export class Shell {
       items.push(off === null ? { ...native("Move to PC…", () => {}, { badge: "submenu" }), sub: () => this.movePcMenu(id) } : native("Move to PC…", () => {}, { enabled: false, desc: off }));
       const ws = this.hub.moves?.chatMenu(id) ?? null;
       if (ws !== null) items.push(ws.why === null ? { ...native("Move to workspace…", () => {}, { badge: "submenu" }), sub: () => this.wsMoveMenu("chat", id) } : native("Move to workspace…", () => {}, { enabled: false, desc: ws.why }));
+      const sh = this.hub.moves?.chatShares(id) ?? null;
+      if (sh !== null) items.push(sh.why === null ? { ...native(SHARE_LABEL, () => {}, { badge: "submenu", desc: sh.line }), sub: () => this.wsShareMenu("chat", id) } : native(SHARE_LABEL, () => {}, { enabled: false, desc: sh.why }));
     }
     items.push(native("Delete", () => this.deleteDialog(id)));
     this.popup("chat", x, y, items, 240, false, true);
@@ -2726,6 +2743,33 @@ export class Shell {
       items.push(this.item(it.label, it.on ? () => {} : go(it.id), { icon: it.back ? ICONS.HOUSE : ICONS.USERS, desc: it.hint, checked: it.on }));
     }
     return { items, width: 260 };
+  }
+
+  /**
+   * Share with workspace…: the account's workspaces as a checklist, the owner shown (not a toggle),
+   * the project's shares ticked and locked, the rest ticked when shared; a pick ticks or unticks.
+   */
+  private wsShareMenu(kind: "chat" | "project", id: number): SubMenu | null {
+    const m = this.hub.moves;
+    const menu = m ? (kind === "chat" ? m.chatShares(id) : m.projectShares(id)) : null;
+    if (!m || menu === null || menu.why !== null) return null;
+    const go = (ws: string, on: boolean) => () =>
+      void (kind === "chat" ? m.shareChat(id, ws, on) : m.shareProject(id, ws, on)).then(
+        (r) => {
+          const b = (r.body ?? {}) as { notice?: unknown; error?: unknown };
+          this.toast(r.status < 300 ? String(b.notice ?? "Shared") : `Couldn't share it: ${String(b.error ?? r.status)}`);
+          this.data.reload();
+          this.refreshAll();
+        },
+        (e: unknown) => this.toast(`Couldn't share it: ${e instanceof Error ? e.message : String(e)}`),
+      );
+    const items: PopRow[] = [{ ...this.label("Share with workspace"), kind: "caption" }, { ...this.label(menu.line), kind: "caption" }];
+    for (const it of menu.items) {
+      const fixed = it.owner || it.locked;
+      items.push(this.item(it.label, fixed ? () => {} : go(it.id, !it.on), { icon: it.owner ? ICONS.HOUSE : ICONS.USERS, desc: it.hint, checked: it.on, enabled: !fixed }));
+    }
+    items.push({ ...this.label(SHARE_NOTE), kind: "caption" });
+    return { items, width: 300 };
   }
 
   /** sidebar.rs `move_menu`: the chat and its sub-agents to another project, or none. */
@@ -2780,6 +2824,7 @@ export class Shell {
       settle_project: () => this.settleProject(id, true),
       unsettle_project: () => this.settleProject(id, false),
       move_workspace: () => {},
+      share_workspace: () => {},
       move_pc: () => void this.projectMovePc(id, x, y),
       remove: () => this.removeRepoDialog(id),
     };
@@ -2789,14 +2834,16 @@ export class Shell {
     const place = this.placeOf(id);
     const r = this.data.repo(id);
     if (place !== null && r) items.push({ ...this.label(placeLine(place, tilde(r.local ?? r.path, homedir()))), kind: "caption" });
-    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
+    const sh = this.hub.moves?.projectShares(id) ?? null;
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}), ...(sh ? { shareWhy: sh.why, shareLine: sh.line } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
       if (it.icon !== "") extra.icon = it.icon;
       if (it.desc !== "") extra.desc = it.desc;
       if (it.off === true) extra.enabled = false;
-      if (it.act === "move_workspace") extra.badge = it.off === true ? "" : "submenu";
-      items.push(it.act === "move_workspace" && it.off !== true ? { ...native(it.label, acts[it.act], extra), sub: () => this.wsMoveMenu("project", id) } : native(it.label, acts[it.act], extra));
+      if (it.act === "move_workspace" || it.act === "share_workspace") extra.badge = it.off === true ? "" : "submenu";
+      const sub = it.off === true ? null : it.act === "move_workspace" ? () => this.wsMoveMenu("project", id) : it.act === "share_workspace" ? () => this.wsShareMenu("project", id) : null;
+      items.push(sub !== null ? { ...native(it.label, acts[it.act], extra), sub } : native(it.label, acts[it.act], extra));
     }
     this.popup("project-row", x, y, items, 260, false, true);
   }
@@ -3593,6 +3640,13 @@ export interface ShellMoves {
   projectMenu(id: number): { why: string | null; items: MoveItem[] } | null;
   moveChat(id: number, ws: string): Promise<{ status: number; body: unknown }>;
   moveProject(id: number, ws: string): Promise<{ status: number; body: unknown }>;
+  /** Share with workspace…: the checklists (null: no such chat or project) and a tick or untick. */
+  chatShares(id: number): { why: string | null; line: string; items: ShareItem[] } | null;
+  projectShares(id: number): { why: string | null; line: string; items: ShareItem[] } | null;
+  shareChat(id: number, ws: string, on: boolean): Promise<{ status: number; body: unknown }>;
+  shareProject(id: number, ws: string, on: boolean): Promise<{ status: number; body: unknown }>;
+  /** The workspace project `id` is in (moved, else its PC's). */
+  projectIn(id: number): string;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

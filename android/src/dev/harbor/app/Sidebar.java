@@ -45,6 +45,35 @@ final class Sidebar {
     private WsFilter scope = new WsFilter(new ArrayList<>(), "", null, new HashMap<>()); // as last drawn
     /** Where Move to workspace… put each project, by id ("": not moved; hubs before 0.120 send none). */
     private final Map<String, String> projectWs = new HashMap<>();
+    /** Share with workspace…: the workspaces each project is shared with (hubs before 0.122 send none). */
+    private final Map<String, List<String>> projectShared = new HashMap<>();
+    /** The account's workspaces by id, as last drawn (for the shared mark's line). */
+    private Map<String, String> wsNames = new HashMap<>();
+
+    /** A JSON list of strings; none for anything else. */
+    static List<String> strings(JSONArray arr) {
+        List<String> out = new ArrayList<>();
+        for (int i = 0; arr != null && i < arr.length(); i++) {
+            String s = arr.optString(i, "");
+            if (!s.isEmpty()) out.add(s);
+        }
+        return out;
+    }
+
+    /** The shared mark (the desktop row's link glyph): blue when the filter shows the row only
+     *  because it's shared; a tap says owner and shares ("Owned by X · shared with Y"). */
+    private void sharedMark(LinearLayout r, int at, String owner, List<String> shared) {
+        String kind = scope.mark(owner, shared);
+        if (kind.isEmpty()) return;
+        String line = WsFilter.line(wsNames, owner, shared);
+        String say = "here".equals(kind) ? "Shown here because it's shared. " + line : line;
+        TextView m = Ui.icon(a, Ui.I_LINK, 13, "here".equals(kind) ? Ui.BLUE : Ui.G600);
+        m.setContentDescription(say);
+        m.setOnClickListener(v -> Ui.toast(a, say));
+        LinearLayout.LayoutParams lp = Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0);
+        if (at < 0 || at > r.getChildCount()) r.addView(m, lp);
+        else r.addView(m, at, lp);
+    }
 
     Sidebar(Base a, String current) {
         this.a = a;
@@ -175,16 +204,19 @@ final class Sidebar {
 
         Map<String, String> projects = new LinkedHashMap<>(); // in the desktop sidebar's order
         projectWs.clear();
+        projectShared.clear();
         JSONArray pa = st.optJSONArray("projects");
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
             JSONObject p = pa.optJSONObject(i);
             if (p != null) {
                 projects.put(p.optString("id"), p.optString("name"));
                 projectWs.put(p.optString("id"), p.optString("workspace", ""));
+                projectShared.put(p.optString("id"), strings(p.optJSONArray("shared")));
             }
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
         Map<String, String> workspaces = Account.workspaces(a);
+        wsNames = workspaces;
         List<String> shown = WsFilter.picked(wsChoice(), workspaces.keySet());
         drawWsBtn(workspaces, shown);
         Map<String, String> pcs = Account.pcWorkspaces(a);
@@ -234,8 +266,10 @@ final class Sidebar {
             if (c == null || "sub".equals(c.optString("role"))) continue; // a lead's subagents live inside its chat, as on the desktop
             String pid = c.isNull("project_id") ? "" : c.optString("project_id");
             String moved = c.optString("workspace", "");
-            if ("lead".equals(c.optString("role")) && !c.optBoolean("settled")) scope.saw(c.optString("home"), moved, pid);
-            if (!scope.shows(c.optString("home"), moved) && !c.optBoolean("main")) continue;
+            // Share with workspace…: it also shows under each workspace it's shared with (its own, its lead's, its project's).
+            List<String> shared = strings(c.optJSONArray("shared"));
+            if ("lead".equals(c.optString("role")) && !c.optBoolean("settled")) scope.saw(c.optString("home"), moved, shared, pid);
+            if (!scope.shows(c.optString("home"), moved, shared) && !c.optBoolean("main")) continue;
             if (!filter.isEmpty() && !filter.equals(pid)) continue;
             if (!q.isEmpty() && !c.optString("title").toLowerCase().contains(q) && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             byId.put(c.optString("id"), c);
@@ -306,7 +340,7 @@ final class Sidebar {
             // A project without chats yet shows too (hubs from 0.88: its header starts the main
             // chat), as the desktop's sidebar lists it; a search shows it when its name matches.
             boolean bare = g.getValue().isEmpty() && main == null;
-            if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), "")) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
+            if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), ""), projectShared.get(g.getKey())) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
                     && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
             if (!first) divider();
             first = false;
@@ -323,7 +357,7 @@ final class Sidebar {
         JSONArray sp = tree == null ? null : tree.optJSONArray("settled_projects");
         for (int i = 0; sp != null && i < sp.length(); i++) {
             String pid = sp.optString(i);
-            if (!scope.showsProject(pid, projectWs.getOrDefault(pid, "")) || (!filter.isEmpty() && !filter.equals(pid))) continue;
+            if (!scope.showsProject(pid, projectWs.getOrDefault(pid, ""), projectShared.get(pid)) || (!filter.isEmpty() && !filter.equals(pid))) continue;
             if (!q.isEmpty() && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             settledProjects.add(pid);
         }
@@ -527,6 +561,7 @@ final class Sidebar {
         String where = key.isEmpty() ? "" : Place.hint(st, key);
         if (where.isEmpty()) h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, mains ? Ui.FG : Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
         else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), mains ? Ui.FG : Ui.G700), new LinearLayout.LayoutParams(0, -2, 1));
+        if (!key.isEmpty()) sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, "")), projectShared.getOrDefault(key, new ArrayList<>()));
         if (main != null) status(h, main, you);
         boolean busy = false;
         for (JSONObject c : cs) busy |= working(c) || Hub.queued(c) > 0;
@@ -607,6 +642,7 @@ final class Sidebar {
         LinearLayout r = Ui.listRow(a, Ui.I_FOLDER, Ui.G700, title, Ui.G700);
         r.setBackground(Ui.press(0, 0, 12));
         r.setContentDescription(title + ", settled project");
+        sharedMark(r, -1, scope.projectOwner(projectWs.getOrDefault(pid, "")), projectShared.getOrDefault(pid, new ArrayList<>()));
         r.setOnClickListener(v -> { Chats.openProject(a, a.hub, pid); a.closeDrawer(); });
         r.setOnLongClickListener(v -> { projectMenu(pid, name, null); return true; });
         return r;
@@ -698,6 +734,12 @@ final class Sidebar {
             r.addView(Ui.icon(a, Ui.I_CLOCK, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 8, 0, 0, 0));
             r.addView(Ui.text(a, c.optString("snoozed_label"), 12, Ui.G600), Ui.margins(Ui.wrap(), 4, 0, 0, 0));
         }
+        // Shared (Share with workspace…): a chat under its project's header shows it only for shares of its own.
+        List<String> shared = strings(c.optJSONArray("shared"));
+        String pid = c.isNull("project_id") ? "" : c.optString("project_id");
+        List<String> own = new ArrayList<>(shared);
+        own.removeAll(projectShared.getOrDefault(pid, new ArrayList<>()));
+        if (pid.isEmpty() || settled || !own.isEmpty()) sharedMark(r, -1, scope.owner(c.optString("home"), c.optString("workspace", "")), shared);
         status(r, c, you);
         r.setOnClickListener(v -> open(id));
         r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
@@ -757,7 +799,7 @@ final class Sidebar {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("", "All projects", "", true));
         for (Map.Entry<String, String> p : projects.entrySet()) {
-            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""))) o.add(new Sheet.Option(p.getKey(), p.getValue(), Place.hint(st, p.getKey()), true));
+            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""), projectShared.get(p.getKey()))) o.add(new Sheet.Option(p.getKey(), p.getValue(), Place.hint(st, p.getKey()), true));
         }
         o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
         Sheet.pick(a, "Projects", null, o, filter, id -> {

@@ -176,6 +176,9 @@ describe("mesh.rs", () => {
       // Move to workspace…: WorkspaceMoves sends a copy's home itself, then keeps it here too.
       ["POST", "v1/chats/7/workspace"],
       ["GET", "v1/chats/7/workspaces"],
+      // Share with workspace…: the same.
+      ["POST", "v1/chats/7/share"],
+      ["GET", "v1/chats/7/shares"],
     ] as const)
       expect(forHome(m, p.split("/"))).toBe(false);
   });
@@ -244,6 +247,36 @@ describe("mesh.rs", () => {
     await replica.applyChats("pc:home", 1, { full: true, chats: sent.map((c) => ({ ...c, workspace: "", project: { ...c.project, workspace: "" } })) });
     place = copy.placement();
     expect([place.chats.size, place.carried.size, place.repos.get(away)]).toEqual([0, 0, undefined]);
+    home.close();
+    copy.close();
+  });
+
+  test("share with workspace goes with the chat JSON: the chat's own shares and its project's, to every copy", async () => {
+    const home = Store.openAt(join(tmp, "share-home.db"));
+    const repo = home.addRepo("/nowhere/home/shared");
+    const lead = home.createChat(blankChat({ repoId: repo, title: "lead", role: "lead" }));
+    const other = home.createChat(blankChat({ repoId: repo, title: "other", role: "lead" }));
+    home.setChatWorkspace(lead.id, "org_a");
+    home.setChatShares(lead.id, ["org_b", "org_c"]);
+    home.setRepoShares(repo, ["org_d"]);
+    const sent = (await new StoreReplica({ store: home, hub: new Hub([], 0), version: "t" }).chats(0, true)).chats as { id: number; shared: string[]; project: { shared: string[] } }[];
+    expect(sent.map((c) => [c.id, c.shared, c.project.shared])).toEqual([[lead.id, ["org_b", "org_c"], ["org_d"]], [other.id, [], ["org_d"]]]);
+    const copy = Store.openAt(join(tmp, "share-copy.db"));
+    const replica = new StoreReplica({ store: copy, hub: new Hub([], 0), version: "t" });
+    await replica.applyChats("pc:home", 1, { full: true, chats: sent });
+    const local = (hid: number) => copy.chats().find((c) => c.homeId === hid)?.id ?? -1;
+    let place = copy.placement();
+    // The owner stays what the home PC says; the shares come along beside it.
+    expect(place.chats.get(local(lead.id))).toBe("org_a");
+    expect(place.shared?.chats.get(local(lead.id))).toEqual(["org_b", "org_c"]);
+    expect(place.shared?.chats.has(local(other.id))).toBe(false);
+    expect(place.shared?.carried.get(local(other.id))).toEqual(["org_d"]);
+    const away = copy.repos().find((r) => r.path === "/nowhere/home/shared")?.id ?? -1;
+    expect(place.shared?.repos.get(away)).toEqual(["org_d"]);
+    // Unshared at home: the copies hear it with the next list.
+    await replica.applyChats("pc:home", 1, { full: true, chats: sent.map((c) => ({ ...c, shared: [], project: { ...c.project, shared: [] } })) });
+    place = copy.placement();
+    expect([place.shared?.chats.size, place.shared?.carried.size, place.shared?.repos.get(away)]).toEqual([0, 0, undefined]);
     home.close();
     copy.close();
   });

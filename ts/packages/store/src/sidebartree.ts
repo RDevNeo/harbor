@@ -36,6 +36,29 @@ export function movedTo<C extends PlacedChat>(c: C, chat: (id: number) => C | un
   return x.repoId === null ? "" : (p.repos.get(x.repoId) ?? "");
 }
 
+function leadOf<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined): C {
+  let x = c;
+  for (let hop = 0; hop < 8 && x.role === "sub" && x.parent !== null; hop++) {
+    const lead = chat(x.parent);
+    if (!lead) break;
+    x = lead;
+  }
+  return x;
+}
+
+/**
+ * The workspaces Share with workspace… shares chat `c` with, besides the one it's in: its own
+ * shares and its project's (a copy's as its home PC says them); a sub-agent's are its lead's.
+ * `inherited` is the project's part alone.
+ */
+export function sharedWith<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined, p: Placement): { all: string[]; inherited: string[] } {
+  const s = p.shared;
+  if (!s) return { all: [], inherited: [] };
+  const x = leadOf(c, chat);
+  const inherited = [...((x.home !== "" ? s.carried.get(x.id) : x.repoId === null ? undefined : s.repos.get(x.repoId)) ?? [])];
+  return { all: [...new Set([...(s.chats.get(x.id) ?? []), ...inherited])], inherited };
+}
+
 /** A project in the sidebar `Tree`. */
 export interface Place {
   id: number;

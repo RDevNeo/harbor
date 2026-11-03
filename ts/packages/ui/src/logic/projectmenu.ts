@@ -5,7 +5,11 @@ import { ICONS } from "../icons.ts";
  * phone's project sheet are both built from this list, so they offer the same things in the
  * same order with the same words.
  */
-export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "settle_project" | "unsettle_project" | "move_workspace" | "move_pc" | "remove";
+export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "remove";
+
+export const SHARE_LABEL = "Share with workspace…";
+/** What Share with workspace…'s checklist says under its title (desktop and phone alike). */
+export const SHARE_NOTE = "It also shows under each workspace ticked here and stays owned by its own. Placement only: who can reach it and what the PCs copy don't change.";
 
 export interface ProjectMenuItem {
   act: ProjectAct;
@@ -30,6 +34,9 @@ export interface ProjectMenuInput {
   settled?: boolean;
   /** Move to workspace…: why there's nothing to pick (no account, a single workspace), null when there is; left out: not offered. */
   moveWhy?: string | null;
+  /** Share with workspace…: the same as `moveWhy`; `shareLine` says owner and shares ("Owned by X · shared with Y"). */
+  shareWhy?: string | null;
+  shareLine?: string;
   /** It's moving to another PC now: what it does ("Copying 340 MB of 1.2 GB"). */
   moving?: string | null;
 }
@@ -58,6 +65,7 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
   if (p.customIcon) add("website_icon", "Use website icon");
   sep = true;
   if (p.moveWhy !== undefined) add("move_workspace", "Move to workspace…", ICONS.USERS, p.moveWhy ?? "It and its chats show under that workspace", p.moveWhy !== null);
+  if (p.shareWhy !== undefined) add("share_workspace", SHARE_LABEL, ICONS.LINK, p.shareWhy ?? p.shareLine ?? "It and its chats show under those workspaces too", p.shareWhy !== null);
   if (p.settled === true) add("unsettle_project", "Unsettle project", ICONS.UNARCHIVE, "It and the chats settled with it come back");
   else add("settle_project", "Settle project", ICONS.ARCHIVE, "It and its chats go to Settled; a new chat or new activity in it brings it back");
   add("move_pc", "Move to PC…", ICONS.MONITOR, p.moving ? p.moving : "Its folder and its chats go to another PC of yours");

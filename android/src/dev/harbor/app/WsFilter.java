@@ -65,4 +65,57 @@ final class WsFilter {
     boolean showsProject(String id, String moved) {
         return !active() || ws.contains(moved != null && !moved.isEmpty() ? moved : here) || projects.contains(id);
     }
+
+    // ---- Share with workspace…: extra workspaces it shows in, its owner unchanged ----
+
+    /** The workspace a chat of PC `home` is in: where it was moved, else its PC's (null: none). */
+    String owner(String home, String moved) {
+        if (moved != null && !moved.isEmpty()) return moved;
+        return home.isEmpty() || home.equals(hub) ? here : pcs.get(home);
+    }
+
+    /** A project's owner: where it was moved, else the answering PC's. */
+    String projectOwner(String moved) { return moved != null && !moved.isEmpty() ? moved : here; }
+
+    private boolean anyShown(Collection<String> shared) {
+        if (shared != null) for (String s : shared) if (ws.contains(s)) return true;
+        return false;
+    }
+
+    /** Whether a chat shows: its owner's picked, or one it's shared with (`shared`: its own, its lead's, its project's). */
+    boolean shows(String home, String moved, Collection<String> shared) {
+        return shows(home, moved) || anyShown(shared);
+    }
+
+    void saw(String home, String moved, Collection<String> shared, String project) {
+        if (shows(home, moved, shared) && !project.isEmpty()) projects.add(project);
+    }
+
+    boolean showsProject(String id, String moved, Collection<String> shared) {
+        return showsProject(id, moved) || (active() && anyShown(shared));
+    }
+
+    /** A row's shared mark (logic/sidebar.ts `shareMark`): "" not shared, "shared", or "here" when
+     *  the filter shows it only because it's shared with a picked workspace. */
+    String mark(String owner, Collection<String> shared) {
+        List<String> others = new ArrayList<>();
+        if (shared != null) for (String s : shared) if (!s.equals(owner) && !others.contains(s)) others.add(s);
+        if (others.isEmpty()) return "";
+        boolean here = active() && (owner == null || !ws.contains(owner)) && anyShown(others);
+        return here ? "here" : "shared";
+    }
+
+    /** "Owned by Sam's workspace · shared with Team" (logic/sidebar.ts `shareLine`); `names` id → name. */
+    static String line(Map<String, String> names, String owner, Collection<String> shared) {
+        List<String> others = new ArrayList<>();
+        if (shared != null) for (String s : shared) if (!s.equals(owner) && !others.contains(name(names, s))) others.add(name(names, s));
+        String head = "Owned by " + name(names, owner);
+        return others.isEmpty() ? head + " · not shared" : head + " · shared with " + String.join(", ", others);
+    }
+
+    static String name(Map<String, String> names, String id) {
+        if (id == null || id.isEmpty()) return "no workspace";
+        String n = names.get(id);
+        return n != null ? n : "a workspace of another account";
+    }
 }

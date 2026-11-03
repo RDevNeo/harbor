@@ -542,7 +542,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       }
     }
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 4) {
-      const moved = (name === "workspace" || name === "workspaces") && h.moves ? await h.moves.route(call, chat) : null;
+      const moved = ["workspace", "workspaces", "share", "shares"].includes(name) && h.moves ? await h.moves.route(call, chat) : null;
       if (moved) return moved;
       // The chat's Discord captcha card (frame, pointer, Don't join): only where the chat's content may go.
       if (m === "POST" && name === "captcha") {

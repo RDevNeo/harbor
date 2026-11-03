@@ -24,7 +24,7 @@ export interface Workspace {
 export type Place = sidebartree.Place;
 export type PlacedChat = sidebartree.PlacedChat;
 export type Tree = sidebartree.Tree;
-export const { isMainOf, movedTo, tree } = sidebartree;
+export const { isMainOf, movedTo, sharedWith, tree } = sidebartree;
 
 /** What's picked of the workspace filter `stored` (ids joined by commas) among `all`: gone ids drop out, and none is All (empty). Every one isn't All: a PC in no workspace shows only under All. */
 export function picked(stored: string, all: readonly Workspace[]): string[] {
@@ -50,11 +50,12 @@ export function toggled(stored: string, id: string, all: readonly Workspace[]): 
 export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: ReadonlyMap<string, string>, chats: readonly (SidebarChat & { parent: number | null })[], place: Placement = NO_PLACEMENT): Tree {
   const byId = new Map(chats.map((c) => [c.id, c]));
   const shown = (w: string) => ws.includes(w);
-  const ours = chats.filter((c) => shown(chatWorkspace(c, (id) => byId.get(id), place, mine, pcs)));
+  // Its own workspace, or one it's shared with (Share with workspace…: its own shares, its lead's, its project's).
+  const ours = chats.filter((c) => shown(chatWorkspace(c, (id) => byId.get(id), place, mine, pcs)) || sharedWith(c, (id) => byId.get(id), place).all.some(shown));
   const ids = new Set(ours.map((c) => c.id));
   const repos = new Set(ours.filter((c) => !c.settled && c.role === "lead" && c.repoId !== null).map((c) => c.repoId));
   const keep = (list: number[]) => list.filter((c) => ids.has(c));
-  const own = (p: number) => shown(place.repos.get(p) ?? mine);
+  const own = (p: number) => shown(place.repos.get(p) ?? mine) || (place.shared?.repos.get(p) ?? []).some(shown);
   return {
     projects: t.projects.filter((p) => own(p.id) || repos.has(p.id)).map((p) => ({ ...p, chats: keep(p.chats) })),
     threads: keep(t.threads),
@@ -109,6 +110,69 @@ export function movedNotice(all: readonly Workspace[], to: string): string {
   const name = all.find((w) => w.id === to)?.name ?? "";
   if (name === "") return "Moved back to its PC's workspace";
   return /workspace/i.test(name) ? `Moved to ${name}` : `Moved to the workspace ${name}`;
+}
+
+/** One row of a Share with workspace… checklist. */
+export interface ShareItem {
+  id: string;
+  label: string;
+  hint: string;
+  /** It shows there now (owner, shared with its project, or shared on its own). */
+  on: boolean;
+  /** The workspace it's in (Move to workspace… or its PC's): shown, not a toggle. */
+  owner: boolean;
+  /** Shared through its project: a toggle of the project's, not this chat's. */
+  locked: boolean;
+}
+
+const NO_ACCOUNT = "Sign in with Google in Settings › Account to use workspaces";
+const ONE_WORKSPACE = "Your account has one workspace: add or join another in Settings › Account";
+
+/** A workspace's name for the menus ("its PC's workspace" when the account doesn't list it, "no workspace" for none). */
+export function workspaceName(all: readonly Workspace[], id: string): string {
+  if (id === "") return "no workspace";
+  return all.find((w) => w.id === id)?.name ?? "a workspace of another account";
+}
+
+/**
+ * Share with workspace… for a chat or project: every workspace of the account, the one it's in
+ * (`owner`) shown as the owner and not a toggle, the ones its project shares it with (`inherited`)
+ * ticked and locked, the rest ticked when shared on its own (`own`). Greyed with `why` like Move.
+ */
+export function shareMenu(all: readonly Workspace[], owner: string, own: readonly string[], inherited: readonly string[] = []): { why: string | null; line: string; items: ShareItem[] } {
+  const line = shareLine(all, owner, [...own, ...inherited]);
+  if (all.length === 0) return { why: NO_ACCOUNT, line, items: [] };
+  if (all.length === 1) return { why: ONE_WORKSPACE, line, items: [] };
+  const items = all.map((w): ShareItem => {
+    if (w.id === owner) return { id: w.id, label: w.name, hint: "Owner: it's in this workspace", on: true, owner: true, locked: false };
+    if (inherited.includes(w.id)) return { id: w.id, label: w.name, hint: "Shared with its project", on: true, owner: false, locked: true };
+    return { id: w.id, label: w.name, hint: "", on: own.includes(w.id), owner: false, locked: false };
+  });
+  return { why: null, line, items };
+}
+
+/** "Owned by Sam's workspace · shared with Team" (the owner never counts as a share). */
+export function shareLine(all: readonly Workspace[], owner: string, shares: readonly string[]): string {
+  const others = [...new Set(shares)].filter((s) => s !== owner);
+  const head = `Owned by ${workspaceName(all, owner)}`;
+  return others.length === 0 ? `${head} · not shared` : `${head} · shared with ${others.map((s) => workspaceName(all, s)).join(", ")}`;
+}
+
+/** The notice after a tick in Share with workspace…. */
+export function sharedNotice(all: readonly Workspace[], id: string, on: boolean): string {
+  return on ? `Shared with ${workspaceName(all, id)}` : `No longer shared with ${workspaceName(all, id)}`;
+}
+
+/**
+ * A row's shared mark: "" (not shared), "shared", or "here" when the filter `picked` shows it only
+ * because it's shared with a picked workspace (its owner isn't picked); `tip` says owner and shares.
+ */
+export function shareMark(all: readonly Workspace[], owner: string, shares: readonly string[], picked: readonly string[]): { shared: "" | "shared" | "here"; shared_tip: string } {
+  const others = shares.filter((s) => s !== owner);
+  if (others.length === 0) return { shared: "", shared_tip: "" };
+  const line = shareLine(all, owner, others);
+  const here = picked.length > 0 && !picked.includes(owner) && others.some((s) => picked.includes(s));
+  return here ? { shared: "here", shared_tip: `Shown here because it's shared. ${line}` } : { shared: "shared", shared_tip: line };
 }
 
 /** Last activity of a project: its newest chat's update. */

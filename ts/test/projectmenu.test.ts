@@ -15,3 +15,12 @@ test("project_menu_offers_move_to_workspace_greyed_with_why", () => {
   expect(items(null).find((i) => i.act === "move_workspace")?.off).toBeUndefined();
   expect(items("Sign in first").find((i) => i.act === "move_workspace")).toMatchObject({ off: true, desc: "Sign in first" });
 });
+
+test("project_menu_offers_share_with_workspace_after_move_greyed_with_why", () => {
+  const items = (shareWhy: string | null) => projectMenu({ remote: null, main: false, customIcon: false, moveWhy: shareWhy, shareWhy, shareLine: "Owned by Team · not shared" });
+  expect(items(null).map((i) => (i.sep ? `— ${i.label}` : i.label))).toEqual(["Open terminal", "— Refresh icon", "Choose icon…", "— Move to workspace…", "Share with workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  // Its line says owner and shares; greyed, it says why instead.
+  expect(items(null).find((i) => i.act === "share_workspace")).toMatchObject({ desc: "Owned by Team · not shared" });
+  expect(items(null).find((i) => i.act === "share_workspace")?.off).toBeUndefined();
+  expect(items("Sign in first").find((i) => i.act === "share_workspace")).toMatchObject({ off: true, desc: "Sign in first" });
+});

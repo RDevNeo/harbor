@@ -109,6 +109,8 @@ public class Chats extends Base {
         if (!sub) items.add("Move to PC…");
         // Hubs from 0.120 say where Move to workspace… put a chat.
         if (!sub && c.has("workspace")) items.add("Move to workspace…");
+        // Hubs from 0.122 say which workspaces a chat is shared with.
+        if (!sub && c.has("shared")) items.add(SHARE);
         items.add("Delete");
         Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items.toArray(new String[0]), (d, w) -> {
             String it = items.get(w);
@@ -119,6 +121,9 @@ public class Chats extends Base {
             else if (it.equals("Move to PC…")) movePc(a, hub, c, after);
             else if (it.equals("Move to workspace…")) moveWorkspace(a, hub, "/v1/chats/" + id + "/workspaces", c.optString("title", "Chat"),
                     ws -> hub.call("POST", "/v1/chats/" + id + "/workspace", new JSONObject().put("workspace", ws)), after);
+            else if (it.equals(SHARE)) Ui.bg(a, () -> hub.call("GET", "/v1/chats/" + id + "/shares", null), m -> shareWorkspace(a, m, c.optString("title", "Chat"),
+                    () -> hub.call("GET", "/v1/chats/" + id + "/shares", null),
+                    (ws, on) -> hub.call("POST", "/v1/chats/" + id + "/share", new JSONObject().put("workspace", ws).put("on", on)), after));
             else if (it.equals("Make main chat")) Ui.bg(a, () -> hub.call("POST", "/v1/chats/" + id + "/main", new JSONObject()),
                     r -> { Ui.toast(a, "Its project's header opens it now"); after.run(); });
             else Ui.dialog(a).setTitle("Delete this chat?")
@@ -231,6 +236,57 @@ public class Chats extends Base {
     }
 
     interface Move { JSONObject to(String workspace) throws Exception; }
+
+    static final String SHARE = "Share with workspace…";
+    interface Share { JSONObject set(String workspace, boolean on) throws Exception; }
+    interface Fetch { JSONObject get() throws Exception; }
+
+    /** Share with workspace… for a chat (`GET shares`) or a project (its menu's `shares`): the
+     *  desktop's checklist, the account's workspaces with the owner shown (not a toggle), its
+     *  project's shares ticked and locked, a tap on another ticks or unticks it. The sheet stays
+     *  open and redraws from `again`. Greyed with why (a toast here) when there's nothing to pick. */
+    static void shareWorkspace(Base a, JSONObject m, String title, Fetch again, Share share, Runnable after) {
+        String why = m == null || m.isNull("why") ? "" : m.optString("why", "");
+        JSONArray its = m == null ? null : m.optJSONArray("items");
+        if (!why.isEmpty() || its == null || its.length() == 0) { Ui.toast(a, why.isEmpty() ? "Nothing to share it with" : why); return; }
+        Sheet s = new Sheet(a, "Share with workspace");
+        TextView n = Ui.text(a, "“" + title + "” also shows under each workspace ticked here and stays owned by its own. Placement only: who can reach it and what the PCs copy don't change.", 14, Ui.G700);
+        n.setPadding(Ui.dp(6), 0, Ui.dp(6), Ui.dp(10));
+        s.body.addView(n);
+        LinearLayout c = s.card();
+        drawShares(a, s, c, m, again, share, after);
+        s.show();
+    }
+
+    private static void drawShares(Base a, Sheet s, LinearLayout c, JSONObject m, Fetch again, Share share, Runnable after) {
+        c.removeAllViews();
+        JSONArray its = m.optJSONArray("items");
+        String line = m.optString("line", "");
+        if (!line.isEmpty()) {
+            TextView l = Ui.text(a, line, 13, Ui.G600);
+            l.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(4));
+            c.addView(l, Ui.fill());
+        }
+        for (int i = 0; its != null && i < its.length(); i++) {
+            JSONObject it = its.optJSONObject(i);
+            if (it == null) continue;
+            if (c.getChildCount() > 0) c.addView(Ui.gap(a));
+            boolean fixed = it.optBoolean("owner") || it.optBoolean("locked");
+            boolean on = it.optBoolean("on");
+            String ws = it.optString("id");
+            LinearLayout r = Ui.cardRow(a, null, it.optString("label"), it.optString("hint"), fixed ? Ui.G600 : Ui.FG, fixed ? null : v ->
+                    Ui.bg(a, () -> { JSONObject res = share.set(ws, !on); return new JSONObject().put("res", res).put("menu", again.get()); }, r2 -> {
+                        Ui.toast(a, r2.optJSONObject("res") == null ? (on ? "No longer shared" : "Shared") : r2.optJSONObject("res").optString("notice", on ? "No longer shared" : "Shared"));
+                        JSONObject next = r2.optJSONObject("menu");
+                        if (next != null && next.optJSONArray("items") != null && next.optJSONArray("items").length() > 0) drawShares(a, s, c, next, again, share, after);
+                        else s.dismiss();
+                        after.run();
+                    }));
+            Ui.wrapSub(r, 3);
+            if (on) r.addView(Ui.icon(a, Ui.I_CHECK, 20, fixed ? Ui.G600 : Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
+            c.addView(r, Ui.fill());
+        }
+    }
 
     /** Move to workspace… for a chat (`GET menu`) or a project (its menu's `workspaces`): the
      *  desktop's list, the account's workspaces with the one it's in ticked, then the way back to

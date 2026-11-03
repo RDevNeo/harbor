@@ -11,7 +11,7 @@ import { parseSnooze } from "./packages/ui/src/logic/sidebar.ts";
 import { sidebartree } from "./packages/store/src/index.ts";
 import { webUrl } from "./packages/agents/src/git.ts";
 import { githubRepo } from "./packages/agents/src/worktree.ts";
-import { choiceJson, type WorkspaceMoves } from "./workspacemoves.ts";
+import { choiceJson, shareJson, type WorkspaceMoves } from "./workspacemoves.ts";
 
 /**
  * "Add project" from a phone (`/v1/projects*`): the desktop's own palette (logic/addproject.ts)
@@ -80,10 +80,11 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.ARCHIVE, "archive"],
   [ICONS.UNARCHIVE, "unarchive"],
   [ICONS.USERS, "users"],
+  [ICONS.LINK, "link"],
   [ICONS.MONITOR, "monitor"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "move_workspace", "move_pc", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "remove"];
 const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -365,7 +366,16 @@ export class ProjectsApi {
     const until = this.snoozeOf(`r${r.id}`);
     const settled = this.h.store.settledProjects().has(r.id);
     const moves = this.h.moves?.projectMenu(r) ?? null;
-    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false, settled, ...(moves ? { moveWhy: moves.why } : {}), moving: this.h.moving?.(r.id) ?? null }).map((it): Json => {
+    const shares = this.h.moves?.projectShares(r) ?? null;
+    const items = projectMenu({
+      remote,
+      main: main !== null,
+      customIcon: this.h.customIcon?.(r.id) ?? false,
+      settled,
+      ...(moves ? { moveWhy: moves.why } : {}),
+      ...(shares ? { shareWhy: shares.why, shareLine: shares.line } : {}),
+      moving: this.h.moving?.(r.id) ?? null,
+    }).map((it): Json => {
       const off = it.act === "terminal" || it.off === true;
       return {
         act: it.act,
@@ -389,6 +399,8 @@ export class ProjectsApi {
       settled,
       // Move to workspace…'s list (null: a Harbor without it).
       workspaces: moves ? choiceJson(moves) : null,
+      // Share with workspace…'s checklist (null: a Harbor without it).
+      shares: shares ? shareJson(shares) : null,
       row: settled ? [] : [
         { act: "new_chat", label: "New chat in this project", icon: "plus" },
         { act: "snooze", label: "Snooze", icon: "clock" },
@@ -404,6 +416,9 @@ export class ProjectsApi {
       case "workspace":
         if (!this.h.moves) return err(409, "this Harbor can't move projects to a workspace");
         return this.h.moves.moveProject(r, b.workspace, forwarded);
+      case "share":
+        if (!this.h.moves) return err(409, "this Harbor can't share projects with a workspace");
+        return this.h.moves.shareProject(r, b.workspace, b.on, forwarded);
       case "refresh_icon":
       case "website_icon":
       case "choose_icon": {
@@ -452,7 +467,7 @@ export class ProjectsApi {
         return ok({ ok: true, snoozed_until_ms: until * 1000, snoozed_label: sidebartree.snoozeLabel(until, at, off) });
       }
       default:
-        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze, settle_project, unsettle_project, workspace or remove");
+        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze, settle_project, unsettle_project, workspace, share or remove");
     }
   }
 

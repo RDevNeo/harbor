@@ -488,6 +488,8 @@ export class PhoneRoutes {
       snoozed_label: sidebartree.snoozedLabel(this.snoozeUntil(`c${c.id}`), now(), utcOffset(now())),
       // The workspace it was moved to (its own, its lead's or its project's); "": its home PC's.
       workspace: sidebartree.movedTo(c, (id) => this.d.store.chat(id), place),
+      // Share with workspace…: the workspaces it shows in besides that one (its own, its lead's, its project's).
+      shared: sidebartree.sharedWith(c, (id) => this.d.store.chat(id), place).all,
     };
   }
 
@@ -619,7 +621,7 @@ export class PhoneRoutes {
       hub_name: me.name === "" ? hostname() : me.name,
       you,
       rev: hub.rev(),
-      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: place.repos.get(r.id) ?? "", ...this.placeJson(r.id) })),
+      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: place.repos.get(r.id) ?? "", shared: [...(place.shared?.repos.get(r.id) ?? [])], ...this.placeJson(r.id) })),
       chats: chats.map((c) => this.chatJson(c, global, place)),
       tree,
       accounts,

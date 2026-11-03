@@ -83,6 +83,8 @@ const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-we
 const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));
 const notes = seed.addRepo(project("field-notes", null));
 seed.setRepoWorkspace(notes, "org_team");
+// Share with workspace…: acme-api is owned by Sam's workspace and shared with Team (the rows' link mark).
+seed.setRepoShares(api, ["org_team"]);
 // Another PC's acme-web, its folder there: the row names that PC (projectplace.ts, Place.java).
 seed.setProjectPc(seed.addRepo("/home/someone/projects/acme-web"), "pc:studio");
 
@@ -162,11 +164,12 @@ chat({ repoId: notes, title: "Summarize the interview notes", updated: ago(60 * 
   say("## Themes\n\n- **Onboarding** is the top complaint (4 of 5).\n- **Pricing** is clear to everyone.\n- **Export** is missing for two of them.", ago(60 * 26)),
   done(ago(60 * 26), 0.12),
 ]);
-chat({ repoId: null, title: "What's a good name for a cat?", updated: ago(60 * 50) }, [
+const cat = chat({ repoId: null, title: "What's a good name for a cat?", updated: ago(60 * 50) }, [
   user("What's a good name for a grey cat?", ago(60 * 50)),
   say("Ash, Pebble, Smoke or Earl Grey.", ago(60 * 50)),
   done(ago(60 * 50), 0.01),
 ]);
+seed.setChatShares(cat.id, ["org_team"]);
 chat({ repoId: web, title: "Old: try the new font", settled: true, updated: ago(60 * 24 * 6) }, [user("Try the new font on the landing page.", ago(60 * 24 * 6))]);
 // An agent's Discord join waiting on a captcha (the phone's captcha card).
 const CAPTCHA_GID = "c4e7a1b2-0000-4000-8000-00000000ca71";

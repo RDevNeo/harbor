@@ -25,9 +25,24 @@ export interface Placement {
   carried: ReadonlyMap<number, string>;
   /** A project's workspace. */
   repos: ReadonlyMap<number, string>;
+  /** Share with workspace…: the extra workspaces each shows in too (only those shared; left out: none). */
+  shared?: Shares;
+}
+
+/** Share with workspace…: workspace ids a chat or project shows in besides its own, the same three ways as `Placement`. */
+export interface Shares {
+  chats: ReadonlyMap<number, readonly string[]>;
+  carried: ReadonlyMap<number, readonly string[]>;
+  repos: ReadonlyMap<number, readonly string[]>;
 }
 
 export const NO_PLACEMENT: Placement = { chats: new Map(), carried: new Map(), repos: new Map() };
+
+/** A share list as kept in a column: ids joined by commas, each once, none empty. */
+export function shareList(v: unknown): string[] {
+  const raw = Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : "")) : typeof v === "string" ? v.split(",") : [];
+  return [...new Set(raw.map((x) => x.trim()).filter((x) => x !== ""))];
+}
 
 export function repoDir(r: Pick<Repo, "path" | "local">): string {
   return r.local ?? r.path;
@@ -234,6 +249,10 @@ function migrate(db: Database): void {
   if (!has("chats", "workspace")) db.exec("ALTER TABLE chats ADD COLUMN workspace TEXT NOT NULL DEFAULT '';");
   if (!has("chats", "project_workspace")) db.exec("ALTER TABLE chats ADD COLUMN project_workspace TEXT NOT NULL DEFAULT '';");
   if (!has("repos", "workspace")) db.exec("ALTER TABLE repos ADD COLUMN workspace TEXT NOT NULL DEFAULT '';");
+  // Share with workspace: the same three, each a list of workspace ids joined by commas.
+  if (!has("chats", "shared")) db.exec("ALTER TABLE chats ADD COLUMN shared TEXT NOT NULL DEFAULT '';");
+  if (!has("chats", "project_shared")) db.exec("ALTER TABLE chats ADD COLUMN project_shared TEXT NOT NULL DEFAULT '';");
+  if (!has("repos", "shared")) db.exec("ALTER TABLE repos ADD COLUMN shared TEXT NOT NULL DEFAULT '';");
 }
 
 function chatFrom(r: Row): Chat {
@@ -385,13 +404,38 @@ export class Store {
   placement(): Placement {
     const chats = new Map<number, string>();
     const carried = new Map<number, string>();
-    for (const r of this.db.query("SELECT id, workspace, project_workspace FROM chats WHERE workspace != '' OR project_workspace != ''").all() as Row[]) {
+    const shared = { chats: new Map<number, string[]>(), carried: new Map<number, string[]>(), repos: new Map<number, string[]>() };
+    const list = (m: Map<number, string[]>, id: number, v: unknown) => {
+      const l = shareList(v);
+      if (l.length > 0) m.set(id, l);
+    };
+    for (const r of this.db.query("SELECT id, workspace, project_workspace, shared, project_shared FROM chats WHERE workspace != '' OR project_workspace != '' OR shared != '' OR project_shared != ''").all() as Row[]) {
       if (text(r.workspace) !== "") chats.set(num(r.id), text(r.workspace));
       if (text(r.project_workspace) !== "") carried.set(num(r.id), text(r.project_workspace));
+      list(shared.chats, num(r.id), r.shared);
+      list(shared.carried, num(r.id), r.project_shared);
     }
     const repos = new Map<number, string>();
-    for (const r of this.db.query("SELECT id, workspace FROM repos WHERE workspace != ''").all() as Row[]) repos.set(num(r.id), text(r.workspace));
-    return { chats, carried, repos };
+    for (const r of this.db.query("SELECT id, workspace, shared FROM repos WHERE workspace != '' OR shared != ''").all() as Row[]) {
+      if (text(r.workspace) !== "") repos.set(num(r.id), text(r.workspace));
+      list(shared.repos, num(r.id), r.shared);
+    }
+    return { chats, carried, repos, shared };
+  }
+
+  /** Chat `id`'s own shares (Share with workspace…): the workspaces it shows in besides its own. */
+  setChatShares(id: number, ws: readonly string[]): void {
+    this.db.query("UPDATE chats SET shared=?2 WHERE id=?1").run(id, shareList(ws).join(","));
+  }
+
+  /** A copy's project's shares, as its home PC says them. */
+  setCarriedShares(id: number, ws: readonly string[]): void {
+    this.db.query("UPDATE chats SET project_shared=?2 WHERE id=?1").run(id, shareList(ws).join(","));
+  }
+
+  /** Project `id`'s shares. */
+  setRepoShares(id: number, ws: readonly string[]): void {
+    this.db.query("UPDATE repos SET shared=?2 WHERE id=?1").run(id, shareList(ws).join(","));
   }
 
   /** Chat `id`'s own workspace ("": none, its project's or its PC's applies). */

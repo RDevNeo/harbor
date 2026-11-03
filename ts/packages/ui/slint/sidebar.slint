@@ -22,6 +22,21 @@ export struct SideRow {
     place: string,
     // `place` names a PC (else it's this PC's folder, for two projects with one name).
     place-pc: bool,
+    // Share with workspace…: "" not shared, "shared", "here" (shown only because it's shared with a picked workspace).
+    shared: string,
+    shared-tip: string,
+}
+
+// Share with workspace…'s mark: a link glyph, blue when the filter shows the row only because it's shared.
+component SharedMark inherits TipArea {
+    in property <string> kind;
+    in property <bool> active;
+    width: 16px;
+    Glyph {
+        icon: Icons.link;
+        size: 12px;
+        color: root.kind == "here" ? Theme.blue-900 : root.active ? Theme.fg : Theme.subtle;
+    }
 }
 
 component ThreadRow {
@@ -60,7 +75,7 @@ component ThreadRow {
         }
         title := Text {
             x: root.indented ? 8px : 32px;
-            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px) - (root.data.place != "" ? place.width + 6px : 0px);
+            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px) - (root.data.shared != "" ? 20px : 0px) - (root.data.place != "" ? place.width + 6px : 0px);
             width: min(self.preferred-width, max(self.room, 10px));
             text: root.data.title;
             font-size: 14px;
@@ -108,6 +123,12 @@ component ThreadRow {
                 size: 13px;
                 color: root.data.pr == "open" ? Theme.green-900 : root.data.pr == "draft" ? Theme.gray-800 : root.data.pr == "closed" ? Theme.red-900 : Theme.dark ? #c4b5fd : #7c3aed;
             }
+        }
+        if root.data.shared != "": SharedMark {
+            x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px);
+            kind: root.data.shared;
+            active: root.data.active;
+            tip: root.data.shared-tip;
         }
         status := StatusView {
             visible: !root.hovering;
@@ -251,6 +272,12 @@ component ProjectRow {
             overflow: elide;
             vertical-alignment: center;
             horizontal-stretch: 0;
+        }
+        if root.data.shared != "": SharedMark {
+            horizontal-stretch: 0;
+            kind: root.data.shared;
+            active: root.data.active;
+            tip: root.data.shared-tip;
         }
         if root.data.place != "": HorizontalLayout {
             spacing: 3px;

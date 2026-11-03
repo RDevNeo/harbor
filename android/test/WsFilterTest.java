@@ -82,6 +82,32 @@ public class WsFilterTest {
         WsFilter allOf = new WsFilter(new ArrayList<>(), "ts:desk", "a", pcs);
         check(allOf.shows("", "b") && allOf.showsProject("/moved", "b"), "under All everything still shows");
 
+        // Share with workspace…: its owner or any workspace it's shared with (logic/sidebar.ts's test).
+        List<String> toB = Arrays.asList("b");
+        WsFilter onlyB = new WsFilter(Arrays.asList("b"), "ts:desk", "a", pcs);
+        check(onlyB.shows("", "", toB), "this PC's chat shared with b shows under b");
+        check(!onlyB.shows("", "", Arrays.asList("c")), "shared with c only: not under b");
+        check(!onlyB.shows("", "", null) && !onlyB.shows("", "", new ArrayList<>()), "not shared: its owner's alone");
+        check(onlyB.showsProject("/mine", "", toB), "a project shared with b shows under b");
+        onlyB.saw("", "", toB, "/through");
+        check(onlyB.showsProject("/through", "", null), "a project with a lead shared with b comes along");
+        WsFilter onlyA = new WsFilter(Arrays.asList("a"), "ts:desk", "a", pcs);
+        check(onlyA.shows("", "", toB) && onlyA.showsProject("/mine", "", toB), "it still shows under its owner");
+        check(!onlyA.shows("", "b", Arrays.asList("c")), "moved to b, shared with c: not under a");
+        same(onlyA.owner("", ""), "a", "owner: its PC's");
+        same(onlyA.owner("ts:other", "c"), "c", "owner: where it was moved");
+        same(onlyA.projectOwner(""), "a", "project owner: the answering PC's");
+        // The mark: plain under its owner or All; "here" when it shows only because it's shared.
+        same(onlyB.mark("a", toB), "here", "shared, owner not picked");
+        same(onlyA.mark("a", toB), "shared", "shared, owner picked");
+        same(allOf.mark("a", toB), "shared", "shared, under All");
+        same(onlyB.mark("b", toB), "", "the owner never counts as a share");
+        Map<String, String> names = new HashMap<>();
+        names.put("a", "Sam's workspace");
+        names.put("b", "Team");
+        same(WsFilter.line(names, "a", toB), "Owned by Sam's workspace · shared with Team", "the line");
+        same(WsFilter.line(names, "b", toB), "Owned by Team · not shared", "the line, not shared");
+
         // The same picks and toggles as src/sidebar.rs's tests.
         List<String> ids = Arrays.asList("a", "b", "c");
         same(WsFilter.picked("", ids), "[]", "All");

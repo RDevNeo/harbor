@@ -152,6 +152,24 @@ test("a_phone_moves_a_chat_to_a_workspace_only_when_the_account_has_some", async
   h.store.setChatWorkspace(c.id, "");
 });
 
+test("a_phone_shares_a_chat_with_a_workspace_and_its_json_says_with_which", async () => {
+  const c = h.store.createChat(blankChat({ title: "Shared", account: "claude", role: "lead", name: "lead", repoId: chat }));
+  h.engine.reload();
+  const [st, menu] = await json("GET", `/v1/chats/${c.id}/shares`);
+  expect(st).toBe(200);
+  expect(menu).toMatchObject({ why: expect.stringMatching(/Sign in/), items: [] });
+  expect((await json("POST", `/v1/chats/${c.id}/share`, { workspace: "org_x", on: true }))[0]).toBe(400);
+  expect((await json("POST", `/v1/chats/${c.id}/share`, { workspace: "", on: true }))[0]).toBe(400);
+  // The phone's chat JSON lists its shares (its own and its project's); projects list theirs.
+  h.store.setChatShares(c.id, ["org_b"]);
+  h.store.setRepoShares(chat, ["org_c"]);
+  const [, state] = await json("GET", "/v1/state");
+  expect((state.chats as { id: unknown; shared: unknown }[]).find((x) => x.id === c.id)?.shared).toEqual(["org_b", "org_c"]);
+  expect((state.projects as { id: unknown; shared: unknown }[]).find((p) => p.id === chat)?.shared).toEqual(["org_c"]);
+  h.store.setChatShares(c.id, []);
+  h.store.setRepoShares(chat, []);
+});
+
 test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
   const lead = h.store.createChat(blankChat({ title: "Lead", account: "claude", role: "lead", name: "lead", repoId: chat }));
   const sub = h.store.createChat(blankChat({ title: "Task", account: "claude", role: "sub", parent: lead.id, name: "worker" }));
@@ -202,10 +220,13 @@ test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
   const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
   expect(st).toBe(200);
   expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
-  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Share with workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
   // Not signed in: greyed with why, and nothing to pick.
   expect((menu.items as { act: string }[]).find((i) => i.act === "move_workspace")).toMatchObject({ enabled: false, desc: expect.stringMatching(/Sign in/) });
   expect(menu.workspaces).toEqual({ why: expect.stringMatching(/Sign in/), items: [] });
+  expect((menu.items as { act: string }[]).find((i) => i.act === "share_workspace")).toMatchObject({ enabled: false, desc: expect.stringMatching(/Sign in/) });
+  expect(menu.shares).toMatchObject({ why: expect.stringMatching(/Sign in/), items: [] });
+  expect((await json("POST", "/v1/projects/do", { project: pid, act: "share", workspace: "org_x", on: true }))[0]).toBe(400);
   expect((await json("POST", "/v1/projects/do", { project: pid, act: "workspace", workspace: "org_x" }))[0]).toBe(400);
   const [gone] = await json("POST", "/v1/projects/do", { project: pid, act: "remove" });
   expect(gone).toBe(200);

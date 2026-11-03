@@ -173,6 +173,26 @@ export async function runApp(o: RunOptions): Promise<number> {
           const r = run.store.repos().find((x) => x.id === id);
           return r ? run.moves.moveProject(r, ws) : { status: 404, body: { error: "no such project" } };
         },
+        chatShares: (id: number) => {
+          const c = run.store.chat(id);
+          return c ? run.moves.chatShares(c) : null;
+        },
+        projectShares: (id: number) => {
+          const r = run.store.repos().find((x) => x.id === id);
+          return r ? run.moves.projectShares(r) : null;
+        },
+        shareChat: async (id: number, ws: string, on: boolean) => {
+          const c = run.store.chat(id);
+          return c ? run.moves.shareChat(c, ws, on) : { status: 404, body: { error: "no such chat" } };
+        },
+        shareProject: async (id: number, ws: string, on: boolean) => {
+          const r = run.store.repos().find((x) => x.id === id);
+          return r ? run.moves.shareProject(r, ws, on) : { status: 404, body: { error: "no such project" } };
+        },
+        projectIn: (id: number) => {
+          const r = run.store.repos().find((x) => x.id === id);
+          return r ? run.moves.projectIn(r) : "";
+        },
       },
       projectMove: (repo: number, body: Record<string, unknown>) => run.projectMove.api(repo, body, run.hub.mesh.me.name),
       projectMoving: (repo: number) => {

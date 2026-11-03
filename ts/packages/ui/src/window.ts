@@ -35,6 +35,10 @@ export interface SideRow {
   place: string;
   /** `place` names a PC (else this PC's folder). */
   place_pc: boolean;
+  /** Share with workspace…: "" not shared, "shared", "here" (the filter shows it only because it's shared). */
+  shared: "" | "shared" | "here";
+  /** "Owned by X · shared with Y". */
+  shared_tip: string;
 }
 
 export interface MdBlockData {

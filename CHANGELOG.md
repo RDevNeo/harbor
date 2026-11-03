@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Share with workspace…: every chat's and every project's menu, on the desktop (right-click a row)
+  and on the phone (a chat's menu, a project's sheet), has it right after Move to workspace…. It's
+  a checklist of the signed-in account's workspaces: the one the chat or project is in shows as its
+  owner and isn't a toggle, and ticking another makes it show there too, while it stays owned by its
+  own workspace. The sidebar's workspace filter then shows it under its owner and under every
+  workspace it's shared with. A project's chats get the project's shares (ticked and locked in a
+  chat's list) plus their own; sub-agents go with their lead. Moving it to a workspace it was shared
+  with drops that share. Shared rows carry a small link mark, on the desktop and the phone alike;
+  its tooltip (a tap on the phone) and the menu say "Owned by X · shared with Y", and when the
+  filter shows a row only because it's shared the mark turns blue and says so. Kept, carried and
+  forwarded like the move: with the chat on its home PC (a project's on the PC whose folder it is),
+  a change made on another PC goes there first, and the mesh carries it to every copy and phone at
+  once. It's placement only: who and which PCs can reach a chat, and what the mesh copies, don't
+  change. Greyed with why when nobody is signed in or the account has a single workspace.
+
 ## [0.121.7] - 2026-11-03
 
 ### Changed
