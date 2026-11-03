@@ -12,7 +12,7 @@ export interface RunError {
 /** The accounts a chat may switch to (app.rs `allowed_accounts`): a lead stays on Claude, a started chat on its provider. */
 export function allowedAccounts(c: Chat, accounts: readonly Account[]): string[] {
   const locked: Kind | undefined = c.role === "lead" ? "Claude" : c.started ? accounts.find((a) => a.id === c.account)?.kind : undefined;
-  return accounts.filter((a) => a.bin !== null && (locked === undefined || a.kind === locked)).map((a) => a.id);
+  return accounts.filter((a) => a.bin !== null && a.off !== true && (locked === undefined || a.kind === locked)).map((a) => a.id);
 }
 
 /**
@@ -43,7 +43,8 @@ export function checkRun(c: Chat, body: Record<string, unknown>, accounts: reado
   if (account !== null) {
     const acc = accounts.find((x) => x.id === account && x.bin !== null);
     if (!acc) fail(400, `no account ${account}`);
-    if (!allowed.includes(account)) fail(409, `can't switch to ${acc ? providers.short(acc) : account}: ${c.role === "lead" ? "a lead runs on Claude" : `a started chat stays on ${oldKind}`}`);
+    if (acc?.off === true && account !== c.account) fail(409, `${providers.short(acc)} is turned off in Settings › Providers on this PC`);
+    if (!allowed.includes(account) && account !== c.account) fail(409, `can't switch to ${acc ? providers.short(acc) : account}: ${c.role === "lead" ? "a lead runs on Claude" : `a started chat stays on ${oldKind}`}`);
     n.account = account;
   }
   const kind = kindOf(n.account) ?? "Claude";

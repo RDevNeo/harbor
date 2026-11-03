@@ -87,6 +87,11 @@ export class Data {
     return this.shared ? this.shared() : this.own;
   }
 
+  /** Reads this PC's accounts again (one was turned off or removed in Settings › Providers). */
+  rediscoverAccounts(): void {
+    this.rediscover();
+  }
+
   reload(): void {
     this.rediscover();
     this.engine.reload();

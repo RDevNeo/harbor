@@ -28,14 +28,21 @@ export interface ProviderRow {
   action: ProviderAction;
   primary: boolean;
   is_default: boolean;
+  /** The switch: on = Harbor may use the account. */
+  on: boolean;
+  removable: boolean;
+  /** Its Remove was pressed: the row asks before removing. */
+  confirming: boolean;
 }
 
 export interface ProvidersData {
   rows: ProviderRow[];
+  /** A line over the list: why a switch didn't move, what Remove did. */
+  note: string;
 }
 
 /** pages.rs `providers_tab`: every account with its state. */
-export function providersData(accounts: readonly providers.Account[], defaultAccount: string, logo: (kind: providers.Kind) => Pixels): ProvidersData {
+export function providersData(accounts: readonly providers.Account[], defaultAccount: string, logo: (kind: providers.Kind) => Pixels, confirming = "", note = ""): ProvidersData {
   const rows = accounts.map((a): ProviderRow => {
     const installed = providers.installed(a);
     const signedOut = a.loggedIn === false;
@@ -53,9 +60,34 @@ export function providersData(accounts: readonly providers.Account[], defaultAcc
       action: !installed ? "Install" : signedOut ? "Sign in" : "Re-auth",
       primary: installed && signedOut,
       is_default: a.id === defaultAccount,
+      on: a.off !== true,
+      removable: providers.removable(a),
+      confirming: confirming === a.id,
     };
   });
-  return { rows };
+  return { rows, note };
+}
+
+/** What a switch does. Turning off the default account makes the next usable one the default; the last usable account
+ *  can't be turned off (new chats would have nothing to run on). Returns the account that became the default, an
+ *  error, or nothing to say. */
+export function toggleAccount(accounts: readonly providers.Account[], defaultAccount: string, id: string, on: boolean, setOff: (id: string, off: boolean) => void): { error: string } | { newDefault: providers.Account | null } {
+  const a = accounts.find((x) => x.id === id);
+  if (a === undefined) return { newDefault: null };
+  if (on) {
+    setOff(id, false);
+    return { newDefault: null };
+  }
+  const rest = accounts.filter((x) => x.id !== id && providers.usable(x));
+  if (rest.length === 0 && providers.usable(a)) return { error: `${label(a)} is the only account Harbor can use: turn another one on first.` };
+  setOff(id, true);
+  if (a.id !== defaultAccount) return { newDefault: null };
+  return { newDefault: providers.fallback(rest, a.kind) ?? null };
+}
+
+/** "Claude · IG" with the account's name, as rows show it. */
+export function label(a: providers.Account): string {
+  return a.kind === "Claude" ? `${a.name} (Claude \u{b7} ${a.badge})` : a.kind;
 }
 
 /** What "Add Claude account" runs in the terminal: the first free ~/.claudeN from 2 on (app.rs `add_claude_account`). */

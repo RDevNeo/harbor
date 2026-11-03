@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { providers } from "@harbor/agents";
-import { addClaudeAccount, firstModel, makeDefault, providersData } from "../src/logic/settings-providers.ts";
+import { addClaudeAccount, firstModel, makeDefault, providersData, toggleAccount } from "../src/logic/settings-providers.ts";
 
 class Kv {
   readonly map = new Map<string, string>();
@@ -66,4 +66,22 @@ test("providers makes an account the default with its first model and its provid
     ["default_effort", "medium"],
     ["default_access", "full"],
   ]);
+});
+
+test("an account's switch: off dims the row, the default moves on, the last usable account stays on", () => {
+  const two = account({ id: "claude2", name: "Work", badge: "WK", configDir: "/h/.claude2" });
+  const v = providersData([account({}), { ...two, off: true }], "claude", logo, "claude2", "note");
+  expect(v.rows[0]).toMatchObject({ on: true, removable: false, confirming: false });
+  expect(v.rows[1]).toMatchObject({ on: false, removable: true, confirming: true });
+  expect(v.note).toBe("note");
+
+  const off: [string, boolean][] = [];
+  const set = (id: string, o: boolean) => void off.push([id, o]);
+  const r = toggleAccount([account({}), two], "claude", "claude", false, set);
+  expect(r).toEqual({ newDefault: two });
+  expect(off).toEqual([["claude", true]]);
+  expect(toggleAccount([account({}), two], "claude", "claude2", false, set)).toEqual({ newDefault: null });
+  const only = toggleAccount([account({}), { ...two, loggedIn: false }], "claude", "claude", false, set);
+  expect("error" in only).toBe(true);
+  expect(off.length).toBe(2);
 });

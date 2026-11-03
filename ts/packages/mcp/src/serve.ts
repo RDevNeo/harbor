@@ -9,7 +9,7 @@ import { harborVersion } from "./version.ts";
 
 /** The Claude Code login Discord's repair runs on: the main one first, as discordrepair.rs did. */
 export function repairAccount(): discordsetup.ClaudeAccount | undefined {
-  const usable = providers.discover().filter((a) => a.kind === "Claude" && a.bin !== null && a.loggedIn === true);
+  const usable = providers.discover().filter((a) => a.kind === "Claude" && providers.signedIn(a));
   const a = usable.find((x) => x.id === "claude") ?? usable[0];
   return a === undefined ? undefined : { bin: providers.binStr(a), env: providers.accountEnv(a) };
 }

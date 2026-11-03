@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { AccountMark, Badge, Btn, Card, Meter, Separator, SettingRow } from "widgets.slint";
+import { AccountMark, Badge, Btn, Card, Meter, Separator, SettingRow, Toggle } from "widgets.slint";
 
 export struct ProviderMeter {
     label: string,
@@ -22,10 +22,14 @@ export struct ProviderRow {
     action: string,
     primary: bool,
     is-default: bool,
+    on: bool,
+    removable: bool,
+    confirming: bool,
 }
 
 export struct ProvidersData {
     rows: [ProviderRow],
+    note: string,
 }
 
 component Centered {
@@ -66,6 +70,15 @@ export component ProvidersTab {
         Rectangle {
             height: 16px;
         }
+        if root.data.note != "": VerticalLayout {
+            padding-bottom: 10px;
+            Text {
+                text: root.data.note;
+                font-size: 13px;
+                color: Theme.fg;
+                wrap: word-wrap;
+            }
+        }
         Card {
             VerticalLayout {
                 for r[i] in root.data.rows: VerticalLayout {
@@ -79,6 +92,7 @@ export component ProvidersTab {
                         VerticalLayout {
                             width: 32px;
                             alignment: start;
+                            opacity: r.on ? 1 : 0.45;
                             AccountMark {
                                 height: 32px;
                                 logo: r.logo;
@@ -89,6 +103,7 @@ export component ProvidersTab {
                             horizontal-stretch: 1;
                             alignment: start;
                             spacing: 1px;
+                            opacity: r.on ? 1 : 0.45;
                             HorizontalLayout {
                                 height: 30px;
                                 spacing: 7px;
@@ -147,27 +162,61 @@ export component ProvidersTab {
                                 }
                             }
                         }
-                        HorizontalLayout {
+                        if r.confirming: HorizontalLayout {
+                            spacing: 8px;
+                            alignment: end;
+                            Centered {
+                                Text {
+                                    text: "Remove from Harbor?";
+                                    font-size: 13px;
+                                    color: Theme.fg;
+                                }
+                            }
+                            Centered {
+                                Btn {
+                                    text: "Remove";
+                                    size: sm;
+                                    variant: destructive;
+                                    clicked => {
+                                        root.act(r.id, "remove_yes");
+                                    }
+                                }
+                            }
+                            Centered {
+                                Btn {
+                                    text: "Cancel";
+                                    size: sm;
+                                    variant: ghost;
+                                    clicked => {
+                                        root.act(r.id, "remove_no");
+                                    }
+                                }
+                            }
+                        }
+                        if !r.confirming: HorizontalLayout {
                             spacing: 8px;
                             alignment: end;
                             Centered {
                                 if !r.installed: Badge {
                                     text: "Not installed";
                                 }
-                                if r.installed && r.state == "signed-out": Badge {
+                                if r.installed && !r.on: Badge {
+                                    text: "Off";
+                                }
+                                if r.installed && r.on && r.state == "signed-out": Badge {
                                     text: "Signed out";
                                     tone: amber;
                                 }
-                                if r.installed && r.state == "ready": Badge {
+                                if r.installed && r.on && r.state == "ready": Badge {
                                     text: "Ready";
                                     tone: green;
                                 }
-                                if r.installed && r.state == "installed": Badge {
+                                if r.installed && r.on && r.state == "installed": Badge {
                                     text: "Installed";
                                     tone: green;
                                 }
                             }
-                            if r.installed: Centered {
+                            if r.installed && r.on: Centered {
                                 if r.is-default: Badge {
                                     text: "Default";
                                     tone: blue;
@@ -185,9 +234,28 @@ export component ProvidersTab {
                                 Btn {
                                     text: r.action;
                                     size: sm;
-                                    variant: r.primary ? primary : r.installed ? ghost : outline;
+                                    variant: r.primary && r.on ? primary : r.installed ? ghost : outline;
                                     clicked => {
                                         root.act(r.id, "login");
+                                    }
+                                }
+                            }
+                            if r.removable: Centered {
+                                Btn {
+                                    icon: Icons.trash;
+                                    size: icon-sm;
+                                    variant: ghost-destructive;
+                                    tip: "Remove this account from Harbor";
+                                    clicked => {
+                                        root.act(r.id, "remove");
+                                    }
+                                }
+                            }
+                            if r.installed: Centered {
+                                Toggle {
+                                    on: r.on;
+                                    toggled(v) => {
+                                        root.act(r.id, v ? "on" : "off");
                                     }
                                 }
                             }
@@ -200,7 +268,7 @@ export component ProvidersTab {
             height: 8px;
         }
         Text {
-            text: "Sign-in runs the provider's own login in Harbor's terminal. Press Refresh in the sidebar afterwards.";
+            text: "Sign-in runs the provider's own login in Harbor's terminal. Press Refresh in the sidebar afterwards. An account switched off is never used for new chats, agents or automatic switching on this PC.";
             font-size: 12px;
             color: Theme.subtle;
             wrap: word-wrap;

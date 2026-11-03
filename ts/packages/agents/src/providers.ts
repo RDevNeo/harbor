@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
-import { home } from "./paths.ts";
+import { dataDir, home, writePrivate } from "./paths.ts";
 
 export const KINDS = ["Claude", "Codex"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -76,6 +76,8 @@ export interface Account {
   usage: Window[];
   /** When the usage monitor wrote `usage` (Unix time). */
   usageAt?: number | null;
+  /** Turned off in Settings › Providers on this PC: Harbor never picks or offers it (`accounts-off.json`). */
+  off?: boolean;
 }
 
 export function installed(a: Account): boolean {
@@ -85,7 +87,58 @@ export function installed(a: Account): boolean {
 /** Installed and not known to be signed out: an account Harbor can run turns as, and lists as such (a profile
  *  folder that was never signed in only shows where Harbor offers the sign-in). */
 export function usable(a: Account): boolean {
-  return a.bin !== null && a.loggedIn !== false;
+  return a.bin !== null && a.loggedIn !== false && a.off !== true;
+}
+
+/** usable() and known to be signed in: what background jobs (dictation, names, recaps) may run on. */
+export function signedIn(a: Account): boolean {
+  return a.bin !== null && a.loggedIn === true && a.off !== true;
+}
+
+/** This PC's turned-off accounts. A file, not the settings table: every process that lists accounts (the app, the
+ *  hub, an MCP server) reads it, and it never syncs to other PCs. */
+export function offPath(): string {
+  return join(dataDir(), "accounts-off.json");
+}
+
+export function offIds(): string[] {
+  const v = readJson(offPath());
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+export function setOff(id: string, off: boolean): void {
+  const now = offIds().filter((x) => x !== id);
+  if (off) now.push(id);
+  mkdirSync(dataDir(), { recursive: true });
+  writePrivate(offPath(), `${JSON.stringify(now.sort())}\n`);
+}
+
+/** The account a chat or a default falls back to when `id` is off or gone: the first usable one of `kind` (any kind
+ *  when there's none), the main Claude account first. */
+export function fallback(accounts: readonly Account[], kind?: Kind): Account | undefined {
+  const ok = accounts.filter(usable);
+  return ok.find((a) => kind === undefined || a.kind === kind) ?? ok[0];
+}
+
+/** A Claude account Settings › Providers can remove: an extra profile folder (~/.claudeN), never the main one. */
+export function removable(a: Account): boolean {
+  return a.kind === "Claude" && /^claude\+?\d+$/.test(a.id) && a.configDir !== null;
+}
+
+/** Takes an extra Claude account out of Harbor: its ~/.claudeN folder moves to Harbor's `removed-accounts` (kept, so
+ *  nothing is lost; discover() no longer finds it), and it leaves the off list. Returns where it went. The folder's
+ *  links into ~/.claude (projects, skills, …) move as links: what they point to stays where it is. */
+export function removeAccount(a: Account): string {
+  if (!removable(a) || a.configDir === null) throw new Error(`${a.name} can't be removed`);
+  const dir = a.configDir;
+  if (!lstatSync(dir).isDirectory()) throw new Error(`${dir} isn't a folder`);
+  const bin = join(dataDir(), "removed-accounts");
+  mkdirSync(bin, { recursive: true, mode: 0o700 });
+  let to = join(bin, `${a.id}-${Math.floor(Date.now() / 1000)}`);
+  for (let i = 2; existsSync(to); i++) to = join(bin, `${a.id}-${Math.floor(Date.now() / 1000)}-${i}`);
+  renameSync(dir, to);
+  if (offIds().includes(a.id)) setOff(a.id, false);
+  return to;
 }
 
 /** The plan as Anthropic names it since 2026-10-30: "Max 20x" is Ultra, "Max 5x" plain Max (the rate-limit tiers,
@@ -226,6 +279,8 @@ export function discover(): Account[] {
   extra.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   for (const [n, dir] of extra) out.push(claudeAccount(`claude${n}`, dir, join(dir, ".claude.json"), n));
   out.push({ id: "codex", kind: "Codex", name: "Codex", email: "", badge: "", plan: "", configDir: null, bin: which(bin("Codex")), loggedIn: existsSync(join(h, ".codex/auth.json")), usage: [] });
+  const off = offIds();
+  for (const a of out) if (off.includes(a.id)) a.off = true;
   applyUsage(out);
   return out;
 }

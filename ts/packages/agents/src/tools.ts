@@ -4,7 +4,7 @@ import type { Engine } from "./engine.ts";
 import * as oc from "./openchat.ts";
 import { newUuid, now, randomHex } from "./paths.ts";
 import * as procs from "./procs.ts";
-import { accessLabel, applyUsage, short, staticModels, usable } from "./providers.ts";
+import { type Account, accessLabel, applyUsage, type Kind, short, staticModels, usable } from "./providers.ts";
 import * as team from "./team.ts";
 import { elapsed } from "./team.ts";
 
@@ -256,6 +256,21 @@ export function statusWords(e: Engine, c: Chat): string {
   return a === "now" ? "idle, active just now" : `idle, last active ${a} ago`;
 }
 
+/** The account a new chat or agent runs on: the one named, else `dflt`. An account turned off in Settings ›
+ *  Providers is never used: named, it's refused; as the default, the first usable one (of `kind`, else of the
+ *  default's provider) takes its place. */
+function pickAccount(e: Engine, named: string, dflt: string, kind?: Kind): Account {
+  const id = named || dflt;
+  const acc = e.account(id);
+  if (!acc) throw new Error(`unknown account '${id}'. Use list_models.`);
+  if (acc.off !== true) return acc;
+  if (named !== "") throw new Error(`account '${id}' is turned off on this PC. Use list_models.`);
+  const k = kind ?? acc.kind;
+  const alt = e.host.accounts().find((x) => x.kind === k && usable(x));
+  if (!alt) throw new Error(`account '${id}' is turned off on this PC and no other ${k} account is on`);
+  return alt;
+}
+
 export async function openChat(e: Engine, me: Chat, a: unknown): Promise<string> {
   const prompt = arg(a, "prompt");
   if (prompt === "") throw new Error("prompt is empty");
@@ -274,9 +289,8 @@ export async function openChat(e: Engine, me: Chat, a: unknown): Promise<string>
     return e.host.openElsewhere(me, machine, a);
   }
   const mine = e.account(me.account)?.kind === "Claude";
-  const account = arg(a, "account") || (mine ? me.account : "claude");
-  const acc = e.account(account);
-  if (!acc) throw new Error(`unknown account '${account}'. Use list_models.`);
+  const acc = pickAccount(e, arg(a, "account"), mine ? me.account : "claude", "Claude");
+  const account = acc.id;
   if (acc.kind !== "Claude") throw new Error(`chats run on a Claude account; give ${acc.kind} work with spawn_agent instead`);
   const same = account === me.account;
   const model = arg(a, "model") || (same ? me.model : "");
@@ -325,9 +339,8 @@ export function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): str
       }
     }
   }
-  const accountId = arg(a, "account") || me.account;
-  const acc = e.account(accountId);
-  if (!acc) throw new Error(`unknown account '${accountId}'. Use list_models.`);
+  const acc = pickAccount(e, arg(a, "account"), me.account);
+  const accountId = acc.id;
   if (acc.bin === null) throw new Error(`${acc.kind} is not installed`);
   const model = arg(a, "model") || (acc.kind === "Claude" ? me.model : "");
   const access = team.subAccess(me.access, acc.kind);

@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Settings › Providers has an on/off switch on each account. An account that's off on this PC is
+  never used: it isn't in the model menu, the phone's account list, list_models, spawn_agent or
+  open_chat (asked for by name, they refuse it), automatic switching on usage limits, or the
+  background jobs (dictation clean-up, worktree names, owner detection). Turning off the default
+  account makes the next account that's on the default and says which; the last usable account can't
+  be turned off. A chat already on an account that's off moves to the default account (or another
+  of the same provider) with a notice when you next send; with none to move to, the notice says to
+  turn it back on or pick another account. The switch is this PC's alone and never syncs.
+- Remove on extra Claude accounts (~/.claudeN), after a confirm: Harbor stops listing the account and
+  moves its folder to Harbor's data folder under removed-accounts, so Refresh doesn't bring it back
+  and nothing is deleted. The main ~/.claude account has no Remove.
+
 ## [0.125.0] - 2026-11-03
 
 ### Changed

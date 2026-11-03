@@ -60,6 +60,8 @@ export interface AccountInfo {
   usage: UsageWindow[];
   usageAt?: number | null;
   plan?: string;
+  /** Turned off in Settings › Providers: never a switch target, and its chats move off it. */
+  off?: boolean;
 }
 
 /** How notices name an account: a Claude account by its own name, others by provider. */
@@ -516,6 +518,7 @@ export class Limits {
     const chat = this.host.chat(chatId);
     if (!chat) return false;
     const account = chat.account;
+    if (this.host.account(account)?.off === true) return this.offGuard(chatId);
     if (!this.blocked(account)) return false;
     // Auto-switch: the turn starts on another account instead.
     const to = this.autoTarget(chatId);
@@ -665,7 +668,7 @@ export class Limits {
     const { ids } = this.switchSettings();
     const v = this.host
       .accounts()
-      .filter((a) => a.kind === kind && a.id !== chat.account && a.loggedIn !== false && !this.blocked(a.id) && !this.ctl.overCap(a.id))
+      .filter((a) => a.kind === kind && a.id !== chat.account && a.loggedIn !== false && a.off !== true && !this.blocked(a.id) && !this.ctl.overCap(a.id))
       .filter((a) => !opted || ids.includes(a.id))
       .map((a): [string, [number, number]] => [a.id, this.usageOf(a.id)])
       .filter(([, [w, f]]) => !opted || (w < FULL && f < FULL));
@@ -737,6 +740,29 @@ export class Limits {
     this.host.pending.delete(chatId);
     this.syncPending();
     this.host.startTurn(chatId, parts.join("\n\n---\n\n"));
+    return true;
+  }
+
+  /** A chat on an account turned off in Settings › Providers: its turn starts on the default account (or the
+   *  least used other one of the same provider) with a notice. With none to move to, the message stays in the
+   *  transcript, unsent, and a notice says why. False: start the turn (on the new account). */
+  private offGuard(chatId: number): boolean {
+    const chat = this.host.chat(chatId);
+    if (!chat) return false;
+    const from = this.host.account(chat.account);
+    const name = from ? accountName(from) : chat.account;
+    const targets = this.switchTargets(chatId, false);
+    const def = this.host.store.get("default_account") ?? "claude";
+    const to = targets.includes(def) ? def : targets[0];
+    const err = to === undefined ? "no other account of this provider is on" : this.bringSession(chatId, to);
+    if (to !== undefined && err === null) {
+      const target = this.host.account(to);
+      this.host.setAccount(chatId, to);
+      this.host.notice(chatId, "clock", `Switched to ${target ? accountName(target) : to} (${name} is turned off in Settings › Providers)`, "");
+      return false;
+    }
+    this.host.notice(chatId, "alert", `${name} is turned off in Settings › Providers: ${err}. Turn it back on or pick another account, then send again.`, "");
+    this.host.persist(chatId);
     return true;
   }
 

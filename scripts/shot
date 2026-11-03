@@ -24,6 +24,8 @@ Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
                 HARBOR_FAKE_CAPTCHA=PNG (ts/packages/ui/src/fakecaptcha.ts)
   --out DIR     where the PNGs go (default ~/.cache/harbor-shots/<time>)
   --empty       fresh empty data instead of a copy of harbor.db (no personal content)
+  --home DIR    the app's home folder starts as a copy of DIR (e.g. fake ~/.claudeN accounts and
+                ~/.local/bin/claude stubs for Settings › Providers); default: an empty one
   --fresh       copy harbor.db again (a cleaned copy is otherwise reused for 10 minutes)
   --idle MIN    --watch stops by itself after MIN minutes without a save (default 30)
   --trace       log every frame while waiting; --keep keeps the scratch folder
@@ -81,6 +83,7 @@ if [ "${1:-}" = --inner ]; then
     fi
     rm -rf "$h" "$T/data"; mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache" "$T/data/harbor"; chmod 700 "$h/run"
     [ -f "$SHOT_DB" ] && cp --reflink=auto "$SHOT_DB" "$T/data/harbor/harbor.db"
+    [ -n "$SHOT_HOME" ] && cp -a "$SHOT_HOME/." "$h/home/"
     start=$(now)
     (cd "$ts" && exec env -i HOME="$h/home" XDG_DATA_HOME="$T/data" XDG_STATE_HOME="$h/state" XDG_CONFIG_HOME="$h/cfg" XDG_CACHE_HOME="$h/cache" \
       XDG_RUNTIME_DIR="$h/run" WAYLAND_DISPLAY="$T/sway/wayland-1" HARBOR_SOCK="$h/h.sock" HARBOR_OFFLINE=1 HARBOR_LISTEN=127.0.0.1 \
@@ -144,7 +147,7 @@ if [ "${1:-}" = --stop ]; then
   exit 0
 fi
 
-views=() envs=() steps="" wait=auto size=1400x900 out="" empty=0 keep=0 fresh=0 watch=0 idle=30 trace=0
+views=() envs=() steps="" wait=auto size=1400x900 out="" empty=0 home="" keep=0 fresh=0 watch=0 idle=30 trace=0
 while [ $# -gt 0 ]; do
   case $1 in
     --view) views+=("${2:?--view needs a value}"); shift 2 ;;
@@ -156,6 +159,7 @@ while [ $# -gt 0 ]; do
     --out) out=${2:?}; shift 2 ;;
     --idle) idle=${2:?}; shift 2 ;;
     --empty) empty=1; shift ;;
+    --home) home=$(cd "${2:?--home needs a folder}" && pwd); shift 2 ;;
     --fresh) fresh=1; shift ;;
     --watch) watch=1; shift ;;
     --keep) keep=1; shift ;;
@@ -221,7 +225,7 @@ fi
 
 rc=0
 export SHOT_TMP=$tmp SHOT_SWAY=$sw SHOT_GRIM=$grim SHOT_BUN=$bun SHOT_SIZE=$size SHOT_WAIT=$wait SHOT_STEPS=$steps SHOT_LASTSTEP=$last SHOT_ENV="${envs[*]}" \
-  SHOT_OUT=$out SHOT_VIEWS="${views[*]}" SHOT_BUNCACHE=$base/.bun SHOT_DB=$db SHOT_SETTLE=$root/scripts/shot-settle.py SHOT_TRACE=$trace \
+  SHOT_OUT=$out SHOT_VIEWS="${views[*]}" SHOT_BUNCACHE=$base/.bun SHOT_DB=$db SHOT_SETTLE=$root/scripts/shot-settle.py SHOT_TRACE=$trace SHOT_HOME=${home:-} \
   SHOT_IDLE=$idle SHOT_RUNNER=$([ $empty = 1 ] && [ -z "$steps" ] && [ "$size" = 1400x900 ] && [ -f "$ts/packages/ui/src/settingsrun.ts" ] && echo 1 || true) SHOT_HOOK=$(grep -q 'harbor-view shown' "$ts/packages/ui/src/shell.ts" && echo 1 || true) SHOT_WATCH=$([ $watch = 1 ] && echo 1 || true) SHOT_TZ=${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}
 # (The braces keep bash's "Killed" note to itself when --stop ends the rig; the rig's own stderr goes through 3.)
 (exec 3>&2; { unshare -Urnm --pid --fork --mount-proc --kill-child "$0" --inner 2>&3; } 2>/dev/null; exit $?) &

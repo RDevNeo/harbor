@@ -79,6 +79,8 @@ export interface CatalogAccount {
   badge: string;
   bin: string | null;
   loggedIn: boolean | null;
+  /** Turned off in Settings › Providers: the phone isn't offered it. */
+  off?: boolean;
   usage: { label: string; percent: number }[];
 }
 
@@ -555,7 +557,7 @@ export class PhoneRoutes {
     const locked = c.role === "lead" ? "Claude" : c.started ? (cat.accounts().find((a) => a.id === c.account)?.kind ?? null) : null;
     return cat
       .accounts()
-      .filter((a) => a.bin !== null && (locked === null || a.kind === locked))
+      .filter((a) => a.bin !== null && a.off !== true && (locked === null || a.kind === locked))
       .map((a) => a.id);
   }
 
@@ -618,7 +620,7 @@ export class PhoneRoutes {
     const choice = (c: Choice) => ({ id: c[0], label: c[1], desc: c[2] });
     const perKind = <T extends Json>(f: (k: string) => T): Record<string, Json> => Object.fromEntries((cat?.kinds ?? []).map((k) => [slug(k), f(k)]));
     const accounts: Json[] = (cat?.accounts() ?? [])
-      .filter((a) => a.bin !== null)
+      .filter((a) => a.bin !== null && a.off !== true)
       .map((a) => ({
         id: a.id,
         label: a.kind === "Claude" ? `Claude · ${a.badge}` : a.kind,
@@ -1140,7 +1142,19 @@ export function composerDefaults(kv: { get(k: string): string | null; set(k: str
     }
     kv.set("effort_default_medium", "1");
   }
-  return { account: get("default_account", "claude"), model: aliases[m] ?? m, effort, access: get("default_access", "full"), device: get("default_device", "") };
+  let account = get("default_account", "claude");
+  let model = aliases[m] ?? m;
+  // The default turned off on this PC (it syncs from others): the first account that's on, the same provider first.
+  const off = accounts.find((x) => x.id === account && x.off === true);
+  if (off !== undefined) {
+    const on = accounts.filter((x) => x.bin !== null && x.loggedIn !== false && x.off !== true);
+    const alt = on.find((x) => x.kind === off.kind) ?? on[0];
+    if (alt !== undefined) {
+      account = alt.id;
+      if (alt.kind !== off.kind) model = "";
+    }
+  }
+  return { account, model, effort, access: get("default_access", "full"), device: get("default_device", "") };
 }
 
 /** `@harbor/agents`' providers module as far as the catalog needs it. */

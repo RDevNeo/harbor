@@ -219,7 +219,7 @@ export class Shell {
       wake: () => this.refreshVoice(),
       account: () => {
         // As voice.rs: not while the account is blocked by a usage limit.
-        const a = this.data.accounts.find((x) => x.id === "claude" && x.bin !== null && x.loggedIn === true && this.engine.limits.blocked(x.id) === undefined);
+        const a = this.data.accounts.find((x) => x.id === "claude" && providers.signedIn(x) && this.engine.limits.blocked(x.id) === undefined);
         return a ? (system, prompt, ms) => recap.askWithin(providers.binStr(a), providers.accountEnv(a), system, prompt, ms) : null;
       },
     });
@@ -442,7 +442,10 @@ export class Shell {
         this.win.draft = text;
         this.drafts.set(DRAFT, text);
       },
-      composer: () => ({ account: this.sel.account, model: this.sel.model, effort: this.sel.effort }),
+      composer: () => {
+        const s = this.newSel();
+        return { account: s.account, model: s.model, effort: s.effort };
+      },
       ask: (title, text, ok, act) => this.dialog(title, text, ok, false, "", (yes, input) => yes && act(input)),
       remote: (repo) => this.gitStatus.get(repo)?.remote ?? null,
       work: () => (this.workOf ??= new Work(this.engine)),
@@ -1381,7 +1384,19 @@ export class Shell {
 
   private chatSel(): Sel {
     const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
-    return c ? { account: c.account, model: c.model, effort: c.effort, access: c.access, device: c.device } : this.sel;
+    return c ? { account: c.account, model: c.model, effort: c.effort, access: c.access, device: c.device } : this.newSel();
+  }
+
+  /** The new-chat picks; a default account turned off in Settings › Providers (a default can sync in from another
+   *  PC) gives way to the first account that's on, its provider's first model when that's another provider. */
+  private newSel(): Sel {
+    const a = this.account(this.sel.account);
+    if (a === undefined || a.off !== true) return this.sel;
+    // Turning the default off in Settings moved the saved default: that one first.
+    const saved = this.account(this.data.store.get("default_account") ?? "");
+    const alt = saved !== undefined && providers.usable(saved) ? saved : providers.fallback(this.data.accounts, a.kind);
+    if (alt === undefined) return this.sel;
+    return alt.kind === a.kind ? { ...this.sel, account: alt.id } : { ...this.sel, account: alt.id, model: providers.staticModels(alt.kind).find((m) => !m.more)?.id ?? "", effort: providers.defaultEffort(alt.kind) };
   }
 
   private kind(sel: Sel): Kind {
@@ -1840,7 +1855,7 @@ export class Shell {
     const joinsMain = this.view !== "chat" && this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
     // A project whose folder is on another PC starts its chat there (draftTarget), unless a device or Auto is picked.
     // "Auto": the PC with the most free memory, decided once now; the chat stays there (the draft keeps Auto for the next one).
-    let sel = this.sel;
+    let sel = this.newSel();
     let startOn = this.view !== "chat" && joinsMain === null ? (this.draftTarget() ?? sel.device) : "";
     let auto = false;
     if (startOn === AUTO_DEVICE) {
@@ -2589,13 +2604,15 @@ export class Shell {
   private refreshPicker(): void {
     const sel = this.chatSel();
     const locked = this.lockedKind();
-    const accounts = this.data.accounts.filter(providers.installed);
+    // Accounts turned off in Settings › Providers aren't offered.
+    const on = this.data.accounts.filter((a) => a.off !== true);
+    const accounts = on.filter(providers.installed);
     sync(
       this.railItems,
       accounts.map((a) => ({ id: a.id, logo: this.logoOf(a.kind), badge: a.badge, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind), tip: railTip(a) })),
       (a, b) => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 }),
     );
-    const { rows, more } = pickerRows(this.picker, this.data.accounts, this.favorites.list, locked);
+    const { rows, more } = pickerRows(this.picker, on, this.favorites.list, locked);
     this.pickerRowsNow = rows;
     sync(
       this.modelRows,

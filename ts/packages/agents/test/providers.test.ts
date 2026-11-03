@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as p from "../src/providers.ts";
@@ -170,5 +170,46 @@ test("an Ultra account's monitor entry has no 5-hour window, and none is made up
     expect([max.plan, max.usage.map((w) => w.label)]).toEqual(["Max", ["5-hour", "Weekly"]]);
   } finally {
     process.env.HOME = was;
+  }
+});
+
+test("an account turned off on this PC is listed but not usable, and Remove moves its folder out of discovery", () => {
+  const h = join(base, "off-home");
+  mkdirSync(join(h, ".claude"), { recursive: true });
+  mkdirSync(join(h, ".claude2"), { recursive: true });
+  mkdirSync(join(h, ".claude4/sub"), { recursive: true });
+  writeFileSync(join(h, ".claude2/.credentials.json"), "{}");
+  writeFileSync(join(h, ".claude4/sub/x"), "kept");
+  const was = { HOME: process.env.HOME, PATH: process.env.PATH, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
+  process.env.HOME = h;
+  process.env.PATH = "/nonexistent";
+  delete process.env.XDG_DATA_HOME;
+  try {
+    expect(p.offIds()).toEqual([]);
+    p.setOff("claude2", true);
+    expect(p.offIds()).toEqual(["claude2"]);
+    const two = p.discover().find((a) => a.id === "claude2") as p.Account;
+    expect(two.off).toBe(true);
+    expect(p.usable({ ...two, bin: "/bin/claude" })).toBe(false);
+    expect(p.signedIn({ ...two, bin: "/bin/claude" })).toBe(false);
+    expect(p.fallback(p.discover().map((a) => ({ ...a, bin: "/bin/claude", loggedIn: true })), "Claude")?.id).toBe("claude");
+    p.setOff("claude2", false);
+    expect(p.discover().find((a) => a.id === "claude2")?.off).toBeUndefined();
+
+    const main = p.discover().find((a) => a.id === "claude") as p.Account;
+    expect(p.removable(main)).toBe(false);
+    expect(() => p.removeAccount(main)).toThrow();
+    const four = p.discover().find((a) => a.id === "claude4") as p.Account;
+    expect(p.removable(four)).toBe(true);
+    p.setOff("claude4", true);
+    const to = p.removeAccount(four);
+    expect(to.startsWith(join(h, ".local/share/harbor/removed-accounts/claude4-"))).toBe(true);
+    expect(readFileSync(join(to, "sub/x"), "utf8")).toBe("kept");
+    expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude2", "codex"]);
+    expect(p.offIds()).toEqual([]);
+  } finally {
+    process.env.HOME = was.HOME;
+    process.env.PATH = was.PATH;
+    if (was.XDG_DATA_HOME !== undefined) process.env.XDG_DATA_HOME = was.XDG_DATA_HOME;
   }
 });

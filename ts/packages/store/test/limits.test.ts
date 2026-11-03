@@ -318,3 +318,20 @@ test("spare quota: an account without a 5-hour window counts it as unused, a res
   expect(l.usageOf("claude")).toEqual([0.7, 0]);
   expect(l.usageOf("claude3")).toEqual([0.2, 0]);
 });
+
+test("a chat on an account turned off moves to the default one, never to another that's off, else waits with a notice", () => {
+  const [h, l] = setup();
+  h.accountsList = [acct("claude", { off: true }), acct("claude2", { off: true }), acct("claude3")];
+  const c = h.addChat({ account: "claude" });
+  expect(l.switchTargets(c.id, false)).toEqual(["claude3"]);
+  h.store.set("default_account", "claude3");
+  expect(l.limitGuard(c.id, "go", [])).toBe(false);
+  expect(c.account).toBe("claude3");
+  expect(h.notices.at(-1)).toContain("is turned off in Settings › Providers");
+  const d = h.addChat({ account: "claude" });
+  h.accountsList = [acct("claude", { off: true }), acct("claude2", { off: true })];
+  expect(l.limitGuard(d.id, "go", [])).toBe(true);
+  expect(d.account).toBe("claude");
+  expect(h.notices.at(-1)).toContain("Turn it back on or pick another account");
+  expect(h.pending.get(d.id)).toBeUndefined();
+});

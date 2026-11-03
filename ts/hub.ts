@@ -179,7 +179,7 @@ export interface RunningHub {
 }
 
 function catalogAccount(a: providers.Account): CatalogAccount {
-  return { id: a.id, kind: a.kind, name: a.name, badge: a.badge, bin: a.bin, loggedIn: a.loggedIn, usage: a.usage.map((u) => ({ label: u.label, percent: u.percent })) };
+  return { id: a.id, kind: a.kind, name: a.name, badge: a.badge, bin: a.bin, loggedIn: a.loggedIn, off: a.off === true, usage: a.usage.map((u) => ({ label: u.label, percent: u.percent })) };
 }
 
 /** Where phones should try this PC: the network's IPv4 first, the router's public address, then IPv6 and Tailscale's (api.rs `phone_addrs`). */
@@ -272,7 +272,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   let engine: Engine | null = null;
   const mirrorDictation = (): void => {
     // As voice.rs: not while the account is blocked by a usage limit.
-    const a = accounts.find((x) => x.id === "claude" && x.bin !== null && x.loggedIn === true && engine?.limits.blocked(x.id) === undefined);
+    const a = accounts.find((x) => x.id === "claude" && providers.signedIn(x) && engine?.limits.blocked(x.id) === undefined);
     dictate.setAccount(a ? (system, prompt, ms) => recap.askWithin(providers.binStr(a), providers.accountEnv(a), system, prompt, ms) : null);
   };
   mirrorDictation();
@@ -416,14 +416,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (!engine || profile.running || !(profileFull || profile.want)) return;
     const live = engine;
     const pcs = pcsNow();
-    const main = accounts.find((a) => a.id === "claude" && a.bin !== null && a.loggedIn === true);
+    const main = accounts.find((a) => a.id === "claude" && providers.signedIn(a));
     const askable = main !== undefined && live.limits.blocked(main.id) === undefined && !(live.limits.quota.get(main.id) ?? []).some(([, used]) => used >= 0.9) && env.HARBOR_PROFILE_RULES === undefined;
     const inputs = () =>
       profileInputs({
         pcs,
         typedOwner: store.get(OWNER_KEY) ?? "",
         typedGithub: store.get(GITHUB_KEY) ?? "",
-        accounts: accounts.map((a) => ({ id: a.id, installed: a.bin !== null, loggedIn: a.loggedIn, short: providers.short(a), name: a.name, email: a.email })),
+        accounts: accounts.filter((a) => a.off !== true).map((a) => ({ id: a.id, installed: a.bin !== null, loggedIn: a.loggedIn, short: providers.short(a), name: a.name, email: a.email })),
         ask: askable ? { model: recap.MODEL, run: (system, prompt) => recap.askWithin(providers.binStr(main), providers.accountEnv(main), system, prompt, 120_000) } : null,
       });
     const job = profile.tick({ nowMs: Date.now(), full: profileFull, kv: store, confirmed: ownerConfirmed(store, owners), inputs });
@@ -777,7 +777,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       email: a.email,
       short: providers.short(a),
       configDir: a.configDir,
-      usable: a.kind === "Claude" && a.bin !== null && a.loggedIn !== false && live.limits.blocked(a.id) === undefined && live.limits.ctl.overCap(a.id) === undefined,
+      usable: a.kind === "Claude" && providers.usable(a) && live.limits.blocked(a.id) === undefined && live.limits.ctl.overCap(a.id) === undefined,
       usage: live.limits.usageOf(a.id),
     }));
   const mover = new MovePc({

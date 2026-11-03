@@ -94,7 +94,7 @@ export class PageHost {
           speech: s.dictation() ?? settingsSpeech(store),
           theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
           back: () => s.leave(),
-          providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount() },
+          providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), changed: () => this.s.data.rediscoverAccounts() },
           integrations: { discordWindow: () => void discord.window().catch(() => {}) },
           webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => this.s.hub().funnel.check(), disableFunnel: () => this.s.hub().funnel.forget(), kick: () => hookcert.kick() },
           funnel: () => this.s.hub().funnel,

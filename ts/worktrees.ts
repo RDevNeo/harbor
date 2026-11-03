@@ -107,7 +107,7 @@ export class Worktrees {
     const e = this.e;
     const usable = e.host
       .accounts()
-      .filter((a) => a.kind === "Claude" && a.bin !== null && a.loggedIn === true && e.limits.blocked(a.id) === undefined)
+      .filter((a) => a.kind === "Claude" && providers.signedIn(a) && e.limits.blocked(a.id) === undefined)
       .sort((a, b) => Number(a.id !== "claude") - Number(b.id !== "claude"));
     const a = usable[0];
     if (!a) return null;
