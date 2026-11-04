@@ -40,7 +40,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
-import { carriedProjects, chatIdle, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { carriedProjects, chatIdle, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -509,6 +509,7 @@ export class Shell {
     win.team_earlier = this.earlierRows;
     win.team_on = data.store.get("show_team") !== "0";
     win.team_settled_open = data.store.get("agents_settled_open") === "1";
+    win.side_w = parseSidebarWidth(data.store.get(SIDEBAR_W_KEY));
     this.wire();
   }
 
@@ -598,6 +599,7 @@ export class Shell {
       w.team_on = !w.team_on;
       this.data.store.set("show_team", w.team_on ? "1" : "0");
     };
+    w.side_resized = (width) => this.data.store.set(SIDEBAR_W_KEY, String(parseSidebarWidth(String(width))));
     w.open_agent = (id) => this.openChat(id);
     w.settle_agent = (id, on) => {
       const marks = mark(loadMarks(this.data.store.get("agent_settle")), id, on, now(), (x) => this.data.chat(x) !== undefined);

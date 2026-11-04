@@ -26,6 +26,19 @@ export type PlacedChat = sidebartree.PlacedChat;
 export type Tree = sidebartree.Tree;
 export const { carriedProjects, isMainOf, movedTo, sharedWith, tree } = sidebartree;
 
+/** The sidebar's default width (px) and the bounds app.slint holds a dragged one to. */
+export const SIDEBAR_W = 256;
+export const SIDEBAR_MIN = 200;
+export const SIDEBAR_MAX = 480;
+export const SIDEBAR_W_KEY = "sidebar_width";
+
+/** The width a stored value names, held to the bounds; anything else is the default. */
+export function parseSidebarWidth(v: string | null | undefined): number {
+  const n = Number(v ?? "");
+  if (v == null || v === "" || !Number.isFinite(n)) return SIDEBAR_W;
+  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(n)));
+}
+
 /** What's picked of the workspace filter `stored` (ids joined by commas) among `all`: gone ids drop out, and none is All (empty). Every one isn't All: a PC in no workspace shows only under All. */
 export function picked(stored: string, all: readonly Workspace[]): string[] {
   const want = stored.split(",");

@@ -366,6 +366,10 @@ export component AppWindow inherits Window {
     in property <bool> add-project-open;
     in-out property <bool> sidebar-open: true;
     out property <bool> narrow: root.width < 768px;
+    // The docked sidebar's width as dragged by its right edge (logic/sidebar.ts SIDEBAR_W, its default),
+    // and the drag's end or a double-click back to the default, to keep it.
+    in-out property <length> side-w: 256px;
+    callback side-resized(length);
 
     in property <[SideRow]> side-rows;
     in property <[SideRow]> side-settled;
@@ -682,7 +686,10 @@ export component AppWindow inherits Window {
 
     property <length> content-w: 760px;
     // app.rs `sidebar_narrow`: a right pane at its minimum leaves the chat its 440px, or the sidebar becomes a drawer.
-    property <bool> docked: root.sidebar-open && !root.narrow && !(root.right-open && root.pane-max == "" && root.width < 256px + 320px + 440px);
+    property <bool> docked: root.sidebar-open && !root.narrow && !(root.right-open && root.pane-max == "" && root.width < root.side-shown + 320px + 440px);
+    // The chat keeps its room: the sidebar never grows past 40% of the window.
+    property <length> side-max: max(200px, min(480px, root.width * 0.4));
+    property <length> side-shown: max(200px, min(root.side-w, root.side-max));
     in property <bool> right-open;
     in property <bool> bottom-open;
     in property <string> pane-max;
@@ -724,7 +731,7 @@ export component AppWindow inherits Window {
         PrsBus.docked = root.docked;
         IssuesBus.docked = root.docked;
     }
-    property <length> left-edge: root.docked ? 256px : 0px;
+    property <length> left-edge: root.docked ? root.side-shown : 0px;
     property <length> right-shown: root.right-open && root.pane-max == "" ? max(320px, min(root.right-w, root.width - root.left-edge - 440px)) : 0px;
     property <length> bottom-shown: root.bottom-open && root.pane-max == "" ? max(140px, min(root.bottom-h, root.height - 120px)) : 0px;
 
@@ -769,7 +776,7 @@ export component AppWindow inherits Window {
                 if root.docked: Sidebar {
                     x: 0;
                     y: 0;
-                    width: 256px;
+                    width: root.side-shown;
                     height: root.height;
                     rows: root.side-rows;
                     reveal: root.side-reveal;
@@ -1170,7 +1177,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.view == "prs": Rectangle {
-                    x: root.docked ? 256px : 0px;
+                    x: root.left-edge;
                     y: 0;
                     width: root.width - self.x;
                     height: root.height;
@@ -1196,7 +1203,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.view == "issues": Rectangle {
-                    x: root.docked ? 256px : 0px;
+                    x: root.left-edge;
                     y: 0;
                     width: root.width - self.x;
                     height: root.height;
@@ -1221,6 +1228,32 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.docked && root.view != "settings": TouchArea {
+            x: root.side-shown - 3px;
+            y: 0;
+            width: 6px;
+            height: root.height;
+            mouse-cursor: col-resize;
+            Rectangle {
+                x: 2px;
+                width: 1px;
+                background: parent.has-hover || parent.pressed ? Theme.gray-700 : transparent;
+            }
+            moved => {
+                if self.pressed {
+                    root.side-w = max(200px, min(root.side-max, self.absolute-position.x + self.mouse-x));
+                }
+            }
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                    root.side-resized(root.side-w);
+                }
+            }
+            double-clicked => {
+                root.side-w = 256px;
+                root.side-resized(root.side-w);
+            }
+        }
         if root.right-open && root.pane-max == "": Rectangle {
             x: root.width - root.right-shown;
             y: 0;

@@ -386,6 +386,8 @@ export interface AppWindow extends slint.ComponentHandle {
   add_project_open: boolean;
   sidebar_open: boolean;
   readonly narrow: boolean;
+  side_w: number;
+  side_resized: (w: number) => void;
 
   side_rows: slint.Model<SideRow>;
   side_settled: slint.Model<SideRow>;

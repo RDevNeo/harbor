@@ -11,6 +11,7 @@ import {
   isMainOf,
   moveMenu,
   movedNotice,
+  parseSidebarWidth,
   shareLine,
   shareMark,
   shareMenu,
@@ -549,4 +550,15 @@ test("alt_up_down_step_through_the_sidebar_rows_in_order", () => {
   expect(stepRow([...rows, row("loose", 30, true)], -1)?.id).toBe(21);
   expect(stepRow([], 1)).toBeNull();
   expect(stepRow([row("label", 0)], -1)).toBeNull();
+});
+
+test("the_sidebar_width_kept_is_held_to_its_bounds", () => {
+  expect(parseSidebarWidth(null)).toBe(256);
+  expect(parseSidebarWidth("")).toBe(256);
+  expect(parseSidebarWidth("wide")).toBe(256);
+  expect(parseSidebarWidth("312")).toBe(312);
+  expect(parseSidebarWidth("301.6")).toBe(302);
+  // Too narrow for the rows, or too wide for the chat.
+  expect(parseSidebarWidth("40")).toBe(200);
+  expect(parseSidebarWidth("4000")).toBe(480);
 });
