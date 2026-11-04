@@ -18,6 +18,7 @@ import { AUTO_DEVICE, ramText } from "./ram.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 import { pcOwner, phoneDev, type Viewer } from "./senders.ts";
+import { RESUME_TEXT, resumeNow } from "./resume.ts";
 
 const CLIP = 16 << 10;
 
@@ -928,18 +929,33 @@ export class PhoneRoutes {
       files.push(path);
     }
     const mentions = (Array.isArray(body.mentions) ? body.mentions : []).map((m) => mention(typeof m === "object" && m !== null ? (m as Partial<Mention>) : {}));
-    if (nothingToSend(text, files.length, mentions.length)) return err(400, "nothing to send");
-    if (c.retired) return err(409, "this agent was retired");
     const e = this.d.engine;
+    // `resume`: an empty composer's send (resume.ts), as the desktop's: the queue a Stop held starts, or the agent is asked to go on.
+    let resumed = false;
+    if (body.resume === true && nothingToSend(text, files.length, mentions.length)) {
+      if (c.retired) return err(409, "this agent was retired");
+      if (!e) return err(503, "agents aren't available in this build");
+      const kind = resumeNow(e, c.id);
+      if (kind === null) return err(409, "nothing to resume");
+      if (kind === "queue") {
+        e.queueResume(c.id);
+        this.d.replica.touch(c.id);
+        return ok({ ok: true, queued: false, steering: false, resumed: "queue" });
+      }
+      resumed = true;
+    }
+    const said = resumed ? RESUME_TEXT : text;
+    if (nothingToSend(said, files.length, mentions.length)) return err(400, "nothing to send");
+    if (c.retired) return err(409, "this agent was retired");
     if (!e) return err(503, "agents aren't available in this build");
     const before = e.queued(c.id).filter((q) => q.intent === "").length;
     const running = e.running(c.id);
     const mode = body.mode === "steer" ? "steer" : "queue";
     this.d.hub.clearDraft(c.id);
-    e.send(c.id, text, { files, mentions, mode, sender, device, from, who: who.who, via: who.via ?? undefined, dev: who.dev });
+    e.send(c.id, said, { files, mentions, mode, sender, device, from, who: who.who, via: who.via ?? undefined, dev: who.dev });
     const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;
     this.d.replica.touch(c.id);
-    return ok({ ok: true, queued, steering: running && !queued && c.home === "" });
+    return ok({ ok: true, queued, steering: running && !queued && c.home === "", ...(resumed ? { resumed: "reply" } : {}) });
   }
 
   /** api.rs `api_create_repo`: the project a new chat asks for (`project_id`, or `project` from another PC); a reply when it can't be had. */

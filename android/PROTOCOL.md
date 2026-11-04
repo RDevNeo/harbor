@@ -703,6 +703,13 @@ queue, as older apps expect): `steer` reaches the running turn now (`steering: t
 (`can_steer`), else it queues; `queue` waits for the turn to end (`queued: true`). A message to an
 idle chat starts a turn, and resumes a queue a Stop held (it runs after this one).
 
+`resume: true` with nothing to send (no text, files or mentions; 0.146): the empty composer's send
+(the button or Enter), as the desktop's (`ts/packages/net/src/resume.ts`, decided by the chat's
+home PC). After a Stop held a queue, the next queued message starts (`resumed: "queue"`); else, in
+an idle chat with a transcript, the PC sends the Resume message ("Resume from where you left off:
+…", `resumed: "reply"`). `409` when there's nothing to resume (a turn runs, or no messages yet).
+The app shows ▶ Resume on the send button then (Resume queue while one is held).
+
 Optional `client_id` (0.112.1: 8 to 80 letters, digits, `-`, `_`; the app sends a UUID): a send
 the phone repeats with the same id (its answer got lost, it timed out, it asked another PC of the
 workspace) runs once; every copy gets the first one's answer, also while that one still runs.

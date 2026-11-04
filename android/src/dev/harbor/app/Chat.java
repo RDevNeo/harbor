@@ -162,6 +162,7 @@ public class Chat extends Base implements Images.Gallery {
         comp.onSend = this::send;
         comp.onStop = this::stop;
         comp.onResume = this::resume;
+        comp.hasMentions = () -> mentions.length() > 0;
         comp.onSendMenu = this::sendMenu;
         comp.onType = this::typed;
         attach.onChange = this::typed;
@@ -674,7 +675,9 @@ public class Chat extends Base implements Images.Gallery {
             }
         }
         drawQueue(waitingQ, b.optBoolean("held"), b.optBoolean("can_steer"));
-        comp.follow(b.optBoolean("can_steer"), b.optBoolean("held"), followUp(this));
+        // Held with nothing queued: Resume asks the agent to go on instead (ts resume.ts), as the desktop's.
+        comp.follow(b.optBoolean("can_steer"), b.optBoolean("held") && queue != null && queue.length() > 0, followUp(this));
+        comp.history(!items.isEmpty());
         strip(b.optJSONObject("agents"));
         // Its suggestion in the empty composer (Suggest.java).
         Suggest.set(comp, b.optString("suggestion", ""));
@@ -1063,6 +1066,7 @@ public class Chat extends Base implements Images.Gallery {
      *  while it changes (the last one always goes), and every 3 s anyway while the user types;
      *  the lease runs out 6 s after. An emptied composer empties the draft everywhere. */
     private void typed() {
+        if (comp != null) comp.again();
         if (applying || composer == null) return;
         // Editing a queued message isn't writing a draft: nothing goes to the other devices.
         if (editId != 0) return;
@@ -1215,6 +1219,7 @@ public class Chat extends Base implements Images.Gallery {
             comp.mentions.addView(t, Ui.margins(Ui.fill(), 8, 6, 8, 0));
         }
         comp.mentions.setVisibility(chips == 0 ? View.GONE : View.VISIBLE);
+        comp.again();
     }
 
     /** The images and videos of card {@code seq} in the order it shows them (its large ones,
@@ -2090,9 +2095,14 @@ public class Chat extends Base implements Images.Gallery {
         Sheet.pick(this, "Choose how to send this message", null, o, followUp(this), this::send);
     }
 
-    /** Resume after a Stop held the queue: the next queued message starts. */
+    /** An empty composer's send, as the desktop's (ts resume.ts): after a Stop held the queue the
+     *  next queued message starts, else the agent is asked to go on from where it left off. The
+     *  chat's home PC decides which (a copy's goes there, as a send does) and writes the message. */
     private void resume() {
-        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/resume", new JSONObject()), r -> load(false));
+        if (attach.busy()) { Ui.toast(this, "Still uploading…"); return; }
+        typing(false, false);
+        String cid = java.util.UUID.randomUUID().toString();
+        Ui.bg(this, () -> hub.send(chatId, new JSONObject().put("text", "").put("resume", true).put("client_id", cid)), r -> { toEnd(); load(false); });
     }
 
     // ---- actions ----

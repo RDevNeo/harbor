@@ -162,9 +162,5 @@ export function pressOf(text: string, m: { control: boolean; shift: boolean; alt
   return { key: names[text] ?? text, ctrl: m.control, shift: m.shift, alt: m.alt };
 }
 
-/** What the send button's Resume does in an empty composer (no text but spaces, no files, no mentions) of an idle chat:
- * start the queue a stop held, or ask the agent to go on in a chat with a transcript; null: it stays Send. */
-export function resumeKind(s: { empty: boolean; running: boolean; editing: boolean; held: boolean; transcript: boolean }): "queue" | "reply" | null {
-  if (!s.empty || s.running || s.editing) return null;
-  return s.held ? "queue" : s.transcript ? "reply" : null;
-}
+/** Lives in @harbor/net, shared with the phone's routes (resume.ts). */
+export { resumeKind } from "@harbor/net";

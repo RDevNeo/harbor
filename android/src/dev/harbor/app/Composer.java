@@ -48,7 +48,9 @@ final class Composer {
     private List<Integer> images = new ArrayList<>();
     /** The last change to the text: where, and how much came in. */
     private int changedAt, changedLen;
-    private boolean running, canSteer, held, editing;
+    private boolean running, canSteer, held, editing, history;
+    /** The draft mentions messages (Chat.mentions): it isn't empty then, as with files. */
+    java.util.function.BooleanSupplier hasMentions;
     /** What the send button does while the agent works: "steer" or "queue" (Chat.followUp). */
     private String mode = "queue";
     /** The usual placeholder; the hub's suggested next message and its Use chip (Suggest.java). */
@@ -140,7 +142,7 @@ final class Composer {
         send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 44, v -> {
             if (editing) { if (onSend != null) onSend.run(); }
             else if (running && empty()) { if (onStop != null) onStop.run(); }
-            else if (!running && held && empty()) { if (onResume != null) onResume.run(); }
+            else if (resumable()) { if (onResume != null) onResume.run(); }
             else if (onSend != null) onSend.run();
         });
         // Long-press while the agent works: "Choose how to send this message" (Steer or Queue).
@@ -187,6 +189,16 @@ final class Composer {
                 if (onType != null) onType.run();
             }
         });
+        // Enter in an empty composer (the keyboard's or a hardware one) is Resume, as on the desktop
+        // (ts resume.ts): no blank line goes in. Typed text keeps Enter for new lines.
+        android.text.InputFilter[] fs = edit.getFilters();
+        android.text.InputFilter[] all = java.util.Arrays.copyOf(fs, fs.length + 1);
+        all[fs.length] = (src, start, end, dest, ds, de) -> {
+            if (edit.setting || end - start != 1 || src.charAt(start) != '\n' || dest.toString().trim().length() > 0 || !resumable()) return null;
+            edit.post(() -> { if (resumable() && onResume != null) onResume.run(); });
+            return "";
+        };
+        edit.setFilters(all);
         if (attach != null) {
             attach.onImage = edit::insertImage;
             attach.onImageGone = n -> {
@@ -270,6 +282,22 @@ final class Composer {
 
     boolean empty() { return edit.getText().toString().trim().isEmpty(); }
 
+    /** Send (the button or Enter) is Resume now (ts resume.ts `resumeKind`): nothing typed,
+     *  attached or mentioned, the agent idle, and a queue a Stop held or a transcript to go on from. */
+    boolean resumable() {
+        return !editing && !running && empty() && (attach == null || !attach.any()) && (hasMentions == null || !hasMentions.getAsBoolean()) && (held || history);
+    }
+
+    /** The chat shows messages: an empty send asks the agent to go on (Resume). */
+    void history(boolean h) {
+        if (history == h) return;
+        history = h;
+        refresh();
+    }
+
+    /** Files or mentions changed: the button follows. */
+    void again() { refresh(); }
+
     void running(boolean r) {
         running = r;
         refresh();
@@ -303,7 +331,7 @@ final class Composer {
             boolean steer = "steer".equals(sendMode());
             g = steer ? Ui.I_STEER : Ui.I_LIST_PLUS;
             d = steer ? "Steer message" : "Queue message";
-        } else if (held && empty) { g = Ui.I_PLAY; d = "Resume queue"; }
+        } else if (resumable()) { g = Ui.I_PLAY; d = held ? "Resume queue" : "Resume"; }
         else { g = Ui.I_UP; d = "Send"; }
         sendGlyph.setText(g);
         boolean stopping = !editing && running && empty;

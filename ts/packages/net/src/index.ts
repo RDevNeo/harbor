@@ -29,6 +29,7 @@ export * from "./view.ts";
 export * from "./senders.ts";
 export * from "./markdown.ts";
 export * from "./phone.ts";
+export * from "./resume.ts";
 export * from "./netcli.ts";
 export * as preview from "./preview.ts";
 export * from "./foldercopy.ts";
