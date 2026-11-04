@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.140.0] - 2026-11-03
+
+### Changed
+- The sidebar gauge's Memory popover shows each PC as one card of one height, whether it's low,
+  off or still asking: a low PC's RAM label turns red, and its chats (with how much each holds)
+  and the swap in use open in a submenu beside the card on hover, in place of rows under it.
+
+### Added
+- A Default pill on each PC's card picks the PC whose RAM the sidebar gauge shows (refreshed every
+  10 s; this PC's again while that one is off). The gauge's tooltip names the PC.
+
 ## [0.139.0] - 2026-11-03
 
 ### Changed
