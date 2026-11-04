@@ -1635,22 +1635,17 @@ export component AppWindow inherits Window {
                                 desc: it.desc;
                                 frac: it.value;
                             }
-                            // A PC in the gauge's popover (mempop.ts `deviceRows`): one height whatever its state, its submenu beside it on hover or click.
+                            // A PC in the gauge's popover (mempop.ts `deviceRows`): one height whatever its state, its submenu beside it on hover or click of its "N chats ▶".
                             // `icon`: the RAM figures, or (`value` < 0) why there are none; `checked`: low on memory; `enabled`: the sidebar's gauge shows it
                             // (its "Default" pill filled; a muted one's click makes this PC the default, `mem-default`, without touching the submenu).
-                            if it.kind == "mem-pc": Rectangle {
+                            if it.kind == "mem-pc": pc-card := Rectangle {
                                 height: 68px;
-                                border-radius: 4px;
-                                background: pc-area.has-hover || pick-area.has-hover || root.sub-row == i ? Theme.accent : transparent;
-                                pc-area := TouchArea {
-                                    mouse-cursor: pointer;
+                                // The card's body opens nothing: entering it leaves an open submenu (`pop-hover(-1)`, closed after the grace delay).
+                                TouchArea {
                                     changed has-hover => {
                                         if self.has-hover {
-                                            root.pop-hover(i, self.absolute-position.y);
+                                            root.pop-hover(-1, pc-card.absolute-position.y);
                                         }
-                                    }
-                                    clicked => {
-                                        root.pop-pick(root.pop-id, i);
                                     }
                                 }
                                 VerticalLayout {
@@ -1710,22 +1705,44 @@ export component AppWindow inherits Window {
                                         Rectangle {
                                             horizontal-stretch: 1;
                                         }
-                                        if it.desc != "": Text {
-                                            text: it.desc;
-                                            font-size: 12px;
-                                            color: Theme.subtle;
-                                            vertical-alignment: center;
-                                        }
-                                        VerticalLayout {
-                                            alignment: center;
-                                            width: 7px;
-                                            Path {
-                                                width: 7px;
-                                                height: 7px;
-                                                viewbox-width: 7;
-                                                viewbox-height: 7;
-                                                commands: "M 0 0 L 7 3.5 L 0 7 Z";
-                                                fill: Theme.subtle;
+                                        // "3 chats ▶": the only part that opens the PC's submenu (on hover or click), lit while hovered or open; the submenu's top on the card's.
+                                        Rectangle {
+                                            width: chip-row.preferred-width;
+                                            border-radius: 4px;
+                                            background: chip-area.has-hover || root.sub-row == i ? Theme.accent : transparent;
+                                            chip-row := HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-right: 6px;
+                                                spacing: 6px;
+                                                if it.desc != "": Text {
+                                                    text: it.desc;
+                                                    font-size: 12px;
+                                                    color: chip-area.has-hover || root.sub-row == i ? Theme.fg : Theme.subtle;
+                                                    vertical-alignment: center;
+                                                }
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    width: 7px;
+                                                    Path {
+                                                        width: 7px;
+                                                        height: 7px;
+                                                        viewbox-width: 7;
+                                                        viewbox-height: 7;
+                                                        commands: "M 0 0 L 7 3.5 L 0 7 Z";
+                                                        fill: chip-area.has-hover || root.sub-row == i ? Theme.fg : Theme.subtle;
+                                                    }
+                                                }
+                                            }
+                                            chip-area := TouchArea {
+                                                mouse-cursor: pointer;
+                                                changed has-hover => {
+                                                    if self.has-hover {
+                                                        root.pop-hover(i, pc-card.absolute-position.y);
+                                                    }
+                                                }
+                                                clicked => {
+                                                    root.pop-pick(root.pop-id, i);
+                                                }
                                             }
                                         }
                                     }

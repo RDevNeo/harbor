@@ -2866,7 +2866,7 @@ export class Shell {
     this.win.pop_id = "";
   }
 
-  /** A cascading submenu (a parent row with `sub`) opens beside its row: right away on hover or click, and when the pointer goes to another row, only after `SUB_GRACE` without reaching the open submenu, so a diagonal move into it doesn't close it. */
+  /** A cascading submenu (a parent row with `sub`) opens beside its row: right away on hover or click, and when the pointer goes to another row, only after `SUB_GRACE` without reaching the open submenu, so a diagonal move into it doesn't close it. `i` = -1 (a part of a row that opens nothing, like a memory card's body) closes it after the same delay. */
   private hoverPop(i: number, y: number): void {
     this.popHover = { i, y };
     if (this.subTimer !== null) clearTimeout(this.subTimer);
