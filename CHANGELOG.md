@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.141.1] - 2026-11-03
+
 ### Fixed
 - Images in a chat that moved between PCs, or in a project whose folder sits under another person's
   home on each PC, show again instead of plain links: a path under another home (`/home/sam/…`)
