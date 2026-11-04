@@ -243,7 +243,7 @@ export function find(md: string, cwd: string | null): Media[] {
     if (tok.startsWith("~/")) path = join(home(), tok.slice(2));
     else if (tok.startsWith("/")) path = tok;
     else continue;
-    if (!out.some((m) => m.path === path) && isFile(path) && allowed(path)) {
+    if (!out.some((m) => m.path === path) && isFile(located(path)) && allowed(path)) {
       out.push({ video: isVideo(path), path, caption: "", shown: false, url: null });
       named++;
       if (named === 4 || out.length === MAX_PER_TEXT) break;
@@ -320,10 +320,38 @@ export function keptPath(path: string): string {
   return join(cacheDir(), "kept", `${shortHash(path)}.${ext(path)}`);
 }
 
+/** Where a copy of another PC's image is kept here once fetched from that PC (`saveRemote`). */
+export function remotePath(path: string): string {
+  return join(cacheDir(), "remote", `${shortHash(path)}.${ext(path)}`);
+}
+
+/**
+ * The same file under this PC's home, for a path under another person's home (`/home/sam/…` or
+ * `/Users/sam/…`): a chat that moved between PCs, or a project folder copied to another PC where it
+ * sits at the same place under its owner's home, names its files by the first PC's home. Null when
+ * the path isn't under another home.
+ */
+export function underThisHome(path: string, here: string = home()): string | null {
+  const m = /^\/(?:home|Users)\/[^/]+\/(.+)$/.exec(path);
+  if (!m?.[1]) return null;
+  const mine = here.replace(/\/+$/, "");
+  if (path === mine || path.startsWith(`${mine}/`)) return null;
+  const to = normalize(`${mine}/${m[1]}`);
+  return to.startsWith(`${mine}/`) ? to : null;
+}
+
+/**
+ * The file to read for `path`: itself, else a copy Harbor kept of it, else the same place under this
+ * PC's home (`underThisHome`), else the copy fetched from the chat's PC (`remotePath`).
+ */
 export function located(path: string): string {
   if (existsSync(path) || !path.startsWith("/") || kind(path) === null) return path;
   const k = keptPath(path);
-  return isFile(k) ? k : path;
+  if (isFile(k)) return k;
+  const here = underThisHome(path);
+  if (here !== null && isFile(here) && allowed(here)) return here;
+  const r = remotePath(path);
+  return isFile(r) ? r : path;
 }
 
 export function keepOne(path: string): string | null {
@@ -358,7 +386,7 @@ export function keep(md: string, cwd: string | null): void {
 }
 
 export function saveRemote(path: string, bytes: Uint8Array): string | null {
-  const to = join(cacheDir(), "remote", `${shortHash(path)}.${ext(path)}`);
+  const to = remotePath(path);
   try {
     mkdirSync(dirname(to), { recursive: true });
     writeFileSync(to, bytes);

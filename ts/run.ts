@@ -225,6 +225,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       projectPlace: (repo: number) => run.projectPlace(repo),
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
+      homeImage: async (chat: number, path: string) => (await run.mesh.homeImage(chat, path, null))?.body ?? null,
     };
     await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; }, busyIn: (f) => run.setBusyIn(f), projects: (p) => run.setWindowProjects(p) });
     tray?.stop();

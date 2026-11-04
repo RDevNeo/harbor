@@ -1243,7 +1243,10 @@ export class Shell {
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat), this.linkTitle());
+    // Another PC's chat: an image that isn't on this PC comes from that PC.
+    const homeImage = this.hub.homeImage;
+    const fetch = homeImage && this.meshChat.foreign(chat) ? (path: string) => homeImage(chat.id, path) : undefined;
+    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor, fetch) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat), this.linkTitle());
     if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);
@@ -4176,6 +4179,8 @@ export interface ShellHub extends PageHub {
   projectMoving?: (repo: number) => string | null;
   /** Harbor's own video player (update.rs `video_lib`, `video_auto`); without it the system's libmpv. */
   player?: import("@harbor/media").video.PlayerSource;
+  /** An image of a chat that runs on another PC, from that PC (null: it's off or hasn't got it). */
+  homeImage?: (chat: number, path: string) => Promise<Uint8Array | null>;
   /** Chats homed on other PCs and the leases (mesh.rs); none without a hub. */
   mesh?: ShellMesh;
   /** Move to workspace… (workspacemoves.ts); none without a hub. */

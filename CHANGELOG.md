@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Images in a chat that moved between PCs, or in a project whose folder sits under another person's
+  home on each PC, show again instead of plain links: a path under another home (`/home/sam/…`)
+  is read from the same place under this PC's home. A chat that runs on another PC fetches an
+  image this PC hasn't got from that PC and keeps it, on the desktop as the phone already did.
+
 ## [0.141.0] - 2026-11-03
 
 ### Fixed

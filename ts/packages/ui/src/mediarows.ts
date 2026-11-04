@@ -45,7 +45,15 @@ export class MediaRows {
     private native: (p: Pixels) => Pixels = (p) => p,
   ) {}
 
-  rows(c: Card, cwd: string, column: number, scale = 2): MediaRow[] {
+  /** Images asked for from their chat's PC already (fetched or not): once each. */
+  private asked = new Set<string>();
+
+  /**
+   * The card's images and videos. `fetch`: for a chat that runs on another PC, an image that isn't on
+   * this PC is asked for from that PC (once) and kept here (media.ts `saveRemote`), then drawn from it.
+   */
+  rows(c: Card, cwd: string, column: number, scale = 2, fetch?: (path: string) => Promise<Uint8Array | null>): MediaRow[] {
+    this.fetch = fetch ?? null;
     const out: MediaRow[] = [];
     const cap = inlineCap(column, scale, this.pkg.images.MID_PX);
     for (const m of cardMedia(c, (t) => this.pkg.images.mediaIn(t, cwd))) {
@@ -70,6 +78,25 @@ export class MediaRows {
 
   /** `key`'s image, decoded to `cap` if it isn't yet. Meanwhile the one decoded last under `slot` (another scale's),
    * kept until the new one is there. */
+  private fetch: ((path: string) => Promise<Uint8Array | null>) | null = null;
+
+  /** An image that failed to decode here: fetched from its chat's PC when it can be (true: it's coming). */
+  private fromHome(path: string, key: string): boolean {
+    const fetch = this.fetch;
+    if (fetch === null || this.asked.has(path) || this.pkg.media.isVideo(path)) return false;
+    this.asked.add(path);
+    void fetch(path)
+      .then((bytes) => (bytes !== null ? this.pkg.media.saveRemote(path, bytes) : null))
+      .catch(() => null)
+      .then((saved) => {
+        // Kept here: decoded again from the copy (media.ts `located` finds it); else it stays a link.
+        if (saved !== null) this.got.delete(key);
+        else this.failed.add(key);
+        this.loaded();
+      });
+    return true;
+  }
+
   private take(slot: string | null, key: string, path: string, cap: number): Got | null {
     this.used.add(key);
     const img = this.got.get(key);
@@ -93,6 +120,7 @@ export class MediaRows {
           this.loaded();
         })
         .catch(() => {
+          if (this.fromHome(path, key)) return;
           if (slot === null) return;
           this.failed.add(key);
           this.loaded();

@@ -116,3 +116,48 @@ test("a zoom or a new display scale never blanks a shown image: the old decode s
   for (const scale of [0.5, 1, 0.5, 1, 1.25]) shown(scale);
   await until(1.25, [600, 200]);
 });
+
+test("another PC's chat: an image that isn't on this PC comes from that PC once, and is drawn from the copy kept here", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
+  const prevData = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = join(dir, "data-home");
+  try {
+    let loads = 0;
+    const rows = new MediaRows(media, () => void loads++);
+    const there = `/home/nobody-${Date.now()}/Documents/game/church.png`;
+    const card = { kind: "text" as const, text: `The church: ![The whole church](${there})`, at: 1, forkable: false };
+    const asked: string[] = [];
+    const fetch = async (p: string) => {
+      asked.push(p);
+      return new Uint8Array(png);
+    };
+    const settle = async (n: number) => {
+      for (let i = 0; i < 100 && loads < n; i++) await Bun.sleep(20);
+    };
+    // Without a fetch (this PC's own chat): a link, as before.
+    expect(rows.rows(card, dir, 760)).toHaveLength(0);
+    await settle(1);
+    expect(rows.rows(card, dir, 760)).toHaveLength(0);
+    // Another PC's chat: asked for once, then drawn.
+    const other = new MediaRows(media, () => void loads++);
+    other.rows(card, dir, 760, 1, fetch);
+    await settle(2);
+    other.rows(card, dir, 760, 1, fetch);
+    await settle(3);
+    expect(other.rows(card, dir, 760, 1, fetch)).toMatchObject([{ path: there, large: true, caption: "The whole church" }]);
+    expect(asked).toEqual([there]);
+    // The PC off or without it: it stays a link, and isn't asked for again.
+    const none = new MediaRows(media, () => void loads++);
+    const card2 = { ...card, text: `![gone](${there.replace("church", "gone")})` };
+    const nothing = async (p: string) => (asked.push(p), null);
+    none.rows(card2, dir, 760, 1, nothing);
+    await settle(5);
+    none.rows(card2, dir, 760, 1, nothing);
+    await Bun.sleep(100);
+    expect(none.rows(card2, dir, 760, 1, nothing)).toHaveLength(0);
+    expect(asked.length).toBe(2);
+  } finally {
+    if (prevData === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prevData;
+  }
+});

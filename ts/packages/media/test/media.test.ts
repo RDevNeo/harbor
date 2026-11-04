@@ -108,6 +108,39 @@ test("a_kept_file_shows_after_it_is_gone", () => {
   expect(m.keepOne("/home/x/.ssh/id.png")).not.toBeNull();
 });
 
+test("a_file_named_under_another_persons_home_is_found_under_this_pcs_or_as_fetched_from_its_pc", () => {
+  const here = tmp("home");
+  const prevHome = process.env.HOME;
+  process.env.HOME = here;
+  try {
+    // A chat that moved here from another PC names its project's images by that PC's home.
+    expect(m.underThisHome("/home/sam/Documents/game/a.png", here)).toBe(`${here}/Documents/game/a.png`);
+    expect(m.underThisHome("/Users/sam/Documents/game/a.png", here)).toBe(`${here}/Documents/game/a.png`);
+    expect(m.underThisHome(`${here}/Documents/a.png`, here)).toBeNull();
+    expect(m.underThisHome("/srv/game/a.png", here)).toBeNull();
+    expect(m.underThisHome("/home/sam/../../etc/a.png", here)).toBeNull();
+    const theirs = "/home/sam-nobody/Documents/game/previews/church.png";
+    expect(m.located(theirs)).toBe(theirs);
+    expect(m.check(theirs).ok).toBe(false);
+    mkdirSync(join(here, "Documents/game/previews"), { recursive: true });
+    writeFileSync(join(here, "Documents/game/previews/church.png"), PNG);
+    expect(m.located(theirs)).toBe(join(here, "Documents/game/previews/church.png"));
+    expect(m.check(theirs)).toEqual({ ok: true, video: false });
+    // Not where this PC keeps secrets, though.
+    mkdirSync(join(here, ".ssh"), { recursive: true });
+    writeFileSync(join(here, ".ssh/key.png"), PNG);
+    expect(m.located("/home/sam-nobody/.ssh/key.png")).toBe("/home/sam-nobody/.ssh/key.png");
+    // Not on this PC at all: the copy fetched from the chat's PC.
+    const gone = "/home/sam-nobody/Documents/game/previews/new.png";
+    expect(m.saveRemote(gone, PNG)).toBe(m.remotePath(gone));
+    expect(m.located(gone)).toBe(m.remotePath(gone));
+    expect(m.check(gone)).toEqual({ ok: true, video: false });
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+  }
+});
+
 test("find_lists_shown_media_then_named_files", () => {
   const d = tmp("find");
   writeFileSync(join(d, "a.png"), PNG);
