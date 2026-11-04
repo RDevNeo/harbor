@@ -57,6 +57,8 @@ export interface EngineHost {
   hostname?(): string;
   /** A reply's shown files are copied aside, so they outlive a cleaned-up /tmp (media.rs `keep`); `cwd`: where its relative paths start. */
   keepMedia?(text: string, cwd: string): void;
+  /** A reply as its chat keeps it: the images and videos it draws from files here copied into the chat's uploads by their contents, and named there (media.ts `adopt`). */
+  adoptMedia?(text: string, cwd: string, chatId: number): string;
   /** A finished turn worth a notification (net's notify.rs). */
   noteTurn?(chatId: number, sub: boolean, failed: boolean, said: string): void;
   /** The chat is on screen with the window focused. */
@@ -594,8 +596,17 @@ export class Engine {
   }
 
   /** A chat on another device keeps its files there. */
-  private keepMedia(chat: Chat | undefined, text: string): void {
-    if (chat && chat.device === "") this.host.keepMedia?.(text, this.chatCwd(chat));
+  private keepMedia(chat: Chat | undefined, text: string): string {
+    if (!chat || chat.device !== "") return text;
+    const cwd = this.chatCwd(chat);
+    let kept = text;
+    try {
+      kept = this.host.adoptMedia?.(text, cwd, chat.id) ?? text;
+    } catch {
+      // As written: the kept copy below still serves it.
+    }
+    this.host.keepMedia?.(kept, cwd);
+    return kept;
   }
 
   private applyEvent(id: number, ev: Event): void {
@@ -628,12 +639,12 @@ export class Engine {
         break;
       }
       case "textFinal": {
-        this.keepMedia(chat, ev.text);
+        const text = this.keepMedia(chat, ev.text);
         const i = tr.pendingText;
         tr.pendingText = null;
         const it = i === null ? undefined : tr.items[i];
-        if (it?.kind === "text") it.text = ev.text;
-        else if (ev.text.trim() !== "") tr.items.push({ kind: "text", text: ev.text, at: now() });
+        if (it?.kind === "text") it.text = text;
+        else if (text.trim() !== "") tr.items.push({ kind: "text", text, at: now() });
         break;
       }
       case "thinkingDelta": {
@@ -732,7 +743,7 @@ export class Engine {
             break;
           }
         }
-        for (const it of tr.items.slice(from)) if (it.kind === "text") this.keepMedia(chat, it.text);
+        for (const it of tr.items.slice(from)) if (it.kind === "text") it.text = this.keepMedia(chat, it.text);
         const stopped = !this.turns.delete(id);
         const last = tr.items[tr.items.length - 1];
         const failed = !stopped && !resumes && (!tr.gotResult || last?.kind === "error");

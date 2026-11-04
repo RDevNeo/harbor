@@ -63,6 +63,7 @@ export class Data {
       noteResumed: (id, account, text) => this.notifier.noteResumed(this.chat(id) ?? null, account, this.engine.accountLabel(account), text, this.engine.limits.limitSettings().notify),
       notify: (kind, key, title, body, chat) => this.notifier.post(kind, key, title, body, chat ?? "", false),
       keepMedia: (text, cwd) => media.keep(text, cwd),
+      adoptMedia: (text, cwd, chat) => media.adopt(text, cwd, chat),
     });
   }
 

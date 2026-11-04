@@ -798,6 +798,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
     keepMedia: (text, cwd) => media.keep(text, cwd),
+    adoptMedia: (text, cwd, chat) => media.adopt(text, cwd, chat),
     noteTurn: (id, sub, failed, said) => {
       const c = eng().chat(id);
       if (!c) return;

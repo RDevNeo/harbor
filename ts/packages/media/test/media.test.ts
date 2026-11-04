@@ -162,3 +162,54 @@ test("mime, sniff and names", () => {
   expect(m.sniff(Buffer.from("hello"))).toBeNull();
   expect(m.mediaName({ path: "/x/y", caption: "", video: false, shown: true, url: "https://a.b/c/d.png?x=1#f" })).toBe("d.png");
 });
+
+test("a_replys_own_images_are_kept_in_its_chats_uploads_by_their_contents_and_named_there", () => {
+  const proj = tmp("proj");
+  const scratch = tmp("scratch");
+  mkdirSync(join(proj, "out"), { recursive: true });
+  const shot = join(scratch, "shot.png");
+  writeFileSync(shot, PNG);
+  writeFileSync(join(proj, "out/chart.png"), Buffer.concat([PNG, Buffer.from("chart")]));
+  writeFileSync(join(scratch, "fake.png"), "not a png");
+  const clip = join(scratch, "a clip.mp4");
+  writeFileSync(clip, MP4);
+  const md = [
+    `The page: ![Login page](${shot} "title")`,
+    "",
+    "![Weekly chart](out/chart.png)",
+    "",
+    `![A clip](<${clip}>) and ![web](https://example.com/a.png) and ![gone](${join(scratch, "gone.png")}) and ![fake](${join(scratch, "fake.png")})`,
+    "",
+    "`![in code](" + shot + ")`",
+  ].join("\n");
+  const out = m.adopt(md, proj, 42);
+  const up = join(m.uploadsDir(), "42");
+  const found = m.find(out, proj).filter((x) => x.shown);
+  expect(found.map((x) => x.caption)).toEqual(["Login page", "Weekly chart", "A clip", "web", "gone", "fake"]);
+  const [a, b, c] = found.map((x) => x.path);
+  for (const p of [a, b, c]) expect(p?.startsWith(`${up}/`)).toBe(true);
+  expect(a).toMatch(/\/[0-9a-f]{20}\.png$/);
+  expect(c).toMatch(/\.mp4$/);
+  expect(readFileSync(a ?? "")).toEqual(PNG);
+  // What isn't a file here that Harbor shows is left as written; so is code.
+  expect(out).toContain("![web](https://example.com/a.png)");
+  expect(out).toContain(`![gone](${join(scratch, "gone.png")})`);
+  expect(out).toContain(`![fake](${join(scratch, "fake.png")})`);
+  expect(out).toContain("`![in code](" + shot + ")`");
+  expect(out.startsWith(`The page: ![Login page](${a})`)).toBe(true);
+  // Kept once: the same contents are the same file, and a reply already named there stays as it is.
+  expect(m.adopt(out, proj, 42)).toBe(out);
+  const again = join(scratch, "again.png");
+  writeFileSync(again, PNG);
+  expect(m.adopt(`![same](${again})`, null, 42)).toBe(`![same](${a})`);
+  // The temp file goes: the reply still shows, from its chat's uploads.
+  rmSync(shot);
+  expect(m.check(a ?? "")).toEqual({ ok: true, video: false });
+  // A private file isn't copied anywhere.
+  const priv = join(scratch, ".ssh");
+  mkdirSync(priv);
+  writeFileSync(join(priv, "k.png"), PNG);
+  expect(m.adopt(`![k](${join(priv, "k.png")})`, null, 42)).toBe(`![k](${join(priv, "k.png")})`);
+  // A plain reply is returned as it is.
+  expect(m.adopt("no images here", proj, 42)).toBe("no images here");
+});

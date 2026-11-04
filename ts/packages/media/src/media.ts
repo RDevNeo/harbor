@@ -381,8 +381,67 @@ export function keep(md: string, cwd: string | null): void {
   const files = find(md, cwd)
     .filter((m) => m.shown && m.url === null)
     .map((m) => m.path)
-    .filter((p) => !startsWithPath(p, cacheDir()));
+    .filter((p) => !startsWithPath(p, cacheDir()) && !startsWithPath(p, uploadsDir()));
   if (files.length > 0) setTimeout(() => files.forEach(keepOne), 0);
+}
+
+/** Where the files of chats live (hub.ts `uploadsDir`): what a phone or another PC sends, and a reply's own images (`adopt`). */
+export function uploadsDir(): string {
+  return join(dataDir(), "uploads");
+}
+
+/** A file's own name once adopted: the first 20 hex digits of its SHA-256 and its extension. */
+function contentName(path: string): string {
+  return `${createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, 20)}.${ext(path)}`;
+}
+
+/**
+ * The copy of a reply's image or video kept in its chat's uploads (`uploads/<chat>/<content hash>.<ext>`),
+ * made if it isn't there yet; null when the file isn't one Harbor shows.
+ */
+export function adoptOne(path: string, chat: number): string | null {
+  if (!isFile(path) || !allowed(path) || !checkFile(path, path).ok) return null;
+  try {
+    const dir = join(uploadsDir(), String(chat));
+    const to = join(dir, contentName(path));
+    if (isFile(to)) return to;
+    mkdirSync(dir, { recursive: true });
+    const part = `${to}.${process.pid}.part`;
+    copyFileSync(path, part);
+    renameSync(part, to);
+    return to;
+  } catch {
+    return null;
+  }
+}
+
+/** A path as a markdown link target. */
+const target = (p: string): string => (/[\s()<>]/.test(p) ? `<${p}>` : p);
+
+/**
+ * A reply as its chat keeps it, on the PC the chat runs on: each image or video it draws from a file
+ * here (`![caption](path)`, a temp file, a project's file) is copied into the chat's uploads by its
+ * contents (`adoptOne`) and the reply names that copy. Other PCs and phones then fetch it as they
+ * fetch any upload, and it still shows once the file it came from is gone. Others are left as written.
+ */
+export function adopt(md: string, cwd: string | null, chat: number): string {
+  if (!md.includes("![")) return md;
+  const up = uploadsDir();
+  let out = "";
+  let at = 0;
+  for (const node of images(parse(md))) {
+    const r = resolve(node.url, cwd);
+    if (!r || r[1] !== null || startsWithPath(r[0], up)) continue;
+    const [start, end] = span(node);
+    const src = md.slice(start, end);
+    const cut = src.lastIndexOf("](");
+    if (start < at || cut < 0 || !src.endsWith(")")) continue;
+    const to = adoptOne(r[0], chat);
+    if (to === null) continue;
+    out += `${md.slice(at, start)}${src.slice(0, cut)}](${target(to)})`;
+    at = end;
+  }
+  return at === 0 ? md : out + md.slice(at);
 }
 
 export function saveRemote(path: string, bytes: Uint8Array): string | null {

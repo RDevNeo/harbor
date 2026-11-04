@@ -136,3 +136,24 @@ test("a_replys_images_are_served_even_after_their_temp_file_is_gone", async () =
   expect(head).toStartWith("HTTP/1.1 200");
   expect((await sharp(body).metadata()).width).toBe(30);
 });
+
+test("a_replys_images_kept_in_its_chats_uploads_are_what_phones_and_other_pcs_are_given_and_served_once_the_temp_file_is_gone", async () => {
+  const tmp = join(root, "tmp116");
+  mkdirSync(tmp, { recursive: true });
+  const shot = join(tmp, "shot.png");
+  writeFileSync(shot, await sharp({ create: { width: 24, height: 12, channels: 3, background: "#f00" } }).png().toBuffer());
+  // On the chat's PC, as the reply is written (engine `textFinal` → media.adopt).
+  const text = media.adopt(`Done.\n\n![The page](${shot})`, null, 9);
+  const kept = media.find(text, null)[0]?.path ?? "";
+  expect(kept.startsWith(join(media.uploadsDir(), "9") + "/")).toBe(true);
+  rmSync(shot);
+  // A phone (or a copy's hub, asking this PC) gets the kept copy's address and its bytes.
+  const shown = project([{ kind: "text", text, at: 1 }], false, [])[0];
+  if (!shown) throw new Error("no card");
+  const card = cardJson(shown, 1, (t) => media.find(t, null), "g9", undefined, { strip: (md) => media.stripRefs(md), parts: (md) => media.parts(md) });
+  const url = (card.media as { url: string }[])[0]?.url ?? "";
+  expect(url).toBe(`/v1/image?path=${q(kept)}&max=512&chat=g9`);
+  const [head, body] = await get(`/v1/image?path=${q(kept)}`);
+  expect(head).toStartWith("HTTP/1.1 200");
+  expect((await sharp(body).metadata()).width).toBe(24);
+});

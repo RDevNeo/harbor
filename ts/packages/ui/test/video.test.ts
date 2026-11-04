@@ -167,3 +167,50 @@ test("another PC's chat: an image that isn't on this PC comes from that PC once,
     else process.env.XDG_DATA_HOME = prevData;
   }
 });
+
+test("an image that failed to show is tried again while it's on the screen: a file that turns up, or its PC coming back", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
+  const prevData = process.env.XDG_DATA_HOME;
+  const prevRetry = MediaRows.RETRY_MS;
+  process.env.XDG_DATA_HOME = join(dir, "data-retry");
+  MediaRows.RETRY_MS = 40;
+  try {
+    let loads = 0;
+    const settle = async (f: () => boolean) => {
+      for (let i = 0; i < 150 && !f(); i++) await Bun.sleep(20);
+    };
+    // This PC's chat: the file isn't there yet, then it is (copied in by hand, written late).
+    const late = join(dir, `late-${Date.now()}.png`);
+    const card = { kind: "text" as const, text: `![Late](${late})`, at: 1, forkable: false };
+    const rows = new MediaRows(media, () => void loads++);
+    expect(rows.rows(card, dir, 760)).toHaveLength(0);
+    await settle(() => loads > 0);
+    expect(rows.rows(card, dir, 760)).toHaveLength(0);
+    writeFileSync(late, png);
+    await settle(() => rows.rows(card, dir, 760).length > 0);
+    expect(rows.rows(card, dir, 760)).toMatchObject([{ path: late, large: true, caption: "Late" }]);
+    // Another PC's chat whose PC was off: asked again later, then drawn.
+    const there = `/home/nobody-${Date.now()}/shots/away.png`;
+    const away = { ...card, text: `![Away](${there})` };
+    let on = false;
+    const asked: string[] = [];
+    const fetch = async (p: string) => (asked.push(p), on ? new Uint8Array(png) : null);
+    const other = new MediaRows(media, () => void loads++);
+    expect(other.rows(away, dir, 760, 1, fetch)).toHaveLength(0);
+    await settle(() => asked.length === 1);
+    on = true;
+    await settle(() => other.rows(away, dir, 760, 1, fetch).length > 0);
+    expect(other.rows(away, dir, 760, 1, fetch)).toMatchObject([{ path: there, caption: "Away" }]);
+    expect(asked).toEqual([there, there]);
+    // Once it's here it's drawn from the copy kept here, not asked for again.
+    const third = new MediaRows(media, () => void loads++);
+    third.rows(away, dir, 760, 1, fetch);
+    await settle(() => third.rows(away, dir, 760, 1, fetch).length > 0);
+    expect(third.rows(away, dir, 760, 1, fetch)).toHaveLength(1);
+    expect(asked).toHaveLength(2);
+  } finally {
+    MediaRows.RETRY_MS = prevRetry;
+    if (prevData === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prevData;
+  }
+});

@@ -218,6 +218,34 @@ async function until(what: string, f: () => boolean, ms = 8000): Promise<void> {
 const texts = (items: readonly Item[]): string[] => items.flatMap((i) => (i.kind === "user" ? [`user: ${i.text}`] : i.kind === "text" ? [i.text] : i.kind === "error" ? [`error: ${i.text}`] : []));
 
 describe("a chat's turn", () => {
+  test("a reply's images are kept in its chat (adoptMedia) and the transcript names the kept copies", async () => {
+    const { e, store } = setup();
+    const adopted: [string, number][] = [];
+    const kept: string[] = [];
+    e.host.adoptMedia = (text, _cwd, id) => (adopted.push([text, id]), text.replace("echo:", `kept in ${id}:`));
+    e.host.keepMedia = (text) => void kept.push(text);
+    const c = newChat(store);
+    e.reload();
+    e.send(c.id, "hello");
+    await until("the turn's end", () => !e.running(c.id));
+    expect(texts(e.transcript(c.id).items)).toEqual(["user: hello", `kept in ${c.id}: hello`]);
+    expect(texts(store.items(c.id))).toEqual(["user: hello", `kept in ${c.id}: hello`]);
+    expect(adopted[0]).toEqual(["echo: hello", c.id]);
+    expect(kept[0]).toBe(`kept in ${c.id}: hello`);
+    // The turn's end goes over its replies again: a reply already kept is what it's given.
+    expect(adopted.every(([t]) => t === "echo: hello" || t === `kept in ${c.id}: hello`)).toBe(true);
+    const before = adopted.length;
+    // Adopting fails: the reply is kept as written.
+    e.host.adoptMedia = () => {
+      throw new Error("disk full");
+    };
+    e.send(c.id, "again");
+    await until("the second turn's end", () => !e.running(c.id));
+    expect(texts(store.items(c.id)).at(-1)).toBe("echo: again");
+    expect(adopted.length).toBe(before);
+    store.close();
+  });
+
   test("a message runs a detached turn and its reply lands in the transcript and the store", async () => {
     const { e, store } = setup();
     const c = newChat(store);

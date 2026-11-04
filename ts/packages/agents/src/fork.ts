@@ -33,6 +33,9 @@ function textOf(content: unknown): string {
     .join("\n");
 }
 
+/** A reply without its images' targets: the chat keeps a reply's images under its uploads (media.ts `adopt`), where the session names the file the agent wrote. */
+const unlinked = (t: string): string => t.replace(/!\[([^\]]*)\]\((?:<[^>]*>|[^)\s]*)[^)]*\)/g, "![$1]()");
+
 function matches(line: unknown, a: Anchor): boolean {
   const kind = str(at(line, "type"));
   const content = at(line, "message", "content");
@@ -40,7 +43,11 @@ function matches(line: unknown, a: Anchor): boolean {
   if (a.kind === "user") return kind === "user" && textOf(content).includes(a.text);
   if (a.kind === "text") {
     const s = textOf(content).trim();
-    return kind === "assistant" && s !== "" && (s === a.text || s.includes(a.text) || a.text.includes(s));
+    if (kind !== "assistant" || s === "") return false;
+    if (s === a.text || s.includes(a.text) || a.text.includes(s)) return true;
+    if (!a.text.includes("![")) return false;
+    const [u, t] = [unlinked(s), unlinked(a.text)];
+    return u === t || u.includes(t) || t.includes(u);
   }
   return a.result
     ? kind === "user" && blocks.some((b) => at(b, "type") === "tool_result" && at(b, "tool_use_id") === a.id)

@@ -45,8 +45,10 @@ export class MediaRows {
     private native: (p: Pixels) => Pixels = (p) => p,
   ) {}
 
-  /** Images asked for from their chat's PC already (fetched or not): once each. */
-  private asked = new Set<string>();
+  /** Images asked for from their chat's PC: when each may be asked again (never once it came). */
+  private asked = new Map<string, number>();
+  /** Images that failed to show: how many times, for the wait before the next try (`later`). */
+  private tries = new Map<string, number>();
 
   /**
    * The card's images and videos. `fetch`: for a chat that runs on another PC, an image that isn't on
@@ -83,18 +85,49 @@ export class MediaRows {
   /** An image that failed to decode here: fetched from its chat's PC when it can be (true: it's coming). */
   private fromHome(path: string, key: string): boolean {
     const fetch = this.fetch;
-    if (fetch === null || this.asked.has(path) || this.pkg.media.isVideo(path)) return false;
-    this.asked.add(path);
+    if (fetch === null || (this.asked.get(path) ?? 0) > Date.now() || this.pkg.media.isVideo(path)) return false;
+    this.asked.set(path, Number.POSITIVE_INFINITY);
     void fetch(path)
       .then((bytes) => (bytes !== null ? this.pkg.media.saveRemote(path, bytes) : null))
       .catch(() => null)
       .then((saved) => {
-        // Kept here: decoded again from the copy (media.ts `located` finds it); else it stays a link.
-        if (saved !== null) this.got.delete(key);
-        else this.failed.add(key);
+        // Kept here: decoded again from the copy (media.ts `located` finds it).
+        if (saved !== null) {
+          this.got.delete(key);
+          this.loaded();
+          return;
+        }
+        // That PC is off, or doesn't have it (yet): a link for now, asked for again a little later.
+        this.asked.set(path, Date.now() + this.wait(key));
+        this.failed.add(key);
+        this.later(key);
         this.loaded();
       });
     return true;
+  }
+
+  /** The wait before an image that failed is tried again: 15 s, doubling up to 5 minutes. */
+  private wait(key: string): number {
+    return Math.min(5 * 60_000, MediaRows.RETRY_MS * 2 ** (this.tries.get(key) ?? 0));
+  }
+
+  /** The first wait before a failed image is tried again (tests make it short). */
+  static RETRY_MS = 15_000;
+
+  /**
+   * An image that failed (no such file here yet, its PC off) is tried again later while a card
+   * still shows it: a file that turns up here, or its PC coming back, shows it without reopening the chat.
+   */
+  private later(key: string): void {
+    const ms = this.wait(key);
+    this.tries.set(key, (this.tries.get(key) ?? 0) + 1);
+    const t = setTimeout(() => {
+      if (this.got.get(key) !== null) return;
+      this.got.delete(key);
+      this.failed.delete(key);
+      this.loaded();
+    }, ms);
+    (t as { unref?: () => void }).unref?.();
   }
 
   private take(slot: string | null, key: string, path: string, cap: number): Got | null {
@@ -115,12 +148,15 @@ export class MediaRows {
         .decode(path, null, cap)
         .then(({ image, dims }) => {
           if (this.got.get(key) !== null) return;
+          this.tries.delete(key);
           this.got.set(key, { image: this.native(image), dims });
           if (slot !== null) this.shown.set(slot, key);
           this.loaded();
         })
         .catch(() => {
           if (this.fromHome(path, key)) return;
+          // A video without a poster (no ffmpeg) keeps its dark card: nothing to try again.
+          if (!this.pkg.media.isVideo(path)) this.later(key);
           if (slot === null) return;
           this.failed.add(key);
           this.loaded();
@@ -153,6 +189,7 @@ export class MediaRows {
     for (const k of this.got.keys()) if (!this.used.has(k)) this.got.delete(k);
     for (const k of this.failed) if (!this.used.has(k)) this.failed.delete(k);
     for (const [slot, k] of this.shown) if (!this.used.has(k)) this.shown.delete(slot);
+    for (const k of this.tries.keys()) if (!this.used.has(k)) this.tries.delete(k);
     this.used.clear();
   }
 }
