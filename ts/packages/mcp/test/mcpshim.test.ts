@@ -38,9 +38,21 @@ test("subs get the team tools and everyone the shared ones", () => {
   expect(names("sub")).toContain("send_message");
   expect(names("sub")).toContain("read_messages");
   expect(names("lead")).not.toContain("send_message");
-  expect(names("lead")).toHaveLength(25);
+  expect(names("lead")).toHaveLength(26);
   expect(names("sub")).toHaveLength(13);
   for (const t of ["list_processes", "start_process", "list_secrets", "run_with_secrets", "find_chats"]) expect(names("sub")).toContain(t);
+});
+
+test("leads steer or queue their messages and take queued ones back", () => {
+  const lead = tools("lead");
+  for (const n of ["message_agent", "message_chat"]) {
+    const s = lead.find((t) => t.name === n)?.inputSchema as { properties: Record<string, { enum?: string[] }>; required: string[] };
+    expect(s.properties.mode?.enum).toEqual(["queue", "steer"]);
+    expect(s.required).not.toContain("mode");
+  }
+  const un = lead.find((t) => t.name === "unqueue_message")?.inputSchema as { required: string[] };
+  expect(un.required).toEqual(["id"]);
+  expect(names("sub")).not.toContain("unqueue_message");
 });
 
 async function* from(lines: string[]): AsyncGenerator<string> {

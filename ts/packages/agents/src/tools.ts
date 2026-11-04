@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { type Chat, usageCtl } from "@harbor/store";
-import type { Engine } from "./engine.ts";
+import type { Delivery, Engine } from "./engine.ts";
 import * as oc from "./openchat.ts";
 import { newUuid, now, randomHex } from "./paths.ts";
 import * as procs from "./procs.ts";
+import { type Mode, parseMode, steering } from "./queue.ts";
 import { type Account, accessLabel, applyUsage, type Kind, short, staticModels, usable } from "./providers.ts";
 import * as team from "./team.ts";
 import { elapsed } from "./team.ts";
@@ -41,13 +42,12 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
           const acc = e.account(c.account);
           const who = acc ? short(acc) : c.account;
           const model = acc ? e.modelLabel(acc.kind, c.model) : c.model;
-          return `- ${c.name} [${status}] ${who} / ${model}\n  link: ${e.chatLink(c)}\n  task: ${c.title}\n  last: ${team.clip(e.lastReply(c.id), 400)}`;
+          return `- ${c.name} [${status}] ${who} / ${model}\n  link: ${e.chatLink(c)}\n  task: ${c.title}\n  last: ${team.clip(e.lastReply(c.id), 400)}${isLead ? queuedLine(e, me, c) : ""}`;
         })
         .join("\n");
     }
-    case "send_message":
-    case "message_agent": {
-      const to = arg(a, tool === "message_agent" ? "agent" : "to");
+    case "send_message": {
+      const to = arg(a, "to");
       const text = arg(a, "text");
       if (text === "") throw new Error("text is empty");
       const target = e.resolve(me, to);
@@ -107,7 +107,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       return list.length === 0 ? "No processes." : list.join("\n");
     }
     case "read_messages": {
-      const q = e.pending.get(me.id) ?? [];
+      const q = [...(e.pending.get(me.id) ?? []), ...e.takeMessages(me.id)];
       e.pending.delete(me.id);
       return q.length === 0 ? "No new messages." : q.join("\n\n");
     }
@@ -121,7 +121,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
     case "list_chats": {
       const chats = chatsFor(e, me, toolProject(e, me, a));
       if (chats.length === 0) return "No chats.";
-      return chats.map((c) => `- id ${c.id} ${oc.quoted(c.title)}${c.id === me.id ? " (this chat)" : ""} [${statusWords(e, c)}] ${e.chatLink(c)}`).join("\n");
+      return chats.map((c) => `- id ${c.id} ${oc.quoted(c.title)}${c.id === me.id ? " (this chat)" : ""} [${statusWords(e, c)}] ${e.chatLink(c)}${queuedLine(e, me, c)}`).join("\n");
     }
     case "find_chats": {
       const who = commander(e, me);
@@ -139,8 +139,36 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
         })
         .join("\n");
     }
+    case "message_agent": {
+      const name = arg(a, "agent");
+      const text = arg(a, "text");
+      if (text === "") throw new Error("text is empty");
+      const target = e.resolve(me, name);
+      if (!target) throw new Error(team.noAgent(e.chats, leadId, name));
+      if (target.id === me.id) throw new Error("that is you");
+      const d = e.deliver(target.id, text, { chat: me.id, from: "lead", to: target.name, tag: "[message from lead] " }, toolMode(a));
+      return delivered(e, target, d, target.name, `agent: ${JSON.stringify(target.name)}`);
+    }
     case "message_chat":
       return messageChat(e, me, a);
+    case "unqueue_message": {
+      const agent = arg(a, "agent");
+      const chat = arg(a, "chat");
+      if ((agent === "") === (chat === "")) throw new Error("give agent or chat");
+      const target = agent !== "" ? e.resolve(me, agent) : chatTarget(e, me, chat);
+      if (!target) throw new Error(team.noAgent(e.chats, leadId, agent));
+      const name = agent !== "" ? target.name : oc.quoted(target.title);
+      const raw = (a as Record<string, unknown> | null)?.id;
+      const which = raw === "all" ? "all" : typeof raw === "number" ? raw : typeof raw === "string" && /^\s*\d+\s*$/.test(raw) ? Number(raw) : null;
+      if (which === null) throw new Error("id must be a queued message's id or 'all'");
+      const gone = e.unqueue(target.id, me.id, which);
+      if (gone.length > 0) return `Took back ${gone.length === 1 ? `message ${gone[0]?.id}` : `${gone.length} messages (ids ${gone.map((q) => q.id).join(", ")})`} from ${name}'s queue: it never gets ${gone.length === 1 ? "it" : "them"}.`;
+      if (which === "all") return `Nothing of yours waits in ${name}'s queue.`;
+      const q = e.queued(target.id).find((x) => x.id === which);
+      if (q && q.agent?.chat !== me.id) throw new Error(`message ${which} isn't yours: only the user takes it back`);
+      if (q) throw new Error(`message ${which} is already on its way into ${name}'s turn: send a correction instead`);
+      throw new Error(`no message ${which} waits in ${name}'s queue: it was delivered already, or the id is wrong (list_agents and list_chats show what waits)`);
+    }
     case "read_agent": {
       const name = arg(a, "agent");
       const target = e.resolve(me, name) ?? team.namedSub(e.chats, leadId, name);
@@ -156,9 +184,12 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       const target = e.resolve(me, name);
       if (!target) throw new Error(team.noAgent(e.chats, leadId, name));
       e.pending.delete(target.id);
-      if (!e.turns.has(target.id)) return `${target.name} was not running.`;
+      // What the lead queued would wait for a Resume the lead can't give: it goes with the turn.
+      const gone = e.unqueue(target.id, me.id, "all", true).length;
+      const dropped = gone > 0 ? ` Dropped ${gone} message(s) you had queued for it.` : "";
+      if (!e.turns.has(target.id)) return `${target.name} was not running.${dropped}`;
       e.stop(target.id);
-      return `Stopped ${target.name}.`;
+      return `Stopped ${target.name}.${dropped}`;
     }
     case "list_models": {
       const out: string[] = [];
@@ -306,22 +337,81 @@ export async function openChat(e: Engine, me: Chat, a: unknown): Promise<string>
   return `Opened the chat ${oc.quoted(fresh.title)} (id ${fresh.id}) in ${project}. Its agent is working on it now; the user sees it in the sidebar. Follow up with message_chat(chat: ${fresh.id}, text) and check it with list_chats.`;
 }
 
-/** `message_chat`: a message from this chat's agent to another chat's, which starts a turn with it (or reads it after the current one). */
-export function messageChat(e: Engine, me: Chat, a: unknown): string {
-  const text = arg(a, "text");
-  if (text === "") throw new Error("text is empty");
-  const which = arg(a, "chat");
+/** A lead chat of this PC `me` may message (by id or title), for message_chat and unqueue_message. */
+function chatTarget(e: Engine, me: Chat, which: string): Chat {
   const target = oc.findChat(
     e.chats.filter((c) => c.role === "lead" && c.home === ""),
     which,
   );
   if (!target || commander(e, target) !== commander(e, me)) throw new Error(`no chat '${which}'. Use list_chats.`);
+  return target;
+}
+
+/** `message_chat`: a message from this chat's agent to another chat's, which starts a turn with it, steers its running one or waits for it to end. */
+export function messageChat(e: Engine, me: Chat, a: unknown): string {
+  const text = arg(a, "text");
+  if (text === "") throw new Error("text is empty");
+  const target = chatTarget(e, me, arg(a, "chat"));
   if (target.id === me.id) throw new Error("that is this chat");
-  e.transcript(target.id).items.push({ kind: "message", from: `chat ${oc.quoted(me.title)}`, to: oc.THIS_CHAT, text });
-  e.persist(target.id);
-  const busy = e.turns.has(target.id);
-  e.trigger(target.id, `[message from the agent of the chat ${oc.quoted(me.title)} (id ${me.id})] ${text}`, true);
-  return busy ? `Delivered to ${oc.quoted(target.title)}. It is busy; it reads it right after its turn.` : `Delivered to ${oc.quoted(target.title)}; its agent is working on it now.`;
+  const d = e.deliver(target.id, text, { chat: me.id, from: `chat ${oc.quoted(me.title)}`, to: oc.THIS_CHAT, tag: `[message from the agent of the chat ${oc.quoted(me.title)} (id ${me.id})] ` }, toolMode(a));
+  return delivered(e, target, d, oc.quoted(target.title), `chat: ${target.id}`);
+}
+
+function toolMode(a: unknown): Mode {
+  const s = arg(a, "mode");
+  if (s === "") return "queue";
+  const m = parseMode(s);
+  if (m === null) throw new Error("mode is 'steer' or 'queue'");
+  return m;
+}
+
+/** What a message_agent or message_chat did, for the lead: `ref` names the target in an unqueue_message call. */
+function delivered(e: Engine, target: Chat, d: Delivery, name: string, ref: string): string {
+  switch (d.how) {
+    case "started":
+      return `Delivered to ${name}; ${target.role === "sub" ? "it is" : "its agent is"} working on it now.`;
+    case "waiting":
+      if (d.why === "slots") return `Delivered to ${name}; it starts on it once a teammate's turn ends (${team.MAX_RUNNING_SUBS} run at a time).`;
+      if (d.why === "paused") return `Held for ${name}: automatic turns are paused in this project until the user writes.`;
+      return `Delivered to ${name}; it starts on it as soon as it can.`;
+    case "steered":
+      return d.restart
+        ? `Steered ${name}: ${e.account(target.account)?.kind ?? "its provider"} can't take a message mid-turn, so its turn was stopped and resumed with yours.`
+        : `Steered ${name}: your message goes into its running turn now.`;
+    case "queued": {
+      const why =
+        d.steer === "unsupported"
+          ? `Couldn't steer ${name} (${steerless(e, target)}), so it was queued instead: `
+          : d.steer === "missed"
+            ? `Couldn't steer ${name} (its turn was closing its input), so it goes next: `
+            : "";
+      const sooner = target.role === "sub" ? ", or sooner if it calls read_messages" : "";
+      return `${why}Queued for ${name} at position ${d.at} (id ${d.id}); it gets it when its current turn ends${sooner}. unqueue_message(${ref}, id: ${d.id}) takes it back.`;
+    }
+  }
+}
+
+/** Why a running turn can't take a steer: Claude's and Codex's can, once their runner is up and while Claude's input is open. */
+function steerless(e: Engine, c: Chat): string {
+  return e.turnOf(c.id) === null ? "its turn is still starting" : "its turn is closing its input";
+}
+
+/** For list_agents and list_chats: the messages `me` queued for `c` (with the ids unqueue_message takes), and how many others wait there. */
+function queuedLine(e: Engine, me: Chat, c: Chat): string {
+  const waiting = e.queued(c.id).filter((q) => !q.written && !steering(q));
+  if (waiting.length === 0) return "";
+  const mine = waiting.filter((q) => q.agent?.chat === me.id);
+  const parts = mine.map((q) => `id ${q.id} ${oc.quoted(gist(q.text))}`);
+  const others = waiting.length - mine.length;
+  if (others > 0) parts.push(`${others} not from you`);
+  return `\n  queued: ${parts.join("; ")}`;
+}
+
+/** A queued message's first line, short. */
+function gist(text: string): string {
+  const line = text.trim().split("\n")[0] ?? "";
+  const chars = [...line];
+  return chars.length > 60 ? `${chars.slice(0, 59).join("")}…` : line;
 }
 
 export function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): string {

@@ -16,8 +16,8 @@ import * as procs from "./procs.ts";
 import { type Account, accountEnv, applyUsage, binStr, installed, type Kind, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as tools from "./tools.ts";
-import { type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode, withWho } from "./queue.ts";
-export { NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, type Mode } from "./queue.ts";
+import { type FromAgent, type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode, withWho } from "./queue.ts";
+export { type FromAgent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, type Mode } from "./queue.ts";
 import { Recaps } from "./recap.ts";
 
 /** What the engine needs from the app around it; the optional parts belong to other packages. */
@@ -145,6 +145,14 @@ interface Running {
   /** Steers and follow-ups this process took in, by text: Claude can echo one twice. */
   took?: string[];
 }
+
+/** What became of another agent's message (`Engine.deliver`). "later": a usage limit or a move to another PC; `restart`: Codex
+ *  takes a steer by restarting its turn; `at` counts from 1 (next); `steer`: why a steer asked for didn't happen. */
+export type Delivery =
+  | { how: "started" }
+  | { how: "waiting"; why: "slots" | "paused" | "later" }
+  | { how: "steered"; restart: boolean }
+  | { how: "queued"; id: number; at: number; steer: "unsupported" | "missed" | null };
 
 export class Engine {
   chats: Chat[] = [];
@@ -764,27 +772,98 @@ export class Engine {
     /** Runs `prompt` as the chat's next turn now, or after the current one. `auto`: Harbor starts it on its own (rate limited). */
   trigger(id: number, prompt: string, auto: boolean): void {
     if (this.chat(id)?.retired) return;
-    if (auto) {
-      const project = this.chat(id)?.repoId ?? 0;
-      const t = Date.now();
-      const q = (this.autoTurns.get(project) ?? []).filter((x) => t - x < 3600_000);
-      this.autoTurns.set(project, q);
-      if (q.length >= team.AUTO_TURNS_PER_HOUR) {
-        if (!this.paused.has(project)) {
-          this.paused.add(project);
-          const lead = this.mainChat(project) ?? this.leadOf(project);
-          if (lead !== null) this.notice(lead, "alert", "Automatic turns paused: more than 60 in the last hour. Send a message to resume.");
-        }
-        // Held for when the user resumes, up to a point: a flood mustn't grow it without end.
-        if ((this.pending.get(id)?.length ?? 0) < team.MAX_PAUSED_PENDING) this.pushPending(id, prompt);
-        return;
-      }
-      q.push(t);
-    }
-    const chat = this.chat(id);
-    const subsBusy = chat?.role === "sub" && chat.parent !== null && this.subsOf(chat.parent).filter((s) => this.turns.has(s.id)).length >= team.MAX_RUNNING_SUBS;
-    if (this.turns.has(id) || subsBusy) this.pushPending(id, prompt);
+    if (auto && !this.countAuto(id, prompt)) return;
+    if (this.turns.has(id) || this.subsBusy(id)) this.pushPending(id, prompt);
     else this.startTurn(id, prompt);
+  }
+
+  /** Counts an automatic turn of the chat's project. Past the hourly limit they pause and `prompt` is held as pending instead: false. */
+  private countAuto(id: number, prompt: string): boolean {
+    const project = this.chat(id)?.repoId ?? 0;
+    const t = Date.now();
+    const q = (this.autoTurns.get(project) ?? []).filter((x) => t - x < 3600_000);
+    this.autoTurns.set(project, q);
+    if (q.length >= team.AUTO_TURNS_PER_HOUR) {
+      if (!this.paused.has(project)) {
+        this.paused.add(project);
+        const lead = this.mainChat(project) ?? this.leadOf(project);
+        if (lead !== null) this.notice(lead, "alert", "Automatic turns paused: more than 60 in the last hour. Send a message to resume.");
+      }
+      // Held for when the user resumes, up to a point: a flood mustn't grow it without end.
+      if ((this.pending.get(id)?.length ?? 0) < team.MAX_PAUSED_PENDING) this.pushPending(id, prompt);
+      return false;
+    }
+    q.push(t);
+    return true;
+  }
+
+  /** A subagent whose teammates already run as many turns as a team may. */
+  private subsBusy(id: number): boolean {
+    const chat = this.chat(id);
+    return chat?.role === "sub" && chat.parent !== null && this.subsOf(chat.parent).filter((s) => this.turns.has(s.id)).length >= team.MAX_RUNNING_SUBS;
+  }
+
+  /** From message_agent and message_chat: a steer is the user's steer; a queued message is also what the agent's
+   *  read_messages takes. */
+  deliver(id: number, text: string, by: FromAgent, mode: Mode = "queue"): Delivery {
+    const prompt = `${by.tag}${text}`;
+    if (!this.turns.has(id) || this.host.moving?.(id)) {
+      this.transcript(id).items.push({ kind: "message", from: by.from, to: by.to, text });
+      this.persist(id);
+      this.trigger(id, prompt, true);
+      if (this.turns.has(id)) return { how: "started" };
+      return { how: "waiting", why: this.subsBusy(id) ? "slots" : this.paused.has(this.chat(id)?.repoId ?? 0) ? "paused" : "later" };
+    }
+    if (!this.countAuto(id, prompt)) {
+      this.transcript(id).items.push({ kind: "message", from: by.from, to: by.to, text });
+      this.persist(id);
+      return { how: "waiting", why: "paused" };
+    }
+    const q: Queued = { id: this.queue.id(), text, files: [], mentions: [], written: false, sender: "", device: "", intent: "", note: "", editing: "", agent: by };
+    const how = this.steering(id);
+    if (mode === "steer" && how !== "no") {
+      this.steer(id, q, STEER);
+      if (steering(q)) return { how: "steered", restart: how === "restart" };
+    } else {
+      this.queue.list(id).push(q);
+      this.changed(id);
+    }
+    const at = this.queued(id).filter((x) => !x.written && !steering(x)).indexOf(q) + 1;
+    return { how: "queued", id: q.id, at, steer: mode === "steer" ? (how === "no" ? "unsupported" : "missed") : null };
+  }
+
+  /** read_messages: the other agents' messages waiting in the chat's queue, taken out as the agent reads them now. */
+  takeMessages(id: number): string[] {
+    const list = this.queue.chats.get(id) ?? [];
+    const taken = list.filter((q) => q.agent && !q.written && !steering(q));
+    if (taken.length === 0) return [];
+    this.queue.chats.set(
+      id,
+      list.filter((q) => !taken.includes(q)),
+    );
+    this.queue.tidy(id);
+    const tr = this.transcript(id);
+    for (const q of taken) tr.items.push(queuedItem(q));
+    tr.pendingText = null;
+    tr.pendingThinking = null;
+    this.persist(id);
+    this.changed(id);
+    return taken.map((q) => queuedPrompt(q, q.text, ""));
+  }
+
+  /** Takes back what chat `by`'s agent queued for `id`: one message by its queue id, or all. Steers and what is on its way
+   *  in stay, unless `inFlight` (its turn is being stopped). Returns what was taken. */
+  unqueue(id: number, by: number, qid: number | "all", inFlight = false): Queued[] {
+    const list = this.queue.chats.get(id) ?? [];
+    const gone = list.filter((q) => q.agent?.chat === by && (qid === "all" || q.id === qid) && (inFlight || (!q.written && !steering(q))));
+    if (gone.length === 0) return [];
+    this.queue.chats.set(
+      id,
+      list.filter((q) => !gone.includes(q)),
+    );
+    this.queue.tidy(id);
+    this.changed(id);
+    return gone;
   }
 
   /** The user wrote: automatic turns of the chat's project run again. */

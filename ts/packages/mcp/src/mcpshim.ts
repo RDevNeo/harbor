@@ -11,6 +11,13 @@ function tool(name: string, description: string, properties: JsonObject, require
 
 const names = (description: string): Json => ({ type: "array", items: { type: "string" }, description });
 
+/** message_agent's and message_chat's `mode`. */
+const mode: Json = {
+  type: "string",
+  enum: ["queue", "steer"],
+  description: "For a busy agent: 'steer' cuts into the turn it is running now, for a correction or a cancel of what it is doing; 'queue' (default) waits until that turn ends, for follow-up work. An idle agent starts a turn with it either way",
+};
+
 export function tools(role: string): JsonObject[] {
   const v: JsonObject[] = [
     tool("list_processes", "Long-running processes Harbor runs for this project (dev servers, watchers…): status, command and URL.", {}, []),
@@ -26,7 +33,7 @@ export function tools(role: string): JsonObject[] {
       },
       ["name", "command"],
     ),
-    tool("list_agents", "List the project's agents: name, provider/model, status (running/idle), current task and last report.", {}, []),
+    tool("list_agents", "List the project's agents: name, provider/model, status (running/idle), current task and last report; for the lead, also the messages it queued for each (with their ids, for unqueue_message).", {}, []),
     tool(
       "find_chats",
       "Find Harbor chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (harbor://chat/…) to put in a reply so the user can open it.",
@@ -111,24 +118,30 @@ export function tools(role: string): JsonObject[] {
       ),
       tool(
         "list_chats",
-        "The project's chats (sidebar threads): id, title, status (working, queued, idle, settled) and link (harbor://chat/…, to put in a reply).",
+        "The project's chats (sidebar threads): id, title, status (working, queued, idle, settled), link (harbor://chat/…, to put in a reply) and the messages you queued there (with their ids, for unqueue_message).",
         { project: prop("string", "Project name or folder (default: this chat's project)") },
         [],
       ),
       tool(
         "message_chat",
-        "Send a message to another chat's agent (by id from list_chats or open_chat, or its title). It starts a turn with it, or reads it after the current one.",
-        { chat: prop("string", "Chat id or title"), text: prop("string", "Message") },
+        "Send a message to another chat's agent (by id from list_chats or open_chat, or its title). Idle, it starts a turn with it. Busy, mode 'queue' (default) waits for its turn to end and 'steer' cuts into it now. The result says which happened; a queued message's id lets unqueue_message take it back.",
+        { chat: prop("string", "Chat id or title"), text: prop("string", "Message"), mode },
         ["chat", "text"],
       ),
       tool(
         "message_agent",
-        "Send a message to a subagent. If it is idle it starts a new turn with it; if busy it reads it with read_messages or after its turn.",
-        { agent: prop("string", "Agent name"), text: prop("string", "Message") },
+        "Send a message to a subagent. Idle, it starts a new turn with it. Busy: mode 'steer' delivers it into the running turn now, like the user's steer, for a correction or a cancel of what it is doing (where steering isn't possible it is queued, said so); 'queue' (default) is for follow-up work: it waits until the turn ends (or the agent calls read_messages). The result says what happened: steered, queued at position N with an id, or started a turn. Withdraw a queued message with unqueue_message.",
+        { agent: prop("string", "Agent name"), text: prop("string", "Message"), mode },
         ["agent", "text"],
       ),
+      tool(
+        "unqueue_message",
+        "Take back messages you queued with message_agent or message_chat that the agent hasn't received yet: one by its id (from the send's result, list_agents or list_chats), or all of yours. A steer, or a message already delivered, can't be taken back: send a correction instead.",
+        { agent: prop("string", "Agent name"), chat: prop("string", "Chat id or title, instead of agent"), id: prop("string", "The message's id, or 'all'") },
+        ["id"],
+      ),
       tool("read_agent", "Read the recent transcript of a subagent (its messages, tool calls and results).", { agent: prop("string", "Agent name"), items: prop("integer", "How many recent entries (default 20)") }, ["agent"]),
-      tool("stop_agent", "Stop a subagent's running turn. It stays on the team: to take it off, use retire_agent.", { agent: prop("string", "Agent name") }, ["agent"]),
+      tool("stop_agent", "Stop a subagent's running turn and drop the messages waiting for it. It stays on the team: to take it off, use retire_agent.", { agent: prop("string", "Agent name") }, ["agent"]),
       tool(
         "retire_agent",
         "Retire a subagent whose job is done: stops its turn if one is running, drops the messages waiting for it, and takes it off the team and the user's Agents panel for good, so it can't be messaged or woken again. Its chat stays readable (its link, find_chats, read_agent). Processes it started keep running and report to you.",

@@ -608,6 +608,130 @@ describe("teams", () => {
   });
 });
 
+describe("a lead's messages: steer or queue", () => {
+  /** A lead and its subagent "tests", the subagent busy with `task`. */
+  async function busySub(task: string, wait = true): Promise<{ e: Engine; store: Store; changed: (number | null)[]; lead: Chat; sub: Chat }> {
+    const { e, store, changed } = setup();
+    const lead = newChat(store, { role: "lead", name: "lead" });
+    const sub = newChat(store, { role: "sub", parent: lead.id, name: "tests" });
+    e.reload();
+    e.send(sub.id, task);
+    if (wait) await until("the runner", () => e.turnOf(sub.id) !== null);
+    return { e, store, changed, lead, sub };
+  }
+
+  const quiet = (e: Engine, ...cs: Chat[]): Promise<void> => until("quiet", () => cs.every((c) => !e.running(c.id) && e.queued(c.id).length === 0), 10_000);
+  /** The subagent's turn over, and the lead's turn on its report too. */
+  const reported = (e: Engine, lead: Chat, sub: Chat): Promise<void> =>
+    until("the report's turn", () => !e.running(sub.id) && e.queued(sub.id).length === 0 && texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent tests] finished")) && !e.running(lead.id), 10_000);
+
+  test("steer goes into the running turn like the user's steer", async () => {
+    const { e, store, lead, sub } = await busySub("slow first");
+    expect(await e.tool(lead.id, "message_agent", { agent: "tests", text: "use the other file", mode: "steer" })).toBe("Steered tests: your message goes into its running turn now.");
+    expect(e.queued(sub.id).map((q) => [q.text, q.intent])).toEqual([["use the other file", STEER]]);
+    await until("the steer written", () => e.queued(sub.id)[0]?.written === true || !e.running(sub.id));
+    await until("the sub's turn's end", () => !e.running(sub.id), 10_000);
+    // One turn: the steer went into it, shown as the lead's message.
+    expect(texts(e.transcript(sub.id).items)).toEqual(["user: slow first", "echo: slow first", "echo: [message from lead] use the other file"]);
+    expect(e.transcript(sub.id).items.filter((i) => i.kind === "message")).toEqual([{ kind: "message", from: "lead", to: "tests", text: "use the other file" }]);
+    await reported(e, lead, sub);
+    store.close();
+  });
+
+  test("queue (the default) waits for the turn, is listed with its id, and only the lead's own come back", async () => {
+    const { e, store, changed, lead, sub } = await busySub("slow one");
+    const first = await e.tool(lead.id, "message_agent", { agent: "tests", text: "then the docs" });
+    const [, id1] = /\(id (\d+)\)/.exec(first) ?? [];
+    expect(first).toBe(`Queued for tests at position 1 (id ${id1}); it gets it when its current turn ends, or sooner if it calls read_messages. unqueue_message(agent: "tests", id: ${id1}) takes it back.`);
+    e.send(sub.id, "the user's", { mode: "queue" });
+    const second = await e.tool(lead.id, "message_agent", { agent: "tests", text: "and the changelog\nwith details", mode: "queue" });
+    const id2 = Number(/\(id (\d+)\)/.exec(second)?.[1]);
+    expect(second).toStartWith(`Queued for tests at position 3 (id ${id2})`);
+    expect(await e.tool(lead.id, "list_agents", {})).toContain(`\n  queued: id ${id1} “then the docs”; id ${id2} “and the changelog”; 1 not from you`);
+    // The composer's queue shows them all, like the user's own.
+    expect(e.queueJson(sub.id).map((q) => (q as { text: string }).text)).toEqual(["then the docs", "the user's", "and the changelog\nwith details"]);
+    const user = e.queued(sub.id)[1] as Queued;
+    await expect(e.tool(lead.id, "unqueue_message", { agent: "tests", id: user.id })).rejects.toThrow("isn't yours");
+    changed.length = 0;
+    expect(await e.tool(lead.id, "unqueue_message", { agent: "tests", id: id1 })).toBe(`Took back message ${id1} from tests's queue: it never gets it.`);
+    expect(changed).toContain(sub.id);
+    await expect(e.tool(lead.id, "unqueue_message", { agent: "tests", id: id1 })).rejects.toThrow(`no message ${id1} waits`);
+    expect(await e.tool(lead.id, "unqueue_message", { agent: "tests", id: "all" })).toBe(`Took back message ${id2} from tests's queue: it never gets it.`);
+    expect(await e.tool(lead.id, "unqueue_message", { agent: "tests", id: "all" })).toBe("Nothing of yours waits in tests's queue.");
+    expect(e.queued(sub.id).map((q) => q.text)).toEqual(["the user's"]);
+    await until("the sub's turn's end", () => !e.running(sub.id) && e.queued(sub.id).length === 0, 10_000);
+    expect(texts(e.transcript(sub.id).items)).toEqual(["user: slow one", "echo: slow one", "user: the user's", "echo: the user's"]);
+    expect(e.transcript(sub.id).items.some((i) => i.kind === "message")).toBe(false);
+    await reported(e, lead, sub);
+    store.close();
+  });
+
+  test("a queued message runs after the turn as the lead's message", async () => {
+    const { e, store, lead, sub } = await busySub("slow one");
+    await e.tool(lead.id, "message_agent", { agent: "tests", text: "next", mode: "queue" });
+    await until("the sub's turn's end", () => !e.running(sub.id) && e.queued(sub.id).length === 0, 10_000);
+    expect(texts(e.transcript(sub.id).items)).toEqual(["user: slow one", "echo: slow one", "echo: [message from lead] next"]);
+    expect(e.transcript(sub.id).items.filter((i) => i.kind === "message")).toEqual([{ kind: "message", from: "lead", to: "tests", text: "next" }]);
+    await reported(e, lead, sub);
+    store.close();
+  });
+
+  test("a steer the turn can't take yet is queued, said so", async () => {
+    // Its runner isn't up yet: nothing to steer.
+    const { e, store, lead, sub } = await busySub("slow one", false);
+    expect(e.turnOf(sub.id)).toBeNull();
+    const said = await e.tool(lead.id, "message_agent", { agent: "tests", text: "stop that", mode: "steer" });
+    expect(said).toStartWith("Couldn't steer tests (its turn is still starting), so it was queued instead: Queued for tests at position 1 (id ");
+    expect(e.queued(sub.id).map((q) => [q.text, q.intent])).toEqual([["stop that", ""]]);
+    await until("the sub's turn's end", () => !e.running(sub.id) && e.queued(sub.id).length === 0, 10_000);
+    expect(texts(e.transcript(sub.id).items).at(-1)).toBe("echo: [message from lead] stop that");
+    await reported(e, lead, sub);
+    store.close();
+  });
+
+  test("read_messages takes the lead's queued messages now; stop_agent drops the rest", async () => {
+    const { e, store, lead, sub } = await busySub("slow one");
+    await e.tool(lead.id, "message_agent", { agent: "tests", text: "look at the docs" });
+    expect(await e.tool(sub.id, "read_messages", {})).toBe("[message from lead] look at the docs");
+    expect(e.queued(sub.id)).toEqual([]);
+    expect(e.transcript(sub.id).items.at(-1)).toEqual({ kind: "message", from: "lead", to: "tests", text: "look at the docs" });
+    await e.tool(lead.id, "message_agent", { agent: "tests", text: "one" });
+    await e.tool(lead.id, "message_agent", { agent: "tests", text: "two" });
+    expect(await e.tool(lead.id, "stop_agent", { agent: "tests" })).toBe("Stopped tests. Dropped 2 message(s) you had queued for it.");
+    expect(e.queued(sub.id)).toEqual([]);
+    // The stopped runner's folder goes once its last events are in.
+    await until("the runner gone", () => !e.running(lead.id) && readdirSync(detach.root()).every((d) => !d.startsWith(`${sub.id}-`)), 10_000);
+    store.close();
+  });
+
+  test("an idle agent starts a turn with it, whichever the mode", async () => {
+    const { e, store } = setup();
+    const lead = newChat(store, { role: "lead", name: "lead" });
+    const sub = newChat(store, { role: "sub", parent: lead.id, name: "tests" });
+    e.reload();
+    expect(await e.tool(lead.id, "message_agent", { agent: "tests", text: "hi", mode: "steer" })).toBe("Delivered to tests; it is working on it now.");
+    expect(e.running(sub.id)).toBe(true);
+    await expect(e.tool(lead.id, "message_agent", { agent: "tests", text: "x", mode: "now" })).rejects.toThrow("mode is 'steer' or 'queue'");
+    await reported(e, lead, sub);
+    store.close();
+  });
+
+  test("message_chat steers and queues the same way", async () => {
+    const { e, store } = setup();
+    const lead = newChat(store, { role: "lead", name: "lead", title: "Main" });
+    const other = newChat(store, { role: "lead", name: "lead", title: "Docs" });
+    e.reload();
+    e.send(other.id, "slow one");
+    const said = await e.tool(lead.id, "message_chat", { chat: "Docs", text: "and the README" });
+    const id = Number(/\(id (\d+)\)/.exec(said)?.[1]);
+    expect(said).toBe(`Queued for “Docs” at position 1 (id ${id}); it gets it when its current turn ends. unqueue_message(chat: ${other.id}, id: ${id}) takes it back.`);
+    expect(await e.tool(lead.id, "list_chats", {})).toContain(`\n  queued: id ${id} “and the README”`);
+    expect(await e.tool(lead.id, "unqueue_message", { chat: String(other.id), id: String(id) })).toBe(`Took back message ${id} from “Docs”'s queue: it never gets it.`);
+    await quiet(e, lead, other);
+    store.close();
+  });
+});
+
 describe("the queue (queue.rs)", () => {
   const q = (id: number, text: string): Queued => ({ id, text, files: [], mentions: [], written: false, sender: "", device: "", intent: "", note: "", editing: "" });
 
@@ -682,6 +806,17 @@ describe("the queue (queue.rs)", () => {
   test("queued_item_keeps_the_intent", () => {
     const it = queuedItem({ ...q(1, "also print the square"), intent: PROMOTED });
     expect(it.kind === "user" && [it.text, it.intent]).toEqual(["also print the square", "promoted"]);
+  });
+
+  test("another_agent_s_message_reads_with_its_tag_shows_as_its_message_and_survives_a_reload", () => {
+    const m: Queued = { ...q(3, "then the docs"), agent: { chat: 1, from: "lead", to: "tests", tag: "[message from lead] " } };
+    expect(queuedPrompt(m, "ignored", "")).toBe("[message from lead] then the docs");
+    expect(queuedItem(m)).toEqual({ kind: "message", from: "lead", to: "tests", text: "then the docs" });
+    const st = new QueueState();
+    st.chats.set(5, [m, q(4, "the user's")]);
+    const back = new QueueState();
+    back.restore(JSON.parse(JSON.stringify(st.snapshot())));
+    expect(back.queued(5).map((x) => x.agent ?? null)).toEqual([m.agent ?? null, null]);
   });
 
   test("modes_round_trip", () => {

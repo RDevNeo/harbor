@@ -19,6 +19,17 @@ export const NOT_LANDED = "Steer didn't land: queued";
 export type Intent = "" | typeof STEER | typeof PROMOTED;
 export type Note = "" | typeof NOT_LANDED;
 
+/** A follow-up another chat's agent sent (message_agent, message_chat) rather than the user. */
+export interface FromAgent {
+  /** The chat whose agent sent it: only that one takes it back (unqueue_message). */
+  chat: number;
+  /** As the transcript's message item names sender and receiver. */
+  from: string;
+  to: string;
+  /** What the agent reads before the text, e.g. "[message from lead] ". */
+  tag: string;
+}
+
 export interface Queued {
   /** The API's `queue/{id}`. */
   id: number;
@@ -38,6 +49,8 @@ export interface Queued {
   note: Note;
   /** The device editing it in its composer; empty when nobody is. */
   editing: string;
+  /** Sent by another chat's agent; the user's own have none. */
+  agent?: FromAgent;
 }
 
 /** Where a message was written, for the agent (which otherwise takes the user to be at this PC).
@@ -51,8 +64,9 @@ export function sentFrom(sender: string, device: string, back: boolean, hostname
     : `[The user sent this from Harbor on '${sender}', another PC, not from this one.]\n\n`;
 }
 
-/** What the agent gets for a queued message: mentioned messages quoted first, then the text as `said`. */
+/** What the agent gets for a queued message: mentioned messages quoted first, then the text as `said` (another agent's: its tag, then the text). */
 export function queuedPrompt(q: Queued, said: string, mentions: string): string {
+  if (q.agent) return `${q.agent.tag}${q.text}`;
   const from = sentFrom(q.sender, q.device, false, undefined, q.via);
   // A slash command only runs at the start: where it came from follows it.
   if (said.startsWith("/") && from !== "") return `${mentions}${said}\n\n${from.trimEnd()}`;
@@ -60,6 +74,7 @@ export function queuedPrompt(q: Queued, said: string, mentions: string): string 
 }
 
 export function queuedItem(q: Queued): Item {
+  if (q.agent) return { kind: "message", from: q.agent.from, to: q.agent.to, text: q.text };
   return withWho({ kind: "user", text: q.text, files: [...q.files], at: now(), mentions: q.mentions, sender: q.sender, intent: q.intent }, q.who, q.via, q.dev);
 }
 
@@ -154,6 +169,7 @@ function queuedJson(q: Queued): Record<string, unknown> {
   if (q.who) v.who = q.who;
   if (q.via) v.via = q.via;
   if (q.dev) v.dev = q.dev;
+  if (q.agent) v.agent = q.agent;
   return v;
 }
 
@@ -176,6 +192,8 @@ function queuedFrom(v: unknown): Queued | null {
   if (s("who") !== "") q.who = s("who");
   if (o.via === "phone" || o.via === "pc") q.via = o.via;
   if (s("dev") !== "") q.dev = s("dev");
+  const ag = o.agent as Record<string, unknown> | null | undefined;
+  if (ag && typeof ag.chat === "number" && typeof ag.from === "string" && typeof ag.to === "string" && typeof ag.tag === "string") q.agent = { chat: ag.chat, from: ag.from, to: ag.to, tag: ag.tag };
   return q;
 }
 
