@@ -171,7 +171,18 @@ export component RoundButton {
         border-radius: 17px;
         background: (root.enabled && area.has-hover ? Ui.mix(Theme.primary, Theme.bg100, 0.12) : Theme.primary).with-alpha(root.enabled ? 1 : 0.4);
     }
-    Glyph {
+    // Lucide's play is an outline; the round button's is solid, nudged right to look centred.
+    if root.icon == Icons.play: Path {
+        x: (parent.width - self.width) / 2 + 1px;
+        y: (parent.height - self.height) / 2;
+        width: 11px;
+        height: 12px;
+        viewbox-width: 11;
+        viewbox-height: 12;
+        commands: "M 1.5 0.4 L 10.4 5.2 Q 11.4 6 10.4 6.8 L 1.5 11.6 Q 0 12.2 0 10.6 L 0 1.4 Q 0 -0.2 1.5 0.4 Z";
+        fill: Theme.on-primary.with-alpha(root.enabled ? 1 : 0.8);
+    }
+    if root.icon != Icons.play: Glyph {
         icon: root.icon;
         size: 16px;
         color: Theme.on-primary.with-alpha(root.enabled ? 1 : 0.8);
@@ -194,10 +205,12 @@ export component StopButton {
         border-radius: 17px;
         background: area.pressed ? Ui.mix(Theme.destructive, black, 0.25) : area.has-hover ? Ui.mix(Theme.destructive, black, 0.12) : Theme.destructive;
     }
-    Glyph {
-        icon: Icons.stop;
-        size: 16px;
-        color: white;
+    // A solid square, not lucide's outline.
+    Rectangle {
+        width: 11px;
+        height: 11px;
+        border-radius: 2px;
+        background: white;
     }
     area := TipArea {
         tip: root.tip;
