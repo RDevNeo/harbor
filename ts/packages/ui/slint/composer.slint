@@ -372,7 +372,6 @@ export struct ComposerState {
     notice: string,
     remote: string,
     error: string,
-    can-resume-reply: bool,
 }
 
 // slash.rs, tags.rs and chatmention.rs `row`: 32px rows; a command's source as a pill on the right.
@@ -492,7 +491,6 @@ export component Composer {
     callback send();
     callback stop();
     callback attach();
-    callback resume-reply();
     callback mic();
     callback remove-file(int);
     callback open-file(int);
@@ -1007,17 +1005,6 @@ export component Composer {
                             font-size: 12.5px;
                             color: Theme.subtle;
                             vertical-alignment: center;
-                        }
-                        if root.state.can-resume-reply && field.text == "" && root.files.length == 0: Btn {
-                            y: 1px;
-                            text: "Resume";
-                            icon: Icons.play;
-                            size: xs;
-                            variant: ghost-muted;
-                            tip: "Ask the agent to go on from where it stopped";
-                            clicked => {
-                                root.resume-reply();
-                            }
                         }
                         if root.voice == "": Btn {
                             y: 1px;

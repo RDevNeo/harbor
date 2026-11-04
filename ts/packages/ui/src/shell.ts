@@ -6,7 +6,7 @@ import { type Account, chatpr, git, type Kind, memory, providers, recap, Work } 
 import { type Chat, dataDir, type Item, malloc, now, parseAccess, runDir } from "@harbor/store";
 import { AUTO_DEVICE, CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
-import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
+import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionFromJson, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
@@ -68,7 +68,7 @@ function collectSoon(): void {
   }, 200);
 }
 
-/** What the composer's Resume button sends. */
+/** What the send button's Resume sends in a chat with nothing queued. */
 export const RESUME_TEXT = "Resume from where you left off: continue what you were saying or doing.";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
@@ -715,12 +715,13 @@ export class Shell {
       const before = this.drafts.get(this.key()) ?? "";
       this.drafts.set(this.key(), t);
       if (this.followImages(before, t)) return;
+      // Typed into or emptied: the send button turns Send, Stop or Resume (keys refresh it too; a paste with the mouse doesn't).
+      if ((before.trim() === "") !== (t.trim() === "")) this.refreshComposer();
       this.shareDraft();
       setTimeout(() => this.refreshMenu(), 0);
     };
     w.key = (e) => this.composerKey(e);
     w.send = () => this.send();
-    w.resume_reply = () => this.resumeReply();
     w.stop = () => this.stop(this.chatId);
     w.attach = () => void this.attach();
     w.mic = () => this.mic();
@@ -1521,7 +1522,7 @@ export class Shell {
     const steer = running && (copy || this.engine.steering(this.chatId) !== "no") && this.engine.followDefault() === "steer";
     const draftEmpty = this.win.draft.trim() === "";
     const editing = this.queueEdit !== null && this.queueEdit.chat === this.key();
-    const resume = this.view === "chat" && draftEmpty && this.resumable(this.chatId);
+    const resume = this.view === "chat" ? this.resumeOf(this.chatId) : null;
     const device = this.deviceLabel(kind);
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
@@ -1533,7 +1534,7 @@ export class Shell {
       access_icon: sel.access === "full" ? ICONS.LOCK_OPEN : sel.access === "plan" ? ICONS.EYE : ICONS.LOCK,
       device,
       device_icon: device.startsWith("Auto") ? ICONS.SPARKLES : "",
-      action: editing ? "update" : running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : resume ? "resume" : "send",
+      action: editing ? "update" : running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : resume !== null ? "resume" : "send",
       action_tip: editing
         ? "Update queued message (Enter)"
         : running && draftEmpty
@@ -1542,17 +1543,18 @@ export class Shell {
             ? "Click to steer, Ctrl-click or Ctrl+Enter to queue"
             : running
               ? "Queue: it runs after the current turn"
-              : resume
+              : resume === "queue"
                 ? "Resume queue: the next queued message starts"
-                : this.view === "chat"
-                  ? this.meshChat.sendTip(this.chatId)
-                  : "Send (Enter)",
+                : resume === "reply"
+                  ? "Resume (Enter): ask the agent to go on"
+                  : this.view === "chat"
+                    ? this.meshChat.sendTip(this.chatId)
+                    : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: this.view === "chat" ? this.meshChat.typing(this.chatId) : "",
       notice: "",
       remote: this.view === "chat" ? this.meshChat.runsOn(open) : this.draftLine(),
       error: this.meshChat.error(this.key()),
-      can_resume_reply: this.view === "chat" && !running && !resume && !editing && draftEmpty && open !== undefined && this.items(open.id).length > 0,
     };
     this.win.composer = state;
     void providerLogo(kindOfAccount(sel.account), token("fg", this.dark)).then((p) => {
@@ -2119,19 +2121,21 @@ export class Shell {
   }
 
   private send(mode: "steer" | "queue" = this.engine.followDefault()): void {
-    const text = this.win.draft.trim();
     const from = this.key();
-    const files = this.attached.get(from) ?? [];
     if (this.queueEdit?.chat === from) {
       this.queueEditEnd(true);
       this.refreshAll();
       return;
     }
-    if (from !== DRAFT && text === "" && files.length === 0 && this.resumable(from)) {
+    const resume = this.resumeOf(from);
+    if (resume === "queue") {
       this.engine.queueResume(from);
       this.refreshAll();
       return;
     }
+    // Resume with nothing queued: an ordinary message asking the agent to go on.
+    const text = resume === "reply" ? RESUME_TEXT : this.win.draft.trim();
+    const files = this.attached.get(from) ?? [];
     if (text === "" && files.length === 0 && this.messageMentions().length === 0) return;
     const mentions = (this.mentions.get(from) ?? []).filter((m) => !isChat(m) || text.includes(m.title));
     const clear = (): void => {
@@ -2251,16 +2255,17 @@ export class Shell {
     }
   }
 
-  /** The composer's Resume: an ordinary message asking the agent to go on, sent the way Enter would. */
-  private resumeReply(): void {
-    if (this.view !== "chat" || this.running(this.chatId) || this.win.draft.trim() !== "" || (this.attached.get(this.chatId)?.length ?? 0) > 0) return;
-    this.win.draft = RESUME_TEXT;
-    this.send();
-  }
-
-  /** Stopped with messages still queued: they wait for Resume (or the next message). */
-  private resumable(id: number): boolean {
-    return !this.engine.running(id) && this.engine.queue.held.has(id) && this.engine.queued(id).length > 0;
+  /** What the send button's Resume does in chat `id`'s composer as it stands (`id` is the open one; DRAFT: nothing).
+   * Stopped with messages still queued, they wait for it (or the next message). */
+  private resumeOf(id: number): "queue" | "reply" | null {
+    if (id === DRAFT) return null;
+    return resumeKind({
+      empty: this.win.draft.trim() === "" && (this.attached.get(id)?.length ?? 0) === 0 && this.messageMentions().length === 0,
+      running: this.running(id),
+      editing: this.queueEdit?.chat === id,
+      held: this.engine.queue.held.has(id) && this.engine.queued(id).length > 0,
+      transcript: this.data.chat(id) !== undefined && this.items(id).length > 0,
+    });
   }
 
   private takeDraft(chat: number): Draft {

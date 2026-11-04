@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { EARLIER, earlier, forget, groupSeq, newOpened, QUEUE_MORE, queueCards, type QueuedView, stripDrawn, subsRunning, toggle, transcriptCards, trim, withQueue } from "../src/cards.ts";
-import { byteAt, charAt, pressOf } from "../src/composer.ts";
+import { byteAt, charAt, pressOf, resumeKind } from "../src/composer.ts";
 import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
 import { parseSteps } from "../src/script.ts";
@@ -160,4 +160,15 @@ test("a reply's chat links read as their chat's title (markdown links keep their
   expect(card()?.blocks[0]?.plain).toStartWith("See Fix sign-in or that one");
   // Without a resolver the text stays as written.
   expect(transcriptCards(items, false, [], newOpened(), "").find((c) => c.kind === "text")?.blocks[0]?.plain).toStartWith(`See ${L("g1")}`);
+});
+
+test("the send button is Resume in an empty composer of an idle chat: the held queue first, else a reply", () => {
+  const idle = { empty: true, running: false, editing: false, held: false, transcript: true };
+  expect(resumeKind(idle)).toBe("reply");
+  expect(resumeKind({ ...idle, held: true })).toBe("queue");
+  expect(resumeKind({ ...idle, transcript: false })).toBeNull();
+  expect(resumeKind({ ...idle, empty: false })).toBeNull();
+  expect(resumeKind({ ...idle, held: true, empty: false })).toBeNull();
+  expect(resumeKind({ ...idle, running: true })).toBeNull();
+  expect(resumeKind({ ...idle, editing: true })).toBeNull();
 });

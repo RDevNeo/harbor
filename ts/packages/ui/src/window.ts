@@ -223,8 +223,6 @@ export interface ComposerState {
   notice: string;
   remote: string;
   error: string;
-  /** An idle chat with a transcript and nothing typed: the Resume button asks the agent to go on. */
-  can_resume_reply: boolean;
 }
 
 export interface DeviceRow {
@@ -474,7 +472,6 @@ export interface AppWindow extends slint.ComponentHandle {
   read_only_action: string;
   read_only_act: () => void;
   toggle: (seq: number) => void;
-  resume_reply: () => void;
   /** The transcript was scrolled near the top of the cards built. */
   transcript_near_top: () => void;
   link: (url: string) => void;

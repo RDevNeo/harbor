@@ -503,7 +503,6 @@ export component AppWindow inherits Window {
     callback send();
     callback stop();
     callback attach();
-    callback resume-reply();
     callback mic();
     callback remove-file(int);
     callback open-file(int);
@@ -1089,9 +1088,6 @@ export component AppWindow inherits Window {
                                 }
                                 send => {
                                     root.send();
-                                }
-                                resume-reply => {
-                                    root.resume-reply();
                                 }
                                 stop => {
                                     root.stop();
