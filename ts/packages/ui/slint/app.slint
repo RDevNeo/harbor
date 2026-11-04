@@ -25,7 +25,7 @@ import { PrsBus, PrsPage } from "prs.slint";
 import { IssuesBus, IssuesPage } from "issues.slint";
 import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
-import { MemPill, MiniBar } from "memory.slint";
+import { MemPill, MiniBar, MemLine } from "memory.slint";
 
 export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
@@ -361,6 +361,8 @@ export component AppWindow inherits Window {
     in property <bool> pc-mem-low;
     in property <string> pc-mem-tip;
     callback mem-pop(string, length, length);
+    // A PC card's "Default" pill in the gauge's popover: row i's PC becomes the gauge's.
+    callback mem-default(int);
     in property <string> view: "draft";
     in property <bool> palette-open;
     in property <bool> add-project-open;
@@ -596,6 +598,7 @@ export component AppWindow inherits Window {
     in property <length> sub-row-y;
     in property <[PopItem]> sub-items;
     in property <length> sub-w: 240px;
+    in property <length> sub-spacing: 8px;
     callback sub-enter();
     callback sub-pick(int);
     in-out property <string> pop-input;
@@ -1625,48 +1628,138 @@ export component AppWindow inherits Window {
                                 }
                             }
                             // A chat's process, or a PC's chat: name, kind, figure and its share as a thin bar.
-                            if it.kind == "mem-row": VerticalLayout {
-                                padding-left: 8px;
-                                padding-right: 8px;
-                                padding-top: 5px;
-                                padding-bottom: 5px;
-                                spacing: 5px;
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    if it.icon != "": Text {
-                                        width: 14px;
+                            if it.kind == "mem-row": MemLine {
+                                icon: it.icon;
+                                label: it.label;
+                                badge: it.badge;
+                                desc: it.desc;
+                                frac: it.value;
+                            }
+                            // A PC in the gauge's popover (mempop.ts `deviceRows`): one height whatever its state, its submenu beside it on hover or click.
+                            // `icon`: the RAM figures, or (`value` < 0) why there are none; `checked`: low on memory; `enabled`: the sidebar's gauge shows it
+                            // (its "Default" pill filled; a muted one's click makes this PC the default, `mem-default`, without touching the submenu).
+                            if it.kind == "mem-pc": Rectangle {
+                                height: 68px;
+                                border-radius: 4px;
+                                background: pc-area.has-hover || pick-area.has-hover || root.sub-row == i ? Theme.accent : transparent;
+                                pc-area := TouchArea {
+                                    mouse-cursor: pointer;
+                                    changed has-hover => {
+                                        if self.has-hover {
+                                            root.pop-hover(i, self.absolute-position.y);
+                                        }
+                                    }
+                                    clicked => {
+                                        root.pop-pick(root.pop-id, i);
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: start;
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    padding-top: 4px;
+                                    spacing: 4px;
+                                    HorizontalLayout {
+                                        height: 26px;
+                                        spacing: 6px;
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            max-width: self.preferred-width;
+                                            text: it.label;
+                                            font-size: 14px;
+                                            font-weight: 600;
+                                            color: Theme.fg;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                        }
+                                        if it.badge != "": VerticalLayout {
+                                            alignment: center;
+                                            Badge {
+                                                text: it.badge;
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            // The same size in both states: only the fill says which PC is the default.
+                                            Rectangle {
+                                                height: 18px;
+                                                width: pick-label.preferred-width + 12px;
+                                                border-radius: 9px;
+                                                border-width: 1px;
+                                                border-color: it.enabled ? Theme.gray-1000 : Theme.gray-400;
+                                                background: it.enabled ? Theme.gray-1000 : pick-area.has-hover ? Theme.gray-200 : transparent;
+                                                pick-label := Text {
+                                                    text: "Default";
+                                                    font-size: 11px;
+                                                    font-weight: 500;
+                                                    color: it.enabled ? Theme.bg100 : pick-area.has-hover ? Theme.fg : Theme.subtle;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                                pick-area := TipArea {
+                                                    mouse-cursor: it.enabled ? default : pointer;
+                                                    tip: it.enabled ? "The sidebar's memory gauge shows this PC" : "Show this PC's memory in the sidebar";
+                                                    clicked => {
+                                                        if !it.enabled {
+                                                            root.mem-default(i);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                        }
+                                        if it.desc != "": Text {
+                                            text: it.desc;
+                                            font-size: 12px;
+                                            color: Theme.subtle;
+                                            vertical-alignment: center;
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            width: 7px;
+                                            Path {
+                                                width: 7px;
+                                                height: 7px;
+                                                viewbox-width: 7;
+                                                viewbox-height: 7;
+                                                commands: "M 0 0 L 7 3.5 L 0 7 Z";
+                                                fill: Theme.subtle;
+                                            }
+                                        }
+                                    }
+                                    if it.value >= 0: HorizontalLayout {
+                                        height: 16px;
+                                        Text {
+                                            text: it.checked ? "Low on memory" : "RAM";
+                                            font-size: 12px;
+                                            color: it.checked ? Theme.red-900 : Theme.subtle;
+                                            vertical-alignment: center;
+                                        }
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                        }
+                                        Text {
+                                            text: it.icon;
+                                            font-size: 12px;
+                                            color: it.checked ? Theme.red-900 : Theme.subtle;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    if it.value >= 0: Meter {
+                                        frac: it.value;
+                                        amber-at: 0.8;
+                                        red-at: it.checked ? 0 : 0.9;
+                                    }
+                                    if it.value < 0: Text {
+                                        height: 26px;
                                         text: it.icon;
-                                        font-family: "lucide";
                                         font-size: 13px;
                                         color: Theme.subtle;
-                                        vertical-alignment: center;
-                                    }
-                                    Text {
-                                        horizontal-stretch: 1;
-                                        text: it.label;
-                                        font-size: 13px;
-                                        color: Theme.fg;
                                         overflow: elide;
                                         vertical-alignment: center;
                                     }
-                                    if it.badge != "": Text {
-                                        text: it.badge;
-                                        font-size: 12px;
-                                        color: Theme.subtle;
-                                        vertical-alignment: center;
-                                    }
-                                    Text {
-                                        text: it.desc;
-                                        font-size: 12px;
-                                        color: Theme.gray-900;
-                                        horizontal-alignment: right;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                                MiniBar {
-                                    height: 3px;
-                                    frac: it.value;
-                                    neutral: true;
                                 }
                             }
                             // "mem-ram": `checked` = low on memory.
@@ -1911,7 +2004,7 @@ export component AppWindow inherits Window {
                         height: parent.height - 10px;
                         sub-list := VerticalLayout {
                             alignment: start;
-                            spacing: 8px;
+                            spacing: root.sub-spacing;
                             for it[i] in root.sub-items: VerticalLayout {
                                 if it.kind == "label": MenuLabel {
                                     text: it.label;
@@ -1924,9 +2017,33 @@ export component AppWindow inherits Window {
                                     color: Theme.subtle;
                                     vertical-alignment: center;
                                 }
-                                if it.kind == "separator": Rectangle {
+                                if it.kind == "separator" && root.sub-spacing > 0px: Rectangle {
                                     height: 1px;
                                     background: Theme.border;
+                                }
+                                if it.kind == "separator" && root.sub-spacing == 0px: MenuSeparator { }
+                                if it.kind == "mem-row": MemLine {
+                                    icon: it.icon;
+                                    label: it.label;
+                                    badge: it.badge;
+                                    desc: it.desc;
+                                    frac: it.value;
+                                }
+                                if it.kind == "mem-warn": Text {
+                                    height: 26px;
+                                    x: 8px;
+                                    text: it.label;
+                                    font-size: 13px;
+                                    color: Theme.red-900;
+                                    vertical-alignment: center;
+                                }
+                                if it.kind == "usage-note": Text {
+                                    height: 26px;
+                                    x: 8px;
+                                    text: it.label;
+                                    font-size: 13px;
+                                    color: Theme.subtle;
+                                    vertical-alignment: center;
                                 }
                                 if it.kind == "item": MenuItem {
                                     icon: it.icon;

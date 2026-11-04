@@ -15,7 +15,7 @@ Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
                 issues, draft. Default: chat, or draft with --empty.
   --chat ID     the chat to show (same as --view chat:ID)
   --steps SPEC  HARBOR_POINTER steps before the shot: "x,y[,action[,secs]];..." with action
-                click|rclick|down|up|wheel|wheel-down|type:text|key:Return|ctrl:k; secs count
+                click|rclick|move|down|up|wheel|wheel-down|type:text|key:Return|ctrl:k; secs count
                 from the app's start; x,y are the PNG's pixels (see ts/packages/ui/src/script.ts)
   --wait S      shot S seconds after the window came up; "2,6" takes one at each time. Default:
                 as soon as it has drawn and stopped changing (after the last step)

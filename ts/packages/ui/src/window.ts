@@ -286,7 +286,7 @@ export interface FileRow {
 }
 
 export interface PopItem {
-  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native" | "usage-account" | "usage-window" | "usage-note" | "mem-row" | "mem-ram" | "mem-warn";
+  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native" | "usage-account" | "usage-window" | "usage-note" | "mem-row" | "mem-ram" | "mem-warn" | "mem-pc";
   icon: string;
   label: string;
   desc: string;
@@ -408,6 +408,8 @@ export interface AppWindow extends slint.ComponentHandle {
   snooze: (key: string, x: number, y: number) => void;
   usage: (x: number, y: number) => void;
   mem_pop: (id: string, x: number, y: number) => void;
+  /** A PC card's "Default" pill: row i's PC becomes the sidebar gauge's. */
+  mem_default: (i: number) => void;
   chat_mem: string;
   pc_mem: string;
   pc_mem_frac: number;
@@ -635,6 +637,7 @@ export interface AppWindow extends slint.ComponentHandle {
   sub_row_y: number;
   sub_items: slint.Model<PopItem>;
   sub_w: number;
+  sub_spacing: number;
   sub_enter: () => void;
   sub_pick: (i: number) => void;
   pop_input: string;

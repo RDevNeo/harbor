@@ -20,6 +20,7 @@ function watch(c: Partial<Chat> | undefined, over: Partial<MemWatchDeps> = {}): 
     show: (v) => pills.push(v.chat),
     popId: () => "",
     rows: () => {},
+    sidebarPc: () => "",
     ...over,
   });
   return { w, pills };
@@ -51,5 +52,54 @@ describe("the chat's memory pill", () => {
     w.sample();
     await Bun.sleep(5);
     expect(pills).toEqual(["—", "—"]);
+  });
+});
+
+describe("the sidebar's gauge on another PC", () => {
+  const far = { name: "laptop", online: true, mem: { ram: { total: 32 * GB, used: 30 * GB, swap_total: 0, swap_used: 0 }, running: 0, top: [] } };
+
+  test("shows the picked PC once it answers, asking at most every 10 s", async () => {
+    const tips: string[] = [];
+    let asked = 0;
+    const { w } = watch(undefined, {
+      sidebarPc: () => "laptop",
+      peers: async () => {
+        asked++;
+        return [far];
+      },
+      show: (v) => tips.push(`${v.pc} ${v.low}`),
+    });
+    w.sample();
+    await Bun.sleep(5);
+    w.sample();
+    await Bun.sleep(5);
+    expect(tips).toEqual(["4.0 GB false", "30 GB true", "30 GB true"]);
+    expect(asked).toBe(1);
+  });
+
+  test("this PC picked: the peers aren't asked", async () => {
+    let asked = 0;
+    const { w } = watch(undefined, {
+      peers: async () => {
+        asked++;
+        return [far];
+      },
+    });
+    w.sample();
+    await Bun.sleep(5);
+    expect(asked).toBe(0);
+  });
+
+  test("the popover's rows carry each PC's submenu", async () => {
+    const got: { kinds: string[]; subs: number }[] = [];
+    const { w } = watch(undefined, {
+      popId: () => "mem-devices",
+      peers: async () => [far],
+      rows: (rows, cards) => got.push({ kinds: rows.map((r) => r.kind), subs: cards.filter((c) => c !== null).length }),
+    });
+    w.sample();
+    await Bun.sleep(5);
+    expect(got[0]).toEqual({ kinds: ["label", "mem-pc", "usage-note"], subs: 1 });
+    expect(got.at(-1)).toEqual({ kinds: ["label", "mem-pc", "separator", "mem-pc"], subs: 2 });
   });
 });

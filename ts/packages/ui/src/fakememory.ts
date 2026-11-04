@@ -24,17 +24,26 @@ export function fakeMemory(env: Record<string, string | undefined> = process.env
       const r = typeof real === "object" && real !== null ? (real as Record<string, unknown>) : {};
       return { ...r, running: top.length, top, ...(chat ? { chat: { parts } } : {}) };
     },
+    /** A PC with room, a low one deep in swap, a Runs on device over SSH and one that's off. */
     async peers(names) {
-      const list = names.length > 0 ? names.slice(0, 3) : ["studio-pc", "laptop"];
-      const pcs = list.map((name, i) => {
-        const lowOne = i === list.length - 1 && list.length > 1;
-        const total = lowOne ? 16 * GB : 32 * GB;
-        const ram = { total, used: lowOne ? 14.6 * GB : 12.3 * GB, swap_total: 4 * GB, swap_used: lowOne ? 1.2 * GB : 0 };
-        const t = lowOne ? [{ title: "Build the APK", bytes: 2.4 * GB }, { title: "Video player", bytes: 640 * MB }] : [{ title: "Discord bot", bytes: 530 * MB }];
-        return { name, online: true, mem: { ram, running: t.length, top: t } };
-      });
-      const mac = { name: "MacBook Air", online: true, ssh: true, mem: { ram: { total: 16 * GB, used: 9.1 * GB, swap_total: 2 * GB, swap_used: 0 }, running: 2, top: [] } };
-      return [...pcs, mac];
+      const [roomy = "studio-pc", short = "laptop", off = "old-desktop"] = names;
+      const pc = (name: string, total: number, used: number, swap: number, t: { title: string; bytes: number }[]) => ({ name, online: true, mem: { ram: { total, used, swap_total: 8 * GB, swap_used: swap }, running: t.length, top: t } });
+      return [
+        pc(roomy, 32 * GB, 12.3 * GB, 0, [
+          { title: "Discord bot", bytes: 530 * MB },
+          { title: "Docs site", bytes: 310 * MB },
+          { title: "Nightly backups", bytes: 92 * MB },
+        ]),
+        pc(short, 16 * GB, 14.9 * GB, 5.6 * GB, [
+          { title: "Build the APK", bytes: 2.4 * GB },
+          { title: "Video player", bytes: 640 * MB },
+          { title: "Sidebar polish", bytes: 410 * MB },
+          { title: "Release notes", bytes: 220 * MB },
+          { title: "Flaky test hunt", bytes: 160 * MB },
+        ]),
+        { name: "build-box", online: true, ssh: true, mem: { ram: { total: 16 * GB, used: 9.1 * GB, swap_total: 2 * GB, swap_used: 0 }, running: 0, top: [] } },
+        { name: off, online: false, mem: null },
+      ];
     },
   };
 }

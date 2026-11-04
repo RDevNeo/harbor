@@ -26,7 +26,7 @@ export interface Mem {
 
 /** A popover row, as the window's `PopItem`. */
 export interface MemRow {
-  kind: "label" | "separator" | "usage-account" | "usage-note" | "mem-row" | "mem-ram" | "mem-warn";
+  kind: "label" | "separator" | "item" | "usage-account" | "usage-note" | "mem-row" | "mem-ram" | "mem-warn" | "mem-pc";
   icon: string;
   label: string;
   desc: string;
@@ -114,7 +114,6 @@ function ramRows(r: Ram, label: string): MemRow[] {
   return out;
 }
 
-const runningText = (n: number): string => (n === 0 ? "Nothing running" : n === 1 ? "1 chat running" : `${n} chats running`);
 
 export interface PcMem {
   name: string;
@@ -129,26 +128,61 @@ export interface PcMem {
   note?: string;
 }
 
-/** The gauge's popover: this PC first, then every other PC with its RAM and the chats holding the most. */
-export function deviceRows(here: PcMem, others: readonly PcMem[], topN = 3): MemRow[] {
-  const out = [row("label", "Memory")];
+/** A PC's card in the gauge's popover and the submenu beside it. `pc` names it for the sidebar's choice ("" = this PC). */
+export interface PcCard {
+  pc: string;
+  sub: MemRow[];
+}
+
+/**
+ * The gauge's popover: this PC first, then every other PC, each one card of one height ("mem-pc": `label` the name, `badge`
+ * "This PC"/"SSH", `desc` its chats running or "Off", `icon` the RAM figures or why there are none, `value` the RAM used
+ * or -1 for no meter, `checked` low on memory, `enabled` the PC the sidebar's gauge shows: its "Default" pill). `cards[i]` is
+ * row i's PC and submenu: the swap line when low, then the chats holding the most or why there are none.
+ */
+export function deviceRows(here: PcMem, others: readonly PcMem[], sidebar = "", topN = 5): { rows: MemRow[]; cards: (PcCard | null)[] } {
+  const rows = [row("label", "Memory")];
+  const cards: (PcCard | null)[] = [null];
+  const add = (r: MemRow, c: PcCard | null = null) => {
+    rows.push(r);
+    cards.push(c);
+  };
   const pc = (p: PcMem, me: boolean) => {
-    const desc = !p.online ? "Off" : p.mem ? runningText(p.mem.running) : "";
-    out.push(row("usage-account", p.name, { badge: me ? "This PC" : p.ssh ? "SSH" : "", desc }));
-    if (!p.online) return;
-    if (!p.mem) {
-      out.push(row("usage-note", p.asking ? "Asking…" : p.note || "No numbers: its Harbor is older."));
-      return;
-    }
-    if (p.mem.ram) out.push(...ramRows(p.mem.ram, "RAM"));
-    const top = p.mem.top.slice(0, topN);
-    const sum = top.reduce((a, t) => a + t.bytes, 0);
-    for (const t of top) out.push(row("mem-row", t.title, { icon: ICONS.MESSAGE, desc: bytesText(t.bytes), value: sum > 0 ? t.bytes / sum : 0 }));
+    const key = me ? "" : p.name;
+    const r = p.online ? (p.mem?.ram ?? null) : null;
+    const isLow = r ? low(r) : false;
+    const note = !p.online ? "Off: no numbers now." : !p.mem ? (p.asking ? "Asking…" : p.note || "No numbers: its Harbor is older.") : !r ? "No RAM figures." : "";
+    const n = p.mem?.running ?? 0;
+    const desc = !p.online ? "Off" : !p.mem ? "" : n === 0 ? "No chats" : n === 1 ? "1 chat" : `${n} chats`;
+    add(row("mem-pc", p.name, { badge: me ? "This PC" : p.ssh ? "SSH" : "", desc, icon: r ? ramText(r) : note, value: r ? ramFrac(r) : -1, checked: isLow, enabled: key === sidebar }), { pc: key, sub: pcSub(p, r, isLow, note, topN) });
   };
   pc(here, true);
   for (const p of others) {
-    out.push(row("separator"));
+    add(row("separator"));
     pc(p, false);
   }
+  return { rows, cards };
+}
+
+function pcSub(p: PcMem, r: Ram | null, isLow: boolean, note: string, topN: number): MemRow[] {
+  const out: MemRow[] = [];
+  if (r && isLow) out.push(row("mem-warn", lowNote(r)));
+  if (note !== "" && (!p.mem || !p.online)) out.push(row("usage-note", note));
+  else if (p.mem) {
+    const top = p.mem.top.slice(0, topN);
+    const sum = top.reduce((a, t) => a + t.bytes, 0);
+    if (top.length === 0) out.push(row("usage-note", "Nothing running"));
+    for (const t of top) out.push(row("mem-row", t.title, { icon: ICONS.MESSAGE, desc: bytesText(t.bytes), value: sum > 0 ? t.bytes / sum : 0 }));
+  }
   return out;
+}
+
+/** The sidebar's gauge: the PC picked for it (`pick`, "" = this PC) when it answered with RAM figures, else this PC's. */
+export function gauge(hereName: string, here: Ram | null, pick: string, peers: readonly PcMem[] | null): { pc: string; frac: number; low: boolean; tip: string } {
+  const there = pick === "" ? null : (peers?.find((p) => p.name === pick) ?? null);
+  const r2 = there?.online ? (there.mem?.ram ?? null) : null;
+  const [name, r] = r2 ? [pick, r2] : [hereName || "this PC", here];
+  if (!r) return { pc: "", frac: 0, low: false, tip: "" };
+  const why = pick === "" || r2 || peers === null ? "" : there === null ? `. ${pick} isn't in your PCs now` : !there.online ? `. ${pick} is off` : `. No numbers from ${pick}`;
+  return { pc: usedText(r), frac: ramFrac(r), low: low(r), tip: `Memory on ${name}: ${ramText(r)}${low(r) ? ". Low on memory" : ""}${why}` };
 }

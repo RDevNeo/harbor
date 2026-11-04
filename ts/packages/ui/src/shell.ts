@@ -25,6 +25,7 @@ import { Keys, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { MemWatch } from "./memwatch.ts";
+import type { PcCard } from "./logic/mempop.ts";
 import { fakeMemory } from "./fakememory.ts";
 import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
@@ -120,9 +121,13 @@ type PopRow = PopItem & { act?: () => void; sub?: () => SubMenu | null };
 interface SubMenu {
   items: PopRow[];
   width: number;
+  /** Between rows; 8 unless set. */
+  spacing?: number;
 }
 /** How long the pointer may cross other rows on its way into an open submenu before that submenu switches or closes. */
 const SUB_GRACE = 300;
+/** kv: the PC whose RAM the sidebar's gauge shows, as the peers list names it; "" or unset: this PC. */
+const MEM_SIDEBAR_KEY = "mem_sidebar_pc";
 type Marks = Pick<SideRow, "worktree" | "worktree_tip" | "pr" | "pr_tip">;
 
 /** sidebar.rs: a chat in its own worktree gets its folder mark, then its branch's PR state. */
@@ -319,6 +324,8 @@ export class Shell {
   /** Per row of the open popup: its cascading submenu, if it has one. */
   private popSubs: ((() => SubMenu | null) | null)[] = [];
   private subActions: (() => void)[] = [];
+  /** The gauge's popover rows' PCs (null: not a PC card). */
+  private memCards: (PcCard | null)[] = [];
   private subItems = new slint.ArrayModel<PopItem>([]);
   private subTimer: ReturnType<typeof setTimeout> | null = null;
   /** The popup row under the pointer and its top in the window. */
@@ -409,11 +416,23 @@ export class Shell {
         if (win.pc_mem_tip !== v.tip) win.pc_mem_tip = v.tip;
       },
       popId: () => win.pop_id,
-      rows: (rows) => {
+      rows: (rows, cards) => {
+        this.memCards = cards;
         this.popActions = rows.map(() => () => {});
-        this.popSubs = rows.map(() => null);
-        sync(this.popItems, rows);
+        this.popSubs = cards.map((c) => (c ? () => this.memSub(c) : null));
+        sync(this.popItems, rows, sameJson);
+        // Re-read every few seconds: an open submenu takes its PC's new rows in place, or closes when its row is gone.
+        const open = win.sub_row >= 0 ? this.popSubs[win.sub_row]?.() : undefined;
+        if (open === undefined) return;
+        if (open === null) return this.closeSub();
+        this.subActions = open.items.map((it) => it.act ?? (() => {}));
+        sync(
+          this.subItems,
+          open.items.map(({ act: _a, sub: _s, ...rest }) => rest),
+          sameJson,
+        );
       },
+      sidebarPc: () => data.store.get(MEM_SIDEBAR_KEY) ?? "",
     });
     this.memWatch.start();
     win.chat_cap_pointer = (id, kind, fx, fy) => this.chatCap.pointer(id, kind, fx, fy);
@@ -537,9 +556,10 @@ export class Shell {
     w.usage = (x, y) => (w.pop_id === "usage" ? this.closePopup() : this.usageMenu(x, y));
     w.mem_pop = (id, x, y) => {
       if (w.pop_id === id) return this.closePopup();
-      this.popup(id, x, y, [], 300, id === "mem-devices");
+      this.popup(id, x, y, [], id === "mem-devices" ? 320 : 300, id === "mem-devices");
       this.memWatch.sample();
     };
+    w.mem_default = (i) => this.memDefault(i);
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
     w.reorder = (id, target, above) => this.reorder(id, target, above);
@@ -2872,6 +2892,7 @@ export class Shell {
       menu.items.map(({ act: _a, sub: _s, ...rest }) => rest),
     );
     w.sub_w = menu.width;
+    w.sub_spacing = menu.spacing ?? 8;
     w.sub_row_y = y;
     w.sub_row = i;
   }
@@ -2881,6 +2902,19 @@ export class Shell {
     this.subTimer = null;
     this.popHover = null;
     this.win.sub_row = -1;
+  }
+
+  /** A PC's submenu in the gauge's popover: why it's low, and its chats. */
+  private memSub(c: PcCard): SubMenu {
+    return { items: c.sub, width: 260, spacing: 0 };
+  }
+
+  /** A card's "Default" pill: that PC's RAM goes to the sidebar's gauge now; the popover and its submenu stay as they are. */
+  private memDefault(i: number): void {
+    const c = this.memCards[i];
+    if (!c || (this.data.store.get(MEM_SIDEBAR_KEY) ?? "") === c.pc) return;
+    this.data.store.set(MEM_SIDEBAR_KEY, c.pc);
+    this.memWatch.sample();
   }
 
   private item(label: string, act: () => void, extra: Partial<PopItem> = {}): PopItem & { act: () => void } {
@@ -3244,7 +3278,7 @@ export class Shell {
       if (it.back) items.push(this.separator());
       items.push(this.item(it.label, it.on ? () => {} : go(it.id), { icon: it.back ? ICONS.HOUSE : ICONS.USERS, desc: it.hint, checked: it.on }));
     }
-    return { items, width: 260 };
+    return { items, width: 260, spacing: 0 };
   }
 
   /**

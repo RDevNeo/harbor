@@ -34,6 +34,9 @@ export function runStep(w: slint.Window, s: Step): void {
   w.dispatchEvent({ type: "pointer-moved", position });
   const [kind, arg = ""] = s.action.includes(":") ? [s.action.slice(0, s.action.indexOf(":")), s.action.slice(s.action.indexOf(":") + 1)] : [s.action, ""];
   switch (kind) {
+    // The pointer only goes there (every step moves it first): a hover.
+    case "move":
+      break;
     case "click":
     case "rclick": {
       const button = kind === "click" ? "left" : "right";

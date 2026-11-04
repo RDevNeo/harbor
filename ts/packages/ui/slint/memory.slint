@@ -109,3 +109,54 @@ export component MemGauge inherits TipArea {
         }
     }
 }
+
+// A chat's process, or a PC's chat: name, kind, figure and its share as a thin bar (the memory popovers' "mem-row").
+export component MemLine inherits VerticalLayout {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> badge;
+    in property <string> desc;
+    in property <float> frac;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    spacing: 5px;
+    HorizontalLayout {
+        spacing: 8px;
+        if root.icon != "": Text {
+            width: 14px;
+            text: root.icon;
+            font-family: "lucide";
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            font-size: 13px;
+            color: Theme.fg;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if root.badge != "": Text {
+            text: root.badge;
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.desc;
+            font-size: 12px;
+            color: Theme.gray-900;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+    MiniBar {
+        height: 3px;
+        frac: root.frac;
+        neutral: true;
+    }
+}
