@@ -54,6 +54,8 @@ final class Video {
     final LinearLayout bar;
     /** What's over the picture while there's nothing to see: a spinner, or why not. */
     final FrameLayout state;
+    /** Over the picture: "−5 s" on the left half or "+5 s" on the right after a double tap there. */
+    final LinearLayout marks;
 
     private final Activity a;
     private final Window win;
@@ -65,6 +67,7 @@ final class Video {
     private final Seek seek;
     private final ProgressBar spin;
     private final TextView why;
+    private final TextView[] mark = new TextView[2];
 
     // The UI thread's.
     private Images.Src now;
@@ -77,6 +80,7 @@ final class Video {
     private int orientation;
     private int width, height;
     private long started;
+    private final Jump jump = new Jump();
     private Surface surface;
     /** The video being shown: what a thread's work is for, if it's still this. */
     private volatile int gen;
@@ -190,6 +194,18 @@ final class Video {
         lp.leftMargin = lp.rightMargin = Ui.dp(24);
         state.addView(msg, lp);
         state.setVisibility(View.GONE);
+        marks = Ui.row(a);
+        for (int k = 0; k < 2; k++) {
+            FrameLayout half = new FrameLayout(a);
+            TextView t = Ui.text(a, "", 14, 0xffffffff);
+            t.setTypeface(Ui.mono);
+            t.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+            t.setBackground(Ui.round(0x8c000000, 0, 16));
+            t.setAlpha(0);
+            half.addView(t, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+            marks.addView(half, new LinearLayout.LayoutParams(0, -1, 1));
+            mark[k] = t;
+        }
     }
 
     private TextView button(String glyph, String label, View.OnClickListener on) {
@@ -223,6 +239,8 @@ final class Video {
         ended = false;
         position = at;
         duration = 0;
+        jump.reset();
+        for (TextView t : mark) { t.animate().cancel(); t.setAlpha(0); }
         width = height = 0;
         picture.setAlpha(0);
         spin.setVisibility(View.VISIBLE);
@@ -317,6 +335,42 @@ final class Video {
             position = at;
             update();
         });
+    }
+
+    /** Seeks there, or (one is under way) right after it: only the last of a run of seeks waits,
+     *  so they never queue up and the stream fetches only where the picture lands. */
+    private void seekTo(int to, boolean exact) {
+        int g = gen;
+        h.post(() -> {
+            if (g != gen) return;
+            if (seeking) {
+                pendingSeek = to;
+                pendingExact = exact;
+            } else {
+                seekNow(to, exact);
+            }
+        });
+    }
+
+    /** A double tap on the picture's left (dir −1) or right (1) half: 5 s back or on, playing
+     *  or paused, stopping at the start and the end. Double taps in a row add up. */
+    void jump(int dir) {
+        if (now == null || !live || duration <= 0) return;
+        int to = jump.tap(dir, position, duration, System.currentTimeMillis());
+        if (to != position || (dir < 0 && ended)) {
+            ended = false;
+            position = to;
+            update();
+            seekTo(to, true);
+        }
+        TextView t = mark[dir < 0 ? 0 : 1], other = mark[dir < 0 ? 1 : 0];
+        other.animate().cancel();
+        other.setAlpha(0);
+        t.setText(jump.mark());
+        t.animate().cancel();
+        t.setAlpha(1);
+        t.animate().alpha(0).setStartDelay(550).setDuration(200).start();
+        touched();
     }
 
     private void seekNow(int to, boolean exact) {
@@ -535,16 +589,7 @@ final class Video {
             ended = false;
             update();
             touched();
-            int g = gen;
-            h.post(() -> {
-                if (g != gen) return;
-                if (seeking) {
-                    pendingSeek = to;
-                    pendingExact = lift;
-                } else {
-                    seekNow(to, lift);
-                }
-            });
+            seekTo(to, lift);
             return true;
         }
     }

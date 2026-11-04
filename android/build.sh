@@ -197,6 +197,9 @@ java -cp "$W/classes:$W/test" dev.harbor.app.LabelsTest
 # And what a video knows while it arrives (Stream, Video).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/BlocksTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.BlocksTest
+# And the player's double-tap seek: 5 s each way, adding up, held at the start and the end (Jump).
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/JumpTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.JumpTest
 # And the Discord screens' QR pixels, captcha taps and lines (DiscordKit).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/DiscordKitTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.DiscordKitTest

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as media from "@harbor/media";
 import { inlineCap, MediaRows } from "../src/mediarows.ts";
+import { pressOf } from "../src/composer.ts";
 import { VIDEO_KEYS } from "../src/videopane.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "hvid-"));
@@ -31,6 +32,11 @@ test("the viewer's keys are video.rs `take_keys`: Space, the arrows, M, F, Esc, 
   expect(VIDEO_KEYS["\u{f72d}"]).toBe("pageDown");
   expect([VIDEO_KEYS.f, VIDEO_KEYS.F, VIDEO_KEYS.m, VIDEO_KEYS.M]).toEqual(["f", "f", "m", "m"]);
   expect(VIDEO_KEYS.Escape).toBe("escape");
+  // ← and → as Slint sends them (Key.LeftArrow, Key.RightArrow) seek 5 s back and on (#114).
+  const no = { control: false, shift: false, alt: false };
+  expect(VIDEO_KEYS[pressOf("\u{f702}", no).key]).toBe("left");
+  expect(VIDEO_KEYS[pressOf("\u{f703}", no).key]).toBe("right");
+  expect(media.video.NUDGE).toBe(5);
   expect(VIDEO_KEYS.q).toBeUndefined();
 });
 

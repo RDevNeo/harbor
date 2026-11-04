@@ -266,6 +266,7 @@ final class Images {
             // Over the poster, under the buttons: its touches go on to the Zoom.
             f.addView(video.picture, new FrameLayout.LayoutParams(-1, -1));
             f.addView(video.state, new FrameLayout.LayoutParams(-1, -1));
+            f.addView(video.marks, new FrameLayout.LayoutParams(-1, -1));
         }
         LinearLayout bar = Ui.row(a);
         bar.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(16), Ui.dp(6));
@@ -333,6 +334,8 @@ final class Images {
             f.addView(video.bar, lp);
         }
         z.onSwipe = go;
+        // On a video a double tap seeks instead of zooming: 5 s back on the left half, on on the right.
+        if (video != null) z.onSide = video::jump;
         z.onTap = () -> { chrome[0] = !chrome[0]; show.run(); };
         // A keyboard's ← → too (a tablet or a Chromebook).
         d.setOnKeyListener((x, code, e) -> {
@@ -404,6 +407,8 @@ final class Images {
         interface Swipe { boolean can(int dir); void to(int dir); default void drag(float dx) { } }
         Swipe onSwipe;
         Runnable onTap;
+        /** A double tap on a video's left (-1) or right (1) half. */
+        java.util.function.IntConsumer onSide;
         /** A video's poster: it doesn't zoom. */
         boolean fixed;
         private final Matrix m = new Matrix();
@@ -442,7 +447,15 @@ final class Images {
                     return true;
                 }
                 @Override public boolean onDoubleTap(MotionEvent e) {
+                    if (fixed) return true;
                     if (zoomed()) fitIn(); else zoomBy(2.5f, e.getX(), e.getY());
+                    return true;
+                }
+                // A video's: on the second tap's lift, unless it became a swipe or a pinch.
+                @Override public boolean onDoubleTapEvent(MotionEvent e) {
+                    if (!fixed || onSide == null || e.getActionMasked() != MotionEvent.ACTION_UP) return false;
+                    if (dragging || multi || Math.hypot(e.getX() - downX, e.getY() - downY) > slop) return true;
+                    onSide.accept(e.getX() < getWidth() / 2f ? -1 : 1);
                     return true;
                 }
                 @Override public boolean onSingleTapConfirmed(MotionEvent e) {
