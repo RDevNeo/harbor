@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.146.1] - 2026-11-04
+
+### Changed
+- The composer no longer says which PC a chat runs on: the "Runs on <PC>" line over an open chat's
+  composer is gone with its space, and so is "Starts on <PC>, where <project>'s folder is" over a
+  new chat (desktop and phone). The device chip already names the PC; the lines that ask you to
+  pick one (the folder isn't on this PC, or its PC is off) stay.
+
 ## [0.146.0] - 2026-11-04
 
 ### Added
