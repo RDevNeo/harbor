@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.145.0] - 2026-11-04
+
+### Added
+- On the phone, a double tap on the left or right half of a video goes back or on 5 seconds, playing
+  or paused, inline and full screen. Double taps in a row add up, and a small "−5 s" / "+5 s" mark
+  shows on the tapped side. Single tap, the seek bar and swiping through the gallery work as before.
+  On the desktop, ← and → still seek 5 seconds.
+
 ## [0.144.0] - 2026-11-04
 
 ### Added
