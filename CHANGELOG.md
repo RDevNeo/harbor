@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.141.3] - 2026-11-04
+
+### Added
+- The image viewer zooms: click the image to zoom in on that spot (twice its fitted size, or 1:1
+  when that's bigger) and click again to fit; the mouse wheel zooms around the pointer. Zoomed in,
+  drag to pan; the image always keeps the window covered.
+
+### Fixed
+- Esc closes the image viewer from anywhere, even with the search field, a terminal or a menu
+  focused, and nothing under the viewer takes that Esc too.
+
 ## [0.141.2] - 2026-11-03
 
 ### Changed
