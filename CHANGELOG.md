@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.138.0] - 2026-11-03
+
+### Added
+- The sidebar is resizable: drag its right edge, from 200px up to 480px (never more than 40% of
+  the window). Each PC keeps its own width; double-click the edge for the default 256px again.
+
+### Changed
+- An empty composer's send button is Resume, in place of the Resume button beside the mic: it
+  resumes a held queue, or else asks the chat's agent to go on where it left off. Enter does the
+  same.
+
 ## [0.137.0] - 2026-11-03
 
 ### Changed
