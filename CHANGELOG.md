@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.146.0] - 2026-11-04
+
+### Added
+- On the phone, sending with an empty composer is Resume, as on the desktop: the send button shows ▶
+  in an idle chat with messages, and it or Enter (the keyboard's or a hardware one) asks the agent
+  to go on from where it left off ("Resume queue" starts the messages a Stop held instead). The
+  chat's home PC decides and writes the message, so it works for chats running on another PC too.
+
 ## [0.145.0] - 2026-11-04
 
 ### Added
