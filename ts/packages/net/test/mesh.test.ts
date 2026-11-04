@@ -25,6 +25,9 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+// A slow sandbox opens a store in seconds.
+const SLOW = 30_000;
+
 const req = (headers: [string, string][] = []): Request => ({ method: "GET", path: "/", query: [], headers, len: 0, chunked: false });
 
 function meshOf(hub: Hub, kv = new MemKv()): Mesh {
@@ -227,7 +230,7 @@ describe("mesh.rs", () => {
     expect(remotes.get(away)).toBe("git@example.org:o/app.git");
     expect(remotes.get(here)).toBe("git@example.org:me/mine.git");
     store.close();
-  });
+  }, SLOW);
 
   test("move to workspace goes with the chat JSON: the chat's own and its project's, to every copy", async () => {
     const home = Store.openAt(join(tmp, "ws-home.db"));
@@ -259,7 +262,7 @@ describe("mesh.rs", () => {
     expect([place.chats.size, place.carried.size, place.repos.get(away)]).toEqual([0, 0, undefined]);
     home.close();
     copy.close();
-  });
+  }, SLOW);
 
   test("share with workspace goes with the chat JSON: the chat's own shares and its project's, to every copy", async () => {
     const home = Store.openAt(join(tmp, "share-home.db"));
@@ -289,7 +292,7 @@ describe("mesh.rs", () => {
     expect([place.shared?.chats.size, place.shared?.carried.size, place.shared?.repos.get(away)]).toEqual([0, 0, undefined]);
     home.close();
     copy.close();
-  });
+  }, SLOW);
 
   test("a project shared here opens its owner's main chat: this PC's empty one goes, one with messages stays a chat", async () => {
     const home = Store.openAt(join(tmp, "main-home.db"));
@@ -338,7 +341,7 @@ describe("mesh.rs", () => {
     expect(owner.mainChats().get(its)).toBe(kept.id);
     owner.close();
     home.close();
-  });
+  }, SLOW);
 
   test("a project made from another PC's chats remembers that PC, even once no copy is left", async () => {
     const store = Store.openAt(join(tmp, "place.db"));
@@ -359,7 +362,7 @@ describe("mesh.rs", () => {
     expect(store.chats().filter((c) => c.repoId === made.id)).toEqual([]);
     expect(store.projectPc(made.id)).toBe("pc:desk");
     store.close();
-  });
+  }, SLOW);
 
   test("a chat's published cwd is where its agent works, its worktree before its project", async () => {
     const store = Store.openAt(join(tmp, "cwd.db"));
@@ -370,7 +373,7 @@ describe("mesh.rs", () => {
     expect(await cwdOf({ cwd: () => null })).toBe(tmp);
     expect(await cwdOf({})).toBe(tmp);
     store.close();
-  });
+  }, SLOW);
 });
 
 interface Pc {
