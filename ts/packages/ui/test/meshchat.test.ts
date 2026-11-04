@@ -80,7 +80,6 @@ test("with the home PC off nothing goes out: the composer gets the text and its 
   const { mc, calls, restored } = rig({ online: false });
   expect(mc.writable(copy)).toBe(false);
   expect(mc.readOnly(copy)).toBe("laptop is off. This chat runs there, so it's read-only until laptop is back; then it catches up.");
-  expect(mc.runsOn(copy)).toBe("");
   mc.send(copy, "hello", [], [mention], "queue");
   await flush();
   expect(calls).toEqual([]);
@@ -101,12 +100,10 @@ test("a send the home PC refuses comes back into an empty composer, and its erro
   expect(mc.error(7)).toBe("");
 });
 
-test("a copy that its home PC answers says where it runs, its running turn and who types there", () => {
+test("a copy that its home PC answers names its PC on the device chip, its running turn and who types there", () => {
   const { mc } = rig();
   expect(mc.writable(copy)).toBe(true);
   expect(mc.readOnly(copy)).toBeNull();
-  expect(mc.runsOn(copy)).toBe("Runs on laptop");
-  expect(mc.runsOn(own)).toBe("");
   // The composer's device chip names the PC the copy runs on, not "This PC".
   expect(mc.homeName(copy)).toBe("laptop");
   expect(mc.running(copy)).toBe(true);

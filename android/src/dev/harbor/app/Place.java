@@ -65,12 +65,12 @@ final class Place {
         return null;
     }
 
-    /** The line over a new chat in project `pid` whose folder isn't on the PC ("" when it is). */
+    /** The line over a new chat in project `pid` whose folder isn't on the PC ("" when it is, or once a device is picked:
+     *  the Device chip already says where the chat runs). */
     static String note(JSONObject st, String pid, String device) {
         JSONObject p = project(st, pid);
         if (!elsewhere(p)) return "";
         String name = p.optString("name"), pc = p.optString("pc_name");
-        if (!device.isEmpty() && device.equals(p.optString("pc"))) return "Starts on " + pc + ", where " + name + "’s folder is";
         if (!device.isEmpty()) return "";
         if (pc.isEmpty()) return name + "’s folder isn’t on this PC: pick the PC that has it under Device";
         if (!p.optBoolean("pc_online")) return name + "’s folder is on " + pc + ", which is off: the chat can start there once it’s back";

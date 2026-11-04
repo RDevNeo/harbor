@@ -223,7 +223,7 @@ export interface ComposerState {
   hint: string;
   typing: string;
   notice: string;
-  remote: string;
+  place: string;
   error: string;
 }
 

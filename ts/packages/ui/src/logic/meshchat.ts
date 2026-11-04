@@ -86,11 +86,6 @@ export class MeshChat {
     return this.m.home(c)?.name ?? c.home;
   }
 
-  runsOn(c: Chat | undefined): string {
-    if (!this.foreign(c) || !this.writable(c)) return "";
-    return `Runs on ${this.m.home(c)?.name ?? c.home}`;
-  }
-
   running(c: Chat | undefined): boolean {
     return this.foreign(c) && this.m.remote(c.id)?.running === true;
   }

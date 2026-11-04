@@ -1567,7 +1567,7 @@ export class Shell {
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: this.view === "chat" ? this.meshChat.typing(this.chatId) : "",
       notice: "",
-      remote: this.view === "chat" ? this.meshChat.runsOn(open) : this.draftLine(),
+      place: this.view === "chat" ? "" : this.draftLine(),
       error: this.meshChat.error(this.key()),
     };
     this.win.composer = state;

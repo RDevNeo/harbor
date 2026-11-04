@@ -40,13 +40,12 @@ export function clashingNames(repos: readonly { name: string }[]): Set<string> {
 }
 
 /**
- * The line over a new chat's composer in a project whose folder isn't here (null: it is): it
- * starts on the PC that holds it, or says before the message where the project lives.
+ * The line over a new chat's composer in a project whose folder isn't here (null: it is, or a
+ * device is picked, which the device chip already names): where the project lives and how to start there.
  * `target` is the PC the draft starts on (null: this PC).
  */
 export function draftPlaceLine(project: string, place: Place | null, target: string | null): string | null {
   if (place === null) return null;
-  if (target !== null && target === place.pc) return `Starts on ${place.name}, where ${project}'s folder is`;
   if (target !== null) return null;
   if (place.pc === "") return `${project}'s folder isn't on this PC: pick the PC that has it under Runs on`;
   if (!place.online) return `${project}'s folder is on ${place.name}, which is off: the chat can start there once it's back`;

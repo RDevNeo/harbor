@@ -20,7 +20,8 @@ test("a project whose folder is on another PC names that PC; two projects with o
 
 test("a draft in a project on another PC says before the message where it starts", () => {
   expect(draftPlaceLine("blox", null, null)).toBeNull();
-  expect(draftPlaceLine("blox", laptop, "pc:laptop")).toBe("Starts on Laptop, where blox's folder is");
+  // Its PC picked: the device chip already says where it starts.
+  expect(draftPlaceLine("blox", laptop, "pc:laptop")).toBeNull();
   // This PC picked instead: where the folder is, and how to start there.
   expect(draftPlaceLine("blox", laptop, null)).toContain("blox's folder is on Laptop");
   expect(draftPlaceLine("blox", { ...laptop, online: false }, null)).toContain("which is off");
