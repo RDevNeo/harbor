@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.141.4] - 2026-11-04
+
+### Removed
+- The stop button on each sub-agent's row in the list over the composer: a row only opens its
+  agent, and its name takes the room. Stop all in the list's header stays.
+
 ## [0.141.3] - 2026-11-04
 
 ### Added
