@@ -81,9 +81,20 @@ export class VoiceCtl {
     const all = (mesh.known ? mesh.known() : mesh.peers()).filter((p) => p.id !== "" && p.id !== me.id);
     const out: [string, string][] = [["", "Automatic"]];
     if (me.id !== undefined && me.id !== "") out.push([me.id, `${me.name === "" ? "This PC" : me.name} (this PC)`]);
-    for (const p of [...all].sort((a, b) => a.name.localeCompare(b.name))) out.push([p.id, p.online ? p.name : `${p.name} (offline)`]);
+    const sorted = [...all].sort((a, b) => a.name.localeCompare(b.name));
+    for (const p of sorted) out.push([p.id, p.online ? p.name : `${p.name} (offline)`]);
+    // SSH devices: this PC's own, then those other PCs transcribe on (one of a name: the device is the same).
+    const own = mesh.speech?.list() ?? [];
+    for (const d of own) out.push([dictate.deviceChoice(me.id ?? "", d.id), `${d.name} (SSH device)`]);
+    const names = new Set(own.map((d) => d.name.toLowerCase()));
+    for (const p of sorted) {
+      for (const d of dictate.devicesOfPeer(p.id)) {
+        if (names.has(d.name.toLowerCase())) continue;
+        out.push([dictate.deviceChoice(p.id, d.id), `${d.name} (SSH device, through ${p.name})`]);
+      }
+    }
     const saved = dictate.host();
-    if (saved !== "" && !out.some(([id]) => id === saved)) out.push([saved, "Saved PC (unknown)"]);
+    if (saved !== "" && !out.some(([id]) => id === saved)) out.push([saved, dictate.parseChoice(saved).device === null ? "Saved PC (unknown)" : "Saved SSH device (unknown)"]);
     return out;
   }
 
@@ -92,10 +103,30 @@ export class VoiceCtl {
     if (!h) return;
     this.host.store.set(dictate.HOST_KEY, h[0]);
     dictate.setHost(h[0]);
+    // One of this PC's SSH devices: connected now, and set up there when it isn't yet.
+    const c = dictate.parseChoice(h[0]);
+    if (c.device !== null && this.ownDevice(h[0])) this.host.mesh.speech?.prepare(c.device);
+  }
+
+  /** `id` ("pc#device") is an SSH device of this PC. */
+  private ownDevice(id: string): boolean {
+    const c = dictate.parseChoice(id);
+    const me = this.host.mesh.me().id ?? "";
+    return c.device !== null && (c.pc === "" || c.pc === me) && (this.host.mesh.speech?.list().some((d) => d.id === c.device) ?? false);
+  }
+
+  /** The chosen SSH device's state for Settings › Voice ("" for anything else, or not known here). */
+  hostState(): string {
+    const id = dictate.host();
+    const c = dictate.parseChoice(id);
+    return c.device !== null && this.ownDevice(id) ? (this.host.mesh.speech?.state(c.device) ?? "") : "";
   }
 
   async refreshInputs(): Promise<void> {
+    // The SSH devices other PCs transcribe on, for "Transcribe on" (no longer than the mesh's 3 s).
+    const peers = dictate.refreshPeerDevices(this.host.mesh).catch(() => undefined);
     this.inputs = await voice.inputDevices();
+    await peers;
     const id = voice.currentInputDevice();
     if (id && !this.inputs.some((d) => d.id === id)) this.inputs.push({ id, label: "Saved microphone (unavailable)" });
   }

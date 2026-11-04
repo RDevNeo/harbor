@@ -120,6 +120,13 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   }
 
   const refreshInputs = () => void speech.refreshInputs().then(() => show());
+  // An SSH device being set up to transcribe: its step shows as it goes.
+  let hostState = "";
+  setInterval(() => {
+    if (tab !== "voice" || speech.hostState() === hostState) return;
+    hostState = speech.hostState();
+    show();
+  }, 1000).unref();
   bus.pick = (s) => {
     tab = tabFromSlug(s) ?? tab;
     if (tab === "voice") refreshInputs();

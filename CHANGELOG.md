@@ -5,6 +5,23 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Settings › Voice › Transcribe on can pick an SSH device from Settings › Devices (a machine added by
+  hand, without Harbor: a Mac, a Linux box), as well as a PC of your mesh. Dictation on this
+  PC, and from phones through it, is sent to the device over SSH and transcribed there by Parakeet
+  TDT 0.6B v3: on an Apple Silicon Mac at full precision on its GPU (MLX; about 0.3-0.6 s for 10 s
+  of speech on a busy Apple Silicon laptop, against 1-1.5 s for the int8 model on its CPU), elsewhere the
+  int8 model on the CPU (sherpa-onnx). Words stay in the language they were spoken in, mixed
+  Portuguese and English included.
+- Picking the device sets it up the first time, over SSH, with nothing outside `~/.harbor-voice`
+  there: uv, its own Python, the speech packages and the model (about 3 GB; no sudo, no Homebrew;
+  `rm -rf ~/.harbor-voice` removes it). Its steps show under the picker. A worker there keeps the
+  model 5 minutes after the last dictation and loads it as soon as the recording starts.
+- Other PCs of your mesh can use your SSH devices too: Transcribe on lists theirs as
+  "Name (SSH device, through PC)", and the recording goes through that PC.
+- When the device is asleep, closed or off the network, Automatic takes over and a message says so
+  once (as for a PC); an unreachable device isn't waited for again for 30 s.
+
 ## [0.142.0] - 2026-11-04
 
 ### Added

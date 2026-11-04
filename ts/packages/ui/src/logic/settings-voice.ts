@@ -61,6 +61,8 @@ export interface VoiceFacts {
   /** "Transcribe on": [mesh id ("" = automatic), label], and the chosen id. */
   hosts?: [string, string][];
   host?: string;
+  /** The chosen SSH device's state ("Setting up: …", "Ready …"), "" when not known here. */
+  hostState?: string;
   commands: boolean;
   keepMin: number;
   dict: { term: string; sounds: string[] }[];
@@ -89,6 +91,7 @@ export function voiceFacts(ctl: voiceCtl.VoiceCtl, shortcut: string): VoiceFacts
     cleanup: dictate.cleanupOn(),
     hosts: ctl.hosts(),
     host: dictate.host(),
+    hostState: ctl.hostState(),
     commands: dictate.commandsOn(),
     keepMin: parakeet.keepMin(),
     dict: dictate.dictionary(),
@@ -111,6 +114,14 @@ function modelNote(f: VoiceFacts): string {
   return `Getting the speech model (${voice.megabytes(done)} of ${voice.megabytes(total)})\u{2026} Dictation works once it's here.`;
 }
 
+/** What "Transcribe on" does with the choice: Automatic, another PC, or an SSH device (with its state when this PC knows it). */
+function hostDesc(at: number, host: string, state: string): string {
+  if (at === 0) return "Automatic: the PC of your mesh with the most free memory (this one on a near tie).";
+  if (dictate.parseChoice(host).device === null) return "Dictation here, and from phones through this PC, goes to that PC; when it can't be reached, Automatic takes over.";
+  const what = "Dictation here, and from phones through this PC, goes to that device over SSH: Parakeet runs there, set up once in ~/.harbor-voice (about 3 GB). When it's asleep or away, Automatic takes over.";
+  return state === "" ? what : `${state} ${what}`;
+}
+
 export function voiceView(f: VoiceFacts): VoiceView {
   const devices = f.inputs ?? [{ id: "", label: "System default" }];
   const onPc = [row({ kind: "microphone", key: `${KEY}input`, title: "Microphone",
@@ -126,7 +137,7 @@ export function voiceView(f: VoiceFacts): VoiceView {
       kind: "picker",
       key: `${KEY}host`,
       title: "Transcribe on",
-      desc: hostAt === 0 ? "Automatic: the PC of your mesh with the most free memory (this one on a near tie)." : "Dictation here, and from phones through this PC, goes to that PC; when it can't be reached, Automatic takes over.",
+      desc: hostDesc(hostAt, f.host ?? "", f.hostState ?? ""),
       options: hosts.map(([, label]) => label),
       selected: hostAt,
     }),

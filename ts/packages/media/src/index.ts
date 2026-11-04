@@ -10,3 +10,4 @@ export * as parakeet from "./parakeet.ts";
 export * as voice from "./voice.ts";
 export * as voiceCtl from "./voicectl.ts";
 export * as video from "./video.ts";
+export * as devicespeech from "./devicespeech.ts";

@@ -330,6 +330,75 @@ describe("routing without a model", () => {
     expect([mine.host, mine.warn]).toEqual(["rig-b", undefined]);
   });
 
+  test("an SSH device of this PC transcribes when chosen, is warmed up, and falls back like a PC", async () => {
+    process.env.HARBOR_TEST_MEMAVAIL_MB = "500";
+    const rig = fakeMesh([peerB]);
+    const calls: string[] = [];
+    let fails: string | null = null;
+    rig.speech = {
+      list: () => [{ id: "ssh:1", name: "laptop" }],
+      transcribe: async (id, samples, lang) => {
+        calls.push(`transcribe ${id} ${samples.length} ${lang}`);
+        if (fails !== null) throw new Error(fails);
+        return { text: "olá, the deploy failed", model: "parakeet-mlx warm" };
+      },
+      warm: (id) => void calls.push(`warm ${id}`),
+      prepare: (id) => void calls.push(`prepare ${id}`),
+      state: () => "",
+    };
+    expect(dictate.parseChoice("rig-a#ssh:1")).toEqual({ pc: "rig-a", device: "ssh:1" });
+    expect(dictate.parseChoice("ts:desk")).toEqual({ pc: "ts:desk", device: null });
+    dictate.setHost(dictate.deviceChoice("rig-a", "ssh:1"));
+    expect(dictate.warmUp(rig)).toBe("laptop");
+    const samples = new Int16Array(16000);
+    const d = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect(d).toEqual({ text: "olá, the deploy failed", raw: null, host: "laptop", send: false });
+    expect(calls).toEqual(["warm ssh:1", "transcribe ssh:1 16000 auto"]);
+    expect(rig.asks).toEqual([]);
+    // Asleep: Automatic takes it (rig-b), told once.
+    fails = "laptop didn't answer in 6 s";
+    rig.reply = [200, { text: "from b", host: "rig-b" }];
+    const first = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect([first.host, first.warn]).toEqual(["rig-b", "laptop couldn't transcribe (laptop didn't answer in 6 s); transcribed elsewhere."]);
+    const second = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect([second.host, second.warn]).toEqual(["rig-b", undefined]);
+    // A peer's own SSH device: asked through that peer, and the peer stays a fallback when it fails.
+    fails = null;
+    rig.voice = { mem_available_mb: 4000, model_state: "ready", model_mb: 670, devices: [{ id: "ssh:4", name: "studio" }] };
+    await dictate.refreshPeerDevices(rig);
+    expect(dictate.devicesOfPeer("rig-b")).toEqual([{ id: "ssh:4", name: "studio" }]);
+    dictate.setHost(dictate.deviceChoice("rig-b", "ssh:4"));
+    rig.asks = [];
+    expect(dictate.warmUp(rig)).toBe("studio");
+    expect(rig.asks).toEqual(["rig-b /mesh/v1/voice?warm=1&device=ssh%3A4"]);
+    rig.posts = [];
+    rig.reply = [200, { text: "from studio", host: "studio", model: "parakeet-mlx warm" }];
+    const via = await dictate.transcribe(rig, samples, "pt", { cleanup: false, commands: false, localOnly: false });
+    expect([via.host, via.text]).toEqual(["studio", "from studio"]);
+    expect(rig.posts).toEqual(["/mesh/v1/transcribe?lang=pt&device=ssh%3A4"]);
+  });
+
+  test("a peer's recording for one of this PC's SSH devices goes there, never here", async () => {
+    const rig = fakeMesh([peerB]);
+    let fails: string | null = null;
+    rig.speech = {
+      list: () => [{ id: "ssh:1", name: "laptop" }],
+      transcribe: async () => {
+        if (fails !== null) throw new Error(fails);
+        return { text: "hi", model: "parakeet-mlx cold" };
+      },
+      warm: () => undefined,
+      prepare: () => undefined,
+      state: () => "",
+    };
+    const wav = voice.wav(new Int16Array(16000), voice.RATE);
+    expect(await dictate.servePeer(rig, wav, "auto", "rig-b", "ssh:1")).toEqual([200, { text: "hi", host: "laptop", model: "parakeet-mlx cold" }]);
+    fails = "laptop can't be reached";
+    expect(await dictate.servePeer(rig, wav, "auto", "rig-b", "ssh:1")).toEqual([409, { error: "laptop can't be reached" }]);
+    expect(dictate.status("rig-a", rig.speech).devices).toEqual([{ id: "ssh:1", name: "laptop" }]);
+    expect(rig.posts).toEqual([]);
+  });
+
   test("a PC serving a peer transcribes itself whatever PC it chose (no loops)", async () => {
     const rig = fakeMesh([peerB]);
     dictate.setHost("rig-b");

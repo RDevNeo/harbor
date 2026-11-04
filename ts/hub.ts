@@ -10,7 +10,7 @@ import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
-import { clipboard, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
+import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { discord, Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
@@ -40,6 +40,7 @@ import {
   directoryPcWorkspaces,
   scopeHas,
   scopeHasDevice,
+  isFound,
   hostLabel,
   osLabel,
   remoteDir,
@@ -523,14 +524,21 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     applyItems: (peer, epoch, hid, body) => replica.applyItems(peer, epoch, hid, body),
     route: async (call) => (await move?.route(call)) ?? (await services?.routeMesh(call)) ?? (await meshMore(call)) ?? replica.route(call),
   };
+  // Dictation on this PC's SSH devices (made once the devices are read, below).
+  let speech: devicespeech.DeviceSpeech | null = null;
   const meshMore = async (call: Call): Promise<Reply | null> => {
     if (call.path[0] !== "mesh" || call.path[1] !== "v1" || call.path.length !== 3) return null;
     const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? call.body : {};
     switch (`${call.method} ${call.path[2]}`) {
-      case "GET voice":
-        // `warm=1`: a peer's person started dictating to this PC, so the model loads while they speak.
-        if (call.query.some(([k, v]) => k === "warm" && v === "1") && parakeet.preload()) console.error(`harbor: loading the speech model for ${hub.mesh.peers.get(call.device)?.name ?? "a peer"}'s dictation`);
-        return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
+      case "GET voice": {
+        // `warm=1`: a peer's person started dictating to this PC (or to its SSH device `device`), so the model loads while they speak.
+        const device = call.query.find(([k]) => k === "device")?.[1] ?? "";
+        if (call.query.some(([k, v]) => k === "warm" && v === "1")) {
+          if (device !== "") speech?.warm(device);
+          else if (parakeet.preload()) console.error(`harbor: loading the speech model for ${hub.mesh.peers.get(call.device)?.name ?? "a peer"}'s dictation`);
+        }
+        return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name, speech ?? undefined))));
+      }
       case "POST memory": {
         const r = acceptMemory(store, b);
         return r.ok ? ok({ ok: true, changed: r.value }) : err(404, r.error);
@@ -559,8 +567,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const mesh = new Mesh({
     hub,
     ram: () => ramMeter.mb(),
-    transcribe: async (wav, lang, from) => {
-      const [status, body] = await dictate.servePeer(voicePeers, wav, lang, from);
+    transcribe: async (wav, lang, from, device) => {
+      const [status, body] = await dictate.servePeer(voicePeers, wav, lang, from, device === "" ? null : device);
       return { status, body: body as Json };
     },
     deliver: (from, kind, name, len, read) =>
@@ -612,6 +620,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   await remotes.refresh();
   const deviceList = (): [RemoteHost, boolean | null][] => remotes.devices(loadRemote(store), remotes.tailnetCached());
+  // Settings › Devices' hand-added POSIX machines can transcribe dictation (PCs Harbor found run their own Harbor).
+  speech = new devicespeech.DeviceSpeech({
+    devices: () => {
+      const cfg = loadRemote(store);
+      return cfg.devices
+        .filter((h) => !isFound(h) && !h.hidden && h.host.trim() !== "" && shellFamily(h.os) === "posix" && scopeHasDevice(account.scope(), h.id))
+        .map((h) => ({ id: h.id, name: hostLabel(h), ssh: deviceSshArgs(remotes, cfg, h) }));
+    },
+    keepSecs: () => dictate.KEEP_MIN * 60,
+  });
   // remoteui.rs `remote_spec`: how a chat's turn reaches its device; null for this PC.
   const remoteSpec = (chat: Chat, account: Account): agent.RemoteSpec | null => {
     if (chat.device === "") return null;
@@ -796,6 +814,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     peers: () => [...hub.mesh.peers.values()].filter((p) => p.online && p.fp !== "").map((p) => ({ id: p.id, name: p.name, online: p.online, dest: dest(p) })),
     known: () => [...hub.mesh.peers.values()].map((p) => ({ id: p.id, name: p.name, online: p.online })),
     http: (p, method, path, body, waitMs) => http(p.dest, method, path, body, waitMs),
+    ...(speech ? { speech } : {}),
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, ...host, ...own });
   const live = engine;
@@ -1156,6 +1175,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       stopMap();
       stopSpeech();
       clearInterval(voiceKv);
+      speech?.stop();
       if (signIn) await account.stop();
       api?.close();
     },

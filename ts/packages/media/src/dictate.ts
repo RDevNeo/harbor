@@ -131,6 +131,8 @@ export function modelState(): [ModelState, number | null] {
 
 export interface VoiceStatus {
   engine: string;
+  /** This PC's SSH devices that transcribe for its peers (`device=` on /mesh/v1/transcribe). */
+  devices?: { id: string; name: string }[];
   model_state: ModelState;
   model_mb: number;
   mem_available_mb: number;
@@ -143,7 +145,7 @@ export interface VoiceStatus {
 }
 
 /** `GET /v1/voice` (and `/mesh/v1/voice`). */
-export function status(host: string): VoiceStatus {
+export function status(host: string, speech?: Speech): VoiceStatus {
   const [state, progress] = modelState();
   const current = voice.currentModel();
   const picked = voice.MODELS.find((x) => x[0] === current);
@@ -159,6 +161,7 @@ export function status(host: string): VoiceStatus {
     dictionary: dictwords.toJson(dictionary()),
   };
   if (progress !== null) v.progress = progress;
+  if (speech) v.devices = speech.list();
   return v;
 }
 
@@ -254,6 +257,62 @@ export interface Mesh<P extends MeshPeer = MeshPeer> {
   /** Every PC of the mesh, offline ones too (Settings › Voice lists them); `peers` when absent. */
   known?(): MeshPeer[];
   http(peer: P, method: "GET" | "POST", path: string, body: { ctype: string; data: Uint8Array } | null, waitMs: number): Promise<[number, unknown]>;
+  /** This PC's SSH devices that transcribe (devicespeech.ts); none when absent. */
+  speech?: Speech;
+}
+
+/** Dictation on this PC's SSH devices, as devicespeech.ts's DeviceSpeech does it. */
+export interface Speech {
+  list(): { id: string; name: string }[];
+  transcribe(id: string, samples: Int16Array, lang: string): Promise<{ text: string; model: string }>;
+  warm(id: string): void;
+  prepare(id: string): void;
+  state(id: string): string;
+}
+
+/** "Transcribe on" for an SSH device: the PC it belongs to, "#", the device's id there. */
+export const DEVICE_SEP = "#";
+
+export function deviceChoice(pc: string, device: string): string {
+  return `${pc}${DEVICE_SEP}${device}`;
+}
+
+/** A "Transcribe on" id: a PC's mesh id, or a PC's SSH device (`pc#device`). */
+export function parseChoice(id: string): { pc: string; device: string | null } {
+  const i = id.indexOf(DEVICE_SEP);
+  return i < 0 ? { pc: id, device: null } : { pc: id.slice(0, i), device: id.slice(i + 1) };
+}
+
+/** The SSH devices peers said they transcribe on (their `/mesh/v1/voice`), by peer id: for the "Transcribe on" list. */
+const peerDevices = new Map<string, { id: string; name: string }[]>();
+
+function devicesOf(v: unknown): { id: string; name: string }[] {
+  const d = field(v, "devices");
+  if (!Array.isArray(d)) return [];
+  return d.flatMap((x) => {
+    const id = field(x, "id");
+    const name = field(x, "name");
+    return typeof id === "string" && id !== "" && !id.includes(DEVICE_SEP) && typeof name === "string" ? [{ id, name: name === "" ? id : name }] : [];
+  });
+}
+
+/** The SSH devices a peer offers, as last heard. */
+export function devicesOfPeer(id: string): { id: string; name: string }[] {
+  return peerDevices.get(id) ?? [];
+}
+
+/** Asks the online peers which SSH devices they transcribe on (Settings › Voice opened). */
+export async function refreshPeerDevices<P extends MeshPeer>(mesh: Mesh<P>): Promise<void> {
+  if (!mesh.on()) return;
+  await Promise.all(
+    mesh
+      .peers()
+      .filter((p) => p.online)
+      .map(async (p) => {
+        const r = await within(mesh.http(p, "GET", "/mesh/v1/voice", null, ASK_WAIT_MS).catch(() => null), ASK_WAIT_MS + 500);
+        if (r && r[0] === 200) peerDevices.set(p.id, devicesOf(r[1]));
+      }),
+  );
 }
 
 function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
@@ -274,6 +333,7 @@ async function peerScores<P extends MeshPeer>(mesh: Mesh<P>): Promise<[P, number
         mesh.http(p, "GET", "/mesh/v1/voice", null, ASK_WAIT_MS).catch(() => null),
         ASK_WAIT_MS + 500,
       );
+      if (r && r[0] === 200) peerDevices.set(p.id, devicesOf(r[1]));
       const s = r && r[0] === 200 ? score(r[1]) : null;
       return s === null ? null : [p, s];
     });
@@ -349,12 +409,31 @@ export async function transcribe<P extends MeshPeer>(mesh: Mesh<P>, samples: Int
   return done;
 }
 
-/** The PC chosen in Settings › Voice, when it isn't this one. */
-function chosenPeer<P extends MeshPeer>(mesh: Mesh<P>): { id: string; peer: P | null } | null {
+/** What Settings › Voice chose, unless it's Automatic or this PC: another PC (`peer`, null while unreachable), or an SSH device (`device`) of this PC (`peer` null) or of another. */
+interface Chosen<P> {
+  id: string;
+  pc: string;
+  device: string | null;
+  peer: P | null;
+  /** Its device is this PC's own. */
+  here: boolean;
+}
+
+function chosenPeer<P extends MeshPeer>(mesh: Mesh<P>): Chosen<P> | null {
   const id = settings.host;
-  if (id === "" || id === (mesh.me().id ?? "")) return null;
-  const peer = mesh.on() ? (mesh.peers().find((p) => p.id === id && p.online) ?? null) : null;
-  return { id, peer };
+  const me = mesh.me().id ?? "";
+  const { pc, device } = parseChoice(id);
+  if (id === "" || (device === null && pc === me)) return null;
+  const here = device !== null && (pc === "" || pc === me);
+  const peer = !here && mesh.on() ? (mesh.peers().find((p) => p.id === pc && p.online) ?? null) : null;
+  return { id, pc, device, peer, here };
+}
+
+/** A device's name: this PC's, or as its PC said. */
+function deviceName<P extends MeshPeer>(mesh: Mesh<P>, c: Chosen<P>): string {
+  const dev = c.device ?? "";
+  const own = c.here ? mesh.speech?.list().find((d) => d.id === dev) : devicesOfPeer(c.pc).find((d) => d.id === dev);
+  return own?.name ?? dev;
 }
 
 /** A PC's name as the mesh knows it, for messages. */
@@ -366,21 +445,27 @@ export function peerName<P extends MeshPeer>(mesh: Mesh<P>, id: string): string 
 /** Warms the model up where the next recording will go, while the person speaks: a ping to the chosen PC, else here. Returns that PC's name, or null for here. */
 export function warmUp<P extends MeshPeer>(mesh: Mesh<P>): string | null {
   const c = chosenPeer(mesh);
+  if (c?.here && c.device !== null && mesh.speech) {
+    mesh.speech.warm(c.device);
+    return deviceName(mesh, c);
+  }
   if (c?.peer) {
     const p = c.peer;
     // Peers from before 0.142 just answer their status: harmless.
-    void mesh.http(p, "GET", "/mesh/v1/voice?warm=1", null, ASK_WAIT_MS).catch(() => undefined);
-    return p.name;
+    const dev = c.device === null ? "" : `&device=${encodeURIComponent(c.device)}`;
+    void mesh.http(p, "GET", `/mesh/v1/voice?warm=1${dev}`, null, ASK_WAIT_MS).catch(() => undefined);
+    return c.device === null ? p.name : deviceName(mesh, c);
   }
   return null;
 }
 
 type Asked = { ok: true; where: Where } | { ok: false; why: string };
 
-async function askPeer<P extends MeshPeer>(mesh: Mesh<P>, pick: P, samples: Int16Array, lang: string): Promise<Asked> {
+async function askPeer<P extends MeshPeer>(mesh: Mesh<P>, pick: P, samples: Int16Array, lang: string, device: string | null = null): Promise<Asked> {
   const l = /^[A-Za-z0-9]*$/.test(lang) ? lang : "auto";
+  const dev = device === null ? "" : `&device=${encodeURIComponent(device)}`;
   try {
-    const [st, v] = await mesh.http(pick, "POST", `/mesh/v1/transcribe?lang=${l}`, { ctype: "audio/wav", data: voice.wav(samples, voice.RATE) }, TRANSCRIBE_WAIT_MS);
+    const [st, v] = await mesh.http(pick, "POST", `/mesh/v1/transcribe?lang=${l}${dev}`, { ctype: "audio/wav", data: voice.wav(samples, voice.RATE) }, TRANSCRIBE_WAIT_MS);
     if (st === 200) {
       const h = field(v, "host");
       const t = field(v, "text");
@@ -398,19 +483,40 @@ async function askPeer<P extends MeshPeer>(mesh: Mesh<P>, pick: P, samples: Int1
   }
 }
 
+/** On one of this PC's SSH devices. */
+async function onDevice<P extends MeshPeer>(mesh: Mesh<P>, device: string, name: string, samples: Int16Array, lang: string): Promise<Asked> {
+  if (!mesh.speech) return { ok: false, why: "this PC has no SSH devices for dictation" };
+  try {
+    const r = await mesh.speech.transcribe(device, samples, lang);
+    return { ok: true, where: { text: r.text, host: name, model: r.model } };
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`harbor: ${name} didn't transcribe: ${why}`);
+    return { ok: false, why };
+  }
+}
+
 async function routed<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, lang: string, me: string): Promise<Where> {
   const chosen = chosenPeer(mesh);
   let warn: string | undefined;
   if (chosen) {
-    if (chosen.peer) {
-      const r = await askPeer(mesh, chosen.peer, samples, lang);
+    const name = chosen.device === null ? "" : deviceName(mesh, chosen);
+    if (chosen.here && chosen.device !== null) {
+      const r = await onDevice(mesh, chosen.device, name, samples, lang);
       if (r.ok) {
         hostWarned = false;
         return r.where;
       }
-      warn = `${chosen.peer.name} couldn't transcribe (${r.why})`;
+      warn = `${name} couldn't transcribe (${r.why})`;
+    } else if (chosen.peer) {
+      const r = await askPeer(mesh, chosen.peer, samples, lang, chosen.device);
+      if (r.ok) {
+        hostWarned = false;
+        return r.where;
+      }
+      warn = `${chosen.device === null ? chosen.peer.name : name} couldn't transcribe (${r.why})`;
     } else {
-      warn = `${peerName(mesh, chosen.id)} isn't reachable`;
+      warn = chosen.device === null ? `${peerName(mesh, chosen.id)} isn't reachable` : `${name} isn't reachable (${peerName(mesh, chosen.pc)} is offline)`;
     }
     console.error(`harbor: dictation: the chosen PC failed (${warn}); transcribing as on Automatic`);
     if (hostWarned) warn = undefined;
@@ -419,7 +525,8 @@ async function routed<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, la
       warn = `${warn}; transcribed elsewhere.`;
     }
   }
-  const peers = (await peerScores(mesh)).filter(([p]) => p.id !== chosen?.id);
+  // A PC that failed isn't asked again; one whose SSH device failed still can be.
+  const peers = (await peerScores(mesh)).filter(([p]) => chosen?.device !== null || p.id !== chosen?.id);
   let firstFail: Fail | null = null;
   const withWarn = (w: Where): Where => (warn === undefined ? w : { ...w, warn });
   for (const pick of order(hereScore(), peers)) {
@@ -438,7 +545,7 @@ async function routed<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, la
 }
 
 /** `POST /mesh/v1/transcribe` from a peer: here only, never forwarded (whatever this PC's own choice of where to transcribe). */
-export async function servePeer<P extends MeshPeer>(mesh: Mesh<P>, body: Uint8Array, lang: string, from = "a peer"): Promise<[number, { text?: string; host?: string; model?: string; error?: string }]> {
+export async function servePeer<P extends MeshPeer>(mesh: Mesh<P>, body: Uint8Array, lang: string, from = "a peer", device: string | null = null): Promise<[number, { text?: string; host?: string; model?: string; error?: string }]> {
   let samples: Int16Array;
   try {
     samples = voice.wavSamples(body);
@@ -448,6 +555,17 @@ export async function servePeer<P extends MeshPeer>(mesh: Mesh<P>, body: Uint8Ar
   const me = meName(mesh);
   const t0 = Date.now();
   const audio = secs((samples.length * 1000) / voice.RATE);
+  if (device !== null) {
+    // On this PC's SSH device; never here instead (the peer falls back by itself).
+    const name = mesh.speech?.list().find((d) => d.id === device)?.name ?? device;
+    const r = await onDevice(mesh, device, name, samples, lang);
+    if (r.ok) {
+      console.error(`harbor: dictation served for ${from} on ${name}: ${audio} of audio in ${secs(Date.now() - t0)}, model ${r.where.model}, ${wordCount(r.where.text)} words`);
+      return [200, { text: r.where.text, host: name, model: r.where.model }];
+    }
+    console.error(`harbor: dictation served for ${from} on ${name}: ${audio} of audio, refused after ${secs(Date.now() - t0)}: ${r.why}`);
+    return [409, { error: r.why }];
+  }
   try {
     const r = await localRun(samples, lang);
     console.error(`harbor: dictation served for ${from}: ${audio} of audio in ${secs(Date.now() - t0)}, model ${r.model}, ${wordCount(r.text)} words`);

@@ -182,3 +182,36 @@ test("Transcribe on lists Automatic, this PC and the mesh's PCs, and stores the 
   expect(voiceChose(meshed, "voice:host", 0)).toBe(true);
   expect(dictate.host()).toBe("");
 });
+
+test("Transcribe on lists this PC's SSH devices and those other PCs offer, and picking one prepares it", async () => {
+  const peers = [{ id: "pc:big", name: "Big desk", online: true }];
+  const prepared: string[] = [];
+  let state = "Setting up: getting the speech model…";
+  const mesh = {
+    on: () => true,
+    me: () => ({ name: "Laptop", id: "pc:lap" }),
+    peers: () => peers,
+    known: () => peers,
+    http: () => Promise.resolve([200, { devices: [{ id: "ssh:2", name: "Studio" }, { id: "ssh:9", name: "studio mac" }] }] as [number, unknown]),
+    speech: { list: () => [{ id: "ssh:1", name: "Studio Mac" }], transcribe: () => Promise.reject(new Error("no")), warm: () => {}, prepare: (id: string) => void prepared.push(id), state: () => state },
+  };
+  const meshed = new voiceCtl.VoiceCtl({ store: kv, mesh, insert: () => {}, toast: () => {}, wake: () => {}, account: () => null });
+  meshed.load();
+  await dictate.refreshPeerDevices(mesh);
+  // Big desk's "studio mac" is this PC's Studio Mac: listed once, as this PC's.
+  expect(meshed.hosts()).toEqual([["", "Automatic"], ["pc:lap", "Laptop (this PC)"], ["pc:big", "Big desk"], ["pc:lap#ssh:1", "Studio Mac (SSH device)"], ["pc:big#ssh:2", "Studio (SSH device, through Big desk)"]]);
+  expect(voiceChose(meshed, "voice:host", 3)).toBe(true);
+  expect([kv.get("voice_host"), prepared]).toEqual(["pc:lap#ssh:1", ["ssh:1"]]);
+  let row = voiceView(voiceFacts(meshed, "")).sections[0]?.rows[1];
+  expect(row?.selected).toBe(3);
+  expect(row?.desc).toStartWith("Setting up: getting the speech model… Dictation here, and from phones through this PC, goes to that device over SSH");
+  state = "";
+  expect(voiceChose(meshed, "voice:host", 4)).toBe(true);
+  expect(prepared).toEqual(["ssh:1"]);
+  row = voiceView(voiceFacts(meshed, "")).sections[0]?.rows[1];
+  expect(row?.desc).toStartWith("Dictation here, and from phones through this PC, goes to that device over SSH");
+  kv.set("voice_host", "pc:gone#ssh:3");
+  meshed.load();
+  expect(meshed.hosts().at(-1)).toEqual(["pc:gone#ssh:3", "Saved SSH device (unknown)"]);
+  expect(voiceChose(meshed, "voice:host", 0)).toBe(true);
+});
