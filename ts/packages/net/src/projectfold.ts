@@ -88,3 +88,34 @@ export function foldProjects(store: Store, home: string, here: (dir: string) => 
   }
   return done;
 }
+
+/** What `takesMainFrom` weighs for one project and one peer. */
+export interface MainFrom {
+  /** The PC holding the project's folder when it isn't on this PC (a mesh id, "" not known); null: it's here. */
+  away: string | null;
+  /** The peer that names a main chat for it. */
+  peer: string;
+  /** This PC's workspace and the peer's ("" none known). */
+  mine: string;
+  peerWs: string;
+  /** The project's Move to workspace… ("" none) and Share with workspace… as this PC has them. */
+  moved: string;
+  shares: readonly string[];
+}
+
+/**
+ * Whether this PC's row of a project opens the main chat `peer` has for it: a project's main chat is
+ * its owner's, the same chat on every PC it's shown on. Another PC's project (its folder isn't here):
+ * the main chat of the PC its folder is on. A project here too (one folded with that PC's: the same
+ * remote, or the same name): only when it reached this PC's workspace through the peer, i.e. it's
+ * further into this PC's workspace than into the peer's. Moving puts a project in another workspace
+ * than its owner's (that workspace's PCs are the furthest), sharing adds other workspaces (their PCs
+ * next; the owner may share it back with their own), and the owner's own workspace is neither.
+ * Otherwise each PC keeps its own main chat.
+ */
+export function takesMainFrom(o: MainFrom): boolean {
+  if (o.away !== null) return o.away !== "" && o.away === o.peer;
+  if (o.moved === "" && o.shares.length === 0) return false;
+  const depth = (ws: string): number => (ws === "" ? -1 : ws === o.moved ? 2 : o.shares.includes(ws) ? 1 : 0);
+  return o.peerWs !== "" && depth(o.mine) > 0 && depth(o.mine) > depth(o.peerWs);
+}

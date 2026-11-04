@@ -157,6 +157,8 @@ export class Shell {
   private draftMain = false;
   /** Projects whose folder is on another PC for which This PC was picked in the draft's Runs on. */
   private draftHere = new Set<number>();
+  /** A device picked in a project's draft while its folder is on another PC: it runs there, not on that PC (draftTarget). */
+  private draftPicked = new Map<number, string>();
   private sel: Sel;
   private opened = new Map<number, Opened>();
   private drafts = new Map<number, string>();
@@ -2157,7 +2159,18 @@ export class Shell {
       return;
     }
     const joinsMain = this.view !== "chat" && this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
-    // A project whose folder is on another PC starts its chat there (draftTarget), unless a device or Auto is picked.
+    // A project's main chat that is another PC's (a project shared with you opens its owner's): the message goes to its home PC.
+    const mainCopy = joinsMain === null ? undefined : this.data.chat(joinsMain);
+    if (mainCopy !== undefined && this.meshChat.foreign(mainCopy)) {
+      clear();
+      this.meshChat.send(mainCopy, text, files, mentions, mode);
+      this.view = "chat";
+      this.chatId = mainCopy.id;
+      this.data.store.set("last_chat", String(mainCopy.id));
+      this.refreshAll();
+      return;
+    }
+    // A project whose folder is on another PC starts its chat there (draftTarget), unless a device or Auto is picked for it.
     // "Auto": the PC with the most free memory, decided once now; the chat stays there (the draft keeps Auto for the next one).
     let sel = this.newSel();
     let startOn = this.view !== "chat" && joinsMain === null ? (this.draftTarget() ?? sel.device) : "";
@@ -2172,6 +2185,8 @@ export class Shell {
       const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
       const body: Record<string, unknown> = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: sel.account, model: sel.model, effort: sel.effort, access: sel.access, text };
       if (auto) body.auto_placed = true;
+      // The project's main chat, started on its PC: that PC's main chat for it (this row opens it once its copy is here).
+      if (this.draftMain && this.draftRepo !== null) body.main = true;
       const place = startOn;
       const made = auto ? (gid: string) => this.hub.auto?.mark(gid, place) : undefined;
       if (this.meshChat.create(place, body, files, this.draftRepo, DRAFT, { text, mentions }, made)) {
@@ -3036,11 +3051,15 @@ export class Shell {
 
   /**
    * The PC a new chat starts on when the draft's project folder isn't here: the PC that holds it,
-   * while it's on, unless a device is picked or This PC was picked for the project.
+   * while it's on, unless This PC or another device was picked for the project. The default device
+   * (the last one picked anywhere, or Auto) doesn't count: the folder isn't on it, so the chat would
+   * only fail with "isn't on this PC".
    */
   private draftTarget(): string | null {
     const p = this.draftPlace();
-    if (p === null || p.pc === "" || !p.online || this.sel.device !== "" || this.draftHere.has(this.draftRepo ?? -1)) return null;
+    const repo = this.draftRepo ?? -1;
+    if (p === null || p.pc === "" || !p.online || this.draftHere.has(repo)) return null;
+    if (this.sel.device !== "" && this.draftPicked.get(repo) === this.sel.device) return null;
     return p.pc;
   }
 
@@ -3095,9 +3114,14 @@ export class Shell {
         // The project's own PC, or This PC instead of it: for this project's drafts, not the default device.
         if (id === "") this.draftHere.add(this.draftRepo);
         else this.draftHere.delete(this.draftRepo);
+        this.draftPicked.delete(this.draftRepo);
         if (this.sel.device !== "") this.setSel({ device: "" });
         this.refreshComposer();
-      } else this.setSel({ device: id });
+      } else {
+        // Another device for a project whose folder is on another PC: picked for it, so it beats that PC.
+        if (place !== null && this.draftRepo !== null) this.draftPicked.set(this.draftRepo, id);
+        this.setSel({ device: id });
+      }
     };
     const runRows = this.hub.runOnRows(chat, current, kind);
     const rows = runRows.map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));

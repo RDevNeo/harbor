@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -12,6 +12,7 @@ import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { cleanPcName, forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, renamePc, parseWhois, partOf, startsTurn, statusNode } from "../src/mesh.ts";
 import { StoreReplica, type StoreReplicaOptions, sameRemote } from "../src/meshstore.ts";
+import { takesMainFrom } from "../src/projectfold.ts";
 import { relayServe } from "../src/relay.ts";
 import { allowedKey, cleanAddrs, downOf, label, newPeer, peerId, type Allowed, type Node } from "../src/shared.ts";
 import { generateIdentity, type Identity } from "../src/tls.ts";
@@ -288,6 +289,55 @@ describe("mesh.rs", () => {
     expect([place.shared?.chats.size, place.shared?.carried.size, place.shared?.repos.get(away)]).toEqual([0, 0, undefined]);
     home.close();
     copy.close();
+  });
+
+  test("a project shared here opens its owner's main chat: this PC's empty one goes, one with messages stays a chat", async () => {
+    const home = Store.openAt(join(tmp, "main-home.db"));
+    const repo = home.addRepo("/nowhere/owner/game");
+    const main = home.createChat(blankChat({ repoId: repo, title: "Game", role: "lead", started: true }));
+    home.createChat(blankChat({ repoId: repo, title: "other", role: "lead" }));
+    home.setMainChat(repo, main.id);
+    home.setRepoWorkspace(repo, "org_team");
+    home.setRepoShares(repo, ["org_owner"]);
+    const sent = (await new StoreReplica({ store: home, hub: new Hub([], 0), version: "t" }).chats(0, true)).chats as { project: { main: string } }[];
+    // Every chat of the project names its main chat, by gid.
+    expect(sent.map((c) => c.project.main)).toEqual([main.gid, main.gid]);
+    const run = async (name: string, said: boolean) => {
+      // This PC has the project too (a folder of the same name), placed in its workspace by the owner, with a main chat of its own.
+      mkdirSync(join(tmp, name, "game"), { recursive: true });
+      const copy = Store.openAt(join(tmp, `${name}.db`));
+      const mine = copy.addRepo(join(tmp, name, "game"));
+      copy.setRepoWorkspace(mine, "org_team");
+      copy.setRepoShares(mine, ["org_owner"]);
+      const own = copy.createChat(blankChat({ repoId: mine, title: "fresh", role: "lead" }));
+      if (said) copy.saveItems(own.id, [{ kind: "user", text: "hello", files: [], at: 1, mentions: [], sender: "", intent: "" }]);
+      copy.setMainChat(mine, own.id);
+      const mainFrom = (r: number, peer: string) => {
+        const place = copy.placement();
+        return takesMainFrom({ away: null, peer, mine: "org_team", peerWs: peer === "pc:home" ? "org_owner" : "", moved: place.repos.get(r) ?? "", shares: place.shared?.repos.get(r) ?? [] });
+      };
+      const replica = new StoreReplica({ store: copy, hub: new Hub([], 0), version: "t", mainFrom });
+      await replica.applyChats("pc:home", 1, { full: true, chats: sent as unknown as Json[] });
+      const theirs = copy.chats().find((c) => c.gid === main.gid);
+      expect(copy.mainChats().get(mine)).toBe(theirs?.id ?? -1);
+      // It follows the project into this PC's workspace, though it's someone else's chat.
+      expect(copy.placement().mains?.has(theirs?.id ?? -1)).toBe(true);
+      const kept = copy.chats().some((c) => c.id === own.id);
+      copy.close();
+      return kept;
+    };
+    expect(await run("main-empty", false)).toBe(false);
+    expect(await run("main-said", true)).toBe(true);
+    // A PC that keeps its own (here: the owner's own folder, never moved here) isn't touched.
+    const owner = Store.openAt(join(tmp, "main-owner.db"));
+    mkdirSync(join(tmp, "main-owner", "game"), { recursive: true });
+    const its = owner.addRepo(join(tmp, "main-owner", "game"));
+    const kept = owner.createChat(blankChat({ repoId: its, title: "mine", role: "lead" }));
+    owner.setMainChat(its, kept.id);
+    await new StoreReplica({ store: owner, hub: new Hub([], 0), version: "t", mainFrom: () => false }).applyChats("pc:home", 1, { full: true, chats: sent as unknown as Json[] });
+    expect(owner.mainChats().get(its)).toBe(kept.id);
+    owner.close();
+    home.close();
   });
 
   test("a project made from another PC's chats remembers that PC, even once no copy is left", async () => {

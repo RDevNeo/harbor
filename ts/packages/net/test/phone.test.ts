@@ -13,6 +13,7 @@ import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
 import { newPeer } from "../src/shared.ts";
+import { newHost, type RemoteHost } from "../src/remote.ts";
 import { StoreReplica } from "../src/meshstore.ts";
 import { cardJson, catalogOf, clock, composerDefaults, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
@@ -617,6 +618,57 @@ describe("phone: a copy's calls at its home PC (mesh.rs mesh_proxy)", () => {
     expect((g.body as { chat: Json }).chat).toEqual({ id: "g-copy", project_id: "/home/owner/code/app", parent: null, gid: "g-copy", title: "theirs" });
     await send(false, "title", { title: "renamed" });
     expect(sent[2]?.ctx).toBeNull();
+    store.close();
+  });
+});
+
+describe("phone: a project whose folder is on another PC", () => {
+  test("a new chat in it starts on that PC (the default device doesn't count), and its main chat's message goes there", async () => {
+    const store = Store.openAt(join(tmp, "away-new.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.me = { id: "pc:desk", name: "desk" };
+    hub.mesh.peers.set("pc:home", newPeer({ id: "pc:home", name: "home", online: true, addr: "127.0.0.1:1" }));
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const repo = store.addRepo("/home/owner/Documents/game");
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const sent: { path: string[]; body: Record<string, unknown> }[] = [];
+    mesh.forward = async (_d, _name, _method, path, body) => {
+      sent.push({ path, body });
+      return { status: 200, body: { id: 9, gid: "g-there", ok: true } };
+    };
+    let online = true;
+    const devices = (): [RemoteHost, boolean | null][] => [
+      [newHost({ id: "ssh:1", name: "mac", host: "mac" }), true],
+      [newHost({ id: "ssh:2", name: "box", host: "box", device_files: true }), true],
+    ];
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, devices, projectPlace: (r) => (r === repo ? { pc: "pc:home", name: "home", online } : null) });
+    const create = (body: Record<string, unknown>, from: boolean = false) =>
+      routes.route({ method: "POST", path: ["v1", "chats"], query: [], body, token: "", device: "Pixel", global: true, ...(from ? { from: { peer: "pc:x", name: "x", ctx: null, sender: "", device: "", who: "", dev: "", via: null } } : {}) });
+    // No device, or one working in this PC's files (the saved default): the PC its folder is on.
+    for (const device of ["", "ssh:1"]) {
+      const r = await create({ project_id: repo, device, account: "claude", text: "hi", main: true });
+      expect(r.status).toBe(200);
+      expect(sent.at(-1)?.path).toEqual(["v1", "chats"]);
+      expect(sent.at(-1)?.body).toMatchObject({ device: "", main: true, text: "hi", project: { path: "/home/owner/Documents/game", name: "game" } });
+    }
+    expect(sent.length).toBe(2);
+    // A device with its own files, that PC off, or a chat another PC asked for here: made here as asked.
+    expect((await create({ project_id: repo, device: "ssh:2", account: "claude", text: "" })).status).toBe(200);
+    online = false;
+    expect((await create({ project_id: repo, device: "", account: "claude", text: "" })).status).toBe(200);
+    online = true;
+    expect((await create({ project_id: repo, device: "", account: "claude", text: "" }, true)).status).toBe(200);
+    expect(sent.length).toBe(2);
+    // The project's main chat is the home PC's (a copy here): a message to it goes there, not into the copy.
+    const copy = store.createChat(blankChat({ title: "Game", repoId: repo, role: "lead", gid: "g-main", home: "pc:home", homeId: 7 }));
+    store.setMainChat(repo, copy.id);
+    const engine = { mainChat: (r: number) => (r === repo ? copy.id : null), send: () => { throw new Error("ran here"); } } as unknown as PhoneEngine;
+    const withEngine = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine });
+    const m = await withEngine.route({ method: "POST", path: ["v1", "chats"], query: [], body: { project_id: repo, main: true, account: "claude", text: "next" }, token: "", device: "Pixel", global: true });
+    expect(m.status).toBe(200);
+    expect(sent.at(-1)).toMatchObject({ path: ["v1", "chats", "7", "send"], body: { text: "next" } });
+    expect(m.body).toMatchObject({ id: "g-main", gid: "g-main" });
     store.close();
   });
 });

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { blankChat, Store } from "@harbor/store";
-import { addFolder, folderOf, foldProjects } from "../src/projectfold.ts";
+import { addFolder, folderOf, foldProjects, takesMainFrom } from "../src/projectfold.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-fold-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -99,3 +99,26 @@ test("adding_a_folder_of_another_pcs_project_gives_it_its_folder_here", () => {
   const made = addFolder(t, MINE, "", HOME, here([MINE]));
   expect(t.repos().find((r) => r.id === made)?.path).toBe(MINE);
 }, SLOW);
+
+test("a_projects_main_chat_is_its_owners_on_the_pcs_it_was_shared_or_moved_to", () => {
+  const base = { away: null, peer: "ts:owner", mine: "org_team", peerWs: "org_owner", moved: "", shares: [] as string[] };
+  // Another PC's project (its folder isn't here): that PC's main chat, and no other PC's.
+  expect(takesMainFrom({ ...base, away: "ts:owner" })).toBe(true);
+  expect(takesMainFrom({ ...base, away: "ts:owner", peer: "ts:third" })).toBe(false);
+  expect(takesMainFrom({ ...base, away: "" })).toBe(false);
+  // A folder of it here too, never shared or moved: each PC keeps its own.
+  expect(takesMainFrom(base)).toBe(false);
+  // Moved to this PC's workspace and shared back with the owner's: the owner's, not the other way round.
+  const moved = { ...base, moved: "org_team", shares: ["org_owner"] };
+  expect(takesMainFrom(moved)).toBe(true);
+  expect(takesMainFrom({ ...moved, peer: "ts:team", mine: "org_owner", peerWs: "org_team" })).toBe(false);
+  // Shared with this PC's workspace (not moved): the owner's; and with a third one too, between those two: neither.
+  expect(takesMainFrom({ ...base, shares: ["org_team"] })).toBe(true);
+  expect(takesMainFrom({ ...base, shares: ["org_team", "org_owner"] })).toBe(false);
+  // Moved elsewhere and shared with this PC's: the owner's still, not the moved-to workspace's PC.
+  expect(takesMainFrom({ ...moved, shares: ["org_team"], moved: "org_ops" })).toBe(true);
+  expect(takesMainFrom({ ...moved, shares: ["org_team"], moved: "org_ops", peerWs: "org_ops" })).toBe(false);
+  // A peer in no workspace known here, or this PC in none: no.
+  expect(takesMainFrom({ ...moved, peerWs: "" })).toBe(false);
+  expect(takesMainFrom({ ...moved, mine: "" })).toBe(false);
+});

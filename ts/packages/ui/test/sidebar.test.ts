@@ -97,6 +97,9 @@ test("a_moved_chat_or_project_shows_under_the_workspace_it_was_moved_to", () => 
   expect(chatWorkspace(byId(5) as TestChat, byId, { ...carried, mates: new Set(["ts:b"]) }, "a", pcs)).toBe("c");
   // Someone else's copy doesn't: their chat stays in its PC's workspace, wherever the project went.
   expect(chatWorkspace(byId(5) as TestChat, byId, carried, "a", pcs)).toBe("b");
+  // Unless it's its project's main chat here: that belongs to the project, so it goes where the project went.
+  expect(chatWorkspace(byId(5) as TestChat, byId, { ...carried, mains: new Set([5]) }, "a", pcs)).toBe("c");
+  expect(sharedWith(byId(5) as TestChat, byId, { ...carried, shared: { chats: new Map(), carried: new Map([[5, ["d"]]]), repos: new Map() }, mains: new Set([5]) }).inherited).toEqual(["d"]);
   // Filtered to a, the moved ones leave at once; chat 2 comes in.
   const a = inWorkspaces(t, ["a"], "a", pcs, chats, place);
   expect(a.threads).toEqual([]);

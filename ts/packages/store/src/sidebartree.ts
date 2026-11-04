@@ -22,7 +22,8 @@ export type PlacedChat = Pick<SidebarChat, "id" | "role" | "repoId" | "home"> & 
 /**
  * The workspace Move to workspace… put chat `c` in, "" for none (its home PC's applies): its own,
  * else its project's (a copy's as its home PC says it, and only when that PC is this owner's:
- * another person's chats stay in their PC's workspace); a sub-agent's is its lead's.
+ * another person's chats stay in their PC's workspace, except the project's main chat); a
+ * sub-agent's is its lead's.
  */
 export function movedTo<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined, p: Placement): string {
   let x = c;
@@ -49,9 +50,12 @@ export function carriedProjects(chats: readonly Pick<SidebarChat, "id" | "repoId
   return out;
 }
 
-/** Whether copy `c` follows its project's move and shares: a chat of another PC of this PC's owner (`Placement.mates`), not someone else's. */
-function follows(c: Pick<SidebarChat, "home">, p: Placement): boolean {
-  return p.mates?.has(c.home) === true;
+/**
+ * Whether copy `c` follows its project's move and shares: a chat of another PC of this PC's owner
+ * (`Placement.mates`), not someone else's; or its project's main chat here, whoever's it is (`Placement.mains`).
+ */
+function follows(c: Pick<SidebarChat, "id" | "home">, p: Placement): boolean {
+  return p.mates?.has(c.home) === true || p.mains?.has(c.id) === true;
 }
 
 function leadOf<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined): C {

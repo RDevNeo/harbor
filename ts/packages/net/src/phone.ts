@@ -974,6 +974,14 @@ export class PhoneRoutes {
     return r ? { repo: r.id } : err(400, "no such project");
   }
 
+  /** The PC a new chat of project `repo` asked for on `device` ("" this PC) goes to instead: the one its folder is on, when it isn't here. */
+  private folderPeer(repo: number, device: string): Peer | null {
+    const p = this.d.projectPlace?.(repo) ?? null;
+    if (p === null || p.pc === "" || !p.online || !this.d.mesh) return null;
+    if (device !== "" && this.d.devices?.().some(([h]) => h.id === device && h.device_files)) return null;
+    return this.d.hub.mesh.peer(p.pc);
+  }
+
   /** mesh.rs `mesh_proxy` and `map_new`: a new chat on another PC's Harbor, answered with the copy of it that arrives here. */
   private async createOnPeer(peer: Peer, body: Record<string, unknown>, sender: string, global: boolean, who: Who): Promise<Reply> {
     if (!peer.online || !this.d.mesh) return err(409, `${peer.name} is off: pick a PC that's on`);
@@ -1037,6 +1045,12 @@ export class PhoneRoutes {
     const found = this.createRepo(body);
     if (!("repo" in found)) return found;
     const repo = found.repo;
+    // A project whose folder is on another PC: the chat starts there (as the desktop's draft does), unless it's
+    // asked for on a device with files of its own; here, or on a device working in this PC's files, it would only
+    // fail with "isn't on this PC".
+    // (Not for a chat another PC asked for: it picked this one.)
+    const there = repo === null || from !== null ? null : this.folderPeer(repo, typeof body.device === "string" ? body.device : "");
+    if (there !== null) return this.createOnPeer(there, { ...body, project_id: repo, device: "" }, sender, global, who);
     let made: unknown = null;
     if (body.worktree === true && (typeof body.device !== "string" || body.device === "") && this.d.worktrees) {
       const about = [body.title, body.text].find((t) => typeof t === "string" && t.trim() !== "");
@@ -1081,7 +1095,11 @@ export class PhoneRoutes {
       const m = e.mainChat(main);
       if (m !== null) {
         const mc = this.chats().find((x) => x.id === m);
-        if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender, "", from, who);
+        // The main chat of a project shared with you is its owner's, a copy here: the message goes to its home PC.
+        if (mc && mc.home !== "" && (text !== "" || files.length > 0)) {
+          const r = await this.forward(mc, "POST", ["v1", "chats", String(mc.id), "send"], { text, files: body.files ?? [] }, sender, global, who);
+          if (r.status >= 300) return r;
+        } else if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender, "", from, who);
         return ok({ id: global ? (mc?.gid ?? "") : m, gid: mc?.gid ?? "" });
       }
     }

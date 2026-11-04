@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- A shared project has one main chat for everyone: the project row on the PCs it was shared or
+  moved to opens its owner's main chat (marked shared, its messages run on the owner's PC), and
+  another PC's project opens the main chat of the PC its folder is on. A main chat a PC had made
+  for it on its own stays as a chat of the project when it has messages, or goes when it's empty.
+  Desktop and phone alike.
+
+### Fixed
+- A new chat in a project whose folder is on another PC starts on that PC even when a default
+  device is set (it used to start on the default device and stop at "folder isn't on this PC");
+  a device picked for that project still wins. The phone's new chats do the same.
+- A message to a project's main chat that lives on another PC, sent from the project's page or the
+  phone, goes to that PC instead of sitting in this PC's copy.
+
 ## [0.138.0] - 2026-11-03
 
 ### Added

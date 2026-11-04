@@ -36,6 +36,7 @@ import {
   addFolder,
   directoryMates,
   foldProjects,
+  takesMainFrom,
   directoryPcWorkspaces,
   scopeHas,
   scopeHasDevice,
@@ -491,6 +492,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     accounts: () => accounts.filter(providers.usable).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
     copied: (chat) => engine?.storeChanged(chat),
     cwd: (c) => engine?.chatCwd(c) ?? null,
+    // A project's main chat is its owner's: another PC's project, or one shared or moved here by that PC (projectfold.ts).
+    mainFrom: (repo, peer) => {
+      const place = store.placement();
+      return takesMainFrom({
+        away: projectClones.place(repo)?.pc ?? null,
+        peer,
+        mine: account.workspace(),
+        peerWs: directoryPcWorkspaces(account.directory()).get(peer) ?? "",
+        moved: place.repos.get(repo) ?? "",
+        shares: place.shared?.repos.get(repo) ?? [],
+      });
+    },
   });
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;

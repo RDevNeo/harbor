@@ -33,6 +33,12 @@ export interface Placement {
    * or moving a project takes the project there, not everyone's chats in it. Left out: none.
    */
   mates?: ReadonlySet<string>;
+  /**
+   * The chats that are a project's main chat here (`repos.main_chat`). A main chat belongs to its
+   * project, not just to its owner: a copy of one follows its project's move and shares whoever's
+   * it is, so a project shared with you opens the same main chat as on its owner's PC. Left out: none.
+   */
+  mains?: ReadonlySet<number>;
 }
 
 /** Share with workspace…: workspace ids a chat or project shows in besides its own, the same three ways as `Placement`. */
@@ -461,7 +467,8 @@ export class Store {
       if (text(r.workspace) !== "") repos.set(num(r.id), text(r.workspace));
       list(shared.repos, num(r.id), r.shared);
     }
-    return { chats, carried, repos, shared, mates: this.mates() };
+    const mains = new Set((this.db.query("SELECT main_chat FROM repos WHERE main_chat != 0").all() as Row[]).map((r) => num(r.main_chat)));
+    return { chats, carried, repos, shared, mates: this.mates(), mains };
   }
 
   /** The other PCs of this PC's owner (`Placement.mates`); the hub sets it from the account's directory. */

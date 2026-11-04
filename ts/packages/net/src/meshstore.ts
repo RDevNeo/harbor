@@ -70,6 +70,8 @@ export interface StoreReplicaOptions {
   copied?: (chat: number | null) => void;
   /** Where a chat's agent works (its worktree, else its project); null: the project's folder. */
   cwd?: (chat: Chat) => string | null;
+  /** Whether project `repo`'s row here opens the main chat `peer` names for it (projectfold.ts `takesMainFrom`); absent: never. */
+  mainFrom?: (repo: number, peer: string) => boolean;
 }
 
 /** A git remote as projects are matched by it: host and path, lowercase, no ".git". */
@@ -160,7 +162,17 @@ export class StoreReplica implements MeshApp {
     return live ? { count: live.length, digest: digest(live) } : this.o.store.summary(chat);
   }
 
-  private chatJson(c: Chat, full: boolean): Json {
+  /** Each project's main chat here (its gid), as chat JSON `project.main` names it: an unsettled lead of that project, own or a copy. */
+  private mainGids(): Map<number, string> {
+    const out = new Map<number, string>();
+    for (const [repo, id] of this.o.store.mainChats()) {
+      const c = this.list.find((x) => x.id === id);
+      if (c && c.role === "lead" && c.repoId === repo && !c.settled && c.gid !== "") out.set(repo, c.gid);
+    }
+    return out;
+  }
+
+  private chatJson(c: Chat, full: boolean, mains: ReadonlyMap<number, string> = new Map()): Json {
     const hub = this.o.hub;
     const r = c.repoId === null ? null : (this.repos.find((x) => x.id === c.repoId) ?? null);
     const sum = full ? this.summary(c.id) : null;
@@ -175,7 +187,8 @@ export class StoreReplica implements MeshApp {
       id: c.id,
       gid: c.gid,
       title: c.title,
-      project: r ? { name: r.name, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])] } : null,
+      // `main`: the project's main chat here, by gid ("" none): a PC this project was shared or moved to opens the same one.
+      project: r ? { name: r.name, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])], main: mains.get(r.id) ?? "" } : null,
       workspace: this.place.chats.get(c.id) ?? "",
       // Share with workspace…: the extra workspaces it shows in (its own; the project's go in `project`).
       shared: [...(this.place.shared?.chats.get(c.id) ?? [])],
@@ -215,8 +228,9 @@ export class StoreReplica implements MeshApp {
       .sort((a, b) => Number(a.role === "sub") - Number(b.role === "sub") || a.id - b.id);
     const out: Json[] = [];
     const turn = yielder();
+    const mains = this.mainGids();
     for (const c of own) {
-      out.push(this.chatJson(c, full));
+      out.push(this.chatJson(c, full, mains));
       await turn();
     }
     return { chats: out, update: this.o.update?.() ?? null };
@@ -410,12 +424,19 @@ export class StoreReplica implements MeshApp {
     const full = body.full === true;
     const wants: [number, number][] = [];
     const listed = new Set<number>();
+    // The main chat the peer names for each project (older PCs name none).
+    const mains = new Map<number, string>();
     for (const x of Array.isArray(body.chats) ? body.chats : []) {
       const m = obj(x);
       const hid = int(m.id);
       if (hid === null) continue;
       listed.add(hid);
       const local = this.upsert(peer, m);
+      const p = m.project === null || m.project === undefined ? null : obj(m.project);
+      if (p !== null && typeof p.main === "string" && p.main !== "") {
+        const repo = this.list.find((c) => c.id === (local ?? this.o.hub.mesh.localId(peer, hid)))?.repoId ?? null;
+        if (repo !== null) mains.set(repo, p.main);
+      }
       if (local === null) continue;
       const k = `${peer}\0${hid}`;
       const known = this.isince.get(k);
@@ -440,8 +461,33 @@ export class StoreReplica implements MeshApp {
       this.remote.delete(id);
     }
     this.reload();
+    this.takeMains(peer, mains);
     this.o.copied?.(null);
     return wants;
+  }
+
+  /**
+   * The main chats `peer` names (project here → gid): a project shared or moved here by its owner, or
+   * another PC's, opens its owner's main chat (`mainFrom`), a copy or this PC's own. A main chat this
+   * PC had made for it gives way: kept as a chat of the project when it has anything in it, else it goes.
+   */
+  private takeMains(peer: string, mains: ReadonlyMap<number, string>): void {
+    if (mains.size === 0 || !this.o.mainFrom) return;
+    const now = this.o.store.mainChats();
+    let changed = false;
+    for (const [repo, gid] of mains) {
+      const c = this.list.find((x) => x.gid === gid);
+      if (!c || c.role !== "lead" || c.repoId !== repo || c.settled) continue;
+      const was = now.get(repo) ?? 0;
+      if (was === c.id || !this.o.mainFrom(repo, peer)) continue;
+      this.o.store.setMainChat(repo, c.id);
+      changed = true;
+      const old = was === 0 ? null : (this.list.find((x) => x.id === was) ?? null);
+      const empty = old !== null && old.home === "" && !old.started && this.o.store.items(old.id).length === 0 && !this.list.some((x) => x.parent === old.id);
+      if (empty) this.o.store.deleteChat(old.id);
+      console.error(`harbor: project ${repo}'s main chat is ${this.o.hub.mesh.nameOf(peer)}'s (chat ${c.id})${old === null ? "" : empty ? `; its empty main chat ${old.id} went` : `; chat ${old.id} stays a chat of it`}`);
+    }
+    if (changed) this.reload();
   }
 
   applyItems(peer: string, epoch: number, hid: number, body: Record<string, unknown>): void {
