@@ -846,18 +846,6 @@ export class Shell {
       if (r) this.data.store.set(`untrusted:${r.local ?? r.path}`, "");
       this.refreshComposer();
     };
-    w.strip_ask_stop = (id) => {
-      w.strip_asking = id;
-    };
-    w.strip_cancel = () => {
-      w.strip_asking = 0;
-    };
-    w.strip_stop = (id) => {
-      w.strip_asking = 0;
-      if (this.meshChat.stop(this.data.chat(id))) return;
-      this.engine.pending.delete(id);
-      this.engine.stop(id);
-    };
     w.strip_head = () => {
       const v = stripView(this.stripRows.length, 0, this.stripFold.get(this.chatId) ?? null);
       if (headerClick(v.folded) === "toggle") this.stripFold.set(this.chatId, !v.open);

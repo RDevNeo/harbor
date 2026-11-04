@@ -54,11 +54,7 @@ component AgentStrip inherits Rectangle {
     in property <bool> header;
     in property <bool> folded;
     in property <bool> open;
-    in property <int> asking;
     callback open-agent(int);
-    callback ask-stop(int);
-    callback stop(int);
-    callback cancel();
     callback head-clicked();
     callback stop-all();
     background: Theme.bg200;
@@ -122,7 +118,7 @@ component AgentStrip inherits Rectangle {
             for r[nth] in root.rows: Rectangle {
                 height: 30px;
                 border-radius: 8px;
-                background: row-area.has-hover || root.asking == r.id ? Theme.gray-100 : transparent;
+                background: row-area.has-hover ? Theme.gray-100 : transparent;
                 row-area := TipArea {
                     tip: r.tip;
                     clicked => {
@@ -139,7 +135,7 @@ component AgentStrip inherits Rectangle {
                 }
                 name := Text {
                     x: 34px;
-                    width: min(self.preferred-width, parent.width - 34px - 140px);
+                    width: min(self.preferred-width, parent.width - 34px - 30px);
                     text: r.name;
                     font-size: 13px;
                     font-weight: 500;
@@ -151,50 +147,6 @@ component AgentStrip inherits Rectangle {
                     x: 34px + name.width;
                     y: 4px;
                     offset: nth * 0.37;
-                }
-                if root.asking != r.id && row-area.has-hover: Btn {
-                    x: parent.width - 29px;
-                    y: 2px;
-                    icon: Icons.stop;
-                    size: icon-xs;
-                    variant: Variant.stop;
-                    tip: "Stop " + r.name;
-                    clicked => {
-                        root.ask-stop(r.id);
-                    }
-                }
-                if root.asking == r.id: HorizontalLayout {
-                    x: parent.width - self.preferred-width - 2px;
-                    height: 30px;
-                    spacing: 4px;
-                    Text {
-                        text: "Stop " + r.name + "?";
-                        font-size: 13px;
-                        color: Theme.subtle;
-                        vertical-alignment: center;
-                    }
-                    Rectangle {
-                        width: 4px;
-                    }
-                    Btn {
-                        y: 1px;
-                        text: "Cancel";
-                        size: xs;
-                        variant: ghost-muted;
-                        clicked => {
-                            root.cancel();
-                        }
-                    }
-                    Btn {
-                        y: 1px;
-                        icon: Icons.stop;
-                        text: "Stop";
-                        size: xs;
-                        variant: Variant.stop;
-                        clicked => {
-                            root.stop(r.id);
-                        }
-                    }
                 }
             }
         }
@@ -503,11 +455,7 @@ export component Composer {
     in property <bool> strip-header;
     in property <bool> strip-folded;
     in property <bool> strip-open;
-    in property <int> strip-asking;
     callback strip-open-agent(int);
-    callback strip-ask-stop(int);
-    callback strip-stop(int);
-    callback strip-cancel();
     callback strip-head();
     callback strip-stop-all();
     in property <bool> untrusted;
@@ -540,18 +488,8 @@ export component Composer {
             header: root.strip-header;
             folded: root.strip-folded;
             open: root.strip-open;
-            asking: root.strip-asking;
             open-agent(id) => {
                 root.strip-open-agent(id);
-            }
-            ask-stop(id) => {
-                root.strip-ask-stop(id);
-            }
-            stop(id) => {
-                root.strip-stop(id);
-            }
-            cancel => {
-                root.strip-cancel();
             }
             head-clicked => {
                 root.strip-head();

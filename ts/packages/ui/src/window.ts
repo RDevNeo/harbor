@@ -567,11 +567,7 @@ export interface AppWindow extends slint.ComponentHandle {
   strip_header: boolean;
   strip_folded: boolean;
   strip_open: boolean;
-  strip_asking: number;
   strip_open_agent: (id: number) => void;
-  strip_ask_stop: (id: number) => void;
-  strip_stop: (id: number) => void;
-  strip_cancel: () => void;
   strip_head: () => void;
   strip_stop_all: () => void;
 

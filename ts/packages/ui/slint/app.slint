@@ -523,11 +523,7 @@ export component AppWindow inherits Window {
     in property <bool> strip-header;
     in property <bool> strip-folded;
     in property <bool> strip-open;
-    in property <int> strip-asking;
     callback strip-open-agent(int);
-    callback strip-ask-stop(int);
-    callback strip-stop(int);
-    callback strip-cancel();
     callback strip-head();
     callback strip-stop-all();
 
@@ -1142,18 +1138,8 @@ export component AppWindow inherits Window {
                                 strip-header: root.strip-header;
                                 strip-folded: root.strip-folded;
                                 strip-open: root.strip-open;
-                                strip-asking: root.strip-asking;
                                 strip-open-agent(id) => {
                                     root.strip-open-agent(id);
-                                }
-                                strip-ask-stop(id) => {
-                                    root.strip-ask-stop(id);
-                                }
-                                strip-stop(id) => {
-                                    root.strip-stop(id);
-                                }
-                                strip-cancel => {
-                                    root.strip-cancel();
                                 }
                                 strip-head => {
                                     root.strip-head();
