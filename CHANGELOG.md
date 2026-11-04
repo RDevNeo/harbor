@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.143.0] - 2026-11-04
+
 ### Added
 - Settings › Voice › Transcribe on can pick an SSH device from Settings › Devices (a machine added by
   hand, without Harbor: a Mac, a Linux box), as well as a PC of your mesh. Dictation on this
