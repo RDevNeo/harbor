@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.144.0] - 2026-11-04
+
+### Added
+- The lead agent can steer a running agent or chat, not only queue for it: message_agent and
+  message_chat take a mode, "steer" or "queue". The lead's queued messages now wait in the same
+  queue as yours and count in its "N queued" badge, and the new unqueue_message tool lets the lead
+  take back the ones it queued.
+
+### Changed
+- Tooltips follow the theme: in dark mode a dark surface like the popovers', in light mode the same
+  look as the popovers. Richer tips show a title, a muted subtitle and label/value rows, and no
+  longer end with "click to…" hints.
+- The Resume and Stop buttons have filled icons: a solid play triangle and a solid square.
+
 ## [0.143.0] - 2026-11-04
 
 ### Added
