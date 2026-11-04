@@ -8,7 +8,7 @@ export interface VoiceButton {
   enabled: boolean;
 }
 
-export type VoiceRowKind = "microphone" | "status" | "choice" | "buttons" | "toggle" | "add";
+export type VoiceRowKind = "microphone" | "picker" | "status" | "choice" | "buttons" | "toggle" | "add";
 
 export interface VoiceRow {
   kind: VoiceRowKind;
@@ -58,6 +58,9 @@ export interface VoiceFacts {
   /** The download under way: model, bytes so far, bytes in all. */
   download: [string, number, number] | null;
   cleanup: boolean;
+  /** "Transcribe on": [mesh id ("" = automatic), label], and the chosen id. */
+  hosts?: [string, string][];
+  host?: string;
   commands: boolean;
   keepMin: number;
   dict: { term: string; sounds: string[] }[];
@@ -84,6 +87,8 @@ export function voiceFacts(ctl: voiceCtl.VoiceCtl, shortcut: string): VoiceFacts
     models: voice.MODELS.map(([name, what, bytes]) => ({ name, what, bytes, installed: voice.installed(name), used: current === name })),
     download: voice.downloading(),
     cleanup: dictate.cleanupOn(),
+    hosts: ctl.hosts(),
+    host: dictate.host(),
     commands: dictate.commandsOn(),
     keepMin: parakeet.keepMin(),
     dict: dictate.dictionary(),
@@ -114,6 +119,25 @@ export function voiceView(f: VoiceFacts): VoiceView {
     buttons: [button(`${KEY}test`, f.micTesting ? "Testing…" : "Test", f.recorder !== null && !f.micTesting)],
     on: f.micTesting ?? false, progress: f.micLevel ?? 0,
   })];
+  const hosts = f.hosts ?? [["", "Automatic"]];
+  const hostAt = Math.max(0, hosts.findIndex(([id]) => id === (f.host ?? "")));
+  onPc.push(
+    row({
+      kind: "picker",
+      key: `${KEY}host`,
+      title: "Transcribe on",
+      desc: hostAt === 0 ? "Automatic: the PC of your mesh with the most free memory (this one on a near tie)." : "Dictation here, and from phones through this PC, goes to that PC; when it can't be reached, Automatic takes over.",
+      options: hosts.map(([, label]) => label),
+      selected: hostAt,
+    }),
+    row({
+      kind: "toggle",
+      key: `${KEY}cleanup`,
+      title: "Clean up dictation",
+      desc: "Claude removes filler words and fixes punctuation (a few seconds more). Never for fewer than 8 words.",
+      on: f.cleanup,
+    }),
+  );
 
   const words = f.dict.map((e, i) => row({ kind: "buttons", title: e.term, desc: e.sounds.length === 0 ? "" : `Sounds like: ${e.sounds.join(", ")}`, buttons: [button(`${KEY}dict:edit:${i}`, "Edit"), button(`${KEY}dict:remove:${i}`, "Remove")] }));
   words.push(
@@ -133,7 +157,7 @@ export function voiceView(f: VoiceFacts): VoiceView {
       { title: "On this PC", before: 0, rows: onPc, note: "" },
       { title: "Dictionary", before: 11, rows: words, note: "" },
     ],
-    footer: `The mic in the composer (or ${f.shortcut}) starts and stops dictation; the text goes in at the cursor, to edit before you send. Each recording is transcribed on the PC of your mesh with the most free memory (this one on a near tie). Phones send their recordings here the same way.`,
+    footer: `The mic in the composer (or ${f.shortcut}) starts and stops dictation; the text goes in at the cursor, to edit before you send. The speech model loads while you speak and stays loaded for ${f.keepMin} minutes after. Phones send their recordings here the same way.`,
   };
 }
 
@@ -143,13 +167,16 @@ function num(s: string | undefined): number | null {
 
 /** A choice of the tab: the engine, how long the model stays loaded, the language. False for a key that isn't one. */
 export function voiceChose(ctl: voiceCtl.VoiceCtl, key: string, n: number): boolean {
-  if (key !== `${KEY}input`) return false;
-  ctl.selectInput(n);
+  if (key === `${KEY}input`) ctl.selectInput(n);
+  else if (key === `${KEY}host`) ctl.selectHost(n);
+  else return false;
   return true;
 }
 
 export function voiceToggled(ctl: voiceCtl.VoiceCtl, key: string, on: boolean): boolean {
-  return false;
+  if (key !== `${KEY}cleanup`) return false;
+  ctl.setMore({ cleanup: on });
+  return true;
 }
 
 /** The text of the two dictionary fields, kept as typed until Add or Save. */

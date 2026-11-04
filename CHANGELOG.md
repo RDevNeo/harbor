@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Settings › Voice › Transcribe on: Automatic (the PC of your mesh with the most free memory, as
+  before) or one PC of your mesh. Dictation on this PC, and from phones through it, goes straight to
+  that PC; when it can't be reached or fails, Automatic takes over and a message says so once. A PC
+  transcribing for another never forwards the recording, whatever it chose itself. Per PC, not synced.
+- One log line per dictation: who dictated, seconds of audio, the PC that transcribed it, how long
+  it took, whether the speech model was loaded, loading or loaded for it, what the cleanup did, and
+  the error shown, if any. The PC that transcribes for a peer logs its side too.
+
+### Changed
+- The speech model stays loaded 5 minutes after its last use again (at least 2), and starts loading
+  when the recording starts, on the PC that will transcribe it: a PC chosen under Transcribe on is
+  asked to load it then, and this PC no longer loads its own copy for nothing.
+- Dictation cleanup is off by default, with its switch back on the Voice page (Clean up dictation,
+  per PC), and never runs on fewer than 8 words: short mixed-language sentences were translated, and
+  each cleanup added seconds.
+- The microphone test says when the sound clips or is very low, with what to do about it, instead
+  of "Microphone is working".
+
 ## [0.141.4] - 2026-11-04
 
 ### Removed

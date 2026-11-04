@@ -334,13 +334,15 @@ let isLoaded = false;
 let reaper: ReturnType<typeof setInterval> | null = null;
 let active = 0;
 let chain: Promise<unknown> = Promise.resolve();
-let keepMinutes = 1;
+let keepMinutes = 5;
+/** Loads asked for (a preload, or a transcription that has to load first) and not answered yet. */
+let loading = 0;
 let workerCmd: string[] | null = null;
 let callTimeoutMs = CALL_TIMEOUT_MS;
 
 /** Minutes the model stays loaded after its last use (0: freed right after each use). */
 export function setKeepMin(m: number): void {
-  keepMinutes = 1;
+  keepMinutes = m;
 }
 
 export function keepMin(): number {
@@ -349,6 +351,11 @@ export function keepMin(): number {
 
 export function loaded(): boolean {
   return isLoaded;
+}
+
+/** How ready the model is for the next recording: in memory, on its way in (a preload under way), or still to load. */
+export function warmth(): "warm" | "loading" | "cold" {
+  return isLoaded ? "warm" : loading > 0 ? "loading" : "cold";
 }
 
 /** The command that starts a speech worker (default: this runtime on speech-worker.ts); for a compiled build. */
@@ -370,10 +377,11 @@ export function workerPid(): number | null {
   return worker?.proc.pid ?? null;
 }
 
-export function preload(): void {
-  if (installed() && !loaded() && memAvailableMb() >= MIN_FREE_MB) {
-    void call({ op: "load", dir: dir() }, new Int16Array(0)).catch(() => undefined);
-  }
+/** Loads the model ahead of a transcription (while the person speaks); false when it is loaded, loading, missing or memory is short. */
+export function preload(): boolean {
+  if (!installed() || loaded() || loading > 0 || memAvailableMb() < MIN_FREE_MB) return false;
+  void call({ op: "load", dir: dir() }, new Int16Array(0)).catch(() => undefined);
+  return true;
 }
 
 export async function transcribe(samples: Int16Array): Promise<string> {
@@ -425,8 +433,11 @@ function exclusive<T>(f: () => Promise<T>): Promise<T> {
 
 function call(head: Head, samples: Int16Array): Promise<string> {
   active += 1;
+  const loads = !isLoaded && (head.op === "load" || head.op === "parakeet");
+  if (loads) loading += 1;
   return exclusive(() => callWorker(head, samples)).finally(() => {
     active -= 1;
+    if (loads) loading -= 1;
   });
 }
 
@@ -478,7 +489,7 @@ export async function reap(now: number = Date.now()): Promise<boolean> {
     reaper = null;
     return false;
   }
-  if (now - w.last < keepMin() * 60 * 1000) return false;
+  if (now - w.last < Math.max(keepMin() * 60, 120) * 1000) return false;
   await stop(w);
   return true;
 }

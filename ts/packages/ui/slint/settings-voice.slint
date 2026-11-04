@@ -284,6 +284,14 @@ export component VoiceTab inherits VerticalLayout {
                             color: r.tone == "green" ? Theme.green-900 : Theme.red-900;
                             horizontal-alignment: right;
                         }
+                        if r.kind == "picker": Picker {
+                            width: min(root.slot, 260px);
+                            options: r.options;
+                            selected: r.selected;
+                            picked(n) => {
+                                root.chose(r.key, n);
+                            }
+                        }
                         if r.kind == "toggle": Toggle {
                             on: r.on;
                             toggled(v) => {

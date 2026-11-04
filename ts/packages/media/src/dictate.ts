@@ -12,6 +12,8 @@ const NEAR_TIE = 0.1;
 const ASK_WAIT_MS = 2500;
 const TRANSCRIBE_WAIT_MS = 300_000;
 const CLEANUP_TIMEOUT_MS = 8000;
+/** Shorter dictations are never cleaned up: little to fix, and a short mixed-language sentence is what the cleanup tends to translate. */
+export const CLEANUP_MIN_WORDS = 8;
 
 /** One question to the PC's Claude account: the instructions, the text, and how long to wait. */
 export type Ask = (system: string, prompt: string, timeoutMs: number) => Promise<string>;
@@ -22,17 +24,31 @@ interface Settings {
   commands: boolean;
   dict: Entry[];
   dirty: boolean;
+  /** The mesh id of the PC that transcribes this PC's dictations ("": automatic, by free memory). */
+  host: string;
 }
 
-const settings: Settings = { engine: "", cleanup: true, commands: true, dict: [], dirty: false };
+const settings: Settings = { engine: "", cleanup: false, commands: true, dict: [], dirty: false, host: "" };
 let account: Ask | null = null;
+/** The chosen PC failed and the person was told: not again until it works. */
+let hostWarned = false;
 
 export function engine(): "parakeet" | "whisper" {
   return "parakeet";
 }
 
 export function cleanupOn(): boolean {
-  return true;
+  return settings.cleanup;
+}
+
+/** The PC chosen to transcribe ("" = automatic). Per PC: a peer that serves never forwards, whatever it chose. */
+export function host(): string {
+  return settings.host;
+}
+
+export function setHost(id: string): void {
+  if (id !== settings.host) hostWarned = false;
+  settings.host = id;
 }
 
 export function commandsOn(): boolean {
@@ -43,6 +59,20 @@ export function dictionary(): Entry[] {
   return settings.dict.map((e) => ({ term: e.term, sounds: [...e.sounds] }));
 }
 
+/** Kv keys of the voice settings that aren't fixed. `voice_cleanup`: "1" on, anything else off (off by default since 0.142). `voice_host`: per PC, not synced. */
+export const CLEANUP_KEY = "voice_cleanup";
+export const HOST_KEY = "voice_host";
+
+/** Reads this PC's stored choices (the app's VoiceCtl and a hub without a window both do). */
+export function loadFrom(kv: { get(k: string): string | null }): void {
+  settings.cleanup = kv.get(CLEANUP_KEY) === "1";
+  setHost(kv.get(HOST_KEY) ?? "");
+  parakeet.setKeepMin(KEEP_MIN);
+}
+
+/** Minutes the speech model stays loaded after its last use. */
+export const KEEP_MIN = 5;
+
 /** Changes the commands setting and the dictionary; `api`: from a phone (the UI then saves them). */
 export function setWords(words: { commands?: boolean; dict?: Entry[] }, api = false): void {
   if (words.dict !== undefined) settings.dict = words.dict;
@@ -51,7 +81,9 @@ export function setWords(words: { commands?: boolean; dict?: Entry[] }, api = fa
 
 /** Changes the settings; `api`: from a phone (the UI then saves them). */
 export function set(change: { engine?: string; cleanup?: boolean; keepMin?: number }, api = false): void {
-  if (change.keepMin !== undefined) parakeet.setKeepMin(Math.min(change.keepMin, 24 * 60));
+  if (change.cleanup !== undefined) settings.cleanup = change.cleanup;
+  // How long the model stays is this PC's to decide (5 min): a phone's old setting doesn't change it.
+  if (change.keepMin !== undefined && !api) parakeet.setKeepMin(Math.min(change.keepMin, 24 * 60));
   settings.dirty ||= api;
 }
 
@@ -136,12 +168,23 @@ export function readyHere(): boolean {
 
 /** A missing model starts its download and throws `Fail("wait")`, unless a Whisper model can answer meanwhile. */
 export async function local(samples: Int16Array, lang: string): Promise<string> {
+  return (await localRun(samples, lang)).text;
+}
+
+/** What one transcription here was like: the text, and whether the model was loaded, on its way in, or loaded for it (or Whisper). */
+interface Here {
+  text: string;
+  model: string;
+}
+
+async function localRun(samples: Int16Array, lang: string): Promise<Here> {
   if (samples.length < Math.floor(voice.RATE / 4)) throw new Fail("err", "Nothing was recorded (check the input device).");
   const parakeetLang = lang === "auto" || parakeet.LANGS.includes(lang);
   if (engine() === "parakeet" && parakeetLang) {
     if (parakeet.installed()) {
+      const model = parakeet.warmth();
       try {
-        return await parakeet.transcribe(samples);
+        return { text: await parakeet.transcribe(samples), model };
       } catch (e) {
         const why = e instanceof Error ? e.message : String(e);
         if (voice.currentModel() === null) throw new Fail("err", why);
@@ -152,11 +195,12 @@ export async function local(samples: Int16Array, lang: string): Promise<string> 
       if (voice.currentModel() === null) throw wait;
     }
   }
-  return voice.whisper(
+  const text = await voice.whisper(
     samples,
     lang,
     dictionary().map((e) => e.term),
   );
+  return { text, model: "whisper" };
 }
 
 export interface Done {
@@ -164,7 +208,12 @@ export interface Done {
   raw: string | null;
   host: string;
   send: boolean;
+  /** Once, when the chosen PC couldn't transcribe and another did: tell the person. */
+  warn?: string;
 }
+
+/** What became of the cleanup pass, for the log. */
+export type CleanupHow = "off" | "short" | "kept" | "rejected" | "failed" | "no account" | "empty";
 
 /** Where to transcribe, best first; `null` is this PC. Scores are free MB plus the model's size when loaded. */
 export function order<T>(here: number, peers: readonly (readonly [T, number])[]): (T | null)[] {
@@ -199,8 +248,11 @@ export interface MeshPeer {
 /** What the mesh offers dictation; the app wires it to its mesh and the net client. */
 export interface Mesh<P extends MeshPeer = MeshPeer> {
   on(): boolean;
-  me(): { name: string };
+  me(): { name: string; id?: string };
+  /** The PCs to transcribe on (online, reachable). */
   peers(): P[];
+  /** Every PC of the mesh, offline ones too (Settings › Voice lists them); `peers` when absent. */
+  known?(): MeshPeer[];
   http(peer: P, method: "GET" | "POST", path: string, body: { ctype: string; data: Uint8Array } | null, waitMs: number): Promise<[number, unknown]>;
 }
 
@@ -239,48 +291,154 @@ function meName<P extends MeshPeer>(mesh: Mesh<P>): string {
   return n === "" ? hostname() : n;
 }
 
-export async function transcribe<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, lang: string, opts: { cleanup: boolean; commands: boolean; localOnly: boolean }): Promise<Done> {
-  const me = meName(mesh);
-  const [raw, host] = opts.localOnly ? [await local(samples, lang), me] : await routed(mesh, samples, lang, me);
-  const spelled = dictwords.apply(raw, dictionary());
-  // Before the cleanup, which could reword "press enter" away.
-  const [text, send] = opts.commands && commandsOn() ? dictwords.commands(spelled) : [spelled, false];
-  if (!opts.cleanup || text.trim() === "") return { text, raw: null, host, send };
-  const cleaned = await cleanupText(text);
-  return { text: cleaned, raw: text, host, send };
+/** Where a recording was transcribed: the text, the PC, and how warm its model was. */
+interface Where {
+  text: string;
+  host: string;
+  model: string;
+  warn?: string;
 }
 
-async function routed<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, lang: string, me: string): Promise<[string, string]> {
-  const peers = await peerScores(mesh);
+const secs = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
+
+/** One line per dictation in the log: who transcribed, how much audio, how long it took, how warm the model was, what the cleanup did, and any error shown. */
+export function logLine(d: { from: string; audioMs: number; host: string; tookMs: number; transcribeMs: number; model: string; cleanup: CleanupHow; words: number; error?: string }): string {
+  const parts = [`harbor: dictation from ${d.from}: ${secs(d.audioMs)} of audio`, d.host === "" ? "" : `on ${d.host}`, `in ${secs(d.tookMs)}`];
+  if (d.transcribeMs !== d.tookMs) parts.push(`(transcribed in ${secs(d.transcribeMs)})`);
+  const tail = [d.model === "" ? "" : `model ${d.model}`, `cleanup ${d.cleanup}`, `${d.words} words`];
+  if (d.error !== undefined) tail.push(`error shown: ${d.error}`);
+  return `${parts.filter((x) => x !== "").join(" ")}, ${tail.filter((x) => x !== "").join(", ")}`;
+}
+
+const wordCount = (t: string): number => t.split(/\s+/u).filter((w) => w !== "").length;
+
+/** `from`: who dictated, for the log ("this PC", "a phone"). */
+export async function transcribe<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, lang: string, opts: { cleanup: boolean; commands: boolean; localOnly: boolean; from?: string }): Promise<Done> {
+  const t0 = Date.now();
+  const from = opts.from ?? "this PC";
+  const audioMs = Math.round((samples.length * 1000) / voice.RATE);
+  const me = meName(mesh);
+  let where: Where;
+  try {
+    where = opts.localOnly ? { ...(await localRun(samples, lang)), host: me } : await routed(mesh, samples, lang, me);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    const waiting = e instanceof Fail && e.kind === "wait";
+    console.error(`harbor: dictation from ${from}: ${secs(audioMs)} of audio, ${waiting ? "waits for the model" : "failed"} after ${secs(Date.now() - t0)}: ${why}${waiting ? "" : " (shown)"}`);
+    throw e;
+  }
+  const transcribeMs = Date.now() - t0;
+  const spelled = dictwords.apply(where.text, dictionary());
+  // Before the cleanup, which could reword "press enter" away.
+  const [text, send] = opts.commands && commandsOn() ? dictwords.commands(spelled) : [spelled, false];
+  const warn = where.warn === undefined ? {} : { warn: where.warn };
+  let done: Done;
+  let how: CleanupHow;
+  if (!opts.cleanup) {
+    how = "off";
+    done = { text, raw: null, host: where.host, send, ...warn };
+  } else if (text.trim() === "") {
+    how = "empty";
+    done = { text, raw: null, host: where.host, send, ...warn };
+  } else {
+    const c = await cleanupRun(text);
+    how = c.how;
+    done = { text: c.text, raw: text, host: where.host, send, ...warn };
+  }
+  console.error(logLine({ from, audioMs, host: where.host, tookMs: Date.now() - t0, transcribeMs, model: where.model, cleanup: how, words: wordCount(done.text), ...(where.warn === undefined ? {} : { error: where.warn }) }));
+  return done;
+}
+
+/** The PC chosen in Settings › Voice, when it isn't this one. */
+function chosenPeer<P extends MeshPeer>(mesh: Mesh<P>): { id: string; peer: P | null } | null {
+  const id = settings.host;
+  if (id === "" || id === (mesh.me().id ?? "")) return null;
+  const peer = mesh.on() ? (mesh.peers().find((p) => p.id === id && p.online) ?? null) : null;
+  return { id, peer };
+}
+
+/** A PC's name as the mesh knows it, for messages. */
+export function peerName<P extends MeshPeer>(mesh: Mesh<P>, id: string): string {
+  const all = mesh.known ? mesh.known() : mesh.peers();
+  return all.find((p) => p.id === id)?.name ?? id;
+}
+
+/** Warms the model up where the next recording will go, while the person speaks: a ping to the chosen PC, else here. Returns that PC's name, or null for here. */
+export function warmUp<P extends MeshPeer>(mesh: Mesh<P>): string | null {
+  const c = chosenPeer(mesh);
+  if (c?.peer) {
+    const p = c.peer;
+    // Peers from before 0.142 just answer their status: harmless.
+    void mesh.http(p, "GET", "/mesh/v1/voice?warm=1", null, ASK_WAIT_MS).catch(() => undefined);
+    return p.name;
+  }
+  return null;
+}
+
+type Asked = { ok: true; where: Where } | { ok: false; why: string };
+
+async function askPeer<P extends MeshPeer>(mesh: Mesh<P>, pick: P, samples: Int16Array, lang: string): Promise<Asked> {
+  const l = /^[A-Za-z0-9]*$/.test(lang) ? lang : "auto";
+  try {
+    const [st, v] = await mesh.http(pick, "POST", `/mesh/v1/transcribe?lang=${l}`, { ctype: "audio/wav", data: voice.wav(samples, voice.RATE) }, TRANSCRIBE_WAIT_MS);
+    if (st === 200) {
+      const h = field(v, "host");
+      const t = field(v, "text");
+      const m = field(v, "model");
+      return { ok: true, where: { text: typeof t === "string" ? t : "", host: typeof h === "string" && h !== "" ? h : pick.name, model: typeof m === "string" ? m : "" } };
+    }
+    const why = field(v, "error");
+    const said = `${st}${typeof why === "string" && why !== "" ? `: ${why}` : ""}`;
+    console.error(`harbor: ${pick.name} couldn't transcribe (${said})`);
+    return { ok: false, why: typeof why === "string" && why !== "" ? why : `error ${st}` };
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`harbor: ${pick.name} didn't transcribe: ${why}`);
+    return { ok: false, why };
+  }
+}
+
+async function routed<P extends MeshPeer>(mesh: Mesh<P>, samples: Int16Array, lang: string, me: string): Promise<Where> {
+  const chosen = chosenPeer(mesh);
+  let warn: string | undefined;
+  if (chosen) {
+    if (chosen.peer) {
+      const r = await askPeer(mesh, chosen.peer, samples, lang);
+      if (r.ok) {
+        hostWarned = false;
+        return r.where;
+      }
+      warn = `${chosen.peer.name} couldn't transcribe (${r.why})`;
+    } else {
+      warn = `${peerName(mesh, chosen.id)} isn't reachable`;
+    }
+    console.error(`harbor: dictation: the chosen PC failed (${warn}); transcribing as on Automatic`);
+    if (hostWarned) warn = undefined;
+    else {
+      hostWarned = true;
+      warn = `${warn}; transcribed elsewhere.`;
+    }
+  }
+  const peers = (await peerScores(mesh)).filter(([p]) => p.id !== chosen?.id);
   let firstFail: Fail | null = null;
+  const withWarn = (w: Where): Where => (warn === undefined ? w : { ...w, warn });
   for (const pick of order(hereScore(), peers)) {
     if (pick === null) {
       try {
-        return [await local(samples, lang), me];
+        return withWarn({ ...(await localRun(samples, lang)), host: me });
       } catch (e) {
         firstFail ??= e instanceof Fail ? e : new Fail("err", e instanceof Error ? e.message : String(e));
       }
       continue;
     }
-    const l = /^[A-Za-z0-9]*$/.test(lang) ? lang : "auto";
-    try {
-      const [st, v] = await mesh.http(pick, "POST", `/mesh/v1/transcribe?lang=${l}`, { ctype: "audio/wav", data: voice.wav(samples, voice.RATE) }, TRANSCRIBE_WAIT_MS);
-      if (st === 200) {
-        const h = field(v, "host");
-        const t = field(v, "text");
-        return [typeof t === "string" ? t : "", typeof h === "string" && h !== "" ? h : pick.name];
-      }
-      const why = field(v, "error");
-      console.error(`harbor: ${pick.name} couldn't transcribe (${st}: ${typeof why === "string" ? why : ""})`);
-    } catch (e) {
-      console.error(`harbor: ${pick.name} didn't transcribe: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const r = await askPeer(mesh, pick, samples, lang);
+    if (r.ok) return withWarn(r.where);
   }
   throw firstFail ?? new Fail("err", "No PC could transcribe the recording.");
 }
 
-/** `POST /mesh/v1/transcribe` from a peer: here only, never forwarded. */
-export async function servePeer<P extends MeshPeer>(mesh: Mesh<P>, body: Uint8Array, lang: string): Promise<[number, { text?: string; host?: string; error?: string }]> {
+/** `POST /mesh/v1/transcribe` from a peer: here only, never forwarded (whatever this PC's own choice of where to transcribe). */
+export async function servePeer<P extends MeshPeer>(mesh: Mesh<P>, body: Uint8Array, lang: string, from = "a peer"): Promise<[number, { text?: string; host?: string; model?: string; error?: string }]> {
   let samples: Int16Array;
   try {
     samples = voice.wavSamples(body);
@@ -288,10 +446,16 @@ export async function servePeer<P extends MeshPeer>(mesh: Mesh<P>, body: Uint8Ar
     return [400, { error: e instanceof Error ? e.message : String(e) }];
   }
   const me = meName(mesh);
+  const t0 = Date.now();
+  const audio = secs((samples.length * 1000) / voice.RATE);
   try {
-    return [200, { text: await local(samples, lang), host: me }];
+    const r = await localRun(samples, lang);
+    console.error(`harbor: dictation served for ${from}: ${audio} of audio in ${secs(Date.now() - t0)}, model ${r.model}, ${wordCount(r.text)} words`);
+    return [200, { text: r.text, host: me, model: r.model }];
   } catch (e) {
-    return [409, { error: e instanceof Error ? e.message : String(e) }];
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`harbor: dictation served for ${from}: ${audio} of audio, refused after ${secs(Date.now() - t0)}: ${why}`);
+    return [409, { error: why }];
   }
 }
 
@@ -314,20 +478,26 @@ export function cleanupSystem(dict: readonly Entry[]): string {
 
 /** A failed or implausible cleanup silently returns the raw text. */
 export async function cleanupText(text: string): Promise<string> {
+  return (await cleanupRun(text)).text;
+}
+
+/** The cleanup and what became of it: short dictations (under CLEANUP_MIN_WORDS words) are never sent. */
+export async function cleanupRun(text: string): Promise<{ text: string; how: CleanupHow }> {
   const dict = dictionary();
   const raw = dictwords.apply(text.trim(), dict);
-  if (raw.split(/\s+/u).filter((w) => w !== "").length < 3) return raw;
+  if (raw === "") return { text: raw, how: "empty" };
+  if (wordCount(raw) < CLEANUP_MIN_WORDS) return { text: raw, how: "short" };
   const ask = account;
-  if (!ask) return raw;
+  if (!ask) return { text: raw, how: "no account" };
   let answer: string;
   try {
     answer = await ask(cleanupSystem(dict), `<dictation>\n${raw}\n</dictation>`, CLEANUP_TIMEOUT_MS);
   } catch {
-    return raw;
+    return { text: raw, how: "failed" };
   }
-  if (plausibleWith(raw, answer, dict)) return dictwords.apply(answer.trim(), dict);
+  if (plausibleWith(raw, answer, dict)) return { text: dictwords.apply(answer.trim(), dict), how: "kept" };
   console.error("harbor: the dictation cleanup changed too much (translated?); kept the raw text");
-  return raw;
+  return { text: raw, how: "rejected" };
 }
 
 /** A cleanup only removes and fixes: an empty answer, one much longer than the input, or one with many words the speaker didn't say is not one. */

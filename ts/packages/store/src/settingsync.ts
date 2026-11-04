@@ -26,6 +26,10 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["gh_agent_account", A],
   ["ctx_send", A],
   ["voice_input", D],
+  // Per PC, never synced: an account value from before 0.128 must not turn the cleanup back on.
+  ["voice_cleanup", D],
+  // The PC that transcribes this one's dictations (mesh id, "" = automatic).
+  ["voice_host", D],
   ["voice_model", A],
   ["voice_dict", A],
   ["limit_auto", A],

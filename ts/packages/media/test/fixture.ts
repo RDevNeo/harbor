@@ -49,7 +49,8 @@ export function sandbox(): Sandbox {
     reset() {
       voice.setFetcher(offline);
       voice.setConfig("", "");
-      dictate.set({ engine: "", cleanup: true, keepMin: 5 });
+      dictate.set({ engine: "", cleanup: false, keepMin: 5 });
+      dictate.setHost("");
       dictate.setWords({ commands: true, dict: [] });
       dictate.setAccount(null);
       parakeet.setWorkerCommand(null);

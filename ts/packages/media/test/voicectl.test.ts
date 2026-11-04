@@ -5,7 +5,7 @@ import * as dictate from "../src/dictate.ts";
 import * as dictwords from "../src/dictwords.ts";
 import * as parakeet from "../src/parakeet.ts";
 import * as voice from "../src/voice.ts";
-import { type Host, VoiceCtl } from "../src/voicectl.ts";
+import { type Host, VoiceCtl, micVerdict } from "../src/voicectl.ts";
 import { type Sandbox, fakeRecorder, findModel, installModel, sandbox, tmp, until, wavFile } from "./fixture.ts";
 
 interface Rig {
@@ -44,19 +44,22 @@ describe("settings", () => {
     const r = rig();
     r.ctl.load();
     expect(voice.config()).toEqual(["auto", ""]);
-    expect(parakeet.keepMin()).toBe(1);
-    expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn(), dictate.dictionary()]).toEqual(["parakeet", true, true, []]);
-    const stored = { voice_lang2: "pt", voice_model: "tiny", voice_keep_min: "15", voice_engine: "whisper", voice_cleanup: "0", voice_commands: "0", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' };
+    expect(parakeet.keepMin()).toBe(5);
+    expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn(), dictate.dictionary(), dictate.host()]).toEqual(["parakeet", false, true, [], ""]);
+    const stored = { voice_lang2: "pt", voice_model: "tiny", voice_keep_min: "15", voice_engine: "whisper", voice_cleanup: "1", voice_commands: "0", voice_host: "pc:big", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' };
     for (const [k, v] of Object.entries(stored)) r.kv.set(k, v);
     r.ctl.load();
     expect(voice.config()).toEqual(["auto", "tiny"]);
-    expect(parakeet.keepMin()).toBe(1);
-    expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn()]).toEqual(["parakeet", true, true]);
+    expect(parakeet.keepMin()).toBe(5);
+    expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn(), dictate.host()]).toEqual(["parakeet", true, true, "pc:big"]);
     expect(dictate.dictionary()).toEqual([{ term: "Harbor", sounds: ["harbour"] }]);
+    // Old values: "0" (switched off before 0.128) is off.
+    r.kv.set("voice_cleanup", "0");
     r.kv.set("voice_keep_min", "soon");
     r.kv.set("voice_dict", "{not json");
     r.ctl.load();
-    expect(parakeet.keepMin()).toBe(1);
+    expect(dictate.cleanupOn()).toBe(false);
+    expect(parakeet.keepMin()).toBe(5);
     expect(dictate.dictionary()).toEqual([]);
   });
 
@@ -65,14 +68,14 @@ describe("settings", () => {
     r.ctl.set({ lang: "en", model: "base" });
     expect(voice.config()).toEqual(["auto", "base"]);
     expect([r.kv.get("voice_lang2"), r.kv.get("voice_model")]).toEqual([undefined, "base"]);
-    r.ctl.setMore({ engine: "whisper", cleanup: false, keepMin: 60 });
-    expect([r.kv.get("voice_engine"), r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min")]).toEqual([undefined, undefined, undefined]);
-    expect([dictate.engine(), dictate.cleanupOn(), parakeet.keepMin()]).toEqual(["parakeet", true, 1]);
+    r.ctl.setMore({ engine: "whisper", cleanup: true, keepMin: 60 });
+    expect([r.kv.get("voice_engine"), r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min")]).toEqual([undefined, "1", undefined]);
+    expect([dictate.engine(), dictate.cleanupOn(), parakeet.keepMin()]).toEqual(["parakeet", true, 5]);
     r.ctl.setWords({ commands: false, dict: [{ term: "Harbor", sounds: [] }] });
     expect([r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual([undefined, '[{"term":"Harbor","sounds":[]}]']);
     expect([dictate.commandsOn(), dictate.dictionary()]).toEqual([true, [{ term: "Harbor", sounds: [] }]]);
-    r.ctl.setMore({ cleanup: true });
-    expect(r.kv.get("voice_cleanup")).toBeUndefined();
+    r.ctl.setMore({ cleanup: false });
+    expect([r.kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["0", false]);
   });
 
   test("dictionary entries are added, edited and removed through the form", () => {
@@ -111,14 +114,16 @@ describe("settings", () => {
   test("poll saves what a phone changed and mirrors the cleanup account", async () => {
     const r = rig(async () => "Ship it on Monday.");
     r.ctl.load();
-    dictate.set({ cleanup: false, keepMin: 15 }, true);
+    dictate.set({ cleanup: true, keepMin: 15 }, true);
     dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Harbor" }]) }, true);
     r.ctl.poll();
-    expect([r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min"), r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual([undefined, undefined, undefined, '[{"term":"Harbor","sounds":[]}]']);
+    expect([r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min"), r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual(["1", undefined, undefined, '[{"term":"Harbor","sounds":[]}]']);
+    // A phone can't change how long the model stays.
+    expect(parakeet.keepMin()).toBe(5);
     r.kv.clear();
     r.ctl.poll();
     expect(r.kv.size).toBe(0);
-    expect(await dictate.cleanupText("uh ship it on friday no wait monday")).toBe("Ship it on Monday.");
+    expect(await dictate.cleanupText("uh so ship it on friday no wait monday")).toBe("Ship it on Monday.");
   });
 
   test("a Whisper model is downloaded, used and removed", async () => {
@@ -263,4 +268,21 @@ describe.skipIf(!model)("dictating with the model", () => {
     expect(r.ctl.takeSend()).toBeNull();
     await parakeet.unload();
   }, 60_000);
+});
+
+describe("the microphone test", () => {
+  const tone = (amp: number, n = 48_000): Int16Array => Int16Array.from({ length: n }, (_, i) => Math.round(amp * Math.sin(i / 5)));
+  test("says when nothing, too little or too much comes in, and what to do", () => {
+    expect(micVerdict(new Int16Array(0))).toBe("Could not record from this microphone.");
+    expect(micVerdict(new Int16Array(48_000))).toStartWith("No sound detected.");
+    expect(micVerdict(tone(600))).toStartWith("The level is very low (peak 2%): raise the input volume");
+    const clipped = tone(32_767);
+    expect(micVerdict(clipped)).toStartWith("The sound is clipping (");
+    expect(micVerdict(clipped)).toContain("lower the input volume");
+    expect(micVerdict(tone(12_000))).toBe("Microphone is working (peak 37%, no clipping).");
+    // A single loud click doesn't count as clipping.
+    const click = tone(12_000);
+    click[100] = 32_767;
+    expect(micVerdict(click)).toStartWith("Microphone is working");
+  });
 });

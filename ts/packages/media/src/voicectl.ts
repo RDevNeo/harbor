@@ -44,7 +44,7 @@ export class VoiceCtl {
     const { store } = this.host;
     voice.setConfig("auto", store.get("voice_model") ?? "");
     voice.setInputDevice(store.get("voice_input") ?? "");
-    dictate.set({ engine: "parakeet", cleanup: true, keepMin: 1 });
+    dictate.loadFrom(store);
     let dict: dictwords.Entry[] = [];
     const raw = store.get("voice_dict");
     if (raw !== null) {
@@ -70,7 +70,28 @@ export class VoiceCtl {
   }
 
   setMore(pick: { engine?: string; cleanup?: boolean; keepMin?: number }): void {
+    if (pick.cleanup !== undefined) this.host.store.set(dictate.CLEANUP_KEY, pick.cleanup ? "1" : "0");
     this.load();
+  }
+
+  /** The PCs "Transcribe on" can pick, Automatic first: [mesh id ("" = automatic), label]. A saved PC the mesh no longer knows stays listed. */
+  hosts(): [string, string][] {
+    const { mesh } = this.host;
+    const me = mesh.me();
+    const all = (mesh.known ? mesh.known() : mesh.peers()).filter((p) => p.id !== "" && p.id !== me.id);
+    const out: [string, string][] = [["", "Automatic"]];
+    if (me.id !== undefined && me.id !== "") out.push([me.id, `${me.name === "" ? "This PC" : me.name} (this PC)`]);
+    for (const p of [...all].sort((a, b) => a.name.localeCompare(b.name))) out.push([p.id, p.online ? p.name : `${p.name} (offline)`]);
+    const saved = dictate.host();
+    if (saved !== "" && !out.some(([id]) => id === saved)) out.push([saved, "Saved PC (unknown)"]);
+    return out;
+  }
+
+  selectHost(index: number): void {
+    const h = this.hosts()[index];
+    if (!h) return;
+    this.host.store.set(dictate.HOST_KEY, h[0]);
+    dictate.setHost(h[0]);
   }
 
   async refreshInputs(): Promise<void> {
@@ -101,7 +122,7 @@ export class VoiceCtl {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       const samples = await rec.stop(); rec = null;
       this.micLevel = Math.min(1, peak * 8);
-      this.micStatus = samples.length === 0 ? "Could not record from this microphone." : peak < 0.001 ? "No sound detected. Check the microphone and input volume." : "Microphone is working.";
+      this.micStatus = micVerdict(samples);
     } catch (e) { this.micStatus = e instanceof Error ? e.message : String(e); }
     finally { clearInterval(timer); rec?.cancel(); this.micTesting = false; changed(); }
   }
@@ -142,8 +163,10 @@ export class VoiceCtl {
       this.host.toast(why);
       return;
     }
-    // The model loads (or downloads, the first time) while the person speaks.
-    if (dictate.engine() === "parakeet") {
+    // The model loads (or downloads, the first time) while the person speaks: on the PC chosen to transcribe, else here.
+    if (dictate.warmUp(this.host.mesh) !== null) {
+      // that PC loads its own
+    } else if (dictate.engine() === "parakeet") {
       if (parakeet.installed()) parakeet.preload();
       else voice.startDownload("parakeet");
     } else if (voice.currentModel() === null) {
@@ -159,7 +182,10 @@ export class VoiceCtl {
   private transcribe(key: number, samples: Int16Array): void {
     const [lang] = voice.config();
     dictate.transcribe(this.host.mesh, samples, lang, { cleanup: dictate.cleanupOn(), commands: true, localOnly: false }).then(
-      (d) => this.back(key, { text: d.text, send: d.send }),
+      (d) => {
+        if (d.warn !== undefined) this.host.toast(d.warn);
+        this.back(key, { text: d.text, send: d.send });
+      },
       (e: unknown) => {
         if (e instanceof Fail && e.kind === "wait") {
           // The model is still on its way: transcribed once it's here (poll).
@@ -194,6 +220,7 @@ export class VoiceCtl {
     }
     const dirty = dictate.takeDirty();
     if (dirty) {
+      store.set(dictate.CLEANUP_KEY, dirty.cleanup ? "1" : "0");
       store.set("voice_dict", JSON.stringify(dictwords.toJson(dirty.dict)));
     }
     const failed = voice.takeDownloadError();
@@ -271,4 +298,28 @@ export class VoiceCtl {
   private commit(dict: dictwords.Entry[]): void {
     this.setWords({ dict: dictwords.parse(dictwords.toJson(dict)) });
   }
+}
+
+/** Full scale for 16-bit samples, and what counts as touching it. */
+const CLIP_AT = 32_000;
+
+/** What the 3-second test says about a recording: nothing, too quiet, clipping, or fine; with what to do about it. */
+export function micVerdict(samples: Int16Array): string {
+  if (samples.length === 0) return "Could not record from this microphone.";
+  let peak = 0;
+  let clipped = 0;
+  let sum = 0;
+  for (const v of samples) {
+    const a = Math.abs(v);
+    if (a > peak) peak = a;
+    if (a >= CLIP_AT) clipped += 1;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / samples.length) / 32768;
+  const top = peak / 32768;
+  if (top < 0.001) return "No sound detected. Check that the right microphone is picked, that it isn't muted, and its input volume in the system's sound settings.";
+  // More than 0.1 % of the samples at full scale: the words are distorted, and the speech model mishears them.
+  if (clipped > samples.length / 1000) return `The sound is clipping (${((clipped * 100) / samples.length).toFixed(1)}% of it at full volume): lower the input volume in the system's sound settings (or the mic's own gain) until loud words stay under the top.`;
+  if (top < 0.05 || rms < 0.003) return `The level is very low (peak ${Math.round(top * 100)}%): raise the input volume, or speak closer to the microphone. Dictation may miss words.`;
+  return `Microphone is working (peak ${Math.round(top * 100)}%, no clipping).`;
 }

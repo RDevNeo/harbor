@@ -95,8 +95,14 @@ describe.skipIf(!model)("the speech engine", () => {
   });
 
   test("preloads while someone speaks, then answers at once; two requests at a time wait for each other", async () => {
-    parakeet.preload();
+    expect(parakeet.warmth()).toBe("cold");
+    expect(parakeet.preload()).toBe(true);
+    expect(parakeet.warmth()).toBe("loading");
+    // A second start while it loads doesn't queue another load.
+    expect(parakeet.preload()).toBe(false);
     await until(() => parakeet.loaded(), 30_000);
+    expect(parakeet.warmth()).toBe("warm");
+    expect(parakeet.preload()).toBe(false);
     const pid = parakeet.workerPid() as number;
     const en = wavFile(src, "en");
     const [a, b] = await Promise.all([parakeet.transcribe(en), parakeet.transcribe(en)]);
@@ -175,10 +181,12 @@ describe.skipIf(!model)("the speech engine", () => {
     expect(await parakeet.reap()).toBe(false);
     parakeet.setKeepMin(0);
     await parakeet.transcribe(wavFile(src, "en"));
+    // Kept less than two minutes: still two, so a model preloaded while someone speaks waits for the recording to end.
     parakeet.setKeepMin(1);
     await parakeet.transcribe(wavFile(src, "en"));
-    expect(await parakeet.reap(Date.now() + 30_000)).toBe(false);
-    expect(await parakeet.reap(Date.now() + 61_000)).toBe(true);
+    expect(await parakeet.reap(Date.now() + 90_000)).toBe(false);
+    expect(await parakeet.reap(Date.now() + 121_000)).toBe(true);
+    parakeet.setKeepMin(5);
   }, 120_000);
 
   test("removing the model frees it and deletes its files", async () => {

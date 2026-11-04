@@ -285,6 +285,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   let accounts = providers.discover();
   parakeet.useOwnBinaryForWorker();
+  // Cleanup and where to transcribe, for phones' dictations even before (or without) a window.
+  dictate.loadFrom(store);
   let engine: Engine | null = null;
   const mirrorDictation = (): void => {
     // As voice.rs: not while the account is blocked by a usage limit.
@@ -526,6 +528,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? call.body : {};
     switch (`${call.method} ${call.path[2]}`) {
       case "GET voice":
+        // `warm=1`: a peer's person started dictating to this PC, so the model loads while they speak.
+        if (call.query.some(([k, v]) => k === "warm" && v === "1") && parakeet.preload()) console.error(`harbor: loading the speech model for ${hub.mesh.peers.get(call.device)?.name ?? "a peer"}'s dictation`);
         return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
       case "POST memory": {
         const r = acceptMemory(store, b);
@@ -555,8 +559,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const mesh = new Mesh({
     hub,
     ram: () => ramMeter.mb(),
-    transcribe: async (wav, lang) => {
-      const [status, body] = await dictate.servePeer(voicePeers, wav, lang);
+    transcribe: async (wav, lang, from) => {
+      const [status, body] = await dictate.servePeer(voicePeers, wav, lang, from);
       return { status, body: body as Json };
     },
     deliver: (from, kind, name, len, read) =>
@@ -788,8 +792,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
     on: () => hub.mesh.on,
-    me: () => ({ name: hub.mesh.me.name }),
+    me: () => ({ name: hub.mesh.me.name, id: hub.mesh.me.id }),
     peers: () => [...hub.mesh.peers.values()].filter((p) => p.online && p.fp !== "").map((p) => ({ id: p.id, name: p.name, online: p.online, dest: dest(p) })),
+    known: () => [...hub.mesh.peers.values()].map((p) => ({ id: p.id, name: p.name, online: p.online })),
     http: (p, method, path, body, waitMs) => http(p.dest, method, path, body, waitMs),
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, ...host, ...own });
@@ -997,6 +1002,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (at === "GET v1/voice") return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
     if (at === "PUT v1/voice/settings") {
       const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
+      // Stored here too: the kv is read again every 15 s, with or without a window to save it.
+      if (typeof b.cleanup === "boolean") store.set(dictate.CLEANUP_KEY, b.cleanup ? "1" : "0");
       dictate.set({ ...(typeof b.cleanup === "boolean" ? { cleanup: b.cleanup } : {}), ...(typeof b.keep_loaded_min === "number" && Number.isInteger(b.keep_loaded_min) && b.keep_loaded_min >= 0 ? { keepMin: b.keep_loaded_min } : {}) }, true);
       dictate.setWords({ ...(typeof b.commands === "boolean" ? { commands: b.commands } : {}), ...(Array.isArray(b.dictionary) ? { dict: dictwords.parse(b.dictionary) } : {}) }, true);
       return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
@@ -1039,10 +1046,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const langQ = get("lang");
       const lang = langQ === null || langQ === "" || langQ === "default" ? voice.config()[0] : langQ;
       try {
-        const d = await dictate.transcribe(voicePeers, voice.wavSamples(wav), lang, { cleanup: get("cleanup") === "1" || (get("cleanup") !== "0" && dictate.cleanupOn()), commands: get("commands") === "1", localOnly: get("local") === "1" });
+        const d = await dictate.transcribe(voicePeers, voice.wavSamples(wav), lang, { cleanup: get("cleanup") === "1" || (get("cleanup") !== "0" && dictate.cleanupOn()), commands: get("commands") === "1", localOnly: get("local") === "1", from: "a phone" });
         const v: Record<string, string | boolean> = { text: d.text, host: d.host };
         if (d.send) v.send = true;
         if (d.raw !== null) v.raw = d.raw;
+        if (d.warn !== undefined) v.warn = d.warn;
         return ok(v);
       } catch (e) {
         return err(409, e instanceof Error ? e.message : String(e));
@@ -1063,6 +1071,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => true) : () => {};
   // The speech model comes by itself, so the first dictation (here, or from a phone or PC that picks this one) needn't wait.
   const stopSpeech = env.HARBOR_LISTEN === undefined && !offline ? voice.keepParakeet() : () => {};
+  // The voice keys this PC's own (cleanup, Transcribe on) are read again now and then: a change written
+  // to the database from outside (another tool, a fix by hand) applies without a restart.
+  const voiceKv = setInterval(() => dictate.loadFrom(store), 15_000);
+  voiceKv.unref();
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   if (signIn) account.start();
   const tick = setInterval(() => {
@@ -1143,6 +1155,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       disc?.stop();
       stopMap();
       stopSpeech();
+      clearInterval(voiceKv);
       if (signIn) await account.stop();
       api?.close();
     },

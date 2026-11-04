@@ -56,7 +56,8 @@ beforeEach(() => {
 afterEach(() => {
   voice.setConfig("", "");
   voice.setInputDevice("");
-  dictate.set({ engine: "", cleanup: true, keepMin: 5 });
+  dictate.set({ engine: "", cleanup: false, keepMin: 5 });
+  dictate.setHost("");
   dictate.setWords({ commands: true, dict: [] });
   if (saved === undefined) delete process.env.XDG_DATA_HOME;
   else process.env.XDG_DATA_HOME = saved;
@@ -85,10 +86,11 @@ test("voice dictionary lists the words, then the form to add or edit one", () =>
 });
 
 test("voice facts read what the speech modules hold, after the stored settings load", () => {
-  for (const [k, v] of Object.entries({ voice_lang2: "en", voice_engine: "whisper", voice_keep_min: "15", voice_cleanup: "0", voice_commands: "0", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' })) kv.set(k, v);
+  expect(voiceFacts(ctl, "").cleanup).toBe(false);
+  for (const [k, v] of Object.entries({ voice_lang2: "en", voice_engine: "whisper", voice_keep_min: "15", voice_cleanup: "1", voice_commands: "0", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' })) kv.set(k, v);
   ctl.load();
   const f = voiceFacts(ctl, "Ctrl+Shift+Space");
-  expect([f.lang, f.engine, f.keepMin, f.cleanup, f.commands]).toEqual(["auto", "parakeet", 1, true, true]);
+  expect([f.lang, f.engine, f.keepMin, f.cleanup, f.commands]).toEqual(["auto", "parakeet", 5, true, true]);
   expect(f.dict).toEqual([{ term: "Harbor", sounds: ["harbour"] }]);
   expect(f.models.map((m) => [m.name, m.installed, m.used])).toEqual([["tiny", false, false], ["base", false, false], ["small", false, false]]);
   expect([f.parakeet.installed, f.parakeet.loaded, f.download]).toEqual([false, false, null]);
@@ -127,9 +129,14 @@ test("voice dictionary: a blank word is not added, and unknown keys are left alo
   expect(voiceEdited(ctl, "quiet_from", "x")).toBe(false);
 });
 
-test("Voice shows only the microphone and the dictionary", () => {
+test("Voice shows the microphone, where to transcribe, the cleanup switch and the dictionary", () => {
   const view = voiceView(facts({ inputs: [{ id: "", label: "System default" }, { id: "usb", label: "USB microphone" }], input: "usb" }));
   expect(view.sections.map((s) => s.title)).toEqual(["On this PC", "Dictionary"]);
+  expect(view.sections[0]?.rows.map((r) => [r.kind, r.key, r.title])).toEqual([
+    ["microphone", "voice:input", "Microphone"],
+    ["picker", "voice:host", "Transcribe on"],
+    ["toggle", "voice:cleanup", "Clean up dictation"],
+  ]);
   expect(view.sections[0]?.rows[0]).toMatchObject({ kind: "microphone", options: ["System default", "USB microphone"], selected: 1 });
   ctl.inputs = [{ id: "", label: "System default" }, { id: "usb", label: "USB microphone" }];
   expect(voiceChose(ctl, "voice:input", 1)).toBe(true);
@@ -146,5 +153,32 @@ test("Voice shows only the microphone and the dictionary", () => {
     process.env.PATH = path;
     rmSync(bin, { recursive: true, force: true });
   }
-  expect(voiceToggled(ctl, "voice:cleanup", false)).toBe(false);
+  expect(voiceToggled(ctl, "voice:cleanup", true)).toBe(true);
+  expect([kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["1", true]);
+  expect(voiceToggled(ctl, "voice:cleanup", false)).toBe(true);
+  expect([kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["0", false]);
+  expect(voiceToggled(ctl, "voice:other", true)).toBe(false);
+});
+
+test("Transcribe on lists Automatic, this PC and the mesh's PCs, and stores the pick by mesh id", () => {
+  const peers = [
+    { id: "pc:zed", name: "Zed", online: false },
+    { id: "pc:big", name: "Big desk", online: true },
+  ];
+  const meshed = new voiceCtl.VoiceCtl({ store: kv, mesh: { on: () => true, me: () => ({ name: "Laptop", id: "pc:lap" }), peers: () => peers.filter((p) => p.online), known: () => peers, http: () => Promise.resolve([0, null]) }, insert: () => {}, toast: () => {}, wake: () => {}, account: () => null });
+  meshed.load();
+  expect(meshed.hosts()).toEqual([["", "Automatic"], ["pc:lap", "Laptop (this PC)"], ["pc:big", "Big desk"], ["pc:zed", "Zed (offline)"]]);
+  let row = voiceView(voiceFacts(meshed, "")).sections[0]?.rows[1];
+  expect(row).toMatchObject({ kind: "picker", options: ["Automatic", "Laptop (this PC)", "Big desk", "Zed (offline)"], selected: 0 });
+  expect(row?.desc).toStartWith("Automatic:");
+  expect(voiceChose(meshed, "voice:host", 2)).toBe(true);
+  expect([kv.get("voice_host"), dictate.host()]).toEqual(["pc:big", "pc:big"]);
+  row = voiceView(voiceFacts(meshed, "")).sections[0]?.rows[1];
+  expect(row?.selected).toBe(2);
+  // A saved PC the mesh forgot stays listed, so the choice can be seen and changed.
+  kv.set("voice_host", "pc:gone");
+  meshed.load();
+  expect(meshed.hosts().at(-1)).toEqual(["pc:gone", "Saved PC (unknown)"]);
+  expect(voiceChose(meshed, "voice:host", 0)).toBe(true);
+  expect(dictate.host()).toBe("");
 });

@@ -117,27 +117,43 @@ describe("settings and cleanup", () => {
     expect(dictate.cleanupSystem([{ term: "Harbor", sounds: ["harbour", "arbor"] }])).toContain("- Harbor (may sound like: harbour, arbor)");
   });
 
-  test("a cleanup of fewer than three words is not asked for", async () => {
+  test("a cleanup of fewer than eight words is not asked for", async () => {
     let calls = 0;
     const ask: Ask = async () => {
       calls += 1;
-      return "x";
+      return "Something else entirely, translated maybe.";
     };
     dictate.setAccount(ask);
     expect(await cleanupText(" ok send ")).toBe("ok send");
+    expect(await dictate.cleanupRun("faz o deploy and check the logs")).toEqual({ text: "faz o deploy and check the logs", how: "short" });
     expect(calls).toBe(0);
+    expect((await dictate.cleanupRun("faz o deploy and then check the logs")).how).toBe("rejected");
+    expect(calls).toBe(1);
+    dictate.setAccount(null);
+    expect((await dictate.cleanupRun("faz o deploy and then check the logs")).how).toBe("no account");
+  });
+
+  test("one log line per dictation says where, how long, how warm and what the cleanup did", () => {
+    expect(dictate.logLine({ from: "this PC", audioMs: 4200, host: "desk", tookMs: 1300, transcribeMs: 1300, model: "warm", cleanup: "off", words: 12 })).toBe("harbor: dictation from this PC: 4.2 s of audio on desk in 1.3 s, model warm, cleanup off, 12 words");
+    expect(dictate.logLine({ from: "a phone", audioMs: 9000, host: "desk", tookMs: 6100, transcribeMs: 2000, model: "cold", cleanup: "kept", words: 30, error: "laptop isn't reachable; transcribed elsewhere." })).toBe(
+      "harbor: dictation from a phone: 9.0 s of audio on desk in 6.1 s (transcribed in 2.0 s), model cold, cleanup kept, 30 words, error shown: laptop isn't reachable; transcribed elsewhere.",
+    );
   });
 
   test("settings are kept for the api and handed to the ui once", () => {
     expect(dictate.engine()).toBe("parakeet");
+    expect(dictate.cleanupOn()).toBe(false);
     expect(dictate.takeDirty()).toBeNull();
-    dictate.set({ engine: "whisper", cleanup: false, keepMin: 99_999 });
+    dictate.set({ engine: "whisper", cleanup: true, keepMin: 99_999 });
     expect(dictate.engine()).toBe("parakeet");
     expect(dictate.cleanupOn()).toBe(true);
-    expect(parakeet.keepMin()).toBe(1);
+    expect(parakeet.keepMin()).toBe(24 * 60);
+    dictate.set({ cleanup: false, keepMin: 5 });
     expect(dictate.takeDirty()).toBeNull();
+    dictate.set({ keepMin: 1 }, true);
+    expect(parakeet.keepMin()).toBe(5);
     dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Harbor" }]) }, true);
-    expect(dictate.takeDirty()).toEqual({ cleanup: true, keepMin: 1, commands: true, dict: [{ term: "Harbor", sounds: [] }] });
+    expect(dictate.takeDirty()).toEqual({ cleanup: false, keepMin: 5, commands: true, dict: [{ term: "Harbor", sounds: [] }] });
     expect(dictate.takeDirty()).toBeNull();
     dictate.set({ cleanup: true }, true);
     expect(dictate.takeDirty()?.cleanup).toBe(true);
@@ -154,8 +170,8 @@ describe("settings and cleanup", () => {
       model_state: "none",
       model_mb: 671,
       mem_available_mb: 3210,
-      cleanup: true,
-      keep_loaded_min: 1,
+      cleanup: false,
+      keep_loaded_min: 5,
       host: "desk",
       commands: true,
       dictionary: [{ term: "Harbor", sounds: ["harbour"] }],
@@ -206,6 +222,8 @@ interface Rig extends Mesh<Peer> {
   posts: string[];
   reply: [number, unknown] | "down";
   voice: unknown;
+  /** Peers that refuse connections, by id. */
+  down: string[];
 }
 
 function fakeMesh(peers: Peer[]): Rig {
@@ -213,12 +231,15 @@ function fakeMesh(peers: Peer[]): Rig {
     asks: [],
     posts: [],
     reply: [200, { text: "hello from b", host: "rig-b" }],
+    down: [],
     voice: { mem_available_mb: 4000, model_state: "ready", model_mb: 670 },
     on: () => true,
-    me: () => ({ name: "rig-a" }),
-    peers: () => peers,
+    me: () => ({ name: "rig-a", id: "rig-a" }),
+    peers: () => peers.filter((p) => p.online),
+    known: () => peers,
     http: async (peer, method, path, body) => {
       if (rig.reply === "down") throw new Error("connection refused");
+      if (rig.down.includes(peer.id)) throw new Error("connection refused");
       if (method === "GET") {
         rig.asks.push(`${peer.name} ${path}`);
         return [200, rig.voice];
@@ -264,6 +285,62 @@ describe("routing without a model", () => {
     const e = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: true, localOnly: false }).catch((x: unknown) => x);
     expect(e).toBeInstanceOf(Fail);
     expect((e as Fail).kind).toBe("wait");
+    await voice.downloadSettled();
+    voice.takeDownloadError();
+  });
+
+  test("the chosen PC transcribes first, is warmed up while the person speaks, and its failure falls back once with a warning", async () => {
+    process.env.HARBOR_TEST_MEMAVAIL_MB = "500";
+    const peerC: Peer = { id: "rig-c", name: "rig-c", online: true, addr: "c" };
+    const rig = fakeMesh([peerB, peerC]);
+    const samples = new Int16Array(16000);
+    // Automatic: no warm-up ping (this PC preloads its own), rig-b and rig-c are asked.
+    expect(dictate.warmUp(rig)).toBeNull();
+    dictate.setHost("rig-c");
+    expect(dictate.warmUp(rig)).toBe("rig-c");
+    expect(rig.asks).toEqual(["rig-c /mesh/v1/voice?warm=1"]);
+    rig.asks = [];
+    rig.reply = [200, { text: "from c", host: "rig-c", model: "warm" }];
+    const d = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect(d).toEqual({ text: "from c", raw: null, host: "rig-c", send: false });
+    // Straight there: no asking around for free memory.
+    expect(rig.asks).toEqual([]);
+    // rig-c down: the others take it, the person is told once.
+    rig.down = ["rig-c"];
+    rig.reply = [200, { text: "from b", host: "rig-b" }];
+    const first = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect(first.host).toBe("rig-b");
+    expect(first.warn).toBe("rig-c couldn't transcribe (connection refused); transcribed elsewhere.");
+    expect(rig.asks).toEqual(["rig-b /mesh/v1/voice"]);
+    const second = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect([second.host, second.warn]).toEqual(["rig-b", undefined]);
+    // Back up: it works again, and a later failure warns again.
+    rig.down = [];
+    rig.reply = [200, { text: "from c", host: "rig-c" }];
+    expect((await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false })).host).toBe("rig-c");
+    peerC.online = false;
+    rig.reply = [200, { text: "from b", host: "rig-b" }];
+    const offline = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect([offline.host, offline.warn]).toEqual(["rig-b", "rig-c isn't reachable; transcribed elsewhere."]);
+    expect(dictate.warmUp(rig)).toBeNull();
+    // This PC chosen: as Automatic, without a warning.
+    dictate.setHost("rig-a");
+    expect(dictate.warmUp(rig)).toBeNull();
+    const mine = await dictate.transcribe(rig, samples, "auto", { cleanup: false, commands: false, localOnly: false });
+    expect([mine.host, mine.warn]).toEqual(["rig-b", undefined]);
+  });
+
+  test("a PC serving a peer transcribes itself whatever PC it chose (no loops)", async () => {
+    const rig = fakeMesh([peerB]);
+    dictate.setHost("rig-b");
+    voice.setFetcher(async () => {
+      throw new Error("offline");
+    });
+    const [status, body] = await dictate.servePeer(rig, voice.wav(new Int16Array(16000), voice.RATE), "auto", "rig-b");
+    expect(status).toBe(409);
+    expect(body.error).toStartWith("Getting the Parakeet speech model");
+    expect(rig.posts).toEqual([]);
+    expect(rig.asks).toEqual([]);
     await voice.downloadSettled();
     voice.takeDownloadError();
   });

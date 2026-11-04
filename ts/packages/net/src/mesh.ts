@@ -60,7 +60,7 @@ export interface MeshDeps {
   /** api.ts's upload, for `/mesh/v1/upload`. */
   upload: (r: Reader, req: Request) => Promise<Reply>;
   /** `POST /mesh/v1/transcribe`: a recording from a peer, transcribed here (voice package). */
-  transcribe?: (wav: Uint8Array, lang: string) => Promise<Reply>;
+  transcribe?: (wav: Uint8Array, lang: string, from: string) => Promise<Reply>;
   /** `POST /mesh/v1/deliver`: what Devices › Send on that PC sent, taken by this one (`receiveDelivery`). */
   deliver?: (from: string, kind: string, name: string, len: number, read: (len: number, max: number) => Promise<Buffer>) => Promise<Reply>;
   notes?: { last(): number; ownSince(since: number): [Json[], number] };
@@ -382,7 +382,7 @@ export class Mesh {
       } catch {
         return err(413, "recording too long");
       }
-      return this.d.transcribe(wav, query(req, "lang") ?? "auto");
+      return this.d.transcribe(wav, query(req, "lang") ?? "auto", shared.nameOf(peer));
     }
     if (is("POST", "mesh", "v1", "deliver") && this.d.deliver) {
       return this.d.deliver(shared.nameOf(peer), query(req, "kind") ?? "", query(req, "name") ?? "file", req.len, (len, max) => readBody(r, len, max));
