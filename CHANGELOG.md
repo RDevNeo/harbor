@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.141.2] - 2026-11-03
+
+### Changed
+- Memory popover: a PC's chats open only from its "3 chats ▶" count and arrow (hovered or clicked),
+  which lights up while its list is open; the rest of the card opens nothing, and moving onto another
+  card closes the open list.
+
 ## [0.141.1] - 2026-11-03
 
 ### Fixed
