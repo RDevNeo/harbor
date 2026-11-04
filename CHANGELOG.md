@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.142.0] - 2026-11-04
+
 ### Added
 - Settings › Voice › Transcribe on: Automatic (the PC of your mesh with the most free memory, as
   before) or one PC of your mesh. Dictation on this PC, and from phones through it, goes straight to
