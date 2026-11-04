@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.139.0] - 2026-11-03
+
 ### Changed
 - A shared project has one main chat for everyone: the project row on the PCs it was shared or
   moved to opens its owner's main chat (marked shared, its messages run on the owner's PC), and
