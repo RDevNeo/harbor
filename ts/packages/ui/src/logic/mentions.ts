@@ -1,5 +1,6 @@
 import { quote } from "./chatmention.ts";
 import { clock } from "./team.ts";
+import { richTip } from "./tips.ts";
 import { defuse } from "./usertext.ts";
 import { toolLabel } from "@harbor/net";
 import { charCount, lines, takeChars, words } from "./text.ts";
@@ -202,10 +203,9 @@ export function chipSnippet(m: Mention): string {
 
 /** A chip's tooltip; `framed`: a chip of its own (one in the composer's card has its note box in view). */
 export function chipTip(m: Mention, framed: boolean): string {
-  let tip = isChat(m) ? `${m.title}\n${m.from}` : takeChars(m.text, 300);
-  if (framed && m.note.trim() !== "") tip += `\n\nYour note: ${m.note.trim()}`;
-  const what = isChat(m) ? "Click to open this chat" : m.excerpt ? "Excerpt. Click to see its message in the chat" : "Click to see it in the chat";
-  return `${tip}\n\n${what}`;
+  const rows: [string, string][] = framed ? [["Your note", m.note]] : [];
+  if (isChat(m)) return richTip({ title: m.title, sub: m.from, rows });
+  return richTip({ title: m.from, sub: m.excerpt ? "Excerpt" : "", body: takeChars(m.text, 300), rows });
 }
 
 export function noteHint(m: Mention): string {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ICONS } from "../src/icons.ts";
+import { tipParts } from "../src/logic/tips.ts";
 import { branchClick, prChip, renameBranchNote, renameFolderNote, workBar, type WsInfo, wsClick } from "../src/logic/workbar.ts";
 
 const checkout: WsInfo = { git: true, mode: "checkout", name: null, path: "/src/app", branch: "main", dirty: 0, base: "", can_move: true, can_rename: false, can_rename_folder: false, pending: null };
@@ -26,6 +27,8 @@ test("gone, another PC's worktree, another PC's checkout with a PR", () => {
   const onlyPr = workBar({ git: false }, { ...o, pr });
   expect([onlyPr.shown, onlyPr.ws, onlyPr.pr?.text, onlyPr.pr?.tone]).toEqual([true, null, "PR #12 · Merged", "purple"]);
   expect(prChip({ ...pr, state: "open" })?.icon).toBe(ICONS.PR_OPEN);
+  expect(tipParts(onlyPr.pr?.tip ?? "")).toMatchObject({ rich: true, title: "Fix login", sub: "https://example.org/pr/12" });
+  expect(prChip({ ...pr, title: "" })?.tip).toBe("https://example.org/pr/12");
 });
 
 test("what git is doing shows on its chip", () => {

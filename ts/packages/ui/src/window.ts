@@ -5,8 +5,10 @@ import { join } from "node:path";
 import * as slint from "slint-ui";
 import { malloc } from "@harbor/store";
 import type { TermKey } from "./logic/terminal.ts";
+import { type TipParts, tipParts } from "./logic/tips.ts";
 import type { TermFrame } from "./terminal.ts";
 import { uiDir } from "./assets.ts";
+import { busOf } from "./pages/bus.ts";
 import type { Pixels } from "./logos.ts";
 
 export interface StatusData {
@@ -727,6 +729,7 @@ export async function loadWindow(): Promise<AppWindow> {
   const ctor = Reflect.get(ui, "AppWindow");
   if (!isCtor(ctor)) throw new Error("app.slint has no AppWindow");
   const win = new ctor();
+  busOf<{ tip_parts: (tip: string) => TipParts }>(win, "Ui").tip_parts = tipParts;
   const title = process.env.HARBOR_WINDOW_TITLE;
   if (title) win.window_title = title;
   return win;

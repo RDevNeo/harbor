@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { MAX_CHARS, MENTION_HIDE_SECS, MENTION_SETTLE_SECS, type Box, type Mention, SelectionButton, add, excerpt, folded, locate, mentionFromJson, mentionToJson, merged, newMention, prompt, scrollTarget } from "../src/logic/mentions.ts";
+import { tipParts } from "../src/logic/tips.ts";
+import { MAX_CHARS, MENTION_HIDE_SECS, MENTION_SETTLE_SECS, type Box, type Mention, SelectionButton, add, chipTip, excerpt, folded, locate, mentionFromJson, mentionToJson, merged, newMention, prompt, scrollTarget } from "../src/logic/mentions.ts";
 
 function whole(item: number, text: string): Mention {
   return newMention({ item, from: "Claude", text, len: Array.from(text).length });
@@ -116,4 +117,12 @@ test("the selection's button waits for the selection to rest, then goes after a 
   expect(b.step(18.5, false, false).show).toBe(true);
   expect(b.step(19, false, false)).toEqual({ show: false, wake: null });
   expect(b.step(19.1, false, true).show).toBe(false);
+});
+
+test("a_chips_tooltip_says_who_the_text_the_note_then_what_a_click_does", () => {
+  const msg = newMention({ from: "Claude", text: "Done.\n\nAll tests pass.", excerpt: true, note: " check it " });
+  expect(tipParts(chipTip(msg, true))).toEqual({ rich: true, title: "Claude", sub: "Excerpt", body: "Done. All tests pass.", rows: [{ label: "Your note", value: "check it" }], hint: "" });
+  expect(tipParts(chipTip(msg, false)).rows).toEqual([]);
+  const chat = newMention({ kind: "chat", chat: "g1", title: "Fix the build", from: "harbor" });
+  expect(tipParts(chipTip(chat, true))).toMatchObject({ title: "Fix the build", sub: "harbor", body: "", rows: [], hint: "" });
 });

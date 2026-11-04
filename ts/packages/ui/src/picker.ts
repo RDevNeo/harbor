@@ -1,5 +1,6 @@
 import { type Account, type Kind, providers } from "@harbor/agents";
 import type { Store } from "@harbor/store";
+import { richTip } from "./logic/tips.ts";
 import type { Pixels } from "./logos.ts";
 
 export interface Row {
@@ -67,11 +68,12 @@ export function emptyText(s: PickerState): string {
 }
 
 export function railTip(a: Account): string {
-  const lines = [providers.short(a), a.email === "" ? a.name : a.email];
-  if (a.plan !== "") lines.push(a.plan);
-  for (const w of a.usage) lines.push(`${w.label}: ${Math.round(w.percent * 100)}% used`);
-  if (a.loggedIn === false) lines.push("Not signed in — Settings › Providers");
-  return lines.join("\n");
+  return richTip({
+    title: providers.short(a),
+    sub: a.email === "" ? a.name : a.email,
+    body: a.loggedIn === false ? "Not signed in — Settings › Providers" : "",
+    rows: [["Plan", a.plan], ...a.usage.map((w): [string, string] => [w.label, `${Math.round(w.percent * 100)}% used`])],
+  });
 }
 
 export class Favorites {

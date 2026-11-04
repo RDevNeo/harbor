@@ -24,6 +24,7 @@ import { isImage } from "./logic/images.ts";
 import { Keys, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
+import { richTip } from "./logic/tips.ts";
 import { MemWatch } from "./memwatch.ts";
 import type { PcCard } from "./logic/mempop.ts";
 import { fakeMemory } from "./fakememory.ts";
@@ -1050,7 +1051,7 @@ export class Shell {
       subs.map(([c, secs]) => {
         const acc = this.account(c.account);
         const kind = acc?.kind ?? kindOfAccount(c.account);
-        return { id: c.id, name: c.name, logo: this.logoOf(kind), badge: acc?.badge ?? "", tip: `${c.name}\n${this.modelLabel(kind, c.model)}\n${c.title}\nWorking for ${stripElapsed(secs)}\n\nClick to open the agent` };
+        return { id: c.id, name: c.name, logo: this.logoOf(kind), badge: acc?.badge ?? "", tip: richTip({ title: c.name, sub: this.modelLabel(kind, c.model), rows: [["Task", c.title], ["Working", stripElapsed(secs)]] }) };
       }),
       (a, b) => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 }),
     );

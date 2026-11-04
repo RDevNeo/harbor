@@ -1,4 +1,5 @@
 import { ICONS } from "../icons.ts";
+import { richTip } from "./tips.ts";
 
 /** `GET /v1/workspace` as the PC answers it (phoneroutes.ts `workspaceInfo`); the phone's WorkBar reads the same. */
 export interface WsInfo {
@@ -61,7 +62,7 @@ export function prChip(pr: WsPr | null): BarChip | null {
   if (pr === null) return null;
   const icon = pr.state === "merged" ? ICONS.GIT_MERGE : pr.state === "closed" ? ICONS.PR_CLOSED : pr.state === "draft" ? ICONS.PR_DRAFT : ICONS.PR_OPEN;
   const tone: Tone = pr.state === "merged" ? "purple" : pr.state === "closed" ? "red" : pr.state === "draft" ? "muted" : "green";
-  return { icon, text: pr.label, tone, tip: pr.title === "" ? pr.url : `${pr.title}\n${pr.url}` };
+  return { icon, text: pr.label, tone, tip: pr.title === "" ? pr.url : richTip({ title: pr.title, sub: pr.url }) };
 }
 
 /**

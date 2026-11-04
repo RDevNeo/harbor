@@ -1,6 +1,10 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 
+// A tip read back by `Ui.tip-parts` (logic/tips.ts `TipParts`).
+export struct TipRow { label: string, value: string }
+export struct TipParts { rich: bool, title: string, sub: string, body: string, rows: [TipRow], hint: string }
+
 export global Ui {
     // `a` moved `t` of the way to `b` (widgets.rs `mix`); Slint's own `mix` weighs the other way.
     public pure function mix(a: color, b: color, t: float) -> color {
@@ -11,6 +15,8 @@ export global Ui {
     in-out property <length> tip-x;
     in-out property <length> tip-y;
     in-out property <length> tip-below;
+    // A tip made by `richTip` (logic/tips.ts) as its parts; `rich` false for a plain string.
+    pure callback tip-parts(string) -> TipParts;
 }
 
 export enum Variant { primary, secondary, outline, ghost, ghost-muted, destructive, ghost-destructive, stop }
@@ -56,7 +62,8 @@ export component TipArea inherits TouchArea {
 // Goes last in the window, over everything.
 export component TipLayer {
     in property <length> window-width;
-    property <length> w: min(measure.preferred-width, 280px) + 16px;
+    property <TipParts> parts: Ui.tip-parts(Ui.tip);
+    property <length> w: root.parts.rich ? min(rich.preferred-width, 344px) : min(measure.preferred-width, 280px) + 16px;
     property <bool> above: Ui.tip-y > 40px;
     measure := Text {
         visible: false;
@@ -68,17 +75,85 @@ export component TipLayer {
         x: max(4px, min(Ui.tip-x - root.w / 2, root.window-width - root.w - 4px));
         y: root.above ? Ui.tip-y - self.height - 6px : Ui.tip-below + 6px;
         width: root.w;
-        height: label.preferred-height + 6px;
-        background: Theme.gray-1000;
+        height: root.parts.rich ? rich.preferred-height : label.preferred-height + 6px;
+        background: Theme.bg100;
+        border-width: 1px;
+        border-color: Theme.border;
         border-radius: Theme.radius-md;
+        drop-shadow-offset-y: 4px;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: black.with-alpha(Theme.dark ? 40 / 255 : 16 / 255);
         label := Text {
+            visible: !root.parts.rich;
             x: 8px;
             width: root.w - 16px;
-            text: Ui.tip;
+            text: root.parts.rich ? "" : Ui.tip;
             wrap: word-wrap;
             font-size: 12px;
-            color: Theme.bg100;
+            color: Theme.fg;
             vertical-alignment: center;
+        }
+        rich := VerticalLayout {
+            visible: root.parts.rich;
+            width: root.w;
+            padding: 10px;
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 8px;
+            VerticalLayout {
+                spacing: 2px;
+                Text {
+                    text: root.parts.title;
+                    wrap: word-wrap;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                }
+                if root.parts.sub != "": Text {
+                    text: root.parts.sub;
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: Theme.subtle;
+                }
+            }
+            if root.parts.body != "": Text {
+                text: root.parts.body;
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Theme.fg;
+            }
+            if root.parts.rows.length > 0: GridLayout {
+                spacing-horizontal: 12px;
+                spacing-vertical: 4px;
+                for r in root.parts.rows: Row {
+                    Text {
+                        text: r.label;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        horizontal-stretch: 0;
+                    }
+                    Text {
+                        text: r.value;
+                        wrap: word-wrap;
+                        font-size: 12px;
+                        color: Theme.fg;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+            if root.parts.hint != "": VerticalLayout {
+                spacing: 7px;
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+                Text {
+                    text: root.parts.hint;
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: Theme.subtle;
+                }
+            }
         }
     }
 }

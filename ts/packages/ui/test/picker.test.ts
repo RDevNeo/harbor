@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Account } from "@harbor/agents";
-import { emptyText, favoritesValue, parseFavorites, pickerRows } from "../src/picker.ts";
+import { tipParts } from "../src/logic/tips.ts";
+import { emptyText, favoritesValue, parseFavorites, pickerRows, railTip } from "../src/picker.ts";
 
 const acc = (id: string, kind: Account["kind"], bin: string | null): Account => ({ id, kind, name: id, email: "", badge: "", plan: "", configDir: null, bin, loggedIn: true, usage: [] });
 const claude = acc("claude", "Claude", "/usr/bin/claude");
@@ -39,4 +40,11 @@ test("favourites list unknown models by their id, and say how to add some when e
   expect(rows.map((r) => [r.label, r.model])).toEqual([["my-model", "my-model"]]);
   expect(emptyText({ rail: null, search: "", more: false, hover: 0 })).toBe("Star a model to pin it here.");
   expect(emptyText({ rail: null, search: "zz", more: false, hover: 0 })).toBe("No match — press Enter to use it as a model id.");
+});
+
+test("the rail's tooltip: the account, its plan and usage", () => {
+  const a: Account = { ...claude, badge: "C1", email: "ana@example.com", plan: "Max", usage: [{ label: "5h", percent: 0.4, resetsAt: null }] };
+  expect(tipParts(railTip(a))).toEqual({ rich: true, title: "Claude · C1", sub: "ana@example.com", body: "", rows: [{ label: "Plan", value: "Max" }, { label: "5h", value: "40% used" }], hint: "" });
+  const out = tipParts(railTip({ ...codex, loggedIn: false }));
+  expect([out.sub, out.body, out.rows]).toEqual(["codex", "Not signed in — Settings › Providers", []]);
 });
