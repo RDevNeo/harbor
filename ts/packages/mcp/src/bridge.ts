@@ -1,11 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { HEAD_WAIT, HttpError, header, Reader, readBody, readChunked, readHead, urlEncode, type Request } from "@harbor/net";
-import { dataDir, home, privateDir, writePrivate } from "@harbor/store";
+import { dataDir, home, privateDir, single, writePrivate } from "@harbor/store";
 import { argStr, argUint } from "./args.ts";
 import { isObject, type Json } from "./json.ts";
 import { grantFrom, type Grant as MachinesGrant, mcp as machinesMcp, NAME as MACHINES } from "./machines.ts";
@@ -944,18 +944,93 @@ export function port(): Promise<number | null> {
     for (let p = PORT + 1; bound === null && p < PORT + 10; p++) bound = await listen(p);
     if (bound !== null) {
       servingSince = Date.now();
-      try {
-        writePrivate(portFile(), String(bound));
-      } catch {
-        // turns then reach the bridge only on the port they were started with
-      }
+      serving_ = bound;
+      claim();
+      reclaimer = setInterval(claim, reclaim.ms);
+      reclaimer.unref?.();
     }
     return bound;
   })();
   return found;
 }
 
-/** Where the bridge's port is written once it serves: a turn's runner reads it for each connection it passes on (relay.ts), so turns reach a Harbor that came back on another port. */
+/** The port file's line: the bridge's port, then the pid and /proc start time of the process serving it (relay.ts reads it). An older Harbor wrote the port alone. */
+export interface PortOwner {
+  port: number;
+  pid: number | null;
+  start: number | null;
+}
+
+export function parsePortFile(text: string): PortOwner | null {
+  const [p, pid, start] = text.trim().split(/\s+/).map(Number);
+  if (p === undefined || !Number.isInteger(p) || p <= 0 || p > 65535) return null;
+  const pos = (n: number | undefined): number | null => (n !== undefined && Number.isInteger(n) && n > 0 ? n : null);
+  return { port: p, pid: pos(pid), start: start !== undefined && Number.isInteger(start) && start >= 0 ? start : null };
+}
+
+export const portLine = (port: number, pid: number, start: number | null): string => `${port} ${pid}${start === null ? "" : ` ${start}`}\n`;
+
+/** /proc stat field 22 of a process: when it started, in clock ticks since boot (null off Linux). */
+function procStart(pid: number | "self"): number | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const f = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+    if (f[0] === "Z" || f[0] === "X") return null;
+    const v = f[19];
+    return v !== undefined && /^\d+$/.test(v) ? Number(v) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The process that wrote the file still runs (an unknown writer counts as running). */
+export function ownerAlive(o: PortOwner): boolean {
+  if (o.pid === null) return true;
+  if (o.start !== null) return procStart(o.pid) === o.start;
+  try {
+    process.kill(o.pid, 0);
+    return true;
+  } catch (e) {
+    return e instanceof Error && "code" in e && e.code === "EPERM";
+  }
+}
+
+/** How often the serving bridge checks that the port file still names it. Tests shorten it. */
+export const reclaim = { ms: 5000 };
+/** Whether this process is the session's Harbor (it holds the instance lock). Tests replace it. */
+export const owner = { primary: (): boolean => single.holding() };
+
+let serving_: number | null = null;
+let reclaimer: ReturnType<typeof setInterval> | null = null;
+const myStart = procStart("self");
+
+function readOwner(): PortOwner | null {
+  try {
+    return parsePortFile(readFileSync(portFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Puts this bridge's port in the port file unless the file belongs to another bridge that is still serving. Runs when
+ * the bridge starts, on each grant and every `reclaim.ms`, so a file left by a process that has gone (a test, a second
+ * Harbor on the same data folder) never strands the turns' relays for long. The session's Harbor (the instance lock's
+ * holder) always takes it; any other process only a file that is missing, its own, or left by a process that is gone.
+ */
+export function claim(): void {
+  if (serving_ === null) return;
+  const o = readOwner();
+  if (o && o.port === serving_ && o.pid === process.pid) return;
+  if (o && !owner.primary() && (o.pid === null || (o.pid !== process.pid && ownerAlive(o)))) return;
+  try {
+    writePrivate(portFile(), portLine(serving_, process.pid, myStart));
+  } catch {
+    // turns then reach the bridge only on the port they were started with
+  }
+}
+
+/** Where the bridge's port (and who serves it: `portLine`) is written once it serves: a turn's runner reads it for each connection it passes on (relay.ts), so turns reach a Harbor that came back on another port. */
 export function portFile(): string {
   return join(privateDir(join(dataDir(), "apps")), "bridge-port");
 }
@@ -978,6 +1053,7 @@ export function forwardedPort(dir: string): number | null {
 export async function grant(g: Grant): Promise<number | null> {
   const p = await port();
   if (p === null) return null;
+  claim();
   if (!GRANTS.has(g.token)) GRANTS.set(g.token, { grant: g, slots: new Map() });
   return p;
 }
@@ -1042,6 +1118,18 @@ export async function close(): Promise<void> {
   servers.clear();
   extra.length = 0;
   found = null;
+  if (reclaimer) clearInterval(reclaimer);
+  reclaimer = null;
+  // The file is removed only while it still names this process: another bridge may have taken it meanwhile.
+  const o = readOwner();
+  if (o && o.port === serving_ && o.pid === process.pid) {
+    try {
+      unlinkSync(portFile());
+    } catch {
+      // already gone
+    }
+  }
+  serving_ = null;
 }
 
 export function remoteConfig(g: Grant, remotePort: number): Json {

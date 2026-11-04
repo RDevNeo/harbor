@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Chat, type Item, Store } from "@harbor/store";
 import * as detach from "../src/detach.ts";
-import { Engine, type EngineHost, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, PROMOTED } from "../src/engine.ts";
+import { Engine, type EngineHost, mcpFailNotice, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, PROMOTED } from "../src/engine.ts";
 import { opposite, parseMode } from "../src/queue.ts";
 import type { Account } from "../src/providers.ts";
 import * as team from "../src/team.ts";
@@ -236,6 +236,27 @@ describe("a chat's turn", () => {
     expect([e.unread.has(c.id), e.failed.has(c.id), e.opened(c.id)]).toEqual([false, false, false]);
     // Its folder is gone once its events are out.
     expect(readdirSync(detach.root()).filter((d) => d.startsWith(`${c.id}-`))).toEqual([]);
+    store.close();
+  });
+
+  test("MCP servers Claude reports failed leave a notice in the chat, once a turn", async () => {
+    const failing = join(base, "claude-mcpfail");
+    const src = readFileSync(fake, "utf8");
+    expect(src).toContain("mcp_servers: []");
+    writeFileSync(failing, src.replace("mcp_servers: []", 'mcp_servers: [{ name: "harbor", status: "failed" }, { name: "github", status: "connected" }, { name: "machines", status: "failed" }]'));
+    chmodSync(failing, 0o755);
+    const { e, store } = setup(failing);
+    const c = newChat(store);
+    e.reload();
+    e.send(c.id, "hello");
+    await until("the turn's end", () => !e.running(c.id));
+    const notices = (): string[] => e.transcript(c.id).items.flatMap((i) => (i.kind === "notice" ? [`${i.icon}: ${i.text}`] : []));
+    expect(notices()).toEqual(["alert: MCP servers didn't connect: harbor, machines · they reconnect on the next turn"]);
+    // The next turn is a new process: it tries them again, and says so again if they fail again.
+    e.send(c.id, "again");
+    await until("the second turn's end", () => !e.running(c.id) && texts(e.transcript(c.id).items).includes("echo: again"));
+    expect(notices()).toHaveLength(2);
+    expect(store.items(c.id).filter((i) => i.kind === "notice")).toHaveLength(2);
     store.close();
   });
 
@@ -902,4 +923,12 @@ describe("list_models", () => {
       store.close();
     }
   });
+});
+
+test("the failed-MCP notice names the failed servers only, and only when some failed", () => {
+  expect(mcpFailNotice([])).toBeNull();
+  expect(mcpFailNotice([["github", "connected"], ["gmail", "pending"], ["x", "needs-auth"]])).toBeNull();
+  expect(mcpFailNotice([["harbor", "failed"]])).toBe("MCP servers didn't connect: harbor · they reconnect on the next turn");
+  const many = ["a", "b", "c", "d", "e", "f"].map((n): [string, string] => [n, "failed"]);
+  expect(mcpFailNotice(many)).toBe("MCP servers didn't connect: a, b, c and 3 more · they reconnect on the next turn");
 });

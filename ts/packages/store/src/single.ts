@@ -58,6 +58,9 @@ export async function acquire(env: Record<string, string | undefined> = process.
   }
 }
 
+/** This process holds the instance lock: it is the session's Harbor. */
+export const holding = (): boolean => held !== undefined;
+
 /** Releases the lock (the process exit does it too). */
 export function release(): void {
   if (held !== undefined) closeSync(held);

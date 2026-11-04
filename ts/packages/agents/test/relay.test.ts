@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BRIDGE_PORT, PORT_REF, RELAY, relayWait, setUp } from "../src/relay.ts";
+import { BRIDGE_PORT, listenerIsMine, PORT_REF, RELAY, readPortFile, relayWait, setUp, target, writerAlive } from "../src/relay.ts";
 
 const work = mkdtempSync(join(tmpdir(), "harbor-relay-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
@@ -70,3 +70,47 @@ test("without the relay asked for, nothing changes", async () => {
   expect(argv).toEqual(["a"]);
   expect(env[BRIDGE_PORT]).toBe("5");
 });
+
+const gonePid = (): number => Bun.spawnSync(["true"]).pid;
+
+test("the port file's writer: a running one is trusted, one that has gone is not", () => {
+  writeFileSync(file, `47940 ${process.pid}\n`);
+  expect(readPortFile(file)).toEqual({ port: 47940, pid: process.pid, start: null });
+  expect(writerAlive({ port: 1, pid: process.pid, start: null })).toBe(true);
+  expect(writerAlive({ port: 1, pid: gonePid(), start: null })).toBe(false);
+  // The start time tells a reused pid from its first process.
+  expect(writerAlive({ port: 1, pid: process.pid, start: 1 })).toBe(false);
+  expect(writerAlive({ port: 1, pid: null, start: null })).toBe(true);
+  writeFileSync(file, "47940\n");
+  expect(readPortFile(file)).toEqual({ port: 47940, pid: null, start: null });
+});
+
+test("a listener is this user's only when /proc says so", async () => {
+  const s = await upstream("mine");
+  expect(listenerIsMine(portOf(s))).toBe(true);
+  const free = portOf(s);
+  await new Promise<void>((r) => s.close(() => r()));
+  expect(listenerIsMine(free)).toBe(false);
+});
+
+test("a port file left by a process that has gone strands nothing: the turn's own port is used, never the stale one", async () => {
+  relayWait.ms = 3000;
+  const live = await upstream("live");
+  const stale = await upstream("stale");
+  writeFileSync(file, `${portOf(stale)} ${gonePid()}\n`);
+  expect(target(file, portOf(live))).toBe(portOf(live));
+  const env: Record<string, string | undefined> = { [RELAY]: file, [BRIDGE_PORT]: String(portOf(live)) };
+  const { relay } = await setUp(env, []);
+  expect(await ask(relay?.port ?? 0, "hi")).toBe("live:hi");
+  // While its writer runs, the file's port and no other.
+  writeFileSync(file, `${portOf(stale)} ${process.pid}\n`);
+  expect(target(file, portOf(live))).toBe(portOf(stale));
+  expect(await ask(relay?.port ?? 0, "hi")).toBe("stale:hi");
+  // No file and nobody of this user's on the turn's port: it waits for the bridge to write the file.
+  rmSync(file);
+  const gone = portOf(live);
+  await new Promise<void>((r) => live.close(() => r()));
+  expect(target(file, gone)).toBeNull();
+  stale.close();
+  relay?.close();
+}, 20_000);

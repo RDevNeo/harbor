@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Grant, close, grant, portFile, resumeWait, revoke, token } from "../src/bridge.ts";
+import { type Grant, close, grant, parsePortFile, portFile, resumeWait, revoke, token } from "../src/bridge.ts";
 import type { Json } from "../src/json.ts";
 import { limits, resetCache } from "../src/lazy.ts";
 import { tools } from "../src/mcpshim.ts";
@@ -270,7 +270,7 @@ test("a grant is reached with its token as a bearer, and a wrong one is refused"
   resumeWait.window = 0;
   const g = base({ servers: { fake: server() } });
   const p = (await grant(g)) as number;
-  expect(Number(readFileSync(portFile(), "utf8"))).toBe(p);
+  expect(parsePortFile(readFileSync(portFile(), "utf8"))?.port).toBe(p);
   const call = { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "hello" } };
   expect(JSON.stringify((await rpc(p, "/fake", call, `Authorization: Bearer ${g.token}\r\n`))?.result)).toContain("pid ");
   // A 404 (its body isn't JSON).

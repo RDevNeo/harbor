@@ -603,9 +603,13 @@ export class Engine {
           this.store.saveChat(chat);
         }
         break;
-      case "mcp":
+      case "mcp": {
         tr.mcp = ev.servers;
+        const text = mcpFailNotice(ev.servers);
+        // Once a turn: a turn picked up again replays its output.
+        if (text !== null && !noticedThisTurn(tr.items, text)) tr.items.push({ kind: "notice", icon: "alert", text, detail: MCP_FAIL_DETAIL });
         break;
+      }
       case "textDelta": {
         const it = tr.pendingText === null ? undefined : tr.items[tr.pendingText];
         if (it?.kind === "text") it.text += ev.text;
@@ -1676,6 +1680,26 @@ export class Engine {
 }
 
 /** The lead's line for a subagent's report (agentstrip.rs): its first sentence. */
+/** The notice for MCP servers Claude Code reports as failed when its process starts (null: none failed). Claude doesn't try them again; the next turn is a new process, which connects anew. */
+export function mcpFailNotice(servers: readonly (readonly [string, string])[]): string | null {
+  const failed = servers.filter(([, status]) => status === "failed").map(([name]) => name);
+  if (failed.length === 0) return null;
+  const names = failed.length <= 4 ? failed.join(", ") : `${failed.slice(0, 3).join(", ")} and ${failed.length - 3} more`;
+  return `MCP servers didn't connect: ${names} · they reconnect on the next turn`;
+}
+
+export const MCP_FAIL_DETAIL =
+  "Claude Code couldn't reach these servers when this turn started, so their tools are missing until it ends. When every server that goes through Harbor failed at once, Harbor's MCP bridge was out of reach.";
+
+function noticedThisTurn(items: readonly Item[], text: string): boolean {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it?.kind === "user") return false;
+    if (it?.kind === "notice" && it.text === text) return true;
+  }
+  return false;
+}
+
 export function reportLine(name: string, report: string): string {
   const sentence = headline(report);
   if (sentence === "") return `${name} finished`;
