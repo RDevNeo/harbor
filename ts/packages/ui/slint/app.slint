@@ -641,6 +641,8 @@ export component AppWindow inherits Window {
     callback global-key(KeyEvent) -> bool;
     // Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken.
     callback nav-key(KeyEvent) -> bool;
+    // Esc, ← and → while the image viewer shows (Esc for a video), before any widget sees them; true = taken.
+    callback viewer-key(KeyEvent) -> bool;
     // The sidebar row Alt+Up / Alt+Down last opened ("kind:id"), scrolled into view.
     in property <string> side-reveal;
 
@@ -748,6 +750,9 @@ export component AppWindow inherits Window {
         focus-on-tab-navigation: false;
         capture-key-pressed(e) => {
             if (e.modifiers.alt || e.modifiers.control) && root.nav-key(e) {
+                return accept;
+            }
+            if (e.text == Key.Escape || e.text == Key.LeftArrow || e.text == Key.RightArrow) && root.viewer-key(e) {
                 return accept;
             }
             if e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta {

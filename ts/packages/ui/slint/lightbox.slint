@@ -23,22 +23,98 @@ export component Lightbox inherits Rectangle {
     callback copy-image();
     callback copy-path();
     background: black.with-alpha(220 / 255);
-    TouchArea {
-        clicked => {
-            root.close();
-        }
-    }
     property <length> room-x: 48px;
     property <length> room-y: 56px;
     property <length> room-w: root.width - 96px;
     property <length> room-h: root.height - 120px;
+    property <length> mid-x: root.room-x + root.room-w / 2;
+    property <length> mid-y: root.room-y + root.room-h / 2;
     property <float> scale: min(root.room-w / max(root.data.width, 1px), root.room-h / max(root.data.height, 1px), 1);
+    // Zoomed in: the image's width on screen (0 = fitted) and where its corner wants to be. A width, not a scale, so the
+    // full picture taking over from its thumbnail keeps the zoom.
+    property <length> zoom-w;
+    property <length> want-x;
+    property <length> want-y;
+    property <length> img-w: root.zoom-w > 0px ? root.zoom-w : root.data.width * root.scale;
+    property <length> img-h: root.data.height * root.img-w / max(root.data.width, 1px);
+    property <length> img-x: root.zoom-w > 0px ? root.place(root.img-w, root.width, root.mid-x, root.want-x) : root.mid-x - root.img-w / 2;
+    property <length> img-y: root.zoom-w > 0px ? root.place(root.img-h, root.height, root.mid-y, root.want-y) : root.mid-y - root.img-h / 2;
+    property <bool> can-pan: root.zoom-w > 0px && (root.img-w > root.width || root.img-h > root.height);
+    property <int> shown: root.data.index;
+    changed shown => {
+        root.zoom-w = 0px;
+    }
+
+    // Where an image's edge goes on one axis: centred on `mid` while the image fits the window, else as near `want` as
+    // keeps the window covered (the image can't be dragged off it).
+    pure function place(size: length, span: length, mid: length, want: length) -> length {
+        if size <= span {
+            return clamp(mid - size / 2, 0px, span - size);
+        }
+        clamp(want, span - size, 0px)
+    }
+
+    // Zooms to `w` wide (fitted at or below the fitted width), keeping the picture's point under (px, py) where it is.
+    function zoom-to(w: length, px: length, py: length) {
+        let fit = root.data.width * root.scale;
+        let k = max(w, fit) / root.img-w;
+        root.want-x = px - (px - root.img-x) * k;
+        root.want-y = py - (py - root.img-y) * k;
+        root.zoom-w = w <= fit + 0.5px ? 0px : w;
+    }
+
+    pure function on-image(x: length, y: length) -> bool {
+        root.data.width > 0px && x >= root.img-x && x < root.img-x + root.img-w && y >= root.img-y && y < root.img-y + root.img-h
+    }
+
+    property <bool> dragged;
+    property <length> from-x;
+    property <length> from-y;
+    TouchArea {
+        // Slint has no zoom-in cursor; the hand says it's clickable.
+        mouse-cursor: root.on-image(self.mouse-x, self.mouse-y) || root.dragged ? (!root.can-pan ? MouseCursor.pointer : self.pressed ? MouseCursor.grabbing : MouseCursor.grab) : MouseCursor.default;
+        pointer-event(e) => {
+            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+                root.dragged = false;
+                root.from-x = root.img-x;
+                root.from-y = root.img-y;
+            }
+        }
+        moved => {
+            if !root.dragged && abs(self.mouse-x - self.pressed-x) + abs(self.mouse-y - self.pressed-y) < 4px {
+                return;
+            }
+            root.dragged = true;
+            if root.can-pan && root.on-image(self.pressed-x, self.pressed-y) {
+                root.want-x = root.place(root.img-w, root.width, root.mid-x, root.from-x + self.mouse-x - self.pressed-x);
+                root.want-y = root.place(root.img-h, root.height, root.mid-y, root.from-y + self.mouse-y - self.pressed-y);
+            }
+        }
+        clicked => {
+            if root.dragged {
+                root.dragged = false;
+            } else if !root.on-image(self.pressed-x, self.pressed-y) {
+                root.close();
+            } else if root.zoom-w > 0px {
+                root.zoom-w = 0px;
+            } else {
+                root.zoom-to(root.data.width * max(root.scale * 2, 1), self.mouse-x, self.mouse-y);
+            }
+        }
+        scroll-event(e) => {
+            if root.data.width > 0px && e.delta-y != 0px {
+                let fit = root.data.width * root.scale;
+                root.zoom-to(clamp(root.img-w * pow(1.002, e.delta-y / 1px), fit, max(fit * 8, root.data.width * 4)), self.mouse-x, self.mouse-y);
+            }
+            accept
+        }
+    }
     if root.data.width > 0px: Rectangle {
-        width: root.data.width * root.scale;
-        height: root.data.height * root.scale;
-        x: root.room-x + (root.room-w - self.width) / 2;
-        y: root.room-y + (root.room-h - self.height) / 2;
-        border-radius: Theme.radius-md;
+        x: root.img-x;
+        y: root.img-y;
+        width: root.img-w;
+        height: root.img-h;
+        border-radius: root.zoom-w > 0px ? 0px : Theme.radius-md;
         clip: true;
         Image {
             width: parent.width;
@@ -46,8 +122,6 @@ export component Lightbox inherits Rectangle {
             source: root.data.image;
             image-fit: fill;
         }
-        // Clicks on the image itself don't close.
-        TouchArea { }
     }
     if root.data.loading || (root.data.width == 0px && root.data.error == ""): Spinner {
         x: root.width / 2 - self.width / 2;

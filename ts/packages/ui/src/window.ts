@@ -609,6 +609,8 @@ export interface AppWindow extends slint.ComponentHandle {
   /** The pointer on a card's frame: kind ("move", "down", "up"), then fractions of the image. */
   chat_cap_pointer: (id: string, kind: string, fx: number, fy: number) => void;
   chat_cap_cancel: (id: string) => void;
+  /** Esc, ← and → for the image viewer, before any widget sees them; true = taken. */
+  viewer_key: (e: KeyEvent) => boolean;
   lb_open: boolean;
   lb_data: LightboxData;
   lb_close: () => void;

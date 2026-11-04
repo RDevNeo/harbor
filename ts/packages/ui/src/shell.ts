@@ -803,6 +803,7 @@ export class Shell {
     };
     w.global_key = (e) => this.globalKey(e);
     w.nav_key = (e) => this.navKey(e, true);
+    w.viewer_key = (e) => this.viewerKey(e);
     w.zoom = (step) => this.zoomer.key(step);
     w.scale_changed = (scale) => this.zoomer.scaleChanged(scale);
     w.picker_rail_pick = (id) => {
@@ -1979,6 +1980,17 @@ export class Shell {
       this.refreshMenu();
     }, 0);
     return false;
+  }
+
+  /**
+   * The viewer's keys before any widget sees them, so a terminal, a field or a menu under it keeps none: Esc closes it
+   * (a video too) and its held repeats reach nothing, ← and → browse the images.
+   */
+  private viewerKey(e: KeyEvent): boolean {
+    if (this.escOfViewer(e)) return true;
+    const p = pressOf(e.text, e.modifiers);
+    if (p.ctrl || p.alt || !(this.win.lb_open || (this.win.vid_open && p.key === "Escape"))) return false;
+    return this.globalKey(e);
   }
 
   private escOfViewer(e: KeyEvent): boolean {
