@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.141.0] - 2026-11-03
+
+### Fixed
+- New chats no longer start with every MCP server that goes through Harbor (harbor, machines,
+  gmail, discord, playwright…) timing out after 30 s. The bridge's port file now names the process
+  serving it, the running Harbor takes it back within seconds when another process left a stale
+  port there, and a turn's relay no longer trusts a port whose writer is gone.
+- `bun test` no longer touches the user's own Harbor: every run gets its own home, data, state,
+  config and runtime folders (a test had written the bridge's port file).
+
+### Added
+- When Claude reports MCP servers that didn't connect, the chat says which, on the desktop and the
+  phone; the next turn connects them again.
+
 ## [0.140.0] - 2026-11-03
 
 ### Changed
