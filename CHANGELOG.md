@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.148.0] - 2026-11-05
+
+### Added
+- Profile photos: people show their photo instead of initials, by default their Google account's.
+  On the phone, Settings › Account and Members show them round, and the drawer's round button is
+  your own; tap your Account row (or your own Members row) for "Your photo": choose one from the
+  gallery (cropped square) or remove it for your initials, for everyone in your workspaces. The
+  desktop's Settings › Workspace shows each member's photo in place of the person icon. Photos are
+  fetched once over HTTPS and kept by address (a new photo is a new address).
+
+### Removed
+- The phone drawer's Browser row (a link in a chat still opens the browser) and its PCs row with
+  the PCs sheet (Settings lists the workspace's PCs, and PCs update themselves). Issues stays.
+
 ## [0.147.0] - 2026-11-04
 
 ### Changed
