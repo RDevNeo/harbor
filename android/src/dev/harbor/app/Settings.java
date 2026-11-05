@@ -15,15 +15,19 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
-/** Settings, grouped in cards like the reference: this workspace (switch workspaces), the
- *  app and its update, the PC's address and version, the account and the workspace's people
- *  (owners invite by email), color mode, sign out. */
+/** Settings in titled sections, like the desktop's pages: the workspace (switch with ▾), the
+ *  account, the workspace's members (owners invite by email) and PCs, the PCs' apps, general,
+ *  voice, notifications, this app and its updates, sign out. Settings that were dropped keep
+ *  a fixed value in code: updates install by themselves (Update), web links open in the
+ *  built-in browser, dictation detects the language and takes spoken commands (Voice), the
+ *  offline model downloads after the first dictation (Asr), and notifications are instant
+ *  (Listen) and come only while you're away from that PC (Notes). */
 public class Settings extends Base {
-    private TextView updateNote, hubVersion, badge, gmailSub, discordSub;
-    private LinearLayout gmailCard, gmailRowBox, discordBox;
+    private TextView updateNote, gmailSub, discordSub, appsHead;
+    private LinearLayout gmailCard, gmailRowBox, discordBox, warnRow, whyRow, voiceCard;
+    private TextView voiceHead;
     private View discordGap;
     private View updateBtn;
-    private LinearLayout autoRow, whyRow;
     private long available;
     private boolean installing;
 
@@ -51,64 +55,19 @@ public class Settings extends Base {
         sv.addView(col);
         root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        // This PC, with its Harbor version as a badge; tap to switch PCs.
+        // The workspace these settings are for; tap to switch.
         LinearLayout top = card(col);
-        LinearLayout pc = Ui.cardRow(this, null, hub.label(), hub.labelOn(hub.via()) + " · " + hub.host + ":" + hub.port, Ui.FG, v -> pcs());
-        badge = Ui.bold(this, "", 13, Ui.ON_INK);
-        badge.setPadding(Ui.dp(12), Ui.dp(5), Ui.dp(12), Ui.dp(5));
-        badge.setBackground(Ui.round(Ui.INK, 0, 14));
-        badge.setVisibility(View.GONE);
-        pc.addView(badge, Ui.margins(Ui.wrap(), 8, 0, 4, 0));
+        LinearLayout pc = Ui.cardRow(this, Ui.I_USERS, hub.label(), null, Ui.FG, v -> pcs());
         pc.addView(Ui.icon(this, Ui.I_DOWN, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(28)));
         top.addView(pc, Ui.fill());
 
-        LinearLayout app = card(col);
-        LinearLayout updateRow = Ui.cardRow(this, Ui.I_DOWNLOAD, "Update", "Checking…", Ui.FG, v -> checkUpdates());
-        updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
-        updateBtn = Ui.button(this, "Update", true, v -> update());
-        updateBtn.setVisibility(View.GONE);
-        updateRow.addView(updateBtn);
-        Ui.wrapSub(updateRow, 3);
-        app.addView(updateRow, Ui.fill());
-        // Why the last automatic install didn't go in: Android's whole message (INSTALL_FAILED_…).
-        whyRow = Ui.col(this);
-        app.addView(whyRow, Ui.fill());
-        app.addView(Ui.gap(this));
-        autoRow = Ui.col(this);
-        autoRows();
-        app.addView(autoRow, Ui.fill());
-        app.addView(Ui.gap(this));
-        app.addView(Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this) + " (" + myCode(this) + ")", Ui.FG, null), Ui.fill());
-        app.addView(Ui.gap(this));
-        // Whether links open in the built-in browser (Servo) or the phone's own, and why.
-        String noBrowser = Engine.unavailable(this);
-        LinearLayout br = Ui.cardRow(this, Ui.I_GLOBE, "Built-in browser", noBrowser == null ? "On: web links open in Harbor (Servo)" : "Off: " + noBrowser,
-                noBrowser == null ? Ui.FG : Ui.AMBER, noBrowser == null ? v -> Browser.open(this, "") : null);
-        Ui.wrapSub(br, 4);
-        app.addView(br, Ui.fill());
-
-        LinearLayout here = card(col);
-        here.addView(Ui.cardRow(this, Ui.I_GLOBE, "Address", hub.host + ":" + hub.port, Ui.FG, null), Ui.fill());
-        here.addView(Ui.gap(this));
-        // The keys this connection is encrypted with (compare the PC's with Settings › Workspace there).
-        String keys = (hub.fp.isEmpty() ? "PC key not known yet" : "PC " + shortFp(hub.fp)) + " · this phone " + shortFp(Net.myFp());
-        here.addView(Ui.cardRow(this, Ui.I_LOCK, "Encrypted with", keys, Ui.FG, null), Ui.fill());
-        here.addView(Ui.gap(this));
-        LinearLayout ver = Ui.cardRow(this, Ui.I_MONITOR, "Harbor on the PC", "…", Ui.FG, null);
-        hubVersion = (TextView) ((LinearLayout) ver.getChildAt(1)).getChildAt(1);
-        here.addView(ver, Ui.fill());
-
-        // The account and this workspace's people and PCs (Account, the directory).
-        acctCard = card(col);
+        // The account, invitations to other workspaces, this workspace's members and PCs.
+        wsBox = Ui.col(this);
+        col.addView(wsBox, Ui.fill());
         workspaceRows();
 
         // Who is who across the PCs, and whose instructions a chat run on another PC uses
-        // (GET/PATCH /v1/people, hubs from 0.44; hidden on older ones).
-        LinearLayout people = card(col);
-        people.setVisibility(View.GONE);
-        LinearLayout pr = Ui.cardRow(this, Ui.I_USERS, "People and memory", "Who is who, and your instructions on other PCs", Ui.FG, v -> people());
-        pr.addView(Ui.chevron(this));
-        people.addView(pr, Ui.fill());
+        // (GET/PATCH /v1/people, hubs from 0.44; hidden on older ones): with the account.
         if (getIntent().getBooleanExtra("people", false)) people();
         // The "Harbor X is ready: tap to install" notification (Update.offer): the install, in
         // front, where Play Protect can ask to scan it.
@@ -120,11 +79,13 @@ public class Settings extends Base {
         Ui.pool.execute(() -> {
             try {
                 hub.get("/v1/people");
-                runOnUiThread(() -> people.setVisibility(View.VISIBLE));
+                runOnUiThread(() -> { hasPeople = true; workspaceRows(); });
             } catch (Exception e) { /* an older hub: no such call */ }
         });
 
         // Apps agents on this PC use (Gmail, 0.95: GET /v1/apps/gmail; hidden on older hubs).
+        appsHead = section(col, "Apps");
+        appsHead.setVisibility(View.GONE);
         LinearLayout apps = card(col);
         apps.setVisibility(View.GONE);
         LinearLayout gm = Ui.cardRow(this, Ui.I_PLUG, "Gmail", "…", Ui.FG, v -> {
@@ -133,7 +94,6 @@ public class Settings extends Base {
         });
         gm.addView(Ui.chevron(this));
         Ui.wrapSub(gm, 2);
-        apps.addView(Ui.label(this, "Apps"), Ui.fill());
         apps.addView(gm, Ui.fill());
         gmailSub = (TextView) ((LinearLayout) gm.getChildAt(1)).getChildAt(1);
         gmailRowBox = gm;
@@ -158,53 +118,63 @@ public class Settings extends Base {
             Discord.show(this, hub, hub.via());
         }
 
-        LinearLayout look = card(col);
-        LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
-        cm.addView(Ui.chevron(this));
-        look.addView(cm, Ui.fill());
-        look.addView(Ui.gap(this));
-        LinearLayout dn = Ui.cardRow(this, Ui.I_LAYERS, "Density", Ui.compact ? "Compact" : "Comfortable", Ui.FG, v -> density());
-        dn.addView(Ui.chevron(this));
-        look.addView(dn, Ui.fill());
-
         // While the agent works, the send button steers or queues (as the desktop's Settings ›
-        // General); long-press does the other for one message (Chat.sendMenu).
-        LinearLayout chat = card(col);
+        // General); long-press does the other for one message (Chat.sendMenu). Then the look.
+        section(col, "General");
+        LinearLayout gen = card(col);
         LinearLayout fu = Ui.cardRow(this, Ui.I_STEER, "While the agent is running", Chat.followLabel(this), Ui.FG, v -> followUp());
         fu.addView(Ui.chevron(this));
-        chat.addView(fu, Ui.fill());
+        gen.addView(fu, Ui.fill());
+        gen.addView(Ui.gap(this));
+        LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
+        cm.addView(Ui.chevron(this));
+        gen.addView(cm, Ui.fill());
+        gen.addView(Ui.gap(this));
+        LinearLayout dn = Ui.cardRow(this, Ui.I_LAYERS, "Density", Ui.compact ? "Compact" : "Comfortable", Ui.FG, v -> density());
+        dn.addView(Ui.chevron(this));
+        gen.addView(dn, Ui.fill());
 
-        // Dictation in the composer (Voice): the language it listens for (on this phone), the
-        // hub's cleanup (GET /v1/voice, PUT /v1/voice/settings; hidden on hubs without them) and
-        // this phone's offline model (Asr).
-        LinearLayout dict = card(col);
-        LinearLayout dl = Ui.cardRow(this, Ui.I_GLOBE, "Dictation language", Voice.langLabel(this), Ui.FG, v -> voiceLang());
-        dl.addView(Ui.chevron(this));
-        dict.addView(dl, Ui.fill());
-        cleanRow = Ui.col(this);
-        cleanRow.setVisibility(View.GONE);
-        dict.addView(cleanRow, Ui.fill());
-        modelRow = Ui.col(this);
-        dict.addView(modelRow, Ui.fill());
-        modelRows();
+        // Dictation in the composer (Voice): the PC's dictionary (GET /v1/voice, PUT
+        // /v1/voice/settings; the section stays hidden on hubs without one).
+        voiceHead = section(col, "Voice");
+        voiceHead.setVisibility(View.GONE);
+        voiceCard = card(col);
+        voiceCard.setVisibility(View.GONE);
         Ui.pool.execute(() -> {
             try {
                 org.json.JSONObject v = hub.call("GET", "/v1/voice", null, 8000);
                 Voice.keepWords(this, v);
                 runOnUiThread(() -> {
-                    cleanup = v.optBoolean("cleanup");
-                    voiceHost = v.optString("host", hub.label());
-                    // Hubs before 0.76 have no dictionary or commands: their rows stay hidden.
+                    // Hubs before 0.76 have no dictionary: the section stays hidden.
                     words = v.has("dictionary") ? v.optJSONArray("dictionary") : null;
-                    commands = v.has("commands") ? v.optBoolean("commands") : null;
-                    cleanRows();
+                    voiceRows();
                 });
             } catch (Exception e) { /* an older hub: no such call */ }
         });
 
         // Notifications (Notes): what the PCs tell this phone about, and when.
+        section(col, "Notifications");
         LinearLayout nt = card(col);
         notifyRows(nt);
+        footnote(col, "They arrive within seconds, and only while you're away from that PC.");
+
+        // This app: its version and update (any PC offers the newest it has), and what keeps
+        // the automatic install from going in.
+        section(col, "App");
+        LinearLayout app = card(col);
+        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", "Checking… · " + myName(this), Ui.FG, v -> checkUpdates());
+        updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
+        updateBtn = Ui.button(this, "Update", true, v -> update());
+        updateBtn.setVisibility(View.GONE);
+        updateRow.addView(updateBtn);
+        Ui.wrapSub(updateRow, 3);
+        app.addView(updateRow, Ui.fill());
+        warnRow = Ui.col(this);
+        app.addView(warnRow, Ui.fill());
+        // Why the last automatic install didn't go in: Android's whole message (INSTALL_FAILED_…).
+        whyRow = Ui.col(this);
+        app.addView(whyRow, Ui.fill());
+        warnRows();
 
         LinearLayout bye = card(col);
         bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
@@ -213,13 +183,63 @@ public class Settings extends Base {
         col.addView(note);
     }
 
-    private LinearLayout acctCard;
+    /** A section's title over its cards. */
+    private TextView section(LinearLayout col, String title) {
+        TextView t = Ui.bold(this, title, 14, Ui.G700);
+        t.setPadding(Ui.dp(18), Ui.dp(10), Ui.dp(18), Ui.dp(8));
+        col.addView(t, Ui.fill());
+        return t;
+    }
 
-    /** Signed in as…, and this workspace: its people (owners invite and remove; anyone leaves
-     *  a workspace that isn't their own) and its PCs. */
+    /** A small note under a card. */
+    private void footnote(LinearLayout col, String s) {
+        TextView t = Ui.text(this, s, 13, Ui.G700);
+        t.setPadding(Ui.dp(18), 0, Ui.dp(18), 0);
+        LinearLayout.LayoutParams lp = Ui.fill();
+        // Sits under the card it explains (cards keep 14 dp below them).
+        lp.setMargins(0, -Ui.dp(6), 0, Ui.dp(16));
+        col.addView(t, lp);
+    }
+
+    /** A round avatar with someone's initials, the size of a card row's icon disc. */
+    private View avatar(String name) {
+        String[] w = name.trim().split("[\\s@._-]+");
+        String ini = w.length == 0 || w[0].isEmpty() ? "?" : (w[0].substring(0, 1) + (w.length > 1 && !w[1].isEmpty() ? w[1].substring(0, 1) : "")).toUpperCase();
+        FrameLayout f = new FrameLayout(this);
+        f.setBackground(Ui.round(Ui.G200, 0, 18));
+        TextView t = Ui.bold(this, ini, 13, Ui.FG);
+        t.setGravity(android.view.Gravity.CENTER);
+        f.addView(t, new FrameLayout.LayoutParams(-1, -1));
+        f.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        return f;
+    }
+
+    /** A trailing tag on a row ("Owner"). */
+    private TextView tag(String s) {
+        TextView t = Ui.text(this, s, 13, Ui.G700);
+        t.setPadding(Ui.dp(10), Ui.dp(3), Ui.dp(10), Ui.dp(3));
+        t.setBackground(Ui.round(Ui.G100, 0, 12));
+        t.setLayoutParams(Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        return t;
+    }
+
+    private LinearLayout wsBox;
+    private boolean hasPeople;
+
+    /** Account: signed in as…, People and memory, invitations to other workspaces. Members:
+     *  this workspace's people (owners invite and remove; anyone leaves a workspace that isn't
+     *  their own), its pending invitations. PCs: the workspace's PCs, who added each. */
     private void workspaceRows() {
-        acctCard.removeAllViews();
-        acctCard.addView(Ui.cardRow(this, Ui.I_USER, Account.name(this), "Signed in with Google · " + Account.email(this), Ui.FG, null), Ui.fill());
+        wsBox.removeAllViews();
+        section(wsBox, "Account");
+        LinearLayout acct = card(wsBox);
+        acct.addView(Ui.cardRow(this, avatar(Account.name(this)), Account.name(this), Account.email(this) + " · Google", Ui.FG, null), Ui.fill());
+        if (hasPeople) {
+            acct.addView(Ui.gap(this));
+            LinearLayout pr = Ui.cardRow(this, Ui.I_BRAIN, "People and memory", "Who is who, and your instructions on other PCs", Ui.FG, v -> people());
+            pr.addView(Ui.chevron(this));
+            acct.addView(pr, Ui.fill());
+        }
         // Invitations to other workspaces: tap to accept or decline.
         org.json.JSONArray pend = Account.invites(this);
         for (int i = 0; i < pend.length(); i++) {
@@ -227,61 +247,75 @@ public class Settings extends Base {
             if (x == null) continue;
             String wsn = x.optString("ws_name").isEmpty() ? "a workspace" : x.optString("ws_name");
             String iid = x.optString("id");
-            acctCard.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, Ui.I_USERS, "Invitation to " + wsn, (x.optString("inviter_name").isEmpty() ? "" : "From " + x.optString("inviter_name") + " · ") + "tap to accept or decline", Ui.FG,
+            acct.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, Ui.I_USERS, "Invitation to " + wsn, (x.optString("inviter_name").isEmpty() ? "" : "From " + x.optString("inviter_name") + " · ") + "tap to accept or decline", Ui.BLUE,
                     v -> Ui.dialog(this).setTitle("Join " + wsn + "?").setMessage("You'd share all of its PCs and chats, on every device. Nothing on this phone or your PCs changes.")
                             .setNegativeButton("Decline", (d, w) -> act(() -> Account.answer(this, iid, false), null))
                             .setPositiveButton("Accept", (d, w) -> act(() -> Account.answer(this, iid, true), "Joined " + wsn)).show());
             r.addView(Ui.chevron(this));
-            acctCard.addView(r, Ui.fill());
+            acct.addView(r, Ui.fill());
         }
         String ws = Account.wsOf(hub);
         JSONObject w = ws == null ? null : Account.workspace(this, ws);
         if (w == null) return;
         boolean owner = "owner".equals(w.optString("role"));
         boolean personal = w.optBoolean("personal");
-        String me = Account.id(this);
-        acctCard.addView(Ui.gap(this));
-        acctCard.addView(Ui.cardRow(this, Ui.I_USERS, w.optString("name"), (owner ? "You own this workspace" : "You're a member") + ": everyone in it controls all of its PCs and chats.", Ui.FG, null), Ui.fill());
-        org.json.JSONArray ms = w.optJSONArray("members");
-        if (ms != null) for (int i = 0; i < ms.length(); i++) {
-            JSONObject m = ms.optJSONObject(i);
-            if (m == null) continue;
+        String me = Account.id(this), wsName = w.optString("name");
+
+        section(wsBox, "Members");
+        LinearLayout people = card(wsBox);
+        // Owners first, then the others, each as the directory lists them.
+        java.util.List<JSONObject> ms = new java.util.ArrayList<>();
+        org.json.JSONArray ma = w.optJSONArray("members");
+        for (int pass = 0; pass < 2; pass++)
+            for (int i = 0; ma != null && i < ma.length(); i++) {
+                JSONObject m = ma.optJSONObject(i);
+                if (m != null && "owner".equals(m.optString("role")) == (pass == 0)) ms.add(m);
+            }
+        for (JSONObject m : ms) {
             String uid = m.optString("id"), nm = m.optString("name").isEmpty() ? m.optString("email") : m.optString("name");
             boolean self = uid.equals(me);
-            String role = "owner".equals(m.optString("role")) ? "Owner" : "Member";
-            View.OnClickListener tap = self && !personal ? v -> confirmRemove(ws, uid, true, w.optString("name"))
-                    : !self && owner ? v -> confirmRemove(ws, uid, false, nm) : null;
-            acctCard.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, null, nm + (self ? " (you)" : ""), role + " · " + m.optString("email"), Ui.FG, tap);
-            if (tap != null) r.addView(Ui.chevron(this));
-            acctCard.addView(r, Ui.fill());
+            View.OnClickListener tap = !self && owner ? v -> confirmRemove(ws, uid, false, nm) : null;
+            if (people.getChildCount() > 0) people.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, avatar(nm), nm + (self ? " (you)" : ""), m.optString("email"), Ui.FG, tap);
+            if ("owner".equals(m.optString("role"))) r.addView(tag("Owner"));
+            people.addView(r, Ui.fill());
         }
         org.json.JSONArray inv = w.optJSONArray("invites");
         if (inv != null) for (int i = 0; i < inv.length(); i++) {
             JSONObject x = inv.optJSONObject(i);
             if (x == null) continue;
-            acctCard.addView(Ui.gap(this));
+            if (people.getChildCount() > 0) people.addView(Ui.gap(this));
             // Same note as the desktop (account.ts inviteNote): nobody can accept it as it is.
             String note = !x.optBoolean("no_account") ? "" : x.optString("near").isEmpty()
                     ? " · no Harbor account uses this address yet"
                     : " · no Harbor account uses this address: did you mean " + x.optString("near") + "?";
-            LinearLayout r = Ui.cardRow(this, null, x.optString("email"), "Invited" + note + " · tap to cancel", Ui.G700, v -> cancelInvite(ws, x.optString("id"), x.optString("email")));
-            acctCard.addView(r, Ui.fill());
+            LinearLayout r = Ui.cardRow(this, Ui.disc(this, Ui.I_CLOCK, 36), x.optString("email"), "Invited" + note, Ui.G700,
+                    owner ? v -> cancelInvite(ws, x.optString("id"), x.optString("email")) : null);
+            Ui.wrapSub(r, 2);
+            people.addView(r, Ui.fill());
         }
         if (owner) {
-            acctCard.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, Ui.I_PLUS, "Invite someone", "By their Google account's email: they'll see it in Harbor", Ui.FG, v -> invite(ws));
-            r.addView(Ui.chevron(this));
-            acctCard.addView(r, Ui.fill());
+            if (people.getChildCount() > 0) people.addView(Ui.gap(this));
+            people.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_PLUS, 36), "Invite someone", null, Ui.FG, v -> invite(ws)), Ui.fill());
         }
+        if (!personal && !owner) {
+            people.addView(Ui.gap(this));
+            people.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_X, 36), "Leave " + wsName, null, Ui.RED, v -> confirmRemove(ws, me, true, wsName)), Ui.fill());
+        }
+        footnote(wsBox, "Everyone in " + wsName + " controls all of its PCs and chats." + (owner ? " Tap someone to remove them." : ""));
+
         org.json.JSONArray pcs = w.optJSONArray("pcs");
-        if (pcs != null) for (int i = 0; i < pcs.length(); i++) {
+        if (pcs == null || pcs.length() == 0) return;
+        section(wsBox, "PCs");
+        LinearLayout pcCard = card(wsBox);
+        for (int i = 0; i < pcs.length(); i++) {
             JSONObject p = pcs.optJSONObject(i);
             if (p == null) continue;
-            acctCard.addView(Ui.gap(this));
-            String by = p.optString("owner_name").isEmpty() ? "" : " · added by " + p.optString("owner_name");
-            acctCard.addView(Ui.cardRow(this, Ui.I_MONITOR, p.optString("name"), "Harbor " + p.optString("version", "?") + by, Ui.FG, null), Ui.fill());
+            if (pcCard.getChildCount() > 0) pcCard.addView(Ui.gap(this));
+            String by = p.optString("owner_name");
+            boolean mine = p.optString("owner").equals(me);
+            pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_MONITOR, 36), p.optString("name"), mine ? "Added by you" : by.isEmpty() ? null : "Added by " + by, Ui.FG, null), Ui.fill());
         }
     }
 
@@ -330,32 +364,30 @@ public class Settings extends Base {
         });
     }
 
-    /** "Update automatically": like the PCs until chosen here (Update.auto). */
-    private void autoRows() {
-        autoRow.removeAllViews();
-        boolean on = Update.auto(this), allowed = getPackageManager().canRequestPackageInstalls();
-        String sub = !on ? "Off: tap Update when a new version is ready"
-                : allowed ? "On: new versions install while the screen is off, and Harbor opens again on the chat you had"
-                : "On, but Android doesn't let Harbor install apps yet: tap to allow it";
-        if (Update.autoChoice(this) == null) sub += " (as your PCs: Settings › Updates there)";
-        LinearLayout r = Ui.cardRow(this, Ui.I_REFRESH, "Update automatically", sub, on && !allowed ? Ui.AMBER : Ui.FG, v -> toggleAuto());
-        Ui.wrapSub(r, 3);
-        // On without the permission: the tap asks for it; a long press turns it off.
-        if (on && !allowed) r.setOnLongClickListener(v -> { Update.setAuto(this, false); autoRows(); return true; });
-        autoRow.addView(r, Ui.fill());
-        // Play Protect refused a background install: new versions come as a notification.
-        if (on && Update.blocked(this)) {
-            autoRow.addView(Ui.gap(this));
+    /** What keeps updates from installing by themselves: Android's "Install unknown apps" not
+     *  allowed yet, or Play Protect refusing background installs. */
+    private void warnRows() {
+        warnRow.removeAllViews();
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            warnRow.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, Ui.I_ALERT, "Allow Harbor to install updates",
+                    "Android doesn't let Harbor install them yet: tap to allow it, once", Ui.AMBER, v -> allowInstalls());
+            Ui.wrapSub(r, 3);
+            r.addView(Ui.chevron(this));
+            warnRow.addView(r, Ui.fill());
+        } else if (Update.blocked(this)) {
+            // Play Protect refused a background install: new versions come as a notification.
+            warnRow.addView(Ui.gap(this));
             LinearLayout pp = Ui.cardRow(this, Ui.I_ALERT, "Play Protect stops background updates",
                     "New versions come as a notification: tap it, then Scan app. To let them install by themselves, turn on "
                             + "Play Store › your picture › Play Protect › ⚙ › Improve harmful app detection, then tap here to try again.",
                     Ui.AMBER, v -> {
                         Update.unblock(this);
-                        autoRows();
+                        warnRows();
                         Ui.toast(this, "The next version tries the background again");
                     });
             Ui.wrapSub(pp, 6);
-            autoRow.addView(pp, Ui.fill());
+            warnRow.addView(pp, Ui.fill());
         }
     }
 
@@ -370,14 +402,6 @@ public class Settings extends Base {
                         .setPositiveButton("Close", null).show());
         Ui.wrapSub(r, 8);
         whyRow.addView(r, Ui.fill());
-    }
-
-    private void toggleAuto() {
-        boolean on = Update.auto(this);
-        if (on && !getPackageManager().canRequestPackageInstalls()) { allowInstalls(); return; }
-        Update.setAuto(this, !on);
-        autoRows();
-        if (!on && !getPackageManager().canRequestPackageInstalls()) allowInstalls();
     }
 
     /** Android's "Install unknown apps" for Harbor: asked once, for every update after it. */
@@ -408,22 +432,10 @@ public class Settings extends Base {
         kinds.addView(Ui.chevron(this));
         nt.addView(kinds, Ui.fill());
         nt.addView(Ui.gap(this));
-        LinearLayout away = Ui.cardRow(this, Ui.I_MONITOR, "Only when I'm away from the PC", Notes.awayOnly(this) ? "On: not while you're using Harbor on that PC" : "Off", Ui.FG, v -> {
-            Notes.prefs(this).edit().putBoolean("away", !Notes.awayOnly(this)).apply();
-            notifyRows(nt);
-        });
-        Ui.wrapSub(away, 3);
-        nt.addView(away, Ui.fill());
-        nt.addView(Ui.gap(this));
         int qa = Notes.quietFrom(this), qb = Notes.quietTo(this);
         LinearLayout quiet = Ui.cardRow(this, Ui.I_MOON, "Quiet hours", qa < 0 ? "Off" : Notes.hm(qa) + " – " + Notes.hm(qb), Ui.FG, v -> pickQuiet(nt));
         quiet.addView(Ui.chevron(this));
         nt.addView(quiet, Ui.fill());
-        nt.addView(Ui.gap(this));
-        boolean inst = Notes.instant(this);
-        nt.addView(Ui.cardRow(this, Ui.I_ACTIVITY, "Instant notifications", inst
-                ? "On: within seconds, with a silent notification while it listens (a little more battery)"
-                : "Off: within about 15 minutes, and within a minute for a while after you leave the app", Ui.FG, v -> toggleInstant(nt)), Ui.fill());
     }
 
     private void pickKinds(LinearLayout nt) {
@@ -453,37 +465,10 @@ public class Settings extends Base {
         }).show();
     }
 
-    private void toggleInstant(LinearLayout nt) {
-        if (Notes.instant(this)) {
-            Notes.prefs(this).edit().putBoolean("instant", false).apply();
-            Listen.apply(this);
-            notifyRows(nt);
-            return;
-        }
-        Ui.dialog(this).setTitle("Instant notifications")
-                .setMessage("Harbor keeps one connection open to your PC, so notifications arrive within seconds even with the app closed. "
-                        + "Android shows a silent notification while it listens, and it uses a little more battery (a wake-up every few minutes).\n\n"
-                        + "If your phone still delays it, set Harbor's battery use to Unrestricted in Android's app settings.\n\n"
-                        + "Without it, notifications come within about 15 minutes (later when the phone sleeps deeply), "
-                        + "and within a minute for a while after you leave the app.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Turn on", (d, w) -> {
-                    Notes.prefs(this).edit().putBoolean("instant", true).apply();
-                    Listen.apply(this);
-                    notifyRows(nt);
-                }).show();
-    }
-
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
         super.onRequestPermissionsResult(code, perms, res);
         if (code == 42) recreate();
-    }
-
-    /** "ab12 cd34 ef56 7890": the first 64 bits, as the PC shows a key. */
-    static String shortFp(String fp) {
-        if (fp == null || fp.length() < 16) return "?";
-        return fp.substring(0, 4) + " " + fp.substring(4, 8) + " " + fp.substring(8, 12) + " " + fp.substring(12, 16);
     }
 
     private Sheet peopleSheet;
@@ -648,40 +633,22 @@ public class Settings extends Base {
         return c;
     }
 
-    private LinearLayout cleanRow, modelRow;
-    private Boolean cleanup, commands;
-    private String voiceHost;
     /** The hub's dictionary (GET /v1/voice `dictionary`, 0.76); null on older hubs. */
     private org.json.JSONArray words;
 
-    /** "Clean up dictation": the hub's setting, mirrored. */
-    private void cleanRows() {
-        cleanRow.removeAllViews();
-        if (cleanup == null) return;
-        cleanRow.setVisibility(View.VISIBLE);
-        cleanRow.addView(Ui.gap(this));
-        LinearLayout r = Ui.cardRow(this, Ui.I_SPARKLES, "Clean up dictation", cleanup
-                ? "On: when you stop, " + voiceHost + " tidies the words (punctuation, filler words)"
-                : "Off: the words go in as heard", Ui.FG, v -> toggleCleanup());
-        Ui.wrapSub(r, 2);
-        cleanRow.addView(r, Ui.fill());
-        if (commands != null) {
-            cleanRow.addView(Ui.gap(this));
-            LinearLayout c = Ui.cardRow(this, Ui.I_SEND, "Voice commands", commands
-                    ? "On: end with \"press enter\" or say \"send\" / \"enviar\" last to send; \"new line\" alone breaks the line"
-                    : "Off: every word goes in as text", Ui.FG, v -> putVoice("commands", !commands));
-            Ui.wrapSub(c, 3);
-            cleanRow.addView(c, Ui.fill());
-        }
-        if (words != null) {
-            cleanRow.addView(Ui.gap(this));
-            int n = words.length();
-            LinearLayout d = Ui.cardRow(this, Ui.I_FILE_TEXT, "Dictionary", n == 0 ? "Names and terms to spell exactly, like SpokPay"
-                    : n + (n == 1 ? " word" : " words") + " · " + termsPreview(), Ui.FG, v -> dictionary());
-            Ui.wrapSub(d, 2);
-            d.addView(Ui.chevron(this));
-            cleanRow.addView(d, Ui.fill());
-        }
+    /** Voice: the dictionary, kept on the PC (hubs from 0.76; else the section stays hidden). */
+    private void voiceRows() {
+        voiceCard.removeAllViews();
+        boolean on = words != null;
+        voiceHead.setVisibility(on ? View.VISIBLE : View.GONE);
+        voiceCard.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (!on) return;
+        int n = words.length();
+        LinearLayout d = Ui.cardRow(this, Ui.I_FILE_TEXT, "Dictionary", n == 0 ? "Names and terms to spell exactly, like SpokPay"
+                : n + (n == 1 ? " word" : " words") + " · " + termsPreview(), Ui.FG, v -> dictionary());
+        Ui.wrapSub(d, 2);
+        d.addView(Ui.chevron(this));
+        voiceCard.addView(d, Ui.fill());
     }
 
     private String termsPreview() {
@@ -700,9 +667,8 @@ public class Settings extends Base {
                 org.json.JSONObject v = hub.call("PUT", "/v1/voice/settings", new org.json.JSONObject().put(key, value));
                 Voice.keepWords(this, v);
                 runOnUiThread(() -> {
-                    if (v.has("commands")) commands = v.optBoolean("commands");
                     if (v.has("dictionary")) words = v.optJSONArray("dictionary");
-                    cleanRows();
+                    voiceRows();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> Ui.toast(this, Hub.why(e)));
@@ -769,52 +735,6 @@ public class Settings extends Base {
         d.show();
     }
 
-    private void toggleCleanup() {
-        boolean want = !cleanup;
-        Ui.pool.execute(() -> {
-            try {
-                hub.call("PUT", "/v1/voice/settings", new org.json.JSONObject().put("cleanup", want));
-                runOnUiThread(() -> { cleanup = want; cleanRows(); });
-            } catch (Exception e) {
-                runOnUiThread(() -> Ui.toast(this, Hub.why(e)));
-            }
-        });
-    }
-
-    /** "Offline dictation": the phone's own model (Asr), refreshed while it downloads. */
-    private void modelRows() {
-        modelRow.removeAllViews();
-        if (!Asr.available()) return;
-        Asr.Model m = Asr.pick(this);
-        modelRow.addView(Ui.gap(this));
-        LinearLayout r = Ui.cardRow(this, Ui.I_DOWNLOAD, "Offline dictation", m.name + " · " + m.mb() + " · " + Asr.state(this), Ui.FG, v -> model());
-        Ui.wrapSub(r, 3);
-        modelRow.addView(r, Ui.fill());
-        if (Asr.progress >= 0 || Asr.wanted(this) && !Asr.ready(this)) modelRow.postDelayed(() -> { if (!isFinishing()) modelRows(); }, 1000);
-    }
-
-    private void model() {
-        Asr.Model m = Asr.pick(this);
-        boolean ready = Asr.ready(this), wanted = Asr.wanted(this);
-        android.app.AlertDialog.Builder d = Ui.dialog(this).setTitle("Offline dictation")
-                .setMessage("When the PC can't transcribe (no network, or it doesn't answer), this phone does it with "
-                        + m.name + " (" + m.mb() + ", picked for this phone's memory). It downloads on Wi-Fi only, and takes memory only while you dictate.")
-                .setNegativeButton("Close", null);
-        if (ready || wanted) d.setPositiveButton(ready ? "Remove" : "Stop download", (x, w) -> { Asr.remove(this); modelRows(); });
-        else d.setPositiveButton("Download on Wi-Fi", (x, w) -> { Asr.want(this); modelRows(); });
-        android.app.AlertDialog dlg = d.show();
-        if (wanted && !ready) dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setTextColor(Ui.RED);
-    }
-
-    private void voiceLang() {
-        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "each phrase in the language you speak it" : "Whisper writes everything in it, translating the rest", true));
-        Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. The PC transcribes what you say, or this phone's offline model when the PC can't.", o, Voice.lang(this), l -> {
-            Ui.prefs(this).edit().putString("voice_lang2", l).apply();
-            recreate();
-        });
-    }
-
     private void followUp() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
         o.add(new Sheet.Option("queue", "Queue", "Your message waits and runs after the current turn finishes.", true));
@@ -849,8 +769,8 @@ public class Settings extends Base {
 
     private void pcs() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        for (Hub h : Hub.all(this)) o.add(new Sheet.Option(h.id, h.label(), h.host + ":" + h.port, true));
-        Sheet.pick(this, "PCs", null, o, hub.id, id -> {
+        for (Hub h : Hub.all(this)) o.add(new Sheet.Option(h.id, h.label(), pcCount(h), true));
+        Sheet.pick(this, "Workspaces", null, o, hub.id, id -> {
             if (id.equals(hub.id)) return;
             Hub.setLast(this, id);
             startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
@@ -859,16 +779,24 @@ public class Settings extends Base {
         });
     }
 
+    /** "2 PCs": a workspace's PCs, from the directory ("" when it isn't known). */
+    private String pcCount(Hub h) {
+        String ws = Account.wsOf(h);
+        JSONObject w = ws == null ? null : Account.workspace(this, ws);
+        int n = w == null || w.optJSONArray("pcs") == null ? 0 : w.optJSONArray("pcs").length();
+        return n == 0 ? "" : n + (n == 1 ? " PC" : " PCs");
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         if (hub == null) return;
-        autoRows(); // back from Android's "Install unknown apps"
+        warnRows(); // back from Android's "Install unknown apps"
         checkUpdates();
         gmailRow(); // back from Google's page or the account sheet
         discordRow();
         // An install that fails after its download (Android or Play Protect refused it).
-        Update.changed = () -> { if (!isFinishing()) { autoRows(); checkUpdates(); } };
+        Update.changed = () -> { if (!isFinishing()) { warnRows(); checkUpdates(); } };
     }
 
     @Override
@@ -887,6 +815,7 @@ public class Settings extends Base {
                     gmailSub.setText(Gmail.summary(r));
                     gmailRowBox.setVisibility(View.VISIBLE);
                     gmailCard.setVisibility(View.VISIBLE);
+                    appsHead.setVisibility(View.VISIBLE);
                     discordGap.setVisibility(View.VISIBLE);
                 });
             } catch (Exception e) { /* an older hub: no such call */ }
@@ -907,6 +836,7 @@ public class Settings extends Base {
                     discordGap.setVisibility(gmailRowBox.getVisibility() == View.VISIBLE ? View.VISIBLE : View.GONE);
                     discordBox.setVisibility(View.VISIBLE);
                     gmailCard.setVisibility(View.VISIBLE);
+                    appsHead.setVisibility(View.VISIBLE);
                 });
             } catch (Exception e) { /* an older hub: no such call */ }
         });
@@ -918,36 +848,25 @@ public class Settings extends Base {
         if (Gmail.result(this, req, res, data)) gmailRow();
     }
 
-    /** The PC's version, and the newest app any PC offers (tap the Update row to ask again). */
+    /** The newest app any PC offers (tap the row to ask again). */
     private void checkUpdates() {
-        updateNote.setText("Checking every PC…");
+        if (!installing) updateNote.setText("Checking every PC… · " + myName(this));
         Ui.pool.execute(() -> {
-            String info, note, version = ""; long code = 0;
-            try {
-                JSONObject st = hub.state();
-                version = st.optString("version");
-                info = "Harbor " + version;
-            } catch (Exception e) {
-                info = Hub.why(e);
-            }
-            // Every PC of every pairing: the one this phone talks to may run an older Harbor.
-            code = Update.check(getApplicationContext(), true);
+            // Every PC of every workspace: the one this phone talks to may offer an older app.
+            long code = Update.check(getApplicationContext(), true);
             long mine = myCode(this);
             String where = Update.bestHub == null ? "" : pcName(Update.bestHub, Update.bestPc);
             String failed = code > mine ? Update.failure(getApplicationContext(), code) : "";
-            note = code <= 0 ? "No PC answered with an app to offer"
+            String note = code <= 0 ? myName(this) + " · no PC answered to check for updates"
                     : code > mine ? "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where)
                         + (!failed.isEmpty() || Update.blocked(getApplicationContext()) ? ". Tap Update to install it"
                         : Update.silent(getApplicationContext(), code) ? ". It installs by itself the next time the screen is off" : "")
-                    : "Up to date (" + name(mine) + ")";
-            final String fi = info, fn = note, fv = version, ff = failed; final long fc = code;
+                    : "Up to date · " + name(mine);
+            final String ff = failed; final long fc = code;
             Ui.main.post(() -> {
                 if (isFinishing()) return;
-                hubVersion.setText(fi);
                 whyRows(ff);
-                if (!installing) updateNote.setText(fn); // else its progress stays on the line
-                badge.setText(fv);
-                badge.setVisibility(fv.isEmpty() ? View.GONE : View.VISIBLE);
+                if (!installing) updateNote.setText(note); // else its progress stays on the line
                 available = fc;
                 updateBtn.setVisibility(fc > myCode(this) ? View.VISIBLE : View.GONE);
             });

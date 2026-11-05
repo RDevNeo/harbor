@@ -44,8 +44,6 @@ final class Notes {
 
     static void set(Context c, String kind, boolean v) { prefs(c).edit().putBoolean("k." + kind, v).apply(); }
 
-    static boolean awayOnly(Context c) { return prefs(c).getBoolean("away", false); }
-    static boolean instant(Context c) { return prefs(c).getBoolean("instant", false); }
     /** Quiet hours as minutes since midnight, or -1 when off. */
     static int quietFrom(Context c) { return prefs(c).getInt("qfrom", -1); }
     static int quietTo(Context c) { return prefs(c).getInt("qto", -1); }
@@ -69,19 +67,19 @@ final class Notes {
     }
 
     /** PC v's answer to a ping: its notes since the last ones taken. Shown unless Harbor is
-     *  in front (the screen shows it then), off in the settings, quiet hours, or (away only)
-     *  the user was at that PC. */
+     *  in front (the screen shows it then), off in the settings, quiet hours, or the user was
+     *  at that PC (only notes from while they were away from it show). */
     static void take(Context c, Hub h, String v, JSONObject r) {
         if (r == null || !r.has("last")) return;
         prefs(c).edit().putLong("s." + h.id + "/" + v, r.optLong("last")).apply();
         JSONArray a = r.optJSONArray("notes");
         if (a == null || a.length() == 0 || Base.resumed > 0 || !allowed(c)) return;
-        boolean quiet = quietNow(c), away = awayOnly(c);
+        boolean quiet = quietNow(c);
         for (int i = 0; i < a.length(); i++) {
             JSONObject n = a.optJSONObject(i);
             if (n == null) continue;
             String kind = n.optString("kind");
-            if (!on(c, kind) || (quiet && !"test".equals(kind)) || (away && !n.optBoolean("away") && !"test".equals(kind))) continue;
+            if (!on(c, kind) || (quiet && !"test".equals(kind)) || (!n.optBoolean("away") && !"test".equals(kind))) continue;
             try { show(c, h, v, n); } catch (Exception ignored) { }
         }
     }

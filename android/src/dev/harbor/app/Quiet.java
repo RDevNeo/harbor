@@ -14,12 +14,6 @@ final class Quiet {
         return resumed <= 0 && (!interactive || locked);
     }
 
-    /** The phone's own choice (null: none, it follows the PCs) and whether any PC updates
-     *  automatically: on or off. */
-    static boolean auto(Boolean mine, boolean pcs) {
-        return mine != null ? mine : pcs;
-    }
-
     static final int NONE = 0, INSTALL = 1, OFFER = 2;
 
     /** What the background does about version `best` (this phone runs `mine`): nothing, install

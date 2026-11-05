@@ -32,8 +32,8 @@ import java.util.Set;
  *  new build (it hasn't seen it): that's the phone's setting, not something an app can skip.
  *  The same key must sign every build, or Android refuses the update. Gets the result too.
  *
- *  Updating automatically (Settings › Update automatically), the background jobs (Alive,
- *  Listen) install the newest app any PC offers while nobody sees Harbor (Quiet), and the next
+ *  Updates are always automatic (no setting): the background jobs (Alive, Listen) install
+ *  the newest app any PC offers while nobody sees Harbor (Quiet), and the next
  *  start opens the chat the user had ({@link #resume}). Also gets MY_PACKAGE_REPLACED. */
 public class Update extends BroadcastReceiver {
     static volatile boolean busy;
@@ -54,42 +54,19 @@ public class Update extends BroadcastReceiver {
         if (!force && System.currentTimeMillis() - checked < 600_000) return bestCode;
         checked = System.currentTimeMillis();
         long best = 0; String bh = null, bp = null;
-        int answered = 0; boolean auto = false;
         for (Hub h : Hub.all(c))
             for (String v : h.endpoints()) {
                 try {
                     JSONObject app = h.callOn(v, "GET", "/v1/app", null);
                     long code = app.optLong("version_code");
                     if (code > best) { best = code; bh = h.id; bp = v; }
-                    answered++;
-                    JSONObject hub = app.optJSONObject("hub");
-                    if (hub != null && hub.optBoolean("auto")) auto = true;
                 } catch (Exception ignored) { } // that PC is away
             }
         bestHub = bh; bestPc = bp; bestCode = best;
-        if (answered > 0) pcsAuto(c, auto);
         return best;
     }
 
     // ---- updating automatically ----
-
-    /** Whether new versions install by themselves. Until it's chosen on this phone it follows
-     *  the PCs: on when one of them updates automatically (Settings › Updates › Automatically
-     *  there; `GET /v1/app` `hub.auto`, hubs from 0.53). */
-    static boolean auto(Context c) { return Quiet.auto(autoChoice(c), Ui.prefs(c).getBoolean("pcs_auto", false)); }
-
-    /** This phone's own choice, null when it follows the PCs. */
-    static Boolean autoChoice(Context c) {
-        SharedPreferences p = Ui.prefs(c);
-        return p.contains("auto_update") ? p.getBoolean("auto_update", false) : null;
-    }
-
-    static void setAuto(Context c, boolean on) { Ui.prefs(c).edit().putBoolean("auto_update", on).apply(); }
-
-    private static void pcsAuto(Context c, boolean on) {
-        SharedPreferences p = Ui.prefs(c);
-        if (p.getBoolean("pcs_auto", false) != on || !p.contains("pcs_auto")) p.edit().putBoolean("pcs_auto", on).apply();
-    }
 
     /** Nobody sees Harbor now (Quiet.now): installing ends its process. */
     static boolean quiet(Context c) {
@@ -98,11 +75,11 @@ public class Update extends BroadcastReceiver {
         return Quiet.now(Base.resumed, pm == null || pm.isInteractive(), km != null && km.isKeyguardLocked());
     }
 
-    /** Updating automatically, and nothing stops it (the sidebar's "Update available" then
+    /** Nothing stops the automatic install (the sidebar's "Update available" then
      *  stays away): Android lets Harbor install, the verifier hasn't refused one, and the
      *  version on offer didn't fail. */
     static boolean silent(Context c, long offered) {
-        if (!auto(c) || !c.getPackageManager().canRequestPackageInstalls() || blocked(c)) return false;
+        if (!c.getPackageManager().canRequestPackageInstalls() || blocked(c)) return false;
         return Ui.prefs(c).getLong("auto_fail_code", 0) != offered;
     }
 
@@ -113,13 +90,13 @@ public class Update extends BroadcastReceiver {
 
     static void unblock(Context c) { Ui.prefs(c).edit().remove("auto_blocked").apply(); }
 
-    /** From the background jobs: installs the newest app any PC offers when updating
-     *  automatically and nobody sees Harbor, or offers it in a notification when the background
+    /** From the background jobs: installs the newest app any PC offers when nobody
+     *  sees Harbor, or offers it in a notification when the background
      *  can't (Quiet.plan). Blocking. Android ends the process when it replaces the app; the
      *  next start opens where the user was. */
     static void background(Context c) {
         try {
-            if (busy || !auto(c) || !c.getPackageManager().canRequestPackageInstalls()) return;
+            if (busy || !c.getPackageManager().canRequestPackageInstalls()) return;
             SharedPreferences p = Ui.prefs(c);
             boolean blocked = blocked(c);
             // Installing needs nobody looking; a notification only needs Harbor out of sight

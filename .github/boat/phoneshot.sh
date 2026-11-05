@@ -192,13 +192,13 @@ open() {
   local what="$1" a=(-W -S -n)
   case "$what" in
     home|chats) a+=("$pkg/.Hubs") ;;
-    chat) a+=("$pkg/.Chat" --es hub rig --es chat "$(gid cards)") ;;
-    chat:lead) a+=("$pkg/.Chat" --es hub rig --es chat "$(gid lead)") ;;
-    chat:composer) a+=("$pkg/.Chat" --es hub rig --es chat "$(gid composer)") ;;
-    chat:*) a+=("$pkg/.Chat" --es hub rig --es chat "${what#chat:}") ;;
-    settings) a+=("$pkg/.Settings" --es hub rig) ;;
-    new) a+=("$pkg/.NewChat" --es hub rig) ;;
-    palette) a+=("$pkg/.Palette" --es hub rig) ;;
+    chat) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "$(gid cards)") ;;
+    chat:lead) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "$(gid lead)") ;;
+    chat:composer) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "$(gid composer)") ;;
+    chat:*) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "${what#chat:}") ;;
+    settings) a+=("$pkg/.Settings" --es hub ws:org_sam) ;;
+    new) a+=("$pkg/.NewChat" --es hub ws:org_sam) ;;
+    palette) a+=("$pkg/.Palette" --es hub ws:org_sam) ;;
     *) echo "unknown screen: $what"; return 2 ;;
   esac
   ad am start "${a[@]}" >/dev/null || { echo "could not open $what"; return 1; }

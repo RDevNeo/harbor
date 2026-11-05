@@ -46,12 +46,6 @@ public class UpdateTest {
                 .startsWith("This version wasn't built for this phone's processor"), "ABI reason in plain words");
         same(Quiet.reason(42, " "), "status 42", "unknown status");
 
-        // The phone's own choice wins; until there is one it follows the PCs.
-        check(Quiet.auto(null, true), "follows the PCs: on");
-        check(!Quiet.auto(null, false), "follows the PCs: off");
-        check(!Quiet.auto(false, true), "off here");
-        check(Quiet.auto(true, false), "on here");
-
         if (failed > 0) { System.err.println(failed + " update checks failed"); System.exit(1); }
         System.out.println("UpdateTest ok");
     }

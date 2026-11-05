@@ -239,18 +239,8 @@ final class Sidebar {
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
         if (Engine.available(a)) list.addView(nav(Ui.I_GLOBE, "Browser", null, Ui.FG, v -> Browser.open(a, "")), Ui.inset());
-        // Which workspace, with several. Which of its PCs answers isn't said here: any of them
-        // does, and the line would come and go with the network (PCs › shows it).
-        String pc = Hub.all(a).size() > 1 ? a.hub.label() : null;
-        list.addView(nav(Ui.I_MONITOR, "PCs", pc, Ui.FG, v -> pcs()), Ui.inset());
-        // The PC answering runs an older Harbor than this app (often a relay while the phone's
-        // own PC is out of reach): newer things won't show until it's updated.
-        String older = olderPc(st);
-        if (older != null) {
-            TextView o = Ui.text(a, older, 12, Ui.AMBER);
-            o.setPadding(Ui.dp(52), 0, Ui.dp(20), Ui.dp(6));
-            list.addView(o, Ui.fill());
-        }
+        // Which workspace and which of its PCs answers aren't said here: PCs › shows them.
+        list.addView(nav(Ui.I_MONITOR, "PCs", null, Ui.FG, v -> pcs()), Ui.inset());
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
         JSONObject app = st.optJSONObject("app");
         long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
@@ -478,20 +468,6 @@ final class Sidebar {
         wrap.setPadding(0, Ui.dp(4), 0, Ui.dp(6));
         wrap.addView(card, Ui.fill());
         return wrap;
-    }
-
-    /** "<PC> runs Harbor 0.28.0, older than this app: update it there", or null. */
-    private String olderPc(JSONObject st) {
-        String v = st == null ? "" : st.optString("version", "");
-        String[] p = v.split("[.\\- ]");
-        if (p.length < 2) return null;
-        try {
-            long pc = Long.parseLong(p[0]) * 1_000_000 + Long.parseLong(p[1]) * 1_000;
-            if (pc >= Hub.appCode() / 1_000 * 1_000) return null;
-        } catch (NumberFormatException e) { return null; }
-        String via = a.hub.viaName();
-        String name = !via.isEmpty() ? via : st.optString("hub_name", a.hub.label());
-        return name + " runs Harbor " + v.split(" ")[0] + ", older than this app: some things won't show until it's updated there.";
     }
 
     /** Busy as the desktop sidebar shows it: its own turn, or (a lead) its sub-agents'

@@ -21,10 +21,8 @@ public class ModelJob extends JobService {
                 again = !Asr.download(this, stop);
             } catch (Exception e) {
                 Log.w(Asr.TAG, "model download: " + e);
-                Asr.failure = e.getMessage();
                 again = true;
             }
-            Asr.progress = -1;
             jobFinished(p, again && Asr.wanted(this));
         });
         return true;

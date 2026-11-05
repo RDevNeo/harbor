@@ -257,12 +257,13 @@ start time in ms, so a restarted hub's ids are higher; a `since` from the future
 note.
 
 The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
-- the 15-minute ping job takes notes; for 8 minutes after the user leaves the app a one-off job
-  long-polls (`wait_ms` 60000), when an answer is most likely; **Instant notifications** (off by
-  default) runs a minimised foreground service that keeps a 240 s long-poll open (seconds instead
-  of minutes, a silent ongoing notification, a little battery);
-- shows nothing while Harbor is in front; filters by the phone's own choices (kinds, quiet hours,
-  only when away), Android channels per kind;
+- a minimised foreground service (`Listen`, always on since 0.147) keeps a 240 s long-poll open
+  (seconds instead of minutes, a silent ongoing notification, a little battery); the 15-minute
+  ping job takes notes too, and when the service isn't running, for 8 minutes after the user
+  leaves the app a one-off job long-polls (`wait_ms` 60000), when an answer is most likely;
+- shows nothing while Harbor is in front; shows only notes from while the user was away from
+  that PC (`away`); filters by the phone's own choices (kinds, quiet hours), Android channels per
+  kind;
 - actions: tap opens the chat (or the PR's `url`), **Reply** (RemoteInput) sends
   `POST /v1/chats/{gid}/send {"text"}` (Android unlocks the phone first, Android 12+), **Continue** sends `POST /v1/chats/{gid}/continue`. Harbor runs agents
   without permission prompts, so there is no approve/deny.
@@ -1842,8 +1843,8 @@ looks at it (window closed, or focused and left alone for a few minutes with not
 it shows no update toast meanwhile and its `/v1/state` `hub_update` stays null while it installs
 or waits to swap in (an Update asked from the phone still shows as before).
 
-The phone's own Settings › Update automatically follows `auto` until it's chosen on the phone
-(on when any PC that answered says true). On, the background jobs (Alive, Listen) look for a
+The phone always updates automatically (since 0.147 there is no setting; before, it followed
+`auto` until chosen on the phone): the background jobs (Alive, Listen) look for a
 newer app (this call, at most every 10 minutes) and install it only while none of Harbor's
 screens is in front and the screen is off or locked: Android always ends an app's process when
 it replaces it. The next start opens the chat the user had (drafts are kept). A version that

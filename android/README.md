@@ -32,7 +32,7 @@ keyboard and rotation; ↗ hands the page to the phone's own browser. It runs in
 own (`:browser`), so its memory goes away when it closes and a crash there leaves the chats
 running. The engine (`android/servo`, `libharborservo.so`) ships for arm64-v8a and armeabi-v7a (phones
 with a 32-bit Android, like the Galaxy A13), about 80 MB of the APK, and needs Android 9;
-elsewhere links open in the phone's browser as before, and Settings › Built-in browser says why.
+elsewhere links open in the phone's browser as before, and the first one each version says why.
 
 ## Build
 

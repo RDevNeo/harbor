@@ -50,8 +50,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  *  hub's last dictionary). Log tag: HarborVoice. */
 final class Voice {
     static final int PERMISSION = 44;
-    /** (code, label): the language setting (Settings › Dictation), kept on this phone. */
-    static final String[][] LANGS = {{"auto", "Detect, mix languages"}, {"en", "English"}, {"pt", "Portuguese"}};
     private static final String TAG = Asr.TAG;
     /** Listening ends after this long without speech. */
     private static final long IDLE_MS = 60_000;
@@ -123,23 +121,15 @@ final class Voice {
 
     boolean active() { return recording || busy; }
 
-    /** `voice_lang2` (0.74.2): a language picked before then forced Whisper into it (translating
-     *  the other one spoken), so every phone starts again from Detect. */
-    static String lang(Context c) { return Ui.prefs(c).getString("voice_lang2", "auto"); }
+    /** The language asked for: none, so each phrase comes out in the language it's spoken in
+     *  (mixing languages works; the setting is gone since 0.147). */
+    private static final String LANG = "";
 
-    static String langLabel(Context c) {
-        String l = lang(c);
-        for (String[] x : LANGS) if (x[0].equals(l)) return x[1];
-        return LANGS[0][1];
-    }
-
-    private static String langParam(Context c) { String l = lang(c); return "auto".equals(l) ? "" : l; }
-
-    /** The hub's dictionary and commands switch (GET /v1/voice), kept for offline phrases. */
+    /** The hub's dictionary (GET /v1/voice), kept for offline phrases. */
     static void keepWords(Context c, JSONObject v) {
         if (v == null || !v.has("dictionary")) return;
         org.json.JSONArray d = v.optJSONArray("dictionary");
-        Ui.prefs(c).edit().putString("voice_dict", d == null ? "[]" : d.toString()).putBoolean("voice_commands", v.optBoolean("commands", true)).apply();
+        Ui.prefs(c).edit().putString("voice_dict", d == null ? "[]" : d.toString()).apply();
     }
 
     private static java.util.List<Words.Entry> dictionary(Context c) {
@@ -340,7 +330,7 @@ final class Voice {
             boolean cold = i != null && !"loaded".equals(i.optString("model_state")) && !warm;
             final long budget = 6000 + samples.length / 16 + (cold ? 20_000 : 0);
             Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on " + host() + "…"); });
-            Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, langParam(a), raw, (int) budget + 2000));
+            Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, LANG, raw, (int) budget + 2000));
             try {
                 JSONObject j = f.get(budget, TimeUnit.MILLISECONDS);
                 text = strip(j.optString("text", ""));
@@ -364,16 +354,15 @@ final class Voice {
         }
         if (text == null) {
             Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on this phone…"); });
-            text = Asr.transcribe(a, samples, langParam(a));
+            text = Asr.transcribe(a, samples, LANG);
             where = "this phone";
             if (text == null) log("offline model not ready");
             else {
                 text = Words.apply(text, dictionary(a));
-                if (Ui.prefs(a).getBoolean("voice_commands", true)) {
-                    String[] c = Words.commands(text);
-                    text = strip(c[0]);
-                    send = "1".equals(c[1]);
-                }
+                // Spoken commands are always on (the PCs' too): "send", "press enter", "new line".
+                String[] c = Words.commands(text);
+                text = strip(c[0]);
+                send = "1".equals(c[1]);
             }
         }
         final String t = text, from = where;
@@ -446,7 +435,7 @@ final class Voice {
         Ui.main.post(() -> { if (g == gen) said.setText("Transcribing on " + host() + "…"); });
         java.util.List<String> got = new java.util.ArrayList<>();
         try {
-            String t = hub.transcribe(wav(all), langParam(a), false, 180_000).optString("text", "").trim();
+            String t = hub.transcribe(wav(all), LANG, false, 180_000).optString("text", "").trim();
             log("whole dictation → \"" + t + "\" on " + host());
             got.add(t);
         } catch (Exception e) {
@@ -454,7 +443,7 @@ final class Voice {
             log("PC failed: " + e);
             Ui.main.post(() -> { if (g == gen) said.setText("Transcribing on this phone…"); });
             for (float[] x : phrases) {
-                String t = Asr.transcribe(a, x, langParam(a));
+                String t = Asr.transcribe(a, x, LANG);
                 if (t == null) { got.clear(); break; }
                 got.add(t);
             }

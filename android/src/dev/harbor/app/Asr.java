@@ -49,9 +49,7 @@ final class Asr {
             this.id = id; this.name = name; this.whisper = whisper; this.repo = repo; this.rev = rev; this.files = files;
         }
 
-        long bytes() { long n = 0; for (String[] f : files) n += Long.parseLong(f[1]); return n; }
 
-        String mb() { return Math.round(bytes() / 1e6) + " MB"; }
     }
 
     static final Model PARAKEET = new Model("parakeet-tdt-0.6b-v3", "Parakeet TDT 0.6B v3", false,
@@ -132,22 +130,9 @@ final class Asr {
         return true;
     }
 
-    /** While ModelJob downloads: 0-100; -1 otherwise. */
-    static volatile int progress = -1;
-    static volatile String failure;
-
     static boolean wanted(Context c) { return Ui.prefs(c).getBoolean("asr_want", false); }
 
-    /** The settings row: "Ready", "Downloading 42%", "Waits for Wi-Fi", "Not downloaded". */
-    static String state(Context c) {
-        if (!available()) return "Not available on this phone";
-        if (ready(c)) return "Ready";
-        if (progress >= 0) return "Downloading " + progress + "%";
-        if (wanted(c)) return failure != null ? "Download failed, retrying on Wi-Fi: " + failure : "Downloads on Wi-Fi";
-        return "Not downloaded";
-    }
-
-    /** Asks for the model (after the first dictation, or Settings › Download): on Wi-Fi. */
+    /** Asks for the model (after the first dictation; no setting since 0.147): on Wi-Fi. */
     static void want(Context c) {
         if (!available() || ready(c)) return;
         Ui.prefs(c).edit().putBoolean("asr_want", true).apply();
@@ -163,17 +148,6 @@ final class Asr {
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED)
                 .setPersisted(true)
                 .build());
-    }
-
-    /** Settings › Remove: frees the space (and stops a download). */
-    static void remove(Context c) {
-        Ui.prefs(c).edit().putBoolean("asr_want", false).apply();
-        JobScheduler js = c.getSystemService(JobScheduler.class);
-        if (js != null) js.cancel(JOB);
-        free();
-        delete(new File(c.getFilesDir(), "asr"));
-        progress = -1;
-        failure = null;
     }
 
     private static void delete(File f) {
@@ -192,11 +166,10 @@ final class Asr {
         // Another model (the phone's memory class changed?) isn't needed anymore.
         File[] others = new File(c.getFilesDir(), "asr").listFiles();
         if (others != null) for (File o : others) if (!o.getName().equals(m.id)) delete(o);
-        long total = m.bytes(), done = 0;
         for (String[] f : m.files) {
             File out = new File(d, f[0]), ok = new File(d, f[0] + ".ok"), part = new File(d, f[0] + ".part");
             long size = Long.parseLong(f[1]);
-            if (ok.isFile() && out.length() == size) { done += size; continue; }
+            if (ok.isFile() && out.length() == size) continue;
             long have = part.isFile() ? part.length() : 0;
             if (have > size) { part.delete(); have = 0; }
             if (have < size) {
@@ -212,7 +185,6 @@ final class Asr {
                     for (int n; (n = in.read(b)) > 0; ) {
                         o.write(b, 0, n);
                         have += n;
-                        progress = (int) ((done + have) * 100 / total);
                         if (stop.get()) return false;
                     }
                 } finally {
@@ -223,10 +195,7 @@ final class Asr {
             if (!f[2].equals(sha256(part))) { part.delete(); throw new IOException("a model file didn't check out"); }
             out.delete();
             if (!part.renameTo(out) || !ok.createNewFile() && !ok.isFile()) throw new IOException("couldn't keep the model");
-            done += size;
         }
-        progress = -1;
-        failure = null;
         Log.i(TAG, "offline model ready: " + m.name);
         return true;
     }

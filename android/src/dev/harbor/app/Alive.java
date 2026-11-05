@@ -42,7 +42,7 @@ public class Alive extends JobService {
 
     /** The user left the app: listen for a few minutes (not with Listen running: it does). */
     static void burst(Context c) {
-        if (Notes.instant(c)) return;
+        if (Listen.listening()) return;
         try {
             JobScheduler js = c.getSystemService(JobScheduler.class);
             if (js != null) js.schedule(new JobInfo.Builder(BURST, new ComponentName(c, Alive.class))
