@@ -238,9 +238,7 @@ final class Sidebar {
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
-        if (Engine.available(a)) list.addView(nav(Ui.I_GLOBE, "Browser", null, Ui.FG, v -> Browser.open(a, "")), Ui.inset());
-        // Which workspace and which of its PCs answers aren't said here: PCs › shows them.
-        list.addView(nav(Ui.I_MONITOR, "PCs", null, Ui.FG, v -> pcs()), Ui.inset());
+        // No Browser row (a link in a chat opens it) and no PCs row (Settings lists the workspace's PCs).
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
         JSONObject app = st.optJSONObject("app");
         long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);

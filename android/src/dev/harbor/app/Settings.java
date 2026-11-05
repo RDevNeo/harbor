@@ -182,17 +182,68 @@ public class Settings extends Base {
         return t;
     }
 
-    /** A round avatar with someone's initials, the size of a card row's icon disc. */
-    private View avatar(String name) {
+    /** Someone's round photo (`image`, a URL) the size of a card row's icon disc, their initials
+     *  until it's here or when they have none. */
+    private View avatar(String name, String image) {
+        return avatar(name, image, 36);
+    }
+
+    private View avatar(String name, String image, int dp) {
         String[] w = name.trim().split("[\\s@._-]+");
         String ini = w.length == 0 || w[0].isEmpty() ? "?" : (w[0].substring(0, 1) + (w.length > 1 && !w[1].isEmpty() ? w[1].substring(0, 1) : "")).toUpperCase();
         FrameLayout f = new FrameLayout(this);
-        f.setBackground(Ui.round(Ui.G200, 0, 18));
-        TextView t = Ui.bold(this, ini, 13, Ui.FG);
+        f.setBackground(Ui.round(Ui.G200, 0, dp / 2));
+        TextView t = Ui.bold(this, ini, dp * 13 / 36, Ui.FG);
         t.setGravity(android.view.Gravity.CENTER);
         f.addView(t, new FrameLayout.LayoutParams(-1, -1));
-        f.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        f.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(dp), Ui.dp(dp)));
+        Avatars.into(f, t, image);
         return f;
+    }
+
+    /** This account's photo: the one it set, else the directory's (Google's). */
+    private String myPhoto() {
+        String me = Account.id(this);
+        JSONObject d = Account.directory(this);
+        org.json.JSONArray ws = d == null ? null : d.optJSONArray("workspaces");
+        // The directory is the newer word (a photo changed on another device arrives with it).
+        for (int i = 0; ws != null && i < ws.length(); i++) {
+            JSONObject w = ws.optJSONObject(i);
+            org.json.JSONArray ms = w == null ? null : w.optJSONArray("members");
+            for (int k = 0; ms != null && k < ms.length(); k++) {
+                JSONObject m = ms.optJSONObject(k);
+                if (m != null && me.equals(m.optString("id")) && m.has("image")) return m.optString("image");
+            }
+        }
+        return Account.image(this);
+    }
+
+    /** Your photo: everyone in your workspaces sees it beside your name. Pick one from the
+     *  phone's photos (cropped square), or remove it for your initials. */
+    private void photoSheet() {
+        Sheet s = new Sheet(this, "Your photo");
+        LinearLayout top = Ui.col(this);
+        top.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+        top.setPadding(0, Ui.dp(4), 0, Ui.dp(14));
+        top.addView(avatar(Account.name(this), myPhoto(), 96));
+        TextView note = Ui.text(this, "Everyone in your workspaces sees it beside your name.", 14, Ui.G700);
+        note.setGravity(android.view.Gravity.CENTER);
+        note.setPadding(Ui.dp(12), Ui.dp(12), Ui.dp(12), 0);
+        top.addView(note, Ui.fill());
+        s.body.addView(top, Ui.fill());
+        LinearLayout c = s.card();
+        c.addView(Ui.cardRow(this, Ui.I_IMAGE, myPhoto().isEmpty() ? "Choose a photo" : "Choose another photo", null, Ui.FG, v -> {
+            s.dismiss();
+            pickImage(uri -> act(() -> Account.putPhoto(this, Avatars.forUpload(this, uri)), "Photo saved"));
+        }), Ui.fill());
+        if (!myPhoto().isEmpty()) {
+            c.addView(Ui.gap(this));
+            c.addView(Ui.cardRow(this, Ui.I_TRASH, "Remove photo", "Your initials instead", Ui.RED, v -> {
+                s.dismiss();
+                act(() -> Account.deletePhoto(this), "Photo removed");
+            }), Ui.fill());
+        }
+        s.show();
     }
 
     /** A trailing tag on a row ("Owner"). */
@@ -214,7 +265,7 @@ public class Settings extends Base {
         wsBox.removeAllViews();
         section(wsBox, "Account");
         LinearLayout acct = card(wsBox);
-        acct.addView(Ui.cardRow(this, avatar(Account.name(this)), Account.name(this), Account.email(this) + " · Google", Ui.FG, null), Ui.fill());
+        acct.addView(Ui.cardRow(this, avatar(Account.name(this), myPhoto()), Account.name(this), Account.email(this) + " · Google", Ui.FG, v -> photoSheet()), Ui.fill());
         if (hasPeople) {
             acct.addView(Ui.gap(this));
             LinearLayout pr = Ui.cardRow(this, Ui.I_BRAIN, "People and memory", "Who is who, and your instructions on other PCs", Ui.FG, v -> people());
@@ -256,9 +307,9 @@ public class Settings extends Base {
         for (JSONObject m : ms) {
             String uid = m.optString("id"), nm = m.optString("name").isEmpty() ? m.optString("email") : m.optString("name");
             boolean self = uid.equals(me);
-            View.OnClickListener tap = !self && owner ? v -> confirmRemove(ws, uid, false, nm) : null;
+            View.OnClickListener tap = self ? v -> photoSheet() : owner ? v -> confirmRemove(ws, uid, false, nm) : null;
             if (people.getChildCount() > 0) people.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, avatar(nm), nm + (self ? " (you)" : ""), m.optString("email"), Ui.FG, tap);
+            LinearLayout r = Ui.cardRow(this, avatar(nm, self ? myPhoto() : m.optString("image")), nm + (self ? " (you)" : ""), m.optString("email"), Ui.FG, tap);
             if ("owner".equals(m.optString("role"))) r.addView(tag("Owner"));
             people.addView(r, Ui.fill());
         }

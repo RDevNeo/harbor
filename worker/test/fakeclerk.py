@@ -45,7 +45,8 @@ def make_user(email, first="", last=""):
     eid = rid("idn")
     uid = rid("user")
     first = first or email.split("@")[0].capitalize()
-    u = {"id": uid, "first_name": first, "last_name": last, "image_url": "https://img.example/" + uid,
+    # Like Clerk: without a photo image_url is a generated mark and has_image is false.
+    u = {"id": uid, "first_name": first, "last_name": last, "image_url": "https://img.example/mark/" + uid, "has_image": False,
          "primary_email_address_id": eid,
          "email_addresses": [{"id": eid, "email_address": email, "verification": {"status": "verified"}}]}
     S["users"][uid] = u
@@ -66,7 +67,8 @@ def member_json(m):
     return {"id": m["id"], "role": m["role"],
             "organization": {"id": o["id"], "name": o["name"], "public_metadata": o["public_metadata"]},
             "public_user_data": {"user_id": u["id"], "first_name": u["first_name"], "last_name": u["last_name"],
-                                 "identifier": uemail(u), "image_url": u["image_url"]}}
+                                 "identifier": uemail(u), "image_url": u["image_url"],
+                                 "has_image": u.get("has_image", False)}}
 
 
 def add_member(org, uid, role):
@@ -104,6 +106,24 @@ def api(method, parts, body):
     if parts[:1] == ["users"] and len(parts) == 2 and method == "GET":
         u = S["users"].get(parts[1])
         return (200, u) if u else err("resource_not_found", "User not found.", 404)
+    if parts[:1] == ["users"] and len(parts) == 3 and parts[2] == "profile_image":
+        u = S["users"].get(parts[1])
+        if not u:
+            return err("resource_not_found", "User not found.", 404)
+        if method == "POST":
+            # multipart/form-data with `file` (read_body keeps its size)
+            if not body.get("_multipart") or body.get("_size", 0) < 4:
+                return err("form_param_missing", "file is required.")
+            S["n"] += 1
+            u["upload"] = "https://img.example/up/%s-%d.jpg" % (u["id"], S["n"])
+        elif method == "DELETE":
+            u.pop("upload", None)
+        else:
+            return err("method_not_allowed", "No.", 405)
+        # Like Clerk: an uploaded image, else the Google account's, else the generated mark.
+        u["image_url"] = u.get("upload") or u.get("google_image") or "https://img.example/mark/" + u["id"]
+        u["has_image"] = bool(u.get("upload") or u.get("google_image"))
+        return 200, u
     if parts[:1] == ["users"] and len(parts) == 3 and parts[2] == "organization_memberships" and method == "GET":
         ms = [member_json(m) for m in S["members"] if m["user_id"] == parts[1]]
         return 200, {"data": ms, "total_count": len(ms)}
@@ -202,6 +222,9 @@ class H(BaseHTTPRequestHandler):
 
     def read_body(self):
         n = int(self.headers.get("content-length") or 0)
+        if "multipart/form-data" in (self.headers.get("content-type") or ""):
+            data = self.rfile.read(n) if n else b""
+            return {"_multipart": True, "_size": len(data), "_file": b'name="file"' in data}
         raw = self.rfile.read(n).decode() if n else ""
         if "json" in (self.headers.get("content-type") or "") or raw.startswith("{"):
             try:
@@ -303,6 +326,15 @@ class H(BaseHTTPRequestHandler):
             if not b.get("email"):
                 return 400, {"error": "email required"}
             return 200, make_user(b["email"], b.get("first_name", ""), b.get("last_name", ""))
+        if what == "google-photo" and m == "POST":
+            # The account's Google photo, as Clerk copies it at an OAuth sign-in.
+            u = user_by_email(b.get("email"))
+            if not u:
+                return 404, {"error": "no such user"}
+            u["google_image"] = "https://img.example/google/" + u["id"]
+            u["image_url"] = u.get("upload") or u["google_image"]
+            u["has_image"] = True
+            return 200, u
         if what == "email-identifier" and m == "POST":
             S["no_email_identifier"] = not b.get("on", True)
             return 200, {"ok": True}

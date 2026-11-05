@@ -230,15 +230,113 @@ async function userMemberships(env, sub) {
 
 async function orgMembers(env, ws) {
   const d = must(await clerk(env, 'GET', `/organizations/${enc2(ws)}/memberships?limit=100`), 'Could not load the workspace members.');
-  return (d.data || []).map((m) => {
+  const list = d.data || [];
+  const off = await photosOff(env, list.map((m) => m.public_user_data?.user_id));
+  return list.map((m) => {
     const u = m.public_user_data || {};
     return {
       id: u.user_id,
       name: fullName(u) || u.identifier || '',
       email: u.identifier || '',
       role: roleOf(m.role),
+      image: off.has(u.user_id) ? '' : photoOf(u),
     };
   });
+}
+
+// ---- profile photos
+
+const MAX_PHOTO = 2 << 20;
+
+/** A person's photo: Clerk's image only when it is a real one (theirs or their Google account's);
+ *  without one Clerk serves a generated mark, and Harbor draws their initials instead. */
+const photoOf = (u) => (u && u.has_image && typeof u.image_url === 'string' && u.image_url.startsWith('https://') ? u.image_url : '');
+
+/** The ones of `ids` who removed their photo in Harbor. */
+async function photosOff(env, ids) {
+  const want = [...new Set((ids || []).filter((i) => typeof i === 'string' && i !== ''))];
+  if (want.length === 0) return new Set();
+  const r = await env.DB.prepare(`SELECT user_id FROM photo_off WHERE user_id IN (${want.map(() => '?').join(',')})`)
+    .bind(...want)
+    .all()
+    .catch(() => ({ results: [] }));
+  return new Set((r.results || []).map((x) => x.user_id));
+}
+
+/** What kind of image these bytes are (by their first bytes, not what the sender says), or ''. */
+function photoType(b) {
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b.length > 12 && String.fromCharCode(...b.slice(0, 4)) === 'RIFF' && String.fromCharCode(...b.slice(8, 12)) === 'WEBP') return 'image/webp';
+  return '';
+}
+
+/** Clerk's profile image of `sub` becomes these bytes; the user Clerk answers with. */
+async function uploadPhoto(env, sub, bytes, type) {
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type }), type === 'image/png' ? 'photo.png' : type === 'image/webp' ? 'photo.webp' : 'photo.jpg');
+  return clerkRaw(`${env.CLERK_API_URL}/users/${enc2(sub)}/profile_image`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${env.CLERK_SECRET_KEY}` },
+    body: form,
+  });
+}
+
+/** Everyone who sees this account's photo: its own devices and the people of its workspaces. */
+async function photoAudience(env, sub) {
+  const ws = await userMemberships(env, sub).catch(() => []);
+  return [sub, ...(await Promise.all(ws.map((w) => memberIds(env, w.id)))).flat()];
+}
+
+/** PUT /v1/me/photo: the body (a JPEG, PNG or WebP of at most 2 MB) is this account's photo,
+ *  for every workspace it's in. */
+async function putPhoto(req, env) {
+  const p = await harborAuth(req, env);
+  if (Number(req.headers.get('content-length') || 0) > MAX_PHOTO) throw new HttpError(413, 'That photo is too large (2 MB at most).');
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (bytes.length > MAX_PHOTO) throw new HttpError(413, 'That photo is too large (2 MB at most).');
+  const type = photoType(bytes);
+  if (!type) throw new HttpError(400, 'That isn\'t a photo Harbor can use: pick a JPEG, PNG or WebP image.');
+  const r = await uploadPhoto(env, p.sub, bytes, type);
+  if (!r.ok) throw clerkFail(r, 'Could not save your photo.');
+  await env.DB.prepare(`DELETE FROM photo_off WHERE user_id=?`).bind(p.sub).run();
+  await tell(env, await photoAudience(env, p.sub), 'directory');
+  return json({ image: photoOf(r.data) || (typeof r.data?.image_url === 'string' ? r.data.image_url : '') });
+}
+
+/** DELETE /v1/me/photo: no photo, initials instead (also when Google has one). */
+async function deletePhoto(req, env) {
+  const p = await harborAuth(req, env);
+  const r = await clerk(env, 'DELETE', `/users/${enc2(p.sub)}/profile_image`);
+  if (!r.ok && r.status !== 404) throw clerkFail(r, 'Could not remove your photo.');
+  await env.DB.prepare(`INSERT INTO photo_off (user_id,at) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET at=excluded.at`).bind(p.sub, now()).run();
+  await tell(env, await photoAudience(env, p.sub), 'directory');
+  return json({ image: '' });
+}
+
+/** A new account from Android's sheet has no photo in Clerk: its Google one, once (best effort),
+ *  unless it was removed in Harbor. Only Google's own image host. */
+async function googlePhoto(env, user, picture) {
+  if (!user || user.has_image || typeof picture !== 'string') return user;
+  let u;
+  try {
+    u = new URL(picture);
+  } catch {
+    return user;
+  }
+  if (u.protocol !== 'https:' || !/(^|\.)googleusercontent\.com$/.test(u.hostname)) return user;
+  if ((await photosOff(env, [user.id])).size > 0) return user;
+  try {
+    const r = await fetch(u.toString(), { redirect: 'error' });
+    if (!r.ok) return user;
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    const type = photoType(bytes);
+    if (!type || bytes.length > MAX_PHOTO) return user;
+    const up = await uploadPhoto(env, user.id, bytes, type);
+    return up.ok && up.data ? up.data : user;
+  } catch {
+    return user;
+  }
 }
 
 const enc2 = encodeURIComponent;
@@ -307,7 +405,7 @@ async function issue(env, sub, dev, fallbackEmail) {
   });
 
   const out = {
-    account: { id: sub, email, name, image: user.image_url || '' },
+    account: { id: sub, email, name, image: (await photosOff(env, [sub])).has(sub) ? '' : photoOf(user) },
     workspaces,
     token,
     exp,
@@ -417,6 +515,7 @@ async function googleSession(req, env) {
     } else throw clerkFail(r, 'Could not create your Harbor account.');
     if (!user) throw new HttpError(503, 'Could not create your Harbor account. Try again.');
   }
+  await googlePhoto(env, user, claims.picture);
   const out = await issue(env, user.id, dev, email);
   out.refresh = await newRefresh(env, dev.fp, user.id);
   return json(out);
@@ -885,6 +984,10 @@ async function route(req, env) {
   if (m === 'POST' && path === '/v1/pcs') return putPc(req, env);
   if (m === 'DELETE' && seg[0] === 'v1' && seg[1] === 'pcs' && seg.length === 3) return deletePc(req, env, seg[2]);
   if (m === 'DELETE' && seg[0] === 'v1' && seg[1] === 'devices' && seg.length === 3) return deleteDevice(req, env, seg[2]);
+  if (path === '/v1/me/photo') {
+    if (m === 'PUT') return putPhoto(req, env);
+    if (m === 'DELETE') return deletePhoto(req, env);
+  }
   if (path === '/v1/settings') {
     if (m === 'GET') return getSettings(req, env);
     if (m === 'PUT') return putSettings(req, env);

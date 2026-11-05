@@ -31,7 +31,10 @@ export async function blockTabs(store: Store, refresh: () => void, copy: (text: 
   const myFp = () => loadOrCreate(stateDir()).fp;
   const devices = devicesHost(store, refresh, myFp, copy, runtime);
   const online = () => new Set([...(runtime?.hub.mesh.peers.values() ?? [])].filter((p) => p.online).map((p) => p.fp));
-  tabs.set("account", accountTab({ account, myFp, onlineFps: online, openUrl: () => {}, now, devices }));
+  // People's photos load in the background (sharp only once one is asked for); the page draws again when one came.
+  const { photos } = await import("@harbor/media");
+  const photo = photos.source(() => refresh());
+  tabs.set("account", accountTab({ account, myFp, onlineFps: online, openUrl: () => {}, now, devices, photo }));
   const chatLabel = (id: number): string => {
     const c = store.chats().find((x) => x.id === id);
     return c === undefined ? "" : c.role === "sub" ? `${c.name} · ${c.title}` : c.title;

@@ -1,6 +1,6 @@
 import { agoShort, inviteNote, short as keyShort, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { ICONS } from "../icons.ts";
-import { badge, btn, copy, field, form, gap, list, row, rows, status, title, type Block, type BlockRow, type BlockTab } from "./settings-blocks.ts";
+import { badge, btn, copy, field, form, gap, list, row, rows, status, title, type Block, type BlockImage, type BlockRow, type BlockTab } from "./settings-blocks.ts";
 import { devicesPressed, devicesSubmitted, newDevicesState, otherDevices, pcRow, phoneRow, renameForm, thisPcRow, type DevicesHost, type DevicesState } from "./settings-devices.ts";
 
 /** The part of `AccountService` this tab reads and presses. */
@@ -33,6 +33,8 @@ export interface AccountHost {
   now(): number;
   /** The machines shown under each person (this PC, the peer PCs, the phones); none in a bare rig. */
   devices?: DevicesHost;
+  /** A person's photo by its URL, round (null until it's here, or none): in their row's icon place. */
+  photo?: (url: string) => BlockImage | null;
 }
 
 const SIGN_OUT_TIP = "Signs this PC out. It stays in its workspace, so its people's phones and PCs keep reaching it.";
@@ -125,7 +127,10 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
     const buttonsOf = [];
     if (owner && !self) buttonsOf.push(btn(`remove:${m.id}`, "Remove", { variant: "destructive", enabled: !st.busy }));
     if (self && !here.personal) buttonsOf.push(btn(`remove:${m.id}`, "Leave", { variant: "destructive", enabled: !st.busy }));
-    const card: BlockRow[] = [row(`${m.name === "" ? m.email : m.name}${self ? " (you)" : ""}`, { icon: ICONS.USER_ROUND, line: m.email, side: [roleBadge(m.role === "owner")], buttons: buttonsOf })];
+    const photo = host.photo?.(m.image ?? "") ?? null;
+    const card: BlockRow[] = [
+      row(`${m.name === "" ? m.email : m.name}${self ? " (you)" : ""}`, { icon: ICONS.USER_ROUND, line: m.email, side: [roleBadge(m.role === "owner")], buttons: buttonsOf, ...(photo ? { photo, has_photo: true } : {}) }),
+    ];
     if (d) {
       if (m.id === myOwner) card.push(thisPcRow(d, ds));
       for (const pc of peers.filter((p) => p.owner === m.id)) card.push(pcRow(d, pc));

@@ -69,6 +69,8 @@ export struct BlockRow {
     well: bool,
     lead: length,
     mark: string,
+    photo: image,
+    has-photo: bool,
 }
 
 export struct Block {
@@ -386,7 +388,15 @@ component ListLine inherits VerticalLayout {
                 min-height: max(root.r.lead, 18px);
                 spacing: 6px;
                 alignment: start;
-                if root.r.icon != "": Glyph {
+                if root.r.has-photo: VerticalLayout {
+                    alignment: center;
+                    Image {
+                        width: 22px;
+                        height: 22px;
+                        source: root.r.photo;
+                    }
+                }
+                if root.r.icon != "" && !root.r.has-photo: Glyph {
                     icon: root.r.icon;
                     size: 14px;
                     color: Theme.fg;

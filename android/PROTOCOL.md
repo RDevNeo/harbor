@@ -128,7 +128,7 @@ phone): then `403`/`401`. A PC in no workspace, or in another one, takes nobody 
 4. Every 2 minutes: `GET /v1/directory` →
    ```json
    {"at": 1730000000000, "workspaces": [{"id", "name", "role", "personal",
-     "members": [{"id", "name", "email", "role"}],
+     "members": [{"id", "name", "email", "role", "image"}],
      "pcs": [{"fp", "id", "name", "addrs", "owner", "owner_name", "seen", "version"}],
      "devices": ["<fp>", …], "invites": [{"id", "email", "at"}]}],
     "peers": [{"fp", "id", "name", "addrs", "owner", "owner_name", "seen", "version", "via": ["<workspace name>"]}]}
@@ -140,12 +140,19 @@ phone): then `403`/`401`. A PC in no workspace, or in another one, takes nobody 
    Pending invitations may include `no_account: true` when no account has that verified address,
    and `near` with a suggested address of someone already in the owner's workspaces. An absent
    flag also covers an unavailable account lookup; invitations remain valid for future sign-ins.
+   `image` (from 0.148, also the session's `account.image`): the person's photo, an HTTPS URL
+   (Clerk's), or `""` for none: their own, else their Google account's, never Clerk's generated
+   mark. Apps draw initials (phone) or the person icon (desktop) without one, and keep fetched
+   photos by URL (a new photo is a new URL).
 
 Also on the service (all with the Harbor token): `DELETE /v1/pcs/{fp}` (a member takes a PC
 out), `DELETE /v1/devices/{fp}` (sign a device out: its own account, or an owner of a workspace
 its account is in), `POST /v1/workspaces/{ws}/invites {"email"}`,
 `DELETE /v1/workspaces/{ws}/invites/{id}` (owners; cancelling deletes it), `DELETE /v1/workspaces/{ws}/members/{user}`
-(owners remove others; anyone leaves a workspace that isn't their own), and settings:
+(owners remove others; anyone leaves a workspace that isn't their own), `PUT /v1/me/photo` (the
+body, a JPEG, PNG or WebP of at most 2 MB, becomes the account's photo; `{"image"}`) and
+`DELETE /v1/me/photo` (initials again, also where Google has a photo; a photo put later shows
+again), and settings:
 `GET /v1/settings` / `PUT /v1/settings {"set": {"<kv key>": {"v": "<value>", "at": <ms>}}}` →
 `{"settings": {…}, "at"}`, newest `at` per key wins (`src/settingsync.rs` lists which keys
 follow the account; machine-bound ones never travel). Errors are `{"error"}`; `401` with

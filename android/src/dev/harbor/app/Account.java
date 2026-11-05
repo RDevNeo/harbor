@@ -107,6 +107,8 @@ final class Account {
     static String name(Context c) { JSONObject s = state(c); String n = s.optString("name"); return n.isEmpty() ? s.optString("email") : n; }
     static String email(Context c) { return state(c).optString("email"); }
     static String id(Context c) { return state(c).optString("id"); }
+    /** The account's photo (an HTTPS URL), "" for none: its initials then. */
+    static String image(Context c) { return state(c).optString("image"); }
 
     /** The Harbor token every call to a PC carries ("" when there's none). */
     static String token(Context c) {
@@ -562,11 +564,32 @@ final class Account {
         if (user.equals(id(c))) renew(c, true); else directory(c, true);
     }
 
+    /** PUT /v1/me/photo: this JPEG becomes the account's photo, for everyone in its workspaces. */
+    static void putPhoto(Context c, byte[] jpeg) throws IOException {
+        JSONObject r = send("PUT", service() + "/v1/me/photo", token(c), "image/jpeg", jpeg);
+        String url = r.optString("image");
+        // Shown at once from these bytes, not downloaded again.
+        if (!url.isEmpty()) Avatars.put(c, url, jpeg);
+        edit(c, j -> j.put("image", url));
+        directory(c, true);
+    }
+
+    /** DELETE /v1/me/photo: initials again, also where Google has a photo. */
+    static void deletePhoto(Context c) throws IOException {
+        http("DELETE", service() + "/v1/me/photo", token(c), null, null);
+        edit(c, j -> j.put("image", ""));
+        directory(c, true);
+    }
+
     // ---- HTTPS ----
 
     /** One call to Clerk or the service (the platform's TLS and CAs). Errors: ApiError with
      *  the answer's "error" (or Clerk's error_description). */
     static JSONObject http(String method, String url, String bearer, String ctype, String body) throws IOException {
+        return send(method, url, bearer, ctype, body == null ? null : body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    static JSONObject send(String method, String url, String bearer, String ctype, byte[] b) throws IOException {
         HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
         try {
             h.setConnectTimeout(15_000);
@@ -575,8 +598,7 @@ final class Account {
             h.setRequestMethod(method);
             h.setRequestProperty("Accept", "application/json");
             if (bearer != null) h.setRequestProperty("Authorization", "Bearer " + bearer);
-            if (body != null) {
-                byte[] b = body.getBytes(StandardCharsets.UTF_8);
+            if (b != null) {
                 h.setDoOutput(true);
                 h.setRequestProperty("Content-Type", ctype);
                 h.setFixedLengthStreamingMode(b.length);

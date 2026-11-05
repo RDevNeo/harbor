@@ -15,6 +15,7 @@ Wire format: see "Accounts" in `android/PROTOCOL.md`.
 - `POST /v1/pcs`, `DELETE /v1/pcs/{fp}`: register / remove a PC
 - `DELETE /v1/devices/{fp}`: remove a device
 - `GET|PUT /v1/settings`: per-account settings, newest write per key wins
+- `PUT|DELETE /v1/me/photo`: the account's photo (a JPEG, PNG or WebP of at most 2 MB, stored as Clerk's profile image), or none (D1 `photo_off`: Google's isn't shown again either); members' photos are `image` in the directory
 - `POST /v1/workspaces/{ws}/invites`, `DELETE .../invites/{id}`, `DELETE .../members/{user}`
 - `GET /oauth/android`: bounces the OAuth redirect to `harbor://oauth`
 - `GET /v1/invites`, `POST /v1/invites/{id}/accept|decline`: the signed-in account's pending invitations

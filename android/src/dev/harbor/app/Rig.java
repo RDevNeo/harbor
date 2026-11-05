@@ -18,8 +18,8 @@ final class Rig {
     static JSONObject account() {
         try {
             JSONArray members = new JSONArray()
-                    .put(member("rig", "Sam Rivera", "sam@example.com", "owner"))
-                    .put(member("u_alex", "Alex Kim", "alex@example.com", "member"))
+                    .put(member("rig", "Sam Rivera", "sam@example.com", "owner").put("image", PHOTO + "sam"))
+                    .put(member("u_alex", "Alex Kim", "alex@example.com", "member").put("image", PHOTO + "alex"))
                     .put(member("u_jordan", "Jordan Lee", "jordan@example.com", "member"));
             JSONArray pcs = new JSONArray()
                     .put(new JSONObject().put("id", "pc:rig-pc").put("name", "rig-pc").put("owner", "rig").put("owner_name", "Sam Rivera").put("version", "0.109.0.ts"))
@@ -28,7 +28,7 @@ final class Rig {
                     .put("members", members).put("pcs", pcs)
                     .put("invites", new JSONArray().put(new JSONObject().put("id", "inv_out").put("email", "taylor@example.com")));
             JSONObject dir = new JSONObject().put("at", System.currentTimeMillis()).put("workspaces", new JSONArray().put(ws));
-            return new JSONObject().put("id", "rig").put("name", "Sam Rivera").put("email", "sam@example.com")
+            return new JSONObject().put("id", "rig").put("name", "Sam Rivera").put("email", "sam@example.com").put("image", PHOTO + "sam")
                     .put("token", Config.RIG_TOKEN).put("token_at", System.currentTimeMillis()).put("exp", 4102444800L)
                     .put("dir", dir);
         } catch (JSONException e) {
@@ -38,6 +38,29 @@ final class Rig {
 
     private static JSONObject member(String id, String name, String email, String role) throws JSONException {
         return new JSONObject().put("id", id).put("name", name).put("email", email).put("role", role);
+    }
+
+    /** Made-up photos (Jordan has none: initials). Avatars asks photo() instead of the network. */
+    private static final String PHOTO = "https://photos.example/";
+
+    /** A placeholder "photo" for a rig URL: a soft two-colour background and a figure, as a PNG. */
+    static byte[] photo(String url) {
+        if (!url.startsWith(PHOTO)) return null;
+        String who = url.substring(PHOTO.length());
+        int a = who.equals("sam") ? 0xFF3B6EA8 : 0xFF8A5A9E, b = who.equals("sam") ? 0xFF7FB3D5 : 0xFFE3A06B;
+        int n = 256;
+        android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(n, n, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas c = new android.graphics.Canvas(bm);
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        p.setShader(new android.graphics.LinearGradient(0, 0, n, n, a, b, android.graphics.Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, n, n, p);
+        p.setShader(null);
+        p.setColor(0xE6F4EDE4);
+        c.drawCircle(n / 2f, n * 0.40f, n * 0.17f, p);
+        c.drawOval(new android.graphics.RectF(n * 0.18f, n * 0.62f, n * 0.82f, n * 1.10f), p);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        bm.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+        return out.toByteArray();
     }
 
     /** The hub's id: the workspace's, as the directory names hubs. */

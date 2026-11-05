@@ -45,12 +45,12 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(NoRedirect)
 
 
-def http(method, url, body=None, token=None, form=None, raw=None):
+def http(method, url, body=None, token=None, form=None, raw=None, ctype="application/json"):
     data, headers = None, {}
     if form is not None:
         data, headers["content-type"] = urlencode(form).encode(), "application/x-www-form-urlencoded"
     elif raw is not None:
-        data, headers["content-type"] = raw, "application/json"
+        data, headers["content-type"] = raw, ctype
     elif body is not None:
         data, headers["content-type"] = json.dumps(body).encode(), "application/json"
     if token:
@@ -350,6 +350,32 @@ def main():
           and w0["pcs"][0]["id"] == "fp:abcd" and w0["pcs"][0]["owner_name"] == "Sam Rig" and w0["pcs"][0]["version"] == "0.80.0" and w0["personal"], js)
     check("directory: devices of members", {pc.fp, phone.fp} <= set(w0.get("devices", [])), w0.get("devices"))
     check("directory: invites list for owner (empty)", w0.get("invites") == [])
+    check("directory: no photo is an empty image (not Clerk's generated mark)", w0["members"][0].get("image") == "", w0["members"][0])
+
+    # Photos: Google's by default, one of the person's own, removed (initials, even with Google's).
+    http("POST", CLERK + "/test/google-photo", {"email": "sam@example.com"})
+    st, js, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
+    check("photo: the Google account's by default", js["workspaces"][0]["members"][0]["image"].startswith("https://img.example/google/"), js)
+    jpeg = b"\xff\xd8\xff\xe0" + b"\0" * 64
+    st, js, _, _ = http("PUT", W + "/v1/me/photo", raw=jpeg, ctype="image/jpeg", token=sam_phone)
+    check("photo: put a JPEG", st == 200 and js["image"].startswith("https://img.example/up/"), js)
+    st, js, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
+    check("photo: the directory has it", js["workspaces"][0]["members"][0]["image"].startswith("https://img.example/up/"), js)
+    st, js, _, _ = http("PUT", W + "/v1/me/photo", raw=b"GIF89a" + b"\0" * 64, ctype="image/jpeg", token=sam_phone)
+    check("photo: not a JPEG, PNG or WebP is refused", st == 400 and "JPEG" in js["error"], js)
+    st, js, _, _ = http("PUT", W + "/v1/me/photo", raw=jpeg + b"\0" * (2 << 20), ctype="image/jpeg", token=sam_phone)
+    check("photo: over 2 MB is refused", st == 413, js)
+    st, js, _, _ = http("PUT", W + "/v1/me/photo", raw=jpeg, ctype="image/jpeg")
+    check("photo: needs a Harbor token", st == 401, js)
+    st, js, _, _ = http("DELETE", W + "/v1/me/photo", token=sam_phone)
+    check("photo: delete", st == 200 and js == {"image": ""}, js)
+    st, js, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
+    check("photo: removed stays removed though Google has one", js["workspaces"][0]["members"][0]["image"] == "", js)
+    st, js, _, _ = session(ct, pc)
+    check("photo: the session's account has none either", js["account"]["image"] == "", js["account"])
+    st, js, _, _ = http("PUT", W + "/v1/me/photo", raw=jpeg, ctype="image/jpeg", token=sam_phone)
+    st, js, _, _ = session(ct, pc)
+    check("photo: a new one shows again", js["account"]["image"].startswith("https://img.example/up/"), js["account"])
     st, js, _, _ = session(ct, pc)
     check("session reports pc workspace for a registered fp",
           js.get("pc") == {"ws": sam_ws, "ws_name": "Sam's workspace", "owner": "Sam Rig", "member": True}, js.get("pc"))

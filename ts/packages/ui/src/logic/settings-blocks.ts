@@ -70,6 +70,9 @@ export interface BlockRow {
   lead: number;
   /** A big glyph in a 32px square before the lines (a device's). */
   mark: string;
+  /** A person's round photo in the icon's place, when `has_photo`. */
+  photo: BlockImage;
+  has_photo: boolean;
 }
 
 export interface Block {
@@ -141,6 +144,8 @@ export const row = (title: string, p: Partial<BlockRow> = {}): BlockRow => ({
   well: false,
   lead: 0,
   mark: "",
+  photo: noImage(),
+  has_photo: false,
   ...p,
 });
 

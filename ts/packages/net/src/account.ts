@@ -56,6 +56,8 @@ export interface AccountMember {
   name: string;
   email: string;
   role: AccountRole;
+  /** Their photo (an HTTPS URL); none: "" or missing. */
+  image?: string;
 }
 
 /** A PC of a workspace as the directory lists it. */
@@ -254,8 +256,11 @@ function parseWorkspace(v: unknown): AccountWorkspace {
 
 function parseMember(v: unknown): AccountMember {
   const o = need(v);
-  return { id: str(o, "id", true), name: str(o, "name"), email: str(o, "email"), role: roleOf(str(o, "role")) };
+  return { id: str(o, "id", true), name: str(o, "name"), email: str(o, "email"), role: roleOf(str(o, "role")), image: photoUrl(str(o, "image")) };
 }
+
+/** Only an HTTPS address is a photo. */
+const photoUrl = (s: string): string => (s.startsWith("https://") && s.length <= 2048 ? s : "");
 
 function parsePc(v: unknown): AccountPc {
   const o = need(v);

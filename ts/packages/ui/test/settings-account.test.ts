@@ -323,3 +323,25 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     expect(titles(b)).toEqual(["This PC", "Other devices"]);
   });
 });
+
+describe("people's photos", () => {
+  test("a member with a photo shows it in the icon's place; one without, or before it came, keeps the icon", () => {
+    const f = signedIn("owner");
+    const home = f.dir.workspaces[0]!;
+    home.members[0] = { ...home.members[0]!, image: "https://img.example/ana.jpg" };
+    const px = { width: 1, height: 1, data: new Uint8Array([1, 2, 3, 255]) };
+    const asked: string[] = [];
+    const photo = (url: string) => {
+      asked.push(url);
+      return url === "https://img.example/ana.jpg" ? px : null;
+    };
+    const people = peopleCards(accountBlocks({ ...host(f), photo }));
+    expect(people[0]?.rows[0]?.has_photo).toBe(true);
+    expect(people[0]?.rows[0]?.photo).toBe(px);
+    expect(people[1]?.rows[0]?.has_photo).toBe(false);
+    expect(people[1]?.rows[0]?.icon).not.toBe("");
+    expect(asked).toEqual(["https://img.example/ana.jpg", ""]);
+    // No photo source (a bare rig): icons only.
+    expect(peopleCards(accountBlocks(host(f)))[0]?.rows[0]?.has_photo).toBe(false);
+  });
+});
