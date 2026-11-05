@@ -5,6 +5,23 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.147.0] - 2026-11-04
+
+### Changed
+- Phone Settings is shorter and in titled sections: the workspace (account, members with an Owner
+  tag, invites, its PCs and who added each), Apps, Appearance (was General), Voice (the dictionary),
+  Notifications, App and Sign out. The PC address, encryption, "Harbor on the PC", the built-in
+  browser switch and the footnotes are gone, and so is the drawer's "older Harbor" warning.
+- The phone's settings that became fixed values: updates always install by themselves, and one
+  "Harbor for Android" row shows the version, asks Android for the install permission when needed
+  (then installs) and explains Play Protect; notifications always arrive within seconds, also while
+  you're at the PC; a running agent is always steered (holding send still queues); dictation is
+  always the PC's (language detected, voice commands on).
+- Phone dictation no longer has an on-phone model: every phrase goes to a PC's transcription, a
+  model downloaded before is deleted, and with no PC answering it says so.
+- "Clean up dictation" is one setting for the whole workspace: changed on any PC (Settings › Voice ›
+  For the whole workspace), every PC and phone follows within seconds; the latest change wins.
+
 ## [0.146.2] - 2026-11-04
 
 ### Fixed
