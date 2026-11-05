@@ -1,9 +1,12 @@
 import type { Store } from "./store.ts";
 
-export type Class = "account" | "device";
+/** account: synced through the account service to the account's PCs; device: stays on this PC;
+ *  workspace: the same on every PC of the workspace, passed between linked PCs (wssettings.ts). */
+export type Class = "account" | "device" | "workspace";
 
 const A: Class = "account";
 const D: Class = "device";
+const W: Class = "workspace";
 
 /** Every kv key, and keys starting with each prefix (ending in `:` or `_`). */
 export const KEYS: readonly (readonly [string, Class])[] = [
@@ -26,8 +29,10 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["gh_agent_account", A],
   ["ctx_send", A],
   ["voice_input", D],
-  // Per PC, never synced: an account value from before 0.128 must not turn the cleanup back on.
-  ["voice_cleanup", D],
+  // One value for the whole workspace (0.147): the newest change on any of its PCs wins.
+  ["voice_cleanup", W],
+  // When each workspace setting last changed (wssettings.ts): {key: ms}.
+  ["ws_settings_at", D],
   // The PC that transcribes this one's dictations (mesh id, "" = automatic).
   ["voice_host", D],
   ["voice_model", A],

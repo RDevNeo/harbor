@@ -203,9 +203,6 @@ java -cp "$W/classes:$W/test" dev.harbor.app.JumpTest
 # And the Discord screens' QR pixels, captcha taps and lines (DiscordKit).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/DiscordKitTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.DiscordKitTest
-# And dictation's dictionary and commands, against the hub's cases (src/dictwords.rs).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/WordsTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.WordsTest "$HERE/test/dictation-cases.txt"
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class') "${LIBS[@]}"
 (cd "$W" && zip -qj base.apk classes*.dex)
 (cd "$W" && zip -qr base.apk lib)

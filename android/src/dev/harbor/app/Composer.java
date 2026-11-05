@@ -51,7 +51,7 @@ final class Composer {
     private boolean running, canSteer, held, editing, history;
     /** The draft mentions messages (Chat.mentions): it isn't empty then, as with files. */
     java.util.function.BooleanSupplier hasMentions;
-    /** What the send button does while the agent works: "steer" or "queue" (Chat.followUp). */
+    /** What the send button does while the agent works: "steer" or "queue" (Chat.FOLLOW_UP). */
     private String mode = "queue";
     /** The usual placeholder; the hub's suggested next message and its Use chip (Suggest.java). */
     final String hint;

@@ -67,8 +67,8 @@ final class Notes {
     }
 
     /** PC v's answer to a ping: its notes since the last ones taken. Shown unless Harbor is
-     *  in front (the screen shows it then), off in the settings, quiet hours, or the user was
-     *  at that PC (only notes from while they were away from it show). */
+     *  in front (the screen shows it then), off in the settings, or quiet hours. Whether the
+     *  user was at that PC doesn't matter (since 0.147): the phone always gets them. */
     static void take(Context c, Hub h, String v, JSONObject r) {
         if (r == null || !r.has("last")) return;
         prefs(c).edit().putLong("s." + h.id + "/" + v, r.optLong("last")).apply();
@@ -79,7 +79,7 @@ final class Notes {
             JSONObject n = a.optJSONObject(i);
             if (n == null) continue;
             String kind = n.optString("kind");
-            if (!on(c, kind) || (quiet && !"test".equals(kind)) || (!n.optBoolean("away") && !"test".equals(kind))) continue;
+            if (!on(c, kind) || (quiet && !"test".equals(kind))) continue;
             try { show(c, h, v, n); } catch (Exception ignored) { }
         }
     }

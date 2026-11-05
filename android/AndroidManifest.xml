@@ -80,9 +80,6 @@
         <!-- Tells the PCs every 15 minutes that this phone is reachable (Devices: online) -->
         <service android:name=".Alive" android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
-        <!-- Downloads dictation's offline model on Wi-Fi, resuming across runs (Asr) -->
-        <service android:name=".ModelJob" android:exported="false"
-            android:permission="android.permission.BIND_JOB_SERVICE" />
         <!-- A notification's Reply and Continue (Notes) -->
         <receiver android:name=".NoteAction" android:exported="false" />
         <service android:name=".Listen" android:exported="false" android:foregroundServiceType="specialUse">

@@ -261,9 +261,9 @@ The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
   (seconds instead of minutes, a silent ongoing notification, a little battery); the 15-minute
   ping job takes notes too, and when the service isn't running, for 8 minutes after the user
   leaves the app a one-off job long-polls (`wait_ms` 60000), when an answer is most likely;
-- shows nothing while Harbor is in front; shows only notes from while the user was away from
-  that PC (`away`); filters by the phone's own choices (kinds, quiet hours), Android channels per
-  kind;
+- shows nothing while Harbor is in front; filters by the phone's own choices (kinds, quiet
+  hours), not by `away` (the phone gets notes also while the user is at that PC, since 0.147),
+  Android channels per kind;
 - actions: tap opens the chat (or the PR's `url`), **Reply** (RemoteInput) sends
   `POST /v1/chats/{gid}/send {"text"}` (Android unlocks the phone first, Android 12+), **Continue** sends `POST /v1/chats/{gid}/continue`. Harbor runs agents
   without permission prompts, so there is no approve/deny.
@@ -539,7 +539,8 @@ the desktop shows nothing:
 - `can_steer` (0.71): whether a message sent now can steer the running turn (Claude, Codex);
   false or absent: the send button queues. `held` (0.71): a Stop holds the queue; the empty
   composer's button is ▶ Resume queue. `follow_up`: the PC's own Enter setting (`steer` |
-  `queue`); the phone keeps its own (Settings › While the agent is running, default Steer).
+  `queue`); the phone always steers (since 0.147 it has no setting; a long press on send queues
+  one message).
 - `working: {since_ms, subagents, text}`: the spinner line while the chat's own turn runs;
   show the time since `since_ms` after `text` ("Working…  ·  1 sub-agent running").
 - `waiting: {agents: [{id, name, title, since_ms}], queued}`: a lead whose own turn is done while
@@ -1149,8 +1150,8 @@ takes the rest (the folder isn't copied twice).
 
 Dictation from the app's mic. Since 0.55 the phone records itself (no Android `SpeechRecognizer`),
 cuts the recording into phrases with Silero VAD (sherpa-onnx) and sends each phrase here as it
-ends, with `cleanup=0` (below); when the hub doesn't answer within ~6 s, fails (other than `409`)
-or is unreachable, its own offline sherpa-onnx model transcribes the phrase. A hub that answers
+ends, with `cleanup=0` (below). Only the PCs transcribe: since 0.147 the phone has no model of its
+own (it deletes one an older app downloaded), and when no PC answers it says so. A hub that answers
 `404` to `GET /v1/voice` (before 0.55) gets the whole dictation here once, at the end, without
 `cleanup`. Phones before 0.55
 used `SpeechRecognizer` and sent whole recordings here only without one. The body
@@ -1200,8 +1201,7 @@ that transcribed). The `409` with the model download's progress stays.
 `GET /v1/voice` adds `"commands": true|false` and `"dictionary": [{"term": "SpokPay", "sounds":
 ["spoke pay"]}]` (the hub's personal dictionary: exact spellings, optional sound-alikes). `PUT
 /v1/voice/settings` takes either (`dictionary` replaces the whole list; blank and duplicate terms
-are dropped, at most 500 of 60 characters) and answers the new status. Phones keep the last
-dictionary for phrases their offline model transcribes. The hub spells the dictionary's words in
+are dropped, at most 500 of 60 characters) and answers the new status. The hub spells the dictionary's words in
 everything it transcribes (a close spelling counts only for terms of 6+ letters said in two or
 more words, or of 7+ letters) and gives them to the cleanup.
 
@@ -1210,8 +1210,8 @@ transcript that ends with "press enter" / "hit enter" / "aperta enter" (…), or
 is only "send" / "enter" / "enviar" / "manda" (…), comes back without it and with `"send": true`
 (the text may then be empty); a sentence that is only "new line" / "nova linha" becomes `"\n"`,
 "new paragraph" / "novo parágrafo" `"\n\n"`. The phone then ends the dictation and sends the
-message once the words are in (after the cleanup). The rules are `src/dictwords.rs`; the phone's
-offline copy (`Words.java`) checks the same `android/test/dictation-cases.txt`.
+message once the words are in (after the cleanup). The rules are `ts/packages/media/src/dictwords.ts`,
+checked against `android/test/dictation-cases.txt`.
 
 #### `POST /v1/voice/cleanup`
 

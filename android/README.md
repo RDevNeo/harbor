@@ -15,7 +15,7 @@ desktop's slash menu (commands and skills from the PC). The API is in [PROTOCOL.
    workspace invited). The PCs of your workspaces show up by themselves and connect directly, each
    pinned to its own key; there's no pairing code. Owners invite people in Settings (the
    workspace's card) or on the PC (Settings › Account).
-3. Updates: when the PC has a newer app, the chat list shows **Update**; Settings › Update
+3. Updates: when the PC has a newer app, the chat list shows **Update**; Settings › Harbor for Android
    installs it (Android asks once to allow "Install unknown apps" for Harbor; Android 12+
    updates silently after that).
 

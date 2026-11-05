@@ -73,7 +73,7 @@ test("the speech model downloads by itself: no model row, and the microphone row
 
 test("voice dictionary lists the words, then the form to add or edit one", () => {
   const f = facts({ dict: [{ term: "SpokPay", sounds: ["spoke pay", "spock pay"] }, { term: "Harbor", sounds: [] }] });
-  const rows = voiceView(f).sections[1]?.rows ?? [];
+  const rows = voiceView(f).sections[2]?.rows ?? [];
   expect(rows.map((r) => [r.title, r.desc])).toEqual([
     ["SpokPay", "Sounds like: spoke pay, spock pay"],
     ["Harbor", ""],
@@ -81,7 +81,7 @@ test("voice dictionary lists the words, then the form to add or edit one", () =>
   ]);
   expect(rows[0]?.buttons.map((b) => b.key)).toEqual(["voice:dict:edit:0", "voice:dict:remove:0"]);
   expect(rows[2]).toMatchObject({ kind: "add", buttons: [{ key: "voice:dict:save", label: "Add", enabled: false }] });
-  const editing = voiceView({ ...f, editing: true, term: "Harbor", sounds: "harbour" }).sections[1]?.rows[2];
+  const editing = voiceView({ ...f, editing: true, term: "Harbor", sounds: "harbour" }).sections[2]?.rows[2];
   expect(editing).toMatchObject({ title: "Edit the word", term: "Harbor", sounds: "harbour", buttons: [{ label: "Save", enabled: true }] });
 });
 
@@ -131,12 +131,12 @@ test("voice dictionary: a blank word is not added, and unknown keys are left alo
 
 test("Voice shows the microphone, where to transcribe, the cleanup switch and the dictionary", () => {
   const view = voiceView(facts({ inputs: [{ id: "", label: "System default" }, { id: "usb", label: "USB microphone" }], input: "usb" }));
-  expect(view.sections.map((s) => s.title)).toEqual(["On this PC", "Dictionary"]);
+  expect(view.sections.map((s) => s.title)).toEqual(["On this PC", "For the whole workspace", "Dictionary"]);
   expect(view.sections[0]?.rows.map((r) => [r.kind, r.key, r.title])).toEqual([
     ["microphone", "voice:input", "Microphone"],
     ["picker", "voice:host", "Transcribe on"],
-    ["toggle", "voice:cleanup", "Clean up dictation"],
   ]);
+  expect(view.sections[1]?.rows.map((r) => [r.kind, r.key, r.title])).toEqual([["toggle", "voice:cleanup", "Clean up dictation"]]);
   expect(view.sections[0]?.rows[0]).toMatchObject({ kind: "microphone", options: ["System default", "USB microphone"], selected: 1 });
   ctl.inputs = [{ id: "", label: "System default" }, { id: "usb", label: "USB microphone" }];
   expect(voiceChose(ctl, "voice:input", 1)).toBe(true);

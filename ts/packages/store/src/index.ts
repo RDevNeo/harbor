@@ -7,6 +7,7 @@ export * as cost from "./cost.ts";
 export * as limits from "./limits.ts";
 export * as secrets from "./secrets.ts";
 export * as settingsync from "./settingsync.ts";
+export * as wssettings from "./wssettings.ts";
 export * as single from "./single.ts";
 export * as malloc from "./malloc.ts";
 export * as usageCtl from "./usage_ctl.ts";

@@ -141,6 +141,9 @@ export function voiceView(f: VoiceFacts): VoiceView {
       options: hosts.map(([, label]) => label),
       selected: hostAt,
     }),
+  );
+  // One value for every PC and phone of the workspace (@harbor/store wssettings): the newest change wins.
+  const shared = [
     row({
       kind: "toggle",
       key: `${KEY}cleanup`,
@@ -148,7 +151,7 @@ export function voiceView(f: VoiceFacts): VoiceView {
       desc: "Claude removes filler words and fixes punctuation (a few seconds more). Never for fewer than 8 words.",
       on: f.cleanup,
     }),
-  );
+  ];
 
   const words = f.dict.map((e, i) => row({ kind: "buttons", title: e.term, desc: e.sounds.length === 0 ? "" : `Sounds like: ${e.sounds.join(", ")}`, buttons: [button(`${KEY}dict:edit:${i}`, "Edit"), button(`${KEY}dict:remove:${i}`, "Remove")] }));
   words.push(
@@ -166,6 +169,7 @@ export function voiceView(f: VoiceFacts): VoiceView {
   return {
     sections: [
       { title: "On this PC", before: 0, rows: onPc, note: "" },
+      { title: "For the whole workspace", before: 11, rows: shared, note: "" },
       { title: "Dictionary", before: 11, rows: words, note: "" },
     ],
     footer: `The mic in the composer (or ${f.shortcut}) starts and stops dictation; the text goes in at the cursor, to edit before you send. The speech model loads while you speak and stays loaded for ${f.keepMin} minutes after. Phones send their recordings here the same way.`,

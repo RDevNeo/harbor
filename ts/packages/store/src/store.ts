@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { type Item, digest, digestOf, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
 import { dataDir, newUuid, now, privateDir } from "./paths.ts";
 import { changed as settingChanged } from "./settingsync.ts";
+import { SHARED, changed as sharedChanged } from "./wssettings.ts";
+
+const SHARED_KEYS: ReadonlySet<string> = new Set(SHARED);
 
 export interface Repo {
   id: number;
@@ -811,9 +814,11 @@ export class Store {
   }
 
   set(k: string, v: string): void {
+    const before = SHARED_KEYS.has(k) ? this.get(k) : null;
     this.db.query("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)").run(k, v);
-    // A setting that follows the account goes to its other devices.
+    // A setting that follows the account goes to its other devices; one of the workspace to its PCs.
     settingChanged(k);
+    if (SHARED_KEYS.has(k)) sharedChanged(this, k, before, v);
   }
 
   del(k: string): void {

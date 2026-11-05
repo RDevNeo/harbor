@@ -676,7 +676,7 @@ public class Chat extends Base implements Images.Gallery {
         }
         drawQueue(waitingQ, b.optBoolean("held"), b.optBoolean("can_steer"));
         // Held with nothing queued: Resume asks the agent to go on instead (ts resume.ts), as the desktop's.
-        comp.follow(b.optBoolean("can_steer"), b.optBoolean("held") && queue != null && queue.length() > 0, followUp(this));
+        comp.follow(b.optBoolean("can_steer"), b.optBoolean("held") && queue != null && queue.length() > 0, FOLLOW_UP);
         comp.history(!items.isEmpty());
         strip(b.optJSONObject("agents"));
         // Its suggestion in the empty composer (Suggest.java).
@@ -1922,12 +1922,9 @@ public class Chat extends Base implements Images.Gallery {
 
     // ---- Steer and the queue (PROTOCOL.md "Steer and the queue") ----
 
-    /** This phone's choice for the send button while the agent works: "steer" (default) or "queue". */
-    static String followUp(Context c) { return Ui.prefs(c).getString("follow_up", "steer"); }
-
-    static String followLabel(Context c) {
-        return "steer".equals(followUp(c)) ? "Steer: the agent gets your message right away" : "Queue: your message waits for the turn to end";
-    }
+    /** The send button while the agent works: always steers (the setting is gone since 0.147);
+     *  a long press queues one message instead (sendMenu). */
+    static final String FOLLOW_UP = "steer";
 
     /** "Up next · N queued": dashed bubbles under the turn. Tap one to edit it in the composer;
      *  long-press for Steer now / Edit / Move / Remove; its Steer pill steers with it now (Send
@@ -2092,7 +2089,7 @@ public class Chat extends Base implements Images.Gallery {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("steer", "Steer now", "Interrupt what the agent is doing", true));
         o.add(new Sheet.Option("queue", "Queue", "Run after the current turn", true));
-        Sheet.pick(this, "Choose how to send this message", null, o, followUp(this), this::send);
+        Sheet.pick(this, "Choose how to send this message", null, o, FOLLOW_UP, this::send);
     }
 
     /** An empty composer's send, as the desktop's (ts resume.ts): after a Stop held the queue the

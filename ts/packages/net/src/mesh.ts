@@ -73,6 +73,9 @@ export interface MeshDeps {
   wake?: () => void;
   /** `GET /mesh/v1/memory`: this PC's RAM and the chats holding memory, with one of its own chats' parts when asked. */
   memory?: (chat: number | null) => Json;
+  /** The workspace's shared settings (@harbor/store wssettings): this PC's, told in hello, each chats list and
+   *  `POST /mesh/v1/shared`; a peer's, taken when newer. */
+  shared?: { snapshot(): Json; adopt(peer: string, v: unknown): void };
 }
 
 /** `tailscale status --json`, or an empty object when Tailscale isn't installed or doesn't answer. */
@@ -305,7 +308,13 @@ export class Mesh {
         moves: MOVES_VERSION,
         project_moves: this.d.project ? PROJECT_MOVES_VERSION : 0,
         ram: this.d.ram?.() ?? null,
+        shared: this.d.shared?.snapshot() ?? null,
       });
+    }
+    if (is("POST", "mesh", "v1", "shared")) {
+      if (!this.d.shared) return err(404, "unknown mesh call");
+      this.d.shared.adopt(peer, await this.json(r, req));
+      return ok({ shared: this.d.shared.snapshot() });
     }
     if (is("GET", "mesh", "v1", "events")) {
       const since = uint(query(req, "since"));
@@ -327,7 +336,7 @@ export class Mesh {
       const rev = hub.rev();
       const { chats, update } = await this.d.app.chats(since, full);
       const gone = full ? [] : shared.gone.filter(([g]) => g > since).map(([, id]) => id);
-      return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update, ram: this.d.ram?.() ?? null });
+      return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update, ram: this.d.ram?.() ?? null, shared: this.d.shared?.snapshot() ?? null });
     }
     if (req.method === "GET" && segs.length === 5 && segs[0] === "mesh" && segs[1] === "v1" && segs[2] === "chats" && segs[4] === "items") {
       const c = segs[3] ?? "";
@@ -661,6 +670,7 @@ export class Mesh {
       p.moves = typeof hello.moves === "number" && hello.moves >= MOVES_VERSION;
       p.projectMoves = typeof hello.project_moves === "number" && hello.project_moves >= PROJECT_MOVES_VERSION;
       p.ram = ramOf(hello.ram);
+      if (hello.shared) this.d.shared?.adopt(id, hello.shared);
       p.accounts = (Array.isArray(hello.accounts) ? hello.accounts : []).map((x) => {
         const o = obj(x);
         const s = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : "");
@@ -700,6 +710,7 @@ export class Mesh {
         if (changed) this.savePeers();
         // Its free memory, for the composer's Auto pick: fresh on every list, not saved.
         if ("ram" in chats) p.ram = ramOf(chats.ram);
+        if (chats.shared) this.d.shared?.adopt(id, chats.shared);
       }
       const wants = await this.d.app.applyChats(id, epoch, chats);
       for (const [hid, isince] of wants) {
@@ -712,6 +723,26 @@ export class Mesh {
       const ev = obj(await get(d, `/mesh/v1/events?since=${since}&epoch=${epoch}`, POLL + 10_000));
       if (ev.epoch !== epoch) return;
     }
+  }
+
+  /** A workspace setting changed here: every peer that answers hears it now (the rest with the next hello or
+   *  chats list). Their answers carry their own, newer ones are taken. */
+  async pushShared(): Promise<void> {
+    const sh = this.d.shared;
+    if (!sh || !this.d.hub.mesh.on) return;
+    const body = jsonBody(sh.snapshot());
+    await Promise.all(
+      [...this.d.hub.mesh.peers.values()]
+        .filter((p) => p.online)
+        .map(async (p) => {
+          try {
+            const [status, v] = await http({ ...dest(p), as: this.d.id() ?? undefined }, "POST", "/mesh/v1/shared", body, 8_000);
+            if (status === 200) sh.adopt(p.id, obj(v).shared);
+          } catch {
+            // away: it hears with its next hello
+          }
+        }),
+    );
   }
 
   /** A call forwarded to a chat's home PC: its files first (uploads there), then the call. */

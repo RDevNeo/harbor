@@ -36,9 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Dictation in the composer, the desktop's mic (src/voice.rs). The phone records (16 kHz mono)
  *  and Silero VAD (Asr) cuts it into phrases at pauses; each phrase goes to the hub
  *  (POST /v1/transcribe, the hub picks the PC that transcribes) and its words appear in the text
- *  while you talk, in order, where the cursor was. When the PC doesn't answer within a few
- *  seconds, fails, or is still downloading its model, the phone's own offline model (Asr) takes
- *  the phrase. It listens until the mic is tapped again (a minute without speech also ends it);
+ *  while you talk, in order, where the cursor was. Only the PCs transcribe (the phone has no
+ *  model of its own since 0.147): when none answers, a short message says so. It listens until the mic is tapped again (a minute without speech also ends it);
  *  then, if the hub's "Clean up dictation" is on, the words are cleaned up there once
  *  (POST /v1/voice/cleanup) and replace what was dictated, unless it was edited meanwhile. A hub
  *  before 0.55 (404 on GET /v1/voice) gets the whole dictation when you stop, uncleaned. A
@@ -46,8 +45,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *  Asks for the microphone the first time. The hub spells its dictionary's words and takes the
  *  spoken commands out (0.76, `commands=1`): a phrase ending with "press enter" or a last one
  *  that is only "send"/"enviar" ends the dictation and sends the message (`onSend`), "new line"
- *  alone is a line break. Phrases this phone transcribes itself get the same (Words, with the
- *  hub's last dictionary). Log tag: HarborVoice. */
+ *  alone is a line break. Log tag: HarborVoice. */
 final class Voice {
     static final int PERMISSION = 44;
     private static final String TAG = Asr.TAG;
@@ -86,8 +84,6 @@ final class Voice {
     private volatile boolean oldHub;
     /** An older hub's phrases, kept for the end. */
     private final java.util.List<float[]> held = new java.util.ArrayList<>();
-    /** PC failures in a row: after two, the phone's model takes the rest of the dictation. */
-    private volatile int hubFails;
     /** The PC answered a phrase this dictation (its model is loaded now). */
     private volatile boolean warm;
     private volatile String problem;
@@ -124,29 +120,6 @@ final class Voice {
     /** The language asked for: none, so each phrase comes out in the language it's spoken in
      *  (mixing languages works; the setting is gone since 0.147). */
     private static final String LANG = "";
-
-    /** The hub's dictionary (GET /v1/voice), kept for offline phrases. */
-    static void keepWords(Context c, JSONObject v) {
-        if (v == null || !v.has("dictionary")) return;
-        org.json.JSONArray d = v.optJSONArray("dictionary");
-        Ui.prefs(c).edit().putString("voice_dict", d == null ? "[]" : d.toString()).apply();
-    }
-
-    private static java.util.List<Words.Entry> dictionary(Context c) {
-        java.util.List<Words.Entry> out = new java.util.ArrayList<>();
-        try {
-            org.json.JSONArray d = new org.json.JSONArray(Ui.prefs(c).getString("voice_dict", "[]"));
-            for (int i = 0; i < d.length(); i++) {
-                JSONObject e = d.optJSONObject(i);
-                if (e == null || e.optString("term").isEmpty()) continue;
-                java.util.List<String> snd = new java.util.ArrayList<>();
-                org.json.JSONArray sa = e.optJSONArray("sounds");
-                for (int j = 0; sa != null && j < sa.length(); j++) snd.add(sa.optString(j));
-                out.add(new Words.Entry(e.optString("term"), snd));
-            }
-        } catch (org.json.JSONException ignored) { }
-        return out;
-    }
 
     /** Spaces and tabs off the ends, line breaks kept ("new line" comes back as "\n"). */
     private static String strip(String s) { return s.replaceAll("^[ \\t]+|[ \\t]+$", ""); }
@@ -206,7 +179,6 @@ final class Voice {
         recording = true;
         recorded = false;
         busy = true;
-        hubFails = 0;
         warm = false;
         problem = null;
         told = false;
@@ -226,9 +198,9 @@ final class Voice {
         e.setSpan(mark, at, at, Spanned.SPAN_MARK_POINT);
         show(true);
         final boolean phrases = Asr.available();
-        log("start, phrases " + phrases + ", offline model " + (Asr.ready(a) ? "ready" : "none"));
+        log("start, phrases " + phrases);
         Ui.pool.execute(() -> {
-            try { info = hub.call("GET", "/v1/voice", null, 5000); log("hub voice " + info); keepWords(a, info); }
+            try { info = hub.call("GET", "/v1/voice", null, 5000); log("hub voice " + info); }
             catch (Exception ex) {
                 oldHub = ex instanceof Hub.ApiError && ((Hub.ApiError) ex).code == 404;
                 log("no /v1/voice: " + ex.getMessage() + (oldHub ? " (an older hub)" : ""));
@@ -320,50 +292,30 @@ final class Voice {
         }
         String text = null, where = null;
         boolean send = false;
-        boolean local = hubFails >= 2 && Asr.ready(a);
-        if (!local) {
-            final byte[] w = wav(samples);
-            final boolean raw = info != null;
-            // A PC that still has to load its model (GET /v1/voice: not "loaded") gets longer
-            // for the first phrase.
-            JSONObject i = info;
-            boolean cold = i != null && !"loaded".equals(i.optString("model_state")) && !warm;
-            final long budget = 6000 + samples.length / 16 + (cold ? 20_000 : 0);
-            Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on " + host() + "…"); });
-            Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, LANG, raw, (int) budget + 2000));
-            try {
-                JSONObject j = f.get(budget, TimeUnit.MILLISECONDS);
-                text = strip(j.optString("text", ""));
-                send = j.optBoolean("send");
-                where = j.optString("host", host());
-                hubFails = 0;
-                warm = true;
-            } catch (TimeoutException e) {
-                f.cancel(true);
-                hubFails++;
-                problem = "The PC took too long to answer.";
-                log("PC timed out");
-            } catch (ExecutionException e) {
-                Throwable c = e.getCause();
-                if (c instanceof Hub.ApiError && ((Hub.ApiError) c).code == 409) problem = c.getMessage();
-                else { hubFails++; problem = Hub.why(c); }
-                log("PC failed: " + c);
-            } catch (InterruptedException e) {
-                return;
-            }
-        }
-        if (text == null) {
-            Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on this phone…"); });
-            text = Asr.transcribe(a, samples, LANG);
-            where = "this phone";
-            if (text == null) log("offline model not ready");
-            else {
-                text = Words.apply(text, dictionary(a));
-                // Spoken commands are always on (the PCs' too): "send", "press enter", "new line".
-                String[] c = Words.commands(text);
-                text = strip(c[0]);
-                send = "1".equals(c[1]);
-            }
+        final byte[] w = wav(samples);
+        final boolean raw = info != null;
+        // A PC that still has to load its model (GET /v1/voice: not "loaded") gets longer for the
+        // first phrase. No fallback here: the PC gets all the time it reasonably needs.
+        JSONObject i = info;
+        boolean cold = i != null && !"loaded".equals(i.optString("model_state")) && !warm;
+        final long budget = 20_000 + samples.length / 16 + (cold ? 30_000 : 0);
+        Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on " + host() + "…"); });
+        Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, LANG, raw, (int) budget + 2000));
+        try {
+            JSONObject j = f.get(budget, TimeUnit.MILLISECONDS);
+            text = strip(j.optString("text", ""));
+            send = j.optBoolean("send");
+            where = j.optString("host", host());
+            warm = true;
+        } catch (TimeoutException e) {
+            f.cancel(true);
+            problem = host() + " took too long to transcribe.";
+            log("PC timed out");
+        } catch (ExecutionException e) {
+            problem = why(e.getCause());
+            log("PC failed: " + e.getCause());
+        } catch (InterruptedException e) {
+            return;
         }
         final String t = text, from = where;
         final boolean sends = send;
@@ -381,12 +333,18 @@ final class Voice {
             } else if (sends) {
                 // Only the command: nothing to put in.
             } else if (t == null && problem != null && g == gen && !told) {
-                Ui.toast(a, Asr.available() && !Asr.ready(a) ? problem + " The offline model isn't on this phone yet." : problem);
+                Ui.toast(a, problem);
                 told = true;
             }
             out.decrementAndGet();
             if (g == gen) maybeDone();
         });
+    }
+
+    /** What went wrong, short: the hub's own words for a refusal, else that no PC answered. */
+    private static String why(Throwable c) {
+        if (c instanceof Hub.ApiError) return c.getMessage();
+        return "Dictation needs one of your PCs, and none answered.";
     }
 
     private String host() {
@@ -403,9 +361,6 @@ final class Voice {
         synchronized (held) { whole = held.toArray(new float[0][]); held.clear(); }
         if (whole.length > 0) { out.incrementAndGet(); work.execute(() -> wholeToOldHub(whole, g)); return; }
         final String text = dictated.toString().trim();
-        work.execute(Asr::free);
-        // The first dictation asks for the offline model (on Wi-Fi, in the background).
-        if (Asr.available() && !Asr.wanted(a) && !Asr.ready(a)) Asr.want(a);
         JSONObject i = info;
         if (text.isEmpty() || i == null || !i.optBoolean("cleanup")) { done(text.isEmpty() && !sendAfter); return; }
         said.setText("Cleaning up on " + host() + "…");
@@ -424,8 +379,7 @@ final class Voice {
         });
     }
 
-    /** An older hub: the phrases as one recording (a short pause between them); the phone's
-     *  model takes them one by one if the PC can't. */
+    /** An older hub: the phrases as one recording (a short pause between them). */
     private void wholeToOldHub(float[][] phrases, int g) {
         int n = 0, gap = 16000 / 4;
         for (float[] x : phrases) n += x.length + gap;
@@ -439,19 +393,13 @@ final class Voice {
             log("whole dictation → \"" + t + "\" on " + host());
             got.add(t);
         } catch (Exception e) {
-            problem = Hub.why(e);
+            problem = why(e);
             log("PC failed: " + e);
-            Ui.main.post(() -> { if (g == gen) said.setText("Transcribing on this phone…"); });
-            for (float[] x : phrases) {
-                String t = Asr.transcribe(a, x, LANG);
-                if (t == null) { got.clear(); break; }
-                got.add(t);
-            }
         }
         Ui.main.post(() -> {
             for (String t : got) if (!t.isEmpty()) put(t);
             if (got.isEmpty() && problem != null && g == gen && !told) {
-                Ui.toast(a, Asr.available() && !Asr.ready(a) ? problem + " The offline model isn't on this phone yet." : problem);
+                Ui.toast(a, problem);
                 told = true;
             }
             out.decrementAndGet();

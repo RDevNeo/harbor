@@ -4,7 +4,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Engine } from "@harbor/agents";
-import { blankChat, Store, type Item } from "@harbor/store";
+import { blankChat, Store, wssettings, type Item } from "@harbor/store";
 import { Api } from "../src/api.ts";
 import { http, httpPart, setHello } from "../src/client.ts";
 import { err, type Request } from "../src/http.ts";
@@ -386,7 +386,7 @@ interface Pc {
   heard: (number | null)[];
 }
 
-async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number, memory?: (chat: number | null) => Json): Promise<Pc> {
+async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number, memory?: (chat: number | null) => Json, shared = false): Promise<Pc> {
   const id = generateIdentity();
   const store = Store.openAt(join(tmp, `${name}.db`));
   const hub = new Hub([], 0);
@@ -405,6 +405,7 @@ async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "")),
     ...(ram === undefined ? {} : { ram: () => ram }),
     ...(memory ? { memory } : {}),
+    ...(shared ? { shared: { snapshot: () => wssettings.snapshot(store), adopt: (_peer: string, v: unknown) => void wssettings.adopt(store, v) } } : {}),
   });
   hub.mesh.on = true;
   api = new Api({
@@ -448,6 +449,23 @@ function oneWorkspace(...pcs: { id: Identity; hub: Hub; port: number }[]): void 
 }
 
 describe("two TypeScript PCs", () => {
+  test("workspace settings: a PC takes a peer's newer value from its hello, and a change here is pushed", async () => {
+    const a = await pc("eps", undefined, undefined, undefined, true);
+    const b = await pc("zeta", undefined, undefined, undefined, true);
+    a.store.set("voice_cleanup", "1");
+    b.store.setQuiet("voice_cleanup", "0");
+    setHello("pc:eps", "eps", a.id);
+    oneWorkspace(a, b);
+    a.mesh.start();
+    b.mesh.start();
+    expect(await until(() => b.store.get("voice_cleanup") === "1")).toBe(true);
+    expect(await until(() => a.hub.mesh.peer("pc:zeta")?.online === true && b.hub.mesh.peer("pc:eps")?.online === true)).toBe(true);
+    b.store.set("voice_cleanup", "0");
+    await b.mesh.pushShared();
+    expect(await until(() => a.store.get("voice_cleanup") === "0")).toBe(true);
+    expect(wssettings.snapshot(a.store).voice_cleanup).toEqual(wssettings.snapshot(b.store).voice_cleanup ?? ["", -1]);
+  }, 30_000);
+
   test("memory: a PC answers with its numbers, one before the route answers nothing", async () => {
     const asked: (number | null)[] = [];
     const a = await pc("gamma", undefined, undefined, (chat) => {

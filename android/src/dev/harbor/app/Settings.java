@@ -16,20 +16,25 @@ import android.widget.TextView;
 import org.json.JSONObject;
 
 /** Settings in titled sections, like the desktop's pages: the workspace (switch with ▾), the
- *  account, the workspace's members (owners invite by email) and PCs, the PCs' apps, general,
- *  voice, notifications, this app and its updates, sign out. Settings that were dropped keep
- *  a fixed value in code: updates install by themselves (Update), web links open in the
- *  built-in browser, dictation detects the language and takes spoken commands (Voice), the
- *  offline model downloads after the first dictation (Asr), and notifications are instant
- *  (Listen) and come only while you're away from that PC (Notes). */
+ *  account, the workspace's members (owners invite by email) and PCs, the PCs' apps,
+ *  appearance, voice, notifications, this app and its updates, sign out. Settings that were
+ *  dropped keep a fixed value in code: updates install by themselves (Update), sending while
+ *  the agent works steers (Chat.FOLLOW_UP), web links open in the built-in browser, dictation
+ *  detects the language and takes spoken commands (Voice), the PCs transcribe every dictation
+ *  (Asr keeps no model), and notifications are instant (Listen) and come whether or not you're
+ *  at that PC (Notes). */
 public class Settings extends Base {
     private TextView updateNote, gmailSub, discordSub, appsHead;
-    private LinearLayout gmailCard, gmailRowBox, discordBox, warnRow, whyRow, voiceCard;
+    private LinearLayout gmailCard, gmailRowBox, discordBox, voiceCard;
     private TextView voiceHead;
     private View discordGap;
     private View updateBtn;
     private long available;
     private boolean installing;
+    /** Android's "Install unknown apps" was opened from Update: install once it's allowed. */
+    private boolean installWhenAllowed;
+    /** Why the version on offer didn't install by itself ("" none). */
+    private String failedWhy = "";
 
     static long myCode(Context c) {
         try {
@@ -118,14 +123,9 @@ public class Settings extends Base {
             Discord.show(this, hub, hub.via());
         }
 
-        // While the agent works, the send button steers or queues (as the desktop's Settings ›
-        // General); long-press does the other for one message (Chat.sendMenu). Then the look.
-        section(col, "General");
+        // The look, on this phone only. (Sending while the agent works always steers: Chat.FOLLOW_UP.)
+        section(col, "Appearance");
         LinearLayout gen = card(col);
-        LinearLayout fu = Ui.cardRow(this, Ui.I_STEER, "While the agent is running", Chat.followLabel(this), Ui.FG, v -> followUp());
-        fu.addView(Ui.chevron(this));
-        gen.addView(fu, Ui.fill());
-        gen.addView(Ui.gap(this));
         LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
         cm.addView(Ui.chevron(this));
         gen.addView(cm, Ui.fill());
@@ -143,7 +143,6 @@ public class Settings extends Base {
         Ui.pool.execute(() -> {
             try {
                 org.json.JSONObject v = hub.call("GET", "/v1/voice", null, 8000);
-                Voice.keepWords(this, v);
                 runOnUiThread(() -> {
                     // Hubs before 0.76 have no dictionary: the section stays hidden.
                     words = v.has("dictionary") ? v.optJSONArray("dictionary") : null;
@@ -156,25 +155,21 @@ public class Settings extends Base {
         section(col, "Notifications");
         LinearLayout nt = card(col);
         notifyRows(nt);
-        footnote(col, "They arrive within seconds, and only while you're away from that PC.");
+        footnote(col, "They arrive within seconds.");
 
-        // This app: its version and update (any PC offers the newest it has), and what keeps
-        // the automatic install from going in.
+        // This app: one row for its version and its update (any PC offers the newest it has),
+        // with whatever keeps the automatic install from going in said on its line.
         section(col, "App");
         LinearLayout app = card(col);
-        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", "Checking… · " + myName(this), Ui.FG, v -> checkUpdates());
+        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", "Checking… · " + myName(this), Ui.FG, v -> updateTapped());
         updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
         updateBtn = Ui.button(this, "Update", true, v -> update());
         updateBtn.setVisibility(View.GONE);
         updateRow.addView(updateBtn);
-        Ui.wrapSub(updateRow, 3);
+        Ui.wrapSub(updateRow, 4);
+        // Why the last install didn't go in: Android's whole message, to read or copy.
+        updateRow.setOnLongClickListener(v -> { whyDialog(); return true; });
         app.addView(updateRow, Ui.fill());
-        warnRow = Ui.col(this);
-        app.addView(warnRow, Ui.fill());
-        // Why the last automatic install didn't go in: Android's whole message (INSTALL_FAILED_…).
-        whyRow = Ui.col(this);
-        app.addView(whyRow, Ui.fill());
-        warnRows();
 
         LinearLayout bye = card(col);
         bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
@@ -364,54 +359,47 @@ public class Settings extends Base {
         });
     }
 
-    /** What keeps updates from installing by themselves: Android's "Install unknown apps" not
-     *  allowed yet, or Play Protect refusing background installs. */
-    private void warnRows() {
-        warnRow.removeAllViews();
-        if (!getPackageManager().canRequestPackageInstalls()) {
-            warnRow.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, Ui.I_ALERT, "Allow Harbor to install updates",
-                    "Android doesn't let Harbor install them yet: tap to allow it, once", Ui.AMBER, v -> allowInstalls());
-            Ui.wrapSub(r, 3);
-            r.addView(Ui.chevron(this));
-            warnRow.addView(r, Ui.fill());
-        } else if (Update.blocked(this)) {
-            // Play Protect refused a background install: new versions come as a notification.
-            warnRow.addView(Ui.gap(this));
-            LinearLayout pp = Ui.cardRow(this, Ui.I_ALERT, "Play Protect stops background updates",
-                    "New versions come as a notification: tap it, then Scan app. To let them install by themselves, turn on "
-                            + "Play Store › your picture › Play Protect › ⚙ › Improve harmful app detection, then tap here to try again.",
-                    Ui.AMBER, v -> {
+    /** The update row's tap: the update when one is ready, Play Protect's way out when it blocks
+     *  background installs, Android's "Install unknown apps" when it isn't allowed, else ask the
+     *  PCs again. */
+    private void updateTapped() {
+        if (installing) return;
+        if (available > myCode(this)) { update(); return; }
+        if (!getPackageManager().canRequestPackageInstalls()) { allowInstalls(); return; }
+        if (Update.blocked(this)) {
+            Ui.dialog(this).setTitle("Play Protect asks before updates")
+                    .setMessage("Google Play Protect wants to scan each new version, so updates come as a notification: tap it, then Scan app. "
+                            + "To let them install by themselves, turn on Play Store › your picture › Play Protect › ⚙ › Improve harmful app detection, then try again.")
+                    .setNegativeButton("Close", null)
+                    .setPositiveButton("Try again", (d, w) -> {
                         Update.unblock(this);
-                        warnRows();
                         Ui.toast(this, "The next version tries the background again");
-                    });
-            Ui.wrapSub(pp, 6);
-            warnRow.addView(pp, Ui.fill());
+                        checkUpdates();
+                    }).show();
+            return;
         }
+        checkUpdates();
     }
 
-    /** "Why it didn't install": the whole reason, wrapped; a tap shows it to copy. */
-    private void whyRows(String reason) {
-        whyRow.removeAllViews();
-        if (reason.isEmpty()) return;
-        whyRow.addView(Ui.gap(this));
-        LinearLayout r = Ui.cardRow(this, Ui.I_ALERT, "Why it didn't install", reason, Ui.AMBER,
-                v -> Ui.dialog(this).setTitle("Why it didn't install").setMessage(reason)
-                        .setNegativeButton("Copy", (d, w) -> Ui.copy(this, reason))
-                        .setPositiveButton("Close", null).show());
-        Ui.wrapSub(r, 8);
-        whyRow.addView(r, Ui.fill());
+    /** The long press: Android's whole reason the last install failed. */
+    private void whyDialog() {
+        if (failedWhy.isEmpty()) return;
+        Ui.dialog(this).setTitle("Why it didn't install").setMessage(failedWhy)
+                .setNegativeButton("Copy", (d, w) -> Ui.copy(this, failedWhy))
+                .setPositiveButton("Close", null).show();
     }
 
-    /** Android's "Install unknown apps" for Harbor: asked once, for every update after it. */
+    /** Android's "Install unknown apps" for Harbor, straight away: asked once, for every update
+     *  after it. Back here with it allowed, a ready update installs (onResume). */
     private void allowInstalls() {
-        Ui.dialog(this).setTitle("Allow Harbor to install updates")
-                .setMessage("Android asks once: turn on “Allow from this source” for Harbor, then come back.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Open settings", (d, w) -> startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:" + getPackageName()))))
-                .show();
+        installWhenAllowed = available > myCode(this);
+        Ui.toast(this, "Turn on “Allow from this source” for Harbor, then come back");
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            installWhenAllowed = false;
+            Ui.toast(this, "Android's settings didn't open: " + e.getMessage());
+        }
     }
 
     private void notifyRows(LinearLayout nt) {
@@ -665,7 +653,6 @@ public class Settings extends Base {
         Ui.pool.execute(() -> {
             try {
                 org.json.JSONObject v = hub.call("PUT", "/v1/voice/settings", new org.json.JSONObject().put(key, value));
-                Voice.keepWords(this, v);
                 runOnUiThread(() -> {
                     if (v.has("dictionary")) words = v.optJSONArray("dictionary");
                     voiceRows();
@@ -735,16 +722,6 @@ public class Settings extends Base {
         d.show();
     }
 
-    private void followUp() {
-        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        o.add(new Sheet.Option("queue", "Queue", "Your message waits and runs after the current turn finishes.", true));
-        o.add(new Sheet.Option("steer", "Steer", "Your message reaches the agent right away, changing what it is working on.", true));
-        Sheet.pick(this, "While the agent is running", "Long-press the send button to use the other option for a single message. Agents that can't be steered always queue.", o, Chat.followUp(this), m -> {
-            Ui.prefs(this).edit().putString("follow_up", m).apply();
-            recreate();
-        });
-    }
-
     private void density() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
         o.add(new Sheet.Option("comfortable", "Comfortable", "", true));
@@ -791,12 +768,18 @@ public class Settings extends Base {
     protected void onResume() {
         super.onResume();
         if (hub == null) return;
-        warnRows(); // back from Android's "Install unknown apps"
-        checkUpdates();
+        // Back from Android's "Install unknown apps": the update it was opened for goes in.
+        if (installWhenAllowed && getPackageManager().canRequestPackageInstalls()) {
+            installWhenAllowed = false;
+            update();
+        } else {
+            installWhenAllowed = false;
+            checkUpdates();
+        }
         gmailRow(); // back from Google's page or the account sheet
         discordRow();
         // An install that fails after its download (Android or Play Protect refused it).
-        Update.changed = () -> { if (!isFinishing()) { warnRows(); checkUpdates(); } };
+        Update.changed = () -> { if (!isFinishing()) checkUpdates(); };
     }
 
     @Override
@@ -856,17 +839,26 @@ public class Settings extends Base {
             long code = Update.check(getApplicationContext(), true);
             long mine = myCode(this);
             String where = Update.bestHub == null ? "" : pcName(Update.bestHub, Update.bestPc);
-            String failed = code > mine ? Update.failure(getApplicationContext(), code) : "";
-            String note = code <= 0 ? myName(this) + " · no PC answered to check for updates"
-                    : code > mine ? "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where)
-                        + (!failed.isEmpty() || Update.blocked(getApplicationContext()) ? ". Tap Update to install it"
-                        : Update.silent(getApplicationContext(), code) ? ". It installs by itself the next time the screen is off" : "")
-                    : "Up to date · " + name(mine);
-            final String ff = failed; final long fc = code;
+            Context c = getApplicationContext();
+            boolean allowed = getPackageManager().canRequestPackageInstalls(), blocked = Update.blocked(c);
+            String failed = code > mine ? Update.failure(c, code) : "";
+            String note;
+            if (code <= 0) note = myName(this) + " · no PC answered to check for updates";
+            else if (code > mine) {
+                note = "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where) + " · "
+                        + (!allowed ? "tap Update, then allow Harbor to install it"
+                        : !failed.isEmpty() ? "it didn't install by itself, tap Update (hold for why)"
+                        : blocked ? "tap Update to install it (Play Protect asks to scan it)"
+                        : Update.silent(c, code) ? "it installs by itself the next time the screen is off" : "tap Update");
+            } else {
+                note = "Up to date · " + name(mine)
+                        + (!allowed ? " · tap to let updates install by themselves" : blocked ? " · Play Protect asks before each update: tap for how" : "");
+            }
+            final String ff = failed, fn = note; final long fc = code;
             Ui.main.post(() -> {
                 if (isFinishing()) return;
-                whyRows(ff);
-                if (!installing) updateNote.setText(note); // else its progress stays on the line
+                failedWhy = ff;
+                if (!installing) updateNote.setText(fn); // else its progress stays on the line
                 available = fc;
                 updateBtn.setVisibility(fc > myCode(this) ? View.VISIBLE : View.GONE);
             });
@@ -885,6 +877,7 @@ public class Settings extends Base {
     }
 
     private void update() {
+        if (installing) return;
         if (!getPackageManager().canRequestPackageInstalls()) {
             allowInstalls();
             return;

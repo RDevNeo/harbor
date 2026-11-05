@@ -90,6 +90,8 @@ final class Ui {
         density = c.getResources().getDisplayMetrics().density;
         theme(c);
         if (sans != null) return;
+        // Once per process: an older app's offline dictation model goes (Asr).
+        pool.execute(() -> Asr.dropModel(app));
         sans = Typeface.createFromAsset(c.getAssets(), "fonts/Geist-Regular.ttf");
         semi = Typeface.createFromAsset(c.getAssets(), "fonts/Geist-SemiBold.ttf");
         mono = Typeface.createFromAsset(c.getAssets(), "fonts/GeistMono-Regular.ttf");

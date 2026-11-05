@@ -119,7 +119,7 @@ import {
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
-import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, home, repoDir, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
@@ -593,8 +593,19 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "Harbor is starting")),
     notes: { last: () => notes.last(), ownSince: (s) => { const [n, l] = notes.ownSince(s); return [n.map(noteJson), l]; } },
     memory: (chat) => memory.snapshot(engine ? memory.engineSource(engine) : { chats: [], runner: () => null, procs: [] }, chat) as Json,
+    // Settings that are one value for the whole workspace ("Clean up dictation"): the newest change on any PC wins.
+    shared: {
+      snapshot: () => wssettings.snapshot(store),
+      adopt: (peer, v) => {
+        const took = wssettings.adopt(store, v);
+        if (took.length === 0) return;
+        if (took.includes(dictate.CLEANUP_KEY)) dictate.set({ cleanup: store.get(dictate.CLEANUP_KEY) === "1" });
+        console.error(`harbor: workspace settings from ${hub.mesh.peers.get(peer)?.name ?? peer}: ${took.join(", ")}`);
+      },
+    },
     env,
   });
+  wssettings.onChanged(store, () => void mesh.pushShared().catch(() => {}));
   mesh.reread();
   // Screenshots only (ram.ts fakePeers, a rig's own data): PCs that are on, with their free memory, in every PC list.
   for (const fp of fakeOnline) {
