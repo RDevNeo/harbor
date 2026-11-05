@@ -352,7 +352,9 @@ export type Status =
   | { kind: "working"; secs: number }
   | { kind: "text"; icon: IconName | null; text: string; color: string }
   | { kind: "failed" }
-  | { kind: "done" };
+  | { kind: "done" }
+  /** Its own turn is done but something will wake it (agents waiting.ts): "Waiting", amber. */
+  | { kind: "waiting"; text: string };
 
 /** What a chat's own status is made of (it and its subagents'). */
 export interface StatusFacts {
@@ -365,16 +367,19 @@ export interface StatusFacts {
   /** Another PC has it open. */
   viewed: boolean;
   failed: boolean;
+  /** What wakes it again (a process, subagent, wake-up or key asked: "2 processes"), null for nothing. */
+  waiting?: string | null;
   unread: boolean;
 }
 
-/** A chat's own status: working, waiting on a limit, written in or open elsewhere, failed, done until opened, else `idle`. */
+/** A chat's own status: working, waiting on a limit, written in or open elsewhere, failed, waiting on what wakes it, done until opened, else `idle`. */
 export function ownStatus(f: StatusFacts, idle: Status, now: number, off: number): Status {
   if (f.working !== null) return { kind: "working", secs: f.working };
   if (f.paused) return { kind: "text", icon: "CLOCK", text: f.paused.at === null ? "limit" : when(f.paused.at, now, off), color: "amber-900" };
   if (f.typing) return { kind: "text", icon: "PEN_LINE", text: "", color: "blue-900" };
   if (f.viewed) return { kind: "text", icon: null, text: "●", color: "blue-900" };
   if (f.failed) return { kind: "failed" };
+  if (f.waiting != null) return { kind: "waiting", text: f.waiting };
   if (f.unread) return { kind: "done" };
   return idle;
 }

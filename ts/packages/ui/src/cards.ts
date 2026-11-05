@@ -275,7 +275,7 @@ function signature(it: Item, open: Opened, seq: number, media: string): string {
   return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
 }
 
-export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false, viewer: Viewer | null = null, linkTitle: LinkTitle | null = null): CardData[] {
+export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string | { text: string; tone: "waiting" }, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false, viewer: Viewer | null = null, linkTitle: LinkTitle | null = null): CardData[] {
   // A copy of another PC's chat: the sender rows are this PC's view of it (senders.ts Viewer).
   const all = project(items, lead, forks, viewer);
   const who = viewer ? `${viewer.dev}|${viewer.label}|${viewer.home.name}|${viewer.home.owner}` : "";
@@ -314,7 +314,9 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
   }
   for (const k of open.memo.keys()) if (!built.has(k)) open.memo.delete(k);
   joinRuns(out, open);
-  if (status !== "") out.push({ ...blank(-2), kind: "status", text: status });
+  // "Working… 12s", or (tone "waiting") what wakes the chat once its turn is done: "Waiting · 2 processes".
+  if (typeof status !== "string") out.push({ ...blank(-2), kind: "status", text: status.text, tone: status.tone });
+  else if (status !== "") out.push({ ...blank(-2), kind: "status", text: status });
   out.push({ ...blank(-3), kind: "space" });
   return out;
 }

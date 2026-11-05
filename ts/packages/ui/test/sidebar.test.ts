@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
   type Place,
+  type Status,
+  ownStatus,
   type Role,
   type SidebarChat,
   type Tree,
@@ -564,4 +566,15 @@ test("the_sidebar_width_kept_is_held_to_its_bounds", () => {
   // Too narrow for the rows, or too wide for the chat.
   expect(parseSidebarWidth("40")).toBe(200);
   expect(parseSidebarWidth("4000")).toBe(480);
+});
+
+test("a chat that something will wake shows Waiting, after working, a limit, others and failed, before done", () => {
+  const idle: Status = { kind: "text", icon: null, text: "5m", color: "gray-800" };
+  const f = { working: null, paused: null, typing: false, viewed: false, failed: false, waiting: "Waiting", unread: true };
+  expect(ownStatus(f, idle, 0, 0)).toEqual({ kind: "waiting", text: "Waiting" });
+  expect(ownStatus({ ...f, working: 12 }, idle, 0, 0)).toEqual({ kind: "working", secs: 12 });
+  expect(ownStatus({ ...f, paused: { at: null } }, idle, 0, 0).kind).toBe("text");
+  expect(ownStatus({ ...f, failed: true }, idle, 0, 0)).toEqual({ kind: "failed" });
+  expect(ownStatus({ ...f, waiting: null }, idle, 0, 0)).toEqual({ kind: "done" });
+  expect(ownStatus({ ...f, waiting: null, unread: false }, idle, 0, 0)).toBe(idle);
 });

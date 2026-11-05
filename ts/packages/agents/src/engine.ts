@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Chat, type CopyTurn, type Item, limits, liveSince, type Mention, type Repo, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
+import { type Chat, type CopyTurn, type Item, limits, liveSince, type Mention, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import * as compaction from "./compaction.ts";
 import { parse as parseJson } from "./json.ts";
@@ -16,6 +16,7 @@ import * as procs from "./procs.ts";
 import { type Account, accountEnv, applyUsage, binStr, installed, type Kind, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as tools from "./tools.ts";
+import { fromJson as waitFromJson, type Waiting, waitingOf } from "./waiting.ts";
 import { type FromAgent, type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode, withWho } from "./queue.ts";
 export { type FromAgent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, type Mode } from "./queue.ts";
 import { Recaps } from "./recap.ts";
@@ -417,6 +418,17 @@ export class Engine {
   teamStarted(id: number): number | null {
     const at = this.chats.filter((c) => c.id === id || (c.role === "sub" && c.parent === id)).flatMap((c) => this.liveSince(c.id) ?? []);
     return at.length === 0 ? null : Math.min(...at);
+  }
+
+  /** What the chat waits on once its own turn is done (waiting.ts): its processes, subagents, wake-ups, keys asked;
+   *  null for nothing. `asks`: the secret cards (kv `secret_asks`), when the caller read them already for a list. */
+  waiting(id: number, asks: readonly { chat: number }[] = secrets.loadAsks(this.store)): Waiting | null {
+    // Another PC's chat: its processes and wake-ups are there; its home PC says what it waits on.
+    if (this.foreign(id)) {
+      const st = this.host.copyTurn?.(id)?.status;
+      return st !== null && typeof st === "object" ? waitFromJson((st as { wait?: unknown }).wait) : null;
+    }
+    return waitingOf(this, id, asks);
   }
 
   subsOf(lead: number): Chat[] {

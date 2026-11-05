@@ -641,6 +641,15 @@ public class Chat extends Base implements Images.Gallery {
             status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
             tick();
         }
+        // Its turn is done but something will wake it (hubs from 0.149, PROTOCOL.md "status.wait"):
+        // the desktop's amber "Waiting · 2 processes" line.
+        JSONObject wait = b.optJSONObject("wait");
+        if (wait != null && working == null) {
+            LinearLayout r = Ui.row(this);
+            r.addView(Ui.dot(this, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 4, 0, 3, 0));
+            r.addView(Ui.subtitle(Ui.text(this, wait.optString("text", "Waiting"), 14, Ui.AMBER)), Ui.margins(Ui.weight(), 8, 0, 0, 0));
+            status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        }
         if (limit != null) {
             LinearLayout r = Ui.row(this);
             r.addView(Ui.icon(this, Ui.I_CLOCK, 15, Ui.AMBER));

@@ -474,10 +474,18 @@ final class Sidebar {
         return wrap;
     }
 
-    /** Busy as the desktop sidebar shows it: its own turn, or (a lead) its sub-agents'
-     *  (`working`; older PCs only send `running`). */
+    /** Busy as the desktop sidebar shows it: its own turn. A hub from 0.149 sends `wait` (a lead whose
+     *  sub-agents still run waits on them); older ones say a lead works while they do (`working`; older
+     *  still only send `running`). */
     static boolean working(JSONObject c) {
+        if (c.has("wait")) return c.optBoolean("running");
         return c.optBoolean("working", c.optBoolean("running"));
+    }
+
+    /** Its turn is done but something will wake it (a process, sub-agent, wake-up or key it asked
+     *  for: PROTOCOL.md `wait`), as the desktop row's amber "Waiting". */
+    static boolean waiting(JSONObject c) {
+        return !working(c) && c.optJSONObject("wait") != null;
     }
 
     // ---- the hub doesn't answer ----
@@ -549,7 +557,7 @@ final class Sidebar {
         if (!key.isEmpty()) sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, ""), projectPc.get(key)), projectShared.getOrDefault(key, new ArrayList<>()));
         if (main != null) status(h, main, you);
         boolean busy = false;
-        for (JSONObject c : cs) busy |= working(c) || Hub.queued(c) > 0;
+        for (JSONObject c : cs) busy |= working(c) || waiting(c) || Hub.queued(c) > 0;
         if (fold && busy) h.addView(Ui.dot(a, Ui.BLUE, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 8, 0, 0, 0));
         // The fold toggle: the whole header, or with main chats only the count and chevron.
         LinearLayout toggle = mains ? Ui.row(a) : h;
@@ -634,7 +642,7 @@ final class Sidebar {
     }
 
     /** A chat's status at the end of its row (or its project's header, for a main chat): who's
-     *  typing, the spinner while it works, queued, failed, unread. */
+     *  typing, the spinner while it works, queued, failed, waiting, unread. */
     private void status(LinearLayout r, JSONObject c, String you) {
         boolean typing = typing(c, you) != null;
         int q = Hub.queued(c);
@@ -646,6 +654,12 @@ final class Sidebar {
             r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
         } else if (c.optBoolean("failed")) {
             r.addView(Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        } else if (waiting(c)) {
+            // The desktop row's amber dot and "Waiting".
+            r.addView(Ui.dot(a, Ui.AMBER, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 8, 0, 0, 0));
+            TextView w = Ui.text(a, c.optJSONObject("wait").optString("label", "Waiting"), 12, Ui.AMBER);
+            w.setContentDescription(c.optJSONObject("wait").optString("text", "Waiting"));
+            r.addView(w, Ui.margins(Ui.wrap(), 5, 0, 0, 0));
         } else if (c.optBoolean("unread")) {
             // Finished while nobody had it open (the desktop sidebar's blue dot).
             r.addView(Ui.dot(a, Ui.BLUE, 6), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(6), Ui.dp(6)), 10, 0, 4, 0));

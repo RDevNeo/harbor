@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Chat, cost, repoDir } from "./packages/store/src/index.ts";
-import { type Engine, providers } from "./packages/agents/src/index.ts";
+import { type Engine, providers, waiting as wait } from "./packages/agents/src/index.ts";
 import { subsRunning } from "./packages/agents/src/engine.ts";
 import { type CloneState, cloneFolderJson, cloneProjectOwner } from "./packages/net/src/clone.ts";
 import type { Json } from "./packages/net/src/wire.ts";
@@ -59,6 +59,16 @@ function folder(h: BarsHost, c: Chat): Json {
   return cloneFolderJson(line);
 }
 
+/** PROTOCOL.md `wait`: what wakes a chat whose own turn is done (agents waiting.ts), null while it works or waits on nothing.
+ *  `asks`: the secret cards, read once for a list. */
+export function waitJson(engine: Engine, id: number, nowMs: number, asks?: readonly { chat: number }[]): Json {
+  if (engine.live(id)) return null;
+  const w = engine.waiting(id, asks);
+  if (w === null) return null;
+  const t = Math.floor(nowMs / 1000);
+  return { label: "Waiting", text: wait.waitText(w, t, wait.utcOffset(t)), procs: w.procs, subs: w.subs, wake_ms: w.wake === null ? null : w.wake * 1000, keys: w.keys };
+}
+
 /** api.rs `api_status`. */
 export function statusBars(h: BarsHost, id: number, nowMs: number): Record<string, Json> {
   const c = h.engine.chat(id);
@@ -89,5 +99,6 @@ export function statusBars(h: BarsHost, id: number, nowMs: number): Record<strin
     limit,
     agents: stripJson(rows, h.engine.subsQueued(id), nowMs) as Json,
     folder: c ? folder(h, c) : null,
+    wait: waitJson(h.engine, id, nowMs),
   };
 }

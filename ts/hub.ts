@@ -8,7 +8,7 @@ import { ProjectsApi } from "./projectsapi.ts";
 import { WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
-import { statusBars } from "./statusbars.ts";
+import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { discord, Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
@@ -119,7 +119,7 @@ import {
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
-import { type Chat, dataDir, home, repoDir, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, home, repoDir, secrets, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
@@ -830,6 +830,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, ...host, ...own });
   const live = engine;
+  // The secret cards waiting for the user, read at most once a second (a chat list asks for each chat's `wait`).
+  let asks: { at: number; list: secrets.Ask[] } = { at: 0, list: [] };
+  const asksNow = (): secrets.Ask[] => {
+    if (Date.now() - asks.at > 1000) asks = { at: Date.now(), list: secrets.loadAsks(store) };
+    return asks.list;
+  };
   // A captcha the chat's agent hit goes into that chat's transcript (its card, then its outcome), and the notification opens that chat.
   const stopDiscord =
     o.discordNotices === true && !offline
@@ -1009,8 +1015,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     queuedCount: (id) => live.queuedCount(id),
     mainChat: (repo) => live.mainChat(repo),
     forksOf: (id) => live.forksOf(id),
+    wait: (id) => waitJson(live, id, Date.now(), asksNow()),
   };
   live.reattachTurns();
+  // Processes the agents started before a restart: their exits still wake them (and they wait on them
+  // meanwhile). A copy of someone's data (offline) leaves them to that data's own Harbor.
+  if (!offline) live.adoptProcs();
   live.limits.load();
   let engineTimer: ReturnType<typeof setTimeout> | null = null;
   let profileAt = 0;

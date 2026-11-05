@@ -1151,16 +1151,25 @@ export component Transcript {
                         alignment: start;
                         Rectangle {
                             width: 16px;
-                            Spinner {
+                            if c.tone != "waiting": Spinner {
                                 y: (parent.height - self.height) / 2 + 2.5px;
                                 radius: 7px;
                                 color: Theme.fg;
+                            }
+                            // Its turn is done, something will wake it (a process, subagent, wake-up, key asked).
+                            if c.tone == "waiting": Rectangle {
+                                x: 4px;
+                                y: (parent.height - self.height) / 2 + 2.5px;
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: Theme.amber-700;
                             }
                         }
                         Text {
                             text: c.text;
                             font-size: 13px;
-                            color: Theme.subtle;
+                            color: c.tone == "waiting" ? Theme.amber-900 : Theme.subtle;
                             vertical-alignment: center;
                         }
                     }

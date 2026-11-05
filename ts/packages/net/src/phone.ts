@@ -68,6 +68,8 @@ export interface PhoneEngine {
   worktreeOf?(id: number): string | null;
   mainChat(repo: number): number | null;
   forksOf(id: number): [number, number][];
+  /** PROTOCOL.md `wait`: what wakes the chat once its own turn is done, null for nothing (hubs from 0.149). */
+  wait?(id: number): Json;
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -415,6 +417,15 @@ export class PhoneRoutes {
     return team.some((x) => this.since(x.id) !== null) || (this.d.engine?.subsQueued(c.id) ?? 0) > 0;
   }
 
+  /** What wakes the chat once its turn is done (statusbars.ts `waitJson`); a copy's as its home PC says it in its status. */
+  private wait(c: Chat): Json {
+    if (c.home !== "") {
+      const st = this.d.replica.remote.get(c.id)?.status;
+      return st !== null && typeof st === "object" && !Array.isArray(st) ? ((st as Record<string, Json>).wait ?? null) : null;
+    }
+    return this.d.engine?.wait?.(c.id) ?? null;
+  }
+
   queuedCount(c: Chat): number {
     if (c.home !== "") return this.d.replica.remote.get(c.id)?.queued ?? 0;
     return this.d.engine?.queuedCount(c.id) ?? 0;
@@ -464,6 +475,7 @@ export class PhoneRoutes {
       limit: null,
       agents: null,
       folder: null,
+      wait: null,
       ...bars,
       can_steer: e !== null && e.steering(c.id) !== "no",
       held: e?.held(c.id) ?? false,
@@ -502,6 +514,7 @@ export class PhoneRoutes {
       running: this.running(c),
       queued: this.queuedCount(c),
       working: this.teamWorking(c),
+      wait: this.wait(c),
       updated_ms: c.updated * 1000,
       rev: hub.chatRev(c.id),
       gid: c.gid,

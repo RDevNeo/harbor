@@ -20,3 +20,5 @@ export * as fork from "./fork.ts";
 export * as autowork from "./autowork.ts";
 export { Work } from "./work.ts";
 export * as memory from "./memory.ts";
+export * as waiting from "./waiting.ts";
+export type { Waiting } from "./waiting.ts";

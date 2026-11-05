@@ -395,6 +395,9 @@ refetch everything.
 - `working` (optional, older hubs leave it out: use `running`): the chat is busy as the desktop
   sidebar shows it, its own turn or, for a lead, any of its sub-agents' turns or work queued for
   them. Draw the list's spinner from it; `running` stays the chat's own turn (the composer's Stop).
+- `wait` (hubs from 0.149, null when nothing): what wakes the chat once its own turn is done, as
+  `status.wait` below. When the key is there, the list's spinner is `running` alone and a lead
+  whose sub-agents still run shows the amber dot and `label` ("Waiting") instead.
 - `you`: this client's own device id, as it appears in `typing` (hide yourself with it).
 - `typing`: who is writing in the chat now (see [Typing](#typing)); for another PC's chat, as
   that PC keeps it (typing in a copy is passed on to its PC).
@@ -555,6 +558,11 @@ the desktop shows nothing:
   `agents`): "Waiting for N sub-agents to finish  ·  Q queued" with the agents' initials, and
   **Stop all** (`POST /v1/chats/{id}/stop_all`). When `agents` is there, don't draw it: the
   strip shows the agents and holds Stop all.
+- `wait: {label, text, procs, subs, wake_ms, keys}` (hubs from 0.149; null otherwise): the chat's
+  own turn is done but something will wake it: `procs` processes it started (start_process) that
+  report their exit (one serving a URL doesn't count), `subs` of its sub-agents running or with
+  work queued, its next wake-up (`wake_ms`, snooze) and `keys` asked of the user (request_secret).
+  Draw an amber dot and `text` ("Waiting · 2 processes · wake 14:30"), not while `working`.
 - `limit: {text, can_cancel}`: the usage-limit line (clock icon, `text`), with **Continue now**
   (`POST /v1/chats/{id}/continue`) and, when `can_cancel`, **Cancel** (`POST /v1/chats/{id}/cancel_limit`).
   `targets: [{id, name}]` (optional, hubs before 0.48 send none): other signed-in accounts of the

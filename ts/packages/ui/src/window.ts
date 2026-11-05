@@ -12,7 +12,7 @@ import { busOf } from "./pages/bus.ts";
 import type { Pixels } from "./logos.ts";
 
 export interface StatusData {
-  kind: "working" | "done" | "failed" | "text";
+  kind: "working" | "done" | "failed" | "waiting" | "text";
   text: string;
   icon: string;
   color: string;

@@ -2,6 +2,8 @@
 export interface CopyTurn {
   running: boolean;
   sinceMs: number | null;
+  /** The bars its home PC shows under it (PROTOCOL.md "status"): `wait` is what wakes it once its turn is done. */
+  status?: unknown;
 }
 
 /** When the chat's turn started wherever it runs: this PC's turn, else its home PC's word for a copy; null while none runs. */

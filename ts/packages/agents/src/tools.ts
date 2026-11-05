@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { type Chat, usageCtl } from "@harbor/store";
+import { type Chat, secrets, usageCtl } from "@harbor/store";
 import type { Delivery, Engine } from "./engine.ts";
 import * as oc from "./openchat.ts";
 import { newUuid, now, randomHex } from "./paths.ts";
@@ -8,6 +8,7 @@ import { type Mode, parseMode, steering } from "./queue.ts";
 import { type Account, accessLabel, applyUsage, type Kind, short, staticModels, usable } from "./providers.ts";
 import * as team from "./team.ts";
 import { elapsed } from "./team.ts";
+import { utcOffset, waitWords } from "./waiting.ts";
 
 function arg(a: unknown, k: string): string {
   const v = (a as Record<string, unknown> | null)?.[k];
@@ -36,9 +37,11 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
     case "list_agents": {
       const subs = e.subsOf(leadId);
       if (subs.length === 0) return "No subagents yet.";
+      const asks = secrets.loadAsks(e.store);
       return subs
         .map((c) => {
-          const status = e.turns.has(c.id) ? "running" : (e.pending.get(c.id)?.length ?? 0) > 0 ? "queued" : `idle (${team.ago(c.updated)} ago)`;
+          const w = e.turns.has(c.id) ? null : e.waiting(c.id, asks);
+          const status = e.turns.has(c.id) ? "running" : (e.pending.get(c.id)?.length ?? 0) > 0 ? "queued" : w !== null ? waitWords(w, now(), utcOffset()) : `idle (${team.ago(c.updated)} ago)`;
           const acc = e.account(c.account);
           const who = acc ? short(acc) : c.account;
           const model = acc ? e.modelLabel(acc.kind, c.model) : c.model;
@@ -218,6 +221,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       const ids = e.timers.filter((t) => t.chatId === leadId).map((t) => t.id);
       for (const id of ids) e.store.deleteTimer(id);
       e.timers = e.timers.filter((t) => t.chatId !== leadId);
+      e.changed(leadId);
       return `Cancelled ${ids.length} wake-up(s).`;
     }
     case "create_webhook": {
@@ -282,6 +286,8 @@ export function statusWords(e: Engine, c: Chat): string {
     return `working${since === null ? "" : ` ${elapsed(Math.floor((Date.now() - since) / 1000))}`}`;
   }
   if ((e.pending.get(c.id)?.length ?? 0) > 0) return "queued";
+  const w = e.waiting(c.id);
+  if (w !== null) return waitWords(w, now(), utcOffset());
   if (c.settled) return "settled";
   const a = team.ago(c.updated);
   return a === "now" ? "idle, active just now" : `idle, last active ${a} ago`;

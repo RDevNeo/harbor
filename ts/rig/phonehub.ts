@@ -190,6 +190,22 @@ for (const [name, tint] of [["before.png", "#4fb3a9"], ["after.png", "#7c6cf2"]]
   await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="${tint}"/><text x="90" y="270" font-family="sans-serif" font-size="70" fill="white">${name.slice(0, -4)} image</text></svg>`)).png().toFile(path);
   composerFiles.push({ id: `rig-composer/${name}`, name, path });
 }
+// A chat whose turn is done but that something will wake (Waiting): a process it started that
+// reports its exit (a sleep this file starts and stops) and a wake-up it asked for.
+const WAITING_GID = "c4e7a1b2-0000-4000-8000-00000000a171";
+const waiting = chat({ gid: WAITING_GID, repoId: api, title: "Deploy the rate limiter to staging", updated: ago(2) }, [
+  user("Deploy the rate limiter to staging and tell me when it's live.", ago(4)),
+  tool("mcp__harbor__start_process", "deploy", { name: "deploy", command: "./scripts/deploy staging" }, "Started 'deploy'. It keeps running after your turn ends."),
+  tool("mcp__harbor__snooze", "", { minutes: 45, reason: "check the staging error rate" }, "Snoozed. End your turn now; you will get a [wake] message."),
+  say("The staging deploy is running. I'll report when it finishes, and look at the error rate again in 45 minutes.", ago(2)),
+  done(ago(2), 0.18),
+]);
+const deploy = Bun.spawn(["sleep", "86400"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+const { procStart } = await import("../packages/agents/src/procfs.ts");
+const deployLog = join(dir, "state", "deploy.log");
+writeFileSync(deployLog, "Deploying acme-api to staging…\n");
+seed.addProc({ lead: waiting.id, repoId: api, owner: waiting.id, name: "deploy", cmd: "./scripts/deploy staging", cwd: join(home, "code", "acme-api"), pid: deploy.pid, startTicks: procStart(deploy.pid) ?? 0, log: deployLog, url: null });
+seed.addTimer(waiting.id, t0 + 45 * 60, "check the staging error rate");
 seed.set("shared_drafts", JSON.stringify([[composer.id, { text: "Compare [Image #1] and [Image #2]", files: composerFiles, mentions: [], by: "rig-desktop", label: "Desk", rev: 1 }]]));
 seed.close();
 
@@ -261,9 +277,10 @@ const front = Bun.serve({
   },
 });
 console.log(`phonehub ready ${port}`);
-console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID }));
+console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID, waiting: WAITING_GID }));
 const stop = async () => {
   front.stop(true);
+  deploy.kill();
   await h.stop();
   process.exit(0);
 };

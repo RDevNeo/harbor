@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
-import { type Account, chatpr, git, type Kind, memory, providers, recap, Work } from "@harbor/agents";
-import { type Chat, dataDir, type Item, malloc, now, parseAccess, runDir } from "@harbor/store";
+import { type Account, chatpr, git, type Kind, memory, providers, recap, waiting, Work } from "@harbor/agents";
+import { type Chat, dataDir, type Item, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
 import { AUTO_DEVICE, CHAT_SCHEME, RESUME_TEXT, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
@@ -1229,7 +1229,8 @@ export class Shell {
     const follow = this.win.at_end;
     const since = this.engine.liveSince(chat.id);
     const subs = chat.role === "lead" ? this.engine.liveSubs(chat.id).length : 0;
-    const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
+    const waits = since === null ? this.engine.waiting(chat.id) : null;
+    const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : waits !== null ? { text: waiting.waitText(waits, now(), utcOffset()), tone: "waiting" as const } : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
     // Another PC's chat: an image that isn't on this PC comes from that PC.
@@ -1258,16 +1259,20 @@ export class Shell {
         return { kind: "done", text: "", icon: "", color: token("green-900", this.dark) };
       case "failed":
         return { kind: "failed", text: "", icon: "", color: token("red-900", this.dark) };
+      case "waiting":
+        return { kind: "waiting", text: s.text, icon: "", color: token("amber-900", this.dark) };
       case "text":
         return { kind: "text", text: s.text, icon: glyph(s.icon), color: token(s.color, this.dark) };
     }
   }
 
-  private chatStatus(c: Chat, idle: Status): Status {
-    const since = this.engine.teamStarted(c.id) ?? this.engine.liveSince(c.id);
+  /** A row's status. Working is its own turn; a lead whose subagents still run once its turn is done waits on them. */
+  private chatStatus(c: Chat, idle: Status, asks: readonly { chat: number }[]): Status {
+    const since = this.engine.liveSince(c.id);
     const t = now();
+    const w = since === null ? this.engine.waiting(c.id, asks) : null;
     return ownStatus(
-      { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.engine.paused.has(c.id) ? { at: null } : null, typing: false, viewed: false, failed: this.engine.failed.has(c.id), unread: this.engine.unread.has(c.id) },
+      { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.engine.paused.has(c.id) ? { at: null } : null, typing: false, viewed: false, failed: this.engine.failed.has(c.id), waiting: w === null ? null : "Waiting", unread: this.engine.unread.has(c.id) },
       idle,
       t,
       utcOffset(),
@@ -1310,6 +1315,7 @@ export class Shell {
       return { place: placeHint(at, dir, clash.has(name)), place_pc: at !== null, tip: placeLine(at, dir) };
     };
     const rows: SideRow[] = [];
+    const asks = secrets.loadAsks(d.store);
     const chatRow = (c: Chat, kind: "thread" | "loose"): SideRow => {
       const until = snoozed.get(`c${c.id}`) ?? null;
       const idle = chatIdle(snoozedLabel(until !== null && until > t ? until : null, t, utcOffset()), c.updated, t);
@@ -1318,7 +1324,7 @@ export class Shell {
         id: c.id,
         title: c.title,
         active: this.view === "chat" && this.chatId === c.id,
-        status: this.statusData(this.chatStatus(c, idle)),
+        status: this.statusData(this.chatStatus(c, idle, asks)),
         letter: "",
         avatar: noPixels,
         has_avatar: false,
@@ -1342,7 +1348,7 @@ export class Shell {
         id: p.repo.id,
         title: p.repo.name,
         active: selected,
-        status: this.statusData(mainChat ? this.chatStatus(mainChat, idle) : idle),
+        status: this.statusData(mainChat ? this.chatStatus(mainChat, idle, asks) : idle),
         letter: projectInitial(p.repo.name),
         avatar: this.avatar(p.repo.id) ?? noPixels,
         has_avatar: this.avatar(p.repo.id) !== null,
@@ -4118,7 +4124,7 @@ export class Shell {
 
 function sameCard(a: CardData, b: CardData): boolean {
   const plain = a.kind === "group" || a.kind === "space" || a.kind === "status" || a.kind === "divider" || a.kind === "earlier";
-  return a === b || (plain && a.kind === b.kind && a.seq === b.seq && a.label === b.label && a.open === b.open && a.pending === b.pending && a.text === b.text && a.url === b.url);
+  return a === b || (plain && a.kind === b.kind && a.seq === b.seq && a.label === b.label && a.open === b.open && a.pending === b.pending && a.text === b.text && a.url === b.url && a.tone === b.tone);
 }
 
 function shortElapsed(secs: number): string {
