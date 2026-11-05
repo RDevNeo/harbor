@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.146.2] - 2026-11-04
+
+### Fixed
+- An image or video in an agent's reply (`![caption](/path/shot.png)`) shows on every PC and phone,
+  not only as a link: the chat's PC keeps a copy in the chat's uploads (by its contents) as the reply
+  is written, and the reply names that copy, so it also still shows after a temp file is deleted.
+  An image that couldn't show yet (its file not there, the chat's PC off) is tried again a little
+  later while it's on the screen, instead of staying a link until the chat is reopened (#116).
+
 ## [0.146.1] - 2026-11-04
 
 ### Changed
