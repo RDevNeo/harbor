@@ -20,10 +20,7 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+
 
 /** Installs the APK the hub serves (GET /app.apk) over this app, through a PackageInstaller
  *  session. Needs "Install unknown apps" for Harbor once. Android 12+ updates an app that
@@ -155,72 +152,6 @@ public class Update extends BroadcastReceiver {
         a.startActivity(new Intent(a, Chats.class).putExtra("hub", h.id));
         if (s.length > 1 && !s[1].isEmpty()) a.startActivity(new Intent(a, Chat.class).putExtra("hub", h.id).putExtra("chat", s[1]));
         return true;
-    }
-
-    /** One PC this phone reaches, and what its Harbor says about itself (`GET /v1/app` `hub`,
-     *  hubs from 0.51): info null = it didn't answer; info without "version" = an older Harbor. */
-    static final class Pc {
-        final Hub hub; final String v, name; JSONObject info;
-        Pc(Hub hub, String v, String name) { this.hub = hub; this.v = v; this.name = name; }
-        String version() { return info == null ? "" : info.optString("version"); }
-        boolean managed() { return info != null && info.optBoolean("managed"); }
-        boolean busy() { return info != null && (info.optBoolean("installing") || info.optBoolean("checking")); }
-        /** Its Settings › Updates: true automatically, false asks; null before 0.53 (no say). */
-        Boolean auto() { return info != null && info.has("auto") ? info.optBoolean("auto") : null; }
-        /** It installs its own updates and asks first: the PCs sheet offers Auto-update. */
-        boolean asks() { return managed() && Boolean.FALSE.equals(auto()); }
-        String status() { return info == null ? "" : info.optString("status"); }
-    }
-
-    /** Every PC of every pairing once (a PC two pairings reach is asked once), with its Harbor
-     *  version. Blocking. Also notes the newest app any of them serves, as {@link #check}. */
-    static List<Pc> pcs(Context c) {
-        List<Pc> out = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (Hub h : Hub.all(c))
-            for (String v : h.endpoints()) {
-                String key = v.isEmpty() ? h.pid : v;
-                if (key == null || key.isEmpty()) key = h.id + "/" + v;
-                if (!seen.add(key)) continue;
-                Pc pc = new Pc(h, v, h.labelOn(v));
-                try {
-                    JSONObject app = h.callOn(v, "GET", "/v1/app", null);
-                    JSONObject hub = app.optJSONObject("hub");
-                    pc.info = hub != null ? hub : new JSONObject();
-                } catch (Exception ignored) { } // that PC is away
-                out.add(pc);
-            }
-        return out;
-    }
-
-    /** The newest Harbor any PC runs or knows of ("" when none says). */
-    static String newest(List<Pc> pcs) {
-        String best = "";
-        for (Pc p : pcs) {
-            if (p.info == null) continue;
-            for (String v : new String[] { p.version(), p.info.isNull("latest") ? "" : p.info.optString("latest") })
-                if (code(v) > code(best)) best = v;
-        }
-        return best;
-    }
-
-    /** A PC that installs its own updates and runs an older Harbor than `newest`: its Update
-     *  (`POST /v1/hub/update`) checks for the release itself when it hasn't yet. */
-    static boolean behind(Pc p, String newest) {
-        return p.managed() && !p.version().isEmpty() && code(newest) > code(p.version());
-    }
-
-    /** "0.51.1" → 49001, as versionCode (Cargo.toml): only to compare. */
-    static long code(String v) {
-        if (v == null) return 0;
-        String[] p = v.trim().replaceFirst("^v", "").split("-")[0].split("\\.");
-        long out = 0;
-        for (int i = 0; i < 3; i++) {
-            long n = 0;
-            try { if (i < p.length) n = Long.parseLong(p[i]); } catch (NumberFormatException e) { return 0; }
-            out = out * 1000 + n;
-        }
-        return out;
     }
 
     /** Harbor came back on screen while the background's download ran: not now. */

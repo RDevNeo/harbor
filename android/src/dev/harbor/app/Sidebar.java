@@ -28,7 +28,7 @@ import java.util.Set;
  *  nav rows (Projects, Pull requests, Issues, PCs, Settings, and Update when there is one), a
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
- *  dot while a turn runs. A round avatar (this PC) and the black "New session" pill float at
+ *  dot while a turn runs. A round avatar (your photo, else the workspace's initial) and the black "New session" pill float at
  *  the bottom. The title row's workspace button narrows the list to some of the account's
  *  workspaces, as the desktop sidebar's does.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
@@ -129,7 +129,7 @@ final class Sidebar {
         fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{Ui.BG, Ui.BG, Ui.BG & 0x00ffffff}));
         view.addView(fade, new FrameLayout.LayoutParams(-1, Ui.dp(84), Gravity.BOTTOM));
 
-        // Bottom: avatar (this PC → Settings) and New session.
+        // Bottom: avatar (your photo → Settings) and New session.
         avatar = Ui.bold(a, "", 16, 0xffffffff);
         avatar.setGravity(Gravity.CENTER);
         avatar.setBackground(Ui.press(0xff7a6ad8, 0, 20));
@@ -149,10 +149,15 @@ final class Sidebar {
         label();
     }
 
+    /** Your photo (Settings › Account), else the workspace's initial on purple. */
     void label() {
-        String l = a.hub.label();
+        String l = a.hub.label(), photo = Account.photo(a);
+        avatar.setContentDescription("Settings");
+        if (!photo.isEmpty() && photo.equals(avatar.getTag())) return; // already showing it
+        avatar.setTag(null);
+        avatar.setBackground(Ui.press(0xff7a6ad8, 0, 20));
         avatar.setText(l.isEmpty() ? "?" : l.substring(0, 1).toUpperCase());
-        avatar.setContentDescription(l + " settings");
+        Avatars.into(avatar, avatar, photo);
     }
 
     private void toggleSearch() {
@@ -201,6 +206,7 @@ final class Sidebar {
     // ---- the list ----
 
     void render(JSONObject st) {
+        label(); // your photo may have come with a newer directory
         this.st = st;
         list.removeAllViews();
 
@@ -787,213 +793,5 @@ final class Sidebar {
             Ui.prefs(a).edit().putString("filter-" + a.hub.id, id).apply();
             if (st != null) render(st);
         });
-    }
-
-    /** Your workspaces' PCs: switch to another. Below, every PC they reach with its
-     *  Harbor version, and Update when one is behind (the desktop's Settings › Workspace). */
-    private void pcs() {
-        Sheet s = new Sheet(a, "PCs");
-        LinearLayout c = s.card();
-        boolean first = true;
-        List<Hub> hubs = Hub.all(a);
-        for (Hub h : hubs) {
-            if (!first) c.addView(Ui.gap(a));
-            first = false;
-            String more = h.eps.isEmpty() ? "" : " · and " + h.eps.size() + (h.eps.size() == 1 ? " more PC" : " more PCs");
-            LinearLayout r = Ui.cardRow(a, null, h.label(), h.host + ":" + h.port + more, Ui.FG, v -> {
-                s.dismiss();
-                if (h.id.equals(a.hub.id)) return;
-                Hub.setLast(a, h.id);
-                a.startActivity(new Intent(a, Chats.class).putExtra("hub", h.id).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
-                a.finish();
-            });
-            Ui.wrapSub(r, 3);
-            if (h.id.equals(a.hub.id)) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
-            c.addView(r, Ui.fill());
-        }
-
-        TextView head = Ui.text(a, "Harbor on your PCs", 14, Ui.G700);
-        head.setPadding(Ui.dp(6), Ui.dp(4), Ui.dp(6), Ui.dp(8));
-        s.body.addView(head);
-        LinearLayout vc = s.card();
-        LinearLayout actions = Ui.row(a);
-        s.body.addView(actions, Ui.margins(Ui.fill(), 0, 0, 0, 4));
-        vc.addView(Ui.cardRow(a, null, "Asking your PCs…", null, Ui.G600, null), Ui.fill());
-        // Paired phones' apps, as the hub saw them (`GET /v1/versions`, hubs from 0.68).
-        TextView ph = Ui.text(a, "Harbor on your phones", 14, Ui.G700);
-        ph.setPadding(Ui.dp(6), Ui.dp(8), Ui.dp(6), Ui.dp(8));
-        ph.setVisibility(View.GONE);
-        s.body.addView(ph);
-        LinearLayout pc = s.card();
-        pc.setVisibility(View.GONE);
-        phonesCard = new View[] { ph, pc };
-        s.show();
-        versions(s, vc, actions, new java.util.HashMap<>());
-    }
-
-    /** The PCs sheet's phones heading and card (filled with each refresh of the versions). */
-    private View[] phonesCard;
-
-    /** The hub's `GET /v1/versions` (null from a hub before 0.68, or one that's away). */
-    private JSONObject knownVersions() {
-        try { return a.hub.get("/v1/versions"); } catch (Exception e) { return null; }
-    }
-
-    /** What the hub last heard from a PC that doesn't answer now: one of its mesh's offline PCs
-     *  by that name ("" when none). */
-    private static String lastRan(JSONObject known, String name) {
-        JSONArray l = known == null ? null : known.optJSONArray("pcs");
-        for (int i = 0; l != null && i < l.length(); i++) {
-            JSONObject p = l.optJSONObject(i);
-            if (p != null && !p.optBoolean("self") && !p.optBoolean("online") && name.equals(p.optString("name"))
-                    && !p.optString("version").isEmpty()) return p.optString("line");
-        }
-        return "";
-    }
-
-    /** One row per paired phone: its app version, when and where the hub last saw it. */
-    private void fillPhones(JSONObject known) {
-        if (phonesCard == null) return;
-        LinearLayout card = (LinearLayout) phonesCard[1];
-        card.removeAllViews();
-        JSONArray l = known == null ? null : known.optJSONArray("phones");
-        int n = l == null ? 0 : l.length();
-        for (int i = 0; i < n; i++) {
-            JSONObject p = l.optJSONObject(i);
-            if (p == null) continue;
-            if (card.getChildCount() > 0) card.addView(Ui.gap(a));
-            LinearLayout r = Ui.cardRow(a, Ui.I_PHONE, p.optString("name"), p.optString("line"), Ui.FG, null);
-            Ui.wrapSub(r, 3);
-            card.addView(r, Ui.fill());
-        }
-        int vis = card.getChildCount() > 0 ? View.VISIBLE : View.GONE;
-        phonesCard[0].setVisibility(vis);
-        card.setVisibility(vis);
-    }
-
-    /** Fills the PCs sheet's version card; `asked`: PCs updating since a tap here → the version
-     *  they ran (until they answer with another one, or say they're busy themselves). */
-    private void versions(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked) {
-        JSONObject[] known = new JSONObject[1];
-        Ui.bg(a, () -> { List<Update.Pc> l = Update.pcs(a); known[0] = knownVersions(); return l; }, pcs -> {
-            if (!s.dialog.isShowing()) return;
-            fillPhones(known[0]);
-            vc.removeAllViews();
-            actions.removeAllViews();
-            String newest = Update.newest(pcs);
-            List<Update.Pc> behind = new ArrayList<>(), asks = new ArrayList<>();
-            boolean first = true, managed = false;
-            for (Update.Pc p : pcs) {
-                if (!first) vc.addView(Ui.gap(a));
-                first = false;
-                String key = p.hub.id + "/" + p.v;
-                String was = asked.get(key);
-                if (was != null && p.info != null && (p.busy() || !was.equals(p.version()))) asked.remove(key);
-                boolean busy = p.busy() || asked.containsKey(key);
-                boolean late = Update.behind(p, newest);
-                managed |= p.managed();
-                if (late && !busy) behind.add(p);
-                String sub;
-                if (p.info == null) {
-                    String last = lastRan(known[0], p.name);
-                    sub = last.isEmpty() ? "not answering" : "not answering · Harbor " + last;
-                }
-                else if (p.version().isEmpty()) sub = "an older Harbor: update it on that PC";
-                else {
-                    String st = busy && !p.busy() ? "updating…" : p.status();
-                    sub = "Harbor " + p.version() + (st.isEmpty() ? "" : " · " + st);
-                    if (late && !busy && !st.contains(newest)) sub += " · " + newest + " is out";
-                    if (p.managed() && Boolean.TRUE.equals(p.auto())) sub += " · updates automatically";
-                }
-                if (p.asks()) asks.add(p);
-                // Hubs from 0.53: a tap sets how that PC updates (its Settings › Updates).
-                LinearLayout r = Ui.cardRow(a, Ui.I_MONITOR, p.name, sub, p.info == null ? Ui.G600 : Ui.FG,
-                        p.managed() && p.auto() != null ? v -> pickAuto(s, vc, actions, asked, p) : null);
-                Ui.wrapSub(r, 3);
-                if (late) {
-                    TextView b = small(busy ? "Updating…" : "Update", !busy);
-                    if (!busy) b.setOnClickListener(v -> update(s, vc, actions, asked, java.util.Collections.singletonList(p)));
-                    r.addView(b, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-                }
-                vc.addView(r, Ui.fill());
-            }
-            if (behind.size() > 1) {
-                TextView all = Ui.button(a, "Update all (" + behind.size() + ")", true, v -> update(s, vc, actions, asked, behind));
-                actions.addView(all, Ui.margins(Ui.weight(), 0, 0, 8, 0));
-            }
-            if (!asks.isEmpty() && behind.size() <= 1) {
-                TextView all = Ui.button(a, asks.size() == 1 ? "Auto-update it" : "Auto-update all (" + asks.size() + ")", false, v -> setAuto(s, vc, actions, asked, asks, true));
-                actions.addView(all, Ui.margins(Ui.weight(), 0, 0, 8, 0));
-            }
-            if (managed) {
-                TextView check = Ui.button(a, "Check for updates", false, v -> {
-                    v.setEnabled(false);
-                    Ui.bg(a, () -> {
-                        for (Update.Pc p : pcs) if (p.managed()) {
-                            try { p.hub.callOn(p.v, "POST", "/v1/hub/check", new JSONObject()); } catch (Exception ignored) { }
-                        }
-                        Thread.sleep(4000); // GitHub answers in a moment
-                        return true;
-                    }, r -> versions(s, vc, actions, asked));
-                });
-                actions.addView(check, actions.getChildCount() > 0 ? Ui.weight() : Ui.fill());
-            }
-        });
-    }
-
-    /** Presses each PC's own Update (`POST /v1/hub/update`), then looks again as they reload. */
-    private void update(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked, List<Update.Pc> pcs) {
-        for (Update.Pc p : pcs) asked.put(p.hub.id + "/" + p.v, p.version());
-        versions(s, vc, actions, asked);
-        Ui.bg(a, () -> {
-            List<String> failed = new ArrayList<>();
-            for (Update.Pc p : pcs) {
-                try { p.hub.callOn(p.v, "POST", "/v1/hub/update", new JSONObject()); }
-                catch (Exception e) { asked.remove(p.hub.id + "/" + p.v); failed.add(p.name + ": " + Hub.why(e)); }
-            }
-            return failed;
-        }, failed -> {
-            Ui.toast(a, failed.isEmpty() ? (pcs.size() == 1 ? "Updating Harbor on " + pcs.get(0).name + "…" : "Updating Harbor on " + pcs.size() + " PCs…")
-                    : String.join("\n", failed));
-            versions(s, vc, actions, asked);
-            // They download, install and reload in place: look again meanwhile.
-            for (int ms : new int[] { 8000, 25000, 60000 })
-                Ui.main.postDelayed(() -> { if (s.dialog.isShowing()) versions(s, vc, actions, asked); }, ms);
-        });
-    }
-
-    /** How PC p updates: Automatically or Ask me (its Settings › Updates). */
-    private void pickAuto(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked, Update.Pc p) {
-        List<Sheet.Option> o = new ArrayList<>();
-        o.add(new Sheet.Option("auto", "Automatically", "new versions install in the background and swap in while nobody uses Harbor there", true));
-        o.add(new Sheet.Option("ask", "Ask me", "an Update button waits on that PC", true));
-        Sheet.pick(a, "Updates on " + p.name, null, o, Boolean.TRUE.equals(p.auto()) ? "auto" : "ask",
-                id -> setAuto(s, vc, actions, asked, java.util.Collections.singletonList(p), "auto".equals(id)));
-    }
-
-    /** Sets each PC's Settings › Updates (`POST /v1/hub/auto`), then looks again. */
-    private void setAuto(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked, List<Update.Pc> pcs, boolean on) {
-        Ui.bg(a, () -> {
-            List<String> failed = new ArrayList<>();
-            JSONObject b = new JSONObject();
-            b.put("on", on);
-            for (Update.Pc p : pcs) {
-                try { p.hub.callOn(p.v, "POST", "/v1/hub/auto", b); }
-                catch (Exception e) { failed.add(p.name + ": " + Hub.why(e)); }
-            }
-            return failed;
-        }, failed -> {
-            if (!failed.isEmpty()) Ui.toast(a, String.join("\n", failed));
-            versions(s, vc, actions, asked);
-        });
-    }
-
-    /** A compact pill button for a card row. */
-    private TextView small(String label, boolean primary) {
-        TextView t = Ui.bold(a, label, 13, primary ? Ui.ON_INK : Ui.G700);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(Ui.dp(14), Ui.dp(7), Ui.dp(14), Ui.dp(7));
-        t.setBackground(primary ? Ui.press(Ui.INK, 0, 18) : Ui.round(Ui.G100, 0, 18));
-        return t;
     }
 }

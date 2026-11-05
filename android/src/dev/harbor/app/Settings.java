@@ -201,21 +201,8 @@ public class Settings extends Base {
         return f;
     }
 
-    /** This account's photo: the one it set, else the directory's (Google's). */
     private String myPhoto() {
-        String me = Account.id(this);
-        JSONObject d = Account.directory(this);
-        org.json.JSONArray ws = d == null ? null : d.optJSONArray("workspaces");
-        // The directory is the newer word (a photo changed on another device arrives with it).
-        for (int i = 0; ws != null && i < ws.length(); i++) {
-            JSONObject w = ws.optJSONObject(i);
-            org.json.JSONArray ms = w == null ? null : w.optJSONArray("members");
-            for (int k = 0; ms != null && k < ms.length(); k++) {
-                JSONObject m = ms.optJSONObject(k);
-                if (m != null && me.equals(m.optString("id")) && m.has("image")) return m.optString("image");
-            }
-        }
-        return Account.image(this);
+        return Account.photo(this);
     }
 
     /** Your photo: everyone in your workspaces sees it beside your name. Pick one from the

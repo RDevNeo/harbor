@@ -110,6 +110,22 @@ final class Account {
     /** The account's photo (an HTTPS URL), "" for none: its initials then. */
     static String image(Context c) { return state(c).optString("image"); }
 
+    /** This account's photo as everyone sees it: the directory's own row (newer: a photo changed on
+     *  another device arrives with it), else the sign-in's; "" for none. */
+    static String photo(Context c) {
+        String me = id(c);
+        JSONArray ws = directory(c).optJSONArray("workspaces");
+        for (int i = 0; ws != null && i < ws.length(); i++) {
+            JSONObject w = ws.optJSONObject(i);
+            JSONArray ms = w == null ? null : w.optJSONArray("members");
+            for (int k = 0; ms != null && k < ms.length(); k++) {
+                JSONObject m = ms.optJSONObject(k);
+                if (m != null && me.equals(m.optString("id")) && m.has("image")) return m.optString("image");
+            }
+        }
+        return image(c);
+    }
+
     /** The Harbor token every call to a PC carries ("" when there's none). */
     static String token(Context c) {
         JSONObject s = state(c);

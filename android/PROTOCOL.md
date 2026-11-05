@@ -1674,9 +1674,8 @@ Automatically on it also installs). `202 {"ok": true, "checking": true}`; the re
 `{"on": true}` or `{"on": false}`: the hub's Settings › Updates, "Automatically" or "Ask me".
 Turned on, a hub that updates itself also looks for a release at once (and installs it, then
 swaps in while nobody uses it). `{"ok": true, "auto": true}`; `400` without `on`; `404` before
-0.53 (offer it only for PCs whose `GET /v1/app` `hub` has `auto`). The phone's PCs sheet: a tap
-on a PC picks Automatically / Ask me, and "Auto-update all" turns it on for every PC that asks;
-the desktop's Settings › Devices has Auto-update per PC and "Auto-update all PCs" (through
+0.53 (offer it only for PCs whose `GET /v1/app` `hub` has `auto`). The phone no longer asks it
+(its PCs sheet went in 0.148: PCs update themselves); the desktop's Settings › Devices has Auto-update per PC and "Auto-update all PCs" (through
 `/mesh/v1/call`).
 
 ### Gmail (0.95): `GET /v1/apps/gmail`, `POST /v1/apps/gmail/{code,start,finish,default,signout}`
@@ -1840,9 +1839,8 @@ the hub knows them, with the line to show built on the hub (the same text agents
 "app 0.68.0 (68000), seen 5m ago at laptop"}]}`. `pcs`: this PC first, then the mesh's PCs; an
 offline one keeps the version it last ran (`line` "0.66.0, offline (last seen 2d ago)"; `version`
 "" when unknown). `phones`: paired here or on another PC of the mesh, most recently seen first;
-`app` 0 = unknown (an app before 0.19), `via` "" = seen at this PC. The phone's PCs sheet shows
-`phones` as "Harbor on your phones" and, for a PC that doesn't answer, "not answering · Harbor
-<line>" from `pcs`.
+`app` 0 = unknown (an app before 0.19), `via` "" = seen at this PC. (The phone's PCs sheet showed
+these until 0.148.)
 
 `hub.auto` (optional, from 0.53; missing: false): the PC's Settings › Updates is
 "Automatically". Such a PC installs releases in the background and swaps them in while nobody
