@@ -256,7 +256,10 @@ function parseWorkspace(v: unknown): AccountWorkspace {
 
 function parseMember(v: unknown): AccountMember {
   const o = need(v);
-  return { id: str(o, "id", true), name: str(o, "name"), email: str(o, "email"), role: roleOf(str(o, "role")), image: photoUrl(str(o, "image")) };
+  const m: AccountMember = { id: str(o, "id", true), name: str(o, "name"), email: str(o, "email"), role: roleOf(str(o, "role")) };
+  const image = photoUrl(str(o, "image"));
+  if (image !== "") m.image = image;
+  return m;
 }
 
 /** Only an HTTPS address is a photo. */

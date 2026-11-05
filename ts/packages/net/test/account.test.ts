@@ -622,6 +622,21 @@ describe("sign-in through Clerk", () => {
 });
 
 describe("the account loop", () => {
+  test("a member's photo is kept only when it's an HTTPS address", async () => {
+    const r = rig();
+    await signedIn(r);
+    const w = workspaceDir(r, {
+      members: [
+        { id: "user_1", name: "Sam", email: "sam@example.com", role: "owner", image: "https://img.example/sam.jpg" },
+        { id: "user_2", name: "Pat", email: "pat@example.com", role: "member", image: "http://img.example/pat.jpg" },
+        { id: "user_3", name: "Kai", email: "kai@example.com", role: "member" },
+      ],
+    });
+    r.world.directory = { at: Date.now(), workspaces: [w], peers: [] };
+    await r.svc.tick(true);
+    expect(r.svc.directory().workspaces[0]?.members.map((m) => m.image ?? "none")).toEqual(["https://img.example/sam.jpg", "none", "none"]);
+  });
+
   test("registers the PC, fetches the directory and the invitations, and caches the directory", async () => {
     const r = rig();
     await signedIn(r);
