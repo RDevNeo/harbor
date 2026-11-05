@@ -193,7 +193,7 @@ for (const [name, tint] of [["before.png", "#4fb3a9"], ["after.png", "#7c6cf2"]]
 // A chat whose turn is done but that something will wake (Waiting): a process it started that
 // reports its exit (a sleep this file starts and stops) and a wake-up it asked for.
 const WAITING_GID = "c4e7a1b2-0000-4000-8000-00000000a171";
-const waiting = chat({ gid: WAITING_GID, repoId: api, title: "Deploy the rate limiter to staging", updated: ago(2) }, [
+const waiting = chat({ gid: WAITING_GID, repoId: api, role: "lead", name: "lead", title: "Deploy the rate limiter to staging", updated: ago(2) }, [
   user("Deploy the rate limiter to staging and tell me when it's live.", ago(4)),
   tool("mcp__harbor__start_process", "deploy", { name: "deploy", command: "./scripts/deploy staging" }, "Started 'deploy'. It keeps running after your turn ends."),
   tool("mcp__harbor__snooze", "", { minutes: 45, reason: "check the staging error rate" }, "Snoozed. End your turn now; you will get a [wake] message."),
@@ -206,6 +206,8 @@ const deployLog = join(dir, "state", "deploy.log");
 writeFileSync(deployLog, "Deploying acme-api to staging…\n");
 seed.addProc({ lead: waiting.id, repoId: api, owner: waiting.id, name: "deploy", cmd: "./scripts/deploy staging", cwd: join(home, "code", "acme-api"), pid: deploy.pid, startTicks: procStart(deploy.pid) ?? 0, log: deployLog, url: null });
 seed.addTimer(waiting.id, t0 + 45 * 60, "check the staging error rate");
+// acme-api's main chat: the drawer's project row shows its status.
+seed.setMainChat(api, waiting.id);
 seed.set("shared_drafts", JSON.stringify([[composer.id, { text: "Compare [Image #1] and [Image #2]", files: composerFiles, mentions: [], by: "rig-desktop", label: "Desk", rev: 1 }]]));
 seed.close();
 
