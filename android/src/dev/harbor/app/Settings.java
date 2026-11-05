@@ -155,7 +155,6 @@ public class Settings extends Base {
         section(col, "Notifications");
         LinearLayout nt = card(col);
         notifyRows(nt);
-        footnote(col, "They arrive within seconds.");
 
         // This app: one row for its version and its update (any PC offers the newest it has),
         // with whatever keeps the automatic install from going in said on its line.
@@ -173,9 +172,6 @@ public class Settings extends Base {
 
         LinearLayout bye = card(col);
         bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
-        TextView note = Ui.text(this, "Signing out forgets your PCs on this phone, and they stop taking it. Chats stay on the PCs.", 13, Ui.G700);
-        note.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
-        col.addView(note);
     }
 
     /** A section's title over its cards. */
@@ -184,16 +180,6 @@ public class Settings extends Base {
         t.setPadding(Ui.dp(18), Ui.dp(10), Ui.dp(18), Ui.dp(8));
         col.addView(t, Ui.fill());
         return t;
-    }
-
-    /** A small note under a card. */
-    private void footnote(LinearLayout col, String s) {
-        TextView t = Ui.text(this, s, 13, Ui.G700);
-        t.setPadding(Ui.dp(18), 0, Ui.dp(18), 0);
-        LinearLayout.LayoutParams lp = Ui.fill();
-        // Sits under the card it explains (cards keep 14 dp below them).
-        lp.setMargins(0, -Ui.dp(6), 0, Ui.dp(16));
-        col.addView(t, lp);
     }
 
     /** A round avatar with someone's initials, the size of a card row's icon disc. */
@@ -298,7 +284,6 @@ public class Settings extends Base {
             people.addView(Ui.gap(this));
             people.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_X, 36), "Leave " + wsName, null, Ui.RED, v -> confirmRemove(ws, me, true, wsName)), Ui.fill());
         }
-        footnote(wsBox, "Everyone in " + wsName + " controls all of its PCs and chats." + (owner ? " Tap someone to remove them." : ""));
 
         org.json.JSONArray pcs = w.optJSONArray("pcs");
         if (pcs == null || pcs.length() == 0) return;
