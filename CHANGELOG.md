@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.149.0] - 2026-11-05
+
+### Added
+- A "Waiting" status, amber, for a chat whose turn is done but that something will wake again: a
+  process its agent started (start_process) that reports when it exits (one serving a URL doesn't
+  count), its sub-agents still running or with work queued, a wake-up it asked for, or a key it
+  asked you for. The desktop's sidebar rows and project rows show an amber dot and "Waiting", the
+  chat's status line says what for ("Waiting · 2 processes · wake 14:30"), and the phone's drawer
+  and chat show the same. It ends when nothing is left or a turn starts. Agents' list_chats and
+  list_agents say it too.
+
+### Changed
+- "Working" is now the chat's own turn: a lead whose own turn is done while its sub-agents run
+  shows Waiting for them.
+
+### Fixed
+- Processes agents started before Harbor restarted are picked up again: their exit wakes the agent
+  that started it, as before the restart.
+
 ## [0.148.0] - 2026-11-05
 
 ### Added
