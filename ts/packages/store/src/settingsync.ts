@@ -11,7 +11,6 @@ const W: Class = "workspace";
 /** Every kv key, and keys starting with each prefix (ending in `:` or `_`). */
 export const KEYS: readonly (readonly [string, Class])[] = [
   ["theme", A],
-  ["density", A],
   ["keybindings", A],
   ["default_account", A],
   ["default_model", A],

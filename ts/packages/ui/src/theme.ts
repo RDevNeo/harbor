@@ -47,10 +47,6 @@ export const RADIUS_MD = 6;
 export const RADIUS_LG = 8;
 export const RADIUS_XL = 12;
 
-export function rowH(compact: boolean): number {
-  return compact ? 28 : 32;
-}
-
 /** A preset's line height (px) and tracking (px), as `widgets::rich` applies them. */
 export function presetMetrics(name: string): [number | null, number] {
   const table: Record<string, [number, number]> = {
@@ -126,7 +122,6 @@ export function themeSlint(): string {
     "// Generated from src/theme.ts by `bun packages/ui/src/gen.ts`; a test keeps them equal.",
     "export global Theme {",
     "    in-out property <bool> dark: true;",
-    "    in-out property <bool> compact: false;",
     `    out property <color> bg100: dark ? ${DARK.bg100} : ${LIGHT.bg100};`,
     `    out property <color> bg200: dark ? ${DARK.bg200} : ${LIGHT.bg200};`,
   ];
@@ -143,7 +138,7 @@ export function themeSlint(): string {
     "    out property <color> on-primary: bg100;",
     "    out property <color> accent: gray-200;",
     "    out property <color> destructive: red-800;",
-    "    out property <length> row-h: compact ? 28px : 32px;",
+    "    out property <length> row-h: 32px;",
     "    out property <length> radius-md: 6px;",
     "    out property <length> radius-lg: 8px;",
     "    out property <length> radius-xl: 12px;",

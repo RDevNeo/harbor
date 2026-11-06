@@ -45,7 +45,7 @@ export interface PageShell {
   /** Back to the view the page was opened from. */
   leave: () => void;
   dark: () => boolean;
-  theme: (dark: boolean, compact: boolean) => void;
+  theme: (dark: boolean) => void;
   toast: (message: string) => void;
   hub: () => PageHub;
   openExternal: (url: string) => void;
@@ -90,7 +90,7 @@ export class PageHost {
           runtime: s.hub().settings,
           keys: s.keys,
           speech: s.dictation() ?? settingsSpeech(store),
-          theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
+          theme: { dark: () => s.dark(), set: (dark) => s.theme(dark) },
           back: () => s.leave(),
           providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), changed: () => this.s.data.rediscoverAccounts() },
           integrations: { discordWindow: () => void discord.window().catch(() => {}) },

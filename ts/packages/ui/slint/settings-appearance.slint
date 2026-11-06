@@ -78,17 +78,13 @@ component Caption inherits VerticalLayout {
 export struct AppearanceView {
     modes: [string],
     mode: int,
-    densities: [string],
-    density: int,
     mode-note: string,
-    density-note: string,
 }
 
 export component AppearanceTab inherits VerticalLayout {
     alignment: start;
     in property <AppearanceView> view;
     callback mode-picked(int);
-    callback density-picked(int);
     Heading {
         text: "Theme";
         top: 11px;
@@ -106,24 +102,5 @@ export component AppearanceTab inherits VerticalLayout {
     }
     Caption {
         text: root.view.mode-note;
-    }
-    Rectangle {
-        height: 24px;
-    }
-    Heading {
-        text: "Density";
-    }
-    HorizontalLayout {
-        alignment: start;
-        IconTabs {
-            labels: root.view.densities;
-            selected: root.view.density;
-            picked(n) => {
-                root.density-picked(n);
-            }
-        }
-    }
-    Caption {
-        text: root.view.density-note;
     }
 }

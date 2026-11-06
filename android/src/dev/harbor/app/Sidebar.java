@@ -88,6 +88,11 @@ final class Sidebar {
         LinearLayout head = Ui.row(a);
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
         head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
+        // Light <-> dark at once (the desktop sidebar's sun/moon): a sun in dark, a moon in light.
+        TextView themeBtn = Ui.iconButton(a, Ui.dark ? Ui.I_SUN : Ui.I_MOON, Ui.FG, v -> a.flipTheme());
+        themeBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        themeBtn.setContentDescription(Ui.dark ? "Light theme" : "Dark theme");
+        head.addView(themeBtn);
         // Which workspace's chats show; hidden until `render` knows there are any.
         wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspaces());
         wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
@@ -668,7 +673,7 @@ final class Sidebar {
 
     private View nav(String glyph, String title, String value, int color, View.OnClickListener on) {
         LinearLayout r = Ui.listRow(a, glyph, color, title, color);
-        r.setMinimumHeight(Ui.dp(Ui.compact ? 36 : 44));
+        r.setMinimumHeight(Ui.dp(44));
         r.setBackground(Ui.press(0, 0, 12));
         if (value != null) {
             TextView s = Ui.subtitle(Ui.text(a, value, 13, Ui.G600));

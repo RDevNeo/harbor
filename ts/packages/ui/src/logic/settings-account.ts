@@ -1,7 +1,7 @@
-import { agoShort, inviteNote, short as keyShort, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
+import { agoShort, inviteNote, short as keyShort, type AccountDir, type AccountPc, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, copy, field, form, gap, list, row, rows, status, title, type Block, type BlockImage, type BlockRow, type BlockTab } from "./settings-blocks.ts";
-import { devicesPressed, devicesSubmitted, newDevicesState, otherDevices, pcRow, phoneRow, renameForm, thisPcRow, type DevicesHost, type DevicesState } from "./settings-devices.ts";
+import { devicesPressed, devicesSubmitted, newDevicesState, otherDevices, ownDeviceRows, pcRow, peerDeviceRows, phoneRow, renameForm, thisPcRow, type DevicesHost, type DevicesState } from "./settings-devices.ts";
 
 /** The part of `AccountService` this tab reads and presses. */
 export interface AccountPort {
@@ -42,14 +42,15 @@ const ACCEPT_TIP = "Join this workspace: its PCs and chats reach you on every de
 
 const roleBadge = (owner: boolean) => badge(owner ? "Owner" : "Member");
 
-/** This PC, then (while it's renamed) the rename form: what the page shows of this PC outside a person's card. */
-function thisPc(d: DevicesHost | undefined, ds: DevicesState): Block[] {
+/** This PC (with its SSH devices when `known` is given), then (while it's renamed) the rename form: what the page shows
+ * of this PC outside a person's card. */
+function thisPc(d: DevicesHost | undefined, ds: DevicesState, known?: readonly AccountPc[]): Block[] {
   if (!d) return [];
-  return [title("This PC"), list([thisPcRow(d, ds)], ""), ...(ds.renaming ? [renameForm(d)] : [])];
+  return [title("This PC"), list([thisPcRow(d, ds), ...(known ? ownDeviceRows(d, known) : [])], ""), ...(ds.renaming ? [renameForm(d)] : [])];
 }
 
 /** The Workspace page: the account, the workspace, its people each with their PCs and phones, invitations, the
- * other workspaces and the devices added by SSH. */
+ * other workspaces. Each PC lists the machines it added over SSH under it. */
 export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesState()): Block[] {
   const d = host.devices;
   const acc = host.account;
@@ -132,14 +133,15 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
       row(`${m.name === "" ? m.email : m.name}${self ? " (you)" : ""}`, { icon: ICONS.USER_ROUND, line: m.email, side: [roleBadge(m.role === "owner")], buttons: buttonsOf, ...(photo ? { photo, has_photo: true } : {}) }),
     ];
     if (d) {
-      if (m.id === myOwner) card.push(thisPcRow(d, ds));
-      for (const pc of peers.filter((p) => p.owner === m.id)) card.push(pcRow(d, pc));
+      // Each PC with the machines it added over SSH right under it.
+      if (m.id === myOwner) card.push(thisPcRow(d, ds), ...ownDeviceRows(d, peers));
+      for (const pc of peers.filter((p) => p.owner === m.id)) card.push(pcRow(d, pc), ...peerDeviceRows(d, pc, peers));
       for (const ph of phones.filter((p) => p.account === m.id)) card.push(phoneRow(ph, owner || self));
     }
     out.push(list(card, "", { before: i === 0 ? 0 : 10 }));
     if (d && m.id === myOwner && ds.renaming) out.push(renameForm(d));
   });
-  if (d && !here.members.some((m) => m.id === myOwner)) out.push(...thisPc(d, ds));
+  if (d && !here.members.some((m) => m.id === myOwner)) out.push(...thisPc(d, ds, peers));
   if (owner) {
     out.push(form("invite", [field("email", "name@example.com", { width: 260 })], btn("invite", "Invite", { icon: ICONS.PLUS, variant: "primary", enabled: !st.busy }), { before: 16 }));
     out.push(
@@ -173,7 +175,7 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
   const outside = peers.filter((p) => !here.members.some((m) => m.id === p.owner));
   if (d && outside.length > 0) {
     out.push(title("Through your other workspaces"));
-    out.push(list(outside.map((pc) => pcRow(d, pc, true)), ""));
+    out.push(list(outside.flatMap((pc) => [pcRow(d, pc, true), ...peerDeviceRows(d, pc, peers)]), ""));
   }
 
   const rest = dir.workspaces.filter((x) => x.id !== ws);
@@ -193,7 +195,6 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
       ),
     );
   }
-  if (d) out.push(...otherDevices(d, peers));
   return out;
 }
 

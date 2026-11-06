@@ -353,7 +353,6 @@ export component AppWindow inherits Window {
     default-font-size: 14px;
 
     in-out property <bool> dark <=> Theme.dark;
-    in-out property <bool> compact <=> Theme.compact;
     // Memory: the open chat's ("" hides its pill) and this PC's (the sidebar's gauge); `mem-pop` opens either's popover.
     in property <string> chat-mem;
     in property <string> pc-mem;
@@ -396,6 +395,7 @@ export component AppWindow inherits Window {
     callback project-menu(int, length, length);
     callback searched(string);
     callback palette();
+    callback toggle-theme();
     callback filter(length, length);
     callback usage(length, length);
     callback ws-filter(length, length);
@@ -833,6 +833,9 @@ export component AppWindow inherits Window {
                     }
                     palette => {
                         root.palette();
+                    }
+                    toggle-theme => {
+                        root.toggle-theme();
                     }
                     filter(x, y) => {
                         root.filter(x, y);

@@ -652,7 +652,7 @@ export component MenuItem {
     in property <bool> checked;
     in property <bool> enabled: true;
     callback clicked;
-    height: (desc != "" ? 44px : 32px) - (Theme.compact ? 4px : 0px);
+    height: (desc != "" ? 44px : 32px);
     opacity: enabled ? 1 : 0.5;
     Rectangle {
         background: area.has-hover && root.enabled ? Theme.accent : transparent;
@@ -660,7 +660,7 @@ export component MenuItem {
     }
     if root.icon != "": Glyph {
         x: 8px;
-        y: 8px - (Theme.compact ? 2px : 0px);
+        y: 8px;
         width: 16px;
         height: 16px;
         icon: root.icon;
@@ -669,7 +669,7 @@ export component MenuItem {
     }
     Text {
         x: root.icon != "" ? 32px : 8px;
-        y: 7px - (Theme.compact ? 2px : 0px);
+        y: 7px;
         width: parent.width - self.x - (root.checked ? 32px : 8px);
         text: root.label;
         font-size: 14px;
@@ -678,7 +678,7 @@ export component MenuItem {
     }
     if root.desc != "": Text {
         x: root.icon != "" ? 32px : 8px;
-        y: 25px - (Theme.compact ? 2px : 0px);
+        y: 25px;
         width: parent.width - self.x - 8px;
         text: root.desc;
         font-size: 12px;
@@ -687,7 +687,7 @@ export component MenuItem {
     }
     if root.checked: Glyph {
         x: parent.width - 24px;
-        y: 8px - (Theme.compact ? 2px : 0px);
+        y: 8px;
         width: 16px;
         height: 16px;
         icon: Icons.check;
@@ -1033,8 +1033,8 @@ export component SettingRow {
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 16px;
-        padding-top: Theme.compact ? 8px : 12px;
-        padding-bottom: Theme.compact ? 8px : 12px;
+        padding-top: 12px;
+        padding-bottom: 12px;
         spacing: 12px;
         // widgets.rs `setting_row`: the text takes 60% or all but 260px, whichever is more, and leaves 60px.
         property <length> inner: root.width - 32px;

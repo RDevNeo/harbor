@@ -16,9 +16,11 @@ import android.widget.TextView;
 import org.json.JSONObject;
 
 /** Settings in titled sections, like the desktop's pages: the workspace (switch with ▾), the
- *  account, the workspace's members (owners invite by email) and PCs, the PCs' apps,
- *  appearance, voice, notifications, this app and its updates, sign out. Settings that were
- *  dropped keep a fixed value in code: updates install by themselves (Update), sending while
+ *  account, the workspace's members (owners invite by email) and PCs (each with the machines it
+ *  added over SSH), the PCs' apps, voice, notifications, this app and its updates, sign out.
+ *  Light or dark is the drawer's sun/moon (Ui.flipTheme). Settings that were dropped keep a
+ *  fixed value in code: rows are the comfortable ones (no Density), updates install by
+ *  themselves (Update), sending while
  *  the agent works steers (Chat.FOLLOW_UP), web links open in the built-in browser, dictation
  *  detects the language and takes spoken commands (Voice), the PCs transcribe every dictation
  *  (Asr keeps no model), and notifications are instant (Listen) and come whether or not you're
@@ -87,6 +89,14 @@ public class Settings extends Base {
                 runOnUiThread(() -> { hasPeople = true; workspaceRows(); });
             } catch (Exception e) { /* an older hub: no such call */ }
         });
+        // The machines each PC added over SSH (GET /v1/hubs `devices`, hubs from 0.150), under it in PCs.
+        Ui.pool.execute(() -> {
+            try {
+                org.json.JSONArray hs = hub.get("/v1/hubs").optJSONArray("hubs");
+                if (hs == null) return;
+                runOnUiThread(() -> { sshHubs = hs; workspaceRows(); });
+            } catch (Exception e) { /* offline: the PCs alone */ }
+        });
 
         // Apps agents on this PC use (Gmail, 0.95: GET /v1/apps/gmail; hidden on older hubs).
         appsHead = section(col, "Apps");
@@ -122,17 +132,6 @@ public class Settings extends Base {
             Discord.changed = this::discordRow;
             Discord.show(this, hub, hub.via());
         }
-
-        // The look, on this phone only. (Sending while the agent works always steers: Chat.FOLLOW_UP.)
-        section(col, "Appearance");
-        LinearLayout gen = card(col);
-        LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
-        cm.addView(Ui.chevron(this));
-        gen.addView(cm, Ui.fill());
-        gen.addView(Ui.gap(this));
-        LinearLayout dn = Ui.cardRow(this, Ui.I_LAYERS, "Density", Ui.compact ? "Compact" : "Comfortable", Ui.FG, v -> density());
-        dn.addView(Ui.chevron(this));
-        gen.addView(dn, Ui.fill());
 
         // Dictation in the composer (Voice): the PC's dictionary (GET /v1/voice, PUT
         // /v1/voice/settings; the section stays hidden on hubs without one).
@@ -244,6 +243,34 @@ public class Settings extends Base {
 
     private LinearLayout wsBox;
     private boolean hasPeople;
+    /** GET /v1/hubs's list, for the SSH devices each PC added (null until it's here). */
+    private org.json.JSONArray sshHubs;
+
+    /** The SSH devices the PC `p` (a directory entry) added, as GET /v1/hubs says: by its key, else
+     *  its id. Ones named like one of the workspace's PCs are that PC, listed already. */
+    private java.util.List<String> sshDevices(JSONObject p, org.json.JSONArray pcs) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (sshHubs == null) return out;
+        String fp = Addr.fp(p.optString("fp")), id = p.optString("id");
+        for (int i = 0; i < sshHubs.length(); i++) {
+            JSONObject h = sshHubs.optJSONObject(i);
+            if (h == null) continue;
+            String hfp = Addr.fp(h.optString("fp"));
+            boolean same = fp != null && hfp != null ? fp.equals(hfp) : !id.isEmpty() && id.equals(h.optString("id"));
+            if (!same) continue;
+            org.json.JSONArray ds = h.optJSONArray("devices");
+            for (int j = 0; ds != null && j < ds.length(); j++) {
+                JSONObject d = ds.optJSONObject(j);
+                String n = d == null ? "" : d.optString("name");
+                if (n.isEmpty() || out.contains(n)) continue;
+                boolean isPc = false;
+                for (int k = 0; k < pcs.length(); k++) { JSONObject q = pcs.optJSONObject(k); if (q != null && n.equals(q.optString("name"))) isPc = true; }
+                if (!isPc) out.add(n);
+            }
+            break;
+        }
+        return out;
+    }
 
     /** Account: signed in as…, People and memory, invitations to other workspaces. Members:
      *  this workspace's people (owners invite and remove; anyone leaves a workspace that isn't
@@ -334,6 +361,11 @@ public class Settings extends Base {
             String by = p.optString("owner_name");
             boolean mine = p.optString("owner").equals(me);
             pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_MONITOR, 36), p.optString("name"), mine ? "Added by you" : by.isEmpty() ? null : "Added by " + by, Ui.FG, null), Ui.fill());
+            // The machines it added over SSH (a Mac it dictates on, a build box): right under it.
+            for (String d : sshDevices(p, pcs)) {
+                pcCard.addView(Ui.gap(this));
+                pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_LAPTOP, 36), d, "SSH device · through " + p.optString("name"), Ui.FG, null), Ui.fill());
+            }
         }
     }
 
@@ -743,28 +775,6 @@ public class Settings extends Base {
             putVoice("dictionary", next);
         });
         d.show();
-    }
-
-    private void density() {
-        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        o.add(new Sheet.Option("comfortable", "Comfortable", "", true));
-        o.add(new Sheet.Option("compact", "Compact", "shorter rows in lists and settings", true));
-        Sheet.pick(this, "Density", "On this phone only, like the desktop's Settings › Appearance › Density.", o, Ui.compact ? "compact" : "comfortable", d -> {
-            Ui.prefs(this).edit().putString("density", d).apply();
-            Ui.themeGen++;
-            recreate();
-        });
-    }
-
-    private void colorMode() {
-        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        for (int i = 0; i < Ui.MODES.length; i++)
-            o.add(new Sheet.Option(Ui.MODES[i], Ui.MODE_LABELS[i], i == 0 ? "follows the phone" : "", true));
-        Sheet.pick(this, "Color mode", null, o, Ui.mode(this), m -> {
-            Ui.prefs(this).edit().putString("color_mode", m).apply();
-            Ui.themeGen++;
-            recreate();
-        });
     }
 
     private void pcs() {

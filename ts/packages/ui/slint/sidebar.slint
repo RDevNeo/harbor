@@ -372,6 +372,8 @@ export component Sidebar inherits Rectangle {
     callback searched(string);
     callback hide();
     callback palette();
+    // The header's sun/moon: light <-> dark at once (kv `theme`, Settings › Appearance has Follow Omarchy).
+    callback toggle-theme();
     callback filter(length, length);
     // Over the gauge, in window coordinates.
     callback usage(length, length);
@@ -422,6 +424,15 @@ export component Sidebar inherits Rectangle {
                 letter-spacing: -0.32px;
                 color: Theme.fg;
                 vertical-alignment: center;
+            }
+            Btn {
+                icon: Theme.dark ? Icons.sun : Icons.moon;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: Theme.dark ? "Light theme" : "Dark theme";
+                clicked => {
+                    root.toggle-theme();
+                }
             }
             Btn {
                 icon: Icons.search;

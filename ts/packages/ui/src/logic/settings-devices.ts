@@ -1,5 +1,5 @@
 import { agoShort, hostLabel, short as keyShort } from "@harbor/net";
-import type { AccountPc, Me, Peer, RemoteHost } from "@harbor/net";
+import type { AccountPc, Me, Peer, PeerDevice, RemoteHost } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, field, form, list, row, title, type Block, type BlockRow } from "./settings-blocks.ts";
 
@@ -87,18 +87,35 @@ export function renameForm(h: DevicesHost): Block {
   });
 }
 
-/** Devices added by SSH before, with Remove: a small section at the end, only when there are any. */
-export function otherDevices(h: DevicesHost, known: readonly AccountPc[]): Block[] {
-  const rows = h.ssh
+const SSH_LINE = "SSH device";
+
+/** This PC's own SSH devices (not the ones that are PCs of `known`): under This PC, each with its status and Remove. */
+export function ownDeviceRows(h: DevicesHost, known: readonly AccountPc[]): BlockRow[] {
+  return h.ssh
     .devices()
     .filter(([d]) => !known.some((p) => p.id === d.id || p.name === hostLabel(d)))
     .map(([d, online]) =>
       row(hostLabel(d), {
-        icon: ICONS.MONITOR,
-        line: `SSH · ${online === true ? "online" : online === false ? "offline" : "status unknown"}`,
-            buttons: [btn(`ssh_remove:${d.id}`, "Remove", { variant: "destructive" })],
+        icon: ICONS.LAPTOP,
+        line: `${SSH_LINE} · through ${h.me().name} · ${online === true ? "online" : online === false ? "offline" : "status unknown"}`,
+        buttons: [btn(`ssh_remove:${d.id}`, "Remove", { variant: "destructive" })],
       }),
     );
+}
+
+/** The SSH devices a peer PC added (its hello's `devices`, as last heard), under that PC; none that are PCs of `known`. */
+export function peerDeviceRows(h: DevicesHost, pc: AccountPc, known: readonly AccountPc[]): BlockRow[] {
+  const peer = h.meshPeers().find((p) => (pc.fp !== "" && p.fp === pc.fp) || p.id === pc.id);
+  const through = pc.name || peer?.name || "PC";
+  return (peer?.devices ?? [])
+    .filter((d: PeerDevice) => !known.some((p) => p.name === d.name) && d.name !== h.me().name)
+    .map((d) => row(d.name, { icon: ICONS.LAPTOP, line: `${SSH_LINE} · through ${through}` }));
+}
+
+/** Devices added by SSH before, with Remove: a small section at the end, only when there are any (signed out, or before a
+ * workspace is picked: there's no person's card to put them in). */
+export function otherDevices(h: DevicesHost, known: readonly AccountPc[]): Block[] {
+  const rows = ownDeviceRows(h, known);
   return rows.length === 0 ? [] : [title("Other devices"), list(rows, "")];
 }
 

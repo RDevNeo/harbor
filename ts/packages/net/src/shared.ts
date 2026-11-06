@@ -40,6 +40,31 @@ export interface Peer {
   projectMoves: boolean;
   /** Its free memory in MB, averaged over 10 minutes (`ram` in hello and its chats list); null: not said (older Harbor). Not saved. */
   ram: number | null;
+  /** The SSH devices it added by hand (`devices` in hello): Settings › Workspace and the phone's PCs list them under it. */
+  devices: PeerDevice[];
+}
+
+/** A machine a PC reaches over SSH (added by hand in its Settings), as it tells its peers and phones. */
+export interface PeerDevice {
+  id: string;
+  name: string;
+  /** "linux", "macOS"…; "" unknown. */
+  os: string;
+}
+
+/** `devices` of a hello, a saved peer or `/v1/hubs`, as far as it makes sense (at most 32, names cut to 60). */
+export function peerDevices(v: unknown): PeerDevice[] {
+  if (!Array.isArray(v)) return [];
+  const s = (o: Record<string, unknown>, k: string, n: number) => Array.from(typeof o[k] === "string" ? (o[k] as string) : "").slice(0, n).join("");
+  const out: PeerDevice[] = [];
+  for (const x of v) {
+    if (typeof x !== "object" || x === null || Array.isArray(x)) continue;
+    const o = x as Record<string, unknown>;
+    const d = { id: s(o, "id", 80), name: s(o, "name", 60), os: s(o, "os", 20) };
+    if (d.id !== "" && d.name !== "" && !out.some((e) => e.id === d.id)) out.push(d);
+    if (out.length === 32) break;
+  }
+  return out;
 }
 
 export function newPeer(p: Partial<Peer> & { id: string }): Peer {
@@ -62,6 +87,7 @@ export function newPeer(p: Partial<Peer> & { id: string }): Peer {
     moves: false,
     projectMoves: false,
     ram: null,
+    devices: [],
     ...p,
   };
 }

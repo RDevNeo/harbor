@@ -390,7 +390,6 @@ export interface KeyEvent {
 
 export interface AppWindow extends slint.ComponentHandle {
   dark: boolean;
-  compact: boolean;
   view: string;
   palette_open: boolean;
   add_project_open: boolean;
@@ -431,6 +430,7 @@ export interface AppWindow extends slint.ComponentHandle {
   project_menu: (id: number, x: number, y: number) => void;
   searched: (q: string) => void;
   palette: () => void;
+  toggle_theme: () => void;
   filter: (x: number, y: number) => void;
   ws_filter: (x: number, y: number) => void;
   ws_all: () => void;

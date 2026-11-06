@@ -49,9 +49,7 @@ final class Ui {
     /** Every Stop control, the same in both themes. */
     static final int STOP = 0xffd93a3f, ON_STOP = 0xffffffff;
     static boolean dark;
-    /** Settings › Density: Compact takes shorter rows (the desktop's own setting, kept per device). */
-    static boolean compact;
-    static int themeGen; // bumped when Color mode changes: open screens redraw on resume
+    static int themeGen; // bumped when the theme flips: open screens redraw on resume
 
     // Lucide glyphs in assets/fonts/lucide.ttf (a subset: the code points of src/icons.rs).
     static final String I_SETTINGS = "", I_PLUS = "", I_LEFT = "", I_CLIP = "",
@@ -75,7 +73,7 @@ final class Ui {
             I_SORT = "\ue046", I_MILESTONE = "\ue298", I_USERS = "\ue1a4",
             I_FILE_CODE = "\ue0c3", I_FILE_BRACES = "\ue36b", I_FILE_TEXT = "\ue0cc", I_COMMIT = "\ue0e3",
             I_FOLDER_GIT = "\ue40a", I_LIST_PLUS = "\ue23f", I_STEER = "\ue0a8", I_LIST_ORDERED = "\ue1d1",
-            I_REDO = "\ue2a0", I_GRIP = "\ue0eb", I_FOLDER_PLUS = "\ue0d9", I_ALARM = "\ue03a", I_USER_CHECK = "\ue1a0";
+            I_REDO = "\ue2a0", I_GRIP = "\ue0eb", I_FOLDER_PLUS = "\ue0d9", I_ALARM = "\ue03a", I_USER_CHECK = "\ue1a0", I_SUN = "\ue178";
 
     static Typeface sans, semi, mono, icons, serif, serifBold;
     static final Handler main = new Handler(Looper.getMainLooper());
@@ -102,19 +100,19 @@ final class Ui {
 
     // ---- colour mode ----
 
-    static final String[] MODES = {"system", "light", "dark"};
-    static final String[] MODE_LABELS = {"System", "Light", "Dark"};
-
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("ui", Context.MODE_PRIVATE); }
+    /** "system" (follow the phone: until the drawer's sun/moon is first tapped), "light" or "dark". */
     static String mode(Context c) { return prefs(c).getString("color_mode", "system"); }
-    static String modeLabel(Context c) {
-        String m = mode(c);
-        for (int i = 0; i < MODES.length; i++) if (MODES[i].equals(m)) return MODE_LABELS[i];
-        return "System";
+
+    /** The drawer's sun/moon: the other of light and dark from what shows now, kept from then on
+     *  (Settings has no Color mode or Density anymore; rows are always the comfortable ones). */
+    static void flipTheme(Context c) {
+        prefs(c).edit().putString("color_mode", dark ? "light" : "dark").remove("density").apply();
+        themeGen++;
+        theme(c);
     }
 
     static void theme(Context c) {
-        compact = "compact".equals(prefs(c).getString("density", "comfortable"));
         String m = mode(c);
         dark = "dark".equals(m) || ("system".equals(m)
                 && (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES);
@@ -348,8 +346,8 @@ final class Ui {
      *  (a status dot, a count) can be added to it. */
     static LinearLayout listRow(Context c, String glyph, int glyphColor, CharSequence title, int titleColor) {
         LinearLayout r = row(c);
-        r.setMinimumHeight(dp(compact ? 34 : 40));
-        r.setPadding(dp(12), dp(compact ? 5 : 8), dp(12), dp(compact ? 5 : 8));
+        r.setMinimumHeight(dp(40));
+        r.setPadding(dp(12), dp(8), dp(12), dp(8));
         r.addView(icon(c, glyph, 18, glyphColor), margins(new LinearLayout.LayoutParams(dp(20), dp(20)), 0, 0, 14, 0));
         r.addView(subtitle(text(c, title, 15, titleColor)), weight());
         return r;
@@ -433,7 +431,7 @@ final class Ui {
      *  optional subtitle, clickable when on isn't null. Trailing views can be added to it. */
     static LinearLayout cardRow(Context c, Object glyph, CharSequence title, CharSequence sub, int titleColor, View.OnClickListener on) {
         LinearLayout r = row(c);
-        r.setMinimumHeight(dp(compact ? 52 : 64));
+        r.setMinimumHeight(dp(64));
         r.setPadding(dp(18), dp(12), dp(16), dp(12));
         if (on != null) r.setBackground(press(0, 0, 0));
         if (glyph != null) {

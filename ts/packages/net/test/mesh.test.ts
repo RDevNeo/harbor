@@ -10,11 +10,11 @@ import { http, httpPart, setHello } from "../src/client.ts";
 import { err, type Request } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
-import { cleanPcName, forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, renamePc, parseWhois, partOf, startsTurn, statusNode } from "../src/mesh.ts";
+import { cleanPcName, forHome, ipsAndPort, loadPeers, MEDIA_PART, Mesh, parseMe, readMe, renamePc, parseWhois, partOf, startsTurn, statusNode } from "../src/mesh.ts";
 import { StoreReplica, type StoreReplicaOptions, sameRemote } from "../src/meshstore.ts";
 import { takesMainFrom } from "../src/projectfold.ts";
 import { relayServe } from "../src/relay.ts";
-import { allowedKey, cleanAddrs, downOf, label, newPeer, peerId, type Allowed, type Node } from "../src/shared.ts";
+import { allowedKey, cleanAddrs, downOf, label, newPeer, peerDevices, peerId, type Allowed, type Node, type PeerDevice } from "../src/shared.ts";
 import { generateIdentity, type Identity } from "../src/tls.ts";
 import type { Json } from "../src/wire.ts";
 
@@ -386,7 +386,7 @@ interface Pc {
   heard: (number | null)[];
 }
 
-async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number, memory?: (chat: number | null) => Json, shared = false): Promise<Pc> {
+async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number, memory?: (chat: number | null) => Json, shared = false, devices?: PeerDevice[]): Promise<Pc> {
   const id = generateIdentity();
   const store = Store.openAt(join(tmp, `${name}.db`));
   const hub = new Hub([], 0);
@@ -405,6 +405,7 @@ async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "")),
     ...(ram === undefined ? {} : { ram: () => ram }),
     ...(memory ? { memory } : {}),
+    ...(devices ? { devices: () => devices } : {}),
     ...(shared ? { shared: { snapshot: () => wssettings.snapshot(store), adopt: (_peer: string, v: unknown) => void wssettings.adopt(store, v) } } : {}),
   });
   hub.mesh.on = true;
@@ -465,6 +466,31 @@ describe("two TypeScript PCs", () => {
     expect(await until(() => a.store.get("voice_cleanup") === "0")).toBe(true);
     expect(wssettings.snapshot(a.store).voice_cleanup).toEqual(wssettings.snapshot(b.store).voice_cleanup ?? ["", -1]);
   }, 30_000);
+
+  test("SSH devices: a PC tells its peers in hello, they keep them, and both list them to phones in /v1/hubs", async () => {
+    const mac = { id: "ssh:1", name: "Mac", os: "macOS" };
+    const a = await pc("iota", undefined, undefined, undefined, false, [mac]);
+    const b = await pc("kappa2");
+    setHello("pc:iota", "iota", a.id);
+    oneWorkspace(a, b);
+    a.mesh.start();
+    b.mesh.start();
+    expect(await until(() => b.hub.mesh.peer("pc:iota")?.online === true)).toBe(true);
+    expect(b.hub.mesh.peer("pc:iota")?.devices).toEqual([mac]);
+    // Kept for when it's off.
+    expect(loadPeers(b.store).get("pc:iota")?.devices).toEqual([mac]);
+    const devs = (h: unknown) => Object.fromEntries((h as { hubs: { id: string; devices: unknown }[] }).hubs.map((x) => [x.id, x.devices]));
+    expect(devs(a.mesh.hubs())).toEqual({ "pc:iota": [mac], "pc:kappa2": [] });
+    expect(devs(b.mesh.hubs())).toEqual({ "pc:kappa2": [], "pc:iota": [mac] });
+  }, 30_000);
+
+  test("peer devices are read leniently: no id or name, duplicates and non-objects go, long names are cut", () => {
+    expect(peerDevices(null)).toEqual([]);
+    expect(peerDevices([{ id: "ssh:1", name: "Mac" }, { id: "ssh:1", name: "again" }, { id: "", name: "x" }, { id: "ssh:2" }, 7, [1], { id: "ssh:3", name: "n".repeat(90), os: 5 }])).toEqual([
+      { id: "ssh:1", name: "Mac", os: "" },
+      { id: "ssh:3", name: "n".repeat(60), os: "" },
+    ]);
+  });
 
   test("memory: a PC answers with its numbers, one before the route answers nothing", async () => {
     const asked: (number | null)[] = [];

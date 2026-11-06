@@ -71,6 +71,7 @@ import {
   profileCheckJson,
   profileFullName,
   profileNodeEnv,
+  type PeerDevice,
   type RemoteHost,
   Remotes,
   systemRunner,
@@ -114,6 +115,7 @@ import {
   knowDevices,
   chatLink as chatLinkOf,
   fakeAccount,
+  fakePeerDevices,
   newPeer,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
@@ -567,6 +569,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const mesh = new Mesh({
     hub,
     ram: () => ramMeter.mb(),
+    // The machines this PC added by hand over SSH: peers and phones list them under it (Settings › Workspace, the phone's PCs).
+    devices: () =>
+      loadRemote(store)
+        .devices.filter((h) => !isFound(h) && !h.hidden && h.host.trim() !== "" && scopeHasDevice(account.scope(), h.id))
+        .map((h) => ({ id: h.id, name: hostLabel(h), os: h.os })),
     transcribe: async (wav, lang, from, device) => {
       const [status, body] = await dictate.servePeer(voicePeers, wav, lang, from, device === "" ? null : device);
       return { status, body: body as Json };
@@ -608,9 +615,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   wssettings.onChanged(store, () => void mesh.pushShared().catch(() => {}));
   mesh.reread();
   // Screenshots only (ram.ts fakePeers, a rig's own data): PCs that are on, with their free memory, in every PC list.
-  for (const fp of fakeOnline) {
+  const fakeDevices = env.HARBOR_FAKE_ACCOUNT ? fakePeerDevices(env.HARBOR_FAKE_ACCOUNT, id.fp) : new Map<string, PeerDevice[]>();
+  for (const fp of new Set([...fakeOnline, ...fakeDevices.keys()])) {
     const pc = account.directory().peers.find((p) => p.fp === fp);
-    if (pc) hub.mesh.peers.set(pc.id || fp, newPeer({ id: pc.id || fp, name: pc.name, fp, online: true, version: pc.version }));
+    if (pc) hub.mesh.peers.set(pc.id || fp, newPeer({ id: pc.id || fp, name: pc.name, fp, online: fakeOnline.includes(fp), version: pc.version, devices: fakeDevices.get(fp) ?? [] }));
   }
   const shotPeers = fakePeers(env.HARBOR_FAKE_PEERS);
   if (shotPeers.length > 0) {

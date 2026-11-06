@@ -8,7 +8,7 @@ import { err, header, ok, parseJson, query, readBody, segments, type Reader, typ
 import type { Hub, PairedPhone } from "./hub.ts";
 import { isLoopback, parseIp, routeTo, type Ip } from "./ip.ts";
 import { kvJson, now, type Kv } from "./kv.ts";
-import { cleanAddrs, dest, downOf, label, newPeer, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer } from "./shared.ts";
+import { cleanAddrs, dest, downOf, label, newPeer, peerDevices, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer, type PeerDevice } from "./shared.ts";
 import { connect, DEFAULT_PORT, hostPort, normalizeFp, tailnetIp, type Identity } from "./tls.ts";
 import { Ordered, type Json } from "./wire.ts";
 import { PIECE_BYTES } from "./foldercopy.ts";
@@ -54,6 +54,8 @@ export interface MeshDeps {
   myAddrs: () => string[];
   /** `GET /v1/app`'s APK versionCode this PC serves (0: none). */
   apkCode?: () => number;
+  /** This PC's SSH devices added by hand (not hidden), told to peers in hello and to phones in `/v1/hubs`. */
+  devices?: () => PeerDevice[];
   /** This PC's free memory in MB (ram.ts RamMeter), told to peers in hello and each chats list; null: not known. */
   ram?: () => number | null;
   uploadsDir: string;
@@ -122,6 +124,8 @@ export function renamePc(kv: Kv, name: string, env: Record<string, string | unde
   return readMe(kv, env);
 }
 
+const devicesJson = (v: readonly PeerDevice[]): Json => v.map((d) => ({ id: d.id, name: d.name, os: d.os }));
+
 function peerJson(p: Peer): Ordered {
   return new Ordered([
     ["id", p.id],
@@ -138,6 +142,7 @@ function peerJson(p: Peer): Ordered {
     ["owner", p.owner],
     ["github", p.github],
     ["owner_suggested", p.owner_suggested],
+    ["devices", devicesJson(p.devices)],
   ]);
 }
 
@@ -166,6 +171,7 @@ export function loadPeers(kv: Kv): Map<string, Peer> {
         owner: s("owner"),
         github: s("github"),
         owner_suggested: o.owner_suggested === true,
+        devices: peerDevices(o.devices),
       }),
     );
   }
@@ -308,6 +314,7 @@ export class Mesh {
         moves: MOVES_VERSION,
         project_moves: this.d.project ? PROJECT_MOVES_VERSION : 0,
         ram: this.d.ram?.() ?? null,
+        devices: devicesJson(this.d.devices?.() ?? []),
         shared: this.d.shared?.snapshot() ?? null,
       });
     }
@@ -500,7 +507,7 @@ export class Mesh {
     const me = hub.mesh.me;
     const addrs = hub.net.addrs;
     const ip = addrs.find((a) => tailnetIp(a)) ?? addrs[0] ?? "";
-    const out: Json[] = [{ id: me.id, name: me.name, host: ip, ip, port: hub.port, fp: this.myFp(), addrs, online: true, phones: true, self: true }];
+    const out: Json[] = [{ id: me.id, name: me.name, host: ip, ip, port: hub.port, fp: this.myFp(), addrs, online: true, phones: true, self: true, devices: devicesJson(this.d.devices?.() ?? []) }];
     const peers: Peer[] = hub.mesh.on ? [...hub.mesh.peers.values()] : [];
     for (const a of hub.mesh.workspacePeers()) {
       if (a.use === false) continue;
@@ -509,7 +516,7 @@ export class Mesh {
     for (const p of peers) {
       const [ips, port] = ipsAndPort([p.addr, ...p.addrs.filter((a) => a !== p.addr)]);
       const pip = ips.find((i) => tailnetIp(i)) ?? ips.find((i) => parseIp(i) !== null) ?? "";
-      const e: Record<string, Json> = { id: p.id, name: p.name, host: pip, ip: pip, port, fp: p.fp, addrs: ips, online: p.online, phones: p.phones, seen: p.seen };
+      const e: Record<string, Json> = { id: p.id, name: p.name, host: pip, ip: pip, port, fp: p.fp, addrs: ips, online: p.online, phones: p.phones, seen: p.seen, devices: devicesJson(p.devices) };
       const down = hub.mesh.down.get(p.id);
       if (down && !p.online) e.down = down;
       out.push(e);
@@ -670,6 +677,7 @@ export class Mesh {
       p.moves = typeof hello.moves === "number" && hello.moves >= MOVES_VERSION;
       p.projectMoves = typeof hello.project_moves === "number" && hello.project_moves >= PROJECT_MOVES_VERSION;
       p.ram = ramOf(hello.ram);
+      p.devices = peerDevices(hello.devices);
       if (hello.shared) this.d.shared?.adopt(id, hello.shared);
       p.accounts = (Array.isArray(hello.accounts) ? hello.accounts : []).map((x) => {
         const o = obj(x);

@@ -4,7 +4,8 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { type Kv } from "./kv.ts";
-import type { Allowed, Me } from "./shared.ts";
+import { loadRemote, newHost, saveRemote } from "./remote.ts";
+import { peerDevices, type Allowed, type Me, type PeerDevice } from "./shared.ts";
 import { sha256Hex, short, signWith, spkiOf, type Identity } from "./tls.ts";
 import { wire, type Json } from "./wire.ts";
 
@@ -427,9 +428,10 @@ export function seedWorkspace(kv: Kv, pcs: { fp: string; addrs?: string[]; id?: 
 }
 
 /** Screenshots only (HARBOR_FAKE_ACCOUNT=<json file>, ram.ts's fakePeers alike): a signed-in look from a file
- * `{account, ws, directory, phones?: [{name, account, account_name}], online?: [fp]}` written into the rig's own kv
- * (kv `account`, `account_ws`, `account_dir`, phones as `api_tokens`); "SELF" stands for this PC's key. Returns the
- * keys to show online. Nothing is fetched or signed: the account loop doesn't run without account.json. */
+ * `{account, ws, directory, phones?: [{name, account, account_name}], online?: [fp], ssh_devices?: [{id, name, host, os}],
+ * peer_devices?: {fp: [{id, name, os}]}}` written into the rig's own kv (kv `account`, `account_ws`, `account_dir`, phones
+ * as `api_tokens`, this PC's SSH devices as `remote_devices`); "SELF" stands for this PC's key. Returns the keys to show
+ * online. Nothing is fetched or signed: the account loop doesn't run without account.json. */
 export function fakeAccount(kv: Kv, path: string, mine: string): string[] {
   let v: Record<string, unknown>;
   try {
@@ -445,7 +447,24 @@ export function fakeAccount(kv: Kv, path: string, mine: string): string[] {
     const tokens = phones.map((p, i) => ({ token: `fake-${i}`, name: textOf(p, "name"), created: 0, group: `fake-${i}`, fp: createHash("sha256").update(`fake-phone-${i}`).digest("hex"), account: textOf(p, "account"), account_name: textOf(p, "account_name") }));
     kv.set("api_tokens", JSON.stringify(tokens));
   }
+  const ssh = Array.isArray(v.ssh_devices) ? v.ssh_devices.filter(isObj) : [];
+  if (ssh.length > 0) {
+    const cfg = loadRemote(kv);
+    saveRemote(kv, { ...cfg, devices: [...cfg.devices, ...ssh.map((d) => newHost({ id: textOf(d, "id"), name: textOf(d, "name"), host: textOf(d, "host"), os: textOf(d, "os") }))] });
+  }
   return Array.isArray(v.online) ? v.online.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** HARBOR_FAKE_ACCOUNT's `peer_devices`: the SSH devices each peer (by key) says it added, as its hello would. */
+export function fakePeerDevices(path: string, mine: string): Map<string, PeerDevice[]> {
+  const out = new Map<string, PeerDevice[]>();
+  try {
+    const v = need(JSON.parse(readFileSync(path, "utf8").replaceAll("SELF", mine)) as unknown);
+    if (isObj(v.peer_devices)) for (const [fp, d] of Object.entries(v.peer_devices)) out.set(fp, peerDevices(d));
+  } catch {
+    // no file, or not JSON: none
+  }
+  return out;
 }
 
 /** This PC's workspace's PCs as last fetched (kv `account_dir`), for commands that run without the account loop (`harbor nc`). */

@@ -68,9 +68,9 @@ test("every_kv_key_is_classified", () => {
 });
 
 test("first_sign_in_keeps_this_pcs_settings", () => {
-  const fill = ss.firstFill(["theme"], { theme: { v: "light", at: 9 }, density: { v: "compact", at: 9 } });
+  const fill = ss.firstFill(["theme"], { theme: { v: "light", at: 9 }, fast_mode: { v: "1", at: 9 } });
   expect("theme" in fill).toBe(false);
-  expect("density" in fill).toBe(true);
+  expect("fast_mode" in fill).toBe(true);
 });
 
 test("replaced_values_are_backed_up", () => {
@@ -86,9 +86,9 @@ test("newest_wins", () => {
   const s = open();
   s.setQuiet("theme", "dark");
   ss.internals.at.set("theme", 100);
-  expect(ss.apply(s, { theme: { v: "light", at: 50 }, density: { v: "compact", at: 200 }, api_tokens: { v: "[]", at: 999 } })).toBe(true);
+  expect(ss.apply(s, { theme: { v: "light", at: 50 }, fast_mode: { v: "1", at: 200 }, api_tokens: { v: "[]", at: 999 } })).toBe(true);
   expect(s.get("theme")).toBe("dark");
-  expect(s.get("density")).toBe("compact");
+  expect(s.get("fast_mode")).toBe("1");
   expect(s.get("api_tokens")).toBeNull();
   ss.internals.dirty.set("theme", 160);
   ss.apply(s, { theme: { v: "light", at: 150 } });
@@ -104,10 +104,10 @@ test("a sync sends this PC's changes and takes the account's", async () => {
     const sent: unknown[] = [];
     await ss.sync(s, "tok", false, async (_t, body) => {
       sent.push(body);
-      return { settings: { density: { v: "compact", at: Date.now() + 5 } } };
+      return { settings: { fast_mode: { v: "1", at: Date.now() + 5 } } };
     });
     expect(Object.keys((sent[0] as { set: object }).set)).toEqual(["theme"]);
-    expect(s.get("density")).toBe("compact");
+    expect(s.get("fast_mode")).toBe("1");
     expect(ss.internals.dirty.size).toBe(0);
     expect(s.get("account_sync")).toContain("theme");
   } finally {

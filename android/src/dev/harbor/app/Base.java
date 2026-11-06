@@ -196,6 +196,26 @@ abstract class Base extends Activity {
         setContentView(shell);
         JSONObject st = Hub.states.get(hub.id);
         if (st != null) side.render(st);
+        // Redrawn for the drawer's sun/moon: the drawer stays open, as it was when tapped.
+        if (reopenDrawer) {
+            reopenDrawer = false;
+            open = LEFT;
+            side.view.setVisibility(View.VISIBLE);
+            side.view.setTranslationX(0);
+            scrim.setVisibility(View.VISIBLE);
+            scrim.setAlpha(1f);
+        }
+    }
+
+    /** Set by flipTheme: the screen it recreates opens with its drawer out. */
+    private static boolean reopenDrawer;
+
+    /** The drawer's sun/moon (Sidebar): light <-> dark at once, this screen redrawn in it (the
+     *  others redraw when they come back: Ui.themeGen). */
+    void flipTheme() {
+        Ui.flipTheme(this);
+        reopenDrawer = drawerOpen();
+        recreate();
     }
 
     /** A panel for the right edge (after installDrawer): a swipe to the left opens it. */

@@ -15,7 +15,6 @@ import { runLoop } from "./loop.ts";
 
 interface SettingsWindow extends slint.ComponentHandle {
   dark: boolean;
-  compact: boolean;
 }
 
 setHarborVersion(pkg.version);
@@ -39,9 +38,8 @@ await mountSettings(
     speech: settingsSpeech(store),
     theme: {
       dark: () => win.dark,
-      set: (dark, compact) => {
+      set: (dark) => {
         win.dark = process.env.HTS_LIGHT === undefined && dark;
-        win.compact = compact;
       },
     },
     back: () => {},

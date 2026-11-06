@@ -56,6 +56,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
+import { toggledMode } from "./logic/settings-appearance.ts";
 import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
 
 /** How long the reader stays at a chat's end before the earlier pages they scrolled up to are let go. */
@@ -452,7 +453,6 @@ export class Shell {
     this.stamp = omarchyStamp(homedir());
     this.dark = resolveDark(this.mode, homedir());
     win.dark = this.dark;
-    win.compact = data.store.get("density") === "compact";
     win.side_rows = this.rows;
     win.side_settled = this.settledRows;
     win.cards = this.cards;
@@ -497,7 +497,7 @@ export class Shell {
       show: (p) => this.openPage(p),
       leave: () => this.leavePage(),
       dark: () => this.dark,
-      theme: (dark, compact) => this.applyTheme(dark, compact),
+      theme: (dark) => this.applyTheme(dark),
       toast: (m) => this.toast(m),
       hub: () => this.hub,
       openExternal: (url) => this.openExternal(url),
@@ -552,6 +552,11 @@ export class Shell {
       this.refreshSidebar();
     };
     w.palette = () => this.openPalette();
+    // The sidebar's sun/moon: the other of light and dark, kept as the choice (Settings › Appearance goes back to Follow Omarchy).
+    w.toggle_theme = () => {
+      this.data.store.set("theme", toggledMode(this.dark));
+      this.applyTheme(!this.dark);
+    };
     w.filter = (x, y) => this.filterMenu(x, y);
     w.usage = (x, y) => (w.pop_id === "usage" ? this.closePopup() : this.usageMenu(x, y));
     w.mem_pop = (id, x, y) => {
@@ -3904,9 +3909,8 @@ export class Shell {
     else this.newDraft(this.draftRepo);
   }
 
-  private applyTheme(dark: boolean, compact: boolean): void {
+  private applyTheme(dark: boolean): void {
     this.mode = parseMode(this.data.store.get("theme") ?? "");
-    this.win.compact = compact;
     if (dark === this.dark) return;
     this.dark = dark;
     this.win.dark = dark;

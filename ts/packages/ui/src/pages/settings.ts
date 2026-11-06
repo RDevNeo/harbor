@@ -63,7 +63,7 @@ export interface SettingsDeps {
   runtime?: SettingsRuntime | undefined;
   keys: Keys;
   speech: voiceCtl.VoiceCtl;
-  theme: { dark: () => boolean; set: (dark: boolean, compact: boolean) => void };
+  theme: { dark: () => boolean; set: (dark: boolean) => void };
   back: () => void;
   providers: Omit<ProvidersHost, "modelsFor">;
   integrations: Omit<IntHost, "changed" | "openUrl" | "copy">;
@@ -99,7 +99,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
 
   function applyAppearance(): void {
     const a = appearanceApplied(store);
-    deps.theme.set(resolveDark(a.mode, homedir()), a.compact);
+    deps.theme.set(resolveDark(a.mode, homedir()));
     bus.appearance = appearanceView(store);
   }
 

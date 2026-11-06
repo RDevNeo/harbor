@@ -3,6 +3,7 @@ import { newHost, newPeer, type AccountDir, type AccountDirectory, type AccountP
 import { accountBlocks, accountTab, type AccountHost, type AccountPort } from "../src/logic/settings-account.ts";
 import type { Block } from "../src/logic/settings-blocks.ts";
 import type { DevicesHost } from "../src/logic/settings-devices.ts";
+import { ICONS } from "../src/icons.ts";
 
 const NOW = 1_000_000;
 const MINE = "a".repeat(64);
@@ -262,7 +263,10 @@ describe("one Workspace page: each person with their PCs and phones", () => {
       myFp: () => MINE,
       versionLabel: () => "0.132.0",
       peers: () => [pc(OTHER, "laptop", "u2", "Leo", ["Home"]), pc("c".repeat(64), "render", "u9", "Kai", ["Studio"], NOW - 5)],
-      meshPeers: () => [newPeer({ id: "pc:laptop", fp: OTHER, online: true, version: "0.132.0" })],
+      meshPeers: () => [
+        newPeer({ id: "pc:laptop", fp: OTHER, online: true, version: "0.132.0", devices: [{ id: "ssh:1", name: "Mac", os: "macOS" }, { id: "ssh:2", name: "render", os: "linux" }] }),
+        newPeer({ id: "pc:render", fp: "c".repeat(64), devices: [{ id: "ssh:4", name: "nas", os: "linux" }] }),
+      ],
       rename: (n) => calls.push(`rename ${n}`),
       copy: (t) => calls.push(`copy ${t.slice(0, 4)}`),
       phones: () => [
@@ -274,27 +278,37 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     };
   }
 
-  test("people cards list their PCs and phones; PCs shared through another workspace and SSH devices follow", () => {
+  test("people cards list their PCs, each with the SSH devices it added, and phones; PCs shared through another workspace follow", () => {
     const f = signedIn("member");
     const b = accountBlocks({ ...host(f), devices: devicesOf([]) });
-    expect(titles(b)).toEqual(["Home · Member", "Through your other workspaces", "Your other workspaces", "Other devices"]);
+    expect(titles(b)).toEqual(["Home · Member", "Through your other workspaces", "Your other workspaces"]);
     expect(peopleCards(b).map((c) => c.rows.map((r) => [r.title, r.badges.map((x) => x.text), r.line]))).toEqual([
       [
         ["Ana (you)", [], "ana@example.com"],
         ["desk", ["This PC"], "Harbor 0.132.0 · key aaaa aaaa aaaa aaaa"],
+        ["Build PC", [], "SSH device · through desk · offline"],
         ["Pixel", [], "Phone · key dddd dddd dddd dddd"],
       ],
       [
         ["leo@example.com", [], "leo@example.com"],
         ["laptop", ["Online"], "Harbor 0.132.0"],
+        // A device that is itself one of the PCs ("render") isn't listed twice.
+        ["Mac", [], "SSH device · through laptop"],
         ["Galaxy", [], "Phone · key eeee eeee eeee eeee"],
       ],
     ]);
+    const icons = peopleCards(b).flatMap((c) => c.rows.filter((r) => r.line.startsWith("SSH device")).map((r) => r.icon));
+    expect(new Set(icons)).toEqual(new Set([ICONS.LAPTOP]));
+    // Only this PC's own devices can be removed here.
+    expect(peopleCards(b)[0]?.rows[2]?.buttons.map((x) => x.key)).toEqual(["ssh_remove:ssh:1"]);
+    expect(peopleCards(b)[1]?.rows[2]?.buttons).toEqual([]);
     // A member signs out their own phone only; the owner any.
     expect(peopleCards(b).map((c) => c.rows.at(-1)?.buttons.map((x) => x.key))).toEqual([[`phone_signout:${"d".repeat(64)}`], []]);
     const shared = b[b.findIndex((x) => x.title === "Through your other workspaces") + 1];
-    expect(shared?.rows.map((r) => [r.title, r.line])).toEqual([["render", "Kai · Harbor 0.131.0 · seen just now"]]);
-    expect(b.at(-1)?.rows.map((r) => [r.title, r.buttons.map((x) => x.key)])).toEqual([["Build PC", ["ssh_remove:ssh:1"]]]);
+    expect(shared?.rows.map((r) => [r.title, r.line])).toEqual([
+      ["render", "Kai · Harbor 0.131.0 · seen just now"],
+      ["nas", "SSH device · through render"],
+    ]);
     expect(titles(b)).not.toContain("PCs");
   });
 

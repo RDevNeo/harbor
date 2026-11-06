@@ -211,6 +211,11 @@ seed.addProc({ lead: waiting.id, repoId: api, owner: waiting.id, name: "deploy",
 seed.addTimer(waiting.id, t0 + 45 * 60, "check the staging error rate");
 // acme-api's main chat: the drawer's project row shows its status.
 seed.setMainChat(api, waiting.id);
+// Settings › PCs: the machines each PC added over SSH, under it (GET /v1/hubs `devices`): this PC's Mac
+// (as a dictation host would be), and one Laptop (the directory's other PC, Rig.java) told in its hello.
+const { newHost, saveRemote } = await import("../packages/net/src/index.ts");
+saveRemote(seed, { tailscale: false, user: "", key: "", port: 0, devices: [newHost({ id: "ssh:1", name: "Mac", host: "10.0.0.20", os: "macOS" })] });
+seed.set("mesh_peers", JSON.stringify({ "pc:laptop": { id: "pc:laptop", name: "Laptop", phones: true, fp: "", devices: [{ id: "ssh:1", name: "build-box", os: "linux" }] } }));
 seed.set("shared_drafts", JSON.stringify([[composer.id, { text: "Compare [Image #1] and [Image #2]", files: composerFiles, mentions: [], by: "rig-desktop", label: "Desk", rev: 1 }]]));
 seed.close();
 
