@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.150.0] - 2026-11-06
+
 ### Changed
 - The phone draws a chat's cards as the PC decides them: icons, colors, tool-run rows ("5 tool
   calls"), which notices open, Discord captcha lines, sender rows and dividers come with each card
