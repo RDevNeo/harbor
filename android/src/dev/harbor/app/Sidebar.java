@@ -28,7 +28,7 @@ import java.util.Set;
  *  nav rows (Projects, Pull requests, Issues, PCs, Settings, and Update when there is one), a
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
- *  dot while a turn runs. A round avatar (your photo, else the workspace's initial), the light/dark sun or moon beside
+ *  dot while a turn runs. A round avatar (your photo, else the workspace's initial), the light/dark switch beside
  *  it and the black "New session" pill float at the bottom. The title row's workspace button narrows the list to some of the account's
  *  workspaces, as the desktop sidebar's does.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
@@ -137,15 +137,30 @@ final class Sidebar {
         FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
         ap.setMargins(Ui.dp(16), 0, 0, Ui.dp(18));
         view.addView(avatar, ap);
-        // Beside it, light <-> dark at once (the desktop sidebar's sun/moon): a sun in dark, a moon in light.
-        TextView themeBtn = Ui.icon(a, Ui.dark ? Ui.I_SUN : Ui.I_MOON, 19, Ui.FG);
-        themeBtn.setGravity(Gravity.CENTER);
-        themeBtn.setBackground(Ui.press(Ui.G100, Ui.LINE, 20));
-        themeBtn.setContentDescription(Ui.dark ? "Light theme" : "Dark theme");
-        themeBtn.setOnClickListener(v -> a.flipTheme());
-        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
-        tp.setMargins(Ui.dp(64), 0, 0, Ui.dp(18));
-        view.addView(themeBtn, tp);
+        // Beside it (apart from it, so a tap meant for one never lands on the other), the light/dark
+        // switch: a pill with a sun and a moon, its knob on the one showing; a tap flips it at once.
+        FrameLayout sw = new FrameLayout(a);
+        sw.setBackground(Ui.press(Ui.G200, Ui.LINE, 17));
+        sw.setContentDescription(Ui.dark ? "Dark theme on: switch to light" : "Light theme on: switch to dark");
+        TextView sun = Ui.icon(a, Ui.I_SUN, 15, Ui.G600), moon = Ui.icon(a, Ui.I_MOON, 15, Ui.G600);
+        sw.addView(sun, new FrameLayout.LayoutParams(Ui.dp(32), -1, Gravity.START));
+        sw.addView(moon, new FrameLayout.LayoutParams(Ui.dp(32), -1, Gravity.END));
+        TextView knob = Ui.icon(a, Ui.dark ? Ui.I_MOON : Ui.I_SUN, 15, Ui.BG);
+        knob.setBackground(Ui.round(Ui.FG, 0, 14));
+        knob.setElevation(Ui.dp(1));
+        FrameLayout.LayoutParams kp = new FrameLayout.LayoutParams(Ui.dp(28), Ui.dp(28), Gravity.START | Gravity.CENTER_VERTICAL);
+        kp.setMargins(Ui.dp(3), 0, 0, 0);
+        sw.addView(knob, kp);
+        int travel = Ui.dp(64 - 28 - 6);
+        knob.setTranslationX(Ui.dark ? travel : 0);
+        sw.setOnClickListener(v -> {
+            v.setEnabled(false);
+            knob.animate().translationX(Ui.dark ? 0 : travel).setDuration(140).start();
+            v.postDelayed(a::flipTheme, 150);
+        });
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(Ui.dp(64), Ui.dp(34), Gravity.BOTTOM | Gravity.START);
+        tp.setMargins(Ui.dp(70), 0, 0, Ui.dp(21));
+        view.addView(sw, tp);
         TextView fab = Ui.bold(a, "+  New session", 15, Ui.ON_INK);
         fab.setGravity(Gravity.CENTER);
         fab.setPadding(Ui.dp(18), 0, Ui.dp(20), 0);
