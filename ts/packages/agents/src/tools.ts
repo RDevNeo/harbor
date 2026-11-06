@@ -202,7 +202,11 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
         const usage = usageCtl.quotaText(acc.plan, e.limits.ctl.windows(acc.id), now());
         const tools = acc.kind === "Claude" || acc.kind === "Codex" ? "" : " (no team tools: cannot message others)";
         out.push(`account '${acc.id}' — ${short(acc)}${acc.email === "" ? "" : ` <${acc.email}>`}${usage === "" ? "" : ` — ${usage}`}${tools}`);
-        for (const m of staticModels(acc.kind)) if (m.id !== "") out.push(`    model '${m.id}' (${m.label})${m.more ? " legacy" : ""}`);
+        const models = staticModels(acc.kind);
+        // OpenCode lists every provider's models: the config's are enough here, the rest is counted.
+        const shown = acc.kind === "OpenCode" ? models.filter((m) => !m.more) : models;
+        for (const m of shown) if (m.id !== "") out.push(`    model '${m.id}' (${m.label})${m.more ? " legacy" : ""}`);
+        if (shown.length < models.length) out.push(`    … and ${models.length - shown.length} more 'provider/model' ids from \`opencode models\``);
       }
       return out.join("\n");
     }

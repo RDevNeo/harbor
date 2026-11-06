@@ -1206,9 +1206,11 @@ export class PhoneRoutes {
 /** The new-chat composer's picks as the Rust app reads them at start (app.rs `Sel`), Claude's old High default moved to Medium once. */
 export function composerDefaults(kv: { get(k: string): string | null; set(k: string, v: string): void }, accounts: CatalogAccount[], claudeDefault: string): { account: string; model: string; effort: string; access: string; device: string } {
   // A default saved on a provider Harbor dropped (Cursor, Gemini, …) reads as Claude's defaults.
-  const dropped = !/^claude\+?\d*$/.test(kv.get("default_account") ?? "claude") && kv.get("default_account") !== "codex";
+  const dropped = !/^claude\+?\d*$/.test(kv.get("default_account") ?? "claude") && kv.get("default_account") !== "codex" && kv.get("default_account") !== "opencode";
   const get = (k: string, d: string) => (dropped ? d : (kv.get(k) ?? d));
-  const aliases: Record<string, string> = { opus: "claude-opus-5-5", "": "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
+  // "" is OpenCode's own default model; for Claude it was Opus.
+  const aliases: Record<string, string> = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
+  if (get("default_account", "claude") !== "opencode") aliases[""] = "claude-opus-5-5";
   const m = get("default_model", "claude-opus-5-5");
   let effort = get("default_effort", "");
   if (kv.get("effort_default_medium") === null) {

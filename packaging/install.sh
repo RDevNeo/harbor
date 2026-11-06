@@ -354,7 +354,7 @@ elif [ -x "$LIB/harbor-browser" ]; then
   say "The built-in browser's engine (Servo) is installed."
 fi
 command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1 || \
-  say "Harbor drives coding-agent CLIs: install Claude Code (https://claude.ai/install.sh) or Codex (it needs Node.js)."
+  say "Harbor drives coding-agent CLIs: install Claude Code (https://claude.ai/install.sh), Codex (it needs Node.js) or OpenCode (https://opencode.ai)."
 # Optional programs (the README lists what each one is for).
 missing=""
 command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1 || missing="$missing zenity"

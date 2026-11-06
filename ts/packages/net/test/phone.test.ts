@@ -713,6 +713,12 @@ test("a default saved on a provider Harbor dropped reads as Claude's defaults", 
   expect(composerDefaults(store, [], "medium")).toEqual({ account: "claude", model: "claude-opus-5-5", effort: "", access: "full", device: "" });
   kv.set("default_account", "codex");
   expect(composerDefaults(store, [], "medium")).toMatchObject({ account: "codex", model: "auto", effort: "minimal" });
+  // OpenCode is driven again; its "Default" model is "", not Claude's Opus.
+  kv.set("default_account", "opencode");
+  kv.set("default_model", "");
+  expect(composerDefaults(store, [], "medium")).toMatchObject({ account: "opencode", model: "" });
+  kv.set("default_model", "nvidia/z-ai/glm-5.3-flash");
+  expect(composerDefaults(store, [], "medium")).toMatchObject({ account: "opencode", model: "nvidia/z-ai/glm-5.3-flash" });
 });
 
 describe("phone: Runs on › Auto", () => {

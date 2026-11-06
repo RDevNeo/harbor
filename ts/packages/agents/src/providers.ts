@@ -1,24 +1,25 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
 import { dataDir, home, writePrivate } from "./paths.ts";
 
-export const KINDS = ["Claude", "Codex"] as const;
+export const KINDS = ["Claude", "Codex", "OpenCode"] as const;
 export type Kind = (typeof KINDS)[number];
 
 export function kindOf(label: string): Kind | undefined {
   return KINDS.find((k) => k === label);
 }
 
-/** An account id Harbor still drives ("claude", "claude2", "codex"): settings saved by older versions may name
- *  providers that were dropped (Cursor, Grok, Gemini, Meta, OpenCode), which read as Claude's defaults. */
+/** An account id Harbor still drives ("claude", "claude2", "codex", "opencode"): settings saved by older versions may
+ *  name providers that were dropped (Cursor, Grok, Gemini, Meta), which read as Claude's defaults. */
 export function knownAccount(id: string): boolean {
-  return /^claude\+?\d*$/.test(id) || id === "codex";
+  return /^claude\+?\d*$/.test(id) || id === "codex" || id === "opencode";
 }
 
 const BIN: Record<Kind, string> = {
   Claude: "claude",
   Codex: "codex",
+  OpenCode: "opencode",
 };
 
 export function bin(k: Kind): string {
@@ -27,7 +28,8 @@ export function bin(k: Kind): string {
 
 /** Interactive command that signs the CLI in; it runs in the built-in terminal. */
 export function loginCmd(k: Kind): readonly string[] {
-  return k === "Claude" ? ["/login"] : ["login"];
+  if (k === "Claude") return ["/login"];
+  return k === "OpenCode" ? ["auth", "login"] : ["login"];
 }
 
 export function installHint(k: Kind): string {
@@ -36,6 +38,8 @@ export function installHint(k: Kind): string {
       return "curl -fsSL https://claude.ai/install.sh | bash";
     case "Codex":
       return "npm i -g @openai/codex";
+    case "OpenCode":
+      return "curl -fsSL https://opencode.ai/install | bash";
   }
 }
 
@@ -62,7 +66,7 @@ export interface Window {
 }
 
 export interface Account {
-  /** Stable id stored on chats: "claude", "claude2", "codex" */
+  /** Stable id stored on chats: "claude", "claude2", "codex", "opencode" */
   id: string;
   kind: Kind;
   name: string;
@@ -191,7 +195,7 @@ function m(id: string, label: string, more: boolean): Model {
 export function childPath(): string {
   const h = home();
   const dirs = (process.env.PATH ?? "").split(":");
-  for (const extra of [".local/bin", ".local/share/mise/shims", ".cargo/bin", ".bun/bin", ".npm-global/bin"]) {
+  for (const extra of [".local/bin", ".local/share/mise/shims", ".cargo/bin", ".bun/bin", ".opencode/bin", ".npm-global/bin"]) {
     const p = join(h, extra);
     if (!dirs.includes(p)) dirs.push(p);
   }
@@ -279,6 +283,8 @@ export function discover(): Account[] {
   extra.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   for (const [n, dir] of extra) out.push(claudeAccount(`claude${n}`, dir, join(dir, ".claude.json"), n));
   out.push({ id: "codex", kind: "Codex", name: "Codex", email: "", badge: "", plan: "", configDir: null, bin: which(bin("Codex")), loggedIn: existsSync(join(h, ".codex/auth.json")), usage: [] });
+  // OpenCode can run on providers from its config alone (no `auth login`): whether it's signed in isn't known.
+  out.push({ id: "opencode", kind: "OpenCode", name: "OpenCode", email: "", badge: "", plan: "", configDir: null, bin: which(bin("OpenCode")), loggedIn: null, usage: [] });
   const off = offIds();
   for (const a of out) if (off.includes(a.id)) a.off = true;
   applyUsage(out);
@@ -345,8 +351,99 @@ export function codexModels(cache: unknown = readJson(join(home(), ".codex/model
   });
 }
 
+/** OpenCode's models ("provider/model", as `opencode run -m` takes them) from `opencode models`: kept in Harbor's data
+ *  folder and refreshed off the UI thread (opencodeModels() starts it), so a list is there at once. */
+export function opencodeCachePath(): string {
+  return join(dataDir(), "opencode-models.json");
+}
+
+/** How long a fetched list is fresh; an older one is shown while it's fetched again. */
+const OPENCODE_FRESH_MS = 10 * 60 * 1000;
+let ocList: string[] | null = null;
+let ocAt = 0;
+let ocFetching: Promise<void> | null = null;
+
+/** The model ids in `opencode models`' output: one "provider/model" per line, anything else skipped. */
+export function parseOpencodeModels(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split("\n")) {
+    const l = raw.trim();
+    if (!/^[^\s/]+\/\S+$/.test(l) || out.includes(l)) continue;
+    out.push(l);
+  }
+  return out;
+}
+
+/** The models named in the user's OpenCode config (`model`, `small_model`, `provider.<p>.models.<m>`): shown up front. */
+export function opencodeConfigured(config: unknown = readJson(join(home(), ".config/opencode/opencode.json"))): string[] {
+  const out: string[] = [];
+  for (const k of ["model", "small_model"]) {
+    const v = optStr(at(config, k));
+    if (v !== undefined && v.includes("/")) out.push(v);
+  }
+  const provs = at(config, "provider");
+  if (provs !== null && typeof provs === "object" && !Array.isArray(provs)) {
+    for (const [p, def] of Object.entries(provs)) {
+      const ms = at(def, "models");
+      if (ms !== null && typeof ms === "object" && !Array.isArray(ms)) for (const id of Object.keys(ms)) out.push(`${p}/${id}`);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/** The picker's list: "Default" (OpenCode's own choice), then every model it lists; those the config names, or the
+ *  first few when it names none, up front and the rest under "More models". */
+export function opencodeModelList(ids: readonly string[], configured: readonly string[]): Model[] {
+  const front = configured.length > 0 ? configured.filter((c) => ids.includes(c)) : ids.slice(0, 6);
+  const rest = ids.filter((x) => !front.includes(x));
+  return [m("", "Default", false), ...front.map((x) => m(x, x, false)), ...rest.map((x) => m(x, x, true))];
+}
+
+/** Runs `opencode models` (without blocking) and keeps its list; a failed run keeps the last one. */
+export function refreshOpencodeModels(binPath: string | null = which(bin("OpenCode"))): Promise<void> {
+  if (ocFetching !== null) return ocFetching;
+  if (binPath === null) return Promise.resolve();
+  ocFetching = (async () => {
+    try {
+      const p = Bun.spawn([binPath, "models"], { env: { ...process.env, PATH: childPath() }, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const timer = setTimeout(() => p.kill("SIGKILL"), 60_000);
+      const text = await new Response(p.stdout).text();
+      await p.exited;
+      clearTimeout(timer);
+      const ids = parseOpencodeModels(text);
+      if (p.exitCode === 0 && ids.length > 0) {
+        ocList = ids;
+        try {
+          mkdirSync(dataDir(), { recursive: true });
+          writeFileSync(opencodeCachePath(), `${JSON.stringify(ids)}\n`);
+        } catch {
+          // no data folder: the list stays in memory
+        }
+      }
+    } catch {
+      // opencode didn't run: the last list stays
+    } finally {
+      ocAt = Date.now();
+      ocFetching = null;
+    }
+  })();
+  return ocFetching;
+}
+
+/** OpenCode's models now: the last list (this process's, else the data folder's), refreshed in the background when stale
+ *  (not under `bun test`, which has no OpenCode of its own to ask). */
+export function opencodeModels(refresh = process.env.NODE_ENV !== "test"): Model[] {
+  if (ocList === null) {
+    const v = readJson(opencodeCachePath());
+    if (Array.isArray(v)) ocList = v.filter((x): x is string => typeof x === "string");
+  }
+  if (refresh && Date.now() - ocAt > OPENCODE_FRESH_MS) void refreshOpencodeModels();
+  return opencodeModelList(ocList ?? [], opencodeConfigured());
+}
+
 export function staticModels(k: Kind): Model[] {
   if (k === "Claude") return claudeModels();
+  if (k === "OpenCode") return opencodeModels();
   return codexModels();
 }
 
@@ -373,6 +470,8 @@ export function efforts(k: Kind): readonly Choice[] {
         ["max", "Max", ""],
         ["ultra", "Ultra", "Maximum reasoning with automatic task delegation"],
       ];
+    case "OpenCode":
+      return [];
   }
 }
 
@@ -381,6 +480,7 @@ let codexEffort: string | undefined;
 /** Claude gets Harbor's own default whatever Claude Code's effortLevel says; the others their CLI's setting. */
 export function defaultEffort(k: Kind): string {
   if (k === "Claude") return "medium";
+  if (k !== "Codex") return "";
   if (codexEffort === undefined) {
     let text = "";
     try {
@@ -401,16 +501,17 @@ export function effortLabel(k: Kind, e: string): string {
 }
 
 /** Providers with a fast tier: Claude Code's fastMode, Codex's priority service tier. */
-export function hasFast(_k: Kind): boolean {
-  return true;
+export function hasFast(k: Kind): boolean {
+  return k === "Claude" || k === "Codex";
 }
 
 const FULL: Choice = ["full", "Full access", "Runs commands and edits files without asking"];
 const EDITS: Choice = ["edits", "Auto-edit", "Edits files; risky commands are refused"];
 const PLAN: Choice = ["plan", "Read only", "Reads and plans, changes nothing"];
 
-export function access(_k: Kind): readonly Choice[] {
-  return [FULL, EDITS, PLAN];
+/** OpenCode's headless run has no approval mode Harbor can set: it runs with full access. */
+export function access(k: Kind): readonly Choice[] {
+  return k === "OpenCode" ? [FULL] : [FULL, EDITS, PLAN];
 }
 
 export function accessLabel(k: Kind, a: string): string {

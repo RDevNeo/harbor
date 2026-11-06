@@ -332,8 +332,9 @@ refetch everything.
 - `projects` come in the desktop sidebar's order (by hand, or by last activity when it's set so).
   Projects never settle, only chats do. Older hubs sent a project `settled`; clients ignore it,
   and current hubs no longer send it.
-- `models`, `efforts`, `access` are keyed by account `kind` (claude, codex; hubs before 0.111
-  also sent cursor, grok, gemini, meta and opencode). The phone draws the chat's model and effort as two small badges right
+- `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, opencode; hubs before
+  0.111 also sent cursor, grok, gemini and meta, and 0.111 to 0.151 had no opencode). OpenCode's models are
+  `provider/model` ids from `opencode models` after a "Default" (`""`), it has no efforts and only `full` access. The phone draws the chat's model and effort as two small badges right
   over the composer (the provider's logo and the model's `label`; the effort's `label`, no badge
   with an empty effort list), each opening its picker. An account the hub doesn't list (another
   PC's chat, on an account only that PC has): the provider is the kind whose `models` hold the
