@@ -8,7 +8,8 @@
 # (0.7.0 -> 7000), so the app the desktop serves and the one on the phone compare as numbers.
 #
 # Toolchain: $ANDROID_BUILD (default ~/.local/opt/android-build, holding jdk/ and sdk/), else
-# $ANDROID_HOME (or $ANDROID_SDK_ROOT) with javac on PATH, as on a CI runner.
+# $ANDROID_HOME (or $ANDROID_SDK_ROOT) with javac on PATH, as on the release's GitHub runner
+# (.github/runner/android.sh: JDK 17 and the runner's SDK).
 #
 # Signing: every build must be signed with the same key, or phones need an uninstall first.
 #   ANDROID_KEYSTORE       keystore path (default ~/.local/share/harbor-android/harbor-android.jks)

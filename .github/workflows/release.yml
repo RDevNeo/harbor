@@ -1,10 +1,11 @@
 # Builds Harbor for Linux x86_64 and aarch64 and publishes a GitHub Release on a v* tag, once
 # smoke.yml has installed and started it on clean x86_64 distro images; aarch64's, slow under qemu,
 # run beside the publishing, and a failure there fails this run. Every build and test runs on
-# boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes. One exception: a
-# bundle-only release that keeps the latest phone app (plan's where=runner) builds on the runner
-# itself (.github/runner/build.sh, jobs quick and quick-aarch64) and publishes from package: seconds of
-# `bun build` don't wait a minute and more for a sandbox.
+# boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes. Two exceptions:
+# a bundle-only release (plan's where=runner) builds on the runner itself (.github/runner/build.sh,
+# jobs quick and quick-aarch64) and publishes from package: seconds of `bun build` don't wait a
+# minute and more for a sandbox. And the phone app always builds on the runner
+# (.github/runner/android.sh, job android): on a sandbox it mostly waited for the lazy disk.
 #
 # Harbor is TypeScript on Bun (ts/); build.sh compiles it into one executable per architecture.
 #
@@ -105,11 +106,12 @@ jobs:
             IFS=.- read -r ma mi pa _ <<< "$ver"
             apkcode=(--apk-code $((ma * 1000000 + mi * 1000 + pa)))
           fi
-          # Where the builds run: a bundle-only release with the same phone app has nothing to build but
-          # JavaScript, so a tag builds it on the runner (jobs quick, quick-aarch64); the rest, and runs
-          # by hand (the pipeline's dry run, which also saves the snapshot), on boat.
+          # Where the desktop builds run: a bundle-only release has nothing to build for the PCs but
+          # JavaScript, so a tag builds it on the runner (jobs quick, quick-aarch64); a new runtime, and
+          # runs by hand (the pipeline's dry run, which also saves the snapshot), on boat. The phone
+          # app always builds on the runner (job android).
           where=boat
-          if [ "$lane" = bundle ] && [ "$apk" = keep ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then where=runner; fi
+          if [ "$lane" = bundle ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then where=runner; fi
           bun ts/scripts/release.ts manifest --version "$ver" --lane "$lane" --out manifest/harbor-app.json $prev \
             --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" "${apkcode[@]}"
           cat manifest/harbor-app.json
@@ -150,7 +152,7 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences ${{ needs.plan.outputs.apk == 'build' && 'android' || '' }}
+        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences
       - name: Fetch the results
         run: |
           set -eu
@@ -167,11 +169,6 @@ jobs:
         with:
           name: harbor-x86_64
           path: out/harbor-x86_64/
-      - uses: actions/upload-artifact@v7
-        if: needs.plan.outputs.apk == 'build'
-        with:
-          name: harbor-android-unsigned
-          path: out/harbor-android/harbor-android-unsigned.apk
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-extra
@@ -286,6 +283,33 @@ jobs:
           name: harbor-aarch64
           path: out/harbor-aarch64/
 
+  # The unsigned phone app, when plan says it changed, on the runner beside the desktop builds
+  # (.github/runner/android.sh); package adds the browser engine and signs it.
+  android:
+    needs: plan
+    if: needs.plan.outputs.apk == 'build'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      # android/build.sh's downloads, keyed by the SHA-256s it pins them by. Saved by every run;
+      # a tag finds the ones a run on main saved (the dry run), or the same tag's.
+      - name: Download key
+        id: deps
+        run: echo "key=harbor-android-deps-$(grep -oE '\b[0-9a-f]{64}\b' android/build.sh | sort | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/harbor-android-deps
+          key: ${{ steps.deps.outputs.key }}
+      - name: Build the unsigned APK (on this runner)
+        env:
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+        run: .github/runner/android.sh out/harbor-android/harbor-android-unsigned.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-android-unsigned
+          path: out/harbor-android/harbor-android-unsigned.apk
+
   # Saves the snapshot and deletes the build's sandbox, beside the packaging: a release doesn't wait
   # for it, and it never fails one. Runs also when the build failed: then it only deletes.
   cache:
@@ -337,8 +361,8 @@ jobs:
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
   # archives and their checksum lists, and the attestations.
   package:
-    needs: [plan, build, build-aarch64, quick, quick-aarch64, browser, video, slint]
-    # One pair of builds runs (plan's where), the other is skipped.
+    needs: [plan, build, build-aarch64, quick, quick-aarch64, android, browser, video, slint]
+    # One pair of desktop builds runs (plan's where), the other is skipped; android only with a new APK.
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-22.04
     steps:

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Run by release.yml's jobs quick (x86_64) and quick-aarch64 (an arm64 runner) on the GitHub runner
-# itself, for a bundle-only release that keeps the latest release's phone app (plan's where=runner:
-# the runtime, android/ and browser/ are as they were). This is the one exception to "every build
-# runs on boat" (CLAUDE.md): it is Bun bundling and compiling JavaScript, seconds of work, while a
+# itself, for a bundle-only release (plan's where=runner: the desktop runtime is unchanged).
+# The phone app builds separately when needed (.github/runner/android.sh). These release jobs are
+# exceptions to "every build runs on boat" (CLAUDE.md): Bun bundles and compiles JavaScript in seconds, while a
 # boat sandbox costs a minute or more to start, fill and fetch from.
 #
 #   build.sh x86_64|aarch64 OUT

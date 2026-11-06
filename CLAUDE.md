@@ -55,10 +55,12 @@ ends with a screenshot of each screen it touches, before you report done:
 
 Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on the PCs
 and not on GitHub-hosted runners. GitHub Actions only orchestrates: checkout, start the boat job,
-then sign, attest and publish. One exception, approved by the user: a bundle-only release tag that
-keeps the latest phone app (release.yml's plan says `where=runner`) builds its JavaScript on the
-GitHub runners themselves (`.github/runner/build.sh`, x86_64 and an arm64 runner) and publishes from
-`package`; every other release, and every other job, stays on boat.
+then sign, attest and publish. Two exceptions in release.yml, approved by the user: a bundle-only
+release tag (plan says `where=runner`) builds its JavaScript on the GitHub runners themselves
+(`.github/runner/build.sh`, x86_64 and an arm64 runner) and publishes from `package`; and the
+release's unsigned phone app always builds on a runner (`.github/runner/android.sh`, job `android`),
+signed in `package` as before. Runtime releases' desktop builds, every other workflow and every
+build for development stay on boat (`scripts/boat/android` for the APK).
 
 A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor (the APK,
 the browser engine, the video player and releases build on boat).
@@ -85,10 +87,11 @@ the browser engine, the video player and releases build on boat).
     the outputs back and deletes the sandbox (also on failure or cancellation, via
     `.github/boat/cleanup.sh`).
   - `.github/boat/build.sh`: the parts it's given, side by side, of Harbor for x86_64, for aarch64
-    (Bun under qemu), the licence reports and the unsigned APK (release.yml, each target on its own
-    sandbox). Each architecture gives the single executable `harbor` (the archives) and the runtime
-    alone; x86_64 also the app bundle `harbor-app.js`. Installed copies update from the bundle, the
-    runtime only when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A bundle-only
+    (Bun under qemu), the licence reports and the unsigned APK (release.yml uses it for a runtime
+    release's desktop parts, each target on its own sandbox; the APK builds on a runner). Each
+    architecture gives the single executable `harbor` (the archives) and the runtime alone; x86_64
+    also the app bundle `harbor-app.js`. Installed copies update from the bundle, the runtime only
+    when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A bundle-only
     release skips the install tests (package checks the bundle on the runtime PCs have) and, when
     `android/` and `browser/` didn't change, reattaches the latest release's signed APK instead of
     building one; such a release builds on the GitHub runners, not boat (the exception above).
