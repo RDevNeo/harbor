@@ -55,7 +55,10 @@ ends with a screenshot of each screen it touches, before you report done:
 
 Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on the PCs
 and not on GitHub-hosted runners. GitHub Actions only orchestrates: checkout, start the boat job,
-then sign, attest and publish.
+then sign, attest and publish. One exception, approved by the user: a bundle-only release tag that
+keeps the latest phone app (release.yml's plan says `where=runner`) builds its JavaScript on the
+GitHub runners themselves (`.github/runner/build.sh`, x86_64 and an arm64 runner) and publishes from
+`package`; every other release, and every other job, stays on boat.
 
 A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor (the APK,
 the browser engine, the video player and releases build on boat).
@@ -88,9 +91,10 @@ the browser engine, the video player and releases build on boat).
     runtime only when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A bundle-only
     release skips the install tests (package checks the bundle on the runtime PCs have) and, when
     `android/` and `browser/` didn't change, reattaches the latest release's signed APK instead of
-    building one. Servo itself is compiled only when `browser/` changes (browser.yml, by its tree id). A
-    release is the `v*` tag alone: a push to main builds nothing, and running release.yml by hand
-    on main is the dry run (signs and publishes nothing, saves the snapshot).
+    building one; such a release builds on the GitHub runners, not boat (the exception above).
+    Servo itself is compiled only when `browser/` changes (browser.yml, by its tree id). A release
+    is the `v*` tag alone: a push to main builds nothing, and running release.yml by hand on main
+    is the dry run (signs and publishes nothing, saves the snapshot).
   - `.github/boat/browser.sh`: the Servo engine for x86_64, or (`browser.sh aarch64`) cross-compiled
     for aarch64 (browser.yml).
   - `.github/boat/browser-android.sh`: the phone app's Servo engine, arm64-v8a and armeabi-v7a, with

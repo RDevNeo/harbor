@@ -2,6 +2,7 @@
 # ~/src/slint/out, where .github/boat/build.sh finds it. A tag must have it; a run by hand without
 # one builds with upstream's addon from npm.
 name: Slint addon
+description: Puts Harbor's Slint addon into a build sandbox
 inputs:
   found:
     description: slint.yml's output `found`
@@ -28,5 +29,12 @@ runs:
           echo "::warning::no Harbor Slint addon: this run builds with upstream's"; exit 0
         fi
         tar -czf "$RUNNER_TEMP/slint.tgz" -C "$RUNNER_TEMP/harbor-slint" .
-        "$HOME/.local/bin/boat" scp "$RUNNER_TEMP/slint.tgz" "$ID:/home/user/slint.tgz"
-        "$HOME/.local/bin/boat" exec "$ID" -- bash -c 'mkdir -p src/slint/out && tar -xzf slint.tgz -C src/slint/out && rm slint.tgz && ls -la src/slint/out/*/'
+        # 5 minutes, not boat exec's default 30 s, which a sandbox whose disk is still loading
+        # outlasted (run 41785392463); and 3 tries.
+        for try in 1 2 3; do
+          "$HOME/.local/bin/boat" scp "$RUNNER_TEMP/slint.tgz" "$ID:/home/user/slint.tgz" \
+            && "$HOME/.local/bin/boat" exec "$ID" --timeout 300 -- bash -c 'rm -rf src/slint/out && mkdir -p src/slint/out && tar -xzf slint.tgz -C src/slint/out && rm slint.tgz && ls -la src/slint/out/*/' \
+            && exit 0
+          [ "$try" = 3 ] || { echo "::warning::copying the addon failed (try $try of 3)"; sleep 10; }
+        done
+        exit 1

@@ -16,9 +16,17 @@ for r in "${runs[@]}"; do
     echo "no harbor-$arch-linux.tar.gz to test" > "$log"; pids+=(""); continue
   fi
   platform=linux/amd64; [ "$arch" = aarch64 ] && platform=linux/arm64
-  ( s=$SECONDS; docker pull -q --platform "$platform" "$img" >/dev/null || true; p=$((SECONDS - s))
-    docker run --rm --platform "$platform" -v "$PWD:/src:ro" -v "$HOME/dist:/dist:ro" "$img" \
-      sh /src/.github/smoke-install.sh; c=$?; echo "$r: $((SECONDS - s))s (image $p s)"; exit $c ) > "$log" 2>&1 &
+  # Getting the image is the network's business, not Harbor's: 3 tries, and a run docker itself
+  # failed (exit 125: no image, no container) once more.
+  ( s=$SECONDS
+    for try in 1 2 3; do docker pull -q --platform "$platform" "$img" >/dev/null && break; sleep 10; done; p=$((SECONDS - s))
+    for try in 1 2; do
+      docker run --rm --platform "$platform" -v "$PWD:/src:ro" -v "$HOME/dist:/dist:ro" "$img" \
+        sh /src/.github/smoke-install.sh; c=$?
+      [ "$c" = 125 ] && [ "$try" = 1 ] || break
+      echo "::warning::docker could not run $img; once more"; sleep 10; docker pull -q --platform "$platform" "$img" >/dev/null
+    done
+    echo "$r: $((SECONDS - s))s (image $p s)"; exit $c ) > "$log" 2>&1 &
   pids+=($!)
 done
 failed=()

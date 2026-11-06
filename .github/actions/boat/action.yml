@@ -1,5 +1,6 @@
 # Callers must delete the sandbox in an `if: always()` step; --ttl only backstops a job that dies first.
 name: boat sandbox
+description: Starts a boat.dev sandbox for this job and copies the source into it
 inputs:
   key:
     required: true
@@ -54,10 +55,20 @@ runs:
         test -n "$id"
         for try in $(seq 30); do "$boat" exec "$id" --timeout 60 -- true >/dev/null 2>&1 && break; sleep 5; done
         echo "id=$id" >> "$GITHUB_OUTPUT"
+    # A fresh sandbox's disk loads on first touch: unpacking can outlast boat exec's default 30 s
+    # (that timeout failed release runs), so it gets 5 minutes, and the copy is tried 3 times.
     - name: Copy the source
       shell: bash
+      env:
+        ID: ${{ steps.box.outputs.id }}
       run: |
         set -eu
+        boat=$HOME/.local/bin/boat
         git archive --format=tar.gz -o "$RUNNER_TEMP/src.tgz" HEAD
-        "$HOME/.local/bin/boat" scp "$RUNNER_TEMP/src.tgz" "${{ steps.box.outputs.id }}:/home/user/src.tgz"
-        "$HOME/.local/bin/boat" exec "${{ steps.box.outputs.id }}" -- bash -c 'mkdir src && tar -xzf src.tgz -C src && rm src.tgz'
+        for try in 1 2 3; do
+          "$boat" scp "$RUNNER_TEMP/src.tgz" "$ID:/home/user/src.tgz" \
+            && "$boat" exec "$ID" --timeout 300 -- bash -c 'rm -rf src && mkdir src && tar -xzf src.tgz -C src && rm src.tgz' \
+            && exit 0
+          [ "$try" = 3 ] || { echo "::warning::copying the source failed (try $try of 3)"; sleep 10; }
+        done
+        exit 1

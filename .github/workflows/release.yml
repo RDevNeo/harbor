@@ -1,7 +1,10 @@
 # Builds Harbor for Linux x86_64 and aarch64 and publishes a GitHub Release on a v* tag, once
 # smoke.yml has installed and started it on clean x86_64 distro images; aarch64's, slow under qemu,
 # run beside the publishing, and a failure there fails this run. Every build and test runs on
-# boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes.
+# boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes. One exception: a
+# bundle-only release that keeps the latest phone app (plan's where=runner) builds on the runner
+# itself (.github/runner/build.sh, jobs quick and quick-aarch64) and publishes from package: seconds of
+# `bun build` don't wait a minute and more for a sandbox.
 #
 # Harbor is TypeScript on Bun (ts/); build.sh compiles it into one executable per architecture.
 #
@@ -60,6 +63,7 @@ jobs:
       min: ${{ steps.plan.outputs.min }}
       apk: ${{ steps.plan.outputs.apk }}
       previous: ${{ steps.plan.outputs.previous }}
+      where: ${{ steps.plan.outputs.where }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -101,11 +105,16 @@ jobs:
             IFS=.- read -r ma mi pa _ <<< "$ver"
             apkcode=(--apk-code $((ma * 1000000 + mi * 1000 + pa)))
           fi
+          # Where the builds run: a bundle-only release with the same phone app has nothing to build but
+          # JavaScript, so a tag builds it on the runner (jobs quick, quick-aarch64); the rest, and runs
+          # by hand (the pipeline's dry run, which also saves the snapshot), on boat.
+          where=boat
+          if [ "$lane" = bundle ] && [ "$apk" = keep ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then where=runner; fi
           bun ts/scripts/release.ts manifest --version "$ver" --lane "$lane" --out manifest/harbor-app.json $prev \
             --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" "${apkcode[@]}"
           cat manifest/harbor-app.json
           { echo "version=$ver"; echo "lane=$lane"; echo "min=$(jq -r .minRuntime manifest/harbor-app.json)"
-            echo "apk=$apk"; echo "previous=$tag"; } >> "$GITHUB_OUTPUT"
+            echo "apk=$apk"; echo "previous=$tag"; echo "where=$where"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-manifest
@@ -113,6 +122,7 @@ jobs:
 
   # The snapshot `harbor-build` keeps Bun, its package cache and the Android SDK warm.
   build:
+    if: needs.plan.outputs.where == 'boat'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     needs: [plan, slint]
@@ -140,12 +150,16 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences ${{ needs.plan.outputs.apk == 'build' && 'android' || '' }}
+        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences ${{ needs.plan.outputs.apk == 'build' && 'android' || '' }}
       - name: Fetch the results
         run: |
           set -eu
           boat exec --timeout 600 "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
-          boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
+          for try in 1 2 3; do
+            boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz" && break
+            [ "$try" != 3 ] || exit 1
+            echo "::warning::fetching the results failed (try $try of 3)"; sleep 10
+          done
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       # The oldest supported base, glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …), as this runner.
       - run: ldd out/harbor-x86_64/harbor && out/harbor-x86_64/harbor --version
@@ -167,6 +181,7 @@ jobs:
   # under qemu (build.sh), which would slow x86_64's build beside it.
   build-aarch64:
     needs: [plan, slint]
+    if: needs.plan.outputs.where == 'boat'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -186,12 +201,16 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh aarch64
+        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh aarch64
       - name: Fetch the results
         run: |
           set -eu
           boat exec --timeout 600 "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
-          boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
+          for try in 1 2 3; do
+            boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz" && break
+            [ "$try" != 3 ] || exit 1
+            echo "::warning::fetching the results failed (try $try of 3)"; sleep 10
+          done
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       - uses: actions/upload-artifact@v7
         with:
@@ -203,11 +222,75 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/boat/cleanup.sh
 
+  # A bundle-only release that keeps the phone app (plan's where=runner): the same artifacts as build
+  # and build-aarch64 (harbor-x86_64 with the app bundle, harbor-extra, harbor-aarch64), built here
+  # on GitHub's runners, aarch64 on an arm64 one, by .github/runner/build.sh.
+  quick:
+    needs: [plan, slint]
+    if: needs.plan.outputs.where == 'runner'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        if: needs.slint.outputs.found == 'true'
+        with:
+          name: harbor-slint
+          path: slint/out
+      - name: Build (on this runner)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ needs.plan.outputs.previous }}
+          HARBOR_VERSION: ${{ needs.plan.outputs.version }}
+          HARBOR_MIN_RUNTIME: ${{ needs.plan.outputs.min }}
+          HARBOR_GIT_SHA: ${{ github.sha }}
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        run: .github/runner/build.sh x86_64 out
+      - run: ldd out/harbor-x86_64/harbor
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-x86_64
+          path: out/harbor-x86_64/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-extra
+          path: out/extra/
+
+  quick-aarch64:
+    needs: [plan, slint]
+    if: needs.plan.outputs.where == 'runner'
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        if: needs.slint.outputs.found == 'true'
+        with:
+          name: harbor-slint
+          path: slint/out
+      - name: Build (on this runner)
+        env:
+          HARBOR_VERSION: ${{ needs.plan.outputs.version }}
+          HARBOR_MIN_RUNTIME: ${{ needs.plan.outputs.min }}
+          HARBOR_GIT_SHA: ${{ github.sha }}
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        run: .github/runner/build.sh aarch64 out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-aarch64
+          path: out/harbor-aarch64/
+
   # Saves the snapshot and deletes the build's sandbox, beside the packaging: a release doesn't wait
   # for it, and it never fails one. Runs also when the build failed: then it only deletes.
   cache:
     needs: build
-    if: always()
+    if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -254,7 +337,9 @@ jobs:
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
   # archives and their checksum lists, and the attestations.
   package:
-    needs: [plan, build, build-aarch64, browser, video, slint]
+    needs: [plan, build, build-aarch64, quick, quick-aarch64, browser, video, slint]
+    # One pair of builds runs (plan's where), the other is skipped.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -479,6 +564,13 @@ jobs:
             dist/harbor-app.js
             dist/harbor-app.json
             dist/harbor-runtime-*
+      # A bundle-only release has no install tests to wait for (smoke): it goes out from here, without
+      # handing dist to another job.
+      - name: Publish the release
+        if: needs.plan.outputs.lane == 'bundle' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/publish.sh
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -508,9 +600,10 @@ jobs:
       dist: true
       arch: aarch64
 
+  # A runtime release, once smoke passed (a bundle-only one is published by package).
   publish:
-    needs: [package, smoke]
-    if: ${{ !cancelled() && !failure() && startsWith(github.ref, 'refs/tags/v') }}
+    needs: [plan, package, smoke]
+    if: ${{ !cancelled() && !failure() && startsWith(github.ref, 'refs/tags/v') && needs.plan.outputs.lane == 'runtime' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -521,17 +614,4 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          ver="${GITHUB_REF_NAME#v}"
-          # This version's CHANGELOG section, then GitHub's generated notes.
-          awk -v v="$ver" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
-          printf '\n**Install:** `curl -fsSL https://github.com/%s/releases/latest/download/install.sh | sh`\n' "$GITHUB_REPOSITORY" >> notes.md
-          printf '\n**Android:** download `harbor-android.apk` below, or scan the install QR code in Harbor › Settings › Phones.\n' >> notes.md
-          pre=""
-          case "$ver" in *-*) pre="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/* --title "Harbor $ver" --notes-file notes.md --generate-notes $pre
-      - name: Tell the account worker, which reads GitHub itself and answers every waiting PC
-        run: |
-          curl -fsS -X POST "$HARBOR_WORKER/v1/release" -H 'content-type: application/json' -d "{\"version\":\"${GITHUB_REF_NAME#v}\"}" \
-            || echo "::warning::the worker could not be reached, so PCs find the release on their own"
+        run: .github/publish.sh

@@ -65,9 +65,15 @@ jobs:
             aarch64) skip+=(--exclude='*x86_64*') ;;
           esac
           tar -cf "$RUNNER_TEMP/dist.tar" "${skip[@]}" dist
-          boat scp "$RUNNER_TEMP/dist.tar" "${{ steps.boat.outputs.id }}:/home/user/dist.tar"
-          boat exec "${{ steps.boat.outputs.id }}" -- tar -xf dist.tar
-          .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env SMOKE_ARCH="$ARCH" bash .github/boat/smoke.sh
+          id="${{ steps.boat.outputs.id }}"
+          for try in 1 2 3; do
+            boat scp "$RUNNER_TEMP/dist.tar" "$id:/home/user/dist.tar" && boat exec "$id" --timeout 300 -- tar -xf dist.tar && break
+            [ "$try" != 3 ] || exit 1
+            echo "::warning::copying the release files failed (try $try of 3)"; sleep 10
+          done
+          # RUN_RETRY: boat's own failures run the tests once more (smoke.sh also retries a distro
+          # whose image docker couldn't get).
+          RUN_RETRY=1 .github/boat/run.sh "$id" --cwd src -- env SMOKE_ARCH="$ARCH" bash .github/boat/smoke.sh
       - name: Delete the sandbox
         if: always()
         env:

@@ -21,7 +21,8 @@ export class ReleaseHub {
   version: string | null | undefined;
   waiters: Set<unknown>;
   readAt: number;
-  refresh(force: boolean): Promise<string | null>;
+  hint: string | null;
+  refresh(force: boolean, hint?: string | null): Promise<string | null>;
   alarm(): Promise<void>;
   wait(have: string | null, signal?: AbortSignal): Promise<Response>;
   answer(): Response;

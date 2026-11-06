@@ -109,6 +109,46 @@ test("the ping is never believed: what its body claims does not matter", async (
   expect(h.version).toBe("1.0.0");
 });
 
+test("a ping naming a release GitHub doesn't show yet keeps reading GitHub until it does, then stops", async () => {
+  const { hub: h, storage } = hub(new Memory(), env({ RELEASE_WAIT_MS: "5000" }));
+  await h.refresh(true);
+  const w = waitFor(h, "1.0.0");
+  storage.alarm = null;
+  h.readAt = 0;
+  await ping(h, "1.1.0");
+  expect(h.version).toBe("1.0.0");
+  expect(storage.alarm).not.toBeNull();
+  gh.latest = "1.1.0";
+  h.readAt = 0;
+  await h.alarm();
+  expect((await body(await w)).version).toBe("1.1.0");
+  expect(h.hint).toBeNull();
+});
+
+test("a ping whose release never shows stops the quick rereads after a few minutes", async () => {
+  const { hub: h, storage } = hub();
+  await h.refresh(true);
+  h.readAt = 0;
+  await ping(h, "1.1.0");
+  for (let i = 0; i < 60; i++) {
+    storage.alarm = null;
+    h.readAt = 0;
+    await h.refresh(true);
+  }
+  expect(storage.alarm).toBeNull();
+  expect(h.hint).toBeNull();
+  expect(h.version).toBe("1.0.0");
+});
+
+test("POST /v1/release passes the version it names to the object as a hint", async () => {
+  const { hub: h } = hub();
+  await h.refresh(true);
+  h.readAt = 0;
+  const r = await releasePing(new Request("https://w/v1/release", { method: "POST", body: JSON.stringify({ version: "1.2.0" }) }), routed(h));
+  expect((await body(r)).version).toBe("1.0.0");
+  expect(h.hint).toBe("1.2.0");
+});
+
 test("no news within the wait answers 204 so the PC reconnects", async () => {
   const { hub: h } = hub();
   const r = await waitFor(h, "1.0.0");

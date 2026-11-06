@@ -103,6 +103,16 @@ cat /tmp/harbor.log
 [ "$code" = 124 ] || fail "harbor exited with $code within 10 s"
 end
 
+# What Harbor started may outlive it (an unpack of the video player or browser engine into
+# ~/.local/lib/harbor): stopped here, or --uninstall's rm races it ("Directory not empty").
+# By /proc: the bare images have no pkill.
+uid=$(id -u tester)
+left() { for p in /proc/[0-9]*; do [ "$(stat -c %u "$p" 2>/dev/null)" = "$uid" ] && echo "${p#/proc/}"; done; true; }
+for p in $(left); do kill "$p" 2>/dev/null || true; done
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -n "$(left)" ] || break; sleep 0.5; done
+for p in $(left); do kill -9 "$p" 2>/dev/null || true; done
+sleep 0.5
+
 step "Uninstall"
 as "sh /src/packaging/install.sh --uninstall" || fail "--uninstall failed"
 for f in .local/lib/harbor .local/bin/harbor .local/share/applications/harbor.desktop \

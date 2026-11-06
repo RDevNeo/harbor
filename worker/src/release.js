@@ -44,6 +44,10 @@ export class ReleaseHub {
     this.version = undefined;
     this.readAt = 0;
     this.missing = 0;
+    // The version the last ping named. Never believed either: it only keeps this object re-reading
+    // GitHub, whose /releases/latest can still name the previous tag for a while after a release is
+    // created. Kept in memory only: if the object is thrown away, the 10-minute recheck remains.
+    this.hint = null;
   }
 
   get repo() {
@@ -68,7 +72,8 @@ export class ReleaseHub {
     return { version, ready: asset.status === 200 || (asset.status >= 300 && asset.status < 400) };
   }
 
-  async refresh(force) {
+  async refresh(force, hint) {
+    if (hint && parseVersion(hint) && newer(hint, this.hint || '0.0.0')) this.hint = String(hint).replace(/^v/, '');
     const wait = this.readAt + MIN_GAP_MS - Date.now();
     if (!force || wait > 0) {
       if (force) await this.state.storage.setAlarm(Date.now() + Math.max(wait, 1));
@@ -95,6 +100,17 @@ export class ReleaseHub {
       this.version = seen.version;
       await this.state.storage.put('version', seen.version);
       this.announce();
+    }
+    // A ping named a release GitHub doesn't show yet: look again shortly, as for missing files.
+    if (this.hint && newer(this.hint, seen.version || '0.0.0') && newer(this.hint, this.version || '0.0.0')) {
+      if (this.missing < MISSING_ASSET_TRIES) {
+        this.missing += 1;
+        await this.state.storage.setAlarm(Date.now() + MISSING_ASSET_MS);
+      } else {
+        this.hint = null;
+      }
+    } else if (this.hint && !newer(this.hint, this.version || '0.0.0')) {
+      this.hint = null;
     }
     return this.version;
   }
@@ -140,7 +156,12 @@ export class ReleaseHub {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/refresh') {
       this.missing = 0;
-      const version = await this.refresh(true);
+      let hint = null;
+      try {
+        const v = (await request.json())?.version;
+        if (typeof v === 'string') hint = v;
+      } catch {}
+      const version = await this.refresh(true, hint);
       return json({ ok: true, version });
     }
     if (request.method === 'GET' && url.pathname === '/wait') return this.wait(url.searchParams.get('have'), request.signal);
@@ -151,7 +172,17 @@ export class ReleaseHub {
 const hub = (env) => env.RELEASES.get(env.RELEASES.idFromName('latest'));
 
 export async function releasePing(req, env) {
-  const res = await hub(env).fetch('https://release/refresh', { method: 'POST' });
+  // The version the release workflow names goes along as a hint (see ReleaseHub.hint).
+  let version = null;
+  try {
+    const v = (await req.json())?.version;
+    if (typeof v === 'string' && parseVersion(v)) version = v;
+  } catch {}
+  const res = await hub(env).fetch('https://release/refresh', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ version }),
+  });
   const out = await res.json();
   return json({ ok: true, version: out.version || null }, 202);
 }
