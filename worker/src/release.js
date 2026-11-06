@@ -123,7 +123,11 @@ export class ReleaseHub {
 
   async alarm() {
     await this.refresh(true);
-    if (this.waiters.size > 0) await this.state.storage.setAlarm(Date.now() + RECHECK_MS);
+    // The 10-minute recheck only when refresh didn't ask for a sooner look (files missing, a pinged
+    // release GitHub doesn't show yet): overwriting that one held such a release back 10 minutes.
+    if (this.waiters.size === 0) return;
+    const at = await this.state.storage.getAlarm();
+    if (at === null || at <= Date.now()) await this.state.storage.setAlarm(Date.now() + RECHECK_MS);
   }
 
   async wait(have, signal) {

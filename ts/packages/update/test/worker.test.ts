@@ -125,6 +125,24 @@ test("a ping naming a release GitHub doesn't show yet keeps reading GitHub until
   expect(h.hint).toBeNull();
 });
 
+test("with PCs waiting, the alarm keeps the quick reread a lagging GitHub needs instead of the 10-minute one", async () => {
+  const { hub: h, storage } = hub(new Memory(), env({ RELEASE_WAIT_MS: "5000" }));
+  await h.refresh(true);
+  const w = waitFor(h, "1.0.0");
+  h.readAt = 0;
+  await ping(h, "1.1.0");
+  for (let i = 0; i < 3; i++) {
+    h.readAt = 0;
+    await h.alarm();
+    expect(storage.alarm).not.toBeNull();
+    expect(storage.alarm! - Date.now()).toBeLessThan(60_000);
+  }
+  gh.latest = "1.1.0";
+  h.readAt = 0;
+  await h.alarm();
+  expect((await body(await w)).version).toBe("1.1.0");
+});
+
 test("a ping whose release never shows stops the quick rereads after a few minutes", async () => {
   const { hub: h, storage } = hub();
   await h.refresh(true);
