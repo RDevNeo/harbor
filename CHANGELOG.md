@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.151.0] - 2026-11-06
+
+### Changed
+- Light or dark is one round button beside your photo at the bottom of the sidebar (desktop) and
+  of the drawer (phone): a sun in dark, a moon in light; a click or tap flips it at once. Your
+  photo alone opens Settings. On the desktop, the bottom bar starts with your photo (your initial
+  without one, the gear when signed out) and Refresh moved up beside Search.
+- Settings has no Appearance page anymore, and Follow Omarchy is gone: a PC that followed Omarchy
+  keeps what it showed. Density is gone too: rows are always the comfortable ones.
+- PCs say where they come from: a machine added over SSH says "SSH", a PC someone else added says
+  "<first name>'s Workspace", yours "Your Workspace". A PC tells its peers and phones the machines
+  it added over SSH, listed under it; the phone's PCs also list your other workspaces' PCs.
+
 ## [0.150.1] - 2026-11-06
 
 ### Changed
