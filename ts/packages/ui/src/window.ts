@@ -426,6 +426,9 @@ export interface AppWindow extends slint.ComponentHandle {
   pc_mem_frac: number;
   pc_mem_low: boolean;
   pc_mem_tip: string;
+  me_photo: Pixels;
+  me_has_photo: boolean;
+  me_letter: string;
   chat_menu: (id: number, x: number, y: number) => void;
   project_menu: (id: number, x: number, y: number) => void;
   searched: (q: string) => void;

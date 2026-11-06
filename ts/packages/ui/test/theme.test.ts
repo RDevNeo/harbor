@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ComponentCompiler } from "slint-ui/rust-module.cjs";
 import { FILES, uiDir } from "../src/assets.ts";
 import { iconsSlint } from "../src/icons.ts";
-import { DARK, LIGHT, omarchyIsDark, presetMetrics, step, themeSlint, token } from "../src/theme.ts";
+import { DARK, LIGHT, omarchyIsDark, parseMode, pinnedMode, presetMetrics, step, themeSlint, token } from "../src/theme.ts";
 
 const slintDir = join(import.meta.dir, "../slint");
 
@@ -28,6 +29,28 @@ test("the Omarchy theme file decides dark or light", () => {
   expect(omarchyIsDark(null)).toBe(true);
   expect(omarchyIsDark('accent = "#fff"\nmode = "light"\n')).toBe(false);
   expect(omarchyIsDark("mode = dark")).toBe(true);
+});
+
+test("light or dark only: a PC that followed Omarchy keeps what it showed, once", () => {
+  expect(parseMode("light")).toBe("light");
+  expect(parseMode("system")).toBe("dark");
+  expect(parseMode("")).toBe("dark");
+  const home = mkdtempSync(join(tmpdir(), "theme-pin-"));
+  try {
+    // A choice is kept as it is; nothing stored and no Omarchy: nothing to write.
+    expect(pinnedMode("light", home)).toBeNull();
+    expect(pinnedMode("dark", home)).toBeNull();
+    expect(pinnedMode(null, home)).toBeNull();
+    expect(pinnedMode("system", home)).toBe("dark");
+    const dir = join(home, ".local/state/omarchy/current/theme");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "colors.toml"), 'mode = "light"\n');
+    expect(pinnedMode("system", home)).toBe("light");
+    expect(pinnedMode(null, home)).toBe("light");
+    expect(pinnedMode("dark", home)).toBeNull();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("every .slint file compiles without errors or binding loops", async () => {

@@ -28,8 +28,8 @@ import java.util.Set;
  *  nav rows (Projects, Pull requests, Issues, PCs, Settings, and Update when there is one), a
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
- *  dot while a turn runs. A round avatar (your photo, else the workspace's initial) and the black "New session" pill float at
- *  the bottom. The title row's workspace button narrows the list to some of the account's
+ *  dot while a turn runs. A round avatar (your photo, else the workspace's initial), the light/dark sun or moon beside
+ *  it and the black "New session" pill float at the bottom. The title row's workspace button narrows the list to some of the account's
  *  workspaces, as the desktop sidebar's does.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
 final class Sidebar {
@@ -88,11 +88,6 @@ final class Sidebar {
         LinearLayout head = Ui.row(a);
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
         head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
-        // Light <-> dark at once (the desktop sidebar's sun/moon): a sun in dark, a moon in light.
-        TextView themeBtn = Ui.iconButton(a, Ui.dark ? Ui.I_SUN : Ui.I_MOON, Ui.FG, v -> a.flipTheme());
-        themeBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
-        themeBtn.setContentDescription(Ui.dark ? "Light theme" : "Dark theme");
-        head.addView(themeBtn);
         // Which workspace's chats show; hidden until `render` knows there are any.
         wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspaces());
         wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
@@ -142,6 +137,15 @@ final class Sidebar {
         FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
         ap.setMargins(Ui.dp(16), 0, 0, Ui.dp(18));
         view.addView(avatar, ap);
+        // Beside it, light <-> dark at once (the desktop sidebar's sun/moon): a sun in dark, a moon in light.
+        TextView themeBtn = Ui.icon(a, Ui.dark ? Ui.I_SUN : Ui.I_MOON, 19, Ui.FG);
+        themeBtn.setGravity(Gravity.CENTER);
+        themeBtn.setBackground(Ui.press(Ui.G100, Ui.LINE, 20));
+        themeBtn.setContentDescription(Ui.dark ? "Light theme" : "Dark theme");
+        themeBtn.setOnClickListener(v -> a.flipTheme());
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
+        tp.setMargins(Ui.dp(64), 0, 0, Ui.dp(18));
+        view.addView(themeBtn, tp);
         TextView fab = Ui.bold(a, "+  New session", 15, Ui.ON_INK);
         fab.setGravity(Gravity.CENTER);
         fab.setPadding(Ui.dp(18), 0, Ui.dp(20), 0);

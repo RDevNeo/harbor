@@ -93,7 +93,7 @@ export component AppearanceTab inherits VerticalLayout {
         alignment: start;
         IconTabs {
             labels: root.view.modes;
-            icons: [Icons.sun-moon, Icons.sun, Icons.moon];
+            icons: [Icons.sun, Icons.moon];
             selected: root.view.mode;
             picked(n) => {
                 root.mode-picked(n);

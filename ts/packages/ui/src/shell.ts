@@ -55,7 +55,7 @@ import { fakeCaptcha } from "./fakecaptcha.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
-import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
+import { parseMode, pinnedMode, token } from "./theme.ts";
 import { toggledMode } from "./logic/settings-appearance.ts";
 import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
 
@@ -147,8 +147,6 @@ export class Shell {
   readonly win: AppWindow;
   readonly data: Data;
   private dark = true;
-  private mode: Mode = "system";
-  private stamp = 0;
   private view: "draft" | "chat" = "draft";
   /** The page over the draft or chat: it leaves back to the chat it was opened from, or the draft. */
   private page: Page | null = null;
@@ -257,6 +255,39 @@ export class Shell {
     this.win.inv_body = card?.body ?? "";
     this.win.inv_busy = acc?.busy() ?? false;
   }
+
+  /** Loads your photo (sharp only once there is one), then draws it: null until it's here. */
+  private photo: ((url: string) => import("@harbor/media").images.Decoded | null) | null = null;
+
+  /** You in the sidebar's bottom bar (it opens Settings): your account photo, round, else your initial; signed out, the
+   *  gear. The photo is the account's, else your entry in the workspace directory's. */
+  private refreshMe(): void {
+    const acc = this.hub.account;
+    const me = acc?.account() ?? null;
+    const letter = me === null ? "" : (me.name.trim() || me.email.trim()).slice(0, 1).toUpperCase();
+    if (this.win.me_letter !== letter) this.win.me_letter = letter;
+    const url = me === null ? "" : me.image || (acc?.directory().workspaces.flatMap((w) => w.members).find((m) => m.id === me.id)?.image ?? "");
+    if (url === "") {
+      if (this.win.me_has_photo) this.win.me_has_photo = false;
+      return;
+    }
+    if (this.photo === null) {
+      void import("@harbor/media").then(({ photos }) => {
+        this.photo ??= photos.source(() => this.refreshMe());
+        this.refreshMe();
+      });
+      return;
+    }
+    const img = this.photo(url);
+    if (img === null) return;
+    if (this.mePhotoOf !== url) {
+      this.mePhotoOf = url;
+      this.win.me_photo = img;
+    }
+    if (!this.win.me_has_photo) this.win.me_has_photo = true;
+  }
+
+  private mePhotoOf = "";
 
   private answerInvite(accept: boolean): void {
     const acc = this.hub.account;
@@ -449,9 +480,10 @@ export class Shell {
       access: get("default_access", "full"),
       device: get("default_device", ""),
     };
-    this.mode = parseMode(get("theme", ""));
-    this.stamp = omarchyStamp(homedir());
-    this.dark = resolveDark(this.mode, homedir());
+    // Light or dark is the sidebar's sun/moon (or Settings › Appearance); a PC that followed Omarchy keeps what it showed.
+    const pin = pinnedMode(data.store.get("theme"), homedir());
+    if (pin !== null) data.store.set("theme", pin);
+    this.dark = parseMode(get("theme", "")) === "dark";
     win.dark = this.dark;
     win.side_rows = this.rows;
     win.side_settled = this.settledRows;
@@ -552,7 +584,7 @@ export class Shell {
       this.refreshSidebar();
     };
     w.palette = () => this.openPalette();
-    // The sidebar's sun/moon: the other of light and dark, kept as the choice (Settings › Appearance goes back to Follow Omarchy).
+    // The sidebar's sun/moon (bottom bar, beside your photo): the other of light and dark, kept as the choice.
     w.toggle_theme = () => {
       this.data.store.set("theme", toggledMode(this.dark));
       this.applyTheme(!this.dark);
@@ -728,9 +760,11 @@ export class Shell {
     // the sidebar, whose chats and projects follow the PCs this account uses.
     this.hub.account?.subscribe(() => {
       this.refreshInvite();
+      this.refreshMe();
       this.changed(null);
     });
     this.refreshInvite();
+    this.refreshMe();
     w.lb_close = () => this.images?.close();
     w.lb_go = (i) => this.images?.goTo(i);
     w.lb_copy_image = () => void this.copyShownImage();
@@ -2531,20 +2565,7 @@ export class Shell {
   private flush: ReturnType<typeof setTimeout> | null = null;
   private cardsOf: number | null = null;
 
-  /** Light or dark follows Omarchy's theme while the mode is System (theme.rs `refresh`). */
-  private followTheme(): void {
-    if (this.mode !== "system") return;
-    const stamp = omarchyStamp(homedir());
-    if (stamp === this.stamp) return;
-    this.stamp = stamp;
-    const dark = resolveDark(this.mode, homedir());
-    if (dark === this.dark) return;
-    this.dark = dark;
-    this.win.dark = dark;
-    this.refreshAll();
-  }
-
-  /** Once a second: the theme, git after a turn, the Working timers (the hub ticks the Engine). */
+  /** Once a second: git after a turn, the Working timers (the hub ticks the Engine). */
   private wasRunning = new Set<number>();
 
   tick(): void {
@@ -2560,7 +2581,6 @@ export class Shell {
     // devices.rs: phones' "last seen" and PCs' online state change by themselves.
     if (this.devicesShown()) this.refreshDevices();
     this.voice?.poll();
-    this.followTheme();
     for (const id of this.wasRunning) {
       const repo = this.data.chat(id)?.repoId;
       if (!this.engine.running(id) && repo !== null && repo !== undefined) this.gitOf(repo, true);
@@ -3910,7 +3930,6 @@ export class Shell {
   }
 
   private applyTheme(dark: boolean): void {
-    this.mode = parseMode(this.data.store.get("theme") ?? "");
     if (dark === this.dark) return;
     this.dark = dark;
     this.win.dark = dark;
@@ -4214,6 +4233,9 @@ export interface ShellAccount {
   /** The last action's error ("": none). */
   error(): string;
   subscribe(f: () => void): () => void;
+  /** Who is signed in (null: nobody): their initial and photo in the sidebar's bottom bar. */
+  account(): { id: string; email: string; name: string; image: string } | null;
+  directory(): { workspaces: readonly { members: readonly { id: string; image?: string }[] }[] };
 }
 
 /** Move to workspace… as the window asks it: a menu (null: no such chat or project) and the move, answered as the phone API answers it. */

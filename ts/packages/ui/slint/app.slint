@@ -359,6 +359,10 @@ export component AppWindow inherits Window {
     in property <float> pc-mem-frac;
     in property <bool> pc-mem-low;
     in property <string> pc-mem-tip;
+    // You in the sidebar's bottom bar: your photo (round), else your initial; "" and no photo: the Settings gear.
+    in property <image> me-photo;
+    in property <bool> me-has-photo;
+    in property <string> me-letter;
     callback mem-pop(string, length, length);
     // A PC card's "Default" pill in the gauge's popover: row i's PC becomes the gauge's.
     callback mem-default(int);
@@ -847,6 +851,9 @@ export component AppWindow inherits Window {
                     mem-frac: root.pc-mem-frac;
                     mem-low: root.pc-mem-low;
                     mem-tip: root.pc-mem-tip;
+                    me-photo: root.me-photo;
+                    me-has-photo: root.me-has-photo;
+                    me-letter: root.me-letter;
                     mem-pop(x, y) => {
                         root.mem-pop("mem-devices", x, y);
                     }

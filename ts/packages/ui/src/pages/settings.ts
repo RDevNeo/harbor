@@ -1,5 +1,4 @@
 import { basename } from "node:path";
-import { homedir } from "node:os";
 import { type Store } from "@harbor/store";
 import { voiceCtl } from "@harbor/media";
 import { harborVersion, mcp } from "@harbor/mcp";
@@ -20,7 +19,6 @@ import { type SettingsRuntime } from "../settingsrun-devices.ts";
 import { blockTabs } from "../settingsrun-blocks.ts";
 import { integrationsFeed } from "../settingsrun-integrations.ts";
 import { providerLogos, providersFeed, type ProvidersHost } from "../settingsrun-providers.ts";
-import { resolveDark } from "../theme.ts";
 
 /** The properties and callbacks of slint/settings.slint's `SettingsBus`, as TypeScript sees them. */
 export interface SettingsView {
@@ -99,7 +97,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
 
   function applyAppearance(): void {
     const a = appearanceApplied(store);
-    deps.theme.set(resolveDark(a.mode, homedir()));
+    deps.theme.set(a.mode === "dark");
     bus.appearance = appearanceView(store);
   }
 

@@ -53,7 +53,8 @@ export function thisPcRow(h: DevicesHost, st: DevicesState): BlockRow {
   });
 }
 
-/** A peer PC: online now (the mesh hears it), else when the directory or the mesh last saw it. `owner`: say whose it is. */
+/** A peer PC: online now (the mesh hears it), else when the directory or the mesh last saw it. `owner`: say whose
+ *  workspace it comes from ("Sam's Workspace"). */
 export function pcRow(h: DevicesHost, pc: AccountPc, owner = false): BlockRow {
   const peer = h.meshPeers().find((p) => p.fp === pc.fp);
   const online = peer?.online ?? false;
@@ -61,7 +62,7 @@ export function pcRow(h: DevicesHost, pc: AccountPc, owner = false): BlockRow {
   const ago = agoShort(seen, h.now());
   const status = online ? "" : seen > 0 ? (ago === "now" ? "seen just now" : `last seen ${ago} ago`) : "offline";
   const version = peer?.version || pc.version;
-  const bits = [owner && pc.owner_name !== "" ? pc.owner_name : "", version !== "" ? `Harbor ${version}` : "", status].filter((b) => b !== "");
+  const bits = [owner ? ownersWorkspace(pc.owner_name) : "", version !== "" ? `Harbor ${version}` : "", status].filter((b) => b !== "");
   return row(pc.name || peer?.name || "PC", {
     icon: ICONS.MONITOR,
     badges: [badge(online ? "Online" : "Offline", online ? "green" : "gray")],
@@ -87,7 +88,14 @@ export function renameForm(h: DevicesHost): Block {
   });
 }
 
-const SSH_LINE = "SSH device";
+/** A PC that comes from someone else's workspace, by its owner's first name: "Sam's Workspace". */
+export function ownersWorkspace(ownerName: string): string {
+  const first = ownerName.trim().split(/\s+/)[0] ?? "";
+  return first === "" ? "Shared workspace" : `${first}'s Workspace`;
+}
+
+/** A machine a PC added over SSH says just that; which PC it came through is the row above it. */
+const SSH_LINE = "SSH";
 
 /** This PC's own SSH devices (not the ones that are PCs of `known`): under This PC, each with its status and Remove. */
 export function ownDeviceRows(h: DevicesHost, known: readonly AccountPc[]): BlockRow[] {
@@ -97,7 +105,7 @@ export function ownDeviceRows(h: DevicesHost, known: readonly AccountPc[]): Bloc
     .map(([d, online]) =>
       row(hostLabel(d), {
         icon: ICONS.LAPTOP,
-        line: `${SSH_LINE} · through ${h.me().name} · ${online === true ? "online" : online === false ? "offline" : "status unknown"}`,
+        line: `${SSH_LINE} · ${online === true ? "online" : online === false ? "offline" : "status unknown"}`,
         buttons: [btn(`ssh_remove:${d.id}`, "Remove", { variant: "destructive" })],
       }),
     );
@@ -106,10 +114,9 @@ export function ownDeviceRows(h: DevicesHost, known: readonly AccountPc[]): Bloc
 /** The SSH devices a peer PC added (its hello's `devices`, as last heard), under that PC; none that are PCs of `known`. */
 export function peerDeviceRows(h: DevicesHost, pc: AccountPc, known: readonly AccountPc[]): BlockRow[] {
   const peer = h.meshPeers().find((p) => (pc.fp !== "" && p.fp === pc.fp) || p.id === pc.id);
-  const through = pc.name || peer?.name || "PC";
   return (peer?.devices ?? [])
     .filter((d: PeerDevice) => !known.some((p) => p.name === d.name) && d.name !== h.me().name)
-    .map((d) => row(d.name, { icon: ICONS.LAPTOP, line: `${SSH_LINE} · through ${through}` }));
+    .map((d) => row(d.name, { icon: ICONS.LAPTOP, line: SSH_LINE }));
 }
 
 /** Devices added by SSH before, with Remove: a small section at the end, only when there are any (signed out, or before a

@@ -274,7 +274,8 @@ public class Settings extends Base {
 
     /** Account: signed in as…, People and memory, invitations to other workspaces. Members:
      *  this workspace's people (owners invite and remove; anyone leaves a workspace that isn't
-     *  their own), its pending invitations. PCs: the workspace's PCs, who added each. */
+     *  their own), its pending invitations. PCs: the workspace's PCs, then your other workspaces' ones, each
+     *  as "Your Workspace" or its owner's ("Sam's Workspace"), with its SSH machines ("SSH") under it. */
     private void workspaceRows() {
         wsBox.removeAllViews();
         section(wsBox, "Account");
@@ -350,23 +351,41 @@ public class Settings extends Base {
             people.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_X, 36), "Leave " + wsName, null, Ui.RED, v -> confirmRemove(ws, me, true, wsName)), Ui.fill());
         }
 
-        org.json.JSONArray pcs = w.optJSONArray("pcs");
-        if (pcs == null || pcs.length() == 0) return;
+        // This workspace's PCs, then those of your other workspaces (each once).
+        org.json.JSONArray pcs = new org.json.JSONArray();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        org.json.JSONArray all = Account.directory(this).optJSONArray("workspaces");
+        for (int pass = 0; pass < 2; pass++)
+            for (int k = 0; all != null && k < all.length(); k++) {
+                JSONObject o = all.optJSONObject(k);
+                if (o == null || ws.equals(o.optString("id")) != (pass == 0)) continue;
+                org.json.JSONArray op = o.optJSONArray("pcs");
+                for (int i = 0; op != null && i < op.length(); i++) {
+                    JSONObject p = op.optJSONObject(i);
+                    String key = p == null ? "" : p.optString("fp").isEmpty() ? p.optString("id") : p.optString("fp");
+                    if (p != null && seen.add(key)) pcs.put(p);
+                }
+            }
+        if (pcs.length() == 0) return;
         section(wsBox, "PCs");
         LinearLayout pcCard = card(wsBox);
         for (int i = 0; i < pcs.length(); i++) {
             JSONObject p = pcs.optJSONObject(i);
-            if (p == null) continue;
             if (pcCard.getChildCount() > 0) pcCard.addView(Ui.gap(this));
-            String by = p.optString("owner_name");
             boolean mine = p.optString("owner").equals(me);
-            pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_MONITOR, 36), p.optString("name"), mine ? "Added by you" : by.isEmpty() ? null : "Added by " + by, Ui.FG, null), Ui.fill());
+            pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_MONITOR, 36), p.optString("name"), mine ? "Your Workspace" : ownersWorkspace(p.optString("owner_name")), Ui.FG, null), Ui.fill());
             // The machines it added over SSH (a Mac it dictates on, a build box): right under it.
             for (String d : sshDevices(p, pcs)) {
                 pcCard.addView(Ui.gap(this));
-                pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_LAPTOP, 36), d, "SSH device · through " + p.optString("name"), Ui.FG, null), Ui.fill());
+                pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_LAPTOP, 36), d, "SSH", Ui.FG, null), Ui.fill());
             }
         }
+    }
+
+    /** A PC someone else added, by their first name (settings-devices.ts ownersWorkspace): "Sam's Workspace". */
+    static String ownersWorkspace(String ownerName) {
+        String first = ownerName.trim().split("\\s+")[0];
+        return first.isEmpty() ? "Shared workspace" : first + "'s Workspace";
     }
 
     private void invite(String ws) {

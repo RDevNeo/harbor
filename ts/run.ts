@@ -161,6 +161,8 @@ export async function runApp(o: RunOptions): Promise<number> {
         answer: (id: string, accept: boolean) => (accept ? run.account.acceptInvite(id) : run.account.declineInvite(id)),
         error: () => run.account.status().error,
         subscribe: (f: () => void) => run.account.subscribe(f),
+        account: () => run.account.account(),
+        directory: () => run.account.directory(),
       },
       prs: run.prs,
       workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),

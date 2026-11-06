@@ -8,8 +8,9 @@ import org.json.JSONObject;
  *  HARBOR_RIG_PORT set makes an app that is signed in to a fake account and knows one PC, a hub
  *  on 127.0.0.1:<port> (adb reverse) that takes HARBOR_RIG_TOKEN. The account's directory has
  *  that PC's workspace (ws:org_sam, as ts/rig/phonehub.ts seeds it) with made-up members, PCs
- *  and an invitation out, for Settings (none in: Invites would pop it up on every screen). In
- *  every other build Config.RIG_PORT is 0 and this is never used. */
+ *  and an invitation out, for Settings (none in: Invites would pop it up on every screen), and a
+ *  second workspace, Kai's, shared with Sam, with one PC. In every other build Config.RIG_PORT
+ *  is 0 and this is never used. */
 final class Rig {
     private Rig() { }
 
@@ -27,7 +28,12 @@ final class Rig {
             JSONObject ws = new JSONObject().put("id", "org_sam").put("name", "Sam's workspace").put("role", "owner").put("personal", true)
                     .put("members", members).put("pcs", pcs)
                     .put("invites", new JSONArray().put(new JSONObject().put("id", "inv_out").put("email", "taylor@example.com")));
-            JSONObject dir = new JSONObject().put("at", System.currentTimeMillis()).put("workspaces", new JSONArray().put(ws));
+            // A workspace someone else shares with Sam: its PC shows in Settings › PCs as "Kai's Workspace".
+            JSONObject kai = new JSONObject().put("id", "org_kai").put("name", "Kai's workspace").put("role", "member").put("personal", false)
+                    .put("members", new JSONArray().put(member("u_kai", "Kai Ono", "kai@example.com", "owner")).put(member("rig", "Sam Rivera", "sam@example.com", "member")))
+                    .put("pcs", new JSONArray().put(new JSONObject().put("id", "pc:studio").put("name", "studio-pc").put("owner", "u_kai").put("owner_name", "Kai Ono").put("version", "0.109.0.ts")))
+                    .put("invites", new JSONArray());
+            JSONObject dir = new JSONObject().put("at", System.currentTimeMillis()).put("workspaces", new JSONArray().put(ws).put(kai));
             return new JSONObject().put("id", "rig").put("name", "Sam Rivera").put("email", "sam@example.com").put("image", PHOTO + "sam")
                     .put("token", Config.RIG_TOKEN).put("token_at", System.currentTimeMillis()).put("exp", 4102444800L)
                     .put("dir", dir);

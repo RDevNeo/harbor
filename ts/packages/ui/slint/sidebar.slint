@@ -344,6 +344,48 @@ component ProjectRow {
     }
 }
 
+// The bottom bar's first button: your round photo (or initial; the gear when signed out), opening Settings.
+component MeBtn {
+    in property <image> photo;
+    in property <bool> has-photo;
+    in property <string> letter;
+    callback clicked;
+    width: 28px;
+    height: 28px;
+    Rectangle {
+        background: area.has-hover ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+    }
+    if root.has-photo: Image {
+        width: 20px;
+        height: 20px;
+        source: root.photo;
+    }
+    if !root.has-photo && root.letter != "": Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        background: #7a6ad8;
+        Text {
+            text: root.letter;
+            font-size: 11px;
+            font-weight: 600;
+            color: white;
+        }
+    }
+    if !root.has-photo && root.letter == "": Glyph {
+        icon: Icons.settings;
+        size: 14px;
+        color: area.has-hover ? Theme.fg : Theme.subtle;
+    }
+    area := TipArea {
+        tip: "Settings (Ctrl+,)";
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 export component Sidebar inherits Rectangle {
     in property <[SideRow]> rows;
     in property <[SideRow]> settled;
@@ -372,8 +414,12 @@ export component Sidebar inherits Rectangle {
     callback searched(string);
     callback hide();
     callback palette();
-    // The header's sun/moon: light <-> dark at once (kv `theme`, Settings › Appearance has Follow Omarchy).
+    // The bottom bar's sun/moon, beside your photo: light <-> dark at once (kv `theme`, also Settings › Appearance).
     callback toggle-theme();
+    // You, in the bottom bar's first place (opens Settings): your photo, else your initial; neither (signed out): the gear.
+    in property <image> me-photo;
+    in property <bool> me-has-photo;
+    in property <string> me-letter;
     callback filter(length, length);
     // Over the gauge, in window coordinates.
     callback usage(length, length);
@@ -426,12 +472,12 @@ export component Sidebar inherits Rectangle {
                 vertical-alignment: center;
             }
             Btn {
-                icon: Theme.dark ? Icons.sun : Icons.moon;
+                icon: Icons.refresh;
                 size: icon-xs;
                 variant: ghost-muted;
-                tip: Theme.dark ? "Light theme" : "Dark theme";
+                tip: "Refresh providers, projects and git";
                 clicked => {
-                    root.toggle-theme();
+                    root.refresh();
                 }
             }
             Btn {
@@ -694,13 +740,21 @@ export component Sidebar inherits Rectangle {
                     root.back();
                 }
             }
-            if !root.pages-back: Btn {
-                icon: Icons.settings;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Settings (Ctrl+,)";
+            if !root.pages-back: MeBtn {
+                photo: root.me-photo;
+                has-photo: root.me-has-photo;
+                letter: root.me-letter;
                 clicked => {
                     root.settings();
+                }
+            }
+            Btn {
+                icon: Theme.dark ? Icons.sun : Icons.moon;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: Theme.dark ? "Light theme" : "Dark theme";
+                clicked => {
+                    root.toggle-theme();
                 }
             }
             if !root.pages-back: Btn {
@@ -742,15 +796,6 @@ export component Sidebar inherits Rectangle {
                 tip: "Claude usage";
                 clicked => {
                     root.usage(self.absolute-position.x, self.absolute-position.y);
-                }
-            }
-            Btn {
-                icon: Icons.refresh;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Refresh providers, projects and git";
-                clicked => {
-                    root.refresh();
                 }
             }
         }

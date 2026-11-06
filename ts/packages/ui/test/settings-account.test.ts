@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { newHost, newPeer, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { accountBlocks, accountTab, type AccountHost, type AccountPort } from "../src/logic/settings-account.ts";
 import type { Block } from "../src/logic/settings-blocks.ts";
-import type { DevicesHost } from "../src/logic/settings-devices.ts";
+import { ownersWorkspace, type DevicesHost } from "../src/logic/settings-devices.ts";
 import { ICONS } from "../src/icons.ts";
 
 const NOW = 1_000_000;
@@ -278,7 +278,7 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     };
   }
 
-  test("people cards list their PCs, each with the SSH devices it added, and phones; PCs shared through another workspace follow", () => {
+  test("people cards list their PCs, each with the SSH devices it added (\"SSH\"), and phones; PCs shared through another workspace follow, as their owner's workspace", () => {
     const f = signedIn("member");
     const b = accountBlocks({ ...host(f), devices: devicesOf([]) });
     expect(titles(b)).toEqual(["Home · Member", "Through your other workspaces", "Your other workspaces"]);
@@ -286,18 +286,18 @@ describe("one Workspace page: each person with their PCs and phones", () => {
       [
         ["Ana (you)", [], "ana@example.com"],
         ["desk", ["This PC"], "Harbor 0.132.0 · key aaaa aaaa aaaa aaaa"],
-        ["Build PC", [], "SSH device · through desk · offline"],
+        ["Build PC", [], "SSH · offline"],
         ["Pixel", [], "Phone · key dddd dddd dddd dddd"],
       ],
       [
         ["leo@example.com", [], "leo@example.com"],
         ["laptop", ["Online"], "Harbor 0.132.0"],
         // A device that is itself one of the PCs ("render") isn't listed twice.
-        ["Mac", [], "SSH device · through laptop"],
+        ["Mac", [], "SSH"],
         ["Galaxy", [], "Phone · key eeee eeee eeee eeee"],
       ],
     ]);
-    const icons = peopleCards(b).flatMap((c) => c.rows.filter((r) => r.line.startsWith("SSH device")).map((r) => r.icon));
+    const icons = peopleCards(b).flatMap((c) => c.rows.filter((r) => r.line.startsWith("SSH")).map((r) => r.icon));
     expect(new Set(icons)).toEqual(new Set([ICONS.LAPTOP]));
     // Only this PC's own devices can be removed here.
     expect(peopleCards(b)[0]?.rows[2]?.buttons.map((x) => x.key)).toEqual(["ssh_remove:ssh:1"]);
@@ -306,8 +306,8 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     expect(peopleCards(b).map((c) => c.rows.at(-1)?.buttons.map((x) => x.key))).toEqual([[`phone_signout:${"d".repeat(64)}`], []]);
     const shared = b[b.findIndex((x) => x.title === "Through your other workspaces") + 1];
     expect(shared?.rows.map((r) => [r.title, r.line])).toEqual([
-      ["render", "Kai · Harbor 0.131.0 · seen just now"],
-      ["nas", "SSH device · through render"],
+      ["render", "Kai's Workspace · Harbor 0.131.0 · seen just now"],
+      ["nas", "SSH"],
     ]);
     expect(titles(b)).not.toContain("PCs");
   });
@@ -336,6 +336,12 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     const b = accountBlocks({ ...host(f), devices: devicesOf([]) });
     expect(titles(b)).toEqual(["This PC", "Other devices"]);
   });
+});
+
+test("a PC from someone else's workspace is named by their first name", () => {
+  expect(ownersWorkspace("Kai Ono")).toBe("Kai's Workspace");
+  expect(ownersWorkspace("  Leo ")).toBe("Leo's Workspace");
+  expect(ownersWorkspace("")).toBe("Shared workspace");
 });
 
 describe("people's photos", () => {

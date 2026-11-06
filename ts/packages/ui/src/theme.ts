@@ -1,5 +1,5 @@
 // rengaf design tokens (theme.rs). `slint/theme.slint` is generated from them; a test keeps both equal.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type Scale = readonly [string, string, string, string, string, string, string, string, string, string];
@@ -78,10 +78,23 @@ export function presetMetrics(name: string): [number | null, number] {
   return [m[0], m[1] * (size ?? 14)];
 }
 
-export type Mode = "system" | "light" | "dark";
+export type Mode = "light" | "dark";
 
+/** kv `theme`: "light" or "dark" (the sidebar's sun/moon, Settings › Appearance); anything else is dark, Harbor's own. */
 export function parseMode(s: string): Mode {
-  return s === "light" || s === "dark" ? s : "system";
+  return s === "light" ? "light" : "dark";
+}
+
+/** The mode to keep when kv `theme` holds no explicit one: up to 0.149, "system" (or nothing) followed Omarchy's theme
+ *  file, which Harbor no longer watches; such a PC keeps what that file says once (Harbor's dark without it); null:
+ *  nothing to write. */
+export function pinnedMode(stored: string | null, home: string): Mode | null {
+  if (stored === "light" || stored === "dark") return null;
+  const p = join(home, ".local/state/omarchy/current/theme/colors.toml");
+  const file = existsSync(p) ? readFileSync(p, "utf8") : null;
+  // Nothing stored and no Omarchy: nothing to keep (dark, unless the account's synced choice comes in).
+  if (stored === null && file === null) return null;
+  return omarchyIsDark(file) ? "dark" : "light";
 }
 
 /** Omarchy's theme file: dark unless its `mode` line says light; dark when unreadable. */
@@ -93,26 +106,6 @@ export function omarchyIsDark(text: string | null): boolean {
     if (l.slice(0, eq).trim() === "mode") return !l.slice(eq + 1).includes("light");
   }
   return true;
-}
-
-export function omarchyPath(home: string): string {
-  return join(home, ".local/state/omarchy/current/theme/colors.toml");
-}
-
-export function resolveDark(mode: Mode, home: string): boolean {
-  if (mode === "light") return false;
-  if (mode === "dark") return true;
-  const p = omarchyPath(home);
-  return omarchyIsDark(existsSync(p) ? readFileSync(p, "utf8") : null);
-}
-
-/** The Omarchy theme file's mtime, to notice a switch cheaply (theme.rs `refresh`). */
-export function omarchyStamp(home: string): number {
-  try {
-    return statSync(omarchyPath(home)).mtimeMs;
-  } catch {
-    return 0;
-  }
 }
 
 const SCALES = ["gray", "blue", "red", "amber", "green"] as const;
