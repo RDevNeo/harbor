@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.150.1] - 2026-11-06
+
 ### Changed
 - Releases that rebuild the phone app build its unsigned APK on a GitHub runner, beside the
   desktop bundle builds, then add the cached browser engine and sign it in packaging as before.
