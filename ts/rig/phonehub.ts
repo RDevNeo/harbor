@@ -116,6 +116,8 @@ const cards = chat({ repoId: web, title: "Speed up the checkout page", updated: 
   tool("Bash", "git commit -am 'Checkout: tax and shipping in parallel'", { command: "git commit -am 'Checkout: tax and shipping in parallel'" }, "[main 4f2a9c1] Checkout: tax and shipping in parallel"),
   say("Committed as `4f2a9c1` and put behind `fast_total` (off by default).", ago(10)),
   done(ago(10), 0.18),
+  // A message of a mention alone (its note is what the user wrote).
+  { kind: "user", text: "", files: [], at: ago(8), mentions: [{ item: 10, from: "Claude", at: ago(10), text: "put behind `fast_total` (off by default)", len: 40, excerpt: true, note: "Turn it on for 10% of users first.", kind: "", chat: "", title: "" }], sender: "", intent: "" },
   notice("process", "dev server", "http://127.0.0.1:5173"),
   notice("clock", "Wakes up at 9:00 to check the error rate"),
   notice("wake", "Woke up: the error rate is back under 1%", "Checked the dashboard at 9:00."),

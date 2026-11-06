@@ -1241,7 +1241,7 @@ export class Shell {
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);
     const queue = queueCards(
-      this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing })),
+      this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing, mentions: m.mentions })),
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
     );
     rows?.sweep();

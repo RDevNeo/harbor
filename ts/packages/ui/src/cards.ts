@@ -3,9 +3,10 @@ import { actions, type Card, CHAT_SCHEME, chatLinks, dividerLook, FORK_DIVIDER, 
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
+import { chipHead, chipSnippet, chipTip, isChat, mentionFromJson } from "./logic/mentions.ts";
 import { type Part, parts } from "./logic/usertext.ts";
 import { type Block, blocks, escape, type Placed, place, registerBlock } from "./markdown.ts";
-import type { CardData, MdBlockData, MediaRow } from "./window.ts";
+import type { CardData, CiteData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
 export interface Opened {
@@ -155,8 +156,24 @@ export function userText(ps: readonly Part[]): slint.StyledText {
   }
 }
 
+/** The messages a user's message mentions, as the composer's chips over its text, each with the note written under it
+ * (a mentioned chat is a link in the text instead: `parts`). */
+export function cites(ms: readonly unknown[]): CiteData[] {
+  return ms.flatMap((v) => {
+    const m = mentionFromJson(v);
+    return m === null || isChat(m) ? [] : [{ head: chipHead(m), snippet: chipSnippet(m), tip: chipTip(m, false), note: m.note.trim() }];
+  });
+}
+
+/** A message with no text, as its mentions read in one bubble of plain text: each one's note, else its chip. */
+export function citesLabel(ms: readonly unknown[]): string {
+  return cites(ms)
+    .map((c) => (c.note !== "" ? c.note : `@${c.head} ${c.snippet}`))
+    .join("\n");
+}
+
 function blank(seq: number): CardData {
-  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [] };
+  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [], cites: [] };
 }
 
 /** The row over the bubble for a message written elsewhere: a phone or PC icon and the person (net's look.ts `senderLook`). */
@@ -211,8 +228,12 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
   switch (c.kind) {
     case "hidden":
       return null;
-    case "user":
-      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }], text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "" };
+    case "user": {
+      // A message of mentions alone has no text line: its bubble is the chips.
+      const ps = parts(c.text, c.mentions);
+      const body = ps.length === 0 ? [] : [{ kind: "p", text: userText(ps), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }];
+      return { ...d, kind: "user", blocks: body, text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "", cites: cites(c.mentions) };
+    }
     case "text": {
       const md = labelLinks(stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path)), linkTitle);
       return { ...d, kind: "text", blocks: mdBlocks(md, seq), text: c.text };
@@ -347,6 +368,8 @@ export interface QueuedView {
   steering: boolean;
   note: string;
   editing: string;
+  /** Its mentions (store's Mention): a message of mentions alone reads as them. */
+  mentions?: readonly unknown[];
 }
 
 export interface QueueState {
@@ -362,7 +385,7 @@ const QUEUE_HEAD = -6;
 
 /** queue.rs `steering_bubbles` and `queued_bubbles`: steers on their way in, then "Up next". */
 export function queueCards(q: readonly QueuedView[], s: QueueState): { steers: CardData[]; next: CardData[] } {
-  const label = (m: QueuedView) => (m.text === "" ? `${m.files} attachment(s)` : m.text);
+  const label = (m: QueuedView) => (m.text !== "" ? m.text : citesLabel(m.mentions ?? []) || `${m.files} attachment(s)`);
   const steers = q.filter((m) => m.steering).map((m) => ({ ...blank(m.id), kind: "steering" as const, text: label(m) }));
   const waiting = q.filter((m) => !m.steering);
   if (waiting.length === 0) return { steers, next: [] };

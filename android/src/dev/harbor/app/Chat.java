@@ -1305,6 +1305,8 @@ public class Chat extends Base implements Images.Gallery {
                 // it, so only the other mentions are chips.
                 JSONArray parts = it.optJSONArray("parts");
                 JSONArray mentions = it.optJSONArray("mentions");
+                // The widest chip or note: a message of mentions alone hugs them, not its empty text.
+                float cites = 0;
                 if (mentions != null) for (int i = 0; i < mentions.length(); i++) {
                     JSONObject m = mentions.optJSONObject(i);
                     if (m == null) continue;
@@ -1318,11 +1320,13 @@ public class Chat extends Base implements Images.Gallery {
                     chip.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(10), Ui.dp(4));
                     chip.setMaxWidth(maxBubble());
                     bubble.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
+                    cites = Math.max(cites, chip.getPaint().measureText(chip.getText().toString().replace('\n', ' ')) + Ui.dp(20));
                     String note = m.optString("note");
                     if (!note.isEmpty()) {
                         TextView n = Ui.text(this, note, 14, Ui.G900);
                         n.setMaxWidth(maxBubble());
                         bubble.addView(n, Ui.margins(Ui.wrap(), 10, 0, 0, 8));
+                        for (String line : note.split("\n")) cites = Math.max(cites, n.getPaint().measureText(line) + Ui.dp(10));
                     }
                 }
                 View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96, seq, namesImages(parts));
@@ -1353,7 +1357,7 @@ public class Chat extends Base implements Images.Gallery {
                 android.text.TextPaint tp = new android.text.TextPaint();
                 tp.setTextSize(android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 16, getResources().getDisplayMetrics()));
                 tp.setTypeface(Ui.sans);
-                float need = 0;
+                float need = cites;
                 for (String line : shown.toString().split("\n")) need = Math.max(need, tp.measureText(line));
                 JSONArray ims = it.optJSONArray("images");
                 if (ims != null && ims.length() > 0) need = Math.max(need, Math.min(ims.length(), 3) * Ui.dp(104));

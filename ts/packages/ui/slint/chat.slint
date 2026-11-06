@@ -17,6 +17,14 @@ export struct MediaRow {
     thumbs: int,
 }
 
+// A message a user's message mentions (cards.ts `cites`): the composer's chip, and the note written about it.
+export struct Cite {
+    head: string,
+    snippet: string,
+    tip: string,
+    note: string,
+}
+
 export struct CardData {
     kind: string,
     seq: int,
@@ -39,6 +47,7 @@ export struct CardData {
     actions: [string],
     time: string,
     media: [MediaRow],
+    cites: [Cite],
 }
 
 component ToolCard {
@@ -175,6 +184,57 @@ component ThumbGrid {
     }
 }
 
+// A mention in a sent message: the composer's chip (mentions.rs `draft`) with its tooltip, its note under it.
+component CiteView {
+    in property <Cite> cite;
+    VerticalLayout {
+        spacing: 4px;
+        Rectangle {
+            height: 26px;
+            background: Theme.bg200;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius-md;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 10px;
+                spacing: 6px;
+                Glyph {
+                    width: 13px;
+                    icon: Icons.at-sign;
+                    size: 13px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: root.cite.head;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.cite.snippet;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+            TipArea {
+                tip: root.cite.tip;
+                mouse-cursor: default;
+            }
+        }
+        if root.cite.note != "": Text {
+            text: root.cite.note;
+            font-size: 14px;
+            color: Theme.fg;
+            wrap: word-wrap;
+        }
+    }
+}
+
 component UserBubble {
     in property <CardData> card;
     in property <length> avail;
@@ -190,8 +250,17 @@ component UserBubble {
         default-font-size: 14px;
         default-font-family: "Geist";
     }
+    // The widest chip or note, unwrapped.
+    Rectangle {
+        visible: false;
+        cites-measure := VerticalLayout {
+            for c in root.card.cites: CiteView {
+                cite: c;
+            }
+        }
+    }
     // chat.rs: at least 220px with files, three thumbnails' width with images.
-    property <length> need: max(hug, root.card.files.length > 0 ? 220px : 0px, root.card.media.length > 0 ? min(3, root.card.media.length) * 140px - 8px : 0px);
+    property <length> need: max(hug, cites-measure.preferred-width, root.card.files.length > 0 ? 220px : 0px, root.card.media.length > 0 ? min(3, root.card.media.length) * 140px - 8px : 0px);
     property <length> w: max(min(need + 2px, avail * 0.8 - 28px), 40px) + 28px;
     // Who wrote it elsewhere, over the first bubble of a run only.
     property <bool> who: root.card.sender != "" && !root.card.joined;
@@ -279,6 +348,13 @@ component UserBubble {
                     padding-top: 10px;
                     padding-bottom: 9px;
                     spacing: Theme.compact ? 8px : 12px;
+                    // Before the text, as the composer had them and the agent reads them.
+                    if root.card.cites.length > 0: VerticalLayout {
+                        spacing: 8px;
+                        for c in root.card.cites: CiteView {
+                            cite: c;
+                        }
+                    }
                     if root.card.media.length > 0: HorizontalLayout {
                         alignment: start;
                         ThumbGrid {
@@ -289,7 +365,8 @@ component UserBubble {
                             }
                         }
                     }
-                    body := StyledText {
+                    // A message of mentions alone has no text line (cards.ts).
+                    if root.card.blocks.length > 0: StyledText {
                         text: root.card.blocks[0].text;
                         default-font-size: 14px;
                         default-font-family: "Geist";

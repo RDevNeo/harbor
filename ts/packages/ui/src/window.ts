@@ -181,6 +181,16 @@ export interface CardData {
   actions: string[];
   time: string;
   media: MediaRow[];
+  /** The messages a user card mentions (cards.ts `cites`). */
+  cites: CiteData[];
+}
+
+/** chat.slint `Cite`: a message a user's message mentions, as its chip, and the note written about it. */
+export interface CiteData {
+  head: string;
+  snippet: string;
+  tip: string;
+  note: string;
 }
 
 export interface MenuEntry {

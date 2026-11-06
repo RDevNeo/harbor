@@ -48,7 +48,10 @@ component ThreadRow {
     callback snooze(length, length);
     // At the pointer, in window coordinates.
     callback menu(length, length);
-    property <bool> hovering: area.has-hover || settle-btn.hovered || snooze-btn.hovered;
+    // The marks after the title count too: they sit over `area`, and without them pointing at one
+    // drops the hover, the title widens, the mark slides off the pointer, the hover comes back and
+    // the title narrows under it again, over and over.
+    property <bool> hovering: area.has-hover || worktree.has-hover || pr.has-hover || shared.has-hover || settle-btn.hovered || snooze-btn.hovered;
     property <bool> indented: data.kind == "thread";
     height: Theme.row-h;
     Rectangle {
@@ -74,9 +77,10 @@ component ThreadRow {
             size: 14px;
             color: root.data.active ? Theme.fg : Theme.subtle;
         }
+        // Hovered, the last mark keeps 30px (glyph to glyph) before the clock, as the clock does before Settle.
         title := Text {
             x: root.indented ? 8px : 32px;
-            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px) - (root.data.shared != "" ? 20px : 0px) - (root.data.place != "" ? place.width + 6px : 0px);
+            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 11px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px) - (root.data.shared != "" ? 20px : 0px) - (root.data.place != "" ? place.width + 6px : 0px);
             width: min(self.preferred-width, max(self.room, 10px));
             text: root.data.title;
             font-size: 14px;
@@ -105,7 +109,8 @@ component ThreadRow {
                 vertical-alignment: center;
             }
         }
-        if root.data.worktree != "": TipArea {
+        worktree := TipArea {
+            visible: root.data.worktree != "";
             x: title.x + title.width + 5px;
             width: 16px;
             tip: root.data.worktree-tip;
@@ -115,7 +120,8 @@ component ThreadRow {
                 color: root.data.worktree == "gone" ? Theme.red-900 : root.data.active ? Theme.fg : Theme.subtle;
             }
         }
-        if root.data.pr != "": TipArea {
+        pr := TipArea {
+            visible: root.data.pr != "";
             x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px);
             width: 16px;
             tip: root.data.pr-tip;
@@ -125,7 +131,8 @@ component ThreadRow {
                 color: root.data.pr == "open" ? Theme.green-900 : root.data.pr == "draft" ? Theme.gray-800 : root.data.pr == "closed" ? Theme.red-900 : Theme.dark ? #c4b5fd : #7c3aed;
             }
         }
-        if root.data.shared != "": SharedMark {
+        shared := SharedMark {
+            visible: root.data.shared != "";
             x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px);
             kind: root.data.shared;
             active: root.data.active;
@@ -186,7 +193,7 @@ component ProjectRow {
     property <bool> dragging: drag-id == data.id;
     property <bool> far;
     // While a drag runs the pressed handle keeps the hover, so the pointer's row shows it instead.
-    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || plus.hovered || snooze.hovered;
+    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || shared.has-hover || plus.hovered || snooze.hovered;
     height: Theme.row-h + 2px;
     Rectangle {
         background: root.data.active || root.hovering ? Theme.accent : transparent;
@@ -261,41 +268,44 @@ component ProjectRow {
             color: Theme.fg;
         }
     }
-    HorizontalLayout {
+    // The name, then its marks right after it (as on a chat row): the room left of the status,
+    // or of the hover buttons, is what the name and its place hint share.
+    property <length> room: self.width - 32px - (root.hovering ? actions.preferred-width + 9px : status.preferred-width + 16px) - (root.data.shared != "" ? 22px : 0px);
+    title := Text {
         x: 32px;
-        width: parent.width - 32px - (root.hovering ? 64px : status.preferred-width + 16px);
-        spacing: 6px;
+        width: min(self.preferred-width, max(root.room - (root.data.place != "" ? place.width + 6px : 0px), 10px));
+        text: root.data.title;
+        font-size: 14px;
+        font-weight: root.data.active ? 500 : 400;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    shared := SharedMark {
+        visible: root.data.shared != "";
+        x: title.x + title.width + 6px;
+        kind: root.data.shared;
+        active: root.data.active;
+        tip: root.data.shared-tip;
+    }
+    // The hint gets what the name leaves, and at least 106px of it before the name elides.
+    place := HorizontalLayout {
+        visible: root.data.place != "";
+        x: title.x + title.width + 6px + (root.data.shared != "" ? 22px : 0px);
+        width: root.data.place != "" ? max(0px, min(self.preferred-width, max(106px, root.room - title.preferred-width - 6px))) : 0px;
+        spacing: 3px;
+        Glyph {
+            width: 12px;
+            icon: root.data.place-pc ? Icons.monitor : Icons.folder;
+            size: 12px;
+            color: Theme.subtle;
+        }
         Text {
-            text: root.data.title;
-            font-size: 14px;
-            font-weight: root.data.active ? 500 : 400;
-            color: Theme.fg;
+            text: root.data.place;
+            font-size: 12px;
+            color: Theme.subtle;
             overflow: elide;
             vertical-alignment: center;
-            horizontal-stretch: 0;
-        }
-        if root.data.shared != "": SharedMark {
-            horizontal-stretch: 0;
-            kind: root.data.shared;
-            active: root.data.active;
-            tip: root.data.shared-tip;
-        }
-        if root.data.place != "": HorizontalLayout {
-            spacing: 3px;
-            horizontal-stretch: 1;
-            Glyph {
-                width: 12px;
-                icon: root.data.place-pc ? Icons.monitor : Icons.folder;
-                size: 12px;
-                color: Theme.subtle;
-            }
-            Text {
-                text: root.data.place;
-                font-size: 12px;
-                color: Theme.subtle;
-                overflow: elide;
-                vertical-alignment: center;
-            }
         }
     }
     status := StatusView {
@@ -304,12 +314,14 @@ component ProjectRow {
         width: self.preferred-width;
         status: root.data.status;
     }
-    HorizontalLayout {
+    // The clock's glyph ends where the status text does (8px in), and the marks before it keep
+    // the buttons' step: 30px from glyph to glyph, as the clock and Settle on a chat row.
+    actions := HorizontalLayout {
         visible: root.hovering;
-        x: parent.width - 2px - self.preferred-width;
+        x: parent.width - 1px - self.preferred-width;
         y: (parent.height - 28px) / 2;
         height: 28px;
-        spacing: 4px;
+        spacing: 2px;
         plus := Btn {
             icon: Icons.plus;
             size: icon-xs;
