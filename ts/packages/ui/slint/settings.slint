@@ -13,7 +13,6 @@ import { Block, BlocksTab } from "settings-blocks.slint";
 import { NotificationsTab, NotifySection } from "settings-notifications.slint";
 import { ProvidersData, ProvidersTab } from "settings-providers.slint";
 import { IntegrationsTab, IntData } from "settings-integrations.slint";
-import { AppearanceTab, AppearanceView } from "settings-appearance.slint";
 
 export struct SettingsTab {
     slug: string,
@@ -171,7 +170,6 @@ export global SettingsBus {
     callback blocks-edited(string, string);
     callback blocks-submitted(string, string, string, string) -> string;
     in-out property <string> search;
-    in property <AppearanceView> appearance;
     in property <ProvidersData> providers;
     in property <[NotifySection]> notifications;
     in property <KeysView> keybindings;
@@ -206,7 +204,6 @@ export component SettingsPage inherits Rectangle {
     callback blocks-edited <=> SettingsBus.blocks-edited;
     callback blocks-submitted <=> SettingsBus.blocks-submitted;
     in-out property <string> search <=> SettingsBus.search;
-    in property <AppearanceView> appearance <=> SettingsBus.appearance;
     in property <ProvidersData> providers <=> SettingsBus.providers;
     in property <[NotifySection]> notifications <=> SettingsBus.notifications;
     in property <KeysView> keybindings <=> SettingsBus.keybindings;
@@ -334,7 +331,6 @@ export component SettingsPage inherits Rectangle {
                     if root.tab == "notifications": NotificationsTab { sections: root.notifications; toggled(k, v) => { root.toggled(k, v); } edited(k, t) => { root.notify-edited(k, t); } pressed(k) => { root.pressed(k); } }
                     if root.tab == "providers": ProvidersTab { data: root.providers; act(i, w) => { root.providers-act(i, w); } }
                     if root.tab == "integrations": IntegrationsTab { data: root.integrations; act(w, i, a, b) => { root.integrations-act(w, i, a, b); } valid(c, k) => { return root.integrations-valid(c, k); } }
-                    if root.tab == "appearance": AppearanceTab { view: root.appearance; mode-picked(n) => { root.chose("theme", n); } }
                     for s[i] in root.sections: VerticalLayout {
                         if i > 0: Rectangle {
                             height: 12px;

@@ -80,9 +80,14 @@ export function presetMetrics(name: string): [number | null, number] {
 
 export type Mode = "light" | "dark";
 
-/** kv `theme`: "light" or "dark" (the sidebar's sun/moon, Settings › Appearance); anything else is dark, Harbor's own. */
+/** kv `theme`: "light" or "dark" (the sidebar's button beside your photo); anything else is dark, Harbor's own. */
 export function parseMode(s: string): Mode {
   return s === "light" ? "light" : "dark";
+}
+
+/** The sidebar's button: the other of light and dark from what shows now, kept as the choice. */
+export function toggledMode(dark: boolean): Mode {
+  return dark ? "light" : "dark";
 }
 
 /** The mode to keep when kv `theme` holds no explicit one: up to 0.149, "system" (or nothing) followed Omarchy's theme

@@ -30,7 +30,6 @@ import picker from "../slint/picker.slint" with { type: "file" };
 import prdetail from "../slint/prdetail.slint" with { type: "file" };
 import prs from "../slint/prs.slint" with { type: "file" };
 import settings from "../slint/settings.slint" with { type: "file" };
-import settingsAppearance from "../slint/settings-appearance.slint" with { type: "file" };
 import settingsBlocks from "../slint/settings-blocks.slint" with { type: "file" };
 import settingsIntegrations from "../slint/settings-integrations.slint" with { type: "file" };
 import settingsKeybindings from "../slint/settings-keybindings.slint" with { type: "file" };
@@ -64,7 +63,6 @@ export const FILES: Readonly<Record<string, string>> = {
   "picker.slint": picker,
   "prdetail.slint": prdetail,
   "prs.slint": prs,
-  "settings-appearance.slint": settingsAppearance,
   "settings-blocks.slint": settingsBlocks,
   "settings-integrations.slint": settingsIntegrations,
   "settings-keybindings.slint": settingsKeybindings,

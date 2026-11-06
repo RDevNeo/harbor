@@ -28,9 +28,13 @@ ends with a screenshot of each screen it touches, before you report done:
 - While iterating, `scripts/shot --watch [same options]` (start it with Harbor's start_process, not
   Bash) keeps the rig up and prints a new PNG path on every save under `ts/packages/ui`, 1.5-3 s
   after the save; `scripts/shot --stop` ends it, and it ends by itself after 30 idle minutes (`--idle`).
-- Look at the PNG yourself (Read it), then put it in your final reply as `![caption](/absolute/path.png)`
-  next to the sentence it illustrates. A subagent puts the paths in its report; the lead puts them
+- Look at the PNG yourself (Read it), then put its zoomed crop (below) in your final reply as
+  `![caption](/absolute/path.png)` next to the sentence it illustrates. A subagent puts the paths in its report; the lead puts them
   in its reply to the user: a subagent's images reach the user only that way.
+- Previews are zoomed crops of exactly the area that changed (desktop and phone alike, each state
+  shown, e.g. dark and light; PIL `crop` then `resize` 3-4x), not full screenshots: a whole window
+  or phone screen shrinks in chat and small controls can't be judged from it. Send full screenshots
+  only when asked.
 - Shots of real chats may be shown in chat but never committed: they hold personal data (even
   `--empty` ones show this PC's home path on some pages).
 - To let the user try a change: `scripts/preview --note "what changed"` opens a "Harbor preview · …"

@@ -7,7 +7,7 @@ import { AUTOSTART_DEFAULT_KEY, autostart, installedLauncher, setAutostart } fro
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
 import { generalSections, navTabs, setGeneral, type SettingSection } from "../logic/settings.ts";
-import { appearanceApplied, appearanceView, setAppearance, type AppearanceView } from "../logic/settings-appearance.ts";
+import { parseMode } from "../theme.ts";
 import { type Block } from "../logic/settings-blocks.ts";
 import { type IntData, type IntHost } from "../logic/settings-integrations.ts";
 import { editNotifications, notificationsSections, notifyPressed, setNotifications, type NotifyEnv, type NotifySection } from "../logic/settings-notifications.ts";
@@ -27,7 +27,6 @@ export interface SettingsView {
   tab_label: string;
   sections: SettingSection[];
   nav_open: boolean;
-  appearance: AppearanceView;
   providers: ProvidersData;
   providers_act: (id: string, what: string) => void;
   integrations: IntData;
@@ -95,15 +94,14 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     return [];
   }
 
-  function applyAppearance(): void {
-    const a = appearanceApplied(store);
-    deps.theme.set(a.mode === "dark");
-    bus.appearance = appearanceView(store);
+  /** Light or dark as kv `theme` holds it now (the sidebar's button, or another PC's pick synced in). */
+  function applyTheme(): void {
+    deps.theme.set(parseMode(store.get("theme") ?? "") === "dark");
   }
 
   function show(next?: Tab): void {
     if (next !== undefined) tab = next;
-    applyAppearance();
+    applyTheme();
     const dark = deps.theme.dark();
     bus.tabs = navTabs("");
     bus.tab = tab;
@@ -149,7 +147,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   };
   bus.chose = (k, n) => {
     setGeneral(store, k, n);
-    setAppearance(store, k, n);
     voiceChose(speech, k, n);
     show();
   };

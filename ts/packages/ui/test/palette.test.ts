@@ -78,6 +78,6 @@ describe("palette.rs", () => {
     expect(v.slice(0, 3).map((i) => i.id)).toEqual(["act:settle:1", "act:fork:1", "act:new"]);
     const sub = v.find((i) => i.id === "chat:2");
     expect([sub?.section, sub?.title, sub?.detail]).toEqual(["agents", "tests", "harbor · Fix it"]);
-    expect(v.filter((i) => i.id.startsWith("settings:"))).toHaveLength(9);
+    expect(v.filter((i) => i.id.startsWith("settings:"))).toHaveLength(8);
   });
 });

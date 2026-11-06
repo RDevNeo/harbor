@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ComponentCompiler } from "slint-ui/rust-module.cjs";
 import { FILES, uiDir } from "../src/assets.ts";
 import { iconsSlint } from "../src/icons.ts";
-import { DARK, LIGHT, omarchyIsDark, parseMode, pinnedMode, presetMetrics, step, themeSlint, token } from "../src/theme.ts";
+import { DARK, LIGHT, omarchyIsDark, parseMode, pinnedMode, presetMetrics, step, themeSlint, toggledMode, token } from "../src/theme.ts";
 
 const slintDir = join(import.meta.dir, "../slint");
 
@@ -35,6 +35,9 @@ test("light or dark only: a PC that followed Omarchy keeps what it showed, once"
   expect(parseMode("light")).toBe("light");
   expect(parseMode("system")).toBe("dark");
   expect(parseMode("")).toBe("dark");
+  // The sidebar's button picks the other of what shows.
+  expect(toggledMode(true)).toBe("light");
+  expect(toggledMode(false)).toBe("dark");
   const home = mkdtempSync(join(tmpdir(), "theme-pin-"));
   try {
     // A choice is kept as it is; nothing stored and no Omarchy: nothing to write.

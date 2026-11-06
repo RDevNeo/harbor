@@ -344,53 +344,29 @@ component ProjectRow {
     }
 }
 
-// The bottom bar's light/dark switch: a pill with a sun and a moon, its knob on the one showing; a click flips it at once.
-component ThemeSwitch {
+// The bottom bar's light/dark button, beside your photo: one round button, a sun in dark (to light) and a moon in light
+// (to dark); a click flips the theme at once.
+component ThemeBtn {
     callback toggled;
-    width: 38px;
+    width: 28px;
     height: 28px;
-    track := Rectangle {
-        y: 4px;
-        height: 20px;
-        border-radius: 10px;
+    Rectangle {
+        width: 24px;
+        height: 24px;
+        border-radius: 12px;
         background: area.has-hover ? Theme.gray-300 : Theme.gray-200;
         border-width: 1px;
         border-color: Theme.border;
         Glyph {
-            x: 4px;
-            width: 12px;
+            width: parent.width;
             height: parent.height;
-            icon: Icons.sun;
-            size: 11px;
-            color: Theme.subtle;
-        }
-        Glyph {
-            x: parent.width - 16px;
-            width: 12px;
-            height: parent.height;
-            icon: Icons.moon;
-            size: 11px;
-            color: Theme.subtle;
-        }
-        Rectangle {
-            x: Theme.dark ? parent.width - 18px : 2px;
-            y: 2px;
-            width: 16px;
-            height: 16px;
-            border-radius: 8px;
-            background: Theme.fg;
-            animate x { duration: 140ms; easing: ease-out; }
-            Glyph {
-                width: parent.width;
-                height: parent.height;
-                icon: Theme.dark ? Icons.moon : Icons.sun;
-                size: 10px;
-                color: Theme.bg100;
-            }
+            icon: Theme.dark ? Icons.sun : Icons.moon;
+            size: 13px;
+            color: Theme.fg;
         }
     }
     area := TipArea {
-        tip: Theme.dark ? "Switch to light" : "Switch to dark";
+        tip: Theme.dark ? "Light theme" : "Dark theme";
         clicked => {
             root.toggled();
         }
@@ -467,7 +443,7 @@ export component Sidebar inherits Rectangle {
     callback searched(string);
     callback hide();
     callback palette();
-    // The bottom bar's light/dark switch, beside your photo: flips at once (kv `theme`, also Settings › Appearance).
+    // The bottom bar's light/dark button, beside your photo: flips at once (kv `theme`; Settings has no Appearance).
     callback toggle-theme();
     // You, in the bottom bar's first place (opens Settings): your photo, else your initial; neither (signed out): the gear.
     in property <image> me-photo;
@@ -782,7 +758,7 @@ export component Sidebar inherits Rectangle {
             height: 40px;
             padding-top: 9px;
             padding-bottom: 3px;
-            spacing: 2px;
+            spacing: 4px;
             if root.pages-back: Btn {
                 icon: Icons.arrow-left;
                 text: "Back";
@@ -805,7 +781,7 @@ export component Sidebar inherits Rectangle {
             Rectangle {
                 width: 4px;
             }
-            ThemeSwitch {
+            ThemeBtn {
                 toggled => {
                     root.toggle-theme();
                 }

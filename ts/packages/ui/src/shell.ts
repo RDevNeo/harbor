@@ -55,8 +55,7 @@ import { fakeCaptcha } from "./fakecaptcha.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
-import { parseMode, pinnedMode, token } from "./theme.ts";
-import { toggledMode } from "./logic/settings-appearance.ts";
+import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
 import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
 
 /** How long the reader stays at a chat's end before the earlier pages they scrolled up to are let go. */
@@ -480,7 +479,7 @@ export class Shell {
       access: get("default_access", "full"),
       device: get("default_device", ""),
     };
-    // Light or dark is the sidebar's sun/moon (or Settings › Appearance); a PC that followed Omarchy keeps what it showed.
+    // Light or dark is the sidebar's button beside your photo; a PC that followed Omarchy keeps what it showed.
     const pin = pinnedMode(data.store.get("theme"), homedir());
     if (pin !== null) data.store.set("theme", pin);
     this.dark = parseMode(get("theme", "")) === "dark";

@@ -4,7 +4,7 @@ import { tabFromSlug, TAB_ORDER, TABS } from "../src/logic/pages.ts";
 import { generalSections, navTabs, setGeneral } from "../src/logic/settings.ts";
 
 test("Settings has nine pages, General then Workspace, with old Devices and Phones links reaching Workspace", () => {
-  expect(TAB_ORDER.map((t) => TABS[t].label)).toEqual(["General", "Workspace", "Notifications", "Appearance", "Keybindings", "Voice", "Providers", "Integrations", "Secrets"]);
+  expect(TAB_ORDER.map((t) => TABS[t].label)).toEqual(["General", "Workspace", "Notifications", "Keybindings", "Voice", "Providers", "Integrations", "Secrets"]);
   expect(tabFromSlug("devices")).toBe("account");
   expect(tabFromSlug("phones")).toBe("account");
   expect(navTabs("android").map((t) => t.slug)).toEqual(["account"]);
