@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.149.1] - 2026-11-06
+
+### Changed
+- Releases that only change the app bundle build on GitHub's runners instead of a boat sandbox and
+  are published straight from packaging: such a release goes out in about two minutes instead of
+  three to four.
+
+### Fixed
+- Release runs no longer fail when a fresh build sandbox unpacks the source or Harbor's Slint addon
+  slower than boat's 30-second command limit; copies and downloads to and from boat are retried, and
+  a command boat never started (or lost) runs once more.
+- The install tests no longer fail now and then at "--uninstall": what Harbor left running after
+  the start test is stopped first.
+- PCs hear of a release even when GitHub still names the previous one at the moment the release
+  workflow tells the account worker: the worker keeps looking for a few minutes.
+
 ## [0.149.0] - 2026-11-05
 
 ### Added
