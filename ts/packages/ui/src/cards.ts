@@ -1,6 +1,5 @@
 import * as slint from "slint-ui";
-import { ICONS, type IconName } from "./icons.ts";
-import { actions, type Card, CHAT_SCHEME, chatLinks, groupLabel, groups, labelChatLinks, project, type Viewer } from "@harbor/net";
+import { actions, type Card, CHAT_SCHEME, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
@@ -156,32 +155,14 @@ export function userText(ps: readonly Part[]): slint.StyledText {
   }
 }
 
-const NOTICE_ICONS: Record<string, IconName> = {
-  bot: "BOT",
-  report: "BOT",
-  wake: "ALARM",
-  webhook: "WEBHOOK",
-  alert: "ALERT",
-  fork: "FORK",
-  process: "ACTIVITY",
-  clock: "CLOCK",
-  restart: "ROTATE_CW",
-  folder: "FOLDER",
-  worktree: "FOLDER_GIT",
-  users: "USERS",
-  monitor: "MONITOR",
-  lock: "LOCK",
-  captcha: "USER_CHECK",
-};
-
 function blank(seq: number): CardData {
   return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [] };
 }
 
-/** The row over the bubble for a message written elsewhere: a phone or PC icon and the person (else the device). */
-function senderLine(c: { who: string; via: string }): { sender: string; icon: string } {
-  if (c.who === "") return { sender: "", icon: "" };
-  return { sender: c.who, icon: ICONS[c.via === "phone" ? "SMARTPHONE" : "MONITOR"] };
+/** The row over the bubble for a message written elsewhere: a phone or PC icon and the person (net's look.ts `senderLook`). */
+function senderLine(c: Extract<Card, { kind: "user" }>): { sender: string; icon: string } {
+  const l = senderLook(c);
+  return { sender: l.name, icon: l.glyph };
 }
 
 function base(name: string): string {
@@ -219,8 +200,9 @@ function linkSig(text: string, title: LinkTitle | null): string {
 /** A Discord captcha notice (logic/captchacard.ts `captchaRoles`): the live card, its outcome line, or nothing. */
 function captchaCard(d: CardData, c: Extract<Card, { kind: "notice" }>, r: CaptchaRole, gone: CaptchaGone): CardData | null {
   if (r.role === "none") return null;
-  if (r.role === "card") return { ...d, kind: "captcha", actions: [], icon: ICONS.USER_CHECK, text: captchaText(r.note.guild), label: r.note.guild ?? "", detail: r.note.captcha, result: gone(r.note.captcha) ? "gone" : "" };
-  return { ...d, kind: "notice", icon: ICONS[r.note.state === "joined" ? "USER_CHECK" : "CIRCLE_SLASH"], text: c.text };
+  const l = noticeLook(c, r);
+  if (r.role === "card") return { ...d, kind: "captcha", actions: [], icon: l.glyph, text: captchaText(r.note.guild), label: r.note.guild ?? "", detail: r.note.captcha, result: gone(r.note.captcha) ? "gone" : "" };
+  return { ...d, kind: "notice", icon: l.glyph, text: l.text };
 }
 
 function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: MediaOf, captcha?: CaptchaRole, gone: CaptchaGone = () => false, linkTitle: LinkTitle | null = null): CardData | null {
@@ -238,27 +220,28 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "thinking":
       return { ...d, kind: "thinking", text: c.text, open: open.cards.has(seq) };
     case "tool": {
-      const [icon, tone]: [IconName, string] = c.result === null ? ["LOADER", ""] : c.is_error ? ["CIRCLE_X", "red"] : ["CIRCLE_CHECK", "green"];
-      return { ...d, kind: "tool", label: c.label, text: c.summary, icon: ICONS[icon], tone, detail: clip(c.input, TOOL_TEXT_MAX), result: c.result === null ? "" : clip(c.result, RESULT_MAX), open: open.cards.has(seq) };
+      const { glyph, tone } = toolLook(c);
+      return { ...d, kind: "tool", label: c.label, text: c.summary, icon: glyph, tone, detail: clip(c.input, TOOL_TEXT_MAX), result: c.result === null ? "" : clip(c.result, RESULT_MAX), open: open.cards.has(seq) };
     }
     case "forked_from":
-      return { ...d, kind: "divider", icon: ICONS.FORK, text: "Forked from conversation", label: "Open source conversation", url: `harbor:chat-id/${c.chat}/${c.seq}` };
-    case "chat_link":
-      return { ...d, kind: "divider", icon: ICONS.BOT, text: c.text, label: "Open chat", url: `harbor:chat/${c.gid}` };
+    case "chat_link": {
+      const l = dividerLook(c);
+      return { ...d, kind: "divider", icon: l.glyph, text: l.text, label: l.link, url: c.kind === "forked_from" ? `harbor:chat-id/${c.chat}/${c.seq}` : `harbor:chat/${c.gid}` };
+    }
     case "notice": {
       if (captcha !== undefined) return captchaCard(d, c, captcha, gone);
-      const expandable = c.detail !== "" && !c.detail.startsWith("http");
-      const opened = expandable && open.cards.has(seq);
+      const l = noticeLook(c);
+      const opened = l.expandable && open.cards.has(seq);
       return {
         ...d,
         kind: "notice",
-        icon: ICONS[NOTICE_ICONS[c.icon] ?? "CIRCLE_CHECK"],
-        text: c.text,
-        detail: c.markdown ? "" : clip(c.detail, DETAIL_MAX),
-        blocks: opened && c.markdown ? mdBlocks(c.detail) : [],
-        expandable: c.url === null && expandable,
-        open: c.url === null && opened,
-        url: c.url ?? "",
+        icon: l.glyph,
+        text: l.text,
+        detail: l.markdown ? "" : clip(c.detail, DETAIL_MAX),
+        blocks: opened && l.markdown ? mdBlocks(c.detail) : [],
+        expandable: l.expandable,
+        open: opened,
+        url: l.url ?? "",
       };
     }
     case "message":
@@ -287,12 +270,12 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
   const out: CardData[] = [{ ...blank(-1), kind: "space" }];
   const built = new Set<number>();
   if (from > 0) out.push({ ...blank(EARLIER), kind: "earlier", label: `Show earlier messages (${visible.length - open.limit})` });
-  const fork = (seq: number, f: number) => out.push({ ...blank(seq), kind: "divider", icon: ICONS.FORK, text: "Conversation fork", label: "Open fork", url: `harbor:chat-id/${f}/0` });
+  const fork = (seq: number, f: number) => out.push({ ...blank(seq), kind: "divider", icon: FORK_DIVIDER.glyph, text: FORK_DIVIDER.text, label: FORK_DIVIDER.link, url: `harbor:chat-id/${f}/0` });
   for (const s of shown) {
     if (s.group !== null) {
       const g = runs.get(s.group) ?? { calls: 0, pending: false };
       const opened = open.groups.has(s.group);
-      if (s.group === s.seq) out.push({ ...blank(groupSeq(s.seq)), kind: "group", label: groupLabel(g.calls), open: opened, pending: g.pending });
+      if (s.group === s.seq) out.push({ ...blank(groupSeq(s.seq)), kind: "group", ...runLook(g), open: opened });
       if (!opened) {
         for (const f of s.forksAfter) fork(s.seq, f);
         continue;

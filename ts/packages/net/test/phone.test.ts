@@ -15,6 +15,7 @@ import { Mesh } from "../src/mesh.ts";
 import { newPeer } from "../src/shared.ts";
 import { newHost, type RemoteHost } from "../src/remote.ts";
 import { StoreReplica } from "../src/meshstore.ts";
+import { GLYPHS } from "../src/glyphs.ts";
 import { cardJson, catalogOf, clock, composerDefaults, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
@@ -213,6 +214,33 @@ describe("the phone API's chats (api.rs App side)", () => {
     // A reply without chat links sends none.
     store.saveItems(where.id, [{ kind: "text", text: "plain", at: 5 }]);
     expect(items(true)[0]?.chat_links).toBeUndefined();
+    store.close();
+  });
+
+  test("each card's look is the desktop's; an earlier card comes again when its look changes", () => {
+    const store = Store.openAt(join(tmp, "looks.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null });
+    const c = store.createChat(blankChat({ title: "looks" }));
+    const cap = (state: string): Item => ({ kind: "notice", icon: "captcha", text: `captcha ${state}`, detail: JSON.stringify({ captcha: "k", state, guild: "G" }) });
+    const run: Item = { kind: "tool", id: "t", name: "Bash", summary: "ls", input: "{}", result: null, is_error: false };
+    store.saveItems(c.id, [run, { kind: "text", text: "hi", at: 5 }, cap("pending"), { kind: "notice", icon: "report", text: "api finished", detail: "**Done**: tests" }, { kind: "notice", icon: "wake", text: "w", detail: "" }]);
+    const get = (since = 0) => (routes.items(c, since, null, true) as { rev: number; items: Record<string, Json>[] });
+    const first = get();
+    const [t, text, pending, report, wake] = first.items;
+    expect(t?.look).toEqual({ glyph: GLYPHS.LOADER, tone: "", run: { label: "1 tool call", pending: true } });
+    expect(text?.look).toBeUndefined();
+    expect(pending?.look).toEqual({ glyph: GLYPHS.USER_CHECK, text: "captcha pending", expandable: false, captcha: "card" });
+    expect(report?.look).toMatchObject({ glyph: GLYPHS.BOT, expandable: true, blocks: [{ type: "paragraph", spans: [{ text: "Done", bold: true }, { text: ": tests" }] }] });
+    expect(wake?.look).toEqual({ glyph: GLYPHS.ALARM, text: "w", expandable: false });
+    // The call ends and the captcha is answered: the tool card and the pending notice come again.
+    store.saveItems(c.id, [{ ...run, result: "ok" }, { kind: "text", text: "hi", at: 5 }, cap("pending"), { kind: "notice", icon: "report", text: "api finished", detail: "**Done**: tests" }, { kind: "notice", icon: "wake", text: "w", detail: "" }, cap("joined")]);
+    const next = get(first.rev);
+    expect(next.items.map((v) => v.seq)).toEqual([0, 2, 5]);
+    expect(next.items[0]?.look).toEqual({ glyph: GLYPHS.CIRCLE_CHECK, tone: "green", run: { label: "1 tool call", pending: false } });
+    expect(next.items[1]?.look).toMatchObject({ captcha: "none" });
+    expect(next.items[2]?.look).toMatchObject({ captcha: "outcome", glyph: GLYPHS.USER_CHECK });
     store.close();
   });
 

@@ -118,6 +118,7 @@ const cards = chat({ repoId: web, title: "Speed up the checkout page", updated: 
   done(ago(10), 0.18),
   notice("process", "dev server", "http://127.0.0.1:5173"),
   notice("clock", "Wakes up at 9:00 to check the error rate"),
+  notice("wake", "Woke up: the error rate is back under 1%", "Checked the dashboard at 9:00."),
   { kind: "message", from: "reviewer", to: "this chat", text: "Looks good; one nit on the flag name." },
   { kind: "error", text: "The usage limit was reached; the next turn starts at 14:00." },
 ]);

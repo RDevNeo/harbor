@@ -524,6 +524,28 @@ selection's menu adds Mention (when `actions` has `mention`: `POST /v1/chats/{id
 `{seq, text}` with the selected text, below) and More… (the long-press sheet). A long-press
 beside the text (a bubble's edge, a tool row, a notice) opens the sheet as before.
 
+Optional on every card (0.150): `look`, how the desktop draws it, decided once on the PC by the
+code the desktop draws with (ts/packages/net/src/look.ts); draw it as given and fall back to the
+rules above only without it (an older hub). Glyphs are Lucide codepoints of the app's own
+`lucide.ttf` (the desktop's file). By kind:
+- `user`: `{glyph, name, steer, steer_glyph}`, the row over the bubble: `glyph` and `name` (who
+  wrote it on a phone or another PC; `name` "" draws no person, and a `joined` bubble drawn right
+  under another draws none either), then " · " and `steer_glyph` "Steer" when `steer`. Every user
+  card has it, so no `look` means an older hub.
+- `tool`: `{glyph, tone}`, the row's status glyph and its color: `tone` "" muted, `red`, `green`.
+- `notice`: `{glyph, text, expandable, blocks?, captcha?}`. `expandable`: a tap opens `detail`
+  (false with a `url`, or a detail that is a web address). `blocks` (with `detail_markdown`): the
+  detail as [Blocks](#blocks), drawn as a reply's. `captcha` (a Discord captcha's notices): `card`
+  the live captcha card, `outcome` the plain pill (`glyph`, `text`), `none` nothing (a pending one
+  that ended since); it replaces the scan for a later notice of the same captcha.
+- `forked_from`, `chat_link`: `{glyph, text, link}`, the divider: a line, the glyph, `text`, the
+  link `link`, a line.
+- `fork` (any card with `forks_after`): the same `{glyph, text, link}` for each fork divider.
+- `run` (the first card of a run, `group == seq`): `{label, pending}`, the run's chevron row
+  ("5 tool calls"; the spinner while `pending` and the chat is `running`).
+A card comes again with a higher `rev` when its `look` changes (a run's call ended, a captcha's
+outcome came).
+
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 

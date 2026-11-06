@@ -194,6 +194,8 @@ java -cp "$W/classes:$W/test" dev.harbor.app.RaceTest
 # And the model badges' names and the agent strip's stops (Labels).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/LabelsTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.LabelsTest
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/LookTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.LookTest
 # And what a video knows while it arrives (Stream, Video).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/BlocksTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.BlocksTest

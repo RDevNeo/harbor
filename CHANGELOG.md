@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- The phone draws a chat's cards as the PC decides them: icons, colors, tool-run rows ("5 tool
+  calls"), which notices open, Discord captcha lines, sender rows and dividers come with each card
+  from the PC (the same code the desktop draws with), instead of being worked out again in the app.
+
+### Fixed
+- On the phone, a "wake" notice has the desktop's alarm icon (not a clock), a "lock" notice its lock,
+  captcha outcome lines the desktop's icons, dividers their icon, and a sub-agent's report opens as
+  formatted markdown instead of raw text; a notice whose detail is a web address no longer opens to it.
+
 ## [0.149.2] - 2026-11-06
 
 ### Fixed

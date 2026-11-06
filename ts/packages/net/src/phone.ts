@@ -16,7 +16,9 @@ import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.t
 import { dest, type Peer } from "./shared.ts";
 import { AUTO_DEVICE, ramText } from "./ram.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
-import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
+import { actions, cardMedia, groups, project, type Media, type Shown } from "./view.ts";
+import { captchaRoles } from "./captchanote.ts";
+import { cardLook } from "./look.ts";
 import { pcOwner, phoneDev, type Viewer } from "./senders.ts";
 import { RESUME_TEXT, resumeNow } from "./resume.ts";
 
@@ -275,7 +277,8 @@ export interface CommitLookup {
 /** A reply's chat links as this hub resolves them (`chat_links`): link as written → `{title, chat, missing}`, `chat` already in the caller's ids. */
 export type LinkTargets = (md: string) => Record<string, { title: string; chat: Json; missing: string }>;
 
-export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null, commits: CommitLookup | null = null, links: LinkTargets | null = null): Record<string, Json> {
+/** `look`: how the card draws, as the desktop decides it (look.ts `cardLook`, PROTOCOL.md `look`); null: nothing to say. */
+export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null, commits: CommitLookup | null = null, links: LinkTargets | null = null, look: Record<string, Json> | null = null): Record<string, Json> {
   const all = cardMedia(s.card, find);
   const images: Json[] = all.filter((m) => !m.video).map((m) => ({ name: m.url !== null ? mediaName(m) : fileName(m.path), url: imageUrl(m.path) }));
   const large = all.filter((m) => m.shown || m.video);
@@ -370,6 +373,12 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
   v.rev = rev;
   if (s.forksAfter.length > 0) v.forks_after = s.forksAfter;
   if (s.group !== null) v.group = s.group;
+  if (look !== null) {
+    // A markdown detail (a sub-agent's report) comes as blocks too, drawn as a reply's are.
+    const l = { ...look };
+    if (c.kind === "notice" && c.markdown && l.expandable === true) l.blocks = blocks(c.detail.length > CLIP ? clipped(c.detail) : c.detail) as Json;
+    v.look = l;
+  }
   return v;
 }
 
@@ -767,10 +776,14 @@ export class PhoneRoutes {
       return out;
     };
     const linkSig = (text: string) => (text.includes(CHAT_SCHEME) ? JSON.stringify(links(text)) : "");
+    // How each card draws (look.ts): a captcha that ended or a run that grew changes an earlier card's look.
+    const roles = captchaRoles(items);
+    const runs = groups(cards);
+    const looks = cards.map((s) => cardLook(s, roles.get(s.seq) ?? null, runs));
     const hashes = cards.map((s, i) => {
       const it = items[i];
       const shas = look && s.card.kind === "text" ? [...look.ofText(s.card.text).keys()].sort().join(",") : "";
-      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && `${s.card.joined}|${s.card.sender}|${s.card.who}|${s.card.via}`}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}|${s.card.kind === "text" ? linkSig(s.card.text) : ""}`;
+      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && `${s.card.joined}|${s.card.sender}|${s.card.who}|${s.card.via}`}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}|${s.card.kind === "text" ? linkSig(s.card.text) : ""}|${JSON.stringify(looks[i] ?? null)}`;
       return (it ? fingerprint(it) : 0n) ^ hashStr(extra);
     });
     revs.length = Math.min(revs.length, hashes.length);
@@ -787,7 +800,7 @@ export class PhoneRoutes {
     const out = cards
       .filter((s) => (revs[s.seq]?.[1] ?? 0) > since)
       .map((s) => {
-        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null, look, links);
+        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null, look, links, looks[s.seq] ?? null);
         if (v.kind === "chat_link") v.chat = byId(this.chats().find((x) => x.gid === v.gid)?.id ?? null);
         return v;
       });

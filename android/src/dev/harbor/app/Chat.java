@@ -1402,8 +1402,11 @@ public class Chat extends Base implements Images.Gallery {
             case "tool": {
                 boolean done = it.optBoolean("done", !it.isNull("result"));
                 boolean err = it.optBoolean("is_error");
-                String glyph = !done ? Ui.I_LOADER : err ? Ui.I_CIRCLE_X : Ui.I_CIRCLE_CHECK;
-                int tint = !done ? Ui.G900 : err ? Ui.RED : Ui.GREEN;
+                // The hub's look (0.150) when it sent one: the desktop's glyph and tone.
+                JSONObject look = it.optJSONObject("look");
+                String glyph = Look.or(look == null ? null : look.optString("glyph"), Look.toolGlyph(done, err));
+                String tone = look != null && look.has("tone") ? look.optString("tone") : Look.toolTone(done, err);
+                int tint = "red".equals(tone) ? Ui.RED : "green".equals(tone) ? Ui.GREEN : Ui.G900;
                 fold(wrap, seq, glyph, tint, it.optString("label", it.optString("name")), it.optString("summary"), () -> {
                     LinearLayout c = Ui.col(this);
                     String in = json(it.opt("input"));
@@ -1423,10 +1426,12 @@ public class Chat extends Base implements Images.Gallery {
                 break;
             }
             // "footer" (a turn's usage line, from hubs before 0.59.2): not drawn, as on the desktop.
-            case "forked_from":
-                wrap.addView(divider("Forked from conversation", "Open source conversation",
+            case "forked_from": {
+                JSONObject look = it.optJSONObject("look");
+                wrap.addView(divider(look, Ui.I_FORK, "Forked from conversation", "Open source conversation",
                         () -> open(this, hub, it.optString("chat"))), Ui.fill());
                 break;
+            }
             case "chat_link": {
                 // A chat an agent opened: back to the chat it came from, or on to the new one.
                 String to = it.isNull("chat") ? "" : it.optString("chat", "");
@@ -1435,14 +1440,25 @@ public class Chat extends Base implements Images.Gallery {
                     t.setGravity(Gravity.CENTER_HORIZONTAL);
                     wrap.addView(t, Ui.fill());
                 } else {
-                    wrap.addView(divider(it.optString("text"), "Open chat", () -> open(this, hub, to)), Ui.fill());
+                    wrap.addView(divider(it.optJSONObject("look"), Ui.I_BOT, it.optString("text"), "Open chat", () -> open(this, hub, to)), Ui.fill());
                 }
                 break;
             }
             case "notice": {
                 // A Discord captcha: live while it waits (and no later notice ended it), then
-                // nothing; its outcome is a plain line.
+                // nothing; its outcome is a plain line. The hub's look (0.150) says which.
                 JSONObject cap = captchaOf(it);
+                JSONObject look = it.optJSONObject("look");
+                String role = look == null ? "" : look.optString("captcha");
+                if (cap != null && !role.isEmpty()) {
+                    if ("none".equals(role)) break;
+                    if ("card".equals(role)) {
+                        CaptchaCard card = new CaptchaCard(this, hub, chatId, cap.optString("captcha"), cap.isNull("guild") ? "" : cap.optString("guild"), () -> front);
+                        wrap.addView(card.view, Ui.fill());
+                        wrap.setTag(CAPTCHA);
+                    } else notice(wrap, it, seq);
+                    break;
+                }
                 if (cap == null) { notice(wrap, it, seq); break; }
                 String cid = cap.optString("captcha"), state = cap.optString("state");
                 if ("pending".equals(state)) {
@@ -1454,7 +1470,7 @@ public class Chat extends Base implements Images.Gallery {
                     try {
                         JSONObject line = new JSONObject(it.toString());
                         line.remove("detail");
-                        line.put("icon", "joined".equals(state) ? "captcha-joined" : "captcha-not");
+                        line.put("icon", "captcha-" + state);
                         notice(wrap, line, seq);
                     } catch (org.json.JSONException e) {
                         notice(wrap, it, seq);
@@ -1497,7 +1513,8 @@ public class Chat extends Base implements Images.Gallery {
         JSONArray forks = it.optJSONArray("forks_after");
         if (forks != null) for (int i = 0; i < forks.length(); i++) {
             String f = forks.optString(i);
-            wrap.addView(divider("Conversation fork", "Open fork", () -> open(this, hub, f)), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            JSONObject look = it.optJSONObject("look");
+            wrap.addView(divider(look == null ? null : look.optJSONObject("fork"), Ui.I_FORK, "Conversation fork", "Open fork", () -> open(this, hub, f)), Ui.margins(Ui.fill(), 0, 6, 0, 0));
         }
         if (wrap.getChildCount() == 0) wrap.setVisibility(View.GONE);
         View out = grouped(it, wrap);
@@ -1527,37 +1544,24 @@ public class Chat extends Base implements Images.Gallery {
         return false;
     }
 
-    /** The desktop's centred notice pill; expands to its detail, or opens its link. */
+    /** The desktop's centred notice pill; expands to its detail, or opens its link. Its glyph,
+     *  text and whether it expands are the hub's `look` (0.150), else Look's fallbacks. */
     private void notice(LinearLayout wrap, JSONObject it, int seq) {
         String icon = it.optString("icon"), detail = it.optString("detail", "");
         String url = it.isNull("url") ? "" : it.optString("url", "");
-        String glyph;
-        switch (icon) {
-            case "bot": case "report": glyph = Ui.I_BOT; break;
-            case "wake": case "clock": glyph = Ui.I_CLOCK; break;
-            case "webhook": glyph = Ui.I_WEBHOOK; break;
-            case "alert": glyph = Ui.I_ALERT; break;
-            case "fork": glyph = Ui.I_FORK; break;
-            case "process": glyph = Ui.I_ACTIVITY; break;
-            case "restart": glyph = Ui.I_ROTATE; break;
-            case "users": glyph = Ui.I_USERS; break;
-            case "monitor": glyph = Ui.I_MONITOR; break;
-            case "folder": glyph = Ui.I_FOLDER; break;
-            case "worktree": glyph = Ui.I_FOLDER_GIT; break;
-            // A lead's hand-offs: "api started: …", "Sent to api: …".
-            case "started": glyph = Ui.I_PLAY; break;
-            // A Discord captcha's outcome (Chat.captchaOf).
-            case "captcha-not": glyph = Ui.I_CIRCLE_X; break;
-            case "sent": glyph = Ui.I_SEND; break;
-            default: glyph = Ui.I_CIRCLE_CHECK;
-        }
-        boolean expandable = !detail.isEmpty() && url.isEmpty();
+        JSONObject look = it.optJSONObject("look");
+        // A captcha's outcome line from an older hub (Chat.captchaOf): "captcha-<state>".
+        String glyph = Look.or(look == null ? null : look.optString("glyph"),
+                icon.startsWith("captcha-") ? Look.captchaGlyph(icon.substring(8)) : Look.noticeGlyph(icon));
+        String text = Look.or(look == null ? null : look.optString("text"), it.optString("text"));
+        boolean expandable = look != null && look.has("expandable") ? look.optBoolean("expandable") : Look.expandable(detail, url);
+        JSONArray detailBlocks = look == null ? null : look.optJSONArray("blocks");
         LinearLayout pill = Ui.row(this);
         pill.setBackground(Ui.press(Ui.G100, Ui.LINE, 16));
         pill.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
         pill.addView(Ui.icon(this, glyph, 14, Ui.G700));
         // Weighted: a line wider than the screen wraps instead of pushing the chevron out.
-        pill.addView(Ui.text(this, it.optString("text"), 14, Ui.FG), Ui.margins(Ui.weight(), 6, 0, 0, 0));
+        pill.addView(Ui.text(this, text, 14, Ui.FG), Ui.margins(Ui.weight(), 6, 0, 0, 0));
         TextView chev = Ui.icon(this, expanded.contains(seq) ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700);
         if (expandable) pill.addView(chev, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         LinearLayout.LayoutParams pp = Ui.wrap();
@@ -1574,7 +1578,12 @@ public class Chat extends Base implements Images.Gallery {
                 LinearLayout well = Ui.col(this);
                 well.setBackground(Ui.round(Ui.G100, 0, 12));
                 well.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(10));
-                if (it.optBoolean("detail_markdown")) well.addView(new Render(this, null).para(detail), Ui.fill());
+                // A markdown detail (a sub-agent's report) as the hub parsed it, as a reply draws.
+                if (detailBlocks != null && detailBlocks.length() > 0) {
+                    LinearLayout md = Ui.col(this);
+                    new Render(this, null).blocks(md, detailBlocks);
+                    well.addView(md, Ui.fill());
+                } else if (it.optBoolean("detail_markdown")) well.addView(new Render(this, null).para(detail), Ui.fill());
                 else {
                     TextView d = Ui.text(this, clip(detail), 13, Ui.FG);
                     d.setTypeface(Ui.mono);
@@ -1598,14 +1607,22 @@ public class Chat extends Base implements Images.Gallery {
         }
     }
 
-    /** A thin line with a label and a link in the middle (fork dividers). */
-    private View divider(String label, String link, Runnable on) {
+    /** A thin line with a glyph, a label and a link in the middle (fork dividers, a chat an
+     *  agent opened), as the desktop draws it: the hub's `look` {glyph, text, link} when it sent
+     *  one, else the given ones. */
+    private View divider(JSONObject look, String glyph, String label, String link, Runnable on) {
+        if (look != null) {
+            glyph = Look.or(look.optString("glyph"), glyph);
+            label = Look.or(look.optString("text"), label);
+            link = Look.or(look.optString("link"), link);
+        }
         LinearLayout r = Ui.row(this);
         r.setPadding(0, Ui.dp(6), 0, Ui.dp(6));
         View l = new View(this);
         l.setBackgroundColor(Ui.LINE);
         r.addView(l, new LinearLayout.LayoutParams(0, Ui.dp(1), 1));
-        r.addView(Ui.text(this, label + " · ", 13, Ui.G700), Ui.margins(Ui.wrap(), 10, 0, 0, 0));
+        r.addView(Ui.icon(this, glyph, 13, Ui.G700), Ui.margins(Ui.wrap(), 10, 0, 0, 0));
+        r.addView(Ui.text(this, label, 13, Ui.G700), Ui.margins(Ui.wrap(), 8, 0, 8, 0));
         TextView a = Ui.bold(this, link, 13, Ui.BLUE);
         a.setBackground(Ui.press(0, 0, 8));
         a.setOnClickListener(v -> on.run());
@@ -1641,19 +1658,24 @@ public class Chat extends Base implements Images.Gallery {
             for (JSONObject m : items.subMap(from, seq).values()) if (m.optInt("group", -1) == g) first = false;
         }
         if (!first) return card;
+        // The run's row as the hub says it (0.150: its first card's look `run`), else counted here.
+        JSONObject head0 = items.get(g), look = head0 == null ? null : head0.optJSONObject("look");
+        JSONObject run = look == null ? null : look.optJSONObject("run");
         int calls = 0;
         boolean pending = false;
-        for (JSONObject m : items.tailMap(g).values()) {
+        if (run == null) for (JSONObject m : items.tailMap(g).values()) {
             if (m.optInt("group", -1) != g) { if (!"hidden".equals(m.optString("kind"))) break; continue; }
             if (!"tool".equals(m.optString("kind"))) continue;
             calls++;
             if (!m.optBoolean("done", !m.isNull("result"))) pending = true;
         }
+        String label = run != null ? run.optString("label") : Look.runLabel(calls);
+        if (run != null) pending = run.optBoolean("pending");
         LinearLayout col = Ui.col(this);
         LinearLayout head = Ui.row(this);
         head.setPadding(Ui.dp(20), Ui.dp(4), Ui.dp(20), Ui.dp(4));
         head.addView(Ui.icon(this, open ? Ui.I_DOWN : Ui.I_RIGHT, 13, Ui.G700));
-        head.addView(Ui.text(this, calls + (calls == 1 ? " tool call" : " tool calls"), 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        head.addView(Ui.text(this, label, 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         if (pending && running) {
             TextView spin = Ui.icon(this, Ui.I_LOADER, 12, Ui.G700);
             android.view.animation.RotateAnimation a = new android.view.animation.RotateAnimation(0, 360,
@@ -1894,13 +1916,32 @@ public class Chat extends Base implements Images.Gallery {
      *  it has neither. A message joined to the one above has no name. Hubs before 0.115 send
      *  only `sender`: "from …" without an icon. */
     private CharSequence userMeta(JSONObject it, boolean steer, boolean joined) {
+        // Hubs from 0.150 say the row in `look` {glyph, name, steer, steer_glyph}, as the desktop draws it.
+        JSONObject look = it.optJSONObject("look");
+        if (look != null) {
+            String name = joined ? "" : look.optString("name");
+            boolean st = look.optBoolean("steer");
+            if (name.isEmpty() && !st) return null;
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+            if (!name.isEmpty()) {
+                String g = look.optString("glyph");
+                if (!g.isEmpty()) { glyph(sb, g, 13); sb.append(" "); }
+                sb.append(name);
+            }
+            if (!name.isEmpty() && st) sb.append("  \u00b7  ");
+            if (st) {
+                glyph(sb, Look.or(look.optString("steer_glyph"), Ui.I_REDO), 12);
+                sb.append(" Steer");
+            }
+            return sb;
+        }
         String from = joined ? "" : it.optString("sender", "");
         if (from.isEmpty() && !steer) return null;
         android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
         String via = it.optString("via", "");
         if (!from.isEmpty() && via.isEmpty()) sb.append("from ").append(from);
         else if (!from.isEmpty()) {
-            glyph(sb, "phone".equals(via) ? Ui.I_PHONE : Ui.I_MONITOR, 13);
+            glyph(sb, Look.senderGlyph(via), 13);
             sb.append(" ").append(it.optString("who", from));
         }
         if (!from.isEmpty() && steer) sb.append("  \u00b7  ");
