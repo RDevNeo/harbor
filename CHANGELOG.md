@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.149.2] - 2026-11-06
+
+### Fixed
+- A release reaches running PCs within seconds also when GitHub still names the previous one at
+  the moment it is published: the account worker's quick rereads were overwritten by its 10-minute
+  recheck (0.149.1 waited for a second ping).
+
 ## [0.149.1] - 2026-11-06
 
 ### Changed
