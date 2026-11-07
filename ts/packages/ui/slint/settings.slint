@@ -309,8 +309,8 @@ export component SettingsPage inherits Rectangle {
             HorizontalLayout {
                 alignment: center;
                 VerticalLayout {
-                    // Integrations' app cards need room for their lines ("Signed in as …"): a wider page.
-                    width: min(root.tab == "integrations" ? 1120px : 760px, main.width - 48px);
+                    // Integrations' app cards need room for their lines ("Signed in as …"): the whole width.
+                    width: root.tab == "integrations" ? main.width - 48px : min(760px, main.width - 48px);
                     padding-top: 20px;
                     padding-bottom: 40px;
                     alignment: start;
