@@ -565,7 +565,8 @@ export class Mesh {
     const tick = () => {
       this.reread();
       this.forgetStrangers();
-      if (!this.d.hub.mesh.on) return;
+      // Screenshot rigs' fake peers (HARBOR_FAKE_PEERS) stay as they were made: nothing is dialled, so none goes off.
+      if (!this.d.hub.mesh.on || this.env("HARBOR_FAKE_PEERS") !== undefined) return;
       for (const t of this.targets()) {
         const k = targetKey(t);
         if (this.running.has(k)) continue;
