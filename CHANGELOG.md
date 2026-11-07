@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Copying a message takes its images along, on the PC and the phone: the message's Copy, and Copy
+  (Ctrl+C) on text selected in it. A paste gives the text and the images where the app takes them.
+  On the PC (Wayland) one copy offers the text, HTML with the text and its images, the image itself
+  when there is one (PNG, and its own type) and the image files, so editors, terminals and plain
+  boxes get the text, and mail, chat and image apps the images too. On the phone the clip holds the
+  text and the images (WhatsApp, Telegram, Gmail take them); a plain text box still gets only the
+  text. Pasted back into Harbor's composer, the images are attached and a user message's
+  `[Image #N]` names its image again. A message without images copies as before; on X11, or a
+  compositor without data-control (GNOME), the text alone.
+
 ## [0.157.1] - 2026-11-07
 
 ### Fixed

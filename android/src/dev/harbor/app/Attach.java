@@ -143,7 +143,7 @@ final class Attach {
 
     /** An image pasted or sent by the keyboard, attached like a pick. done (if any) runs once
      *  it is uploaded or failed: a keyboard's read permission can end then. */
-    void paste(Uri uri, Runnable done) { add(uri, done); }
+    Up paste(Uri uri, Runnable done) { return add(uri, done); }
 
     /** Whether uri is an image: its type, else the clip's, else its name. */
     static boolean image(Context c, Uri uri, ClipDescription d) {
@@ -311,7 +311,7 @@ final class Attach {
         return isImage(name) && !name.toLowerCase().endsWith(".heic");
     }
 
-    private void add(Uri uri, Runnable done) {
+    private Up add(Uri uri, Runnable done) {
         Up u = new Up();
         u.uri = uri;
         u.name = name(uri);
@@ -354,6 +354,7 @@ final class Attach {
                 changed();
             });
         });
+        return u;
     }
 
     private void label(Up u) {

@@ -16,8 +16,8 @@ import java.util.Date;
 import java.util.Locale;
 
 /** Hands the camera app a file to write its photo into (content://dev.harbor.app.cam/<name>),
- *  without a support library's FileProvider. Only files under cache/camera, only to apps the
- *  intent grants. Shots older than a day are removed when a new one starts. */
+ *  and other apps a copied message's images (clip/<name>, Copied), without a support library's FileProvider. Only files under cache/camera (cache/clip), only to apps
+ *  the intent (the clipboard) grants. Shots older than a day are removed when a new one starts. */
 public class CamProvider extends ContentProvider {
     static final String AUTHORITY = "dev.harbor.app.cam";
 
@@ -52,12 +52,14 @@ public class CamProvider extends ContentProvider {
         if (n == null || n.contains("/") || n.startsWith(".")) throw new FileNotFoundException();
         java.util.List<String> segs = u.getPathSegments();
         if (segs.size() == 2 && "recv".equals(segs.get(0))) return new File(received(getContext()), n);
+        if (segs.size() == 2 && "clip".equals(segs.get(0))) return new File(Copied.dir(getContext()), n);
         if (segs.size() != 1) throw new FileNotFoundException();
         return new File(dir(getContext()), n);
     }
 
+    /** What the PCs sent, or a copied message's images (Copied): only ever read. */
     private static boolean isReceived(Uri u) {
-        return u.getPathSegments().size() == 2 && "recv".equals(u.getPathSegments().get(0));
+        return u.getPathSegments().size() == 2 && ("recv".equals(u.getPathSegments().get(0)) || "clip".equals(u.getPathSegments().get(0)));
     }
 
     @Override public boolean onCreate() { return true; }
@@ -83,6 +85,14 @@ public class CamProvider extends ContentProvider {
     }
 
     @Override public String getType(Uri uri) {
+        java.util.List<String> segs = uri.getPathSegments();
+        if (segs.size() == 2 && "clip".equals(segs.get(0))) {
+            byte[] head = new byte[12];
+            int n = 0;
+            try (java.io.FileInputStream in = new java.io.FileInputStream(file(uri))) { n = Math.max(0, in.read(head)); } catch (java.io.IOException e) { return "image/png"; }
+            String t = Copied.sniff(head, n);
+            return t != null ? t : "image/png";
+        }
         return isReceived(uri) ? Inbox.mime(String.valueOf(uri.getLastPathSegment()), false) : "image/jpeg";
     }
     @Override public Uri insert(Uri uri, ContentValues v) { return null; }

@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { limits } from "@harbor/store";
+import type { Offer, OwnerIn, OwnerOut } from "./clipowner.ts";
+// Its source, not its path: a compiled executable or a bundle has no clipowner.ts beside it.
+import * as ownerText from "./clipowner.ts" with { type: "text" };
 import { type Decoded, decodeBytes } from "./images.ts";
 import { sharpLib } from "./sharplib.ts";
 
@@ -120,6 +125,149 @@ export async function copyImage(bytes: Uint8Array): Promise<boolean> {
     }
   }
   return (await (await backend())?.set("image/png", png)) ?? false;
+}
+
+/** A message as it's copied: its text and its images (files on this PC), and which image each `[Image #k]` of
+ * the text names (a user message's), so a paste into a composer gives them back. */
+export interface RichCopy {
+  text: string;
+  images: string[];
+  named: [number, string][];
+}
+
+const sniff = (b: Uint8Array): string | null => {
+  const at = (s: string, off = 0) => [...s].every((ch, i) => b[off + i] === ch.charCodeAt(0));
+  if (isPng(b)) return "image/png";
+  if (at("\xFF\xD8\xFF")) return "image/jpeg";
+  if (at("GIF87a") || at("GIF89a")) return "image/gif";
+  if (b.length >= 12 && at("RIFF") && at("WEBP", 8)) return "image/webp";
+  return null;
+};
+
+const escapeHtml = (s: string): string => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+/** Past this many bytes of images, the HTML names their files instead of holding them. */
+const HTML_INLINE_MAX = 16 << 20;
+
+/** What a copy offers, best first: the text (every name X11 and Wayland apps ask by), HTML with the text and its
+ * images (rich editors, mail), the one image itself when there is just one (image editors, chat apps), and the
+ * image files (file managers, browsers' file paste). `bytes` reads a file (null: unreadable, left out). */
+export async function richOffers(copy: RichCopy, bytes: (path: string) => Uint8Array | null = readOr): Promise<Offer[]> {
+  const out: Offer[] = [];
+  const enc = new TextEncoder();
+  if (copy.text !== "") {
+    const t = enc.encode(copy.text);
+    for (const m of TEXT) out.push({ mime: m, data: t });
+  }
+  const imgs: { path: string; data: Uint8Array; mime: string }[] = [];
+  for (const path of copy.images) {
+    const data = bytes(path);
+    if (!data || data.length === 0) continue;
+    let mime = sniff(data);
+    let d = data;
+    if (mime === null) {
+      // An SVG or another kind sharp reads: as PNG.
+      try {
+        d = new Uint8Array(await (await sharpLib())(data).png().toBuffer());
+        mime = "image/png";
+      } catch {
+        continue;
+      }
+    }
+    imgs.push({ path, data: d, mime });
+  }
+  if (imgs.length === 0) return out;
+  const inline = imgs.reduce((n, i) => n + i.data.length, 0) <= HTML_INLINE_MAX;
+  const img = (i: (typeof imgs)[number]) => `<img src="${inline ? `data:${i.mime};base64,${Buffer.from(i.data).toString("base64")}` : escapeHtml(pathToFileURL(i.path).href)}">`;
+  const para = copy.text === "" ? "" : `<p>${escapeHtml(copy.text).replaceAll("\n", "<br>")}</p>`;
+  out.push({ mime: "text/html", data: enc.encode(`<meta charset="utf-8">${para}${imgs.map(img).join("")}`) });
+  const one = imgs.length === 1 ? imgs[0] : undefined;
+  if (one) {
+    let png: Uint8Array | null = one.mime === "image/png" ? one.data : null;
+    if (png === null) {
+      try {
+        png = new Uint8Array(await (await sharpLib())(one.data).png().toBuffer());
+      } catch {
+        png = null;
+      }
+    }
+    if (png) out.push({ mime: "image/png", data: png });
+    if (one.mime !== "image/png") out.push({ mime: one.mime, data: one.data });
+  }
+  out.push({ mime: "text/uri-list", data: enc.encode(imgs.map((i) => `${pathToFileURL(i.path).href}\r\n`).join("")) });
+  return out;
+}
+
+function readOr(path: string): Uint8Array | null {
+  try {
+    return readFileSync(path);
+  } catch {
+    return null;
+  }
+}
+
+let ownerUrl: string | null = null;
+/** The Worker that holds this process's copy on the clipboard, and that copy; null once another copy took it. */
+let holder: { worker: Worker; copy: RichCopy } | null = null;
+/** How long a Worker may take to own the clipboard. */
+const OWN_MS = 3000;
+
+/** The copy this process holds on the clipboard now, until another copy (any app's) replaces it. */
+export function owned(): RichCopy | null {
+  return holder?.copy ?? null;
+}
+
+/** Puts `offers` on the Wayland clipboard all at once (clipowner.ts); false when it can't (X11, a compositor without data-control). */
+export function own(offers: Offer[], copy: RichCopy): Promise<boolean> {
+  const display = process.env.WAYLAND_DISPLAY ?? "";
+  const runtime = process.env.XDG_RUNTIME_DIR ?? "";
+  if (display === "" || (!display.startsWith("/") && runtime === "") || offers.length === 0) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let worker: Worker;
+    try {
+      ownerUrl ??= URL.createObjectURL(new Blob([(ownerText as unknown as { default: string }).default], { type: "application/typescript" }));
+      worker = new Worker(ownerUrl);
+    } catch {
+      resolve(false);
+      return;
+    }
+    worker.unref();
+    let settled = false;
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const end = () => {
+      if (holder?.worker === worker) holder = null;
+      worker.terminate();
+    };
+    const timer = setTimeout(() => {
+      settle(false);
+      end();
+    }, OWN_MS);
+    worker.onerror = () => {
+      settle(false);
+      end();
+    };
+    worker.onmessage = (e: MessageEvent<OwnerOut>) => {
+      if (e.data.t === "owned") {
+        holder = { worker, copy };
+        settle(true);
+      } else {
+        settle(false);
+        end();
+      }
+    };
+    worker.postMessage({ offers, display, runtime } satisfies OwnerIn);
+  });
+}
+
+/** Copies a message with its images: every type at once on Wayland; false when that can't be done here
+ * (the caller copies the text as before). */
+export async function copyRich(copy: RichCopy): Promise<boolean> {
+  return own(await richOffers(copy), copy);
 }
 
 export function preview(text: string): string | null {

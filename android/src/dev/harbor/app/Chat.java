@@ -1251,6 +1251,11 @@ public class Chat extends Base implements Images.Gallery {
         return out;
     }
 
+    private boolean hasImages(JSONObject it) {
+        for (Images.Src s : gallery(it.optInt("seq"))) if (!s.video()) return true;
+        return false;
+    }
+
     /** A card's `images` without those its `media` already draws large. */
     private static JSONArray notShown(JSONObject it) {
         JSONArray images = it.optJSONArray("images"), media = it.optJSONArray("media");
@@ -1778,7 +1783,7 @@ public class Chat extends Base implements Images.Gallery {
             String label;
             Runnable on;
             switch (id) {
-                case "copy": glyph = Ui.I_COPY; label = "Copy"; on = () -> Ui.copy(this, text); break;
+                case "copy": glyph = Ui.I_COPY; label = "Copy"; on = () -> copyWith(it, text); break;
                 case "quote": glyph = Ui.I_LINK; label = "Quote in reply"; on = () -> quote(text); break;
                 case "fork": glyph = Ui.I_FORK; label = "Fork from this response"; on = () -> fork(seq); break;
                 case "mention": glyph = atSign(); label = "Mention in your next message"; on = () -> mention(seq); break;
@@ -1788,6 +1793,19 @@ public class Chat extends Base implements Images.Gallery {
             c.addView(Ui.cardRow(this, glyph, label, null, Ui.FG, v -> { s.dismiss(); on.run(); }), Ui.fill());
         }
         if (n > 0) s.show();
+    }
+
+    /** Copy of `text` (card `it`'s, or a selection in it) with the card's images, as the desktop
+     *  copies (ts shell.ts `copyMessage`); false when the card has none (the text copies as ever). */
+    private boolean copyWith(JSONObject it, String text) {
+        List<Images.Src> pics = new ArrayList<>();
+        for (Images.Src s : gallery(it.optInt("seq"))) if (!s.video()) pics.add(s);
+        if (pics.isEmpty()) {
+            Ui.copy(this, text);
+            return false;
+        }
+        Copied.copy(this, hub, text, pics, "user".equals(it.optString("kind")));
+        return true;
     }
 
     /** A message's text is selectable (Android's handles, as on the desktop): its menu adds
@@ -1806,6 +1824,8 @@ public class Chat extends Base implements Images.Gallery {
             @Override public boolean onActionItemClicked(android.view.ActionMode mode, android.view.MenuItem item) {
                 int a = Math.max(0, Math.min(t.getSelectionStart(), t.getSelectionEnd())), z = Math.max(t.getSelectionStart(), t.getSelectionEnd());
                 String part = t.getText().subSequence(a, Math.min(z, t.length())).toString();
+                // Copy takes the message's images along (Copied); a message without any copies as ever.
+                if (item.getItemId() == android.R.id.copy && !part.isEmpty() && hasImages(it)) { mode.finish(); copyWith(it, part); return true; }
                 if (item.getItemId() == MENTION) { mode.finish(); if (!part.trim().isEmpty()) mention(it.optInt("seq"), part); return true; }
                 if (item.getItemId() == MORE) { mode.finish(); itemMenu(it, whole); return true; }
                 return false;

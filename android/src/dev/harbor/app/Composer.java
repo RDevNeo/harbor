@@ -529,17 +529,49 @@ final class Composer {
             return super.onTextContextMenuItem(id);
         }
 
+        /** A message copied here with its images (Copied) pasted back: its images attach, its text
+         *  types at the cursor with each `[Image #k]` naming the k-th of them now (a user message's),
+         *  and those its text doesn't name get their tokens after it, as on the desktop
+         *  (ts usertext.ts `pastedCopy`). False: the clip isn't such a copy. */
+        boolean pasteCopy(ClipData from) {
+            Copied.Info c = attach == null ? null : Copied.mine(from);
+            if (c == null) return false;
+            java.util.function.IntConsumer on = attach.onImage;
+            attach.onImage = null; // the tokens are written below, not at each attach
+            java.util.Map<Integer, Attach.Up> named = new java.util.HashMap<>();
+            List<Attach.Up> ups = new ArrayList<>();
+            try {
+                for (int i = 0; i < c.uris.size(); i++) {
+                    Attach.Up u = attach.paste(c.uris.get(i), null);
+                    ups.add(u);
+                    if (c.named) named.put(i + 1, u);
+                }
+            } finally { attach.onImage = on; }
+            clipText = c.text;
+            clip = named; // arrived() maps the tokens of the text typed below to these images
+            int a = Math.max(0, getSelectionStart()), b = Math.max(0, getSelectionEnd());
+            getText().replace(Math.min(a, b), Math.max(a, b), c.text);
+            java.util.Set<Integer> said = new java.util.HashSet<>();
+            if (c.named) for (int[] t : TagList.images(c.text)) said.add(t[2]);
+            for (int i = 0; i < ups.size(); i++) if (!said.contains(i + 1) && ups.get(i).number > 0) insertImage(ups.get(i).number);
+            attached();
+            return true;
+        }
+
         /** Attaches the clipboard's images and types its text; false when it holds no image. */
         private boolean pasteImages() {
             ClipboardManager cm = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
             ClipData clip = cm == null ? null : cm.getPrimaryClip();
             if (clip == null) return false;
+            if (pasteCopy(clip)) return true;
             List<Uri> images = new ArrayList<>();
             StringBuilder text = new StringBuilder();
             for (int i = 0; i < clip.getItemCount(); i++) {
                 ClipData.Item it = clip.getItemAt(i);
-                if (it.getUri() != null && Attach.image(getContext(), it.getUri(), clip.getDescription())) images.add(it.getUri());
-                else if (it.getText() != null) text.append(it.getText());
+                boolean image = it.getUri() != null && Attach.image(getContext(), it.getUri(), clip.getDescription());
+                if (image) images.add(it.getUri());
+                // An item can hold an image and its text both (a message copied with its image).
+                if (it.getText() != null) text.append(it.getText());
             }
             if (images.isEmpty()) return false;
             for (Uri u : images) attach.paste(u, null);
@@ -558,14 +590,23 @@ final class Composer {
         static void on(Edit e, Attach attach) {
             e.setOnReceiveContentListener(IMAGES, (v, payload) -> {
                 ClipData all = payload.getClip();
+                if (e.pasteCopy(all)) return null;
                 ClipData rest = null;
+                boolean took = false;
                 for (int i = 0; i < all.getItemCount(); i++) {
                     ClipData.Item it = all.getItemAt(i);
-                    if (it.getUri() != null && Attach.image(v.getContext(), it.getUri(), all.getDescription())) attach.paste(it.getUri(), null);
-                    else if (rest == null) rest = new ClipData(all.getDescription(), it);
-                    else rest.addItem(it);
+                    ClipData.Item left = it;
+                    if (it.getUri() != null && Attach.image(v.getContext(), it.getUri(), all.getDescription())) {
+                        attach.paste(it.getUri(), null);
+                        took = true;
+                        // An item can hold an image and its text both (a message copied with its image): the text goes on.
+                        left = it.getText() != null && it.getText().length() > 0 ? new ClipData.Item(it.getText()) : null;
+                    }
+                    if (left == null) continue;
+                    if (rest == null) rest = new ClipData(all.getDescription(), left);
+                    else rest.addItem(left);
                 }
-                if (rest == null || rest.getItemCount() < all.getItemCount()) e.attached();
+                if (took) e.attached();
                 return rest == null ? null : new ContentInfo.Builder(payload).setClip(rest).build();
             });
         }

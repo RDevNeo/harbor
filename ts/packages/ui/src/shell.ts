@@ -44,7 +44,7 @@ import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
 import { carriedProjects, chatIdle, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
-import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
+import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { AttachThumbs, sameFile } from "./attachthumbs.ts";
@@ -841,6 +841,11 @@ export class Shell {
     };
     w.global_key = (e) => this.globalKey(e);
     w.nav_key = (e) => this.navKey(e, true);
+    // Ctrl+C on a transcript selection: the selection's own copy happens first, then its message's images join it.
+    w.copy_key = () => {
+      const s = this.selection;
+      if (s && s.text !== "" && !w.lb_open) setTimeout(() => this.selection === s && void this.copyMessage(s.seq, s.text, false), 40);
+    };
     w.viewer_key = (e) => this.viewerKey(e);
     w.zoom = (step) => this.zoomer.key(step);
     w.scale_changed = (scale) => this.zoomer.scaleChanged(scale);
@@ -1965,7 +1970,10 @@ export class Shell {
         return true;
       }
     }
-    if ((p.ctrl && !p.alt && !p.shift && p.key.toLowerCase() === "v") || (p.shift && p.key === "Insert")) void this.pasteImage();
+    if ((p.ctrl && !p.alt && !p.shift && p.key.toLowerCase() === "v") || (p.shift && p.key === "Insert")) {
+      if (this.pasteCopy()) return true;
+      void this.pasteImage();
+    }
     if (this.keys.matches("voice", p) && this.win.pop_id === "") {
       this.mic();
       return true;
@@ -2123,6 +2131,67 @@ export class Shell {
       return true;
     }
     return false;
+  }
+
+  /** The images message `seq` of the open chat shows, as files on this PC (another PC's chat: the copies fetched
+   * from it), and which image each `[Image #k]` of a user message's text names. */
+  private messageImages(seq: number): { images: string[]; named: [number, string][] } {
+    const chat = this.data.chat(this.chatId);
+    const item = chat ? this.items(chat.id)[seq] : undefined;
+    const located = this.media?.media.located ?? ((p: string) => p);
+    const here = (p: string): string | null => {
+      const l = located(p);
+      return existsSync(l) ? l : null;
+    };
+    const images: string[] = [];
+    const named: [number, string][] = [];
+    if (item?.kind === "user") {
+      item.files.filter(isImage).forEach((f, i) => {
+        const l = here(f);
+        if (l === null) return;
+        named.push([i + 1, l]);
+        if (!images.includes(l)) images.push(l);
+      });
+    }
+    for (let i = 0; i < this.cards.length; i++) {
+      const c = this.cards.rowData(i);
+      if (c?.seq !== seq || (c.kind !== "user" && c.kind !== "text")) continue;
+      for (const m of c.media) {
+        const l = m.video ? null : here(m.path);
+        if (l !== null && !images.includes(l)) images.push(l);
+      }
+    }
+    return { images, named };
+  }
+
+  /** Copy (a message's, or Ctrl+C on a selection in it): its text and its images together, so a paste gives
+   * both (clipboard.ts `copyRich`). `own`: the text isn't on the clipboard yet (a selection copied it itself). */
+  private async copyMessage(seq: number, text: string, own: boolean): Promise<void> {
+    const { images, named } = this.messageImages(seq);
+    if (images.length === 0 || !this.media) {
+      if (own) this.win.copy_text(text);
+      return;
+    }
+    const ok = await this.media.clipboard.copyRich({ text, images, named });
+    if (!ok && own) this.win.copy_text(text);
+  }
+
+  /** Ctrl+V of a message this window copied with its images: its text at the cursor, each `[Image #k]` naming
+   * that image now attached, and the images its text doesn't name attached after it. False: not such a copy. */
+  private pasteCopy(): boolean {
+    const own = this.media?.clipboard.owned();
+    if (!own || own.images.length === 0) return false;
+    const key = this.key();
+    const files = [...(this.attached.get(key) ?? [])];
+    const d = this.win.draft;
+    const [a, z] = [utf16At(d, this.win.cursor_anchor), utf16At(d, this.win.cursor)].sort((x, y) => x - y) as [number, number];
+    const before = d.slice(0, a);
+    const after = d.slice(z);
+    const mid = pastedCopy(own.text, own.named, own.images, files);
+    this.attached.set(key, files);
+    this.composerText(before + mid + after, before.length + mid.length);
+    this.refreshFiles();
+    return true;
   }
 
   /** An image on the clipboard joins the message (app.rs `save_pasted_image`); text pastes as usual. */
@@ -4049,7 +4118,7 @@ export class Shell {
     if (!chat || !item) return;
     const text = item.kind === "user" || item.kind === "text" ? item.text : "";
     if (a === "copy") {
-      this.win.copy_text(text);
+      void this.copyMessage(seq, text, true);
     } else if (a === "quote") {
       const quote = defuse(text)
         .split("\n")

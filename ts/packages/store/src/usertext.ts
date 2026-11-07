@@ -334,6 +334,18 @@ export function pasted(text: string, named: readonly (readonly [number, string])
 }
 
 
+/** A message copied with its images (clipboard.ts `RichCopy`) as it pastes into a composer with `files` (pushed to):
+ * its text with each `[Image #k]` naming that image now, then a token for each image its text doesn't name. */
+export function pastedCopy(text: string, named: readonly (readonly [number, string])[], images: readonly string[], files: string[]): string {
+  let out = pasted(text, named, files);
+  for (const p of images) {
+    if (files.includes(p)) continue;
+    files.push(p);
+    if (isImage(p)) [out] = writeImage(out, null, imageCount(files));
+  }
+  return out;
+}
+
 /** The tokens of `text` erased whole, as [start, end], in order and apart: every occurrence of `tokens` standing as a word of its own (longer first). */
 export function whole(text: string, tokens: readonly string[]): [number, number][] {
   const out: [number, number][] = [];

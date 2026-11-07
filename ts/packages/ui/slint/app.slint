@@ -639,6 +639,8 @@ export component AppWindow inherits Window {
     callback global-key(KeyEvent) -> bool;
     // Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken.
     callback nav-key(KeyEvent) -> bool;
+    // Ctrl+C anywhere, before any widget sees it (a transcript selection still copies as ever): the shell adds the message's images.
+    callback copy-key();
     // Esc, ← and → while the image viewer shows (Esc for a video), before any widget sees them; true = taken.
     callback viewer-key(KeyEvent) -> bool;
     // The sidebar row Alt+Up / Alt+Down last opened ("kind:id"), scrolled into view.
@@ -752,6 +754,9 @@ export component AppWindow inherits Window {
             }
             if (e.text == Key.Escape || e.text == Key.LeftArrow || e.text == Key.RightArrow) && root.viewer-key(e) {
                 return accept;
+            }
+            if e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt && !e.modifiers.meta && (e.text == "c" || e.text == "C") {
+                root.copy-key();
             }
             if e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta {
                 if e.text == "=" || e.text == "+" {

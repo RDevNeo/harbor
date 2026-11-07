@@ -20,6 +20,7 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
                    settings, new (new chat), palette, home (the app's first screen). Several:
                    --screen chats,chat,settings. Default: chats.
   --tap X,Y        a tap, in the PNG's pixels (1080x2400)
+  --press X,Y      a long press there (a message's sheet, a text box's Paste)
   --swipe X1,Y1,X2,Y2
   --text WORDS     types into the focused field
   --key NAME       an Android key: BACK, ENTER, DEL, TAB…
@@ -47,7 +48,7 @@ steps=() quiet="" dark="" from="" save="" drop=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
-    --tap|--swipe|--text|--key|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
+    --tap|--press|--swipe|--text|--key|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --from) from=$2; shift ;;
     --save-snapshot) save=1 ;;

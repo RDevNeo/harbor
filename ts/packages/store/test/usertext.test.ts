@@ -23,6 +23,7 @@ import {
   type Part,
   parts,
   pasted,
+  pastedCopy,
   plain,
   shiftImages,
   whole,
@@ -265,4 +266,15 @@ test("the_composer_erases_picked_tokens_chat_titles_and_images_whole", () => {
   expect(back("/review")).toBe("ask @src/a.rs about Fix login [Image #1] then @src/a.rsx");
   // Typed by hand, not picked: one character at a time.
   expect(erase(text, text.length, true, sp)).toBeNull();
+});
+
+test("a message copied with its images pastes them back: its tokens name them, the rest come after", () => {
+  const files = ["/d/old.png"];
+  const text = pastedCopy("see [Image #2] then [Image #1]", [[1, "/m/a.png"], [2, "/m/b.png"]], ["/m/a.png", "/m/b.png", "/m/c.jpg"], files);
+  expect(text).toBe("see [Image #2] then [Image #3] [Image #4] ");
+  expect(files).toEqual(["/d/old.png", "/m/b.png", "/m/a.png", "/m/c.jpg"]);
+  // A reply's images: no tokens of its own, a token each after its text; a stray token stops being one.
+  const none: string[] = [];
+  expect(pastedCopy("look [Image #1]", [], ["/r/x.png"], none)).toBe("look [Image 1] [Image #1] ");
+  expect(none).toEqual(["/r/x.png"]);
 });

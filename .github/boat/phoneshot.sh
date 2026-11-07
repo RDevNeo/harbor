@@ -6,7 +6,7 @@
 # leaves the PNGs in ~/out/shots, packed as ~/out/shots.tgz.
 #
 # Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|home>,
-# tap:<x>,<y>, swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>, wait:<seconds>,
+# tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>, wait:<seconds>,
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults.
 #
@@ -212,6 +212,7 @@ for st in "$@"; do
   case "$st" in
     screen:*) open "${st#screen:}" && shot "${st#screen:}" || { fail=1; break; } ;;
     tap:*) xy=${st#tap:}; ad input tap "${xy%,*}" "${xy#*,}" ;;
+    press:*) xy=${st#press:}; ad input swipe "${xy%,*}" "${xy#*,}" "${xy%,*}" "${xy#*,}" 900 ;;
     swipe:*) IFS=, read -r x1 y1 x2 y2 <<< "${st#swipe:}"; ad input swipe "$x1" "$y1" "$x2" "$y2" 300 ;;
     text:*) t=${st#text:}; ad input text "$(printf %q "${t// /%s}")" ;;
     key:*) ad input keyevent "KEYCODE_${st#key:}" ;;
