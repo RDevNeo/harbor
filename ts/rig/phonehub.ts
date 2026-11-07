@@ -33,6 +33,9 @@ Object.assign(process.env, {
   HARBOR_MESH_NAME: "rig-pc",
   // WhatsApp with no WhatsApp: unlinked, and Link / Get a code show a made-up QR and code.
   HARBOR_FAKE_WHATSAPP: "rig",
+  // The workspace's other PCs' accounts in the account pickers (meshaccounts.ts): the Laptop on, with its owner's
+  // OpenCode; a Tower that is off, with Codex.
+  HARBOR_FAKE_PEERS: "pc:laptop=Laptop:9000@Dana_Reyes+opencode,pc:tower=Tower:4000@Dario_Reis+codex!off",
 });
 for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
 // OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.
@@ -225,6 +228,7 @@ seed.setMainChat(api, waiting.id);
 const { newHost, saveRemote } = await import("../packages/net/src/index.ts");
 saveRemote(seed, { tailscale: false, user: "", key: "", port: 0, devices: [newHost({ id: "ssh:1", name: "Mac", host: "10.0.0.20", os: "macOS" })] });
 seed.set("mesh_peers", JSON.stringify({ "pc:laptop": { id: "pc:laptop", name: "Laptop", phones: true, fp: "", devices: [{ id: "ssh:1", name: "build-box", os: "linux" }] } }));
+seed.set("owner_name", "Mara Lind");
 seed.set("shared_drafts", JSON.stringify([[composer.id, { text: "Compare [Image #1] and [Image #2]", files: composerFiles, mentions: [], by: "rig-desktop", label: "Desk", rev: 1 }]]));
 seed.close();
 

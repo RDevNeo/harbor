@@ -16,6 +16,7 @@ import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.t
 import { dest, type Peer } from "./shared.ts";
 import { AUTO_DEVICE, ramText } from "./ram.ts";
 import { isSharedId, kindLabel, sharedAccess, sharedTarget, type SharedAccount } from "./meshaccounts.ts";
+import type { MoveWant } from "./movepc.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, groups, project, type Media, type Shown } from "./view.ts";
 import { captchaRoles } from "./captchanote.ts";
@@ -114,7 +115,8 @@ export interface Catalog {
 /** "Move to PC…" as the phone routes ask for it (movepcrun.ts `MovePc`). */
 export interface PhoneMove {
   targetsJson(chat: number): Promise<Json>;
-  movePc(chat: number, pc: string): Promise<string>;
+  /** `want`: the chat switched to one of `pc`'s accounts (meshaccounts.ts): it goes on there with that one. */
+  movePc(chat: number, pc: string, want?: MoveWant | null): Promise<string>;
 }
 
 export interface PhoneDeps {
@@ -590,15 +592,18 @@ export class PhoneRoutes {
     return this.d.catalog?.accounts().find((a) => a.id === c.account)?.kind ?? "Claude";
   }
 
-  /** api.rs `allowed_accounts`. */
+  /** api.rs `allowed_accounts`; a lead on this PC (not on a device) may also switch to another PC's account, which moves it there. */
   allowedAccounts(c: Chat): string[] {
     const cat = this.d.catalog;
     if (!cat) return [];
     const locked = lockLeads(c, (id) => cat.accounts().find((a) => a.id === id)?.kind);
-    return cat
+    const own = cat
       .accounts()
       .filter((a) => a.bin !== null && a.off !== true && (locked === undefined || a.kind === locked))
       .map((a) => a.id);
+    if (c.role === "sub" || c.device !== "" || locked !== undefined || !this.d.move) return own;
+    const other = (cat.shared?.() ?? []).filter((x) => x.pc !== "" && x.pc !== c.home && x.why === "").map((x) => x.id);
+    return [...own, ...other];
   }
 
   /** `switchable`, `allowed_accounts`, `switch_reason`, `device_why`, `moving_to` (api.rs `chat_json`). */
@@ -894,6 +899,23 @@ export class PhoneRoutes {
         const w = this.d.auto.why?.(c.id, this.kindOf(c)) ?? null;
         if (w !== null) return err(409, `can't move it there: ${w}`);
         delete body.device;
+      }
+      // Another PC's account (meshaccounts.ts): the chat moves to that PC and goes on there with it; this PC's own is a
+      // plain switch.
+      if (typeof body.account === "string" && isSharedId(body.account)) {
+        const t = sharedTarget(this.d.catalog?.shared?.() ?? [], body.account);
+        if (t === null) return err(400, `no account ${body.account}`);
+        if (t.why !== "") return err(409, t.why);
+        if (t.pc === "") body.account = t.account;
+        else {
+          if (!this.d.move) return err(409, "can't move it there: this Harbor can't move chats");
+          try {
+            const to = await this.d.move.movePc(c.id, t.pc, { account: t.account, kind: t.kind, model: typeof body.model === "string" ? body.model : "" });
+            return { status: 202, body: { ok: true, moving: true, to, account: t.label } };
+          } catch (e) {
+            return err(409, `can't switch to ${t.label}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
       }
       const moving = !auto && c.started && typeof body.device === "string" && body.device !== c.device ? body.device : null;
       if (moving !== null) {
@@ -1221,7 +1243,9 @@ export class PhoneRoutes {
   private async movePc(c: Chat, body: Record<string, unknown>): Promise<Reply> {
     if (!this.d.move) return err(404, "no such call");
     try {
-      const to = await this.d.move.movePc(c.id, typeof body.pc === "string" ? body.pc : "");
+      const w = typeof body.want === "object" && body.want !== null ? (body.want as Record<string, unknown>) : null;
+      const want: MoveWant | null = w && typeof w.account === "string" && typeof w.kind === "string" ? { account: w.account, kind: w.kind, model: typeof w.model === "string" ? w.model : "" } : null;
+      const to = await this.d.move.movePc(c.id, typeof body.pc === "string" ? body.pc : "", want);
       return { status: 202, body: { ok: true, moving: true, to } };
     } catch (e) {
       return err(409, e instanceof Error ? e.message : String(e));

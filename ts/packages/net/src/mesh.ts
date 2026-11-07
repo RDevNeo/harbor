@@ -317,6 +317,8 @@ export class Mesh {
         owner_suggested: x.owner_suggested,
         update: x.update,
         moves: MOVES_VERSION,
+        // It takes a started chat switched to one of its accounts (meshaccounts.ts, movepc.ts `MoveWant`).
+        account_moves: 1,
         project_moves: this.d.project ? PROJECT_MOVES_VERSION : 0,
         ram: this.d.ram?.() ?? null,
         devices: devicesJson(this.d.devices?.() ?? []),
@@ -681,6 +683,7 @@ export class Mesh {
       p.update = hello.update ?? null;
       p.moves = typeof hello.moves === "number" && hello.moves >= MOVES_VERSION;
       p.projectMoves = typeof hello.project_moves === "number" && hello.project_moves >= PROJECT_MOVES_VERSION;
+      p.accountMoves = typeof hello.account_moves === "number" && hello.account_moves >= 1;
       p.ram = ramOf(hello.ram);
       p.devices = peerDevices(hello.devices);
       if (hello.shared) this.d.shared?.adopt(id, hello.shared);

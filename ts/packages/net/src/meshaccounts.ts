@@ -293,9 +293,9 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
 }
 
 /** Where a picked account runs: this PC's own id, or another PC's account (null: no such account, or why it can't now). */
-export function sharedTarget(list: readonly SharedAccount[], id: string): { pc: string; account: string; why: string } | null {
+export function sharedTarget(list: readonly SharedAccount[], id: string): { pc: string; account: string; kind: string; label: string; why: string } | null {
   const s = list.find((x) => x.id === id) ?? list.find((x) => x.key === id);
-  return s ? { pc: s.pc, account: s.account, why: s.why } : null;
+  return s ? { pc: s.pc, account: s.account, kind: s.kind, label: s.label, why: s.why } : null;
 }
 
 /** An account id another PC runs (`sharedAccounts`' key): never one of this PC's own ids ("claude2", "opencode"). */

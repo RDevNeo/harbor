@@ -1150,6 +1150,27 @@ describe("OpenCode as a chat's main model", () => {
     store.close();
   });
 
+  test("a chat that came from another PC without a session it can go on with starts a new one, with the conversation so far", async () => {
+    rmSync(ocLog, { force: true });
+    const { e, store } = ocSetup();
+    const c = newChat(store, { role: "lead", name: "lead" });
+    // As movepcrun's take leaves it: on this PC's OpenCode, started, the other PC's session id, its transcript.
+    store.saveChat({ ...(store.chat(c.id) as Chat), account: "opencode", started: true, sessionId: "ses_elsewhere" });
+    store.saveItems(c.id, [{ kind: "user", text: "port the parser", files: [], at: 1, mentions: [], sender: "", intent: "" }, { kind: "text", text: "ported", at: 2 }]);
+    e.reload();
+    // Same provider as before, but its session stayed on the other PC: handed over all the same.
+    expect(e.handOver(c.id, "OpenCode on desk")).toBe(true);
+    e.send(c.id, "go on");
+    await until("its turn", () => !e.running(c.id) && texts(e.transcript(c.id).items).some((t) => t.startsWith("oc: ")));
+    const run = runs()[0] as string[];
+    expect(run).not.toContain("--session");
+    expect(run.at(-1) ?? "").toStartWith("This conversation started on OpenCode on desk and continues with you (OpenCode).");
+    expect(run.at(-1) ?? "").toContain("port the parser");
+    // Without `moved`, the same provider is no hand-over.
+    expect(e.handOver(c.id)).toBe(false);
+    store.close();
+  });
+
   test("a lead started on Claude and switched to OpenCode continues in a new session with the conversation so far", async () => {
     rmSync(ocLog, { force: true });
     const { e, store } = ocSetup();

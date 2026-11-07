@@ -894,3 +894,44 @@ describe("phone: the mesh's shared accounts", () => {
     store.close();
   });
 });
+
+describe("phone: a started chat switched to another PC's account", () => {
+  test("it's offered to a lead here, and picking it moves the chat there with that account", async () => {
+    const store = Store.openAt(join(tmp, "shared-switch.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.me = { id: "ts:desk", name: "desk" };
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const laptop = newPeer({ id: "ts:laptop", name: "laptop", owner: "Sam Lee", online: true, provs: [{ id: "opencode", short: "OpenCode", kind: "opencode", ident: "", person: "", main: true, models: [] }] });
+    hub.mesh.peers.set(laptop.id, laptop);
+    const acct = (id: string, kind: string): CatalogAccount => ({ id, kind, name: id, badge: "AB", bin: "/bin/true", loggedIn: true, usage: [] });
+    const catalog = catalogOf(providers, () => [acct("claude", "Claude")], store);
+    catalog.shared = () =>
+      sharedAccounts({ me: { id: "ts:desk", name: "desk", owner: "Ana Lu", github: "" }, local: [{ id: "claude", kind: "Claude", email: "ana@example.com", badge: "AB", short: "Claude · AB", usable: true }], peers: [laptop], provs: new Map([[laptop.id, laptop.provs]]) });
+    const moves: [number, string, unknown][] = [];
+    let refuse: string | null = null;
+    const move = {
+      targetsJson: async () => ({}),
+      movePc: async (chat: number, pc: string, want?: unknown) => {
+        if (refuse !== null) throw new Error(refuse);
+        moves.push([chat, pc, want]);
+        return "laptop";
+      },
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog, move, runSettings: { accounts: () => [], modelsFor: () => [], devices: () => [], setFast: () => {} } as never });
+    const lead = store.createChat(blankChat({ title: "l", role: "lead", account: "claude", started: true, sessionId: "s" }));
+    const sub = store.createChat(blankChat({ title: "s", role: "sub", account: "claude", started: true, parent: lead.id }));
+    const id = "opencode@ts:laptop/opencode";
+    expect(routes.allowedAccounts(lead)).toEqual(["claude", id]);
+    // A sub-agent moves with its lead.
+    expect(routes.allowedAccounts(sub)).toEqual(["claude"]);
+    const patch = (body: Record<string, unknown>) => routes.route({ method: "PATCH", path: ["v1", "chats", String(lead.id)], query: [], body, token: "", device: "Pixel", global: false });
+    expect(await patch({ account: id, model: "nvidia/glm" })).toMatchObject({ status: 202, body: { ok: true, moving: true, to: "laptop", account: "OpenCode · SL" } });
+    expect(moves).toEqual([[lead.id, "ts:laptop", { account: "opencode", kind: "opencode", model: "nvidia/glm" }]]);
+    // Its account here didn't change: the chat goes on there.
+    expect(store.chat(lead.id)?.account).toBe("claude");
+    refuse = "laptop has no project named x";
+    expect(await patch({ account: id })).toMatchObject({ status: 409, body: { error: "can't switch to OpenCode · SL: laptop has no project named x" } });
+    store.close();
+  });
+});

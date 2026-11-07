@@ -1304,13 +1304,14 @@ export class Engine {
   }
 
   /** A started chat switched to another provider can't resume its session there: it starts a fresh one, with the
-   *  conversation so far as its first message's preamble (as a fork's). True when it did. */
-  handOver(id: number): boolean {
+   *  conversation so far as its first message's preamble (as a fork's). True when it did. `moved`: the chat came from
+   *  another PC on one of this PC's accounts without a session it can go on with ("Codex on desk"): always. */
+  handOver(id: number, moved?: string): boolean {
     const c = this.chat(id);
     const to = c ? this.account(c.account)?.kind : undefined;
     if (!c || to === undefined || !c.started || c.sessionId === "") return false;
-    const from = this.sessionKind(c);
-    if (from === undefined || from === to) return false;
+    const from = moved ?? this.sessionKind(c);
+    if (from === undefined || (moved === undefined && from === to)) return false;
     const items = this.transcript(id).items.filter((i) => i.kind !== "thinking" && i.kind !== "result" && i.kind !== "notice");
     const context = team.clip(items.map(team.renderItem).join("\n"), 40_000);
     if (context.trim() !== "") this.store.set(preambleKey(id), `This conversation started on ${from} and continues with you (${to}). Here it is so far; continue from it with the user's next message.\n\n${context}\n\n---\n\n`);

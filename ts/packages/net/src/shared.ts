@@ -40,6 +40,8 @@ export interface Peer {
   moves: boolean;
   /** It takes whole projects (Move to PC… of a project, `project_moves` in hello). */
   projectMoves: boolean;
+  /** It takes a started chat switched to one of its accounts (`account_moves` in hello). Not saved. */
+  accountMoves: boolean;
   /** Its free memory in MB, averaged over 10 minutes (`ram` in hello and its chats list); null: not said (older Harbor). Not saved. */
   ram: number | null;
   /** The SSH devices it added by hand (`devices` in hello): Settings › Workspace and the phone's PCs list them under it. */
@@ -89,6 +91,7 @@ export function newPeer(p: Partial<Peer> & { id: string }): Peer {
     update: null,
     moves: false,
     projectMoves: false,
+    accountMoves: false,
     ram: null,
     devices: [],
     ...p,

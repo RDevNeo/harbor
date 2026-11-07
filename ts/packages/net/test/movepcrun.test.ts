@@ -90,6 +90,19 @@ class FakeEngine implements MoveEngine {
     this.log.push(`send ${id}: ${said} ${JSON.stringify(opts.files ?? [])}`);
   }
 
+  /** Each chat's session provider (engine.ts `sessionKind`), and the hand-overs asked for. */
+  readonly kinds = new Map<number, string>();
+  readonly handovers: [number, string][] = [];
+
+  sessionKind(c: Chat): string | undefined {
+    return this.kinds.get(c.id);
+  }
+
+  handOver(id: number, from?: string): boolean {
+    this.handovers.push([id, from ?? ""]);
+    return true;
+  }
+
   notices(id: number): string[] {
     return this.transcript(id).items.flatMap((i) => (i.kind === "notice" ? [i.text] : []));
   }
@@ -118,7 +131,7 @@ interface Pc {
   fwd: { reply: Reply };
 }
 
-function pc(name: string, over: { project?: boolean; claude?: boolean } = {}): Pc {
+function pc(name: string, over: { project?: boolean; claude?: boolean; accounts?: MovePcAccount[]; level?: () => string } = {}): Pc {
   const root = tmp(name);
   const [app, cfg, home, uploads] = ["app", "cfg", "home", "uploads"].map((d) => join(root, d)) as [string, string, string, string];
   for (const d of [home, cfg, uploads]) mkdirSync(d, { recursive: true });
@@ -129,7 +142,7 @@ function pc(name: string, over: { project?: boolean; claude?: boolean } = {}): P
   const mesh = new Shared();
   mesh.me = { id: `pc:${name}`, name };
   mesh.on = true;
-  const accounts: MovePcAccount[] = [{ id: "claude", claude: over.claude !== false, email: "a@example.com", short: "Claude · AB", configDir: cfg, usable: over.claude !== false, usage: [0, 0] }];
+  const accounts: MovePcAccount[] = over.accounts ?? [{ id: "claude", claude: over.claude !== false, email: "a@example.com", short: "Claude · AB", configDir: cfg, usable: over.claude !== false, usage: [0, 0] }];
   const forwarded: Forwarded[] = [];
   const toasts: string[] = [];
   const removed: string[] = [];
@@ -151,6 +164,7 @@ function pc(name: string, over: { project?: boolean; claude?: boolean } = {}): P
       removed.push(d);
     },
     reindex: () => undefined,
+    ...(over.level ? { shareLevel: over.level, accessOf: (k: string) => (k === "opencode" ? ["full"] : ["full", "edits", "plan"]) } : {}),
   });
   move.onToast = (t) => toasts.push(t);
   return { root, app, cfg, home, uploads, store, engine, mesh, move, forwarded, toasts, removed, fwd };
@@ -619,6 +633,83 @@ describe("movepcrun: the target", () => {
       await until("the refusal", () => a.engine.notices(lead.id).length > 0);
       expect(a.engine.notices(lead.id)).toEqual(["Couldn't move to b: this chat belongs to gamma here, not to you"]);
       expect(a.store.chats().find((c) => c.id === lead.id)?.home).toBe("");
+    } finally {
+      clean(a, b);
+    }
+  });
+});
+
+describe("movepcrun: a started chat switched to another PC's account", () => {
+  const acct = (id: string, kind: string, cfg: string | null): MovePcAccount => ({ id, kind, claude: kind === "claude", email: `${id}@example.com`, short: id, configDir: cfg, usable: kind === "claude", ready: true, usage: [0, 0] });
+
+  test("a Codex chat goes on with the target's OpenCode in a new session, within what the target shares", async () => {
+    let level = "edit";
+    const a = pc("a", { accounts: [acct("codex", "codex", null)] });
+    const b = pc("b", { accounts: [acct("claude", "claude", null), acct("opencode", "opencode", null)], level: () => level });
+    try {
+      meet(a, b);
+      const peer = a.mesh.peers.get("pc:b");
+      if (peer) peer.accountMoves = true;
+      const repo = a.store.repos()[0];
+      const lead = a.store.createChat(blankChat({ repoId: repo?.id ?? null, title: "Port it", sessionId: "thread-1", started: true, account: "codex", model: "gpt-5", effort: "high", access: "full", role: "lead", name: "lead", gid: "g-cx" }));
+      a.store.saveItems(lead.id, [user("port the parser"), text("ported", 2)]);
+      a.engine.kinds.set(lead.id, "codex");
+      // A plain move of a Codex chat is still refused; a switch to one of b's accounts isn't.
+      await expect(a.move.movePc(lead.id, "pc:b")).rejects.toThrow("only Claude chats move to another PC for now");
+      useSend(a, wire(a, b));
+      const want = { account: "opencode", kind: "opencode", model: "nvidia/glm" };
+      // b shares "edit" with a: OpenCode runs with full access only, so b refuses it.
+      expect(await a.move.movePc(lead.id, "pc:b", false, want)).toBe("b");
+      await until("the refusal", () => a.engine.notices(lead.id).length > 0);
+      expect(a.engine.notices(lead.id)).toEqual(["Couldn't move to b: b lets this PC's chats only edit files there, and OpenCode runs with full access only"]);
+      expect(b.store.chats()).toEqual([]);
+      level = "full";
+      await a.move.movePc(lead.id, "pc:b", false, want);
+      await until("the copy", () => a.store.chats().find((c) => c.id === lead.id)?.home === "pc:b");
+      const there = b.store.chats().find((c) => c.gid === "g-cx");
+      expect(there).toMatchObject({ account: "opencode", model: "nvidia/glm", effort: "", access: "full", started: true, sessionId: "thread-1" });
+      expect(b.store.items(there?.id ?? 0).slice(0, 2)).toEqual([user("port the parser"), text("ported", 2)]);
+      // No Codex session went along: b goes on in a new one, with the conversation so far.
+      expect(b.engine.handovers).toEqual([[there?.id ?? 0, "Codex on a"]]);
+      expect(existsSync(join(b.cfg, "projects"))).toBe(false);
+    } finally {
+      clean(a, b);
+    }
+  });
+
+  test("a Claude chat switched to another Claude login there keeps its session, at most read-only when that's what b shares", async () => {
+    const a = pc("a");
+    const b = pc("b", { accounts: [acct("claude", "claude", null), acct("claude2", "claude", "")], level: () => "read" });
+    const cfg2 = join(b.root, "claude2");
+    const two = b.move.d.accounts().find((x) => x.id === "claude2");
+    if (two) two.configDir = cfg2;
+    try {
+      meet(a, b);
+      const peer = a.mesh.peers.get("pc:b");
+      if (peer) peer.accountMoves = true;
+      const { lead, sub } = seed(a);
+      useSend(a, wire(a, b));
+      await a.move.movePc(lead.id, "pc:b", false, { account: "claude2", kind: "claude", model: "" });
+      await until("the copy", () => a.store.chats().find((c) => c.id === lead.id)?.home === "pc:b");
+      const bLead = b.store.chats().find((c) => c.gid === "g-lead");
+      expect(bLead).toMatchObject({ account: "claude2", access: "plan", model: "claude-opus-5-5", effort: "medium", sessionId: SID });
+      expect(b.store.chats().find((c) => c.gid === "g-sub")).toMatchObject({ account: "claude2", access: "plan" });
+      // Its session came along, into that login's profile: no new session.
+      expect(readFileSync(join(sessionDir(b.home, cfg2, b.app), `${SID}.jsonl`), "utf8")).toBe('{"lead":1}\n');
+      expect(b.engine.handovers).toEqual([]);
+      expect(sub.id).toBeGreaterThan(0);
+    } finally {
+      clean(a, b);
+    }
+  });
+
+  test("a PC whose Harbor can't take such a switch says so in the targets", async () => {
+    const a = pc("a", { accounts: [acct("codex", "codex", null)] });
+    const b = pc("b");
+    try {
+      meet(a, b);
+      const lead = a.store.createChat(blankChat({ title: "x", sessionId: "t", started: true, account: "codex", role: "lead", name: "lead", gid: "g-old" }));
+      await expect(a.move.movePc(lead.id, "pc:b", false, { account: "claude", kind: "claude", model: "" })).rejects.toThrow("b can't take it: it runs an older Harbor: update it to switch to its accounts");
     } finally {
       clean(a, b);
     }

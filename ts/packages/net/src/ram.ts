@@ -95,18 +95,18 @@ export function ramText(mb: number): string {
 /** kv key of a chat Auto placed: its value is the place it landed on ("" this PC, else the PC's id). */
 export const autoKey = (gid: string): string => `auto_pc:${gid}`;
 
-/** HARBOR_FAKE_PEERS=[id=]name:MB[@Owner_Name][+kind.kind],… (screenshots only, `scripts/shot --env`): PCs that are on, with a
- * Claude account (or the kinds after `+`, each its PC's own CLI), that much free memory and that owner (`_` for a space), in the
+/** HARBOR_FAKE_PEERS=[id=]name:MB[@Owner_Name][+kind.kind][!off],… (screenshots only, `scripts/shot --env`): PCs that are on
+ * (off with `!off`), with a Claude account (or the kinds after `+`, each its PC's own CLI), that much free memory and that owner (`_` for a space), in the
  * Runs on menu, Auto's pick and the model picker's accounts. `id=` stands in for a PC the data already knows (a device of
  * Settings › Workspace with its own name). Nothing else knows of them; unset, there are none. */
 export function fakePeers(spec: string | undefined): Peer[] {
   const out: Peer[] = [];
   for (const part of (spec ?? "").split(",")) {
-    const m = /^(?:([a-z]+:[A-Za-z0-9._-]+)=)?([A-Za-z0-9 ._-]+):(\d+)(?:@([A-Za-z_.'-]+))?(?:\+([a-z.]+))?$/.exec(part.trim());
+    const m = /^(?:([a-z]+:[A-Za-z0-9._-]+)=)?([A-Za-z0-9 ._-]+):(\d+)(?:@([A-Za-z_.'-]+))?(?:\+([a-z.]+))?(!off)?$/.exec(part.trim());
     if (!m) continue;
     const kinds = (m[5] ?? "claude").split(".").filter((k) => k !== "");
     const accounts = kinds.map((k): [string, string, string] => [k, k === "claude" ? "Claude" : k, k]);
-    out.push(newPeer({ id: m[1] ?? `pc:fake-${m[2]}`, name: m[2] ?? "", online: true, moves: true, accounts, owner: (m[4] ?? "").replace(/_/g, " "), ram: Number(m[3]) }));
+    out.push(newPeer({ id: m[1] ?? `pc:fake-${m[2]}`, name: m[2] ?? "", online: m[6] === undefined, moves: true, accountMoves: true, accounts, owner: (m[4] ?? "").replace(/_/g, " "), ram: Number(m[3]) }));
   }
   return out;
 }

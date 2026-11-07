@@ -3136,6 +3136,29 @@ export class Shell {
     return this.sharedList;
   }
 
+  /** A started chat switched to another PC's account: it moves there (or to this PC, for a copy picking one of this
+   *  PC's) and goes on with it; what happens shows as a toast and in the chat. */
+  private switchShared(c: Chat, account: string, model: string): void {
+    const label = this.shared().find((x) => x.id === account)?.label ?? account;
+    const id = c.id;
+    if (this.meshChat.foreign(c)) {
+      this.meshChat.patch(c, { account, model });
+      this.toast(`Switching to ${label}…`);
+      return;
+    }
+    const call = this.hub.call;
+    if (!call) return;
+    void call("PATCH", `v1/chats/${id}`, undefined, { account, model }).then(
+      (r) => {
+        const b = typeof r.body === "object" && r.body !== null ? (r.body as { to?: unknown; error?: unknown }) : {};
+        if (r.status === 202) this.toast(`Moving to ${typeof b.to === "string" ? b.to : "that PC"}: it goes on there with ${label}`);
+        else if (r.status >= 300) this.toast(typeof b.error === "string" ? b.error : `Couldn't switch to ${label}`);
+        this.refreshAll();
+      },
+      (e: unknown) => this.toast(`Couldn't switch to ${label}: ${e instanceof Error ? e.message : String(e)}`),
+    );
+  }
+
   /** One of this PC's accounts' badge: its owner's while the mesh has other PCs (meshaccounts.ts), else its own. */
   private badgeOf(id: string, acc: Account | undefined): string {
     return this.shared().find((x) => x.pc === "" && x.account === id)?.badge ?? acc?.badge ?? "";
@@ -3171,12 +3194,24 @@ export class Shell {
     const locked = this.lockedKind();
     const { on, mesh } = this.pickerAccounts();
     const accounts = on.filter(providers.installed);
-    // Another PC's account starts a new chat there: not one for a chat that runs here already.
-    const ok = (a: Account) => !isSharedId(a.id) || (this.view !== "chat" && (mesh.get(a.id)?.why ?? "") === "");
+    // Another PC's account: a new chat starts there; a started lead moves there (Move to PC) and goes on with it.
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const notHere = (s: SharedAccount): string => {
+      if (s.why !== "") return s.why;
+      if (!open) return "";
+      if (open.role === "sub") return "A sub-agent moves with its lead: switch the lead";
+      if (open.device !== "") return "It runs on a device: bring it to this PC first";
+      return this.hub.call === undefined && !this.meshChat.foreign(open) ? "This Harbor can't move chats" : "";
+    };
+    const ok = (a: Account) => {
+      const s = isSharedId(a.id) ? mesh.get(a.id) : undefined;
+      return s === undefined ? !isSharedId(a.id) : notHere(s) === "";
+    };
     const tipOf = (a: Account) => {
       const s = mesh.get(a.id);
       if (!s) return railTip(a);
-      const why = ok(a) ? "" : s.why !== "" ? s.why : `Runs on ${s.pcName}: pick it for a new chat`;
+      const no = isSharedId(a.id) ? notHere(s) : "";
+      const why = no !== "" ? no : isSharedId(a.id) && open?.started === true && open.home !== s.pc ? `Picked, this chat moves to ${s.pcName} and goes on there` : "";
       return railTip(a, { title: s.label, owner: sharedTip(s), why });
     };
     sync(
@@ -3211,6 +3246,13 @@ export class Shell {
   private pickModel(i: number): void {
     const r = this.pickerRowsNow[i];
     if (!r?.enabled) return;
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    // Another PC's account in a chat: the chat's home PC moves it there (phone.ts PATCH), where it goes on with it.
+    if (open && isSharedId(r.account)) {
+      this.closePopup();
+      this.switchShared(open, r.account, r.model);
+      return;
+    }
     const sel = this.chatSel();
     const kind = this.account(r.account)?.kind ?? kindOfAccount(r.account);
     this.setSel({ account: r.account, model: r.model, effort: kind === this.kind(sel) ? sel.effort : providers.defaultEffort(kind) });

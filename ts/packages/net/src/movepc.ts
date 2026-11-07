@@ -6,6 +6,7 @@ import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { resolveUpload } from "./hub.ts";
 import type { Kv } from "./kv.ts";
 import { projectSlug } from "./meshctx.ts";
+import { sharedAccess, sharedWith } from "./meshaccounts.ts";
 import { outputWithin, type Spawner } from "./proc.ts";
 import { label, type Dest, type Down, type Peer } from "./shared.ts";
 import { arr, bool, int, obj, str, wire, type Json } from "./wire.ts";
@@ -592,6 +593,8 @@ export interface MoveChat {
   retired: boolean;
   /** Role::as_str. */
   role: string;
+  /** The provider its session is of ("claude", "codex"…): the target starts a new one when it can't go on with it. Older peers: none. */
+  session_kind?: string;
   /** The parent chat's gid. */
   parent: string | null;
   name: string;
@@ -611,13 +614,25 @@ export interface MoveCheckInput {
   project: { name: string; folder: string; remote: string; at?: string } | null;
   from: string;
   code: { branch: string; sha: string; worktree: boolean; remote: string };
+  /** A switch to one of the target's accounts (meshaccounts.ts): its id there, its kind, and the model picked. */
+  want?: MoveWant | null;
+}
+
+/** A started chat switched to another PC's account: the chat moves there and goes on with that account. */
+export interface MoveWant {
+  /** The account's id on the target. */
+  account: string;
+  /** Its kind: "claude", "codex", "opencode". */
+  kind: string;
+  model: string;
 }
 
 /** `adopt/check`'s body (also the base of `adopt`'s). */
 export function moveCheckBody(i: MoveCheckInput): { [k: string]: Json } {
   return {
     gid: i.gid,
-    kind: "claude",
+    kind: i.want ? i.want.kind : "claude",
+    ...(i.want ? { account: i.want.account, model: i.want.model, shared_account: true } : {}),
     email: i.email,
     project: i.project,
     from: i.from,
@@ -643,10 +658,13 @@ export interface BlockerInput {
   movingTo: string | null;
   /** The lead first, then its sub-agents. */
   chats: MoveSubject[];
+  /** A switch to another PC's account: any provider's chat may go. */
+  anyKind?: boolean;
 }
 
 /** Why this PC's chat can't move to any PC now (null: it may, the PCs say the rest). Cheap: no git. */
 export function movePcBlocker(i: BlockerInput): string | null {
+  // (`anyKind`: a switch to another PC's account, which goes on with the conversation so far whatever it ran on.)
   if (i.foreignHome !== null) return `this chat is ${i.foreignHome}'s: move it from there`;
   if (i.isSub) return "a sub-agent moves with its lead: move the lead";
   if (!i.meshOn) return "this PC doesn't share chats with other PCs (Settings › Workspace)";
@@ -656,7 +674,7 @@ export function movePcBlocker(i: BlockerInput): string | null {
     const it = x === lead ? "it" : `its sub-agent ${x.name}`;
     // A chat on an SSH device comes here first, its sessions with it: relocate.rs.
     if (lead && x.device !== lead.device) return `${it} runs on another device than its lead`;
-    if (!x.claude) return `${it} isn't a Claude chat: only Claude chats move to another PC for now`;
+    if (!x.claude && i.anyKind !== true) return `${it} isn't a Claude chat: only Claude chats move to another PC for now`;
     if (x.running) return `${it} is running: move it once its turn ends`;
   }
   return null;
@@ -669,6 +687,8 @@ export interface TargetsInput {
   /** Whether a key is on the allowed list (a PC paired but off still shows). */
   allowedFp(fp: string): boolean;
   downOf(id: string): Down | null;
+  /** A switch to one of the PC's accounts: it needs no Claude account, but a Harbor that takes such a switch. */
+  anyKind?: boolean;
 }
 
 /** The PCs this PC's chat could move to, each with why not (if so). */
@@ -680,7 +700,8 @@ export function movePcTargets(i: TargetsInput): MoveTarget[] {
       if (i.blocker !== null) why = i.blocker;
       else if (!p.online) why = i.downOf(p.id) === "harbor" ? "Harbor isn't running there" : "it's off or out of reach";
       else if (!p.moves) why = "it runs an older Harbor: update it first";
-      else if (!p.accounts.some((a) => a[2] === "claude")) why = "it has no Claude account";
+      else if (i.anyKind === true && !p.accountMoves) why = "it runs an older Harbor: update it to switch to its accounts";
+      else if (i.anyKind !== true && !p.accounts.some((a) => a[2] === "claude")) why = "it has no Claude account";
       else why = null;
       return { id: p.id, name: p.name === "" ? label(p.id) : p.name, why };
     });
@@ -722,6 +743,10 @@ export interface MoveAccount {
   email: string;
   /** A Claude account that is installed, signed in and under no block or cap. */
   usable: boolean;
+  /** Its provider ("claude", "codex", "opencode"); older callers: Claude. */
+  kind?: string;
+  /** It can run turns now, whatever its provider (a switch to it by name); absent: `usable`. */
+  ready?: boolean;
   usage: [number, number];
   configDir: string | null;
   /** How the account is named in notices. */
@@ -759,16 +784,36 @@ export interface MoveTargetApp {
   /** Makes the received chats this PC's own; returns gid -> id here. */
   take(peer: string, chats: unknown[], repo: number | null, account: string, worktree: string | null, body: unknown): Map<string, number>;
   now?: () => number;
+  /** What this PC lets `peer`'s chats do here (machines levels); absent: full. */
+  shareLevel?(peer: string): string;
+  /** A provider's access levels ("full", "edits", "plan"). */
+  accessOf?(kind: string): string[];
 }
 
 /** The project and account the chat would get here, or why it can't come. */
-export async function movePlan(app: MoveTargetApp, body: unknown): Promise<{ repo: number | null; account: string }> {
+export async function movePlan(app: MoveTargetApp, body: unknown, peer = ""): Promise<{ repo: number | null; account: string }> {
   const me = app.meName();
   const b = obj(body);
-  if (b.kind !== "claude") throw new Error(`${me} only takes Claude chats for now`);
-  const cands: MoveAccountCand[] = app.accounts().filter((a) => a.usable).map((a) => ({ id: a.id, email: a.email, usage: a.usage }));
-  const account = pickAccount(cands, str(b.email) ?? "", app.defaultAccount());
-  if (account === null) throw new Error(`${me} has no Claude account signed in that can take it now`);
+  const wanted = str(b.account) ?? "";
+  let account: string | null;
+  if (wanted !== "") {
+    // A switch to one of this PC's accounts by name: that one, within what this PC lets the asking PC's chats do here.
+    const a = app.accounts().find((x) => x.id === wanted);
+    if (!a || !(a.ready ?? a.usable)) throw new Error(`${me} can't run ${a?.short ?? wanted} now`);
+    const kind = a.kind ?? "claude";
+    const level = app.shareLevel?.(peer) ?? "full";
+    const choices = app.accessOf?.(kind) ?? ["full", "edits", "plan"];
+    if (!sharedWith(level, choices)) {
+      const r = sharedAccess(level, "full", choices, { me, kind });
+      throw new Error("why" in r ? r.why : `${me} doesn't let this PC's chats use it`);
+    }
+    account = a.id;
+  } else {
+    if (b.kind !== "claude") throw new Error(`${me} only takes Claude chats for now`);
+    const cands: MoveAccountCand[] = app.accounts().filter((a) => a.usable).map((a) => ({ id: a.id, email: a.email, usage: a.usage }));
+    account = pickAccount(cands, str(b.email) ?? "", app.defaultAccount());
+    if (account === null) throw new Error(`${me} has no Claude account signed in that can take it now`);
+  }
   const p = b.project;
   if (p === null || p === undefined) return { repo: null, account };
   const s = (k: string) => str(obj(p)[k]) ?? "";
@@ -804,7 +849,7 @@ export async function moveCheck(app: MoveTargetApp, peer: string, body: unknown)
   const c = app.chatOf(gid);
   if (c && c.home !== peer) return ok({ ok: false, owns: false, why: `this chat belongs to ${c.homeName} here, not to you` });
   try {
-    const { repo, account } = await movePlan(app, body);
+    const { repo, account } = await movePlan(app, body, peer);
     const project = repo === null ? null : (app.repo(repo)?.name ?? null);
     const acc = app.accounts().find((a) => a.id === account)?.short ?? account;
     return ok({ ok: true, owns: false, project, account: acc });
@@ -828,7 +873,7 @@ export async function moveAdopt(app: MoveTargetApp, device: string, body: unknow
   if (existing && existing.home !== device) return err(409, `this chat belongs to ${existing.homeName} here, not to you`);
   let plan;
   try {
-    plan = await movePlan(app, body);
+    plan = await movePlan(app, body, device);
   } catch (e) {
     return err(409, e instanceof Error ? e.message : String(e));
   }
@@ -918,7 +963,7 @@ export function movedHereDetail(i: {
 }
 
 /** A received chat (one entry of `move.json`) as the fields a chat here gets. */
-export function receivedChat(m: unknown): { gid: string; auto_placed: boolean; title: string; session_id: string; started: boolean; model: string; effort: string; access: string; settled: boolean; retired: boolean; role: string; parent: string | null; name: string; items: unknown } {
+export function receivedChat(m: unknown): { gid: string; auto_placed: boolean; title: string; session_id: string; started: boolean; model: string; effort: string; access: string; settled: boolean; retired: boolean; role: string; session_kind: string; parent: string | null; name: string; items: unknown } {
   const o = obj(m);
   const s = (k: string) => str(o[k]) ?? "";
   return {
@@ -933,6 +978,7 @@ export function receivedChat(m: unknown): { gid: string; auto_placed: boolean; t
     settled: bool(o.settled) ?? false,
     retired: bool(o.retired) ?? false,
     role: str(o.role) ?? "chat",
+    session_kind: (str(o.session_kind) ?? "").toLowerCase(),
     parent: str(o.parent),
     name: s("name"),
     items: o.items,

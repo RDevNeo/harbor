@@ -37,6 +37,7 @@ import {
   type MoveAccount,
   type MoveCandidate,
   type MoveChat,
+  type MoveWant,
   type MoveCode,
   type MoveHandoff,
   type MoveOutcome,
@@ -45,6 +46,7 @@ import {
   type MoveTargetApp,
   type OwnedChat,
 } from "./movepc.ts";
+import { kindLabel, sharedAccess } from "./meshaccounts.ts";
 import type { Spawner } from "./proc.ts";
 import { dest, type Peer, type Shared } from "./shared.ts";
 import { arr, obj, str, type Json } from "./wire.ts";
@@ -70,6 +72,10 @@ export interface MoveEngine {
   notice(id: number, icon: string, text: string, detail?: string): void;
   startTurn(id: number, prompt: string): void;
   send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[] }): void;
+  /** The provider of a chat's session (engine.ts `sessionKind`). */
+  sessionKind?(c: Chat): string | undefined;
+  /** A started chat goes on in a new session, the conversation so far first (engine.ts `handOver`); `from` says where it ran. */
+  handOver?(id: number, from?: string): boolean;
 }
 
 export interface MovePcAccount extends MoveAccount {
@@ -90,6 +96,10 @@ export interface MovePcDeps {
   /** The mesh's id maps again (mesh.rs `mesh_index`). */
   reindex(): void;
   forget?(chatId: number): void;
+  /** What this PC lets `peer`'s chats do here (machines levels): a switch to one of its accounts runs within it. */
+  shareLevel?(peer: string): string;
+  /** A provider's access levels. */
+  accessOf?(kind: string): string[];
   run?: Spawner;
   send?: MoveSendDeps;
   now?: () => number;
@@ -181,7 +191,7 @@ export class MovePc {
   }
 
   /** Why this PC's chat can't move to any PC now (null: it may, the PCs say the rest). Cheap: no git. */
-  blocker(chatId: number, ownProject = false): string | null {
+  blocker(chatId: number, ownProject = false, anyKind = false): string | null {
     const c = this.chat(chatId);
     if (!c) return null;
     const team = c.role === "sub" ? [c] : [c, ...this.subs(chatId)];
@@ -191,14 +201,15 @@ export class MovePc {
       meshOn: this.d.mesh.on,
       movingTo: this.movingTo(chatId, ownProject),
       chats: team.map((x) => ({ id: x.id, name: x.name, device: x.device, claude: this.account(x.account)?.claude ?? false, running: this.d.engine.running(x.id) })),
+      anyKind,
     });
   }
 
-  private plainTargets(chatId: number): { blocker: string | null; targets: MoveTarget[] } {
+  private plainTargets(chatId: number, anyKind = false): { blocker: string | null; targets: MoveTarget[] } {
     const mesh = this.d.mesh;
-    const blocker = this.blocker(chatId);
+    const blocker = this.blocker(chatId, false, anyKind);
     const hosts = [...mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    const targets = movePcTargets({ blocker, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.usableFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null });
+    const targets = movePcTargets({ blocker, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.usableFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null, anyKind });
     return { blocker, targets };
   }
 
@@ -269,11 +280,12 @@ export class MovePc {
   }
 
   /** Starts handing `chatId` (and its sub-agents) over to PC `pc`. Resolves with the PC's name; the outcome comes later (a notice in the chat; the chat turns into a copy of that PC's).
-   * `auto`: Runs on › Auto chose `pc`; the target remembers that too (move.json `auto_placed`). */
-  async movePc(chatId: number, pc: string, auto = false): Promise<string> {
+   * `auto`: Runs on › Auto chose `pc`; the target remembers that too (move.json `auto_placed`). `want`: the chat switched
+   * to one of `pc`'s accounts (meshaccounts.ts): it goes on there with that one, whatever provider it ran on here. */
+  async movePc(chatId: number, pc: string, auto = false, want: MoveWant | null = null): Promise<string> {
     const c = this.chat(chatId);
-    if (c && c.home !== "") return this.moveFromHome(c, pc);
-    const { blocker, targets } = this.plainTargets(chatId);
+    if (c && c.home !== "") return this.moveFromHome(c, pc, want);
+    const { blocker, targets } = this.plainTargets(chatId, want !== null);
     if (blocker !== null) throw new Error(blocker);
     const t = targets.find((x) => x.id === pc);
     if (!t) throw new Error("that PC isn't one of this PC's");
@@ -282,16 +294,16 @@ export class MovePc {
     if (!peer) throw new Error("that PC isn't one of this PC's");
     if (!c) throw new Error("no such chat");
     if (c.device !== "") {
-      if (this.relocate === null) throw new Error(`it runs on the device ${c.device}: bring it to this PC first, then move it`);
+      if (this.relocate === null || want !== null) throw new Error(`it runs on the device ${c.device}: bring it to this PC first, then move it`);
       return this.relocate(chatId, pc, auto);
     }
     const engine = this.d.engine;
     const worktree = engine.worktreeOf(c);
     const code = c.repoId !== null ? await codeState({ home: this.d.home, ...(this.d.run ? { run: this.d.run } : {}) }, engine.chatCwd(c), worktree !== null) : { ...NO_MOVE_CODE };
     // Nothing is awaited from here to the moment the move is recorded: a second call sees it.
-    const again = this.blocker(chatId);
+    const again = this.blocker(chatId, false, want !== null);
     if (again !== null) throw new Error(again);
-    const handoff = this.handoffOf(c, peer, t.name, code, worktree !== null && code.worktree ? [worktree, code.branch, code.remote] : null, null, auto);
+    const handoff = this.handoffOf(c, peer, t.name, code, worktree !== null && code.worktree ? [worktree, code.branch, code.remote] : null, null, auto, want);
     // Auto's marker says where it put the chat: a hand-picked move to that PC isn't Auto's (an earlier Auto move there failed).
     if (auto) this.d.store.set(autoKey(c.gid), pc);
     else if (this.d.store.get(autoKey(c.gid)) === pc) this.d.store.del(autoKey(c.gid));
@@ -308,14 +320,18 @@ export class MovePc {
   }
 
   /** What's sent for chat `c` (and its sub-agents); `project`: a project move's, whose folder is at `at` there already. */
-  private handoffOf(c: Chat, peer: Peer, peerName: string, code: MoveCode, push: [string, string, string] | null, project: { at: string; branch: string | null } | null, auto = false): MoveHandoff {
+  private handoffOf(c: Chat, peer: Peer, peerName: string, code: MoveCode, push: [string, string, string] | null, project: { at: string; branch: string | null } | null, auto = false, want: MoveWant | null = null): MoveHandoff {
     const engine = this.d.engine;
     const chats = [c, ...this.subs(c.id)];
     for (const x of chats) if (!this.account(x.account)) throw new Error("an account of the chat is gone");
+    const kindOf = (x: Chat) => (engine.sessionKind?.(x) ?? (this.account(x.account)?.claude === false ? "" : "claude")).toLowerCase();
+    // A switch to another provider there goes on in a new session (the target's handOver): only Claude sessions that
+    // stay on Claude go along.
+    const goes = (x: Chat) => want === null || (want.kind === "claude" && kindOf(x) === "claude");
     const sessions = moveSessions(
       { home: this.d.home, overlays: this.d.overlays },
       c.id,
-      chats.map((x) => ({ id: x.id, name: x.name, started: x.started, session_id: x.sessionId, configDir: this.account(x.account)?.configDir ?? null })),
+      chats.filter(goes).map((x) => ({ id: x.id, name: x.name, started: x.started, session_id: x.sessionId, configDir: this.account(x.account)?.configDir ?? null })),
     );
     const list: MoveChat[] = chats.map((x) => ({
       gid: x.gid,
@@ -329,6 +345,7 @@ export class MovePc {
       settled: x.settled,
       retired: x.retired,
       role: x.role,
+      ...(want !== null ? { session_kind: kindOf(x) } : {}),
       parent: x.parent === null ? null : (this.chat(x.parent)?.gid ?? null),
       name: x.name,
       items: engine.transcript(x.id).items.map(itemValue),
@@ -340,6 +357,7 @@ export class MovePc {
       project: repo ? { name: repo.name, folder: basename(repo.path), remote: code.remote, ...(project ? { at: project.at } : {}) } : null,
       from: this.d.mesh.me.name,
       code,
+      want,
     });
     // A project move's worktree branch came with the project's commits: it's there already.
     if (project && project.branch !== null && code.worktree) check.worktree = { branch: project.branch, remote: code.remote, here: true };
@@ -389,13 +407,16 @@ export class MovePc {
   }
 
   /** A copy: its home PC hands it over. */
-  private async moveFromHome(c: Chat, pc: string): Promise<string> {
+  private async moveFromHome(c: Chat, pc: string, want: MoveWant | null = null): Promise<string> {
     const peer = this.d.mesh.peer(c.home);
     const name = this.homeName(c);
     if (!peer?.online) throw new Error(`${name} is off: this chat is read-only until it's back`);
     if (!peer.moves) throw new Error(`${name} runs an older Harbor that can't move chats: update it first`);
+    if (want !== null && !peer.accountMoves) throw new Error(`${name} runs an older Harbor: update it to switch this chat to another PC's account`);
     this.asked.delete(c.id);
-    const r = await this.d.forward(dest(peer), peer.name, "POST", ["v1", "chats", String(c.homeId), "move_pc"], { pc }, [], [this.d.mesh.me.name, ""], null);
+    // Its home PC is the one that knows: "" here is this PC, by its id there.
+    const to = pc === "" ? this.d.mesh.me.id : pc;
+    const r = await this.d.forward(dest(peer), peer.name, "POST", ["v1", "chats", String(c.homeId), "move_pc"], want === null ? { pc: to } : { pc: to, want: { ...want } }, [], [this.d.mesh.me.name, ""], null);
     if (r.status >= 300) throw new Error(str(obj(r.body).error) ?? "it didn't work");
     return str(obj(r.body).to) ?? pc;
   }
@@ -572,6 +593,8 @@ export class MovePc {
       worktree: { root: d.worktreeRoot, newId: () => randomUUID().replace(/[^0-9a-f]/g, "").slice(0, 6), ...(d.run ? { run: d.run } : {}) },
       removeWorktree: d.removeWorktree,
       take: (peer, chats, repo, account, worktree, body) => this.take(peer, chats, repo, account, worktree, body),
+      ...(d.shareLevel ? { shareLevel: (peer: string) => d.shareLevel?.(peer) ?? "full" } : {}),
+      ...(d.accessOf ? { accessOf: (kind: string) => d.accessOf?.(kind) ?? [] } : {}),
       ...(d.now ? { now: d.now } : {}),
     };
   }
@@ -581,9 +604,27 @@ export class MovePc {
     const { store, engine } = this.d;
     const ids = new Map<string, number>();
     const all = store.chats();
+    const b = obj(body);
+    // Switched to one of this PC's accounts (movePlan checked it): what this PC lets that PC's chats do here, at most.
+    const switched = (str(b.account) ?? "") !== "";
+    const kind = (this.account(account)?.kind ?? "claude").toLowerCase();
+    const level = switched ? (this.d.shareLevel?.(peer) ?? "full") : "full";
+    const restart: [number, string][] = [];
     for (const m of chats) {
       const r = receivedChat(m);
       if (r.gid === "") continue;
+      const lead = r.gid === str(obj(chats[0]).gid);
+      let redo: string | null = null;
+      if (switched) {
+        const capped = sharedAccess(level, r.access === "" ? "full" : r.access, this.d.accessOf?.(kind) ?? ["full", "edits", "plan"], { me: this.d.mesh.me.name, kind });
+        r.access = "access" in capped ? capped.access : "plan";
+        const from = r.session_kind === "" ? "claude" : r.session_kind;
+        if (from !== kind) r.effort = "";
+        if (lead && (str(b.model) ?? "") !== "") r.model = str(b.model) ?? r.model;
+        else if (from !== kind) r.model = "";
+        // Its session didn't come (another provider's, or one that can't go on here): a new one, with the conversation so far.
+        if (kind !== "claude" || from !== "claude") redo = `${kindLabel(from)} on ${str(b.from) ?? "another PC"}`;
+      }
       const existing = all.find((c) => c.gid === r.gid);
       const parent = r.parent === null ? null : (ids.get(r.parent) ?? all.find((c) => c.gid === r.parent)?.id ?? null);
       const c = blankChat({
@@ -621,7 +662,9 @@ export class MovePc {
       engine.transcript(id).items = items;
       this.d.forget?.(id);
       ids.set(r.gid, id);
+      if (redo !== null) restart.push([id, redo]);
     }
+    for (const [id, from] of restart) engine.handOver?.(id, from);
     engine.reload();
     this.d.reindex();
     const leadGid = str(obj(chats[0]).gid);

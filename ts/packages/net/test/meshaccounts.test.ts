@@ -112,10 +112,10 @@ describe("the mesh's accounts, each once", () => {
     const oc = v[4]!;
     expect(isSharedId(oc.id)).toBe(true);
     expect(oc.models).toEqual([["opencode/big", "Big"]]);
-    expect(sharedTarget(v, oc.id)).toEqual({ pc: "ts:laptop", account: "opencode", why: "" });
+    expect(sharedTarget(v, oc.id)).toEqual({ pc: "ts:laptop", account: "opencode", kind: "opencode", label: "OpenCode · DR", why: "" });
     // An off PC's shows, with why it can't be picked.
     expect(v[5]!.why).toBe("tower is offline");
-    expect(sharedTarget(v, "claude2")).toEqual({ pc: "", account: "claude2", why: "" });
+    expect(sharedTarget(v, "claude2")).toMatchObject({ pc: "", account: "claude2", why: "" });
     expect(sharedTarget(v, "nope")).toBeNull();
   });
 

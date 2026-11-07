@@ -441,7 +441,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const me = aboutOwner(store, owners);
     return [{ name: me.owner, github: me.github }, ...[...hub.mesh.peers.values()].map((p) => ({ name: p.owner, github: p.github }))];
   };
+  // Read for every chat of `/v1/state` (its allowed accounts): worked out at most every 2 s.
+  let sharedCache: [number, SharedAccount[]] = [0, []];
   const sharedNow = (): SharedAccount[] => {
+    const t = Date.now();
+    if (t - sharedCache[0] < 2000) return sharedCache[1];
+    sharedCache = [t, sharedFresh()];
+    return sharedCache[1];
+  };
+  const sharedFresh = (): SharedAccount[] => {
     const me = aboutOwner(store, owners);
     // Only the PCs this account uses (account.ts `pcScope`), as the window's chats.
     const peers = hub.mesh.on ? peersNow().filter((p) => scopeHas(account.scope(), p.id)) : [];
@@ -675,7 +683,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     store.set("mesh_enabled", "1");
     mesh.reread();
     // As the mesh would: a PC this account doesn't use isn't followed, so it isn't a peer.
-    for (const p of shotPeers) if (scopeHas(account.scope(), p.id)) hub.mesh.peers.set(p.id, p);
+    // One standing in for a PC the data knows keeps what that one said (its devices).
+    for (const p of shotPeers) if (scopeHas(account.scope(), p.id)) hub.mesh.peers.set(p.id, { ...p, devices: hub.mesh.peers.get(p.id)?.devices ?? p.devices });
   }
   hub.mesh.about = () => aboutOwner(store, owners);
   const remotes = new Remotes({
@@ -928,6 +937,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       configDir: a.configDir,
       usable: a.kind === "Claude" && providers.usable(a) && live.limits.blocked(a.id) === undefined && live.limits.ctl.overCap(a.id) === undefined,
       usage: live.limits.usageOf(a.id),
+      kind: a.kind.toLowerCase(),
+      // A switch to it by name (meshaccounts.ts): any provider that can run turns now.
+      ready: providers.usable(a) && live.limits.blocked(a.id) === undefined && live.limits.ctl.overCap(a.id) === undefined,
     }));
   const mover = new MovePc({
     store,
@@ -942,6 +954,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     removeWorktree: (repo, dir) => worktree.remove(repo, dir),
     reindex: () => replica.reload(),
     forget: (chat) => live.host.forgetWorkspace?.(chat),
+    shareLevel: (peer) => machines.levelFor(store, peer),
+    accessOf: (kind) => {
+      const k = providers.kindOf(kindLabel(kind));
+      return k === undefined ? [] : providers.access(k).map((c) => c[0]);
+    },
   });
   mover.load();
   move = mover;
@@ -1044,7 +1061,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   mover.relocate = (chat, pc, auto) => runOn.relocate(chat, pc, auto);
   phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };
   phone.d.auto = { pick: (kind) => runOn.autoPick(kind), resolve: (device, kind) => runOn.resolve(device, kind), mark: (gid, place) => runOn.markAuto(gid, place), label: (c, here) => runOn.autoLabel(c, here), relocate: (chatId, kind) => runOn.relocateAuto(chatId, kind), why: (chatId, kind) => runOn.autoWhy(chatId, kind) };
-  phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc) => mover.movePc(chat, pc) };
+  phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc, want) => mover.movePc(chat, pc, false, want ?? null) };
   phone.d.engine = {
     running: (id) => live.running(id),
     runningSince: (id) => live.runningSince(id),
