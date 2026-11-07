@@ -15,7 +15,7 @@ export type IntegrationAction = "" | "signin" | "google" | "signout" | "cancel" 
 /** What opens under the card's head. */
 export type IntegrationForm = "" | "pending" | "discord-qr" | "discord" | "whatsapp-qr" | "whatsapp" | "google" | "key" | "accounts";
 
-const ACTS = ["signin", "google", "signout", "cancel", "cancel-form", "add", "own-client", "save-key", "save-google", "get-key", "google-help", "harbors", "discord-ok", "discord-window", "whatsapp-ok", "whatsapp-code", "copy", "open-page", "make-default", "signout-account", "dismiss", "chip"] as const;
+const ACTS = ["signin", "google", "signout", "cancel", "cancel-form", "add", "own-client", "save-key", "save-google", "get-key", "google-help", "harbors", "discord-ok", "discord-window", "whatsapp-ok", "whatsapp-code", "whatsapp-uncode", "copy", "open-page", "make-default", "signout-account", "dismiss", "chip"] as const;
 
 /** One app's card, as slint/settings-integrations.slint draws it (`IntApp`). */
 export interface IntApp {
@@ -32,6 +32,12 @@ export interface IntApp {
   gear: boolean;
   form: IntegrationForm;
   code: string;
+  /** WhatsApp's code: what to try when it didn't link, and the other number's button (Brazil's 9). */
+  hint: string;
+  retry: string;
+  retry_text: string;
+  /** How long the code lasts: "5:42 left". */
+  code_left: string;
   has_url: boolean;
   qr: Pixels;
   has_qr: boolean;
@@ -134,6 +140,8 @@ function card(a: mcp.App, i: IntInput): IntApp {
   else if (accounts.length > 1) sub = `${accounts.length} accounts`;
   else if (line !== undefined && (signed || line.tone !== 0)) [sub, tone] = [line.text, line.tone === 2 ? 2 : line.tone === 1 ? 1 : 0];
   else if (signed) sub = view.account(a.id) !== undefined ? `Signed in as ${view.account(a.id)}` : a.about;
+  // WhatsApp's note carries the code's time left, which its card shows beside the code instead.
+  if (wa && pending?.code !== undefined) [sub, tone] = ["Enter the code on your phone", 1];
 
   let open: IntegrationForm = "";
   if (pending && discord) open = pending.qr !== undefined ? "discord-qr" : "";
@@ -155,6 +163,10 @@ function card(a: mcp.App, i: IntInput): IntApp {
     gear,
     form: open,
     code: pending?.code ?? "",
+    hint: pending?.hint ?? "",
+    retry: pending?.retry?.phone ?? "",
+    retry_text: pending?.retry?.label ?? "",
+    code_left: pending?.left !== undefined ? `${pending.left} left` : "",
     has_url: pending?.url !== undefined,
     qr: pending?.qr !== undefined ? i.qr(pending.qr) : blank,
     has_qr: pending?.qr !== undefined,
@@ -229,6 +241,7 @@ export interface AppsApi {
   toggleOff(id: string): void;
   /** WhatsApp's link by number: a code for the phone (signin.ts `whatsappCode`). */
   whatsappCode(id: string, phone: string, changed: () => void): void;
+  whatsappUncode(id: string, changed: () => void): void;
   pendingUrl(id: string): string | undefined;
 }
 
@@ -295,6 +308,9 @@ export function integrationsAct(api: AppsApi, forms: Map<string, Form>, host: In
     case "whatsapp-code":
       if (a.replace(/\D/g, "").length < 8) return;
       api.whatsappCode(id, a, changed);
+      break;
+    case "whatsapp-uncode":
+      api.whatsappUncode(id, changed);
       break;
     case "discord-window":
       host.discordWindow();

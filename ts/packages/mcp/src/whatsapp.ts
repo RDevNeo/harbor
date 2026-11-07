@@ -122,7 +122,17 @@ function fakeStatus(mode: string): Obj {
     phase: linkedNow ? "open" : "pairing",
     linked: linkedNow,
     account: linkedNow ? { jid: "15550100000@s.whatsapp.net", name: "Sam" } : null,
-    pairing: linkedNow ? null : { qr: "https://wa.me/settings/linked_devices#2@not-a-real-link-code-made-up-for-a-screenshot", code: code ?? null, note: code !== undefined ? "Enter the code on your phone" : "Scan with WhatsApp" },
+    pairing: linkedNow
+      ? null
+      : {
+          qr: "https://wa.me/settings/linked_devices#2@not-a-real-link-code-made-up-for-a-screenshot",
+          code: code ?? null,
+          note: code !== undefined ? "Enter the code on your phone \u{b7} 5:42 left" : "Scan with WhatsApp",
+          // A made-up Brazilian number (no mobile there starts with 1): the hint and its other form.
+          left: code !== undefined ? "5:42" : null,
+          hint: code !== undefined ? "Didn't link? Some Brazilian numbers are on WhatsApp without the 9 after the area code: try +55 11 1234 5678." : null,
+          retry: code !== undefined ? { phone: "+551112345678", label: "Try without the 9" } : null,
+        },
     error: null,
     sync: "",
     busy: 0,
@@ -190,6 +200,8 @@ export function card(about: string, changed: () => void = () => {}): CardLine {
 }
 
 const SHORT = 60_000;
+/** A code: the first link may install the engine, and the code gets a new link of its own (and a second number for Brazil). */
+const CODE_WAIT = 180_000;
 
 /** Starts a link on this PC; with `phone`, also asks for a code to type on that phone. */
 export async function link(phone?: string): Promise<Obj> {
@@ -206,7 +218,15 @@ export async function code(phone: string): Promise<Obj> {
     fakeCode = "K7QX-2M9P";
     return fakeStatus(f);
   }
-  return obj(await request({ op: "code", phone }, SHORT));
+  return obj(await request({ op: "code", phone }, CODE_WAIT));
+}
+
+/** Back from a code to the QR and the number field: a different number, or the QR after all. */
+export async function uncode(): Promise<Obj> {
+  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") fakeCode = undefined;
+  const f = fakeMode();
+  if (f !== undefined) return fakeStatus(f);
+  return obj(await ask({ op: "uncode" }, 5000));
 }
 
 export async function cancel(): Promise<void> {
@@ -250,9 +270,15 @@ export async function login(signal: AbortSignal, update: (p: Pending) => void): 
     const qr = str(p.qr);
     const c = str(p.code);
     const note = str(p.note);
+    const hint = str(p.hint);
+    const retry = obj(p.retry);
     if (qr !== undefined) out.qr = qr;
     if (c !== undefined) out.code = c;
     if (note !== undefined) out.note = note;
+    if (hint !== undefined) out.hint = hint;
+    const left = str(p.left);
+    if (left !== undefined) out.left = left;
+    if (str(retry.phone) !== undefined) out.retry = { phone: str(retry.phone) ?? "", label: str(retry.label) ?? "Try again" };
     update(out);
   }
 }

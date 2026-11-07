@@ -155,6 +155,17 @@ export function whatsappCode(id: string, phone: string, changed: () => void = ()
     .finally(changed);
 }
 
+/** WhatsApp's code card back to the QR and the number field (another number). */
+export function whatsappUncode(id: string, changed: () => void = () => undefined): void {
+  const w = integrations.whatsapp;
+  if (!w) return;
+  ERRORS.delete(id);
+  void w
+    .uncode()
+    .catch(() => {})
+    .finally(changed);
+}
+
 interface Cmd {
   argv: string[];
   env: Record<string, string | undefined>;

@@ -1819,7 +1819,7 @@ drops anything outside the captcha. "Don't join" → `POST /v1/apps/discord/capt
 closed", timeout "Not joined: nobody solved the captcha in time", stopped "Not joined: Discord
 stopped".
 
-### WhatsApp: `GET /v1/apps/whatsapp`, `POST /v1/apps/whatsapp/{link,code,cancel,signout}`
+### WhatsApp: `GET /v1/apps/whatsapp`, `POST /v1/apps/whatsapp/{link,code,uncode,cancel,signout}`
 
 From 0.155. The WhatsApp app on this PC (packages/mcp whatsapp*.ts): agents running here read and
 send on the user's personal WhatsApp through a device linked to their phone, like WhatsApp Web.
@@ -1830,14 +1830,19 @@ it answer `404`; the phone then hides the WhatsApp row of Settings › Apps. Cal
 
 `GET /v1/apps/whatsapp`, and the answer of every POST:
 
-`{"phase": "open", "linked": true, "account": {"jid": "15550100000@s.whatsapp.net", "name": "…"} | null, "pairing": {"qr": "…" | null, "code": "K7QX-2M9P" | null, "note": "…"} | null, "error": null, "sync": "", "busy": 0, "qr": null, "card": {"text": "…", "tone": 0}}`
+`{"phase": "open", "linked": true, "account": {"jid": "15550100000@s.whatsapp.net", "name": "…"} | null, "pairing": {"qr": "…" | null, "code": "K7QX-2M9P" | null, "note": "…", "hint": "…" | null, "retry": {"phone": "+55…", "label": "Try without the 9"} | null, "until": 1800000000 | null} | null, "error": null, "sync": "", "busy": 0, "qr": null, "card": {"text": "…", "tone": 0}}`
 
 - `phase`: `stopped` (no host running: a linked PC starts one within a minute), `idle`,
   `installing`, `pairing`, `connecting`, `open` or `closed` (offline, retrying).
 - `account`: the linked account (its number is the jid's digits); null when nothing is linked.
 - `pairing`: a link waiting for the phone, or null. `qr` the text WhatsApp's QR stands for (it
   changes every 20 s or so), `code` the code to type in WhatsApp › Linked devices › Link a device
-  › Link with phone number instead (once asked for), `note` the line to show.
+  › Link with phone number instead (once asked for), `note` the line to show (with a code, the time
+  it has left: "Enter the code on your phone · 4:05 left"; "Getting a code…" while one is asked
+  for). From 0.155.1, with a code: `hint` what to try when it didn't link, `retry` another number to
+  try (a Brazilian mobile's other form, with or without the 9 after the area code; post it to
+  `code`), `until` when the code runs out (Unix seconds; the PC then starts a new link by itself
+  and `note` says the code ran out).
 - `error`: why the last link failed (expired, nobody scanned in 5 minutes), or null.
 - `qr`: null, or `pairing.qr` as `{"size", "rows"}`, drawn as Discord's.
 - `card`: the exact line the desktop's WhatsApp card shows (`text`, `tone` 0 plain, 1 accent, 2
@@ -1846,13 +1851,16 @@ it answer `404`; the phone then hides the WhatsApp row of Settings › Apps. Cal
 `POST /v1/apps/whatsapp/link` `{"accept": true, "phone"?: "+1 555…"}` starts a link (the phone
 showed the warning first; without `accept`: `409`); with `phone`, also asks for its code.
 `POST /v1/apps/whatsapp/code` `{"phone": "+1 555…"}` asks for a code for that number (starting
-a link if none runs). `POST /v1/apps/whatsapp/cancel` `{}` ends a link that waits.
+a link if none runs; from 0.155.1 it answers within about 20 s, and a slower code shows in the next
+`GET`). `POST /v1/apps/whatsapp/uncode` `{}` (0.155.1) drops the code and goes back to the QR and the
+number field. `POST /v1/apps/whatsapp/cancel` `{}` ends a link that waits.
 `POST /v1/apps/whatsapp/signout` `{}` unlinks: WhatsApp drops the device and the PC deletes what
 it stored. A refusal: `409 {"error": "…"}`.
 
 The phone's sheet (WhatsApp.java): `card.text`; linked: the name and number, and Unlink (asked
 first). Not linked: Link, after the warning ("Harbor links to your WhatsApp as another device…").
-While `pairing`: `pairing.note`; with a `code`, the code large with Copy code; otherwise the QR
+While `pairing`: `pairing.note`; with a `code`, the code large with Copy code, `hint`, a `retry.label`
+button and Other number; otherwise the QR
 ("Scan from the phone with WhatsApp: Settings › Linked devices › Link a device.") and a number
 field with Get a code; Cancel. It asks again every 2 s while open, but not while the number is
 being typed. Notification kind `whatsapp` (the link ended) opens this sheet.

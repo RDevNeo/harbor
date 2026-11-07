@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- WhatsApp: linking by code ("Get a code") failed with "Couldn't link device" on the phone. Harbor
+  now connects as the WhatsApp Web version WhatsApp serves today (Baileys' own had gone stale) and
+  as a browser WhatsApp knows (Chrome), and each code gets a fresh link of its own that lasts about
+  six minutes (before, the code died with the QR codes, two to three minutes after Link, often
+  before it was typed). The card and the phone's sheet show the time a code has left, say when it
+  ran out (a new QR and number field come back), and offer Other number. For a Brazilian (+55)
+  mobile they also offer the number's other form, with or without the 9 after the area code (some
+  accounts are on WhatsApp without it), and try it by themselves when WhatsApp refuses the first.
+  host.log now records the link's steps (version, QR ready, code asked for a masked number, the
+  phone taking it, close codes), never a whole number or a code.
+
 ## [0.155.0] - 2026-11-07
 
 ### Added

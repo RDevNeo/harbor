@@ -18,6 +18,33 @@ const obj = (v: unknown): Raw => (typeof v === "object" && v !== null && !Array.
 const list = (v: unknown): Raw[] => (Array.isArray(v) ? v.map(obj) : []);
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+/** host.log (the host's stderr): never a whole number or a code. */
+const log = (s: string): void => {
+  process.stderr.write(`${new Date().toISOString()} ${s}\n`);
+};
+
+/**
+ * The other way a Brazilian mobile number may be on WhatsApp: mobiles got a 9 after the area code
+ * (2012-2016), and older accounts often still have their number without it (and the code WhatsApp
+ * sends is for the account's own number). Digits in, digits out; undefined when there's no other.
+ */
+export function brazilAlt(digits: string): string | undefined {
+  if (!digits.startsWith("55")) return undefined;
+  const area = digits.slice(2, 4);
+  const rest = digits.slice(4);
+  if (rest.length === 9 && rest.startsWith("9")) return `55${area}${rest.slice(1)}`;
+  if (rest.length === 8 && /^[6-9]/.test(rest)) return `55${area}9${rest}`;
+  return undefined;
+}
+
+/** "+55 21 98765 4321" / "+55 21 8765 4321": a Brazilian number the way the hint shows it. */
+const brazilShow = (d: string): string => `+55 ${d.slice(2, 4)} ${d.slice(4, d.length - 4)} ${d.slice(-4)}`;
+
+/** A time left as "4:05". */
+const left = (ms: number): string => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
 
 /** The engine as a child process speaking JSON lines (or a test's stand-in). */
 export interface EngineProc extends Engine {
@@ -121,6 +148,13 @@ export class Host {
   error: string | undefined;
   note = "";
   sync = "";
+  /** When the code runs out (the engine's link for it ends), and the number it's for (digits). */
+  private codeUntil = 0;
+  private codeFor = "";
+  /** A code request is out; a code ran out before the phone linked. */
+  private asking = false;
+  private lost = false;
+  private codeError: string | undefined;
   private pairUntil = 0;
   private idleSince = Date.now();
   private busy = 0;
@@ -158,11 +192,35 @@ export class Host {
       phase: this.phase,
       linked: me !== undefined,
       account: me === undefined ? null : { jid: me.jid, name: me.name },
-      pairing: this.phase === "pairing" || (this.phase === "installing" && this.pairUntil > 0) ? { qr: this.qr ?? null, code: this.code ?? null, note: this.note } : null,
+      pairing: this.phase === "pairing" || (this.phase === "installing" && this.pairUntil > 0) ? this.pairing() : null,
       error: this.error ?? null,
       sync: this.sync,
       busy: this.busy,
     };
+  }
+
+  /** A running link as the cards show it: its QR, its code, what to do, and what to try when a code didn't link. */
+  private pairing(): Raw {
+    const p: Raw = { qr: this.qr ?? null, code: this.code ?? null, note: this.note, hint: null, retry: null, until: null, left: null };
+    if (this.asking) p.note = "Getting a code\u{2026}";
+    else if (this.code !== undefined) {
+      const ms = this.codeUntil - Date.now();
+      p.note = this.codeUntil > 0 ? `Enter the code on your phone \u{b7} ${left(ms)} left` : "Enter the code on your phone";
+      if (this.codeUntil > 0) {
+        p.until = Math.floor(this.codeUntil / 1000);
+        p.left = left(ms);
+      }
+      const alt = brazilAlt(this.codeFor);
+      if (alt !== undefined) {
+        const without = alt.length < this.codeFor.length;
+        p.hint = without
+          ? `Didn't link? Some Brazilian numbers are on WhatsApp without the 9 after the area code: try ${brazilShow(alt)}.`
+          : `Didn't link? Most Brazilian mobiles are on WhatsApp with a 9 after the area code: try ${brazilShow(alt)}.`;
+        p.retry = { phone: `+${alt}`, label: without ? "Try without the 9" : "Try with the 9" };
+      } else p.hint = "Didn't link? Check the number has its country code, or get a new code.";
+    } else if (this.codeError !== undefined) p.note = `Couldn't get a code: ${this.codeError}`;
+    else if (this.lost) p.note = "That code ran out before the phone linked. Get a new one.";
+    return p;
   }
 
   /** Starts the engine if it isn't running: to link (`pairing`) or to keep a link up. */
@@ -203,7 +261,7 @@ export class Host {
   async link(phone: string | undefined): Promise<void> {
     if (this.linked()) throw new Error("WhatsApp is already linked on this PC.");
     this.error = undefined;
-    this.code = undefined;
+    this.clearCode();
     this.pairUntil = Date.now() + PAIR_WAIT;
     if (!this.engine.running()) {
       this.forget();
@@ -221,17 +279,58 @@ export class Host {
     if (digits.length < 8 || digits.length > 15) throw new Error("Enter the phone number with its country code, like +55 11 91234 5678.");
     for (let i = 0; i < 240 && this.qr === undefined && (this.phase === "pairing" || this.phase === "installing"); i++) await new Promise((r) => setTimeout(r, 250));
     if (this.qr === undefined) throw new Error(this.error ?? "WhatsApp isn't ready to link yet. Try again in a moment.");
-    const r = await this.engine.request("pair_code", { phone: digits }, 30_000);
+    this.clearCode();
+    this.codeError = undefined;
+    this.asking = true;
+    // The engine makes a new link for the code (its whole time is the code's): a minute at most.
+    const ask = (d: string): Promise<Raw> => this.engine.request("pair_code", { phone: d }, 75_000);
+    let used = digits;
+    let r: Raw;
+    try {
+      try {
+        r = await ask(digits);
+      } catch (e) {
+        // WhatsApp said no to this number: a Brazilian one may be on WhatsApp in its other form.
+        const alt = brazilAlt(digits);
+        if (alt === undefined || !/refused a code/.test(msg(e))) throw e;
+        log(`whatsapp host: code refused for a +55 number of ${digits.length} digits, trying it ${alt.length < digits.length ? "without" : "with"} the 9`);
+        r = await ask(alt);
+        used = alt;
+      }
+    } catch (e) {
+      this.codeError = msg(e);
+      throw e;
+    } finally {
+      this.asking = false;
+    }
     const code = str(r.code);
     if (code === undefined) throw new Error("WhatsApp gave no code.");
     this.code = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+    this.codeFor = used;
+    this.codeUntil = typeof r.until === "number" && r.until > Date.now() ? r.until : 0;
+    // The link waits for the phone as long as the code lasts.
+    this.pairUntil = Math.max(this.pairUntil, this.codeUntil + 15_000, Date.now() + 2 * 60_000);
     this.note = "Enter the code on your phone";
+  }
+
+  private clearCode(): void {
+    this.codeError = undefined;
+    this.code = undefined;
+    this.codeUntil = 0;
+    this.codeFor = "";
+    this.lost = false;
+  }
+
+  /** Back from a code to the QR and the number: another number, or the QR after all. */
+  uncode(): void {
+    this.clearCode();
+    if (this.qr !== undefined) this.note = "Scan with WhatsApp";
   }
 
   async cancel(): Promise<void> {
     this.pairUntil = 0;
     this.qr = undefined;
-    this.code = undefined;
+    this.clearCode();
     if (!this.linked()) {
       await this.engine.stop();
       setup.wipe();
@@ -249,7 +348,7 @@ export class Host {
     this.forget();
     this.phase = "idle";
     this.qr = undefined;
-    this.code = undefined;
+    this.clearCode();
   }
 
   /** Everything of the account: its keys and all that was stored of it. */
@@ -277,7 +376,7 @@ export class Host {
         if (this.linked()) return;
         this.qr = str(d.qr);
         this.phase = "pairing";
-        if (this.code === undefined) this.note = "Scan with WhatsApp";
+        if (this.code === undefined && !this.lost) this.note = "Scan with WhatsApp";
         return;
       case "open": {
         const jid = normJid(str(d.id) ?? "");
@@ -291,7 +390,7 @@ export class Host {
         }
         this.phase = "open";
         this.qr = undefined;
-        this.code = undefined;
+        this.clearCode();
         this.note = "";
         this.error = undefined;
         this.pairUntil = 0;
@@ -305,6 +404,26 @@ export class Host {
         return;
       }
       case "close":
+        if (d.refused === true && !this.linked()) {
+          // WhatsApp turned the new device down (its 401 before any link): nothing to forget but the keys.
+          this.error = "WhatsApp refused to link this PC. Try again in a few minutes.";
+          this.pairUntil = 0;
+          this.qr = undefined;
+          this.clearCode();
+          void this.engine.stop().then(() => setup.wipe());
+          this.phase = "idle";
+          return;
+        }
+        if (d.lostCode === true && !this.linked()) {
+          // The engine starts a new link by itself: a new QR, and a new code when asked.
+          this.qr = undefined;
+          this.clearCode();
+          this.lost = true;
+          this.note = "That code ran out before the phone linked. Get a new one.";
+          // Time to ask for another before the link is given up.
+          if (this.pairUntil > 0) this.pairUntil = Math.max(this.pairUntil, Date.now() + 2 * 60_000);
+          return;
+        }
         if (d.loggedOut === true) {
           const was = this.linked();
           void this.engine.stop();
@@ -317,7 +436,7 @@ export class Host {
           if (this.pairUntil > 0) this.error = "The code expired before the phone linked. Try again.";
           this.pairUntil = 0;
           this.qr = undefined;
-          this.code = undefined;
+          this.clearCode();
           void this.engine.stop();
           this.phase = "idle";
           return;
@@ -397,6 +516,9 @@ export class Host {
         if (this.pairUntil === 0) await this.link(typeof req.phone === "string" ? req.phone : "");
         else await this.askCode(typeof req.phone === "string" ? req.phone : "");
         return this.status();
+      case "uncode":
+        this.uncode();
+        return this.status();
       case "cancel":
         await this.cancel();
         return this.status();
@@ -427,7 +549,7 @@ export class Host {
   async tick(): Promise<boolean> {
     const now = Date.now();
     if (this.pairUntil > 0 && now > this.pairUntil && !this.linked()) {
-      this.error = "Nobody linked a phone in 5 minutes. Try again when you have it at hand.";
+      this.error = "Nobody linked a phone in time. Try again when you have it at hand.";
       await this.cancel();
     }
     if (this.linked() && !this.engine.running() && this.phase !== "installing") await this.up(false).catch(() => {});

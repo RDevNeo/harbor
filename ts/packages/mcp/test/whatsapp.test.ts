@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import * as whatsapp from "../src/whatsapp.ts";
-import { Host, type EngineProc } from "../src/whatsapphost.ts";
+import { Host, type EngineProc, brazilAlt } from "../src/whatsapphost.ts";
 import * as setup from "../src/whatsappsetup.ts";
 import { type Raw, Store, normJid, parseContent } from "../src/whatsappstore.ts";
 import { type Engine, PACE, type State, Tools, fileContent, tools } from "../src/whatsapptools.ts";
@@ -259,57 +259,177 @@ describe("tools", () => {
   });
 });
 
-/** Baileys at the engine's edge: a socket whose events the test fires. */
-function fakeBaileys() {
-  const handlers = new Map<string, ((d: unknown) => void)[]>();
+/** Baileys at the engine's edge: each makeWASocket a new socket whose events (and raw frames) the test fires. */
+function fakeBaileys(o: { ack?: Raw } = {}) {
+  type Sock = ReturnType<typeof makeSock>;
+  const socks: Sock[] = [];
   const sent: unknown[] = [];
-  const creds: Raw = { registered: false };
-  const sock = {
-    ev: { on: (name: string, f: (d: unknown) => void) => handlers.set(name, [...(handlers.get(name) ?? []), f]) },
-    user: undefined as Raw | undefined,
-    requestPairingCode: async (phone: string) => `CODE${phone.slice(-4)}`,
-    sendMessage: async (jid: string, content: unknown, opts: unknown) => {
-      sent.push({ jid, content, opts });
-      return { key: { remoteJid: jid, fromMe: true, id: "S1" }, message: { conversation: "x" }, messageTimestamp: { low: 5, high: 0, unsigned: true, toNumber: () => 5 } };
-    },
-    readMessages: async () => {},
-    end: () => {},
-    logout: async () => {},
-  };
-  const fire = (name: string, d: unknown): void => {
-    for (const f of handlers.get(name) ?? []) f(d);
-  };
+  const configs: Raw[] = [];
+  let saved: Raw = { registered: false };
+  function makeSock() {
+    const handlers = new Map<string, ((d: unknown) => void)[]>();
+    const raw = new Map<string, ((d: unknown) => void)[]>();
+    const on = (m: Map<string, ((d: unknown) => void)[]>) => (name: string, f: (d: unknown) => void) => m.set(name, [...(m.get(name) ?? []), f]);
+    const fire = (name: string, d: unknown): void => {
+      for (const f of handlers.get(name) ?? []) f(d);
+    };
+    const frame = (name: string, d: unknown): void => {
+      for (const f of raw.get(name) ?? []) f(d);
+    };
+    const sock = {
+      ev: { on: on(handlers) },
+      ws: { on: on(raw) },
+      user: undefined as Raw | undefined,
+      ended: false,
+      fire,
+      frame,
+      requestPairingCode: async (phone: string) => {
+        creds.me = { id: `${phone}@s.whatsapp.net`, name: "~" };
+        fire("creds.update", creds);
+        setTimeout(() => frame("frame", o.ack ?? { tag: "iq", attrs: { type: "result" }, content: [{ tag: "link_code_companion_reg", attrs: {} }] }), 1);
+        return `CODE${phone.slice(-4)}`;
+      },
+      sendMessage: async (jid: string, content: unknown, opts: unknown) => {
+        sent.push({ jid, content, opts });
+        return { key: { remoteJid: jid, fromMe: true, id: "S1" }, message: { conversation: "x" }, messageTimestamp: { low: 5, high: 0, unsigned: true, toNumber: () => 5 } };
+      },
+      readMessages: async () => {},
+      end: () => {
+        sock.ended = true;
+      },
+      logout: async () => {},
+    };
+    return sock;
+  }
+  let creds: Raw = saved;
   const baileys = {
     DisconnectReason: { loggedOut: 401, restartRequired: 515 },
     Browsers: { ubuntu: (b: string) => ["Ubuntu", b, "22"] },
-    useMultiFileAuthState: async () => ({ state: { creds, keys: {} }, saveCreds: async () => {} }),
-    makeWASocket: () => sock,
+    fetchLatestWaWebVersion: async () => ({ version: [2, 3000, 42], isLatest: true }),
+    useMultiFileAuthState: async () => {
+      creds = { ...saved };
+      return {
+        state: { creds, keys: {} },
+        saveCreds: async () => {
+          saved = { ...creds };
+        },
+      };
+    },
+    makeWASocket: (c: Raw) => {
+      configs.push(c);
+      const s = makeSock();
+      socks.push(s);
+      // WhatsApp hands a new link its QR refs at once: six, as it does.
+      setTimeout(() => {
+        s.frame("CB:iq,type:set,pair-device", { tag: "iq", attrs: {}, content: [{ tag: "pair-device", attrs: {}, content: Array.from({ length: 6 }, () => ({ tag: "ref", attrs: {}, content: "r" })) }] });
+        s.fire("connection.update", { qr: `2@qr${socks.length}` });
+      }, 1);
+      return s;
+    },
   };
-  return { baileys, sock, fire, sent, creds };
+  const last = (): Sock => socks[socks.length - 1] as Sock;
+  return { baileys, socks, last, sent, configs, saved: () => saved };
+}
+
+async function engine(o: { ack?: Raw } = {}) {
+  const path = join(import.meta.dir, "../../../../whatsapp/engine.mjs");
+  const mod = (await import(path)) as { createEngine: (o: Raw) => (line: string) => Promise<void>; maskPhone: (d: string) => string };
+  const f = fakeBaileys(o);
+  const out: Raw[] = [];
+  const said: string[] = [];
+  let clock = 1_900_000_000_000;
+  const onLine = mod.createEngine({ baileys: f.baileys, authDir: join(tmp(), "auth"), write: (l: string) => out.push(JSON.parse(l) as Raw), say: (l: string) => said.push(l), now: () => clock });
+  let id = 0;
+  const cmd = async (c: Raw): Promise<Raw> => {
+    const n = ++id;
+    await onLine(JSON.stringify({ ...c, id: n }));
+    return out.find((x) => x.id === n) as Raw;
+  };
+  return { f, out, said, cmd, mod, tick: (ms: number) => (clock += ms) };
 }
 
 describe("engine (whatsapp/engine.mjs) over a fake Baileys socket", () => {
   test("starts, shows a QR, gives a pairing code, sends with Buffers and Longs as JSON, reports a logout", async () => {
-    const path = join(import.meta.dir, "../../../../whatsapp/engine.mjs");
-    const mod = (await import(path)) as { createEngine: (o: Raw) => (line: string) => Promise<void> };
-    const f = fakeBaileys();
-    const out: Raw[] = [];
-    const onLine = mod.createEngine({ baileys: f.baileys, authDir: join(tmp(), "auth"), write: (l: string) => out.push(JSON.parse(l) as Raw) });
-    await onLine(JSON.stringify({ id: 1, op: "start" }));
-    f.fire("connection.update", { qr: "2@abc" });
-    await onLine(JSON.stringify({ id: 2, op: "pair_code", phone: "+1 555 000 1234" }));
-    f.fire("messages.upsert", { type: "notify", messages: [{ key: { id: "K" }, message: { imageMessage: { mediaKey: new Uint8Array([1, 2, 3]) } } }] });
-    await onLine(JSON.stringify({ id: 3, op: "send", jid: ANA, content: { text: "hi" }, quoted: { key: { id: "Q" }, message: { imageMessage: { mediaKey: { $b: "AQID" } } } } }));
-    f.fire("connection.update", { connection: "close", lastDisconnect: { error: { output: { statusCode: 401 } } } });
-    expect(out).toContainEqual({ id: 1, ok: true, result: {} });
-    expect(out).toContainEqual({ ev: "qr", data: { qr: "2@abc" } });
-    expect(out).toContainEqual({ id: 2, ok: true, result: { code: "CODE1234" } });
+    const { f, out, cmd } = await engine();
+    expect(await cmd({ op: "start" })).toEqual({ id: 1, ok: true, result: {} });
+    await Bun.sleep(5);
+    expect(out).toContainEqual({ ev: "qr", data: { qr: "2@qr1" } });
+    // Today's WhatsApp Web, and a browser WhatsApp knows (a made-up one breaks links by code).
+    expect(f.configs[0]).toMatchObject({ version: [2, 3000, 42], browser: ["Ubuntu", "Chrome", "22"], markOnlineOnConnect: false });
+    expect(await cmd({ op: "pair_code", phone: "+1 555 000 1234" })).toMatchObject({ ok: true, result: { code: "CODE1234" } });
+    f.last().fire("connection.update", { isNewLogin: true });
+    f.last().fire("connection.update", { connection: "open" });
+    f.last().fire("messages.upsert", { type: "notify", messages: [{ key: { id: "K" }, message: { imageMessage: { mediaKey: new Uint8Array([1, 2, 3]) } } }] });
+    const send = await cmd({ op: "send", jid: ANA, content: { text: "hi" }, quoted: { key: { id: "Q" }, message: { imageMessage: { mediaKey: { $b: "AQID" } } } } });
+    f.last().fire("connection.update", { connection: "close", lastDisconnect: { error: { output: { statusCode: 401 } } } });
     expect(out).toContainEqual({ ev: "messages.upsert", data: { type: "notify", messages: [{ key: { id: "K" }, message: { imageMessage: { mediaKey: { $b: "AQID" } } } }] } });
-    const send = out.find((o) => o.id === 3);
     expect(send).toMatchObject({ ok: true, result: { message: { key: { id: "S1" }, messageTimestamp: 5 } } });
     const quoted = (f.sent[0] as { opts: { quoted: { message: { imageMessage: { mediaKey: unknown } } } } }).opts.quoted;
     expect(Buffer.isBuffer(quoted.message.imageMessage.mediaKey)).toBe(true);
-    expect(out).toContainEqual({ ev: "close", data: { code: 401, loggedOut: true, expired: true, reason: "" } });
+    expect(out).toContainEqual({ ev: "close", data: { code: 401, loggedOut: true, refused: false, lostCode: false, reason: "" } });
+  });
+
+  test("a code gets a new link of its own that lasts minutes, and the log never holds the number or the code", async () => {
+    const { f, said, cmd } = await engine();
+    await cmd({ op: "start" });
+    await Bun.sleep(5);
+    const r = await cmd({ op: "pair_code", phone: "+55 21 98765 4321" });
+    expect(r).toMatchObject({ ok: true, result: { code: "CODE4321" } });
+    // The QR link was ended, and the code's link shows each QR a minute: six of them, six minutes.
+    expect(f.socks.length).toBe(2);
+    expect(f.socks[0]?.ended).toBe(true);
+    expect(f.configs[1]).toMatchObject({ qrTimeout: 60_000 });
+    expect(f.configs[0]?.qrTimeout).toBeUndefined();
+    const until = (r.result as Raw).until as number;
+    expect(until - 1_900_000_000_000).toBe(6 * 60_000);
+    const log = said.join("\n");
+    expect(log).toContain("code asked for +55…21 (13 digits), 360 s to enter it");
+    expect(log).toContain("WhatsApp took the code request");
+    expect(log).toContain("WhatsApp Web 2.3000.42");
+    expect(log).not.toContain("98765");
+    expect(log).not.toContain("CODE4321");
+    f.last().frame("frame", { tag: "notification", attrs: {}, content: [{ tag: "link_code_companion_reg", attrs: { stage: "primary_hello" } }] });
+    expect(said.at(-1)).toBe("the phone took the code (primary_hello): linking");
+  });
+
+  test("a code WhatsApp refuses fails, and saying so", async () => {
+    const { said, cmd } = await engine({ ack: { tag: "iq", attrs: { type: "error" }, content: [{ tag: "error", attrs: { code: "400", text: "bad-request" } }] } });
+    await cmd({ op: "start" });
+    await Bun.sleep(5);
+    const r = await cmd({ op: "pair_code", phone: "+55 21 98765 4321" });
+    expect(r).toMatchObject({ ok: false, error: "WhatsApp refused a code for this number (400 bad-request)." });
+    expect(said).toContain("WhatsApp refused the code request: 400 bad-request");
+  });
+
+  test("a code link that runs out says the code is gone and starts a clean link; a pairing restart reconnects at once", async () => {
+    const { f, out, cmd } = await engine();
+    await cmd({ op: "start" });
+    await Bun.sleep(5);
+    await cmd({ op: "pair_code", phone: "+1 555 000 1234" });
+    expect(f.saved().me).toBeDefined();
+    f.last().fire("connection.update", { connection: "close", lastDisconnect: { error: { message: "QR refs attempts ended", output: { statusCode: 408 } } } });
+    expect(out).toContainEqual({ ev: "close", data: { code: 408, loggedOut: false, refused: false, lostCode: true, reason: "QR refs attempts ended" } });
+    await Bun.sleep(20);
+    // The code's number is out of the keys (else the next link would log in with it, and get a 401).
+    expect(f.saved().me).toBeUndefined();
+    await Bun.sleep(1100);
+    expect(f.socks.length).toBe(3);
+    expect(f.configs[2]?.qrTimeout).toBeUndefined();
+    // Paired: WhatsApp's 515 restart comes straight back as the linked account.
+    f.last().fire("connection.update", { isNewLogin: true });
+    f.last().fire("connection.update", { connection: "close", lastDisconnect: { error: { output: { statusCode: 515 } } } });
+    await Bun.sleep(10);
+    expect(f.socks.length).toBe(4);
+  });
+
+  test("a 401 before anything linked is a refused link, not a logout", async () => {
+    const { f, out, cmd } = await engine();
+    await cmd({ op: "start" });
+    await Bun.sleep(5);
+    f.last().fire("connection.update", { connection: "close", lastDisconnect: { error: { output: { statusCode: 401 } } } });
+    expect(out).toContainEqual({ ev: "close", data: { code: 401, loggedOut: false, refused: true, lostCode: false, reason: "" } });
+    await Bun.sleep(1100);
+    expect(f.socks.length).toBe(1);
   });
 });
 
@@ -328,9 +448,16 @@ class FakeProc implements EngineProc {
   running(): boolean {
     return this.up;
   }
-  async request(op: string): Promise<Raw> {
+  phones: string[] = [];
+  refuse = new Set<string>();
+  async request(op: string, args: Raw = {}): Promise<Raw> {
     this.calls.push(op);
-    if (op === "pair_code") return { code: "ABCD1234" };
+    if (op === "pair_code") {
+      const phone = String(args.phone);
+      this.phones.push(phone);
+      if (this.refuse.has(phone)) throw new Error("WhatsApp refused a code for this number (400 bad-request).");
+      return { code: "ABCD1234", until: Date.now() + 6 * 60_000 };
+    }
     if (op === "groups") return { groups: [{ id: GROUP, subject: "Climbing" }] };
     return {};
   }
@@ -374,6 +501,62 @@ describe("host", () => {
     await Bun.sleep(1);
     expect(host.status()).toMatchObject({ phase: "idle", error: expect.stringContaining("expired") });
     expect(whatsapp.cardLine(host.status(), "About").tone).toBe(2);
+  });
+});
+
+describe("host: links by code", () => {
+  const rigHost = async () => {
+    const proc = new FakeProc();
+    const host = new Host(new Store(join(tmp(), "wa.db")), proc);
+    await host.handle({ op: "link" });
+    proc.onEvent("qr", { qr: "2@q" });
+    return { proc, host, pairing: () => host.status().pairing as Raw };
+  };
+
+  test("Brazil's 9: the other form of a +55 mobile, with or without it", () => {
+    expect(brazilAlt("5521987654321")).toBe("552187654321");
+    expect(brazilAlt("552187654321")).toBe("5521987654321");
+    expect(brazilAlt("552134567890")).toBeUndefined();
+    expect(brazilAlt("15550001234")).toBeUndefined();
+  });
+
+  test("a code shows its time left, what to try when it didn't link, and Brazil's other form", async () => {
+    const { host, pairing } = await rigHost();
+    await host.handle({ op: "code", phone: "+55 21 98765 4321" });
+    expect(pairing()).toMatchObject({ code: "ABCD-1234", note: expect.stringMatching(/^Enter the code on your phone · [56]:\d\d left$/), retry: { phone: "+552187654321", label: "Try without the 9" } });
+    expect(String(pairing().hint)).toContain("without the 9 after the area code: try +55 21 8765 4321");
+    expect(whatsapp.cardLine(host.status(), "About").text).toContain("left");
+    await host.handle({ op: "code", phone: "+552187654321" });
+    expect(pairing()).toMatchObject({ retry: { phone: "+5521987654321", label: "Try with the 9" } });
+    await host.handle({ op: "code", phone: "+1 555 000 0001" });
+    expect(pairing()).toMatchObject({ retry: null, hint: expect.stringContaining("country code") });
+    await host.handle({ op: "uncode" });
+    expect(pairing()).toMatchObject({ code: null, qr: "2@q", note: "Scan with WhatsApp" });
+  });
+
+  test("a +55 number WhatsApp refuses is tried in its other form", async () => {
+    const { proc, host, pairing } = await rigHost();
+    proc.refuse.add("5521987654321");
+    expect(await host.handle({ op: "code", phone: "+55 21 98765 4321" })).toMatchObject({ ok: true });
+    expect(proc.phones).toEqual(["5521987654321", "552187654321"]);
+    expect(pairing()).toMatchObject({ code: "ABCD-1234", retry: { label: "Try with the 9" } });
+    proc.refuse.add("15550000001");
+    expect(await host.handle({ op: "code", phone: "+1 555 000 0001" })).toMatchObject({ ok: false, error: expect.stringContaining("refused") });
+    expect(pairing()).toMatchObject({ code: null, note: expect.stringContaining("Couldn't get a code: WhatsApp refused") });
+  });
+
+  test("a code that ran out goes, and the link goes on with a new QR; a refused link says so", async () => {
+    const { proc, host, pairing } = await rigHost();
+    await host.handle({ op: "code", phone: "+1 555 000 0001" });
+    proc.onEvent("close", { code: 408, lostCode: true });
+    expect(host.status()).toMatchObject({ phase: "pairing", error: null });
+    expect(pairing()).toMatchObject({ code: null, note: "That code ran out before the phone linked. Get a new one." });
+    expect(proc.running()).toBe(true);
+    proc.onEvent("qr", { qr: "2@q2" });
+    expect(pairing()).toMatchObject({ qr: "2@q2", note: "That code ran out before the phone linked. Get a new one." });
+    proc.onEvent("close", { code: 401, refused: true });
+    await Bun.sleep(1);
+    expect(host.status()).toMatchObject({ phase: "idle", pairing: null, error: expect.stringContaining("refused") });
   });
 });
 

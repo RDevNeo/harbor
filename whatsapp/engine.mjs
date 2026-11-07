@@ -67,11 +67,35 @@ function quietLogger(say) {
   return l;
 }
 
+/** How long Baileys shows each QR of a link by default: the first 60 s, the rest 20 s. */
+const FIRST_QR = 60_000;
+const NEXT_QR = 20_000;
+/**
+ * A link made for a pairing code shows each of its QRs this long instead: nobody scans those, and
+ * the link's whole time (about six minutes) is the code's. Baileys ends a link when its QRs run out,
+ * and its code goes with it.
+ */
+const CODE_QR = 60_000;
+/** How long to wait for WhatsApp to take a code request, and for a new link's first QR. */
+const ACK_WAIT = 5000;
+const QR_WAIT = 30_000;
+/** The WhatsApp Web version WhatsApp serves today, asked again after this. */
+const VERSION_TTL = 6 * 3600_000;
+
+/** A number for the log: its country code, how long it is and its last two digits, never all of it. */
+export function maskPhone(digits) {
+  const d = String(digits).replace(/\D/g, "");
+  return d.length < 6 ? `(${d.length} digits)` : `+${d.slice(0, 2)}…${d.slice(-2)} (${d.length} digits)`;
+}
+
+const childNodes = (n) => (Array.isArray(n?.content) ? n.content.filter((c) => c && typeof c === "object" && typeof c.tag === "string") : []);
+const child = (n, tag) => childNodes(n).find((c) => c.tag === tag);
+
 /**
  * The engine over `baileys` (the module, or a test's stand-in with the same names). `write` takes
- * one line out; `say` the log. Returns what a command line goes to.
+ * one line out; `say` the log (host.log: what a failed link left behind). Returns what a command line goes to.
  */
-export function createEngine({ baileys, authDir, write, say = () => {}, exit = () => {} }) {
+export function createEngine({ baileys, authDir, write, say = () => {}, exit = () => {}, now = () => Date.now() }) {
   const logger = quietLogger(say);
   const { DisconnectReason } = baileys;
   const out = (o) => write(JSON.stringify(o, replacer));
@@ -79,22 +103,77 @@ export function createEngine({ baileys, authDir, write, say = () => {}, exit = (
   const sent = new Map();
   let sock;
   let state;
+  let saveCreds = async () => {};
   let stopping = false;
   let attempt = 0;
   let timer;
   let qrSeen = false;
+  /** This link had no account when it began (a QR or code link), and hasn't paired since. */
+  let fresh = true;
+  let paired = false;
+  /** When this link's QRs run out (and Baileys ends it), from the refs WhatsApp gave it. */
+  let until = 0;
+  /** A pairing code is out on this link, for the number `codeFor` (digits). */
+  let codeFor = "";
+  /** Waiting for WhatsApp's answer to a code request. */
+  let ackWait;
+  let qrWaiters = [];
+  let version;
+  let versionAt = 0;
 
-  async function connect() {
+  async function waVersion() {
+    if (version !== undefined && now() - versionAt < VERSION_TTL) return version;
+    if (typeof baileys.fetchLatestWaWebVersion !== "function") return undefined;
+    try {
+      // Baileys' own version goes stale between its releases, and WhatsApp then refuses new links.
+      const r = await baileys.fetchLatestWaWebVersion({ signal: AbortSignal.timeout(8000) });
+      if (r?.isLatest === true && Array.isArray(r.version)) {
+        version = r.version;
+        versionAt = now();
+        return version;
+      }
+      say(`WhatsApp Web version unknown (${r?.error?.message ?? "no answer"}): Baileys' own`);
+    } catch (e) {
+      say(`WhatsApp Web version unknown (${e?.message ?? e}): Baileys' own`);
+    }
+    return undefined;
+  }
+
+  function onFrame(f) {
+    if (paired || !fresh || !f || typeof f !== "object") return;
+    if (f.tag === "notification") {
+      const reg = child(f, "link_code_companion_reg");
+      if (reg) say(`the phone took the code (${reg.attrs?.stage ?? "?"}): linking`);
+    } else if (f.tag === "iq" && ackWait !== undefined) {
+      if (f.attrs?.type === "error") {
+        const e = child(f, "error");
+        ackWait({ ok: false, why: `${e?.attrs?.code ?? "?"} ${e?.attrs?.text ?? ""}`.trim() });
+      } else if (f.attrs?.type === "result" && child(f, "link_code_companion_reg")) ackWait({ ok: true });
+    }
+  }
+
+  async function connect(qrMs) {
     clearTimeout(timer);
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
     const auth = await baileys.useMultiFileAuthState(authDir);
     state = auth.state;
+    saveCreds = auth.saveCreds;
     qrSeen = false;
+    until = 0;
+    codeFor = "";
+    paired = false;
+    fresh = state.creds.me === undefined;
+    const v = await waVersion();
+    if (stopping) return;
+    say(`connecting: ${fresh ? "a new link" : "the linked account"}, WhatsApp Web ${v ? v.join(".") : "(Baileys' own version)"}`);
     const keys = baileys.makeCacheableSignalKeyStore ? baileys.makeCacheableSignalKeyStore(state.keys, logger) : state.keys;
     const s = baileys.makeWASocket({
       auth: { creds: state.creds, keys },
       logger,
-      browser: baileys.Browsers.ubuntu("Harbor"),
+      ...(v ? { version: v } : {}),
+      // A browser WhatsApp knows: links by code fail ("Couldn't link device") for a made-up one.
+      browser: baileys.Browsers.ubuntu("Chrome"),
+      ...(qrMs ? { qrTimeout: qrMs } : {}),
       // The phone keeps its notifications only while no other device says it's online.
       markOnlineOnConnect: false,
       syncFullHistory: false,
@@ -103,28 +182,64 @@ export function createEngine({ baileys, authDir, write, say = () => {}, exit = (
       getMessage: async (key) => sent.get(key.id)?.message ?? undefined,
     });
     sock = s;
-    s.ev.on("creds.update", auth.saveCreds);
+    s.ev.on("creds.update", (c) => {
+      if (s === sock) void saveCreds(c);
+    });
+    s.ws?.on?.("frame", (f) => {
+      if (s === sock) onFrame(f);
+    });
+    s.ws?.on?.("CB:iq,type:set,pair-device", (stanza) => {
+      if (s !== sock) return;
+      const refs = childNodes(child(stanza, "pair-device")).filter((c) => c.tag === "ref").length;
+      until = refs > 0 ? now() + (qrMs || FIRST_QR) + (refs - 1) * (qrMs || NEXT_QR) : 0;
+      say(`link waiting: ${refs} QR codes, ${Math.round((until - now()) / 1000)} s`);
+    });
     s.ev.on("connection.update", (u) => {
       if (s !== sock) return;
       if (u.qr) {
+        if (!qrSeen) say("QR ready");
         qrSeen = true;
         out({ ev: "qr", data: { qr: u.qr } });
+        const w = qrWaiters;
+        qrWaiters = [];
+        for (const f of w) f();
+      }
+      if (u.isNewLogin) {
+        paired = true;
+        say("paired: WhatsApp restarts the connection");
       }
       if (u.connection === "open") {
         attempt = 0;
+        paired = true;
+        fresh = false;
         const me = s.user ?? state.creds.me ?? {};
+        say("connected");
         out({ ev: "open", data: { id: me.id ?? "", lid: me.lid ?? "", name: me.name ?? me.notify ?? "" } });
       }
       if (u.connection === "close") {
         const err = u.lastDisconnect?.error;
         const code = err?.output?.statusCode ?? 0;
-        const loggedOut = code === DisconnectReason.loggedOut;
-        const registered = state.creds.registered === true || state.creds.me !== undefined;
-        // An unlinked pairing that ran out of codes: the host asks again when the user does.
-        const expired = !registered && qrSeen && code !== DisconnectReason.restartRequired;
-        out({ ev: "close", data: { code, loggedOut, expired, reason: err?.message ?? "" } });
-        if (stopping || loggedOut || expired) return;
-        const wait = code === DisconnectReason.restartRequired ? 0 : Math.min(60_000, 1000 * 2 ** attempt++);
+        const reason = err?.message ?? "";
+        const linked = !fresh || paired || state.creds.registered === true;
+        const restart = code === DisconnectReason.restartRequired;
+        const lostCode = !linked && codeFor !== "" && !restart && !stopping;
+        say(`closed: ${code} ${reason}`.trim() + (linked ? "" : lostCode ? " (a new link; its code is gone)" : " (a new link)"));
+        // An unlinked link refused (WhatsApp's 401): not a logout, nothing was linked.
+        const loggedOut = code === DisconnectReason.loggedOut && linked;
+        const refused = code === DisconnectReason.loggedOut && !linked;
+        // A new link that ran out of QR codes starts again by itself: the host gives up on it in time.
+        out({ ev: "close", data: { code, loggedOut, refused, lostCode, reason } });
+        if (stopping || loggedOut) return;
+        if (!linked && !restart) {
+          // The next link starts clean: a code's number in the keys would make it log in, and fail.
+          if (state.creds.me !== undefined) {
+            state.creds.me = undefined;
+            delete state.creds.pairingCode;
+            void saveCreds();
+          }
+          if (refused) return;
+        }
+        const wait = restart ? 0 : !linked && qrSeen ? 1000 : Math.min(60_000, 1000 * 2 ** attempt++);
         timer = setTimeout(() => void connect().catch((e) => say(`connect: ${e?.message ?? e}`)), wait);
       }
     });
@@ -133,6 +248,70 @@ export function createEngine({ baileys, authDir, write, say = () => {}, exit = (
         if (s === sock) out({ ev: name, data });
       });
     }
+  }
+
+  /** Ends this link and starts a new one whose QRs last `qrMs`: the whole of it for a code. */
+  async function relink(qrMs) {
+    const old = sock;
+    sock = undefined;
+    clearTimeout(timer);
+    if (state?.creds && state.creds.me !== undefined) {
+      state.creds.me = undefined;
+      delete state.creds.pairingCode;
+      await saveCreds();
+    }
+    try {
+      old?.end(undefined);
+    } catch {
+      // already closed
+    }
+    const ready = new Promise((ok, no) => {
+      const t = setTimeout(() => no(new Error("WhatsApp didn't start a link in time. Try again.")), QR_WAIT);
+      qrWaiters.push(() => {
+        clearTimeout(t);
+        ok();
+      });
+    });
+    ready.catch(() => {});
+    await connect(qrMs);
+    await ready;
+  }
+
+  async function pairCode(phone) {
+    if (!sock) throw new Error("WhatsApp isn't started.");
+    if (!fresh || paired) throw new Error("WhatsApp is already linked on this PC.");
+    const digits = String(phone).replace(/\D/g, "");
+    // A code of its own on a new link: the old link's QRs may be nearly out, and a second code on
+    // one link breaks the first (Baileys keeps one).
+    await relink(CODE_QR);
+    const s = sock;
+    say(`code asked for ${maskPhone(digits)}, ${Math.round((until - now()) / 1000)} s to enter it`);
+    const ack = new Promise((ok) => {
+      const t = setTimeout(() => ok(undefined), ACK_WAIT);
+      ackWait = (a) => {
+        clearTimeout(t);
+        ok(a);
+      };
+    });
+    let code;
+    try {
+      code = await s.requestPairingCode(digits);
+    } catch (e) {
+      ackWait = undefined;
+      say(`code request failed: ${e?.message ?? e}`);
+      throw e;
+    }
+    codeFor = digits;
+    const a = await ack;
+    ackWait = undefined;
+    if (a === undefined) say("WhatsApp didn't answer the code request (it may still work)");
+    else if (a.ok) say("WhatsApp took the code request: waiting for the phone");
+    else {
+      say(`WhatsApp refused the code request: ${a.why}`);
+      codeFor = "";
+      throw new Error(`WhatsApp refused a code for this number (${a.why}).`);
+    }
+    return { code, until };
   }
 
   const need = () => {
@@ -156,11 +335,8 @@ export function createEngine({ baileys, authDir, write, say = () => {}, exit = (
       case "start":
         if (!sock) await connect();
         return {};
-      case "pair_code": {
-        const s = need();
-        if (!qrSeen) throw new Error("WhatsApp isn't waiting for a link right now.");
-        return { code: await s.requestPairingCode(String(c.phone).replace(/\D/g, "")) };
-      }
+      case "pair_code":
+        return pairCode(c.phone);
       case "send": {
         const m = await need().sendMessage(c.jid, revive(c.content), c.quoted ? { quoted: revive(c.quoted) } : {});
         if (m?.key?.id) {

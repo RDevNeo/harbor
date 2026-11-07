@@ -136,6 +136,15 @@ final class WhatsApp {
             sc.addView(Ui.text(a, "In WhatsApp: Settings › Linked devices › Link a device › Link with phone number instead, then type this code.", 13, Ui.G700),
                     Ui.margins(Ui.fill(), 18, 0, 18, 8));
             sc.addView(Ui.button(a, "Copy code", true, v -> { Ui.copy(a, code.replace("-", "")); Ui.toast(a, "Copied"); }), Ui.margins(Ui.fill(), 16, 4, 16, 4));
+            // Didn't link: what to check, and for Brazil the number's other form (the 9 after the area code).
+            String hint = link.isNull("hint") ? "" : link.optString("hint");
+            if (!hint.isEmpty()) sc.addView(Ui.text(a, hint, 13, Ui.G700), Ui.margins(Ui.fill(), 18, 8, 18, 6));
+            JSONObject retry = link.optJSONObject("retry");
+            if (retry != null && !retry.optString("phone").isEmpty()) {
+                String other = retry.optString("phone");
+                sc.addView(Ui.button(a, retry.optString("label", "Try again"), false, v -> post(a, hub, pc, s, "code", other)), Ui.margins(Ui.fill(), 16, 0, 16, 4));
+            }
+            sc.addView(Ui.button(a, "Other number", false, v -> post(a, hub, pc, s, "uncode", null)), Ui.margins(Ui.fill(), 16, 0, 16, 4));
         } else {
             Bitmap qr = qr(r.optJSONObject("qr"));
             if (qr != null) {

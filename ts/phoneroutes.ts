@@ -358,9 +358,17 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
           if (b.accept !== true) throw new Error("Linking needs the warning accepted first.");
           await whatsapp.link(phone === "" ? undefined : phone);
           break;
-        case "code":
+        case "code": {
           if (phone === "") throw new Error("Pass the phone number.");
-          await whatsapp.code(phone);
+          // The phone waits 25 s at most: a slower code (a first install, Brazil's second form)
+          // still comes, in the sheet's next look ("Getting a code…" until then).
+          const asked = whatsapp.code(phone);
+          asked.catch(() => {});
+          await Promise.race([asked, new Promise((r) => setTimeout(r, 20_000))]);
+          break;
+        }
+        case "uncode":
+          await whatsapp.uncode();
           break;
         case "cancel":
           await whatsapp.cancel();

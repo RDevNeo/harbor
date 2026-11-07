@@ -132,6 +132,7 @@ function rig() {
     signOutAccount: (id, e) => calls.push(`signOutAccount ${id} ${e}`),
     toggleOff: (id) => calls.push(`toggleOff ${id}`),
     whatsappCode: (id, phone) => calls.push(`whatsappCode ${id} ${phone}`),
+    whatsappUncode: (id) => calls.push(`whatsappUncode ${id}`),
     pendingUrl: () => "https://example.test/page",
   };
   const host: IntHost = { changed: () => calls.push("changed"), openUrl: (u) => calls.push(`open ${u}`), copy: (t) => calls.push(`copy ${t}`), discordWindow: () => calls.push("discordWindow") };
@@ -216,8 +217,12 @@ test("WhatsApp's card: Link opens the warning, then its QR or code; linked, Unli
   expect(r.calls).toContain("whatsappCode whatsapp +1 555 010 0000");
   const qr = find(data(view({ pending: (id) => (id === "whatsapp" ? { qr: "2@x", note: "Scan with WhatsApp" } : undefined) })), "whatsapp");
   expect(qr).toMatchObject({ form: "whatsapp-qr", has_qr: true, sub: "Scan with WhatsApp", sub_tone: 1, window_btn: false, action: "cancel" });
-  const coded = find(data(view({ pending: (id) => (id === "whatsapp" ? { qr: "2@x", code: "K7QX-2M9P" } : undefined) })), "whatsapp");
-  expect(coded).toMatchObject({ form: "whatsapp-qr", code: "K7QX-2M9P", sub: "Enter the code on your phone" });
+  const coded = find(data(view({ pending: (id) => (id === "whatsapp" ? { qr: "2@x", code: "K7QX-2M9P", note: "Enter the code on your phone · 5:42 left", left: "5:42", hint: "Didn't link? …", retry: { phone: "+551112345678", label: "Try without the 9" } } : undefined) })), "whatsapp");
+  expect(coded).toMatchObject({ form: "whatsapp-qr", code: "K7QX-2M9P", sub: "Enter the code on your phone", code_left: "5:42 left", hint: "Didn't link? …", retry: "+551112345678", retry_text: "Try without the 9" });
+  r.act("whatsapp-code", "whatsapp", "+551112345678");
+  expect(r.calls).toContain("whatsappCode whatsapp +551112345678");
+  r.act("whatsapp-uncode", "whatsapp");
+  expect(r.calls).toContain("whatsappUncode whatsapp");
   const linked = find(data(view({ signedIn: (id) => id === "whatsapp", whatsappLine: () => ({ text: "Linked as Sam · Connected", tone: 0 }) })), "whatsapp");
   expect(linked).toMatchObject({ action: "signout", action_text: "Unlink", badge: true, sub: "Linked as Sam · Connected" });
   expect(find(data(view()), "whatsapp")).toMatchObject({ action: "signin", action_text: "Link", sub: "Read and send as you" });
