@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.159.0] - 2026-11-07
+
+### Changed
+- The worktree and branch under the composer sit in a slim tray tucked under its bottom edge, a little
+  narrower than the composer: where the agent works on the left ("Current checkout" or the chat's
+  worktree), its pull request and branch on the right, in small muted text with a chevron where a click
+  opens a menu. On the phone too.
+- The sidebar's Settled header reads "Settled (N)" with a thin line to the edge and a chevron (up while
+  open, down while folded); the phone's drawer the same.
+
+### Fixed
+- The memory gauge in the sidebar's bottom row is centred on the row like your photo and the other
+  buttons: its icon no longer sits above its figure and bar.
+
 ## [0.158.0] - 2026-11-07
 
 ### Added
