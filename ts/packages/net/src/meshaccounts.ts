@@ -20,11 +20,17 @@ export interface MeshAccount {
   models: [string, string][];
   /** Its PC lets the PC it told run chats on it (Settings › Workspace there); older PCs don't say: yes. */
   shared?: boolean;
+  /** The photo of the person it belongs to (`person`, else its PC's owner) as its PC's workspace directory has it: an
+   *  HTTPS URL (Clerk's image), absent when it knows none. Older PCs don't say. */
+  photo?: string;
 }
 
 const MODELS_MAX = 60;
 
 const str = (v: unknown, n: number) => Array.from(typeof v === "string" ? v : "").slice(0, n).join("");
+
+/** Only an HTTPS address is a photo (account.ts' rule). */
+export const photoUrl = (v: unknown): string => (typeof v === "string" && v.startsWith("https://") && v.length <= 2048 ? v : "");
 
 /** `accounts` of a hello or of a saved peer, as far as it makes sense (at most 32). */
 export function meshAccounts(v: unknown): MeshAccount[] {
@@ -47,6 +53,8 @@ export function meshAccounts(v: unknown): MeshAccount[] {
       }
       const a: MeshAccount = { id, short: str(o.short, 60), kind: str(o.kind, 20).toLowerCase(), ident: str(o.ident, 64), person: str(o.person, 80), main: o.main === true, models };
       if (o.shared === false) a.shared = false;
+      const photo = photoUrl(o.photo);
+      if (photo !== "") a.photo = photo;
       out.push(a);
     }
     if (out.length === 32) break;
@@ -57,6 +65,7 @@ export function meshAccounts(v: unknown): MeshAccount[] {
 export function meshAccountJson(a: MeshAccount): { [k: string]: string | boolean | string[][] } {
   const o: { [k: string]: string | boolean | string[][] } = { id: a.id, short: a.short, kind: a.kind, ident: a.ident, person: a.person, main: a.main, models: a.models };
   if (a.shared === false) o.shared = false;
+  if (a.photo !== undefined && a.photo !== "") o.photo = a.photo;
   return o;
 }
 
@@ -71,6 +80,20 @@ export function identOf(kind: string, email: string): string {
 export function accountKey(kind: string, ident: string, pc: string, id: string): string {
   return ident !== "" ? `${kind}:${ident}` : `${kind}@${pc}/${id}`;
 }
+
+/** People's photos by name, from the workspace directory's members (and who is signed in here): the first one named so
+ *  with a photo. Names are compared as people write them (case and spaces aside). */
+export function photosByName(people: readonly { name: string; image?: string }[]): (name: string) => string {
+  const m = new Map<string, string>();
+  for (const p of people) {
+    const k = nameKey(p.name);
+    const url = photoUrl(p.image);
+    if (k !== "" && url !== "" && !m.has(k)) m.set(k, url);
+  }
+  return (name) => m.get(nameKey(name)) ?? "";
+}
+
+const nameKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
 /** A person of the mesh: a PC's owner. */
 export interface Person {
@@ -146,8 +169,9 @@ export interface LocalAccount {
   models?: [string, string][];
 }
 
-/** This PC's usable accounts as hello tells them: sign-ins of one identity once (the first), each with who it is. */
-export function helloAccounts(local: readonly LocalAccount[], people: readonly Person[]): MeshAccount[] {
+/** This PC's usable accounts as hello tells them: sign-ins of one identity once (the first), each with who it is and, when
+ *  `photos` knows one, that person's photo (`owner`'s, this PC's owner, for one nobody else is known to own). */
+export function helloAccounts(local: readonly LocalAccount[], people: readonly Person[], photos?: { owner: string; of: (name: string) => string }): MeshAccount[] {
   const out: MeshAccount[] = [];
   const seen = new Set<string>();
   const kinds = new Map<string, number>();
@@ -159,7 +183,11 @@ export function helloAccounts(local: readonly LocalAccount[], people: readonly P
     const key = accountKey(kind, ident, "", a.id);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ id: a.id, short: a.short, kind, ident, person: a.email === "" ? "" : personOfEmail(a.email, people), main: a.id === kind || kinds.get(kind) === 1, models: (a.models ?? []).slice(0, MODELS_MAX) });
+    const person = a.email === "" ? "" : personOfEmail(a.email, people);
+    const m: MeshAccount = { id: a.id, short: a.short, kind, ident, person, main: a.id === kind || kinds.get(kind) === 1, models: (a.models ?? []).slice(0, MODELS_MAX) };
+    const photo = photos ? photoUrl(photos.of(person !== "" ? person : photos.owner)) : "";
+    if (photo !== "") m.photo = photo;
+    out.push(m);
   }
   return out;
 }
@@ -176,10 +204,14 @@ export interface SharedAccount {
   /** That PC: "" this one. */
   pc: string;
   pcName: string;
-  /** Who it belongs to ("" not known) and their badge. */
+  /** Who it belongs to ("" not known) and their badge: their initials, drawn only where no photo is known. */
   person: string;
   badge: string;
-  /** "Claude · DR", "OpenCode · ML". */
+  /** Their workspace photo (an HTTPS URL; "" none known), drawn round in place of the initials. */
+  photo: string;
+  /** The mesh has other PCs, so the badge says whose it is, and no photo of them is known: their initials stand in. */
+  noPhoto: boolean;
+  /** "Claude · DR", "OpenCode · ML"; with a photo, their name: "Claude · Dana Reyes". */
   label: string;
   models: [string, string][];
   /** Why it can't be picked now ("" it can). */
@@ -195,6 +227,8 @@ export interface SharedInput {
   peers: readonly Pick<Peer, "id" | "name" | "online" | "owner" | "github" | "accounts">[];
   /** Each peer's accounts as it told them (`Peer.provs`); a peer missing here is read from its `accounts`. */
   provs: ReadonlyMap<string, readonly MeshAccount[]>;
+  /** A person's photo as this PC's workspace directory has it (`photosByName`; "" none); else the one their PC told. */
+  photoOf?: (name: string) => string;
 }
 
 interface Holder {
@@ -255,6 +289,13 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   // Alone (no other PC), the accounts keep their own badges: the owner's would be the same on every one.
   const alone = !i.peers.some((p) => p.id !== i.me.id);
   const badges = alone ? new Map<string, string>() : personBadges([...owners.values()]);
+  // The photos PCs told, by whose they are (the account's person, else that PC's owner): the first of each.
+  const told = new Map<string, string>();
+  for (const hs of groups.values())
+    for (const h of hs) {
+      const who = h.acc.person !== "" ? h.acc.person : h.owner;
+      if (who !== "" && (h.acc.photo ?? "") !== "" && !told.has(who)) told.set(who, h.acc.photo ?? "");
+    }
   const out: SharedAccount[] = [];
   for (const key of order) {
     const hs = groups.get(key) ?? [];
@@ -263,7 +304,9 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
     const person = owners.get(key) ?? "";
     const own = run.acc.kind === "claude" ? (run.local?.badge ?? "") : "";
     const badge = alone ? own : (badges.get(person) ?? own);
-    const label = badge === "" ? kindLabel(run.acc.kind) : `${kindLabel(run.acc.kind)} \u{b7} ${badge}`;
+    // Their photo, while the badge says whose it is: this PC's directory's, else one a PC told with any of theirs.
+    const photo = alone || person === "" ? "" : i.photoOf?.(person) || (told.get(person) ?? "");
+    const label = photo !== "" ? `${kindLabel(run.acc.kind)} \u{b7} ${person}` : badge === "" ? kindLabel(run.acc.kind) : `${kindLabel(run.acc.kind)} \u{b7} ${badge}`;
     out.push({
       key,
       kind: run.acc.kind,
@@ -273,6 +316,8 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
       pcName: run.pcName,
       person,
       badge,
+      photo,
+      noPhoto: !alone && photo === "" && badge !== "",
       label,
       models: run.acc.models,
       why: run.online ? "" : `${run.pcName} is offline`,
@@ -286,7 +331,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
     labels.set(s.label, n);
     if (n > 1 && s.badge !== "") {
       s.badge = `${s.badge}${n}`;
-      s.label = `${kindLabel(s.kind)} \u{b7} ${s.badge}`;
+      s.label = s.photo !== "" ? `${kindLabel(s.kind)} \u{b7} ${s.person} ${n}` : `${kindLabel(s.kind)} \u{b7} ${s.badge}`;
     }
   }
   return out;
@@ -308,17 +353,19 @@ export function accountsByPc(list: readonly SharedAccount[]): Map<string, string
   const out = new Map<string, string[]>();
   for (const s of list) {
     const v = out.get(s.pc) ?? [];
-    v.push(s.person === "" ? s.label : `${s.label} (${s.person})`);
+    v.push(s.person === "" || s.photo !== "" ? s.label : `${s.label} (${s.person})`);
     out.set(s.pc, v);
   }
   return out;
 }
 
-/** A shared account in a tooltip: who it is and where it runs. */
+/** A shared account in a tooltip: who it is and where it runs, and that its badge is their initials when the workspace
+ *  has no photo of them. */
 export function sharedTip(s: SharedAccount): string {
   const who = s.person === "" ? "" : `${s.person}'s, `;
   const also = s.also.length === 0 ? "" : ` (also on ${s.also.join(", ")})`;
-  return `${who}runs on ${s.pc === "" ? "this PC" : s.pcName}${also}`;
+  const initials = s.noPhoto ? ` \u{b7} no workspace photo${s.person === "" ? "" : ` of ${s.person}`}, so the badge is ${s.badge}` : "";
+  return `${who}runs on ${s.pc === "" ? "this PC" : s.pcName}${also}${initials}`;
 }
 
 const RANK: Record<string, number> = { plan: 0, edits: 1, full: 2 };

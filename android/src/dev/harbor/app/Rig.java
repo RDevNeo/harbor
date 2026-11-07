@@ -78,7 +78,12 @@ final class Rig {
     static byte[] photo(String url) {
         if (!url.startsWith(PHOTO)) return null;
         String who = url.substring(PHOTO.length());
-        int a = who.equals("sam") ? 0xFF3B6EA8 : 0xFF8A5A9E, b = who.equals("sam") ? 0xFF7FB3D5 : 0xFFE3A06B;
+        // Sam's blue, anyone else's by the letters of their name (photos.ts `fakeColour` alike).
+        int[][] colours = {{0xFF3B6EA8, 0xFF7FB3D5}, {0xFF8A5A9E, 0xFFE3A06B}, {0xFF2F7D5B, 0xFF9CD38A}, {0xFFB04A3C, 0xFFF0B27A}, {0xFF4A4F9E, 0xFFC07FD8}};
+        int sum = 0;
+        for (int i = 0; i < who.length(); i++) sum += who.charAt(i);
+        int k = who.equals("sam") ? 0 : 1 + sum % (colours.length - 1);
+        int a = colours[k][0], b = colours[k][1];
         int n = 256;
         android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(n, n, android.graphics.Bitmap.Config.ARGB_8888);
         android.graphics.Canvas c = new android.graphics.Canvas(bm);

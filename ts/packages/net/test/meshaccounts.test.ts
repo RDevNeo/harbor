@@ -11,9 +11,11 @@ import {
   meshAccounts,
   personBadges,
   personOfEmail,
+  photosByName,
   sharedAccess,
   sharedAccounts,
   sharedTarget,
+  sharedTip,
   sharedWith,
 } from "../src/meshaccounts.ts";
 import { meshPcs, peopleNote } from "../src/meshctx.ts";
@@ -222,4 +224,67 @@ test("an account its PC doesn't let this PC use is left out of the picker, still
   const p = peer("ts:k", "K", "Kim Ro", true, [a, told("codex", "codex", "")]);
   const v = sharedAccounts({ me: { id: "ts:z", name: "Z", owner: "Zoe Q", github: "" }, local: [], peers: [p], provs: new Map([[p.id, p.provs]]) });
   expect(v.map((s) => s.label)).toEqual(["Codex · KR"]);
+});
+
+describe("owners' photos", () => {
+  const me = { id: "ts:desk", name: "desk", owner: "Mara Lind", github: "mlind" };
+  const MARA_PHOTO = "https://img.example/mara.png";
+  const DANA_PHOTO = "https://img.example/dana.png";
+  const DARIO_TOLD = "https://img.example/dario-told.png";
+  const photoOf = photosByName([
+    { name: "Mara  Lind", image: MARA_PHOTO },
+    { name: "dana reyes", image: DANA_PHOTO },
+    { name: "Dana Reyes", image: "https://img.example/second.png" },
+    { name: "Nope", image: "http://img.example/plain.png" },
+  ]);
+
+  test("a person's photo is the directory's first by name, case and spaces aside; only HTTPS counts", () => {
+    expect(photoOf("Mara Lind")).toBe(MARA_PHOTO);
+    expect(photoOf(" Dana Reyes ")).toBe(DANA_PHOTO);
+    expect(photoOf("Nope")).toBe("");
+    expect(photoOf("")).toBe("");
+  });
+
+  test("hello tells each account's owner's photo, never a plain-HTTP one, and reads it back", () => {
+    const v = helloAccounts([local("claude", "Claude", DANA, "DR"), local("opencode", "OpenCode", "", "")], [{ name: "Dana Reyes", github: "" }], { owner: "Mara Lind", of: photoOf });
+    expect(v.map((a) => [a.id, a.photo])).toEqual([
+      ["claude", DANA_PHOTO],
+      ["opencode", MARA_PHOTO],
+    ]);
+    expect(meshAccounts(v.map(meshAccountJson))).toEqual(v);
+    expect(meshAccounts([{ id: "claude", kind: "claude", photo: "http://img.example/x.png" }])[0]!.photo).toBeUndefined();
+    // Without photos it says none.
+    expect(helloAccounts([local("claude", "Claude", DANA, "DR")], [])[0]!.photo).toBeUndefined();
+  });
+
+  test("with a photo the badge is the photo and the label names them; without one, initials, and the tip says so", () => {
+    const laptop = peer("ts:laptop", "laptop", "Dana Reyes", true, [told("opencode", "opencode", "")]);
+    const tower = peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", "", { photo: DARIO_TOLD }), told("claude", "claude", DARIO)]);
+    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [laptop, tower], provs: new Map([laptop, tower].map((p) => [p.id, p.provs])), photoOf });
+    expect(v.map((s) => [s.label, s.badge, s.photo, s.noPhoto])).toEqual([
+      ["Claude · Mara Lind", "ML", MARA_PHOTO, false],
+      ["OpenCode · Dana Reyes", "DR", DANA_PHOTO, false],
+      // Not in this PC's directory: the photo its PC told.
+      ["Codex · Dario Reis", "DaR", DARIO_TOLD, false],
+      ["Claude · Dario Reis", "DaR", DARIO_TOLD, false],
+    ]);
+    expect(sharedTip(v[1]!)).toBe("Dana Reyes's, runs on laptop");
+    // Nobody knows a photo of Dario: his initials, said in the tooltip.
+    const bare = sharedAccounts({ me, local: [], peers: [peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", "")])], provs: new Map(), photoOf });
+    expect([bare[0]!.label, bare[0]!.photo, bare[0]!.noPhoto]).toEqual(["Codex · DR", "", true]);
+    expect(sharedTip(bare[0]!)).toBe("Dario Reis's, runs on tower · no workspace photo of Dario Reis, so the badge is DR");
+    // One person's two sign-ins of a kind are numbered, photo or not.
+    const twice = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX"), local("claude2", "Claude", "mara.lind@example.com", "ML")], peers: [laptop], provs: new Map([[laptop.id, laptop.provs]]), photoOf });
+    expect(twice.slice(0, 2).map((s) => [s.label, s.badge])).toEqual([
+      ["Claude · Mara Lind", "ML"],
+      ["Claude · Mara Lind 2", "ML2"],
+    ]);
+    // The who is who names them once.
+    expect(accountsByPc(v).get("ts:laptop")).toEqual(["OpenCode · Dana Reyes"]);
+  });
+
+  test("alone, nothing changes: own badges, no photos", () => {
+    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [], provs: new Map(), photoOf });
+    expect(v.map((s) => [s.label, s.photo, s.noPhoto])).toEqual([["Claude · MX", "", false]]);
+  });
 });

@@ -493,6 +493,8 @@ export component AppWindow inherits Window {
     in-out property <string> draft;
     in property <ComposerState> composer;
     in property <image> model-logo;
+    in property <image> model-badge-photo;
+    in property <bool> model-has-badge-photo;
     // Set and read back by the shell: pixels go in, a native image comes out, which models then share
     // instead of each copying the pixels (`MediaRows`).
     in-out property <image> image-scratch;
@@ -606,6 +608,7 @@ export component AppWindow inherits Window {
     callback pop-input-accept();
 
     in property <[RailItem]> picker-rail;
+    in property <int> picker-rail-reveal: -1;
     in property <bool> picker-favorites;
     in property <[ModelRow]> picker-rows;
     in-out property <int> picker-hover;
@@ -1085,6 +1088,8 @@ export component AppWindow inherits Window {
                                 voice-note: root.voice-note;
                                 mic-tip: root.mic-tip;
                                 logo: root.model-logo;
+                                badge-photo: root.model-badge-photo;
+                                has-badge-photo: root.model-has-badge-photo;
                                 files: root.files;
                                 file-tiles: root.file-tiles;
                                 menu: root.menu;
@@ -1486,6 +1491,7 @@ export component AppWindow inherits Window {
                 x: max(4px, min(root.pop-x, root.width - self.width - 4px));
                 y: max(0px, root.pop-y - self.height - 6px);
                 rail: root.picker-rail;
+                rail-reveal: root.picker-rail-reveal;
                 favorites-active: root.picker-favorites;
                 rows: root.picker-rows;
                 hover <=> root.picker-hover;

@@ -385,6 +385,12 @@ final class Ui {
     /** The desktop's account mark: the provider's logo with the account badge ("AB") in its
      *  lower right corner. `size` in dp. */
     static View accountMark(Context c, String file, String badge, int size) {
+        return accountMark(c, file, badge, size, "");
+    }
+
+    /** The provider's logo with whose it is in its corner: their workspace photo, round, when
+     *  `photo` names one (Avatars; the initials until it's loaded), else the `badge` initials. */
+    static View accountMark(Context c, String file, String badge, int size, String photo) {
         FrameLayout f = new FrameLayout(c);
         android.graphics.Bitmap b = logo(c, file);
         if (b != null) {
@@ -395,7 +401,20 @@ final class Ui {
         } else {
             f.addView(icon(c, I_BOT, size * 0.8f, G700), new FrameLayout.LayoutParams(dp(size), dp(size)));
         }
-        if (badge != null && !badge.isEmpty()) {
+        if (photo != null && !photo.isEmpty()) {
+            // A ring in the sheet's colour around the photo sets it apart from the logo.
+            int ps = Math.max(10, Math.round(size * 0.58f));
+            FrameLayout ring = new FrameLayout(c);
+            ring.setBackground(round(CARD, 0, ps));
+            ring.setPadding(dp(1.5f), dp(1.5f), dp(1.5f), dp(1.5f));
+            TextView t = bold(c, badge == null ? "" : badge, 6, FG);
+            t.setIncludeFontPadding(false);
+            t.setGravity(Gravity.CENTER);
+            t.setBackground(round(G300, 0, ps));
+            ring.addView(t, new FrameLayout.LayoutParams(dp(ps), dp(ps)));
+            f.addView(ring, new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.BOTTOM));
+            Avatars.into(t, t, photo);
+        } else if (badge != null && !badge.isEmpty()) {
             TextView t = bold(c, badge, 7, FG);
             t.setIncludeFontPadding(false);
             t.setPadding(dp(2), 0, dp(2), 0);

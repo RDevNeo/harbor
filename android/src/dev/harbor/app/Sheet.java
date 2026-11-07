@@ -88,7 +88,10 @@ final class Sheet {
 
     static final class Option {
         final String id, label, sub; final boolean enabled;
-        Option(String id, String label, String sub, boolean enabled) { this.id = id; this.label = label; this.sub = sub; this.enabled = enabled; }
+        /** Drawn before the label (an account's logo and owner), or null. */
+        final View lead;
+        Option(String id, String label, String sub, boolean enabled) { this(id, label, sub, enabled, null); }
+        Option(String id, String label, String sub, boolean enabled, View lead) { this.id = id; this.label = label; this.sub = sub; this.enabled = enabled; this.lead = lead; }
     }
 
     interface Chosen { void on(String id); }
@@ -106,7 +109,7 @@ final class Sheet {
         for (Option o : opts) {
             if (!first) c.addView(Ui.gap(a));
             first = false;
-            LinearLayout r = Ui.cardRow(a, null, o.label, o.sub, o.enabled ? Ui.FG : Ui.G600,
+            LinearLayout r = Ui.cardRow(a, o.lead, o.label, o.sub, o.enabled ? Ui.FG : Ui.G600,
                     o.enabled ? v -> { s.dismiss(); chosen.on(o.id); } : null);
             Ui.wrapSub(r, 3);
             if (o.id.equals(current)) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));

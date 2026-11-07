@@ -84,9 +84,15 @@ seed.set("onboarded", "1");
 // Signed in to a made-up account with two workspaces (Move to workspace…, the drawer's filter); the team's has the
 // Laptop and the Tower, whose accounts the pickers offer (HARBOR_FAKE_PEERS below).
 const pcs = (id: string) => [{ fp: "", id, name: id.slice(3) }];
+// The team's people: Sam and Dana with made-up photos (Rig.java draws them), Dario with none, so his accounts show initials.
+const team = [
+  { id: "user_rig", name: "Sam Rivera", email: "sam@example.com", role: "member", image: "https://photos.example/sam" },
+  { id: "user_dana", name: "Dana Reyes", email: "dana@example.com", role: "owner", image: "https://photos.example/dana" },
+  { id: "user_dario", name: "Dario Reis", email: "dario@example.com", role: "member" },
+];
 seed.set("account", JSON.stringify({ id: "user_rig", email: "sam@example.com", name: "Sam Rivera", workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true }, { id: "org_team", name: "Team workspace", role: "member" }] }));
 seed.set("account_ws", "org_sam");
-seed.set("account_dir", JSON.stringify({ at: t0 * 1000, workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true, pcs: pcs("pc:rig-pc") }, { id: "org_team", name: "Team workspace", role: "member", pcs: [{ fp: "fp-laptop", id: "pc:laptop", name: "Laptop" }, { fp: "fp-tower", id: "pc:tower", name: "Tower" }] }] }));
+seed.set("account_dir", JSON.stringify({ at: t0 * 1000, workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true, pcs: pcs("pc:rig-pc") }, { id: "org_team", name: "Team workspace", role: "member", members: team, pcs: [{ fp: "fp-laptop", id: "pc:laptop", name: "Laptop" }, { fp: "fp-tower", id: "pc:tower", name: "Tower" }] }] }));
 
 const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-web.git"));
 const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));

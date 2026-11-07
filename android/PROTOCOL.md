@@ -395,6 +395,10 @@ refetch everything.
   window ("5h", "Weekly", …).
 - `can_start`: the account can start a new chat (a lead). Every provider can since 0.153 (hubs before it:
   only Claude); OpenCode leads work alone, without subagents.
+- `badge`, `owner`, `photo` (0.160, `photo` from 0.163; absent when not known): whose the account is while the
+  mesh has other PCs: their initials, their name, and their workspace photo (an HTTPS URL, Clerk's image, as
+  Settings › Workspace draws it). Draw the photo round in the logo's corner; the initials only without one. With a
+  photo, `label` names them ("Claude · Dana Reyes") instead of "Claude · DR".
 - `queued`: messages waiting for the running turn.
 - `working` (optional, older hubs leave it out: use `running`): the chat is busy as the desktop
   sidebar shows it, its own turn or, for a lead, any of its sub-agents' turns or work queued for

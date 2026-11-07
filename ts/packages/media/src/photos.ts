@@ -106,10 +106,26 @@ export function circle(rgba: Uint8Array, n: number): void {
     }
 }
 
+const FAKE_COLOURS: [number[], number[]][] = [
+  [[0x3b, 0x6e, 0xa8], [0x7f, 0xb3, 0xd5]],
+  [[0x8a, 0x5a, 0x9e], [0xe3, 0xa0, 0x6b]],
+  [[0x2f, 0x7d, 0x5b], [0x9c, 0xd3, 0x8a]],
+  [[0xb0, 0x4a, 0x3c], [0xf0, 0xb2, 0x7a]],
+  [[0x4a, 0x4f, 0x9e], [0xc0, 0x7f, 0xd8]],
+];
+
+/** Which colours a made-up photo has: Sam's blue, anyone else's by the letters of their name (Rig.java's alike). */
+export function fakeColour(who: string): number {
+  if (who === "sam") return 0;
+  let n = 0;
+  for (const ch of who) n += ch.charCodeAt(0);
+  return 1 + (n % (FAKE_COLOURS.length - 1));
+}
+
 /** A made-up photo: a soft two-colour background and a figure (Rig.java draws the phone's alike). */
 export function fake(who: string): Decoded {
   const n = SIZE;
-  const [a, b] = who === "sam" ? [[0x3b, 0x6e, 0xa8], [0x7f, 0xb3, 0xd5]] : [[0x8a, 0x5a, 0x9e], [0xe3, 0xa0, 0x6b]];
+  const [a, b] = FAKE_COLOURS[fakeColour(who)]!;
   const data = new Uint8Array(n * n * 4);
   for (let y = 0; y < n; y++)
     for (let x = 0; x < n; x++) {

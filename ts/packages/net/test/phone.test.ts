@@ -840,13 +840,13 @@ describe("phone: the mesh's shared accounts", () => {
     hub.mesh.peers.set(off.id, off);
     const acct = (id: string, kind: string): CatalogAccount => ({ id, kind, name: id, badge: "AB", bin: "/bin/true", loggedIn: true, usage: [] });
     const catalog = catalogOf(providers, () => [acct("claude", "Claude")], store);
-    const shared = () =>
-      sharedAccounts({
-        me: { id: "ts:desk", name: "desk", owner: "Ana Lu", github: "" },
-        local: [{ id: "claude", kind: "Claude", email: "ana@example.com", badge: "AB", short: "Claude · AB", usable: true }],
-        peers: [laptop, off],
-        provs: new Map([laptop, off].map((p) => [p.id, p.provs])),
-      });
+    const input = {
+      me: { id: "ts:desk", name: "desk", owner: "Ana Lu", github: "" },
+      local: [{ id: "claude", kind: "Claude", email: "ana@example.com", badge: "AB", short: "Claude · AB", usable: true }],
+      peers: [laptop, off],
+      provs: new Map([laptop, off].map((p) => [p.id, p.provs])),
+    };
+    const shared = Object.assign(() => sharedAccounts(input), { input });
     catalog.shared = shared;
     const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, catalog });
     const s = routes.state("", true) as { accounts: Record<string, Json>[] };
@@ -857,6 +857,17 @@ describe("phone: the mesh's shared accounts", () => {
     ]);
     expect(s.accounts[1]).toMatchObject({ name: "Sam Lee on laptop", owner: "Sam Lee", pc_name: "laptop", models: [{ id: "nvidia/glm", label: "GLM", more: false }] });
     expect(s.accounts[2]?.why).toBe("tower is offline");
+    // No photo known: no `photo`, the initials stay.
+    expect(s.accounts.some((a) => "photo" in a)).toBe(false);
+    // With the owners' workspace photos: each account carries its owner's, and its label names them.
+    catalog.shared = () => sharedAccounts({ ...shared.input, photoOf: (n) => (n === "Sam Lee" ? "https://img.example/sam.png" : n === "Ana Lu" ? "https://img.example/ana.png" : "") });
+    const p = routes.state("", true) as { accounts: Record<string, Json>[] };
+    expect(p.accounts.map((a) => [a.label, a.photo ?? null])).toEqual([
+      ["Claude · Ana Lu", "https://img.example/ana.png"],
+      ["OpenCode · Sam Lee", "https://img.example/sam.png"],
+      ["Codex · KR", null],
+    ]);
+    catalog.shared = shared;
     const call = (body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body, token: "", device: "Pixel", global: true });
     // Picked: the chat starts on the laptop, on the laptop's own OpenCode; this PC's device pick doesn't matter.
     const r = await call({ account: "opencode@ts:laptop/opencode", model: "nvidia/glm", device: "", text: "hi" });

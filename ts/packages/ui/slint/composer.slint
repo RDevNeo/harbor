@@ -432,6 +432,9 @@ export component Composer {
     in-out property <string> text <=> field.text;
     in property <ComposerState> state;
     in property <image> logo;
+    // The account's owner's photo for the model chip's badge (meshaccounts.ts); without one, `state.badge`'s initials.
+    in property <image> badge-photo;
+    in property <bool> has-badge-photo;
     in property <length> max-h: 280px;
     in property <[FileItem]> files;
     // How many of `files` are tiles.
@@ -839,6 +842,9 @@ export component Composer {
                                 has-logo: true;
                                 logo: root.logo;
                                 badge: root.state.badge;
+                                photo: root.badge-photo;
+                                has-photo: root.has-badge-photo;
+                                ground: Theme.dark ? Theme.bg200 : Theme.bg100;
                                 label: chips.show-m ? root.state.model : "";
                                 label-max: chips.lm + chips.gm - 4px;
                                 tip: chips.show-m ? root.state.model-tip : root.state.model + " · " + root.state.model-tip;

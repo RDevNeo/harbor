@@ -353,6 +353,9 @@ export interface RailItem {
   id: string;
   logo: Pixels;
   badge: string;
+  /** Its owner's workspace photo (round), shown in place of `badge` when `has_photo`. */
+  photo: Pixels;
+  has_photo: boolean;
   active: boolean;
   dim: boolean;
   tip: string;
@@ -552,6 +555,8 @@ export interface AppWindow extends slint.ComponentHandle {
   composer: ComposerState;
   work_bar: WorkBarData;
   model_logo: Pixels;
+  model_badge_photo: Pixels;
+  model_has_badge_photo: boolean;
   image_scratch: Pixels;
   files: slint.Model<FileItem>;
   /** How many of `files` are tiles. */
@@ -660,6 +665,8 @@ export interface AppWindow extends slint.ComponentHandle {
   pop_input_accept: () => void;
 
   picker_rail: slint.Model<RailItem>;
+  /** Index in `picker_rail` the rail scrolls into view (-1: the favourites, at the top): at open and when it changes. */
+  picker_rail_reveal: number;
   picker_favorites: boolean;
   picker_rows: slint.Model<ModelRow>;
   picker_hover: number;

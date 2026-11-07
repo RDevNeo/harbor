@@ -6,6 +6,8 @@ export struct RailItem {
     id: string,
     logo: image,
     badge: string,
+    photo: image,
+    has-photo: bool,
     active: bool,
     dim: bool,
     tip: string,
@@ -28,6 +30,8 @@ component StarFilled inherits Path {
 
 export component ModelPicker inherits PopoverFrame {
     in property <[RailItem]> rail;
+    // The rail's item to scroll into view (-1: the favourites): at open, and whenever it changes (keys move it).
+    in property <int> rail-reveal: -1;
     in property <bool> favorites-active;
     in property <[ModelRow]> rows;
     in-out property <int> hover;
@@ -45,6 +49,22 @@ export component ModelPicker inherits PopoverFrame {
     callback key(KeyEvent) -> bool;
     public function focus-search() {
         field.focus-field();
+    }
+    // Scrolls the rail so item `i` shows whole (the favourites stay above it, outside the scrolling part).
+    function reveal(i: int) {
+        if i < 0 {
+            rail-flick.viewport-y = 0;
+        } else if i * 44px < -rail-flick.viewport-y {
+            rail-flick.viewport-y = -i * 44px;
+        } else if i * 44px + 48px > -rail-flick.viewport-y + rail-flick.height {
+            rail-flick.viewport-y = min(0px, rail-flick.height - i * 44px - 48px);
+        }
+    }
+    init => {
+        self.reveal(self.rail-reveal);
+    }
+    changed rail-reveal => {
+        self.reveal(self.rail-reveal);
     }
     width: 448px;
     height: 310px;
@@ -80,36 +100,64 @@ export component ModelPicker inherits PopoverFrame {
             height: 1px;
             background: Theme.border;
         }
-        for r[i] in root.rail: Rectangle {
-            x: 4px;
-            y: 53px + i * 44px;
-            width: 40px;
-            height: 40px;
-            border-radius: Theme.radius-md;
-            background: r.active ? Theme.gray-200 : tile-area.has-hover ? Theme.gray-100 : transparent;
-            opacity: r.dim ? 0.5 : 1;
-            AccountMark {
-                x: 8px;
-                y: 8px;
-                width: 24px;
-                height: 24px;
-                logo: r.logo;
-                badge: r.badge;
-            }
-            if r.active: Rectangle {
-                x: 49px;
-                y: 8px;
-                width: 3px;
-                height: 24px;
-                border-radius: 2px;
-                background: Theme.gray-1000;
-            }
-            tile-area := TipArea {
-                tip: r.tip;
-                clicked => {
-                    root.rail-pick(r.id);
+        // Every account under the favourites, scrolled by the wheel or touchpad when they don't fit; the selected one is
+        // scrolled into view (`rail-reveal`). Wider than the column so the active mark beside a tile isn't cut.
+        rail-flick := Flickable {
+            x: 0px;
+            y: 49px;
+            width: 57px;
+            height: parent.height - 49px;
+            viewport-width: self.width;
+            viewport-height: root.rail.length * 44px + 4px;
+            for r[i] in root.rail: Rectangle {
+                x: 4px;
+                y: 4px + i * 44px;
+                width: 40px;
+                height: 40px;
+                border-radius: Theme.radius-md;
+                background: r.active ? Theme.gray-200 : tile-area.has-hover ? Theme.gray-100 : transparent;
+                opacity: r.dim ? 0.5 : 1;
+                AccountMark {
+                    x: 8px;
+                    y: 8px;
+                    width: 24px;
+                    height: 24px;
+                    logo: r.logo;
+                    badge: r.badge;
+                    photo: r.photo;
+                    has-photo: r.has-photo;
+                    ring: r.active ? Theme.gray-200 : tile-area.has-hover ? Theme.gray-100 : Theme.bg100;
+                }
+                if r.active: Rectangle {
+                    x: 49px;
+                    y: 8px;
+                    width: 3px;
+                    height: 24px;
+                    border-radius: 2px;
+                    background: Theme.gray-1000;
+                }
+                tile-area := TipArea {
+                    tip: r.tip;
+                    clicked => {
+                        root.rail-pick(r.id);
+                    }
                 }
             }
+        }
+        // More above or below: the edge fades into the popover.
+        if rail-flick.viewport-y < 0: Rectangle {
+            x: 0px;
+            y: 49px;
+            width: 52px;
+            height: 14px;
+            background: @linear-gradient(180deg, Theme.bg100 0%, Theme.bg100.with-alpha(0) 100%);
+        }
+        if rail-flick.viewport-y > rail-flick.height - rail-flick.viewport-height: Rectangle {
+            x: 0px;
+            y: parent.height - self.height;
+            width: 52px;
+            height: 18px;
+            background: @linear-gradient(180deg, Theme.bg100.with-alpha(0) 0%, Theme.bg100 100%);
         }
         Rectangle {
             x: parent.width + 4px;

@@ -52,7 +52,7 @@ import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
 import { ChatCaptcha, FRAME_W, hereCaptcha, noChatCaptcha } from "./chatcaptcha.ts";
 import { fakeCaptcha } from "./fakecaptcha.ts";
-import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
+import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, railStep, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
@@ -192,6 +192,8 @@ export class Shell {
   private earlierRows = new slint.ArrayModel<{ id: number; title: string; ago: string }>([]);
   private logos = new Map<string, Pixels>();
   private railItems = new slint.ArrayModel<RailItem>([]);
+  /** The rail's accounts as last drawn (Tab steps through them). */
+  private railIds: string[] = [];
   private modelRows = new slint.ArrayModel<ModelRow>([]);
   private picker: PickerState = { rail: null, search: "", more: false, hover: 0 };
   private pickerRowsNow: Row[] = [];
@@ -265,8 +267,33 @@ export class Shell {
     this.win.inv_busy = acc?.busy() ?? false;
   }
 
-  /** Loads your photo (sharp only once there is one), then draws it: null until it's here. */
+  /** Loads people's photos (sharp only once there is one), then draws them: null until it's here. */
   private photo: ((url: string) => import("@harbor/media").images.Decoded | null) | null = null;
+  private photoLoading = false;
+
+  /** A person's photo, round (photos.ts: your own, and the owners' of the model picker's accounts): null without one or
+   *  until it's loaded, when what shows photos draws again. */
+  private photoPixels(url: string): Pixels | null {
+    if (url === "") return null;
+    if (this.photo === null) {
+      if (!this.photoLoading) {
+        this.photoLoading = true;
+        void import("@harbor/media").then(({ photos }) => {
+          this.photo ??= photos.source(() => this.photosCame());
+          this.photosCame();
+        });
+      }
+      return null;
+    }
+    return this.photo(url);
+  }
+
+  /** A photo came: everything that draws one again. */
+  private photosCame(): void {
+    this.refreshMe();
+    if (this.win.pop_id === "model") this.refreshPicker();
+    this.refreshComposer();
+  }
 
   /** You in the sidebar's bottom bar (it opens Settings): your account photo, round, else your initial; signed out, the
    *  gear. The photo is the account's, else your entry in the workspace directory's. */
@@ -280,14 +307,7 @@ export class Shell {
       if (this.win.me_has_photo) this.win.me_has_photo = false;
       return;
     }
-    if (this.photo === null) {
-      void import("@harbor/media").then(({ photos }) => {
-        this.photo ??= photos.source(() => this.refreshMe());
-        this.refreshMe();
-      });
-      return;
-    }
-    const img = this.photo(url);
+    const img = this.photoPixels(url);
     if (img === null) return;
     if (this.mePhotoOf !== url) {
       this.mePhotoOf = url;
@@ -297,6 +317,7 @@ export class Shell {
   }
 
   private mePhotoOf = "";
+  private badgePhotoOf = "";
 
   private answerInvite(accept: boolean): void {
     const acc = this.hub.account;
@@ -1607,7 +1628,8 @@ export class Shell {
     const mine = this.shared().find((x) => (x.pc === at && x.account === sel.account) || (at === "" && x.id === sel.account));
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
-      model_tip: mine ? `${mine.label} · ${sharedTip(mine)}` : acc ? providers.short(acc) : kind,
+      // With their photo the label already names them: "Claude · Dana Reyes's, runs on laptop".
+      model_tip: mine ? `${mine.photo !== "" ? kindLabel(mine.kind) : mine.label} · ${sharedTip(mine)}` : acc ? providers.short(acc) : kind,
       badge: mine?.badge ?? acc?.badge ?? "",
       has_effort: providers.efforts(kind).length > 0,
       effort: providers.effortLabel(kind, sel.effort) + (providers.hasFast(kind) && this.data.store.get("fast_mode") === "1" ? " · Fast" : ""),
@@ -1638,6 +1660,17 @@ export class Shell {
       error: this.meshChat.error(this.key()),
     };
     this.win.composer = state;
+    // Its owner's photo in place of the badge's initials, once it's loaded.
+    const photo = this.photoPixels(mine?.photo ?? "");
+    if (photo === null) {
+      if (this.win.model_has_badge_photo) this.win.model_has_badge_photo = false;
+    } else {
+      if (this.badgePhotoOf !== mine?.photo) {
+        this.badgePhotoOf = mine?.photo ?? "";
+        this.win.model_badge_photo = photo;
+      }
+      if (!this.win.model_has_badge_photo) this.win.model_has_badge_photo = true;
+    }
     void providerLogo(kindOfAccount(sel.account), token("fg", this.dark)).then((p) => {
       this.win.model_logo = p;
     });
@@ -3228,9 +3261,16 @@ export class Shell {
     };
     sync(
       this.railItems,
-      accounts.map((a) => ({ id: a.id, logo: this.logoOf(a.kind), badge: a.badge, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind) || !ok(a), tip: tipOf(a) })),
-      (a, b) => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 }),
+      accounts.map((a) => {
+        // Its owner's photo in place of the initials, once loaded (meshaccounts.ts `photo`).
+        const photo = this.photoPixels(mesh.get(a.id)?.photo ?? "");
+        return { id: a.id, logo: this.logoOf(a.kind), badge: a.badge, photo: photo ?? noPixels, has_photo: photo !== null, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind) || !ok(a), tip: tipOf(a) };
+      }),
+      (a, b) => a.logo === b.logo && a.photo === b.photo && JSON.stringify({ ...a, logo: 0, photo: 0 }) === JSON.stringify({ ...b, logo: 0, photo: 0 }),
     );
+    // The rail scrolls the picked account into view (at open, and as Tab moves it).
+    this.railIds = accounts.map((a) => a.id);
+    this.win.picker_rail_reveal = this.picker.rail === null ? -1 : this.railIds.indexOf(this.picker.rail);
     const look: PickerLook = {
       label: (a) => mesh.get(a.id)?.label ?? providers.short(a),
       models: (a) => {
@@ -3275,6 +3315,13 @@ export class Shell {
   private pickerKey(e: KeyEvent): boolean {
     const n = Math.max(this.pickerRowsNow.length, 1);
     const k = pressOf(e.text, e.modifiers);
+    // Tab and Shift+Tab step through the rail: the favourites, then each account.
+    if ((k.key === "Tab" || e.text === "\u{19}") && !k.ctrl && !k.alt) {
+      const rail = railStep(this.railIds, this.picker.rail, k.shift || e.text === "\u{19}" ? -1 : 1);
+      this.picker = { ...this.picker, rail, more: false, hover: 0 };
+      this.refreshPicker();
+      return true;
+    }
     if (k.ctrl && /^[1-9]$/.test(k.key)) {
       this.pickModel(Number(k.key) - 1);
       return true;

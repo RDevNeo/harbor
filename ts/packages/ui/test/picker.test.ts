@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Account } from "@harbor/agents";
 import { tipParts } from "../src/logic/tips.ts";
-import { emptyText, favoritesValue, parseFavorites, pickerRows, railTip } from "../src/picker.ts";
+import { emptyText, favoritesValue, parseFavorites, pickerRows, railStep, railTip } from "../src/picker.ts";
 
 const acc = (id: string, kind: Account["kind"], bin: string | null): Account => ({ id, kind, name: id, email: "", badge: "", plan: "", configDir: null, bin, loggedIn: true, usage: [] });
 const claude = acc("claude", "Claude", "/usr/bin/claude");
@@ -47,4 +47,16 @@ test("the rail's tooltip: the account, its plan and usage", () => {
   expect(tipParts(railTip(a))).toEqual({ rich: true, title: "Claude · C1", sub: "ana@example.com", body: "", rows: [{ label: "Plan", value: "Max" }, { label: "5h", value: "40% used" }], hint: "" });
   const out = tipParts(railTip({ ...codex, loggedIn: false }));
   expect([out.sub, out.body, out.rows]).toEqual(["codex", "Not signed in — Settings › Providers", []]);
+});
+
+test("Tab and Shift+Tab step the rail: the favourites, then each account, round", () => {
+  const ids = ["claude", "codex", "opencode@ts:laptop/opencode"];
+  expect(railStep(ids, null, 1)).toBe("claude");
+  expect(railStep(ids, "claude", 1)).toBe("codex");
+  expect(railStep(ids, "opencode@ts:laptop/opencode", 1)).toBeNull();
+  expect(railStep(ids, null, -1)).toBe("opencode@ts:laptop/opencode");
+  expect(railStep(ids, "claude", -1)).toBeNull();
+  // One no longer on the rail starts from the favourites.
+  expect(railStep(ids, "gone", 1)).toBe("claude");
+  expect(railStep([], null, 1)).toBeNull();
 });

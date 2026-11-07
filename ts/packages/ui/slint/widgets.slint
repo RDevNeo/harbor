@@ -711,7 +711,13 @@ export component MenuItem {
 export component AccountMark {
     in property <image> logo;
     in property <string> badge;
+    // Whose it is as a picture (their workspace photo, already round): drawn in the corner in place of `badge`.
+    in property <image> photo;
+    in property <bool> has-photo;
+    // What lies under the mark: the photo's ring, so it stands apart from the logo.
+    in property <color> ring: Theme.bg100;
     in property <color> tint: transparent;
+    property <length> photo-size: max(9px, round(self.width * 0.6 / 1px) * 1px);
     Image {
         x: parent.width * 0.12 - 1.5px;
         y: parent.height * 0.12 - 1.5px;
@@ -720,7 +726,22 @@ export component AccountMark {
         source: root.logo;
         colorize: root.tint;
     }
-    if root.badge != "": Rectangle {
+    if root.has-photo: Rectangle {
+        x: parent.width - root.photo-size + 4px - 1.5px;
+        y: parent.height - root.photo-size + 3px - 1.5px;
+        width: root.photo-size + 3px;
+        height: root.photo-size + 3px;
+        border-radius: self.width / 2;
+        background: root.ring;
+        Image {
+            x: 1.5px;
+            y: 1.5px;
+            width: root.photo-size;
+            height: root.photo-size;
+            source: root.photo;
+        }
+    }
+    if root.badge != "" && !root.has-photo: Rectangle {
         x: parent.width - self.width + 4px;
         y: parent.height - self.height + 3px;
         width: badge-text.preferred-width + 5px;
@@ -741,6 +762,10 @@ export component Trigger {
     in property <image> logo;
     in property <bool> has-logo;
     in property <string> badge;
+    in property <image> photo;
+    in property <bool> has-photo;
+    // What the chip sits on (its photo's ring when not hovered).
+    in property <color> ground: Theme.bg100;
     in property <string> label;
     in property <bool> open;
     in property <string> tip;
@@ -769,6 +794,9 @@ export component Trigger {
         height: 20px;
         logo: root.logo;
         badge: root.badge;
+        photo: root.photo;
+        has-photo: root.has-photo;
+        ring: root.hover ? Theme.accent : root.ground;
     }
     text := Text {
         x: 31px;

@@ -113,6 +113,7 @@ import {
   type MovePcAccount,
   accountsByPc,
   helloAccounts,
+  photosByName,
   type LocalAccount,
   meshAccountJson,
   type Person,
@@ -488,6 +489,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const me = aboutOwner(store, owners);
     return [{ name: me.owner, github: me.github }, ...[...hub.mesh.peers.values()].map((p) => ({ name: p.owner, github: p.github }))];
   };
+  // People's photos (Settings › Workspace's): who is signed in here, then every member of this account's workspaces.
+  const meshPhotos = (): ((name: string) => string) => {
+    const me = account.account();
+    return photosByName([...(me ? [{ name: me.name, image: me.image }] : []), ...account.directory().workspaces.flatMap((w) => w.members)]);
+  };
   // Read for every chat of `/v1/state` (its allowed accounts): worked out at most every 2 s.
   let sharedCache: [number, SharedAccount[]] = [0, []];
   const sharedNow = (): SharedAccount[] => {
@@ -505,6 +511,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       local: localAccounts(),
       peers,
       provs: new Map(peers.filter((p) => p.provs.length > 0).map((p) => [p.id, p.provs])),
+      photoOf: meshPhotos(),
     });
   };
   /** hello's `accounts` to `peer`: those this PC doesn't let its chats use (Settings › Workspace, as its files) say `shared: false`. */
@@ -515,7 +522,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return kind !== undefined && sharedWith(level, providers.access(kind).map((c) => c[0]));
     };
     // Every account, as before (Runs on and Move to PC read them); one this PC doesn't let `peer`'s chats use says so.
-    return helloAccounts(localAccounts(), meshPeople()).map((a) => meshAccountJson(kindOk(a.kind) ? a : { ...a, shared: false }));
+    return helloAccounts(localAccounts(), meshPeople(), { owner: aboutOwner(store, owners).owner, of: meshPhotos() }).map((a) => meshAccountJson(kindOk(a.kind) ? a : { ...a, shared: false }));
   };
   const pcsNow = (): Pc[] => {
     const [versions] = gatherVersions(versionsInput(hub, versionsOwn()));

@@ -691,7 +691,7 @@ export class PhoneRoutes {
           can_start: true,
           usage: a.usage.map((u) => ({ label: u.label, percent: new F64(Math.round(u.percent * 1000) / 10) })),
         };
-        if (sh) Object.assign(o, { badge: sh.badge, owner: sh.person, pc: "", pc_name: sh.pcName });
+        if (sh) Object.assign(o, { badge: sh.badge, owner: sh.person, pc: "", pc_name: sh.pcName }, sh.photo === "" ? {} : { photo: sh.photo });
         return [o];
       });
     for (const sh of shared ?? []) {
@@ -706,6 +706,7 @@ export class PhoneRoutes {
         can_start: sh.why === "",
         usage: [],
         badge: sh.badge,
+        ...(sh.photo === "" ? {} : { photo: sh.photo }),
         owner: sh.person,
         pc: sh.pc,
         pc_name: sh.pcName,

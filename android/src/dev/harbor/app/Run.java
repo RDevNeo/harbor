@@ -309,7 +309,9 @@ final class Run {
 
     private void pickAccount(Activity a, Changed ch) {
         List<Sheet.Option> o = new ArrayList<>();
-        for (JSONObject j : accounts()) o.add(new Sheet.Option(j.optString("id"), j.optString("label", j.optString("id")), usage(j), true));
+        // Each with its logo and whose it is: their workspace photo (hubs from 0.163), else their initials.
+        for (JSONObject j : accounts()) o.add(new Sheet.Option(j.optString("id"), j.optString("label", j.optString("id")), usage(j), true,
+                Ui.accountMark(a, Labels.logo(j.optString("kind")), j.optString("badge"), 28, j.optString("photo"))));
         String note = chat == null ? "Any provider can lead a chat. OpenCode works alone, without subagents." : null;
         Sheet.pick(a, "Account", note, o, account, id -> ch.apply("account", id));
     }

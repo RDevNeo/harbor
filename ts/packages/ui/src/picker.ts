@@ -86,6 +86,13 @@ export function railTip(a: Account, mesh: { title: string; owner: string; why: s
   });
 }
 
+/** The rail's next stop from `cur` (null: the favourites, first) by `dir` (1 down, -1 up), round. */
+export function railStep(ids: readonly string[], cur: string | null, dir: 1 | -1): string | null {
+  const stops: (string | null)[] = [null, ...ids];
+  const at = Math.max(0, stops.indexOf(cur));
+  return stops[(at + dir + stops.length) % stops.length] ?? null;
+}
+
 export class Favorites {
   list: [string, string][];
 
