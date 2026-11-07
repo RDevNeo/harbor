@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.159.1] - 2026-11-07
+
+### Changed
+- Dialogs that open with text already in their field (Rename worktree, Rename branch, Rename chat) put the
+  cursor at the end of it, not the start.
+
 ## [0.159.0] - 2026-11-07
 
 ### Changed

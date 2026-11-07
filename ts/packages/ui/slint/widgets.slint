@@ -524,6 +524,11 @@ export component Input {
     public function focus-field() {
         field.focus();
     }
+    // Focus with the cursor after the text (dialogs that start filled in, like Rename): Slint clamps the offset to the end.
+    public function focus-end() {
+        field.focus();
+        field.set-selection-offsets(2147483647, 2147483647);
+    }
     height: 36px;
     Rectangle {
         background: Theme.bg100;
