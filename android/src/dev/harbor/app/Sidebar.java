@@ -384,7 +384,7 @@ final class Sidebar {
         View line = new View(a);
         line.setBackgroundColor(Ui.dark ? Ui.G400 : Ui.G300);
         h.addView(line, Ui.margins(new LinearLayout.LayoutParams(0, Math.max(1, Ui.dp(1)), 1), 12, 0, 12, 0));
-        h.addView(Ui.icon(a, showSettled ? Ui.I_UP : Ui.I_DOWN, 15, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
+        h.addView(Ui.icon(a, showSettled ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 15, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
         h.setOnClickListener(v -> toggle.run());
         return h;
     }
