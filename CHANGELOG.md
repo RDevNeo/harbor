@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.152.0] - 2026-11-06
+
 ### Added
 - OpenCode is a provider again (desktop and phone): Settings › Providers lists it when `opencode`
   is installed (also from `~/.opencode/bin`, where its installer puts it), and the model picker
