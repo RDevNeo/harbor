@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.153.0] - 2026-11-06
+
 ### Added
 - OpenCode (and Codex) can be a chat's main model, on desktop and phone: a new chat runs on the
   OpenCode model picked (it was switched to Claude Opus), and an existing chat's picker offers every
