@@ -6,7 +6,8 @@
 # leaves the PNGs in ~/out/shots, packed as ~/out/shots.tgz.
 #
 # Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|home>,
-# tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>, wait:<seconds>,
+# tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>,
+# broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>,
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults.
 #
@@ -216,6 +217,7 @@ for st in "$@"; do
     swipe:*) IFS=, read -r x1 y1 x2 y2 <<< "${st#swipe:}"; ad input swipe "$x1" "$y1" "$x2" "$y2" 300 ;;
     text:*) t=${st#text:}; ad input text "$(printf %q "${t// /%s}")" ;;
     key:*) ad input keyevent "KEYCODE_${st#key:}" ;;
+    broadcast:*) ad am broadcast -a "${st#broadcast:}" -p "$pkg" >/dev/null ;;
     wait:*) sleep "${st#wait:}" ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;
     *) echo "unknown step: $st"; fail=1; break ;;

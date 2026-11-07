@@ -194,6 +194,9 @@ javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "
 java -cp "$W/classes:$W/test" dev.harbor.app.EchoTest
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/RaceTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.RaceTest
+# And when text in the composer is a message copied with its images (ClipMatch).
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/ClipMatchTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.ClipMatchTest
 # And the model badges' names and the agent strip's stops (Labels).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/LabelsTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.LabelsTest

@@ -24,6 +24,9 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --swipe X1,Y1,X2,Y2
   --text WORDS     types into the focused field
   --key NAME       an Android key: BACK, ENTER, DEL, TAB…
+  --broadcast ACTION  a broadcast to the app, for a test build's hooks (Rig.java):
+                   dev.harbor.app.RIG_KEYBOARD_PASTE types the clipboard's text as a keyboard's
+                   clipboard does, dev.harbor.app.RIG_TEXT_CLIP leaves only its text on it
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
@@ -48,7 +51,7 @@ steps=() quiet="" dark="" from="" save="" drop=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
-    --tap|--press|--swipe|--text|--key|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
+    --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --from) from=$2; shift ;;
     --save-snapshot) save=1 ;;

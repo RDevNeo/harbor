@@ -234,6 +234,8 @@ final class Composer {
     private void arrived(Editable e) {
         int from = changedAt, to = changedAt + changedLen; // the replacements below move them
         boolean ours = to <= e.length() && e.subSequence(from, to).toString().equals(edit.clipText);
+        // A message copied with its images, typed whole by a keyboard's clipboard (text only): its images too.
+        if (!ours && edit.copyArrived(e, from, to)) ours = true;
         List<int[]> all = TagList.images(e);
         edit.renumbering = true;
         try {
@@ -534,10 +536,38 @@ final class Composer {
          *  and those its text doesn't name get their tokens after it, as on the desktop
          *  (ts usertext.ts `pastedCopy`). False: the clip isn't such a copy. */
         boolean pasteCopy(ClipData from) {
-            Copied.Info c = attach == null ? null : Copied.mine(from);
+            Copied.Info c = attach == null ? null : Copied.mine(getContext(), from);
             if (c == null) return false;
+            List<Attach.Up> ups = attachCopy(c);
+            clipText = c.text; // arrived() maps the tokens of the text typed below to these images
+            int a = Math.max(0, getSelectionStart()), b = Math.max(0, getSelectionEnd());
+            try { getText().replace(Math.min(a, b), Math.max(a, b), c.text); } finally { clipText = null; }
+            setSelection(Math.min(getText().length(), Math.min(a, b) + c.text.length())); // the tokens go after it
+            tokensAfter(c, ups);
+            attached();
+            return true;
+        }
+
+        /** Text that came in whole (from..to of e) is a message copied with its images, typed by a
+         *  keyboard's clipboard or pasted from a clip that lost the images on the way: they attach
+         *  as a paste's would, its tokens (`clip`) name them, and the rest get tokens after it.
+         *  False: it isn't one, or the keyboard is still composing it (a word typed). */
+        boolean copyArrived(Editable e, int from, int to) {
+            if (attach == null || from < 0 || to > e.length()) return false;
+            Copied.Info c = Copied.typed(getContext(), e.subSequence(from, to));
+            if (c == null) return false;
+            int cs = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(e), ce = android.view.inputmethod.BaseInputConnection.getComposingSpanEnd(e);
+            if (cs >= 0 && ce > cs && cs < to && ce > from) return false;
+            List<Attach.Up> ups = attachCopy(c);
+            // Its tokens go after the text once this change is over: no edit inside a text watcher's turn.
+            post(() -> { tokensAfter(c, ups); attached(); });
+            return true;
+        }
+
+        /** Attaches copy c's images; `clip` then maps a user message's `[Image #k]` to its k-th. */
+        private List<Attach.Up> attachCopy(Copied.Info c) {
             java.util.function.IntConsumer on = attach.onImage;
-            attach.onImage = null; // the tokens are written below, not at each attach
+            attach.onImage = null; // the tokens are written by the caller, not at each attach
             java.util.Map<Integer, Attach.Up> named = new java.util.HashMap<>();
             List<Attach.Up> ups = new ArrayList<>();
             try {
@@ -547,15 +577,15 @@ final class Composer {
                     if (c.named) named.put(i + 1, u);
                 }
             } finally { attach.onImage = on; }
-            clipText = c.text;
-            clip = named; // arrived() maps the tokens of the text typed below to these images
-            int a = Math.max(0, getSelectionStart()), b = Math.max(0, getSelectionEnd());
-            getText().replace(Math.min(a, b), Math.max(a, b), c.text);
+            clip = named;
+            return ups;
+        }
+
+        /** Tokens, at the cursor, for copy c's images its text doesn't name. */
+        private void tokensAfter(Copied.Info c, List<Attach.Up> ups) {
             java.util.Set<Integer> said = new java.util.HashSet<>();
             if (c.named) for (int[] t : TagList.images(c.text)) said.add(t[2]);
-            for (int i = 0; i < ups.size(); i++) if (!said.contains(i + 1) && ups.get(i).number > 0) insertImage(ups.get(i).number);
-            attached();
-            return true;
+            for (int i = 0; i < ups.size(); i++) if (!said.contains(i + 1) && ups.get(i).number > 0 && !ups.get(i).dropped) insertImage(ups.get(i).number);
         }
 
         /** Attaches the clipboard's images and types its text; false when it holds no image. */

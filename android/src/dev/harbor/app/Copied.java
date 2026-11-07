@@ -26,14 +26,16 @@ final class Copied {
     /** Past this, an image is left out (it would be a slow copy). */
     private static final int MAX_BYTES = 32 << 20;
 
-    /** The last copy made here, so Harbor's composer can give its `[Image #k]` tokens back. */
+    /** The last copy made here, so Harbor's composer can give its `[Image #k]` tokens back. Kept
+     *  in cache/clip too (SAVED): Android may end the app between the copy and the paste. */
     static final class Info {
         final String text; final List<Uri> uris; final boolean named;
         Info(String text, List<Uri> uris, boolean named) { this.text = text; this.uris = uris; this.named = named; }
     }
-    private static Info last;
+    private static volatile Info last;
+    private static final String SAVED = "last.json";
     /** Each copy's files get their own names: a clip still pasting never reads the next one's. */
-    private static int seq;
+    private static volatile int seq = (int) (System.currentTimeMillis() / 1000 % 100_000_000); // not an earlier run's names
 
     static File dir(Context c) {
         File d = new File(c.getCacheDir(), "clip");
@@ -53,6 +55,7 @@ final class Copied {
         int n = ++seq;
         Ui.pool.execute(() -> {
             File d = dir(c);
+            last = null; // its images go now
             File[] old = d.listFiles();
             if (old != null) for (File f : old) if (!f.getName().startsWith(n + "-")) f.delete();
             List<Uri> uris = new ArrayList<>();
@@ -67,7 +70,12 @@ final class Copied {
             }
             Ui.main.post(() -> {
                 if (n != seq) return; // a later copy came first
-                if (uris.isEmpty()) { Ui.copy(a, text); return; }
+                if (uris.isEmpty()) {
+                    // Said, not silent: a paste of just the text would look like this feature failing.
+                    ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Harbor", text));
+                    Ui.toast(c, pics.size() == 1 ? "Copied the text: its image couldn't be fetched" : "Copied the text: its images couldn't be fetched");
+                    return;
+                }
                 List<String> mimes = new ArrayList<>();
                 mimes.add(ClipDescription.MIMETYPE_TEXT_PLAIN);
                 mimes.addAll(types);
@@ -75,6 +83,7 @@ final class Copied {
                 // The others with an empty text: a plain text box pastes nothing for them, not their address.
                 for (int i = 1; i < uris.size(); i++) clip.addItem(new ClipData.Item("", null, null, uris.get(i)));
                 last = new Info(text, uris, named);
+                save(c, last, n);
                 ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(clip);
                 Ui.toast(c, uris.size() == 1 ? "Copied with its image" : "Copied with " + uris.size() + " images");
             });
@@ -124,12 +133,60 @@ final class Copied {
         return null;
     }
 
-    /** The copy made here that `clip` is (it's still on the clipboard), or null. */
-    static Info mine(ClipData clip) {
+    private static void save(Context c, Info l, int n) {
+        try {
+            org.json.JSONArray us = new org.json.JSONArray();
+            for (Uri u : l.uris) us.put(u.toString());
+            String json = new org.json.JSONObject().put("text", l.text).put("named", l.named).put("uris", us).toString();
+            Ui.pool.execute(() -> {
+                if (n != seq) return;
+                try (OutputStream o = new FileOutputStream(new File(dir(c), SAVED))) { o.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                catch (IOException ignored) { }
+            });
+        } catch (org.json.JSONException ignored) { }
+    }
+
+    /** The last copy: this run's, or the one an earlier run saved, while its images are still here. */
+    private static Info last(Context c) {
         Info l = last;
-        if (l == null || clip == null || clip.getDescription() == null || !LABEL.contentEquals(clip.getDescription().getLabel())) return null;
-        if (clip.getItemCount() != l.uris.size()) return null;
-        for (int i = 0; i < clip.getItemCount(); i++) if (!l.uris.get(i).equals(clip.getItemAt(i).getUri())) return null;
-        return l;
+        if (l != null || c == null) return l;
+        File f = new File(dir(c), SAVED);
+        if (!f.isFile()) return null;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+            org.json.JSONArray us = o.getJSONArray("uris");
+            List<Uri> uris = new ArrayList<>();
+            for (int i = 0; i < us.length(); i++) {
+                Uri u = Uri.parse(us.getString(i));
+                if (!new File(dir(c), String.valueOf(u.getLastPathSegment())).isFile()) return null;
+                uris.add(u);
+            }
+            if (uris.isEmpty()) return null;
+            return last = new Info(o.getString("text"), uris, o.optBoolean("named"));
+        } catch (IOException | org.json.JSONException e) {
+            return null;
+        }
+    }
+
+    /** The copy made here that `clip` is, or null: the clip itself still, or its text alone (a
+     *  phone's own clipboard, Samsung's, or a clipboard app may hand the text back without the
+     *  images, or with copies of them under its own addresses). */
+    static Info mine(Context c, ClipData clip) {
+        Info l = last(c);
+        if (l == null || clip == null) return null;
+        if (clip.getDescription() != null && LABEL.contentEquals(clip.getDescription().getLabel()) && clip.getItemCount() == l.uris.size()) {
+            boolean same = true;
+            for (int i = 0; i < clip.getItemCount(); i++) same &= l.uris.get(i).equals(clip.getItemAt(i).getUri());
+            if (same) return l;
+        }
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < clip.getItemCount(); i++) if (clip.getItemAt(i).getText() != null) text.append(clip.getItemAt(i).getText());
+        return ClipMatch.same(l.text, text) ? l : null;
+    }
+
+    /** The copy made here whose text `typed` is (a keyboard's clipboard types just the text), or null. */
+    static Info typed(Context c, CharSequence typed) {
+        Info l = last(c);
+        return l != null && ClipMatch.same(l.text, typed) ? l : null;
     }
 }

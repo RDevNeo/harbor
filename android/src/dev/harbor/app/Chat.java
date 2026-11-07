@@ -34,6 +34,8 @@ public class Chat extends Base implements Images.Gallery {
     private View jump;
     private LinearLayout content, status;
     private Composer comp;
+    /** A test build's stand-in for a keyboard's clipboard (Rig.keyboard); null in every other build. */
+    private android.content.BroadcastReceiver rigKeyboard;
     private EditText composer;
     private Attach attach;
     private Run run;
@@ -143,6 +145,7 @@ public class Chat extends Base implements Images.Gallery {
         attach = new Attach(this, hub, chatId);
         comp = new Composer(this, attach, "Chat with Claude…");
         composer = comp.edit;
+        if (Rig.on()) rigKeyboard = Rig.keyboard(this, comp.edit);
         slash = new Slash(this, hub, chatId, comp.edit, this::harbor);
         stage.addView(slash.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
         // `@` files and `#` issues and PRs share the composer's cursor and Back with the slash menu.
@@ -221,6 +224,7 @@ public class Chat extends Base implements Images.Gallery {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (rigKeyboard != null) unregisterReceiver(rigKeyboard);
         if (echoKey != null && showing.get(echoKey) == this) showing.remove(echoKey);
     }
 

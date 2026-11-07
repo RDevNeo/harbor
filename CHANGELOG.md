@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Phone: a message copied with its images attaches them when pasted into Harbor's composer from the
+  keyboard's clipboard (Samsung's and Gboard's give back only the text), from a clipboard app that
+  kept just the text, and after Android closed Harbor between the copy and the paste. A copy whose
+  images couldn't be fetched from the PC says so instead of quietly copying only the text.
+
 ## [0.160.1] - 2026-11-07
 
 ### Changed

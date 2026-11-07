@@ -16,6 +16,31 @@ final class Rig {
 
     static boolean on() { return Config.RIG_PORT > 0; }
 
+    /** What a keyboard's clipboard does with a copy (phoneshot --broadcast): RIG_KEYBOARD_PASTE
+     *  types the clipboard's text into the composer through an input connection, as Samsung's
+     *  and Gboard's clipboards do (just the text of a clip that also holds images);
+     *  RIG_TEXT_CLIP puts only the clipboard's text back on it, as a clipboard app may. */
+    static android.content.BroadcastReceiver keyboard(android.app.Activity a, android.widget.EditText edit) {
+        android.content.BroadcastReceiver r = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context c, android.content.Intent in) {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) a.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                android.content.ClipData clip = cm.getPrimaryClip();
+                if (clip == null || clip.getItemCount() == 0) return;
+                CharSequence text = clip.getItemAt(0).getText();
+                if (text == null) return;
+                if (in.getAction().endsWith("RIG_TEXT_CLIP")) { cm.setPrimaryClip(android.content.ClipData.newPlainText("Clipboard", text)); return; }
+                edit.requestFocus();
+                android.view.inputmethod.InputConnection ic = edit.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
+                if (ic != null) ic.commitText(text, 1);
+            }
+        };
+        android.content.IntentFilter f = new android.content.IntentFilter("dev.harbor.app.RIG_KEYBOARD_PASTE");
+        f.addAction("dev.harbor.app.RIG_TEXT_CLIP");
+        if (android.os.Build.VERSION.SDK_INT >= 33) a.registerReceiver(r, f, android.content.Context.RECEIVER_EXPORTED);
+        else a.registerReceiver(r, f);
+        return r;
+    }
+
     static JSONObject account() {
         try {
             JSONArray members = new JSONArray()
