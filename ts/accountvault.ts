@@ -208,7 +208,7 @@ export function whatsappApp(): SingleApp {
       if (extra) for (const f of ["wa.db", "wa.db-shm", "wa.db-wal", "notices.jsonl"]) rmSync(join(root(), f), { force: true });
     },
     request: (req, waitMs) => whatsapp.requestHere(req, waitMs),
-    ops: ["status", "call", "signout", "cancel", "uncode"],
+    ops: ["status", "call", "signout", "cancel"],
     gapMs: 5 * 60_000,
   };
 }
