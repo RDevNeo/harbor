@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.156.1] - 2026-11-07
+
 ### Changed
 - The sidebar's bottom row no longer has the Pull requests and Issues buttons, and the phone's drawer
   no longer has their rows. Both pages still open from the search (Ctrl+K) and from a project's menu.
