@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.160.0] - 2026-11-07
+
+### Added
+- Every PC's agent accounts in the workspace are offered on every other PC and phone: the model
+  picker's rail and the phone's account list show them, each sign-in once (this PC's own when it has
+  it), with its owner's initials as the badge (two people with the same ones are told apart, e.g. FS
+  and FiS). A PC that is off shows its accounts greyed, with why.
+- Picking another PC's account starts the chat on that PC, which runs it with its own login: keys and
+  sign-ins never leave the PC that has them. Another PC that has the same sign-in takes over when the
+  first is off. What that PC lets your PC's chats do there (Settings › Workspace) caps the chat's
+  access, and it refuses when it shares nothing.
+- A started chat switches to another PC's account too: it moves there (as Move to PC does) and goes on
+  with that account. A Claude session that stays on Claude comes along; any other switch goes on in a
+  new session with the conversation so far, as switching providers on one PC does. On the phone too.
+
+### Changed
+- The who-is-who agents are told lists each account once, under the PC that runs it, and each phone
+  once.
+
 ## [0.159.1] - 2026-11-07
 
 ### Changed
