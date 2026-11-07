@@ -329,14 +329,14 @@ export async function openChat(e: Engine, me: Chat, a: unknown): Promise<string>
     if (!e.host.openElsewhere) throw new Error(`no PC named '${machine}'. PCs: ${homeName(e, me)}`);
     return e.host.openElsewhere(me, machine, a);
   }
-  const mine = e.account(me.account)?.kind === "Claude";
-  const acc = pickAccount(e, arg(a, "account"), mine ? me.account : "claude", "Claude");
+  // A chat runs on any provider: the one named, else this chat's own.
+  const acc = pickAccount(e, arg(a, "account"), me.account);
   const account = acc.id;
-  if (acc.kind !== "Claude") throw new Error(`chats run on a Claude account; give ${acc.kind} work with spawn_agent instead`);
+  if (acc.bin === null) throw new Error(`${acc.kind} is not installed`);
   const same = account === me.account;
   const model = arg(a, "model") || (same ? me.model : "");
   const effort = arg(a, "effort") || (same ? me.effort : "");
-  const fresh = e.newThread(repo, prompt, { account, model, effort, access: me.access, device: me.device });
+  const fresh = e.newThread(repo, prompt, { account, model, effort, access: me.access, device: acc.kind === "Claude" ? me.device : "" });
   if (title !== "") fresh.title = title;
   e.notice(fresh.id, "chat", oc.openedBy(me.title), `${oc.LINK}${me.gid}`);
   e.notice(me.id, "chat", `Opened ${oc.quoted(fresh.title)}`, `${oc.LINK}${fresh.gid}`);

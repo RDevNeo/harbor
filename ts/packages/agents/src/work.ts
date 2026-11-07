@@ -46,20 +46,20 @@ export class Work {
     return this.e.account(ok ? pick : composer) ?? this.e.host.accounts().find((a) => a.kind === "Claude");
   }
 
-  /** A thread in `project` that runs `prompt`; another provider than Claude does the work as the lead's one subagent. */
+  /** A thread in `project` that runs `prompt`, led by the account picked for GitHub work (else the composer's). */
   launch(project: number, prompt: string, composer: { account: string; model: string; effort: string }, quiet: boolean): Chat | null {
     const acc = this.account(composer.account);
     if (!acc) return null;
-    let { account, model } = composer;
-    let p = prompt;
-    if (acc.kind === "Claude") {
-      if (this.e.account(account)?.kind !== "Claude") model = "claude-opus-5-5";
-      account = acc.id;
-    } else p = `${prompt}\n\nDo the work through one subagent: spawn_agent with account \`${acc.id}\` (${acc.kind}).`;
+    // The composer's model and effort go with its provider; another provider's account runs on its defaults.
+    const same = this.e.account(composer.account)?.kind === acc.kind;
+    const account = acc.id;
+    const model = same ? composer.model : acc.kind === "Claude" ? "claude-opus-5-5" : "";
+    const effort = same ? composer.effort : "";
+    const p = prompt;
     // As when the user writes: their own run lifts a project's pause.
     if (!quiet) this.e.paused.delete(project);
     // Fix and merge threads change the project: full access, whatever the composer is on.
-    const chat = this.e.newThread(project, p, { account, model, effort: composer.effort, access: "full", device: "" });
+    const chat = this.e.newThread(project, p, { account, model, effort, access: "full", device: "" });
     const item: Item = { kind: "user", text: p, files: [], at: now(), mentions: [], sender: "", intent: "" };
     this.e.transcript(chat.id).items.push(item);
     this.e.persist(chat.id);

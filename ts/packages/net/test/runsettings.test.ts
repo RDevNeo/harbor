@@ -23,7 +23,7 @@ test("run_settings_follow_the_desktop_rules", () => {
   const lead = chat("claude", false, "lead");
   // Nothing asked.
   expect(run(lead, claude, { title: "x" })).toBeNull();
-  // Another Claude account: fine; another provider: 409 (a lead runs on Claude).
+  // Another Claude account: fine; an account not allowed (here only Claude's are): 409.
   expect(run(lead, claude, { account: "claude2" })?.chat).toMatchObject({ account: "claude2", model: "claude-opus-5-5" });
   expect(status(() => run(lead, claude, { account: "codex" }))).toBe(409);
   expect(status(() => run(lead, claude, { account: "nope" }))).toBe(400);
@@ -54,9 +54,21 @@ test("run_settings_follow_the_desktop_rules", () => {
   expect(lead.effort).toBe("high");
 });
 
-test("a lead may switch only among Claude accounts, a started chat stays on its provider", () => {
-  const accounts = [account("claude", "Claude"), account("claude2", "Claude"), account("codex", "Codex")];
-  expect(allowedAccounts(chat("claude", false, "lead"), accounts)).toEqual(["claude", "claude2"]);
+test("a lead may switch to any provider unless it started on another device, a started subagent stays on its provider", () => {
+  const accounts = [account("claude", "Claude"), account("claude2", "Claude"), account("codex", "Codex"), account("opencode", "OpenCode")];
+  expect(allowedAccounts(chat("claude", false, "lead"), accounts)).toEqual(["claude", "claude2", "codex", "opencode"]);
+  expect(allowedAccounts(chat("claude", true, "lead"), accounts)).toEqual(["claude", "claude2", "codex", "opencode"]);
+  expect(allowedAccounts({ ...chat("claude", true, "lead"), device: "ts:laptop" }, accounts)).toEqual(["claude", "claude2"]);
   expect(allowedAccounts(chat("codex", true, "sub"), accounts)).toEqual(["codex"]);
-  expect(allowedAccounts(chat("codex", false, "sub"), accounts)).toEqual(["claude", "claude2", "codex"]);
+  expect(allowedAccounts(chat("codex", false, "sub"), accounts)).toEqual(["claude", "claude2", "codex", "opencode"]);
+});
+
+test("a lead switched to OpenCode takes its models and only access level; one not started leaves its device", () => {
+  const accounts = [account("claude", "Claude"), account("opencode", "OpenCode")];
+  const lead = { ...chat("claude", true, "lead"), access: "plan" as const };
+  const models = (k: providers.Kind) => (k === "OpenCode" ? providers.opencodeModelList(["nvidia/z-ai/glm-5.3-flash"], []) : providers.staticModels(k));
+  const n = checkRun(lead, { account: "opencode", model: "nvidia/z-ai/glm-5.3-flash" }, accounts, allowedAccounts(lead, accounts), models, [])?.chat as Chat;
+  expect([n.account, n.model, n.effort, n.access]).toEqual(["opencode", "nvidia/z-ai/glm-5.3-flash", "", "full"]);
+  const draft = { ...chat("claude", false, "lead"), device: "ts:laptop" };
+  expect(checkRun(draft, { account: "opencode" }, accounts, allowedAccounts(draft, accounts), models, ["ts:laptop"])?.chat.device).toBe("");
 });

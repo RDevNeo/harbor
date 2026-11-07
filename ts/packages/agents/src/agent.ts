@@ -314,9 +314,11 @@ function isDir(p: string): boolean {
 /** Builds the command line and the bytes to write to stdin, per provider, and the bridge grant of a remote turn. */
 export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: string | null; grant: Grant | null }> {
   if (given.remote && given.account.kind !== "Claude") throw new Error(`only Claude Code runs on other devices so far, not ${given.account.kind}`);
-  // CLIs without a system-prompt flag get the team instructions in the first message.
+  // CLIs without a system-prompt flag get the team instructions in the first message; OpenCode, which has no team
+  // tools, leads a chat as a plain agent (its subagents still get theirs: who they are and what they work on).
+  const plain = given.account.kind === "OpenCode" && given.team?.role === "lead";
   const spec: TurnSpec =
-    given.team && given.account.kind !== "Claude" && !given.resume ? { ...given, prompt: `${given.team.system}\n\n---\n\n${given.prompt}`, remote: null } : given;
+    given.team && given.account.kind !== "Claude" && !given.resume && !plain ? { ...given, prompt: `${given.team.system}\n\n---\n\n${given.prompt}`, remote: null } : given;
   const a = spec.account;
   const cmd = detach.command(binStr(a));
   cmd.cwd = spec.cwd;

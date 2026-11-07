@@ -109,7 +109,7 @@ export function tools(role: string): JsonObject[] {
           prompt: prop("string", "Its first message: a complete, self-contained request"),
           project: prop("string", "Project name or folder (default: this chat's project)"),
           title: prop("string", "Sidebar title (default: the prompt's first line)"),
-          account: prop("string", "Claude account id from list_models (default: yours)"),
+          account: prop("string", "Account id from list_models: Claude, Codex or OpenCode (default: yours)"),
           model: prop("string", "Model id from list_models (default: yours)"),
           effort: prop("string", "Reasoning effort (optional)"),
           machine: prop("string", "Another PC of the user's Harbor mesh to run it on (default: this PC)"),

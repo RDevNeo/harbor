@@ -391,7 +391,8 @@ refetch everything.
   every PC of the mesh (this one first). A hub the phone has no token for yet: ask `GET /v1/hubs`.
 - `usage[].percent`: 0–100 with one decimal (100.0 = that window is used up); `label` names the
   window ("5h", "Weekly", …).
-- `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
+- `can_start`: the account can start a new chat (a lead). Every provider can since 0.153 (hubs before it:
+  only Claude); OpenCode leads work alone, without subagents.
 - `queued`: messages waiting for the running turn.
 - `working` (optional, older hubs leave it out: use `running`): the chat is busy as the desktop
   sidebar shows it, its own turn or, for a lead, any of its sub-agents' turns or work queued for
@@ -823,8 +824,10 @@ when the message is gone (it started or was removed):
 The same changes the desktop composer allows, with its rules. The whole request is checked
 first; if any field fails nothing changes (`400` an unknown value, `409` not switchable now).
 
-- `account`: one of the chat's `allowed_accounts`. A lead runs on Claude; a chat that has
-  started keeps its provider (Claude accounts share sessions, so it may move between them).
+- `account`: one of the chat's `allowed_accounts`. A lead may switch to any provider (hubs before
+  0.153: Claude only), unless it started on another device (Claude only there); a started lead
+  that changes provider continues in a fresh session that gets the conversation so far. A started
+  subagent keeps its provider (Claude accounts share sessions, so it may move between them).
   When the provider changes and no `model` is given, the model becomes that provider's first one.
 - `model`: one of `models[kind]` of the (new) account's kind.
 - `effort`: one of `efforts[kind]`, or `""`. Left out and no longer valid for the provider: its default.

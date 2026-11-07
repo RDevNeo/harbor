@@ -1095,3 +1095,110 @@ test("the failed-MCP notice names the failed servers only, and only when some fa
   const many = ["a", "b", "c", "d", "e", "f"].map((n): [string, string] => [n, "failed"]);
   expect(mcpFailNotice(many)).toBe("MCP servers didn't connect: a, b, c and 3 more · they reconnect on the next turn");
 });
+
+// An OpenCode-shaped CLI (`opencode run --format json … <prompt>`): logs its arguments, answers "oc: <prompt>" in the
+// session given with --session, else a new one.
+const ocBin = join(base, "opencode");
+const ocLog = join(base, "opencode-args.log");
+writeFileSync(
+  ocBin,
+  `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+${GUARD()}const a = process.argv.slice(2);
+appendFileSync(${JSON.stringify(ocLog)}, JSON.stringify(a) + "\\n");
+const sid = a.includes("--session") ? a[a.indexOf("--session") + 1] : "ses_fake" + Date.now();
+const out = (v) => process.stdout.write(JSON.stringify(v) + "\\n");
+out({ type: "step_start", sessionID: sid, part: { type: "step-start", sessionID: sid } });
+out({ type: "text", sessionID: sid, part: { type: "text", text: "oc: " + a.at(-1) } });
+out({ type: "step_finish", sessionID: sid, part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0 } } } });
+process.exit(0);
+`,
+);
+chmodSync(ocBin, 0o755);
+
+describe("OpenCode as a chat's main model", () => {
+  const ocAccount: Account = { id: "opencode", kind: "OpenCode", name: "OpenCode", email: "", badge: "", plan: "", configDir: null, bin: ocBin, loggedIn: null, usage: [] };
+  const ocSetup = (): { e: Engine; store: Store } => {
+    process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
+    const store = Store.openTemp();
+    return { e: new Engine({ store, accounts: () => [account, ocAccount], changed: () => {} }), store };
+  };
+  const runs = (): string[][] => (existsSync(ocLog) ? readFileSync(ocLog, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as string[]) : []);
+
+  test("a new thread on an OpenCode model runs on it, without the team's instructions, and continues its session", async () => {
+    rmSync(ocLog, { force: true });
+    const { e, store } = ocSetup();
+    const c = e.newThread(null, "hello", { account: "opencode", model: "nvidia/z-ai/glm-5.3-flash", effort: "high", access: "plan", device: "ts:laptop" });
+    // Not switched to Claude: OpenCode's model, its only access level, this PC.
+    expect(c).toMatchObject({ account: "opencode", model: "nvidia/z-ai/glm-5.3-flash", role: "lead", access: "full", device: "" });
+    e.send(c.id, "hello");
+    await until("its first turn", () => !e.running(c.id) && texts(e.transcript(c.id).items).includes("oc: hello"));
+    const first = runs()[0] as string[];
+    expect(first.slice(0, 5)).toEqual(["run", "--format", "json", "--thinking", "--auto"]);
+    expect(first).toContain("nvidia/z-ai/glm-5.3-flash");
+    expect(first).not.toContain("--session");
+    // A plain agent: no team prompt (it has no team tools).
+    expect(first.at(-1)).toBe("hello");
+    const sid = e.chat(c.id)?.sessionId ?? "";
+    expect(sid).toStartWith("ses_fake");
+    expect(e.chat(c.id)?.started).toBe(true);
+    e.send(c.id, "again");
+    await until("its second turn", () => !e.running(c.id) && texts(e.transcript(c.id).items).includes("oc: again"));
+    const second = runs()[1] as string[];
+    expect(second[second.indexOf("--session") + 1]).toBe(sid);
+    expect(e.chat(c.id)?.sessionId).toBe(sid);
+    store.close();
+  });
+
+  test("a lead started on Claude and switched to OpenCode continues in a new session with the conversation so far", async () => {
+    rmSync(ocLog, { force: true });
+    const { e, store } = ocSetup();
+    const c = newChat(store, { role: "lead", name: "lead" });
+    e.reload();
+    e.send(c.id, "first");
+    await until("Claude's turn", () => !e.running(c.id) && texts(e.transcript(c.id).items).includes("echo: first"));
+    expect(e.chat(c.id)?.started).toBe(true);
+    // The picker's switch (desktop setSel, phone PATCH): the account and model change, nothing else.
+    const chat = e.chat(c.id) as Chat;
+    chat.account = "opencode";
+    chat.model = "nvidia/z-ai/glm-5.3-flash";
+    store.saveChat(chat);
+    e.send(c.id, "second");
+    await until("OpenCode's turn", () => !e.running(c.id) && texts(e.transcript(c.id).items).some((t) => t.startsWith("oc: ")));
+    const run = runs()[0] as string[];
+    expect(run).not.toContain("--session");
+    const prompt = run.at(-1) ?? "";
+    expect(prompt).toStartWith("This conversation started on Claude and continues with you (OpenCode).");
+    expect(prompt).toContain("user: first");
+    expect(prompt).toContain("echo: first");
+    expect(prompt).toEndWith("second");
+    expect(e.transcript(c.id).items.some((i) => i.kind === "notice" && i.text.startsWith("Continues on OpenCode"))).toBe(true);
+    expect(e.chat(c.id)?.sessionId).toStartWith("ses_fake");
+    // The next turn resumes OpenCode's session, with no second hand-over.
+    e.send(c.id, "third");
+    await until("its next turn", () => !e.running(c.id) && texts(e.transcript(c.id).items).includes("oc: third"));
+    const next = runs()[1] as string[];
+    expect(next).toContain("--session");
+    expect(next.at(-1)).toBe("third");
+    store.close();
+  });
+
+  test("open_chat and Fix threads run on OpenCode when it's the account asked for", async () => {
+    const { e, store } = ocSetup();
+    store.addRepo(base);
+    const repo = store.repos()[0]?.id ?? 0;
+    const lead = newChat(store, { role: "lead", name: "lead", title: "Main" });
+    e.reload();
+    await e.tool(lead.id, "open_chat", { prompt: "look into the docs", title: "Docs", account: "opencode", model: "nvidia/z-ai/glm-5.3-flash" });
+    const fresh = e.chats.find((c) => c.title === "Docs") as Chat;
+    expect(fresh).toMatchObject({ account: "opencode", model: "nvidia/z-ai/glm-5.3-flash" });
+    await until("its turn", () => !e.running(fresh.id));
+    const work = new Work(e);
+    const issue = { number: 9, title: "Crash on start", url: "https://github.com/o/r/issues/9", repo: "o/r", state: "open", updated: 1, assignees: ["me"], linked_pr: false, author_trusted: true };
+    const c = work.fixIssue(repo, issue, "", { account: "opencode", model: "nvidia/z-ai/glm-5.3-flash", effort: "" }) as Chat;
+    expect(c).toMatchObject({ account: "opencode", model: "nvidia/z-ai/glm-5.3-flash", role: "lead" });
+    expect(texts(e.transcript(c.id).items)[0]).not.toContain("spawn_agent");
+    await until("its fix turn", () => !e.running(c.id));
+    store.close();
+  });
+});

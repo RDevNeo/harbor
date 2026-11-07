@@ -272,12 +272,12 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect(s.chats.find((c) => c.id === gone.id)?.writable).toBe(false);
   });
 
-  test("run settings follow the providers: a lead stays on Claude, a started chat on its provider", () => {
+  test("run settings follow the providers: a lead switches to any (OpenCode too), a started subagent stays on its provider", () => {
     const store = Store.openAt(join(tmp, "catalog.db"));
     const hub = new Hub([], 0);
     const replica = new StoreReplica({ store, hub, version: "t" });
     const acct = (id: string, kind: string, bin: string | null): CatalogAccount => ({ id, kind, name: id, badge: "AB", bin, loggedIn: true, usage: [{ label: "5h", percent: 0.4213 }] });
-    const accounts = [acct("claude", "Claude", "/bin/true"), acct("claude2", "Claude", "/bin/true"), acct("codex", "Codex", "/bin/true"), acct("claude3", "Claude", null)];
+    const accounts = [acct("claude", "Claude", "/bin/true"), acct("claude2", "Claude", "/bin/true"), acct("codex", "Codex", "/bin/true"), acct("opencode", "OpenCode", "/bin/true"), acct("claude3", "Claude", null)];
     store.set("default_effort", "high");
     const catalog = catalogOf(providers, () => accounts, store);
     const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog });
@@ -285,20 +285,26 @@ describe("the phone API's chats (api.rs App side)", () => {
     const lead = store.createChat(blankChat({ title: "l", role: "lead", account: "claude", started: true }));
     const sub = store.createChat(blankChat({ title: "s", role: "sub", account: "codex", started: true }));
     const fresh = store.createChat(blankChat({ title: "f", role: "chat", account: "codex" }));
+    // A lead that started on another device stays on Claude, the only provider that runs there.
+    const away = store.createChat(blankChat({ title: "a", role: "lead", account: "claude", started: true, device: "ts:laptop" }));
     const s = routes.state("tok:0", false) as { chats: { id: number; allowed_accounts: string[]; switch_reason: Record<string, string>; switchable: Record<string, boolean> }[]; accounts: { id: string; label: string; usage: Json[] }[]; defaults: { model: string } };
     const of = (id: number) => s.chats.find((c) => c.id === id);
-    expect(of(lead.id)?.allowed_accounts).toEqual(["claude", "claude2"]);
+    expect(of(lead.id)?.allowed_accounts).toEqual(["claude", "claude2", "codex", "opencode"]);
     expect(of(lead.id)?.switchable.account).toBe(true);
+    expect(of(away.id)?.allowed_accounts).toEqual(["claude", "claude2"]);
     expect(of(sub.id)?.allowed_accounts).toEqual(["codex"]);
     expect(of(sub.id)?.switch_reason.account).toBe("A started chat stays on Codex");
     expect(of(sub.id)?.switch_reason.device).toBe("Only Claude chats move between devices for now");
-    expect(of(fresh.id)?.allowed_accounts).toEqual(["claude", "claude2", "codex"]);
+    expect(of(fresh.id)?.allowed_accounts).toEqual(["claude", "claude2", "codex", "opencode"]);
     expect(of(fresh.id)?.switch_reason.device).toBe("Only Claude chats run on another device");
     expect(s.accounts.map((a) => [a.id, a.label])).toEqual([
       ["claude", "Claude · AB"],
       ["claude2", "Claude · AB"],
       ["codex", "Codex"],
+      ["opencode", "OpenCode"],
     ]);
+    // Every provider can start a new chat (the phone's "Account" row lists them all).
+    expect((s.accounts as unknown as { can_start: boolean }[]).every((a) => a.can_start)).toBe(true);
     expect(wire(s.accounts[0]?.usage ?? [])).toBe('[{"label":"5h","percent":42.1}]');
     expect(s.defaults.model).toBe("claude-opus-5-5");
   });

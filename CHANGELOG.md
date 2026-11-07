@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- OpenCode (and Codex) can be a chat's main model, on desktop and phone: a new chat runs on the
+  OpenCode model picked (it was switched to Claude Opus), and an existing chat's picker offers every
+  provider under Account. A started chat that changes provider continues in a fresh session that
+  gets the conversation so far; later turns continue that provider's session (`--session` for
+  OpenCode). An OpenCode-led chat works as a plain agent: no subagents or team tools. `open_chat`
+  and Fix/Merge threads run on OpenCode or Codex too when that's the account asked for. Only Claude
+  runs on another device, so a lead that started there stays on Claude.
+
 ## [0.152.0] - 2026-11-06
 
 ### Added
