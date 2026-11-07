@@ -784,32 +784,42 @@ export component Sidebar inherits Rectangle {
             Rectangle {
                 width: 4px;
             }
-            ThemeBtn {
-                toggled => {
-                    root.toggle-theme();
+            // Centred on your photo, which is taller than the rest of the row.
+            VerticalLayout {
+                alignment: center;
+                ThemeBtn {
+                    toggled => {
+                        root.toggle-theme();
+                    }
                 }
             }
             Rectangle {
                 horizontal-stretch: 1;
             }
-            if root.mem != "": MemGauge {
-                text: root.mem;
-                frac: root.mem-frac;
-                low: root.mem-low;
-                open: root.pop-id == "mem-devices";
-                tip: root.mem-tip;
-                clicked => {
-                    root.mem-pop(self.absolute-position.x, self.absolute-position.y);
+            if root.mem != "": VerticalLayout {
+                alignment: center;
+                MemGauge {
+                    text: root.mem;
+                    frac: root.mem-frac;
+                    low: root.mem-low;
+                    open: root.pop-id == "mem-devices";
+                    tip: root.mem-tip;
+                    clicked => {
+                        root.mem-pop(self.absolute-position.x, self.absolute-position.y);
+                    }
                 }
             }
-            Btn {
-                icon: Icons.gauge;
-                size: icon-xs;
-                variant: ghost-muted;
-                pressed: root.pop-id == "usage";
-                tip: "Claude usage";
-                clicked => {
-                    root.usage(self.absolute-position.x, self.absolute-position.y);
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    icon: Icons.gauge;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    pressed: root.pop-id == "usage";
+                    tip: "Claude usage";
+                    clicked => {
+                        root.usage(self.absolute-position.x, self.absolute-position.y);
+                    }
                 }
             }
         }
