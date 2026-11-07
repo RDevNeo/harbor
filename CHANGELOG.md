@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.160.2] - 2026-11-07
+
 ### Fixed
 - Phone: a message copied with its images attaches them when pasted into Harbor's composer from the
   keyboard's clipboard (Samsung's and Gboard's give back only the text), from a clipboard app that
