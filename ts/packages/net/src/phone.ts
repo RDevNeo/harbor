@@ -699,7 +699,7 @@ export class PhoneRoutes {
       accounts.push({
         id: sh.id,
         label: sh.label,
-        name: `${sh.person === "" ? kindLabel(sh.kind) : sh.person} on ${sh.pcName}`,
+        name: `${sh.shown === "" ? kindLabel(sh.kind) : sh.shown} on ${sh.pcName}`,
         kind: sh.kind,
         signed_in: true,
         // Picked, a new chat starts on that PC, which runs it with its own sign-in.

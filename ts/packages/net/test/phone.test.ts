@@ -16,7 +16,7 @@ import { newPeer } from "../src/shared.ts";
 import { newHost, type RemoteHost } from "../src/remote.ts";
 import { StoreReplica } from "../src/meshstore.ts";
 import { GLYPHS } from "../src/glyphs.ts";
-import { sharedAccounts } from "../src/meshaccounts.ts";
+import { photoBook, sharedAccounts } from "../src/meshaccounts.ts";
 import { cardJson, catalogOf, clock, composerDefaults, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
@@ -860,13 +860,17 @@ describe("phone: the mesh's shared accounts", () => {
     // No photo known: no `photo`, the initials stay.
     expect(s.accounts.some((a) => "photo" in a)).toBe(false);
     // With the owners' workspace photos: each account carries its owner's, and its label names them.
-    catalog.shared = () => sharedAccounts({ ...shared.input, photoOf: (n) => (n === "Sam Lee" ? "https://img.example/sam.png" : n === "Ana Lu" ? "https://img.example/ana.png" : "") });
+    catalog.shared = () => sharedAccounts({ ...shared.input, photos: photoBook([{ name: "Sam Lee", image: "https://img.example/sam.png" }, { name: "Ana Lu", image: "https://img.example/ana.png" }]) });
     const p = routes.state("", true) as { accounts: Record<string, Json>[] };
     expect(p.accounts.map((a) => [a.label, a.photo ?? null])).toEqual([
       ["Claude · Ana Lu", "https://img.example/ana.png"],
       ["OpenCode · Sam Lee", "https://img.example/sam.png"],
       ["Codex · KR", null],
     ]);
+    // The workspace knows the account's email as "Nana": that member's photo and name, on the phone too.
+    catalog.shared = () => sharedAccounts({ ...shared.input, photos: photoBook([{ name: "Nana", email: "ana@example.com", image: "https://img.example/nana.png" }]) });
+    const n = routes.state("", true) as { accounts: Record<string, Json>[] };
+    expect([n.accounts[0]?.label, n.accounts[0]?.photo, n.accounts[0]?.owner]).toEqual(["Claude · Nana", "https://img.example/nana.png", "Nana"]);
     catalog.shared = shared;
     const call = (body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body, token: "", device: "Pixel", global: true });
     // Picked: the chat starts on the laptop, on the laptop's own OpenCode; this PC's device pick doesn't matter.
