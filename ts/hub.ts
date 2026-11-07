@@ -8,6 +8,7 @@ import { ProjectsApi } from "./projectsapi.ts";
 import { WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
+import { WorktreeCleaner } from "./worktreeclean.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
@@ -332,7 +333,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return engine && r ? { repo: repoDir(r), dir: engine.worktreeOf(c) ?? repoDir(r) } : null;
     },
     changed: (chatId) => (engine ? engine.changed(chatId) : hub.touch(chatId, true)),
+    merged: (lead, pr) => cleaner?.merged(lead, pr),
   });
+  let cleaner: WorktreeCleaner | null = null;
   const prOf = (c: Chat): Json => {
     const p = c.home !== "" ? chatpr.prFrom(replica.remote.get(c.id)?.pr) : prs.of(c);
     return p ? asJson(chatpr.prJson(p)) : null;
@@ -399,6 +402,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     uploadPath: (id) => resolveUpload(uploadsDir, id),
     settled: (repo, on) => windowProjects?.settled(repo, on),
     move: (repo, body, sender) => (projectMove ? projectMove.api(repo, body, sender) : Promise.resolve(err(409, "projects can't move from here"))),
+    cleanWorktrees: (repo) => (cleaner ? cleaner.project(repo) : Promise.resolve(null)),
     moving: (repo) => {
       const st = projectMove?.statusOf(repo);
       return st?.state === "running" ? `Moving to ${st.toName}: ${st.stage}` : null;
@@ -407,6 +411,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   let windowProjects: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void } | null = null;
   let busyIn: (dir: string) => string | null = () => null;
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
+  // Delete merged worktrees: on this PC's own chats only, never on a copy of someone's data.
+  if (!offline) cleaner = new WorktreeCleaner({ store, engine: () => eng(), prs, worktrees, busyIn: (dir) => busyIn(dir), touch: () => hub.touch(null, true) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
@@ -1037,6 +1043,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (!offline) {
       prs.sweep((c) => live.worktreeOf(c) !== null);
       worktrees.tickMoves();
+      cleaner?.tick();
       profileFull = Date.now() - profileAt >= 10_000;
       if (profileFull) profileAt = Date.now();
       detectNow();

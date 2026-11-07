@@ -29,6 +29,8 @@ public class Settings extends Base {
     private TextView updateNote, gmailSub, discordSub, appsHead;
     private LinearLayout gmailCard, gmailRowBox, discordBox, voiceCard;
     private TextView voiceHead;
+    private TextView wtHead;
+    private LinearLayout wtCard;
     private View discordGap;
     private View updateBtn;
     private long available;
@@ -147,6 +149,19 @@ public class Settings extends Base {
                     words = v.has("dictionary") ? v.optJSONArray("dictionary") : null;
                     voiceRows();
                 });
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+
+        // Merged worktrees (GET/PUT /v1/worktrees/settings, the desktop's General › Worktrees; the
+        // section stays hidden on hubs without it): account settings, the same on every PC.
+        wtHead = section(col, "Worktrees");
+        wtHead.setVisibility(View.GONE);
+        wtCard = card(col);
+        wtCard.setVisibility(View.GONE);
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject v = hub.call("GET", "/v1/worktrees/settings", null, 8000);
+                runOnUiThread(() -> worktreeRows(v));
             } catch (Exception e) { /* an older hub: no such call */ }
         });
 
@@ -697,6 +712,38 @@ public class Settings extends Base {
 
     /** The hub's dictionary (GET /v1/voice `dictionary`, 0.76); null on older hubs. */
     private org.json.JSONArray words;
+
+    /** Merged worktrees: one row saying what goes, tap to change it. */
+    private void worktreeRows(JSONObject v) {
+        wtCard.removeAllViews();
+        wtHead.setVisibility(View.VISIBLE);
+        wtCard.setVisibility(View.VISIBLE);
+        boolean on = v.optBoolean("delete_merged", true), br = v.optBoolean("delete_branch", true), rm = v.optBoolean("delete_remote", false);
+        String sub = !on ? "Off: merged worktrees stay" : "Once a chat's PR is merged" + (br ? (rm ? " · branches too, here and on GitHub" : " · their branches too") : "");
+        LinearLayout row = Ui.cardRow(this, Ui.I_FOLDER_GIT, "Delete merged worktrees", sub, Ui.FG, x -> pickWorktrees(v));
+        Ui.wrapSub(row, 2);
+        row.addView(Ui.chevron(this));
+        wtCard.addView(row, Ui.fill());
+    }
+
+    private void pickWorktrees(JSONObject v) {
+        String[] keys = { "delete_merged", "delete_branch", "delete_remote" };
+        String[] labels = { "Delete merged worktrees", "Also delete their branches", "Also delete their branches on GitHub" };
+        boolean[] on = { v.optBoolean(keys[0], true), v.optBoolean(keys[1], true), v.optBoolean(keys[2], false) };
+        Ui.dialog(this).setTitle("Merged worktrees")
+                .setMultiChoiceItems(labels, on, (d, i, x) -> on[i] = x)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("OK", (d, w) -> Ui.pool.execute(() -> {
+                    try {
+                        JSONObject b = new JSONObject();
+                        for (int i = 0; i < keys.length; i++) b.put(keys[i], on[i]);
+                        JSONObject r = hub.call("PUT", "/v1/worktrees/settings", b);
+                        runOnUiThread(() -> worktreeRows(r));
+                    } catch (Exception e) {
+                        runOnUiThread(() -> Ui.toast(this, Hub.why(e)));
+                    }
+                })).show();
+    }
 
     /** Voice: the dictionary, kept on the PC (hubs from 0.76; else the section stays hidden). */
     private void voiceRows() {

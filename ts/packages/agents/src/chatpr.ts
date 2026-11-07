@@ -29,6 +29,8 @@ export interface ChatPr {
   title: string;
   /** The local branch it was found for: looked up with it again once the worktree is gone. */
   branch: string;
+  /** The PR's head commit on GitHub (gh `headRefOid`): a merged worktree is cleaned up only when its branch holds nothing past it. */
+  head?: string;
 }
 
 /** "PR #123 · Merged". */
@@ -51,7 +53,8 @@ export function prFrom(v: unknown): ChatPr | null {
   const number = u64(at(v, "number"));
   const url = optStr(at(v, "url"));
   if ((state !== "open" && state !== "draft" && state !== "merged" && state !== "closed") || number === undefined || url === undefined) return null;
-  return { number, state, url, title: optStr(at(v, "title")) ?? "", branch: optStr(at(v, "branch")) ?? "" };
+  const head = optStr(at(v, "head")) ?? "";
+  return { number, state, url, title: optStr(at(v, "title")) ?? "", branch: optStr(at(v, "branch")) ?? "", ...(head !== "" ? { head } : {}) };
 }
 
 async function git(dir: string, args: string[]): Promise<string | null> {
@@ -96,7 +99,7 @@ export async function place(dir: string, branch: string, known: boolean): Promis
 async function ghPrs(repo: string, head: string): Promise<unknown> {
   let out;
   try {
-    out = await outputWithin(["gh", "pr", "list", "--repo", repo, "--head", head, "--state", "all", "--limit", "20", "--json", "number,state,isDraft,url,title,headRefName,headRepositoryOwner"], GH_TIMEOUT_MS, {
+    out = await outputWithin(["gh", "pr", "list", "--repo", repo, "--head", head, "--state", "all", "--limit", "20", "--json", "number,state,isDraft,url,title,headRefName,headRepositoryOwner,headRefOid"], GH_TIMEOUT_MS, {
       env: { ...process.env, PATH: childPath(), GH_PROMPT_DISABLED: "1", NO_COLOR: "1" },
     });
   } catch (e) {
@@ -123,7 +126,8 @@ export function pick(list: unknown, head: string, owner: string, branch: string)
   const url = optStr(at(p, "url"));
   if (st === undefined || number === undefined || url === undefined) return null;
   const state: PrState = st === "MERGED" ? "merged" : st === "CLOSED" ? "closed" : bool(at(p, "isDraft")) === true ? "draft" : "open";
-  return { number, state, url, title: optStr(at(p, "title")) ?? "", branch };
+  const oid = optStr(at(p, "headRefOid")) ?? "";
+  return { number, state, url, title: optStr(at(p, "title")) ?? "", branch, ...(oid !== "" ? { head: oid } : {}) };
 }
 
 const isDir = (p: string): boolean => {
@@ -162,6 +166,8 @@ export interface PrHost {
   /** The chat's project folder on this PC, and its worktree if it has one. */
   folders(c: Chat): { repo: string; dir: string } | null;
   changed(chatId: number): void;
+  /** A lookup found the chat's PR merged (each time it does, changed or not): its worktree may be cleaned up (worktreeclean.ts). */
+  merged?(lead: number, pr: ChatPr): void;
 }
 
 /** The PRs found, and when each was last looked up. */
@@ -221,13 +227,39 @@ export class ChatPrs {
       this.save();
       this.host.changed(lead);
     }
+    if (!failed && pr?.state === "merged") this.host.merged?.(lead, pr);
     if (this.again.delete(lead)) this.want(lead, null);
+  }
+
+  /** Looks a chat's PR up now and waits for it (Clean up merged worktrees): what was found, else the last one known. */
+  async now(chat: number): Promise<ChatPr | null> {
+    const c = this.host.chat(chat);
+    if (!c) return null;
+    const lead = leadOf(c);
+    const lc = this.host.chat(lead);
+    if (!lc || lc.home !== "" || lc.device !== "") return null;
+    const f = this.host.folders(lc);
+    if (!f || !existsSync(join(f.repo, ".git"))) return null;
+    this.checked.set(lead, [Date.now(), false]);
+    try {
+      const pr = await lookup(f.dir, f.repo, this.found.get(lead) ?? null);
+      if (JSON.stringify(this.found.get(lead) ?? null) !== JSON.stringify(pr)) {
+        if (pr) this.found.set(lead, pr);
+        else this.found.delete(lead);
+        this.save();
+        this.host.changed(lead);
+      }
+      return pr;
+    } catch {
+      this.checked.set(lead, [Date.now(), true]);
+      return this.found.get(lead) ?? null;
+    }
   }
 
   /** kv `chat_prs` as serde writes the map: chat id → the PR's fields in order. */
   private save(): void {
     const o: Record<string, unknown> = {};
-    for (const [k, p] of this.found) o[String(k)] = { number: p.number, state: p.state, url: p.url, title: p.title, branch: p.branch };
+    for (const [k, p] of this.found) o[String(k)] = { number: p.number, state: p.state, url: p.url, title: p.title, branch: p.branch, ...(p.head !== undefined ? { head: p.head } : {}) };
     this.host.store.set("chat_prs", JSON.stringify(o));
   }
 

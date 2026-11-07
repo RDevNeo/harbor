@@ -56,6 +56,7 @@ final class ProjectMenu {
             case "users": return Ui.I_USERS;
             case "link": return Ui.I_LINK;
             case "monitor": return Ui.I_MONITOR;
+            case "merge": return Ui.I_MERGE;
             default: return null;
         }
     }
@@ -134,6 +135,11 @@ final class ProjectMenu {
                         return run(hub, pid, act, up.optString("id"));
                     }, r -> Ui.toast(a, "Icon set on " + m.optString("pc_name", "the PC")));
                 });
+                break;
+            case "clean_worktrees":
+                // Its chats' worktrees whose PR was merged, on the PC that holds the project: what it did, in a toast.
+                Ui.toast(a, "Cleaning up merged worktrees…");
+                Ui.bg(a, () -> run(hub, pid, act, null), r -> { Ui.toast(a, r.optString("said", "Done")); after.run(); });
                 break;
             case "settle_project":
                 Ui.bg(a, () -> run(hub, pid, act, null), r -> gone.on("Settled “" + m.optString("name", "Project") + "”: it's under Settled"));

@@ -16,10 +16,17 @@ test("Settings has nine pages, General then Workspace, with old Devices and Phon
 test("General only exposes login startup, automatic work and the version", () => {
   const kv = new MemKv();
   const sections = generalSections(kv, { autostart: true, version: "0.124.0" });
-  expect(sections.map((s) => s.title)).toEqual(["Background", "Issues and pull requests", "Updates"]);
-  expect(sections.flatMap((s) => s.rows).map((r) => r.key)).toEqual(["autostart", "auto_fix", "auto_merge", "version"]);
+  expect(sections.map((s) => s.title)).toEqual(["Background", "Issues and pull requests", "Worktrees", "Updates"]);
+  expect(sections.flatMap((s) => s.rows).map((r) => r.key)).toEqual(["autostart", "auto_fix", "auto_merge", "wt_clean_merged", "wt_clean_branch", "wt_clean_remote", "version"]);
   expect(sections.at(-1)?.rows[0]).toMatchObject({ title: "Harbor 0.124.0", desc: "" });
   for (const key of ["follow_up", "resume_on_restart", "order_by_activity", "fast_mode", "bg_keep", "suggest_enabled", "auto_update"]) expect(setGeneral(kv, key, false)).toBe(false);
   expect(setGeneral(kv, "auto_fix", true)).toBe(true);
   expect(kv.get("auto_fix")).toBe("1");
+  // Delete merged worktrees and their branches are on until turned off; the remote branch only when asked.
+  const wt = () => sections2().find((s) => s.title === "Worktrees")?.rows.map((r) => [r.key, r.on, r.enabled]);
+  const sections2 = () => generalSections(kv, { autostart: true, version: "0.124.0" });
+  expect(wt()).toEqual([["wt_clean_merged", true, true], ["wt_clean_branch", true, true], ["wt_clean_remote", false, true]]);
+  expect(setGeneral(kv, "wt_clean_merged", false)).toBe(true);
+  expect(kv.get("wt_clean_merged")).toBe("0");
+  expect(wt()).toEqual([["wt_clean_merged", false, true], ["wt_clean_branch", true, false], ["wt_clean_remote", false, false]]);
 });

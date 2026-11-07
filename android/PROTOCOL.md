@@ -1161,6 +1161,22 @@ project is gone.
   `/v1/state`: `tree.settled_projects` lists settled projects (out of `tree.projects`; every chat
   of theirs is in `tree.settled`), and `projects[].settled` says it too. The drawer shows them
   under Settled above the settled chats: a tap opens the project, a long press its sheet.
+- Clean up merged worktrees (0.154): `do` with `act` `clean_worktrees` (item `icon` merge, offered
+  for a git project) looks up the PR of each of the project's chats with a worktree on that PC and
+  removes the worktree of every merged one where nothing would be lost (and its branch, as the
+  settings below say). `200 {ok, removed, branches, kept, busy, open, said}`; `said` is the line
+  the app toasts ("Removed 2 merged worktrees and their branches; kept 1 (…: it has 1 uncommitted
+  change)").
+
+### Merged worktrees settings (0.154): `GET`/`PUT /v1/worktrees/settings`
+
+`{delete_merged, delete_branch, delete_remote}` (booleans; defaults true, true, false), the
+desktop's Settings › General › Worktrees; `PUT` takes any of them and answers the same. Account
+settings: they reach the account's other PCs. A PC removes a chat's worktree once the chat's PR is
+merged and nothing works in it, unless it has uncommitted changes or commits the PR's head commit
+doesn't have (the chat says why it stayed, once). The chat then works in the project's checkout:
+its notice `worktree` says "Worktree removed: <branch> was merged (PR #N)" and its `worktree`
+marker goes. Hubs without the call answer 404: the app hides the section.
 
 ### Move a project to another PC (0.121): `POST /v1/projects/move`
 

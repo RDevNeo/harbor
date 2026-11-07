@@ -381,6 +381,18 @@ export class Worktrees {
     this.h.touch();
   }
 
+  /** The chat's worktree was removed (worktreeclean.ts): it, its sub-agents and `others` sharing the folder work in the project's checkout again. */
+  forget(lead: number, others: readonly number[] = []): void {
+    this.loadMoves();
+    for (const id of [lead, ...others]) {
+      this.h.store.set(`worktree:${id}`, "");
+      this.h.store.set(`worktree_named:${id}`, "");
+      this.unplanMove(id);
+    }
+    for (const id of [...this.tree(lead), ...others]) workspace.forget(id);
+    this.h.touch();
+  }
+
   drop(chat: Chat): void {
     const key = `worktree:${chat.id}`;
     const dir = this.h.store.get(key);

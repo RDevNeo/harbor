@@ -5,8 +5,9 @@ import { ICONS } from "../icons.ts";
  * phone's project sheet are both built from this list, so they offer the same things in the
  * same order with the same words.
  */
-export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "remove";
+export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "clean_worktrees" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "remove";
 
+export const CLEAN_LABEL = "Clean up merged worktrees";
 export const SHARE_LABEL = "Share with workspace…";
 /** What Share with workspace…'s checklist says under its title (desktop and phone alike). */
 export const SHARE_NOTE = "It also shows under each workspace ticked here and stays owned by its own. Placement only: who can reach it and what the PCs copy don't change.";
@@ -39,6 +40,8 @@ export interface ProjectMenuInput {
   shareLine?: string;
   /** It's moving to another PC now: what it does ("Copying 340 MB of 1.2 GB"). */
   moving?: string | null;
+  /** A git project its chats may have worktrees in: Clean up merged worktrees is offered. */
+  git?: boolean;
 }
 
 export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
@@ -54,6 +57,10 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
     add("issues", "Issues", ICONS.CIRCLE_DOT);
   }
   if (p.remote !== null) add("remote", "Open remote", ICONS.EXTERNAL);
+  if (p.git === true) {
+    sep = true;
+    add("clean_worktrees", CLEAN_LABEL, ICONS.GIT_MERGE, "Its chats' worktrees whose PR was merged, unless something would be lost");
+  }
   if (p.main) {
     sep = true;
     add("rename_main", "Rename main chat");

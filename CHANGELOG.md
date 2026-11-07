@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Merged worktrees clean themselves up (desktop and phone), like T3 Code's "Delete merged
+  worktrees": once a chat's PR is merged on GitHub (squash and rebase merges included: the PR's
+  state decides, not git) and nothing works in its worktree, Harbor removes the worktree and its
+  local branch, on the PC that holds the folder. It only does when nothing would be lost: no
+  uncommitted changes and no commit the PR's head didn't have; otherwise the chat says once why it
+  stayed. The chat stays and works in the project's checkout from then on, with a notice
+  "Worktree removed: <branch> was merged (PR #N)". Settings › General › Worktrees (and the phone's
+  Settings › Worktrees): Delete merged worktrees (on), Also delete their branches (on), Also
+  delete their branches on GitHub (off; only when the remote branch is still at the PR's head).
+  The project menu's new "Clean up merged worktrees" does it for every chat of a project at once
+  and says how many went and why any stayed.
+
 ## [0.153.0] - 2026-11-06
 
 ### Added

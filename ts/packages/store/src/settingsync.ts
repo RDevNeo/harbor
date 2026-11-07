@@ -25,6 +25,10 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["recap_enabled", A],
   ["auto_fix", A],
   ["auto_merge", A],
+  // Delete merged worktrees (wtclean.ts): the worktree, its local branch, its branch on the remote.
+  ["wt_clean_merged", A],
+  ["wt_clean_branch", A],
+  ["wt_clean_remote", A],
   ["gh_agent_account", A],
   ["ctx_send", A],
   ["voice_input", D],
@@ -106,6 +110,8 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["worktree_move:", D],
   ["worktree_named:", D],
   ["worktree_note:", D],
+  // Why a chat's merged worktree stayed, said once (worktreeclean.ts).
+  ["wt_clean_kept:", D],
   ["recap:", D],
   ["recap_users:", D],
   ["suggestion:", D],

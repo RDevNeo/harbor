@@ -3391,6 +3391,7 @@ export class Shell {
           this.loadIcon(id, false);
         });
       },
+      clean_worktrees: () => void this.cleanWorktrees(id),
       settle_project: () => this.settleProject(id, true),
       unsettle_project: () => this.settleProject(id, false),
       move_workspace: () => {},
@@ -3405,7 +3406,9 @@ export class Shell {
     const r = this.data.repo(id);
     if (place !== null && r) items.push({ ...this.label(placeLine(place, tilde(r.local ?? r.path, homedir()))), kind: "caption" });
     const sh = this.hub.moves?.projectShares(id) ?? null;
-    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}), ...(sh ? { shareWhy: sh.why, shareLine: sh.line } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
+    // A project here offers it when it's a git one; one on another PC always (that PC answers).
+    const isGit = this.hub.call !== undefined && r !== undefined && (place !== null ? place.pc !== "" : existsSync(join(r.local ?? r.path, ".git")));
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, git: isGit, ...(ws ? { moveWhy: ws.why } : {}), ...(sh ? { shareWhy: sh.why, shareLine: sh.line } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
       if (it.icon !== "") extra.icon = it.icon;
@@ -3416,6 +3419,20 @@ export class Shell {
       items.push(sub !== null ? { ...native(it.label, acts[it.act], extra), sub } : native(it.label, acts[it.act], extra));
     }
     this.popup("project-row", x, y, items, 260, false, true);
+  }
+
+  /** Clean up merged worktrees (worktreeclean.ts on the PC that holds the project's folder): what it did, in the toast. */
+  private async cleanWorktrees(id: number): Promise<void> {
+    const call = this.hub.call;
+    const r = this.data.repo(id);
+    if (!call || !r) return;
+    const place = this.placeOf(id);
+    const body = place !== null && place.pc !== "" ? { project: r.path, pc: place.pc, act: "clean_worktrees" } : { project: id, act: "clean_worktrees" };
+    this.toast("Cleaning up merged worktrees…");
+    const res = await call("POST", "v1/projects/do", {}, body).catch((e: unknown) => ({ status: 500, body: { error: e instanceof Error ? e.message : String(e) } }));
+    const b = typeof res.body === "object" && res.body !== null ? (res.body as Record<string, unknown>) : {};
+    if (res.status < 300) this.toast(typeof b.said === "string" ? b.said : "Done");
+    else this.toast(`Couldn't clean up: ${typeof b.error === "string" ? b.error : "it didn't work"}`);
   }
 
   /** A project's Move to PC… (projectmoverun.ts through `hub.projectMove`): its state if one runs, else the PCs, the confirmation, then the move with its progress in the toast. */

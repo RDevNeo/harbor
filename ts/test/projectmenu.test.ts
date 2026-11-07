@@ -24,3 +24,10 @@ test("project_menu_offers_share_with_workspace_after_move_greyed_with_why", () =
   expect(items(null).find((i) => i.act === "share_workspace")?.off).toBeUndefined();
   expect(items("Sign in first").find((i) => i.act === "share_workspace")).toMatchObject({ off: true, desc: "Sign in first" });
 });
+
+test("project_menu_offers_clean_up_merged_worktrees_for_git_projects", () => {
+  const labels = (git: boolean) => projectMenu({ remote: "https://github.com/sam/x", main: false, customIcon: false, git }).map((i) => (i.sep ? `— ${i.label}` : i.label));
+  expect(labels(true).slice(0, 6)).toEqual(["Open terminal", "Pull requests", "Issues", "Open remote", "— Clean up merged worktrees", "— Refresh icon"]);
+  expect(labels(false)).not.toContain("Clean up merged worktrees");
+  expect(projectMenu({ remote: null, main: false, customIcon: false, git: true }).find((i) => i.act === "clean_worktrees")).toMatchObject({ label: "Clean up merged worktrees", sep: true });
+});

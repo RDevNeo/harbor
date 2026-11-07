@@ -9,7 +9,7 @@ import { parseSnooze, snoozePresets, snoozePreview } from "./packages/ui/src/log
 import { sidebartree } from "./packages/store/src/index.ts";
 import { composerRoutes } from "./phonecomposer.ts";
 import { basename } from "node:path";
-import { worktree as wt } from "./packages/agents/src/index.ts";
+import { worktree as wt, wtclean } from "./packages/agents/src/index.ts";
 import type { ProjectClones } from "./projectclones.ts";
 import type { ProjectsApi } from "./projectsapi.ts";
 import type { WorkspaceMoves } from "./workspacemoves.ts";
@@ -47,6 +47,7 @@ const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 const query = (c: Call, k: string): string | null => c.query.find(([q]) => q === k)?.[1] ?? null;
 const plain = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
+const WT_CLEAN = wtclean.KEYS;
 const body = (c: Call): Record<string, unknown> => (typeof c.body === "object" && c.body !== null && !Array.isArray(c.body) ? (c.body as Record<string, unknown>) : {});
 
 export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Promise<Reply | null> {
@@ -573,6 +574,15 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       if (p[2] === "discord") return discordCall(p[3] ?? "", body(call));
     }
     if (p[1] === "projects") return h.projects.route(call);
+    if (p[1] === "worktrees" && p[2] === "settings" && p.length === 3) {
+      // Delete merged worktrees (worktreeclean.ts), as the desktop's General tab sets it; account settings, synced.
+      if (m === "PUT") {
+        const b = body(call);
+        for (const [k, key] of [["delete_merged", WT_CLEAN.worktree], ["delete_branch", WT_CLEAN.branch], ["delete_remote", WT_CLEAN.remote]] as const) if (typeof b[k] === "boolean") h.store.set(key, b[k] ? "1" : "0");
+      } else if (m !== "GET") return null;
+      const pr = wtclean.prefsOf(h.store);
+      return ok({ delete_merged: pr.worktree, delete_branch: pr.branch, delete_remote: pr.remote });
+    }
     if (p.length !== 2) return null;
     if (m === "GET" && p[1] === "workspace") return workspaceInfo(call);
     if (m === "GET" && p[1] === "branches") return branchList(call);

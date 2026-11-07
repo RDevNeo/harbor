@@ -62,13 +62,29 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
         ),
       ],
     },
+    worktreesSection(kv),
     { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Harbor ${env.version}` })] },
   ];
 }
 
+/** Delete merged worktrees (wtclean.ts KEYS): on, with their branches, by default; the remote branch only when asked. */
+export const WT_CLEAN = { worktree: "wt_clean_merged", branch: "wt_clean_branch", remote: "wt_clean_remote" } as const;
+
+export function worktreesSection(kv: Kv): SettingSection {
+  const on = kv.get(WT_CLEAN.worktree) !== "0";
+  return {
+    title: "Worktrees",
+    rows: [
+      toggle(WT_CLEAN.worktree, "Delete merged worktrees", "Once a chat's PR is merged and nothing works in its worktree, the worktree is removed; the chat stays and works in the project's checkout. Skipped when it has uncommitted changes or commits that aren't in the PR.", on),
+      { ...toggle(WT_CLEAN.branch, "Also delete their branches", "The local branch goes too. Safe after a squash merge: only when it holds nothing the PR didn't.", kv.get(WT_CLEAN.branch) !== "0"), enabled: on },
+      { ...toggle(WT_CLEAN.remote, "Also delete their branches on GitHub", "When the merged branch is still on the remote and points at the PR's last commit.", kv.get(WT_CLEAN.remote) === "1"), enabled: on },
+    ],
+  };
+}
+
 /** A toggle of the General tab, written to kv; false for what isn't a kv flag. */
 export function setGeneral(kv: Kv, key: string, value: boolean | number): boolean {
-  if ((key === "auto_fix" || key === "auto_merge") && typeof value === "boolean") kv.set(key, value ? "1" : "0");
+  if ((key === "auto_fix" || key === "auto_merge" || Object.values(WT_CLEAN).includes(key as never)) && typeof value === "boolean") kv.set(key, value ? "1" : "0");
   else return false;
   return true;
 }

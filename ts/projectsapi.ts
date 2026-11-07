@@ -54,6 +54,8 @@ export interface ProjectsHost {
   move?: (repo: number, body: Record<string, unknown>, sender: string) => Promise<Reply>;
   /** What project `repo`'s move to another PC does now (null: none runs). */
   moving?: (repo: number) => string | null;
+  /** Clean up merged worktrees of project `repo` (worktreeclean.ts): what it did (null: this Harbor can't). */
+  cleanWorktrees?: (repo: number) => Promise<{ removed: number; branches: number; kept: number; busy: number; open: number; said: string } | null>;
 }
 
 const STEPS: readonly Step[] = ["sources", "new", "local", "url", "github"];
@@ -83,9 +85,10 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.USERS, "users"],
   [ICONS.LINK, "link"],
   [ICONS.MONITOR, "monitor"],
+  [ICONS.GIT_MERGE, "merge"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "clean_worktrees", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "remove"];
 const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -365,6 +368,7 @@ export class ProjectsApi {
       main: main !== null,
       customIcon: this.h.customIcon?.(r.id) ?? false,
       settled,
+      git: this.h.cleanWorktrees !== undefined && isDir(join(repoDir(r), ".git")),
       ...(moves ? { moveWhy: moves.why } : {}),
       ...(shares ? { shareWhy: shares.why, shareLine: shares.line } : {}),
       moving: this.h.moving?.(r.id) ?? null,
@@ -434,6 +438,12 @@ export class ProjectsApi {
         this.h.touch();
         return ok({ ok: true, settled: on });
       }
+      case "clean_worktrees": {
+        const done = (await this.h.cleanWorktrees?.(r.id)) ?? null;
+        if (done === null) return err(409, "this Harbor can't clean up worktrees");
+        if (done.removed > 0) this.h.touch();
+        return ok({ ok: true, ...done });
+      }
       case "remove":
         if (!this.h.remove) return err(409, "can't remove projects here");
         this.h.remove(r.id);
@@ -460,7 +470,7 @@ export class ProjectsApi {
         return ok({ ok: true, snoozed_until_ms: until * 1000, snoozed_label: sidebartree.snoozeLabel(until, at, off) });
       }
       default:
-        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze, settle_project, unsettle_project, workspace, share or remove");
+        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, clean_worktrees, snooze, settle_project, unsettle_project, workspace, share or remove");
     }
   }
 
