@@ -43,9 +43,12 @@ final class WorkBar {
     WorkBar(Activity a, Hub hub) {
         this.a = a;
         this.hub = hub;
+        // A tray tucked under the composer card, a little narrower: its sides and rounded bottom
+        // drawn, its top edge left to the card's (the desktop's composer tray).
         view = Ui.row(a);
         view.setGravity(Gravity.CENTER_VERTICAL);
-        view.setPadding(Ui.dp(6), Ui.dp(2), Ui.dp(6), 0);
+        view.setPadding(Ui.dp(6), 0, Ui.dp(6), Ui.dp(1));
+        view.setBackground(tray());
         ws = chip(Ui.I_FOLDER);
         br = chip(Ui.I_BRANCH);
         prc = chip(Ui.I_PR_OPEN);
@@ -64,19 +67,40 @@ final class WorkBar {
         view.setVisibility(View.GONE);
     }
 
-    /** A quiet chip: a Lucide glyph and a one-line label. */
+    /** The tray: a hair darker than the page, bordered on its sides and bottom (its top stroke
+     *  sits just above the view, so it's clipped and the card's bottom edge is the tray's top). */
+    private static android.graphics.drawable.Drawable tray() {
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setColor(Ui.BG2);
+        g.setStroke(Math.max(1, Ui.dp(1)), Ui.LINE);
+        float r = Ui.dp(14);
+        g.setCornerRadii(new float[]{0, 0, 0, 0, r, r, r, r});
+        android.graphics.drawable.LayerDrawable l = new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{g});
+        l.setLayerInset(0, 0, -Math.max(1, Ui.dp(1)), 0, 0);
+        return l;
+    }
+
+    /** A quiet chip: a Lucide glyph, a one-line label and, where a tap opens a sheet, a small
+     *  chevron. */
     private LinearLayout chip(String glyph) {
         LinearLayout c = Ui.row(a);
         c.setGravity(Gravity.CENTER_VERTICAL);
-        c.setPadding(Ui.dp(10), 0, Ui.dp(10), 0);
+        c.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
         c.setBackground(Ui.press(0, 0, 10));
-        c.addView(Ui.icon(a, glyph, 15, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)));
-        TextView t = Ui.text(a, "", 13, Ui.G700);
+        c.addView(Ui.icon(a, glyph, 14, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
+        TextView t = Ui.text(a, "", 12.5f, Ui.G700);
         t.setSingleLine(true);
         t.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         t.setMaxWidth(Ui.dp(150));
         c.addView(t, Ui.margins(new LinearLayout.LayoutParams(-2, -2), 6, 0, 0, 0));
+        TextView chev = Ui.icon(a, Ui.I_DOWN, 12, Ui.G600);
+        chev.setVisibility(View.GONE);
+        c.addView(chev, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 3, 0, 0, 0));
         return c;
+    }
+
+    private static void chevron(LinearLayout c, boolean on) {
+        c.getChildAt(2).setVisibility(on ? View.VISIBLE : View.GONE);
     }
 
     private static void label(LinearLayout c, String glyph, String text) {
@@ -122,6 +146,9 @@ final class WorkBar {
         showPr();
         ws.setOnClickListener(v -> tapWorkspace());
         tint(ws, Ui.G700);
+        // Chevrons only where a tap opens a sheet (this PC's git, nothing pending).
+        chevron(ws, false);
+        chevron(br, false);
         // As the desktop: "gone" only where the workspace is this PC's (a device's chat has its
         // worktree elsewhere, so it isn't here, yet not gone).
         if (git && chat != null && marker != null && marker.optBoolean("gone")) {
@@ -157,6 +184,8 @@ final class WorkBar {
         String pend = r.isNull("pending") ? "" : r.optString("pending");
         if (!pend.isEmpty()) { label(ws, Ui.I_LOADER, pend); Ui.main.postDelayed(this::load, 1500); }
         label(br, Ui.I_BRANCH, b.isEmpty() ? "…" : b);
+        chevron(ws, pend.isEmpty());
+        chevron(br, true);
     }
 
     private static void tint(LinearLayout c, int color) {

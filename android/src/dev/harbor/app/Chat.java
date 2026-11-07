@@ -176,7 +176,8 @@ public class Chat extends Base implements Images.Gallery {
         // Clear of the agents strip above and the composer below; its pills start under the strip's edge.
         below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 4, 8, 4));
         below.addView(comp.view, Ui.fill());
-        below.addView(work.view, Ui.fill());
+        // The tray: narrower than the card, its sides under the card's rounded corners.
+        below.addView(work.view, Ui.margins(Ui.fill(), 22, 0, 22, 0));
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
         comp.voice(hub);
         work.load();

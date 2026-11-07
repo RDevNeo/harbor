@@ -79,17 +79,22 @@ export component MemGauge inherits TipArea {
     in property <bool> low;
     in property <bool> open;
     width: row.preferred-width + 12px;
+    // As tall as the row's buttons: the icon on its middle, the figure over it and the bar under it.
+    height: 28px;
     Rectangle {
         background: root.has-hover || root.open ? Theme.accent : transparent;
         border-radius: Theme.radius-md;
     }
     row := HorizontalLayout {
         x: 6px;
+        height: root.height;
         spacing: 6px;
-        MemIcon {
-            y: (parent.height - self.height) / 2;
-            size: 14px;
-            color: root.low ? Theme.red-900 : root.has-hover || root.open ? Theme.fg : Theme.subtle;
+        VerticalLayout {
+            alignment: center;
+            MemIcon {
+                size: 14px;
+                color: root.low ? Theme.red-900 : root.has-hover || root.open ? Theme.fg : Theme.subtle;
+            }
         }
         VerticalLayout {
             alignment: center;

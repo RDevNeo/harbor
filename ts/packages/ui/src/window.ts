@@ -212,6 +212,8 @@ export interface WorkChip {
 
 export interface WorkBarData {
   shown: boolean;
+  /** The chips do something here (the PC's own git): they show their chevrons. */
+  live: boolean;
   ws: WorkChip;
   branch: WorkChip;
   pr: WorkChip;

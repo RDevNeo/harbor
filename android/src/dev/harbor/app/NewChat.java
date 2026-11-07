@@ -84,7 +84,8 @@ public class NewChat extends Base {
         LinearLayout below = Ui.col(this);
         below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 0, 8, -4));
         below.addView(comp.view, Ui.fill());
-        below.addView(work.view, Ui.fill());
+        // The tray: narrower than the card, its sides under the card's rounded corners.
+        below.addView(work.view, Ui.margins(Ui.fill(), 22, 0, 22, 0));
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
         comp.voice(hub);
         // No chat yet: the PC lists by the project and run settings picked here.

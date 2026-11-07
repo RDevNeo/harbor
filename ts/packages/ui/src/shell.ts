@@ -1687,7 +1687,7 @@ export class Shell {
     const crumbs = this.win.crumbs;
     const head = this.headBranch(crumbs.branch);
     if (head !== crumbs.branch) this.win.crumbs = { ...crumbs, branch: head };
-    this.win.work_bar = { shown: bar.shown, ws: chip(bar.ws), branch: chip(bar.branch), pr: chip(bar.pr) };
+    this.win.work_bar = { shown: bar.shown, live: bar.live, ws: chip(bar.ws), branch: chip(bar.branch), pr: chip(bar.pr) };
   }
 
   /** The open chat's branch when it works in its own worktree (the footer's answer), else `checkout`'s. */

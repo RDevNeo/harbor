@@ -681,37 +681,30 @@ export component Sidebar inherits Rectangle {
                 }
             }
         }
+        // "Settled (N)", a hairline to the edge and the fold's chevron: up while open, down while folded.
         if root.settled-count > 0: Rectangle {
             height: Theme.row-h;
-            background: settled-area.has-hover ? Theme.accent : transparent;
-            border-radius: Theme.radius-md;
+            property <color> ink: settled-area.has-hover ? Theme.fg.mix(Theme.gray-700, 0.5) : Theme.gray-700;
             settled-label := Text {
                 x: 8px;
-                text: "Settled";
+                text: "Settled (" + root.settled-count + ")";
                 font-size: 12px;
                 font-weight: 500;
-                color: settled-area.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
+                color: parent.ink;
                 vertical-alignment: center;
             }
             Rectangle {
-                x: 8px + settled-label.preferred-width + 6px;
-                width: max(count.preferred-width, 8px) + 12px;
-                height: 20px;
-                border-radius: Theme.radius-md;
-                background: Theme.gray-200;
-                count := Text {
-                    text: root.settled-count;
-                    font-size: 12px;
-                    font-weight: 500;
-                    color: Theme.subtle;
-                }
+                x: settled-label.x + settled-label.preferred-width + 10px;
+                width: max(0px, parent.width - self.x - 34px);
+                height: 1px;
+                background: settled-area.has-hover ? Theme.gray-600 : Theme.gray-500;
             }
             Glyph {
                 x: parent.width - 21px;
                 width: 14px;
-                icon: root.settled-open ? Icons.down : Icons.up;
-                size: 14px;
-                color: settled-label.color;
+                icon: root.settled-open ? Icons.up : Icons.down;
+                size: 12px;
+                color: parent.ink;
             }
             settled-area := TouchArea {
                 mouse-cursor: pointer;

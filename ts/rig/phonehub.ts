@@ -180,7 +180,9 @@ const cat = chat({ repoId: null, title: "What's a good name for a cat?", updated
   done(ago(60 * 50), 0.01),
 ]);
 seed.setChatShares(cat.id, ["org_team"]);
-chat({ repoId: web, title: "Old: try the new font", settled: true, updated: ago(60 * 24 * 6) }, [user("Try the new font on the landing page.", ago(60 * 24 * 6))]);
+// Settled leads: the sidebar's folded Settled section (its header, and its rows once unfolded).
+chat({ repoId: web, title: "Old: try the new font", role: "lead", name: "lead", settled: true, updated: ago(60 * 24 * 6) }, [user("Try the new font on the landing page.", ago(60 * 24 * 6))]);
+chat({ repoId: notes, title: "Tidy the interview folder", role: "lead", name: "lead", settled: true, updated: ago(60 * 24 * 9) }, [user("Rename the interview files by date.", ago(60 * 24 * 9))]);
 // An agent's Discord join waiting on a captcha (the phone's captcha card).
 const CAPTCHA_GID = "c4e7a1b2-0000-4000-8000-00000000ca71";
 const GUILD = "Example Server";

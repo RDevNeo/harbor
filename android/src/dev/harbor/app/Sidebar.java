@@ -362,10 +362,7 @@ final class Sidebar {
         }
         if (!settled.isEmpty() || !settledProjects.isEmpty()) {
             if (!first) divider();
-            TextView h = Ui.label(a, "Settled · " + (settled.size() + settledProjects.size()) + (showSettled ? "  ▾" : "  ▸"));
-            h.setBackground(Ui.press(0, 0, 0));
-            h.setOnClickListener(v -> { showSettled = !showSettled; render(st); });
-            list.addView(h, Ui.fill());
+            list.addView(settledHead(settled.size() + settledProjects.size(), () -> { showSettled = !showSettled; render(st); }), Ui.fill());
             if (showSettled) {
                 for (String pid : settledProjects) list.addView(settledProjectRow(pid, projects.get(pid)), Ui.inset());
                 for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
@@ -373,6 +370,23 @@ final class Sidebar {
         } else if (first) {
             none(nothing); // nothing to show, or only main chats of projects the filter left out
         }
+    }
+
+    /** The desktop's Settled header: "Settled (N)", a hairline to the edge and the fold's chevron
+     *  (up while open, down while folded); a tap folds or unfolds it. */
+    private View settledHead(int n, Runnable toggle) {
+        LinearLayout h = Ui.row(a);
+        h.setGravity(Gravity.CENTER_VERTICAL);
+        h.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(18), Ui.dp(6));
+        h.setBackground(Ui.press(0, 0, 0));
+        h.setContentDescription("Settled, " + n + (showSettled ? ", open" : ", folded"));
+        h.addView(Ui.text(a, "Settled (" + n + ")", 13, Ui.G700), Ui.wrap());
+        View line = new View(a);
+        line.setBackgroundColor(Ui.dark ? Ui.G400 : Ui.G300);
+        h.addView(line, Ui.margins(new LinearLayout.LayoutParams(0, Math.max(1, Ui.dp(1)), 1), 12, 0, 12, 0));
+        h.addView(Ui.icon(a, showSettled ? Ui.I_UP : Ui.I_DOWN, 15, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
+        h.setOnClickListener(v -> toggle.run());
+        return h;
     }
 
     private void none(String text) {
