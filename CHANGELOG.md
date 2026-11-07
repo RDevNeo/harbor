@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.156.0] - 2026-11-07
+
 ### Changed
 - Phone app updates: a newer app shows a sheet ("Update available", the new version and yours) with
   Later and Update, once per version, instead of the drawer's "Update available" row. Update
