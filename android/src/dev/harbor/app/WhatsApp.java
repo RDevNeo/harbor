@@ -28,6 +28,9 @@ final class WhatsApp {
     private static int round;
     private static String qrKey;
     private static Bitmap qrBitmap;
+    /** The answer last drawn: a poll that brings the same one doesn't redraw (a redraw under a
+     *  finger loses its tap). */
+    private static String drawn = "";
     /** WhatsApp's mark, in its brand green (assets/logos/whatsapp.a8, the desktop's). */
     static final int BRAND = 0xff25d366;
 
@@ -71,13 +74,14 @@ final class WhatsApp {
             JSONObject got = r;
             Ui.main.post(() -> {
                 if (my != round || a.isFinishing() || a.isDestroyed()) return;
-                if (got != null) render(a, hub, pc, s, got);
+                if (got != null && !got.toString().equals(drawn)) render(a, hub, pc, s, got);
                 Ui.main.postDelayed(() -> poll(a, hub, pc, s, my), 2000);
             });
         });
     }
 
     private static void render(Activity a, Hub hub, String pc, Sheet s, JSONObject r) {
+        drawn = r.toString();
         s.body.removeAllViews();
         String where = hub.labelOn(pc);
         JSONObject link = r.optJSONObject("pairing");
