@@ -1006,7 +1006,8 @@ export component Composer {
                     height: 32px;
                     border-bottom-left-radius: 10px;
                     border-bottom-right-radius: 10px;
-                    background: Theme.border;
+                    // Its stroke is the card's, brighter while you type as the card's is.
+                    background: field.has-focus ? Theme.gray-600 : Theme.border;
                     Rectangle {
                         x: 1px;
                         y: 0;

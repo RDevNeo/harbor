@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.160.1] - 2026-11-07
+
+### Changed
+- The worktree and branch tray under the composer has the composer's outline colour, brighter while you type,
+  as the composer's is.
+
 ## [0.160.0] - 2026-11-07
 
 ### Added
