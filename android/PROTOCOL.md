@@ -1844,7 +1844,7 @@ PC (`callOn`), the one Settings shows.
 - `account`: the linked account (its number is the jid's digits); null when nothing is linked.
 - `pairing`: a link waiting for the phone, or null. `qr` the text WhatsApp's QR stands for (it
   changes every 20 s or so), `note` the line to show ("Scan with WhatsApp"). Hubs of 0.155.x also
-  sent a code by number (`code`, `hint`, `retry`, `until`); from 0.159 there are no codes.
+  sent a code by number (`code`, `hint`, `retry`, `until`); from 0.162 there are no codes.
 - `error`: why the last link failed (expired, nobody scanned in 5 minutes), or null.
 - `qr`: null, or `pairing.qr` as `{"size", "rows"}`, drawn as Discord's.
 - `card`: the exact line the desktop's WhatsApp card shows (`text`, `tone` 0 plain, 1 accent, 2
@@ -1855,7 +1855,7 @@ PC (`callOn`), the one Settings shows.
 answers once its QR is there (8 s at most).
 `POST /v1/apps/whatsapp/cancel` `{}` ends a link that waits.
 `POST /v1/apps/whatsapp/signout` `{}` unlinks: WhatsApp drops the device and the PC deletes what
-it stored. A refusal: `409 {"error": "…"}`. From 0.159 `code` and `uncode` are gone (`404`).
+it stored. A refusal: `409 {"error": "…"}`. From 0.162 `code` and `uncode` are gone (`404`).
 
 The phone's sheet (WhatsApp.java) is the desktop card's row: WhatsApp's logo, "WhatsApp",
 `card.text` (in its tone), and on the right Sign in (straight to the QR, no warning), or the green "Signed in" badge and Sign out (asked first), or Cancel
