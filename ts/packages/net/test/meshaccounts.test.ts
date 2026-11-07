@@ -11,6 +11,7 @@ import {
   meshAccounts,
   personBadges,
   personOfEmail,
+  photoBook,
   photosByName,
   sharedAccess,
   sharedAccounts,
@@ -231,12 +232,14 @@ describe("owners' photos", () => {
   const MARA_PHOTO = "https://img.example/mara.png";
   const DANA_PHOTO = "https://img.example/dana.png";
   const DARIO_TOLD = "https://img.example/dario-told.png";
-  const photoOf = photosByName([
+  const dir = [
     { name: "Mara  Lind", image: MARA_PHOTO },
     { name: "dana reyes", image: DANA_PHOTO },
     { name: "Dana Reyes", image: "https://img.example/second.png" },
     { name: "Nope", image: "http://img.example/plain.png" },
-  ]);
+  ];
+  const photoOf = photosByName(dir);
+  const photos = photoBook(dir);
 
   test("a person's photo is the directory's first by name, case and spaces aside; only HTTPS counts", () => {
     expect(photoOf("Mara Lind")).toBe(MARA_PHOTO);
@@ -246,7 +249,7 @@ describe("owners' photos", () => {
   });
 
   test("hello tells each account's owner's photo, never a plain-HTTP one, and reads it back", () => {
-    const v = helloAccounts([local("claude", "Claude", DANA, "DR"), local("opencode", "OpenCode", "", "")], [{ name: "Dana Reyes", github: "" }], { owner: "Mara Lind", of: photoOf });
+    const v = helloAccounts([local("claude", "Claude", DANA, "DR"), local("opencode", "OpenCode", "", "")], [{ name: "Dana Reyes", github: "" }], { owner: "Mara Lind", book: photos });
     expect(v.map((a) => [a.id, a.photo])).toEqual([
       ["claude", DANA_PHOTO],
       ["opencode", MARA_PHOTO],
@@ -260,7 +263,7 @@ describe("owners' photos", () => {
   test("with a photo the badge is the photo and the label names them; without one, initials, and the tip says so", () => {
     const laptop = peer("ts:laptop", "laptop", "Dana Reyes", true, [told("opencode", "opencode", "")]);
     const tower = peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", "", { photo: DARIO_TOLD }), told("claude", "claude", DARIO)]);
-    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [laptop, tower], provs: new Map([laptop, tower].map((p) => [p.id, p.provs])), photoOf });
+    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [laptop, tower], provs: new Map([laptop, tower].map((p) => [p.id, p.provs])), photos });
     expect(v.map((s) => [s.label, s.badge, s.photo, s.noPhoto])).toEqual([
       ["Claude · Mara Lind", "ML", MARA_PHOTO, false],
       ["OpenCode · Dana Reyes", "DR", DANA_PHOTO, false],
@@ -270,11 +273,11 @@ describe("owners' photos", () => {
     ]);
     expect(sharedTip(v[1]!)).toBe("Dana Reyes's, runs on laptop");
     // Nobody knows a photo of Dario: his initials, said in the tooltip.
-    const bare = sharedAccounts({ me, local: [], peers: [peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", "")])], provs: new Map(), photoOf });
+    const bare = sharedAccounts({ me, local: [], peers: [peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", "")])], provs: new Map(), photos });
     expect([bare[0]!.label, bare[0]!.photo, bare[0]!.noPhoto]).toEqual(["Codex · DR", "", true]);
     expect(sharedTip(bare[0]!)).toBe("Dario Reis's, runs on tower · no workspace photo of Dario Reis, so the badge is DR");
     // One person's two sign-ins of a kind are numbered, photo or not.
-    const twice = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX"), local("claude2", "Claude", "mara.lind@example.com", "ML")], peers: [laptop], provs: new Map([[laptop.id, laptop.provs]]), photoOf });
+    const twice = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX"), local("claude2", "Claude", "mara.lind@example.com", "ML")], peers: [laptop], provs: new Map([[laptop.id, laptop.provs]]), photos });
     expect(twice.slice(0, 2).map((s) => [s.label, s.badge])).toEqual([
       ["Claude · Mara Lind", "ML"],
       ["Claude · Mara Lind 2", "ML2"],
@@ -283,8 +286,63 @@ describe("owners' photos", () => {
     expect(accountsByPc(v).get("ts:laptop")).toEqual(["OpenCode · Dana Reyes"]);
   });
 
-  test("alone, nothing changes: own badges, no photos", () => {
-    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [], provs: new Map(), photoOf });
+  test("alone, only a sign-in names a photo: own badges, none by name", () => {
+    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [], provs: new Map(), photos });
     expect(v.map((s) => [s.label, s.photo, s.noPhoto])).toEqual([["Claude · MX", "", false]]);
+    const signed = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [], provs: new Map(), photos: photoBook([{ name: "Mara Lind", email: MARA, image: MARA_PHOTO }]) });
+    expect(signed.map((s) => [s.label, s.badge, s.photo, s.noPhoto])).toEqual([["Claude · Mara Lind", "MX", MARA_PHOTO, false]]);
+  });
+
+  // The workspace calls Filip "Fizz": their PCs' owner detection knows them as Filip Sato.
+  const FILIP = "filip.sato@example.com";
+  const FIZZ_PHOTO = "https://img.example/fizz.png";
+  const nick = photoBook([
+    { name: "Mara Lind", email: "mara@example.com", image: MARA_PHOTO },
+    { name: "Fizz", email: "Filip.Sato@Example.com", image: FIZZ_PHOTO },
+  ]);
+  const fern = peer("ts:fern", "fern", "Fern Sato", true, [told("codex", "codex", "")]);
+  const lab = peer("ts:lab", "lab", "Filip Sato", false, [told("codex", "codex", "")]);
+
+  test("a member's workspace nickname still finds their photo by the email their account signs in with", () => {
+    expect(nick.byEmail(" filip.sato@example.com")).toEqual({ name: "Fizz", photo: FIZZ_PHOTO });
+    expect(nick.byName("Filip Sato")).toBe("");
+    expect(nick.byIdent("claude", identOf("claude", FILIP))).toEqual({ name: "Fizz", photo: FIZZ_PHOTO });
+    expect(nick.byIdent("codex", identOf("claude", FILIP))).toBeNull();
+    expect(nick.byIdent("claude", "")).toBeNull();
+    // Without a photo (or only a plain-HTTP one) a member names nobody's photo.
+    expect(photoBook([{ name: "Fizz", email: FILIP, image: "http://img.example/x.png" }]).byEmail(FILIP)).toBeNull();
+  });
+
+  test("this PC's account of another member: their photo, their workspace name, and the tip says both names", () => {
+    const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX"), local("claude3", "Claude", FILIP, "FS")], peers: [fern, lab], provs: new Map([fern, lab].map((p) => [p.id, p.provs])), photos: nick });
+    const f = v.find((s) => s.account === "claude3")!;
+    expect([f.person, f.shown, f.badge, f.photo, f.noPhoto, f.label]).toEqual(["Filip Sato", "Fizz", "FiS", FIZZ_PHOTO, false, "Claude · Fizz"]);
+    expect(sharedTip(f)).toBe("Fizz's (Filip Sato), runs on this PC");
+    expect(accountsByPc(v).get("")).toEqual(["Claude · Mara Lind", "Claude · Fizz (Filip Sato)"]);
+    // The PC owner's own sign-in finds theirs by email too, though the directory names nobody "Mara Lind" with it.
+    const m = sharedAccounts({ me, local: [local("claude", "Claude", "mara@example.com", "MA")], peers: [fern], provs: new Map([[fern.id, fern.provs]]), photos: nick });
+    expect([m[0]!.label, m[0]!.photo]).toEqual(["Claude · Mara Lind", MARA_PHOTO]);
+    // Hello tells that photo to the mesh, never the email.
+    const h = helloAccounts([local("claude3", "Claude", FILIP, "FS")], [{ name: "Filip Sato", github: "" }], { owner: "Mara Lind", book: nick });
+    expect([h[0]!.person, h[0]!.photo]).toEqual(["Filip Sato", FIZZ_PHOTO]);
+    expect(JSON.stringify(h.map(meshAccountJson))).not.toContain("example.com");
+  });
+
+  test("another PC's account is matched to the member by the hash of its sign-in", () => {
+    const tower = peer("ts:tower", "tower", "Fern Sato", true, [told("claude", "claude", FILIP, { main: false })]);
+    const v = sharedAccounts({ me, local: [], peers: [tower, lab], provs: new Map([tower, lab].map((p) => [p.id, p.provs])), photos: nick });
+    const f = v.find((s) => s.pc === "ts:tower")!;
+    // Its PC knew no one by the email: the member it signs in as is who it is.
+    expect([f.person, f.shown, f.photo, f.label]).toEqual(["Fizz", "Fizz", FIZZ_PHOTO, "Claude · Fizz"]);
+    expect(sharedTip(f)).toBe("Fizz's, runs on tower");
+    // Its PC worked out who it is: that name stays the person (badges agree on every PC); the label is the workspace's.
+    const named = peer("ts:tower", "tower", "Fern Sato", true, [told("claude", "claude", FILIP, { person: "Filip Sato" })]);
+    const w = sharedAccounts({ me, local: [], peers: [named, lab], provs: new Map([named, lab].map((p) => [p.id, p.provs])), photos: nick });
+    const g = w.find((s) => s.pc === "ts:tower")!;
+    expect([g.person, g.shown, g.photo, g.label, g.noPhoto]).toEqual(["Filip Sato", "Fizz", FIZZ_PHOTO, "Claude · Fizz", false]);
+    // Not in this PC's directory: the photo its PC told for that very account.
+    const toldPhoto = peer("ts:tower", "tower", "Fern Sato", true, [told("claude", "claude", "other@example.com", { person: "Filip Sato", photo: FIZZ_PHOTO })]);
+    const x = sharedAccounts({ me, local: [], peers: [toldPhoto], provs: new Map([[toldPhoto.id, toldPhoto.provs]]), photos: nick });
+    expect([x[0]!.photo, x[0]!.label]).toEqual([FIZZ_PHOTO, "Claude · Filip Sato"]);
   });
 });
