@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.161.0] - 2026-11-07
+
+### Changed
+- Snoozing a chat or a project no longer moves it: it stays where it was in the sidebar and the phone's
+  list, its title muted and, where its status goes, a clock with when it wakes ("Tomorrow, 9:00"). It
+  used to leave the list (a chat) or hide (a project) until a search. Waking still marks the chat unread.
+
 ## [0.160.2] - 2026-11-07
 
 ### Fixed

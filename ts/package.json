@@ -1,6 +1,6 @@
 {
   "name": "harbor-ts",
-  "version": "0.160.2",
+  "version": "0.161.0",
   "private": true,
   "type": "module",
   "workspaces": [
