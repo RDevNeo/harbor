@@ -33,6 +33,9 @@ Object.assign(process.env, {
   HARBOR_MESH_NAME: "rig-pc",
 });
 for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
+// OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.
+mkdirSync(join(dir, "home", ".opencode", "bin"), { recursive: true });
+writeFileSync(join(dir, "home", ".opencode", "bin", "opencode"), '#!/bin/sh\n[ "$1" = models ] && printf "nvidia/z-ai/glm-5.3-flash\\nopencode/big-pickle\\nopenrouter/qwen/qwen3-coder\\n"\nexit 0\n', { mode: 0o755 });
 
 // Imported after the environment is set: the store reads its folders when loaded.
 const { blankChat, dataDir, Store } = await import("../packages/store/src/index.ts");

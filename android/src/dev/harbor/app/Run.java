@@ -178,8 +178,8 @@ final class Run {
         return Hub.optId(list.opt(0));
     }
 
-    /** Accounts offered: a new chat's must be able to start one (leads run on Claude); a
-     *  started chat's come from allowed_accounts. */
+    /** Accounts offered: a new chat's must be able to start one (can_start: every provider since
+     *  0.153); a started chat's come from allowed_accounts. */
     List<JSONObject> accounts() {
         List<JSONObject> out = new ArrayList<>();
         JSONArray a = st.optJSONArray("accounts");
@@ -310,7 +310,7 @@ final class Run {
     private void pickAccount(Activity a, Changed ch) {
         List<Sheet.Option> o = new ArrayList<>();
         for (JSONObject j : accounts()) o.add(new Sheet.Option(j.optString("id"), j.optString("label", j.optString("id")), usage(j), true));
-        String note = chat == null ? "New chats are project leads, and leads run on Claude." : null;
+        String note = chat == null ? "Any provider can lead a chat. OpenCode works alone, without subagents." : null;
         Sheet.pick(a, "Account", note, o, account, id -> ch.apply("account", id));
     }
 

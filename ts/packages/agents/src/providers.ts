@@ -26,6 +26,14 @@ export function bin(k: Kind): string {
   return BIN[k];
 }
 
+/** The provider a chat is held to, if any: a lead may switch to any (a started one continues in a fresh session with the
+ *  conversation so far) unless it started on another device, which only Claude runs on; a started subagent stays on its
+ *  own. */
+export function lockedKind(c: { role: string; started: boolean; device: string; account: string }, kindOf: (account: string) => Kind | undefined): Kind | undefined {
+  if (c.role === "lead") return c.started && c.device !== "" ? "Claude" : undefined;
+  return c.started ? kindOf(c.account) : undefined;
+}
+
 /** Interactive command that signs the CLI in; it runs in the built-in terminal. */
 export function loginCmd(k: Kind): readonly string[] {
   if (k === "Claude") return ["/login"];

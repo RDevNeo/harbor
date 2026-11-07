@@ -3014,13 +3014,12 @@ export class Shell {
     }
   }
 
-  /** Lead chats run on Claude; a started chat stays on its provider (app.rs `locked_kind_of`). */
+  /** A lead switches to any provider (a started one continues in a fresh session with the conversation so far) unless
+   *  it started on another device, which only Claude runs on; a started subagent stays on its provider. */
   private lockedKind(): Kind | null {
     const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
     if (!c) return null;
-    if (c.role === "lead") return "Claude";
-    if (!c.started) return null;
-    return this.account(c.account)?.kind ?? kindOfAccount(c.account);
+    return providers.lockedKind(c, (id) => this.account(id)?.kind ?? kindOfAccount(id)) ?? null;
   }
 
   private logoOf(kind: Kind): Pixels {

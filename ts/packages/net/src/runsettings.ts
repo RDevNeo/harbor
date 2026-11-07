@@ -9,9 +9,14 @@ export interface RunError {
   error: string;
 }
 
-/** The accounts a chat may switch to (app.rs `allowed_accounts`): a lead stays on Claude, a started chat on its provider. */
+/** providers.lockedKind with the kinds as the phone's catalog labels them ("Claude", "OpenCode", …). */
+export function lockLeads(c: Chat, kindOf: (account: string) => string | undefined): Kind | undefined {
+  return providers.lockedKind(c, (id) => providers.kindOf(kindOf(id) ?? ""));
+}
+
+/** The accounts a chat may switch to (app.rs `allowed_accounts`), per providers.lockedKind. */
 export function allowedAccounts(c: Chat, accounts: readonly Account[]): string[] {
-  const locked: Kind | undefined = c.role === "lead" ? "Claude" : c.started ? accounts.find((a) => a.id === c.account)?.kind : undefined;
+  const locked = providers.lockedKind(c, (id) => accounts.find((a) => a.id === id)?.kind);
   return accounts.filter((a) => a.bin !== null && a.off !== true && (locked === undefined || a.kind === locked)).map((a) => a.id);
 }
 
@@ -44,7 +49,7 @@ export function checkRun(c: Chat, body: Record<string, unknown>, accounts: reado
     const acc = accounts.find((x) => x.id === account && x.bin !== null);
     if (!acc) fail(400, `no account ${account}`);
     if (acc?.off === true && account !== c.account) fail(409, `${providers.short(acc)} is turned off in Settings › Providers on this PC`);
-    if (!allowed.includes(account) && account !== c.account) fail(409, `can't switch to ${acc ? providers.short(acc) : account}: ${c.role === "lead" ? "a lead runs on Claude" : `a started chat stays on ${oldKind}`}`);
+    if (!allowed.includes(account) && account !== c.account) fail(409, `can't switch to ${acc ? providers.short(acc) : account}: ${c.role === "lead" ? "only Claude runs on another device" : `a started chat stays on ${oldKind}`}`);
     n.account = account;
   }
   const kind = kindOf(n.account) ?? "Claude";
@@ -64,6 +69,8 @@ export function checkRun(c: Chat, body: Record<string, unknown>, accounts: reado
     if (!levels.some((x) => x[0] === access)) fail(400, `${kind} has no access level ${access}`);
     n.access = access as Chat["access"];
   } else if (!levels.some((x) => x[0] === n.access)) n.access = (levels[0]?.[0] ?? "full") as Chat["access"];
+  // A chat not started yet that leaves Claude comes back to this PC: only Claude runs on another device.
+  if (kind !== "Claude" && !c.started && device === null) n.device = "";
   if (device !== null && device !== c.device) {
     if (c.started) fail(409, "a started chat stays on the device it started on; start a new chat to use another");
     if (device !== "" && kind !== "Claude") fail(400, "only Claude chats run on another device");

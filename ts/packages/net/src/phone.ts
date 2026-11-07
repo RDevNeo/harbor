@@ -1,4 +1,4 @@
-import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
+import { allowedAccounts, checkRun, isRunError, lockLeads } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
 import { blankChat, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
@@ -589,10 +589,10 @@ export class PhoneRoutes {
   allowedAccounts(c: Chat): string[] {
     const cat = this.d.catalog;
     if (!cat) return [];
-    const locked = c.role === "lead" ? "Claude" : c.started ? (cat.accounts().find((a) => a.id === c.account)?.kind ?? null) : null;
+    const locked = lockLeads(c, (id) => cat.accounts().find((a) => a.id === id)?.kind);
     return cat
       .accounts()
-      .filter((a) => a.bin !== null && a.off !== true && (locked === null || a.kind === locked))
+      .filter((a) => a.bin !== null && a.off !== true && (locked === undefined || a.kind === locked))
       .map((a) => a.id);
   }
 
@@ -606,7 +606,7 @@ export class PhoneRoutes {
     const fast = cat?.hasFast(kind) ?? false;
     const blocker = c.started && kind === "Claude" ? (cat?.relocateBlocker?.(c) ?? null) : null;
     const why: Record<string, Json> = {};
-    if (!allowed.some((a) => a !== c.account)) why.account = c.role === "lead" ? "A project's lead runs on Claude" : c.started ? `A started chat stays on ${kind}` : "No other account";
+    if (!allowed.some((a) => a !== c.account)) why.account = c.role === "lead" && c.started && c.device !== "" ? "Only Claude runs on another device" : c.started && c.role !== "lead" ? `A started chat stays on ${kind}` : "No other account";
     if (efforts.length === 0) why.effort = `${kind} has no effort levels`;
     if (access.length <= 1) why.access = `${kind} has one access level`;
     if (c.started && kind === "Claude") {
@@ -663,7 +663,8 @@ export class PhoneRoutes {
         name: a.name,
         kind: slug(a.kind),
         signed_in: a.loggedIn ?? true,
-        can_start: a.kind === "Claude",
+        // Every provider can lead a new chat (OpenCode's has no team tools: it works alone).
+        can_start: true,
         usage: a.usage.map((u) => ({ label: u.label, percent: new F64(Math.round(u.percent * 1000) / 10) })),
       }));
     const sel = cat?.defaults() ?? { account: "", model: "", effort: "", access: "full", device: "" };
@@ -1115,12 +1116,12 @@ export class PhoneRoutes {
     const kindOf = (id: string): string | undefined => cat?.accounts().find((a) => a.id === id)?.kind;
     const kind = cat ? kindOf(account) : "Claude";
     if (kind === undefined) return err(400, `no account ${account}`);
-    if (kind !== "Claude") return err(400, `new chats start on a Claude account; ${kind} works as a subagent`);
     const effort = s("effort", kind === (kindOf(d.account) ?? "Claude") ? d.effort : "");
     if (cat && effort !== "" && !cat.efforts(kind).some((e) => e[0] === effort)) return err(400, `${kind} has no effort ${effort}`);
     const access = s("access", "full");
     if (cat && !cat.access(kind).some((a) => a[0] === access)) return err(400, `${kind} has no access level ${access}`);
-    const device = s("device", "");
+    // Only Claude runs on another device.
+    const device = kind === "Claude" ? s("device", "") : "";
     const text = s("text", "").trim();
     const files: string[] = [];
     for (const f of Array.isArray(body.files) ? body.files : []) {

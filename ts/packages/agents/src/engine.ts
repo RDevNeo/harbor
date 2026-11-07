@@ -10,10 +10,13 @@ import type { Event, RemoteSpec, Turn } from "./agent.ts";
 import * as detach from "./detach.ts";
 import { ensureSession, ensureSessionIn, sessionCopies } from "./movechat.ts";
 import { forkable, forkJsonl, forksKey, preambleKey } from "./fork.ts";
+
+/** kv: the provider kind a chat's session runs on. */
+export const sessionKindKey = (chat: number): string => `session_kind_${chat}`;
 import { home, newUuid, now } from "./paths.ts";
 import { alive as aliveNow } from "./procfs.ts";
 import * as procs from "./procs.ts";
-import { type Account, accountEnv, applyUsage, binStr, installed, type Kind, knownAccount, short, staticModels } from "./providers.ts";
+import { access as accessLevels, type Account, accountEnv, applyUsage, binStr, installed, type Kind, kindOf, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as tools from "./tools.ts";
 import { fromJson as waitFromJson, type Waiting, waitingOf } from "./waiting.ts";
@@ -488,6 +491,9 @@ export class Engine {
       this.persist(id);
       return;
     }
+    // Another provider than the session's: a fresh session, the conversation so far before the prompt.
+    if (this.handOver(id)) prompt = this.takeForkPreamble(id) + prompt;
+    this.store.set(sessionKindKey(id), account.kind);
     const tr = this.transcript(id);
     let remote: RemoteSpec | null = null;
     try {
@@ -1052,6 +1058,8 @@ export class Engine {
     }
     // A message to an idle chat resumes a queue its Stop held: the queue follows it.
     this.queue.held.delete(id);
+    // Switched to another provider since its last turn: the conversation goes with this message (taken below).
+    this.handOver(id);
     const tr = this.transcript(id);
     const item = tr.items.length;
     // The previous message came from elsewhere: this one's place is said too.
@@ -1285,6 +1293,34 @@ export class Engine {
     this.transcripts.set(chat.id, { items: copy, pendingText: null, pendingThinking: null, mcp: [], stderr: [], gotResult: false });
     this.changed(null);
     return chat;
+  }
+
+  /** The provider of a chat's session: the one its last turn ran on (chats from before this was kept: a lead's was
+   *  Claude, the only provider a lead ran on; anything else's its account's). */
+  sessionKind(c: Chat): Kind | undefined {
+    const k = kindOf(this.store.get(sessionKindKey(c.id)) ?? "");
+    if (k !== undefined) return k;
+    return c.role === "lead" ? "Claude" : this.account(c.account)?.kind;
+  }
+
+  /** A started chat switched to another provider can't resume its session there: it starts a fresh one, with the
+   *  conversation so far as its first message's preamble (as a fork's). True when it did. */
+  handOver(id: number): boolean {
+    const c = this.chat(id);
+    const to = c ? this.account(c.account)?.kind : undefined;
+    if (!c || to === undefined || !c.started || c.sessionId === "") return false;
+    const from = this.sessionKind(c);
+    if (from === undefined || from === to) return false;
+    const items = this.transcript(id).items.filter((i) => i.kind !== "thinking" && i.kind !== "result" && i.kind !== "notice");
+    const context = team.clip(items.map(team.renderItem).join("\n"), 40_000);
+    if (context.trim() !== "") this.store.set(preambleKey(id), `This conversation started on ${from} and continues with you (${to}). Here it is so far; continue from it with the user's next message.\n\n${context}\n\n---\n\n`);
+    c.started = false;
+    c.sessionId = to === "Claude" ? newUuid() : "";
+    this.store.set(sessionKindKey(id), to);
+    this.store.saveChat(c);
+    this.transcript(id).items.push({ kind: "notice", icon: "restart", text: `Continues on ${to}: a new session, with the conversation so far`, detail: "" });
+    this.persist(id);
+    return true;
   }
 
   /** A fork's preamble for its first message (once), or "". */
@@ -1697,11 +1733,15 @@ export class Engine {
       .sort((a, b) => b[1] - a[1]);
   }
 
-  /** A new lead chat (a project's thread, or a project-less one) on a Claude account. */
+  /** A new lead chat (a project's thread, or a project-less one) on the account picked: Claude, Codex or OpenCode. An
+   *  account this PC doesn't have falls back to Claude's; only Claude runs on another device. */
   newThread(repo: number | null, first: string, sel: { account: string; model: string; effort: string; access: string; device: string }): Chat {
-    let { account, model, access } = sel;
-    if (this.account(account)?.kind !== "Claude") [account, model] = ["claude", "claude-opus-5-5"];
-    if (!["full", "edits", "plan"].includes(access)) access = "full";
+    let { account, model, access, device } = sel;
+    const acc = this.account(account);
+    if (!acc) [account, model] = ["claude", "claude-opus-5-5"];
+    const kind = acc?.kind ?? "Claude";
+    if (kind !== "Claude") device = "";
+    if (!accessLevels(kind).some((a) => a[0] === access)) access = accessLevels(kind)[0]?.[0] ?? "full";
     const title = [...(first.trim().split("\n")[0] ?? "").trim()].slice(0, 60).join("");
     const chat = this.store.createChat({
       id: 0,
@@ -1718,7 +1758,7 @@ export class Engine {
       role: "lead",
       parent: null,
       name: "lead",
-      device: sel.device,
+      device: device,
       gid: "",
       home: "",
       homeId: 0,
