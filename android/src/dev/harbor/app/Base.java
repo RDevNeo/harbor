@@ -30,6 +30,8 @@ abstract class Base extends Activity {
 
     /** Harbor screens in the foreground now. */
     static volatile int resumed;
+    /** This screen is in front (between onResume and onPause). */
+    boolean front;
     private int gen;                 // bumped to stop the current poll loop
     private volatile Net.Http polling;
     private long rev = -1;
@@ -394,6 +396,7 @@ abstract class Base extends Activity {
     protected void onResume() {
         super.onResume();
         resumed++;
+        front = true;
         Inbox.resumed(this);
         Gmail.sayPending(this);
         Invites.resumed(this);
@@ -406,6 +409,7 @@ abstract class Base extends Activity {
     protected void onPause() {
         super.onPause();
         resumed--;
+        front = false;
         Inbox.paused(this);
         Invites.paused();
         // Left the app (not just another of its screens): listen a few minutes for answers.

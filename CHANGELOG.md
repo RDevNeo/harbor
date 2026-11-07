@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Phone app updates: a newer app shows a sheet ("Update available", the new version and yours) with
+  Later and Update, once per version, instead of the drawer's "Update available" row. Update
+  downloads and installs it at once, as does Settings › App's Update button, which now shows the
+  version on offer as soon as Settings opens, without checking every PC first. Installing by itself
+  while the screen is off is unchanged.
+
 ## [0.155.1] - 2026-11-07
 
 ### Fixed

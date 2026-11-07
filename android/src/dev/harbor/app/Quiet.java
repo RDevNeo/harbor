@@ -27,6 +27,13 @@ final class Quiet {
         return INSTALL;
     }
 
+    /** Whether the "Harbor X is ready" sheet shows for version `offered` (this phone runs
+     *  `mine`): once per version, so Later on one keeps it away until a newer one comes.
+     *  dismissed: the version the sheet last showed for (Later, Update or its X). */
+    static boolean prompt(long offered, long mine, long dismissed) {
+        return offered > mine && offered != dismissed;
+    }
+
     /** PackageInstaller's STATUS_FAILURE_BLOCKED: the verifier (Play Protect) refused it. */
     static final int BLOCKED = 2;
 

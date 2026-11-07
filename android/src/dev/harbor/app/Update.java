@@ -13,6 +13,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInstaller;
 import android.os.Build;
 import android.os.PowerManager;
+import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -60,7 +62,61 @@ public class Update extends BroadcastReceiver {
                 } catch (Exception ignored) { } // that PC is away
             }
         bestHub = bh; bestPc = bp; bestCode = best;
+        // Kept for the next start: Settings and the sheet know the version on offer at once.
+        Ui.prefs(c).edit().putLong("known_code", best).putString("known_hub", bh == null ? "" : bh)
+                .putString("known_pc", bp == null ? "" : bp).apply();
         return best;
+    }
+
+    /** The newest app known to be on offer, without asking the PCs: the last {@link #check}'s,
+     *  this run's or the one before the process last ended. 0: none known. */
+    static long known(Context c) {
+        if (bestCode <= 0) {
+            SharedPreferences p = Ui.prefs(c);
+            long code = p.getLong("known_code", 0);
+            String h = p.getString("known_hub", "");
+            if (code > 0 && !h.isEmpty() && Hub.get(c, h) != null) { bestHub = h; bestPc = p.getString("known_pc", ""); bestCode = code; }
+        }
+        return bestCode;
+    }
+
+    /** A PC's state says it serves app `code` (GET /v1/state `app`): the newest known when it
+     *  beats the last check's, so Update downloads it from there without asking again. */
+    static void saw(Context c, String hubId, long code) {
+        if (code <= known(c) || hubId == null) return;
+        bestHub = hubId; bestPc = ""; bestCode = code;
+        Ui.prefs(c).edit().putLong("known_code", code).putString("known_hub", hubId).putString("known_pc", "").apply();
+    }
+
+    // ---- the sheet that says an update is ready ----
+
+    /** "Harbor X is ready" over the chats, once per version (Quiet.prompt; Later or the X keeps
+     *  it away until a newer one): Update installs it now, in front, through Settings (the same
+     *  direct path as its row: no new check). Settings › App keeps the update for later. */
+    static void prompt(Base a, long offered) {
+        SharedPreferences p = Ui.prefs(a);
+        if (!a.front || a.isFinishing() || busy || !Quiet.prompt(offered, Settings.myCode(a), p.getLong("prompt_code", 0))) return;
+        p.edit().putLong("prompt_code", offered).apply();
+        Sheet s = new Sheet(a, "Update available");
+        String hint = !a.getPackageManager().canRequestPackageInstalls() ? "Android asks once to let Harbor install it."
+                : blocked(a) ? "Google Play Protect may ask to scan it first."
+                : !failure(a, offered).isEmpty() ? "It didn't install by itself."
+                : "Otherwise it installs by itself the next time the screen is off.";
+        LinearLayout c = s.card();
+        LinearLayout row = Ui.cardRow(a, Ui.I_DOWNLOAD, "Harbor " + Settings.name(offered),
+                "You have " + Settings.myName(a) + ". " + hint, Ui.FG, null);
+        Ui.wrapSub(row, 3);
+        c.addView(row, Ui.fill());
+        LinearLayout btns = Ui.row(a);
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, -2, 1);
+        btns.addView(Ui.button(a, "Later", false, v -> s.dismiss()), half);
+        btns.addView(new View(a), new LinearLayout.LayoutParams(Ui.dp(10), 1));
+        btns.addView(Ui.button(a, "Update", true, v -> {
+            s.dismiss();
+            a.startActivity(new Intent(a, Settings.class).putExtra("hub", a.hub.id).putExtra("install", offered));
+        }), new LinearLayout.LayoutParams(0, -2, 1));
+        s.body.addView(btns, Ui.margins(Ui.fill(), 2, 0, 2, 6));
+        s.show();
     }
 
     // ---- updating automatically ----
@@ -164,7 +220,7 @@ public class Update extends BroadcastReceiver {
      *  background's, which gives up quietly if Harbor came back on screen meanwhile. */
     static void install(Context c, Hub hub, Progress progress, boolean auto) throws Exception {
         if (busy) throw new IOException("already updating");
-        long to = bestCode;
+        long to = known(c);
         Hub from = bestHub == null ? null : Hub.get(c, bestHub);
         Net.Http http = from != null && bestCode > Settings.myCode(c) ? from.openOn(bestPc, "GET", "/app.apk", 60_000)
                 : hub.open("GET", "/app.apk", 60_000, true);

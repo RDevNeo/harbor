@@ -34,6 +34,13 @@ public class UpdateTest {
         same(Quiet.plan(54000, 53000, 53000, true, 54000), Quiet.NONE, "blocked and offered");
         same(Quiet.plan(53000, 53000, 53000, true, 53000), Quiet.NONE, "blocked, up to date");
 
+        // The "Harbor X is ready" sheet: once per version, back for a newer one.
+        check(Quiet.prompt(53000, 52000, 0), "newer, never shown");
+        check(!Quiet.prompt(53000, 52000, 53000), "shown for it already");
+        check(Quiet.prompt(54000, 52000, 53000), "a newer one than the dismissed one");
+        check(!Quiet.prompt(52000, 52000, 0), "up to date");
+        check(!Quiet.prompt(0, 52000, 0), "nothing offered");
+
         // What counts as the verifier's refusal (Play Protect), and the reason Settings shows.
         check(Quiet.verifier(Quiet.BLOCKED, null), "STATUS_FAILURE_BLOCKED");
         check(Quiet.verifier(1, "INSTALL_FAILED_VERIFICATION_FAILURE: Verification failed"), "verification message");

@@ -191,7 +191,7 @@ public class Settings extends Base {
         // with whatever keeps the automatic install from going in said on its line.
         section(col, "App");
         LinearLayout app = card(col);
-        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", "Checking… · " + myName(this), Ui.FG, v -> updateTapped());
+        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this), Ui.FG, v -> updateTapped());
         updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
         updateBtn = Ui.button(this, "Update", true, v -> update());
         updateBtn.setVisibility(View.GONE);
@@ -200,6 +200,7 @@ public class Settings extends Base {
         // Why the last install didn't go in: Android's whole message, to read or copy.
         updateRow.setOnLongClickListener(v -> { whyDialog(); return true; });
         app.addView(updateRow, Ui.fill());
+        showUpdate(Math.max(Update.known(this), available)); // the version already known to be on offer: no wait for a check
 
         LinearLayout bye = card(col);
         bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
@@ -480,7 +481,7 @@ public class Settings extends Base {
                     .setPositiveButton("Try again", (d, w) -> {
                         Update.unblock(this);
                         Ui.toast(this, "The next version tries the background again");
-                        checkUpdates();
+                        refreshUpdate();
                     }).show();
             return;
         }
@@ -890,13 +891,13 @@ public class Settings extends Base {
             update();
         } else {
             installWhenAllowed = false;
-            checkUpdates();
+            refreshUpdate();
         }
         gmailRow(); // back from Google's page or the account sheet
         discordRow();
         whatsappRow();
         // An install that fails after its download (Android or Play Protect refused it).
-        Update.changed = () -> { if (!isFinishing()) checkUpdates(); };
+        Update.changed = () -> { if (!isFinishing()) refreshUpdate(); };
     }
 
     @Override
@@ -967,44 +968,49 @@ public class Settings extends Base {
         if (Gmail.result(this, req, res, data)) gmailRow();
     }
 
-    /** The newest app any PC offers (tap the row to ask again). */
+    /** The row from what's known, then a quiet look at the PCs (at most every 10 minutes,
+     *  Update.check): an update already known shows its Update button straight away. */
+    private void refreshUpdate() {
+        showUpdate(Update.known(this));
+        Ui.pool.execute(() -> {
+            long code = Update.check(getApplicationContext(), false);
+            Ui.main.post(() -> { if (!isFinishing()) showUpdate(Math.max(code, Update.known(this))); });
+        });
+    }
+
+    /** Up to date, tapped: asks every PC again, now. */
     private void checkUpdates() {
         if (!installing) updateNote.setText("Checking every PC… · " + myName(this));
         Ui.pool.execute(() -> {
             // Every PC of every workspace: the one this phone talks to may offer an older app.
             long code = Update.check(getApplicationContext(), true);
-            long mine = myCode(this);
-            String where = Update.bestHub == null ? "" : pcName(Update.bestHub, Update.bestPc);
-            Context c = getApplicationContext();
-            boolean allowed = getPackageManager().canRequestPackageInstalls(), blocked = Update.blocked(c);
-            String failed = code > mine ? Update.failure(c, code) : "";
-            String note;
-            if (code <= 0) note = myName(this) + " · no PC answered to check for updates";
-            else if (code > mine) {
-                note = "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where) + " · "
-                        + (!allowed ? "tap Update, then allow Harbor to install it"
-                        : !failed.isEmpty() ? "it didn't install by itself, tap Update (hold for why)"
-                        : blocked ? "tap Update to install it (Play Protect asks to scan it)"
-                        : Update.silent(c, code) ? "it installs by itself the next time the screen is off" : "tap Update");
-            } else {
-                note = "Up to date · " + name(mine)
-                        + (!allowed ? " · tap to let updates install by themselves" : blocked ? " · Play Protect asks before each update: tap for how" : "");
-            }
-            final String ff = failed, fn = note; final long fc = code;
             Ui.main.post(() -> {
                 if (isFinishing()) return;
-                failedWhy = ff;
-                if (!installing) updateNote.setText(fn); // else its progress stays on the line
-                available = fc;
-                updateBtn.setVisibility(fc > myCode(this) ? View.VISIBLE : View.GONE);
+                if (code <= 0 && !installing) { updateNote.setText(myName(this) + " · no PC answered to check for updates"); return; }
+                showUpdate(code);
             });
         });
     }
 
-    /** The name of PC v of pairing id ("" = the paired PC). */
-    private String pcName(String id, String v) {
-        Hub h = Hub.get(this, id);
-        return h == null ? "" : h.labelOn(v);
+    /** The row for app `code` on offer: its version and an Update button when it's newer than
+     *  this one, else just this version. A download in progress keeps its line. */
+    private void showUpdate(long code) {
+        if (installing) return; // its progress stays on the line
+        long mine = myCode(this);
+        Context c = getApplicationContext();
+        boolean allowed = getPackageManager().canRequestPackageInstalls(), blocked = Update.blocked(c);
+        String failed = code > mine ? Update.failure(c, code) : "";
+        String note;
+        if (code > mine) {
+            note = "Version " + name(code) + " is ready";
+        } else {
+            note = name(mine) + " · up to date"
+                    + (!allowed ? " · tap to let updates install by themselves" : blocked ? " · Play Protect asks before each update: tap for how" : "");
+        }
+        failedWhy = failed;
+        updateNote.setText(note);
+        available = code;
+        updateBtn.setVisibility(code > mine ? View.VISIBLE : View.GONE);
     }
 
     /** 7001 -> 0.7.1 (android/build.sh: major*1000000 + minor*1000 + patch). */

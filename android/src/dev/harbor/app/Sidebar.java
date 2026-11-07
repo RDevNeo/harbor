@@ -255,10 +255,11 @@ final class Sidebar {
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
         // No Browser row (a link in a chat opens it) and no PCs row (Settings lists the workspace's PCs).
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
+        // A newer app: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
         JSONObject app = st.optJSONObject("app");
-        long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
-        // Updating automatically it installs by itself while the phone sleeps: nothing to tap.
-        if (offered > Settings.myCode(a) && !Update.silent(a, offered)) list.addView(nav(Ui.I_DOWNLOAD, "Update available", null, Ui.BLUE, v -> settings()), Ui.inset());
+        if (app != null) Update.saw(a, a.hub.id, app.optLong("version_code"));
+        long offered = Update.known(a);
+        if (offered > Settings.myCode(a)) Ui.main.post(() -> Update.prompt(a, offered));
         View line = new View(a);
         line.setBackgroundColor(Ui.LINE);
         list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 8, 20, 2));
