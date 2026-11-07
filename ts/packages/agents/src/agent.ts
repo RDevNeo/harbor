@@ -446,6 +446,14 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
       args.push(promptWithPaths(spec.prompt, others));
       break;
     }
+    case "OpenCode": {
+      // Headless, with full access (its only level): permissions its config doesn't deny are granted.
+      args.push("run", "--format", "json", "--thinking", "--auto");
+      if (model !== null) args.push("--model", model);
+      if (spec.resume) args.push("--session", spec.sessionId);
+      args.push(promptWithPaths(spec.prompt, all));
+      break;
+    }
   }
   if (spec.remote && grant) {
     const r = spec.remote;
@@ -588,6 +596,10 @@ export function parser(kind: Kind): (v: unknown) => Event[] {
       return parseClaude;
     case "Codex":
       return parseCodex;
+    case "OpenCode": {
+      const st = opencodeState();
+      return (v) => parseOpencode(v, st);
+    }
   }
 }
 
@@ -823,3 +835,53 @@ const has = (v: unknown, k: string): boolean => {
   return o !== undefined && Object.prototype.hasOwnProperty.call(o, k);
 };
 
+
+/** What `opencode run`'s events carry over from one line to the next. */
+export interface OpencodeState {
+  sessionSent: boolean;
+  /** Tokens and cost of the turn's steps so far: one result goes out when the last step ends. */
+  cost: number;
+  input: number;
+  output: number;
+  cached: number;
+  steps: number;
+}
+
+export function opencodeState(): OpencodeState {
+  return { sessionSent: false, cost: 0, input: 0, output: 0, cached: 0, steps: 0 };
+}
+
+/** `opencode run --format json`: events with a `part` and a `sessionID`. A step that ends in tool calls is followed by
+ *  another; the turn's result (its steps added up) comes with the step that ends it. */
+export function parseOpencode(v: unknown, st: OpencodeState): Event[] {
+  const e: Event[] = [];
+  const sid = optStr(at(v, "sessionID")) ?? optStr(at(v, "part", "sessionID"));
+  if (!st.sessionSent && sid !== undefined && sid !== "") {
+    st.sessionSent = true;
+    e.push({ type: "session", id: sid });
+  }
+  const part = at(v, "part");
+  const ty = str(at(v, "type"));
+  if (ty === "text") e.push({ type: "textFinal", text: str(at(part, "text")) });
+  else if (ty === "reasoning") e.push({ type: "thinkingFinal", text: str(at(part, "text")) });
+  else if (ty === "tool_use" || ty === "tool") {
+    const state = at(part, "state");
+    const status = at(state, "status");
+    const done = status === "completed" || status === "error";
+    const out = status === "error" ? (optStr(at(state, "error")) ?? textOf(at(state, "output"))) : textOf(at(state, "output"));
+    e.push({ type: "tool", id: str(at(part, "callID")), name: str(at(part, "tool")), summary: toolSummary(at(state, "input")), input: pretty(at(state, "input")), result: done ? out : null, isError: status === "error" });
+  } else if (ty === "step_finish") {
+    const t = at(part, "tokens");
+    st.cost += positive(at(part, "cost")) ?? 0;
+    st.input += n0(at(t, "input")) + n0(at(t, "cache", "read"));
+    st.output += n0(at(t, "output")) + n0(at(t, "reasoning"));
+    st.cached += n0(at(t, "cache", "read"));
+    st.steps++;
+    if (at(part, "reason") !== "tool-calls")
+      e.push({ type: "result", costUsd: st.cost > 0 ? st.cost : null, durationMs: 0, turns: st.steps, inputTokens: st.input, outputTokens: st.output, cached: st.cached });
+  } else if (ty === "error") {
+    const msg = optStr(at(v, "error", "data", "message")) ?? optStr(at(v, "error", "message")) ?? optStr(at(v, "error", "name")) ?? "error";
+    e.push({ type: "error", text: msg });
+  }
+  return e;
+}

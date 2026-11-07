@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- OpenCode is a provider again (desktop and phone): Settings › Providers lists it when `opencode`
+  is installed (also from `~/.opencode/bin`, where its installer puts it), and the model picker
+  offers "Default" plus every model `opencode models` lists, those your OpenCode config names up
+  front (e.g. `nvidia/z-ai/glm-5.3-flash`); the list is fetched in the background and kept for the
+  next start. Turns run `opencode run --format json` with the chosen model, continue by OpenCode's
+  session id and run with full access (its only level); OpenCode can't be steered, so messages
+  sent mid-turn queue.
+
 ## [0.151.0] - 2026-11-06
 
 ### Changed

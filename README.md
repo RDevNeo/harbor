@@ -4,7 +4,8 @@ A native, lightweight desktop chat client for coding agents, organised by projec
 TypeScript on Bun, with a native [Slint](https://slint.dev) window: no Electron, no webview, no browser engine
 behind the window. Linux only (x86_64 and aarch64, glibc 2.35+).
 
-- **Providers**: Claude Code (one entry per account: `~/.claude`, `~/.claude2`, …) and Codex. Each
+- **Providers**: Claude Code (one entry per account: `~/.claude`, `~/.claude2`, …), Codex and
+  OpenCode (any model `opencode models` lists, e.g. its NVIDIA or OpenCode Go providers). Each
   is its own CLI, run headless per message; the conversation
   continues through the provider's session id. Nothing stays resident between turns.
 - **Composer**: model picker (favourites, provider rail with account badges, search, Ctrl+1–9),
@@ -68,7 +69,7 @@ Required:
 |---|---|
 | A Wayland or X11 session with OpenGL/EGL | loaded at runtime (Mesa is enough) |
 | `curl`, `tar`, `sha256sum` | the installer and the self-updater |
-| An agent CLI, signed in | Claude Code or Codex. Codex installs with npm, so it needs [Node.js](https://nodejs.org) |
+| An agent CLI, signed in | Claude Code, Codex or OpenCode. Codex installs with npm, so it needs [Node.js](https://nodejs.org) |
 
 Optional (only that feature is off without it):
 

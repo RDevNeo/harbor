@@ -307,6 +307,14 @@ describe("command lines per provider", () => {
     expect(v[v.length - 1]).toBe("sys\n\n---\n\nhi");
     expect(v).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
+
+  test("OpenCode: headless JSON with full access, the model as given, continued by its session id", async () => {
+    const oc = (over: Partial<agent.TurnSpec> = {}) => agent.build(spec({ account: claude({ kind: "OpenCode", id: "opencode", bin: "/x/opencode" }), ...over }));
+    const fresh = await oc({ model: "nvidia/z-ai/glm-5.3-flash", team: { role: "sub", system: "sys" } });
+    expect(fresh.cmd.args).toEqual(["run", "--format", "json", "--thinking", "--auto", "--model", "nvidia/z-ai/glm-5.3-flash", "sys\n\n---\n\nhi"]);
+    expect(fresh.stdin).toBeNull();
+    expect((await oc({ resume: true, files: ["/a.png"] })).cmd.args).toEqual(["run", "--format", "json", "--thinking", "--auto", "--session", "abc", "hi\n\nAttached files:\n- /a.png"]);
+  });
 });
 
 describe("event streams", () => {
@@ -352,6 +360,32 @@ describe("event streams", () => {
       { type: "result", costUsd: null, durationMs: 0, turns: 1, inputTokens: 10, outputTokens: 2, cached: 4 },
     ]);
     expect(agent.parseCodex({ type: "turn.failed", error: { message: "boom" } })).toEqual([{ type: "error", text: "boom" }]);
+  });
+
+  test("OpenCode", () => {
+    // `opencode run --format json -m nvidia/z-ai/glm-5.3-flash "Say OK"`, as opencode 1.19.5 wrote it.
+    const real = [
+      "{\"type\":\"step_start\",\"timestamp\":1794007757338,\"sessionID\":\"ses_e4ccf7d62ffeKrIB1LXthybJVi\",\"part\":{\"id\":\"prt_1b331f211001C7E8V59TnOOnfN\",\"messageID\":\"msg_1b3308503001UpsER276R8W2cU\",\"sessionID\":\"ses_e4ccf7d62ffeKrIB1LXthybJVi\",\"type\":\"step-start\"}}",
+      "{\"type\":\"text\",\"timestamp\":1794007761124,\"sessionID\":\"ses_e4ccf7d62ffeKrIB1LXthybJVi\",\"part\":{\"id\":\"prt_1b331ffbc001xv0J0dXK5CEjWG\",\"messageID\":\"msg_1b3308503001UpsER276R8W2cU\",\"sessionID\":\"ses_e4ccf7d62ffeKrIB1LXthybJVi\",\"type\":\"text\",\"text\":\"OK\",\"time\":{\"start\":1794007760828,\"end\":1794007761103}}}",
+      "{\"type\":\"step_finish\",\"timestamp\":1794007761124,\"sessionID\":\"ses_e4ccf7d62ffeKrIB1LXthybJVi\",\"part\":{\"id\":\"prt_1b33200d500156OQhiaK5Oyy4g\",\"reason\":\"stop\",\"messageID\":\"msg_1b3308503001UpsER276R8W2cU\",\"sessionID\":\"ses_e4ccf7d62ffeKrIB1LXthybJVi\",\"type\":\"step-finish\",\"tokens\":{\"total\":50504,\"input\":49190,\"output\":0,\"reasoning\":34,\"cache\":{\"write\":0,\"read\":1280}},\"cost\":0}}",
+    ];
+    const oc = agent.parser("OpenCode");
+    expect(real.flatMap((l) => oc(JSON.parse(l)))).toEqual([
+      { type: "session", id: "ses_e4ccf7d62ffeKrIB1LXthybJVi" },
+      { type: "textFinal", text: "OK" },
+      { type: "result", costUsd: null, durationMs: 0, turns: 1, inputTokens: 50470, outputTokens: 34, cached: 1280 },
+    ]);
+    // A step that ends in tool calls adds up into the turn's one result.
+    const st = agent.opencodeState();
+    const step = (reason: string, cost: number) => ({ type: "step_finish", sessionID: "o", part: { reason, cost, tokens: { input: 1, output: 2, reasoning: 1, cache: { read: 3 } } } });
+    expect(agent.parseOpencode(step("tool-calls", 0.25), st)).toEqual([{ type: "session", id: "o" }]);
+    expect(agent.parseOpencode(step("stop", 0.25), st)).toEqual([{ type: "result", costUsd: 0.5, durationMs: 0, turns: 2, inputTokens: 8, outputTokens: 6, cached: 6 }]);
+    const tool = (status: string, extra: object) => ({ type: "tool_use", sessionID: "o", part: { callID: "c1", tool: "bash", state: { status, input: { command: "echo hi" }, ...extra } } });
+    expect(agent.parseOpencode(tool("running", {}), st)).toEqual([{ type: "tool", id: "c1", name: "bash", summary: "echo hi", input: '{\n  "command": "echo hi"\n}', result: null, isError: false }]);
+    expect(agent.parseOpencode(tool("completed", { output: "hi\n" }), st)[0]).toMatchObject({ result: "hi\n", isError: false });
+    expect(agent.parseOpencode(tool("error", { error: "denied" }), st)[0]).toMatchObject({ result: "denied", isError: true });
+    expect(agent.parseOpencode({ type: "reasoning", part: { text: "hmm" } }, st)).toEqual([{ type: "thinkingFinal", text: "hmm" }]);
+    expect(oc({ type: "error", error: { name: "APIError", data: { message: "m" } } })).toEqual([{ type: "error", text: "m" }]);
   });
 
   test("tool summaries", () => {

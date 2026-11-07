@@ -7,7 +7,7 @@ import * as p from "../src/providers.ts";
 const base = mkdtempSync(join(tmpdir(), "hts-prov-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-test("accounts from a home folder: one per Claude profile, then Codex", () => {
+test("accounts from a home folder: one per Claude profile, then Codex and OpenCode", () => {
   const h = join(base, "home");
   const bin = join(h, ".local/bin");
   mkdirSync(join(h, ".claude"), { recursive: true });
@@ -21,12 +21,17 @@ test("accounts from a home folder: one per Claude profile, then Codex", () => {
   writeFileSync(join(h, ".codex/auth.json"), "{}");
   writeFileSync(join(bin, "claude"), "#!/bin/sh\n");
   chmodSync(join(bin, "claude"), 0o755);
+  // OpenCode's installer puts it in ~/.opencode/bin.
+  mkdirSync(join(h, ".opencode/bin"), { recursive: true });
+  writeFileSync(join(h, ".opencode/bin/opencode"), "#!/bin/sh\n");
+  chmodSync(join(h, ".opencode/bin/opencode"), 0o755);
   const was = { HOME: process.env.HOME, PATH: process.env.PATH };
   process.env.HOME = h;
   process.env.PATH = "/nonexistent";
   try {
     const all = p.discover();
-    expect(all.map((a) => a.id)).toEqual(["claude", "claude2", "claude10", "codex"]);
+    expect(all.map((a) => a.id)).toEqual(["claude", "claude2", "claude10", "codex", "opencode"]);
+    expect(all.find((a) => a.id === "opencode")).toMatchObject({ kind: "OpenCode", loggedIn: null, bin: join(h, ".opencode/bin/opencode") });
     const [one, two, ten] = all;
     expect(one).toMatchObject({ name: "Claude", badge: "AB", configDir: null, loggedIn: true, bin: join(bin, "claude") });
     expect(two).toMatchObject({ name: "Work", badge: "C2", configDir: join(h, ".claude2"), loggedIn: true });
@@ -73,8 +78,15 @@ test("efforts, access and their labels", () => {
   expect(p.hasFast("Codex") && p.hasFast("Claude")).toBe(true);
   expect(p.loginCmd("Codex")).toEqual(["login"]);
   expect(p.badgeFrom("9z@x", "C1")).toBe("C1");
-  expect(["claude", "claude2", "claude+3", "codex"].every(p.knownAccount)).toBe(true);
-  expect(["cursor", "grok", "gemini", "meta", "opencode", ""].some(p.knownAccount)).toBe(false);
+  expect(["claude", "claude2", "claude+3", "codex", "opencode"].every(p.knownAccount)).toBe(true);
+  expect(["cursor", "grok", "gemini", "meta", ""].some(p.knownAccount)).toBe(false);
+  expect(p.access("OpenCode").map((a) => a[0])).toEqual(["full"]);
+  expect(p.accessLabel("OpenCode", "plan")).toBe("Full access");
+  expect(p.efforts("OpenCode")).toEqual([]);
+  expect(p.effortLabel("OpenCode", "")).toBe("Default");
+  expect(p.hasFast("OpenCode")).toBe(false);
+  expect(p.loginCmd("OpenCode")).toEqual(["auth", "login"]);
+  expect(p.installHint("OpenCode")).toBe("curl -fsSL https://opencode.ai/install | bash");
 });
 
 test("the usage monitor's file: read again on each call, an empty reset is unknown, and its time is kept", () => {
@@ -123,14 +135,14 @@ test("a removed profile folder is gone on the next read; one never signed in rea
   process.env.PATH = "/nonexistent";
   try {
     const before = p.discover();
-    expect(before.map((a) => a.id)).toEqual(["claude", "claude3", "claude4", "codex"]);
+    expect(before.map((a) => a.id)).toEqual(["claude", "claude3", "claude4", "codex", "opencode"]);
     const four = before.find((a) => a.id === "claude4") as p.Account;
     expect(four).toMatchObject({ badge: "C4", loggedIn: false });
     expect(p.usable({ ...four, bin: "/bin/claude" })).toBe(false);
     expect(p.usable({ ...four, bin: "/bin/claude", loggedIn: null })).toBe(true);
     expect(before.find((a) => a.id === "claude3")?.plan).toBe("Max");
     rmSync(join(h, ".claude4"), { recursive: true });
-    expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude3", "codex"]);
+    expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude3", "codex", "opencode"]);
   } finally {
     process.env.HOME = was.HOME;
     process.env.PATH = was.PATH;
@@ -205,11 +217,41 @@ test("an account turned off on this PC is listed but not usable, and Remove move
     const to = p.removeAccount(four);
     expect(to.startsWith(join(h, ".local/share/harbor/removed-accounts/claude4-"))).toBe(true);
     expect(readFileSync(join(to, "sub/x"), "utf8")).toBe("kept");
-    expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude2", "codex"]);
+    expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude2", "codex", "opencode"]);
     expect(p.offIds()).toEqual([]);
   } finally {
     process.env.HOME = was.HOME;
     process.env.PATH = was.PATH;
     if (was.XDG_DATA_HOME !== undefined) process.env.XDG_DATA_HOME = was.XDG_DATA_HOME;
   }
+});
+
+test("OpenCode's models: `opencode models` run without blocking, the config's up front, kept for the next start", async () => {
+  const text = "opencode/big-pickle\nnvidia/z-ai/glm-5.3-flash\nnvidia/moonshotai/kimi-k3.1-pro\nnot a model\n\nnvidia/z-ai/glm-5.3-flash\n";
+  expect(p.parseOpencodeModels(text)).toEqual(["opencode/big-pickle", "nvidia/z-ai/glm-5.3-flash", "nvidia/moonshotai/kimi-k3.1-pro"]);
+  const config = { model: "opencode/big-pickle", provider: { nvidia: { models: { "z-ai/glm-5.3-flash": { name: "GLM" } } } } };
+  expect(p.opencodeConfigured(config)).toEqual(["opencode/big-pickle", "nvidia/z-ai/glm-5.3-flash"]);
+  expect(p.opencodeConfigured(undefined)).toEqual([]);
+  const ids = p.parseOpencodeModels(text);
+  expect(p.opencodeModelList(ids, p.opencodeConfigured(config)).map((m) => [m.id, m.more])).toEqual([
+    ["", false],
+    ["opencode/big-pickle", false],
+    ["nvidia/z-ai/glm-5.3-flash", false],
+    ["nvidia/moonshotai/kimi-k3.1-pro", true],
+  ]);
+  // A config naming none: the first ones up front.
+  expect(p.opencodeModelList(ids, []).every((m) => !m.more)).toBe(true);
+  // A fake `opencode`: its list lands in the data folder, and the picker's list has it.
+  const fake = join(base, "opencode");
+  writeFileSync(fake, `#!/bin/sh\n[ "$1" = models ] && printf '${text.replaceAll("\n", "\\n")}'\n`);
+  chmodSync(fake, 0o755);
+  await p.refreshOpencodeModels(fake);
+  expect(JSON.parse(readFileSync(p.opencodeCachePath(), "utf8"))).toEqual(ids);
+  const listed = p.opencodeModels(false);
+  expect(listed[0]).toEqual({ id: "", label: "Default", more: false });
+  expect(listed.map((m) => m.id).slice(1).sort()).toEqual([...ids].sort());
+  expect(p.staticModels("OpenCode").length).toBe(listed.length);
+  // A run that fails keeps the list.
+  await p.refreshOpencodeModels(join(base, "missing-opencode"));
+  expect(p.opencodeModels(false).length).toBe(listed.length);
 });

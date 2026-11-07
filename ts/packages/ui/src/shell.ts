@@ -472,9 +472,11 @@ export class Shell {
     const dropped = !providers.knownAccount(data.store.get("default_account") ?? "claude");
     const get = (k: string, d: string) => (dropped ? d : (data.store.get(k) ?? d));
     const model = get("default_model", "claude-opus-5-5");
+    // "" is OpenCode's own default model; for Claude it was Opus.
+    const claudeDefault = get("default_account", "claude") !== "opencode";
     this.sel = {
       account: get("default_account", "claude"),
-      model: model === "opus" || model === "" ? "claude-opus-5-5" : model === "sonnet" ? "claude-sonnet-5-5" : model === "haiku" ? "claude-haiku-5-5" : model,
+      model: model === "opus" || (model === "" && claudeDefault) ? "claude-opus-5-5" : model === "sonnet" ? "claude-sonnet-5-5" : model === "haiku" ? "claude-haiku-5-5" : model,
       effort: get("default_effort", providers.defaultEffort("Claude")),
       access: get("default_access", "full"),
       device: get("default_device", ""),

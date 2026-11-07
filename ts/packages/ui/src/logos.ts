@@ -3,8 +3,9 @@
 import claudeColor from "../../../../assets/logos/p-claude-color.rgba" with { type: "file" };
 import github from "../../../../assets/logos/github.a8" with { type: "file" };
 import openai from "../../../../assets/logos/p-openai.a8" with { type: "file" };
+import opencode from "../../../../assets/logos/p-opencode.a8" with { type: "file" };
 
-export type ProviderKind = "Claude" | "Codex";
+export type ProviderKind = "Claude" | "Codex" | "OpenCode";
 
 export interface Pixels {
   width: number;
@@ -31,6 +32,7 @@ export function pixels(bytes: Uint8Array, tint: [number, number, number] = [255,
 const FILES: Record<ProviderKind, [string, boolean]> = {
   Claude: [claudeColor, false],
   Codex: [openai, true],
+  OpenCode: [opencode, true],
 };
 
 const cache = new Map<string, Pixels>();
@@ -55,6 +57,7 @@ export async function providerLogo(kind: ProviderKind, fg: string): Promise<Pixe
 export function kindOfAccount(id: string): ProviderKind {
   const s = id.toLowerCase();
   if (s.startsWith("codex")) return "Codex";
+  if (s.startsWith("opencode")) return "OpenCode";
   return "Claude";
 }
 

@@ -484,7 +484,7 @@ export class Engine {
       if (knownAccount(chat.account)) return;
       // A chat on a provider Harbor dropped (Cursor, Gemini, …) says so instead of doing nothing.
       const tr = this.transcript(id);
-      tr.items.push({ kind: "error", text: `Harbor no longer runs ${chat.account}: switch this chat to a Claude or Codex account.` });
+      tr.items.push({ kind: "error", text: `Harbor no longer runs ${chat.account}: switch this chat to a Claude, Codex or OpenCode account.` });
       this.persist(id);
       return;
     }
