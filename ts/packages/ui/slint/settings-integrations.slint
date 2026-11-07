@@ -525,6 +525,7 @@ component Chip {
 
 export component IntegrationsTab {
     in property <IntData> data;
+    property <bool> one-column: (root.width - 8px) / 2 < 520px;
     callback act(string, string, string, string);
     pure callback valid(string, string) -> bool;
     VerticalLayout {
@@ -542,7 +543,8 @@ export component IntegrationsTab {
                 vertical-alignment: center;
             }
         }
-        HorizontalLayout {
+        // Two columns while a card gets 520px (room for a line beside "Signed in" and Sign out), else one.
+        if !root.one-column: HorizontalLayout {
             spacing: 8px;
             for column in [0, 1]: VerticalLayout {
                 width: (root.width - 8px) / 2;
@@ -554,6 +556,22 @@ export component IntegrationsTab {
                         act(w, i, a, b) => { root.act(w, i, a, b); }
                         valid(c, s) => { return root.valid(c, s); }
                     }
+                }
+            }
+        }
+        if root.one-column: VerticalLayout {
+            spacing: 8px;
+            for row in root.data.rows: VerticalLayout {
+                spacing: 8px;
+                AppCard {
+                    app: row.left;
+                    act(w, i, a, b) => { root.act(w, i, a, b); }
+                    valid(c, s) => { return root.valid(c, s); }
+                }
+                if row.has-right: AppCard {
+                    app: row.right;
+                    act(w, i, a, b) => { root.act(w, i, a, b); }
+                    valid(c, s) => { return root.valid(c, s); }
                 }
             }
         }

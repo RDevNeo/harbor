@@ -1,6 +1,6 @@
 import { mcp } from "@harbor/mcp";
 import { appTiles } from "./applogos.ts";
-import { integrationsAct, integrationsData, realApi, realView, type Form, type IntData, type IntHost } from "./logic/settings-integrations.ts";
+import { type AppsView, integrationsAct, integrationsData, realApi, realView, type Form, type IntData, type IntHost } from "./logic/settings-integrations.ts";
 import type { Pixels } from "./logos.ts";
 
 /** The Integrations page over `mcp`: its data and its buttons; `qr` draws the Discord login code. */
@@ -8,7 +8,7 @@ export async function integrationsFeed(host: IntHost, qr: (url: string) => Pixel
   const tiles = await appTiles();
   const forms = new Map<string, Form>();
   const api = realApi();
-  const view = realView();
+  const view = process.env.HARBOR_FAKE_APPS === "signed" ? signedView(realView()) : realView();
   const feed = {
     view: (dark: boolean): IntData => integrationsData({ view, forms, tile: (n) => tiles(n, dark), qr }),
     valid: (client: string, secret: string): boolean => mcp.validGoogleClient(client, secret),
@@ -22,4 +22,19 @@ export async function integrationsFeed(host: IntHost, qr: (url: string) => Pixel
     if (what && id) integrationsAct(api, forms, { ...host, changed: () => void setTimeout(() => host.changed(), 0) }, what, id, "", "");
   }
   return feed;
+}
+
+/** Screenshots with every app signed in, as made-up people (scripts/shot --env HARBOR_FAKE_APPS=signed). */
+function signedView(real: AppsView): AppsView {
+  const who: Record<string, string> = { github: "sam-rivera-dev", gmail: "sam.rivera@example.com" };
+  return {
+    ...real,
+    pending: () => undefined,
+    signedIn: () => true,
+    account: (id) => who[id],
+    error: () => undefined,
+    googleAccounts: (id) => (id === "gmail" ? ["sam.rivera@example.com", "sam.rivera.work@example.org"] : []),
+    discordLine: () => ({ text: "Signed in as Sam Rivera · Frozen while idle", tone: 0 }),
+    whatsappLine: () => ({ text: "Signed in as +1 555 123 4567", tone: 0 }),
+  };
 }

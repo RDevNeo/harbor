@@ -91,6 +91,8 @@ final class WhatsApp {
         LinearLayout row = Ui.cardRow(a, Ui.appTile(a, "whatsapp.a8", BRAND, 40), "WhatsApp", summary(r), Ui.FG, null);
         TextView sub = Discord.subOf(row);
         if (sub != null) sub.setTextColor(Discord.toneColor(tone(r)));
+        // The whole line, as the desktop's wider card shows it: it wraps beside the badge and button.
+        Ui.wrapSub(row, 3);
         if (link != null) {
             row.addView(Ui.rowButton(a, "Cancel", false, v -> post(a, hub, pc, s, "cancel")), trailing());
         } else if (linked) {
