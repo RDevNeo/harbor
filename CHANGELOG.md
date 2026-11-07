@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.164.1] - 2026-11-07
+
+### Fixed
+- The model picker's account badges show the owner's workspace photo even when the workspace knows them
+  by a nickname: an account is matched to the member who signs in with the same email (another PC's by
+  the hash of its sign-in; emails never cross the mesh), and names only last. This covers this PC's own
+  profiles that belong to someone else too. The label uses the workspace name, and the tooltip adds the
+  name Harbor detected when it differs ("Patty's (Pat Lee), runs on this PC"); the phone's Account
+  sheet shows the same.
+
 ## [0.164.0] - 2026-11-07
 
 ### Changed
