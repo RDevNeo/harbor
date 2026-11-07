@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.165.0] - 2026-11-07
+
 ### Changed
 - Your integrations, saved keys and WhatsApp/Discord sessions follow your account with nothing to set
   up: any PC you sign in on gets them on its first sync, even with every other PC of yours off. The
