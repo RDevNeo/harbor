@@ -34,7 +34,7 @@ function signedView(real: AppsView): AppsView {
     account: (id) => who[id],
     error: () => undefined,
     googleAccounts: (id) => (id === "gmail" ? ["sam.rivera@example.com", "sam.rivera.work@example.org"] : []),
-    discordLine: () => ({ text: "Signed in as Sam Rivera · Frozen while idle", tone: 0 }),
+    discordLine: () => ({ text: "Signed in as Sam Rivera", tone: 0 }),
     whatsappLine: () => ({ text: "Signed in as +1 555 123 4567", tone: 0 }),
   };
 }

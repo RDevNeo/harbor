@@ -99,7 +99,7 @@ final class Gmail {
                 if (c.getChildCount() > 0) c.addView(Ui.gap(a));
                 LinearLayout row = Ui.cardRow(a, Ui.I_USER, email, def ? (n > 1 ? "Default: agents use it unless they name another" : "Connected") : "Tap to make it the default",
                         Ui.FG, def ? null : v -> post(a, hub, "default", email));
-                row.addView(Ui.button(a, "Sign out", false, v -> confirmOut(a, hub, email)));
+                row.addView(Ui.danger(Ui.button(a, "Sign out", false, v -> confirmOut(a, hub, email))));
                 Ui.wrapSub(row, 2);
                 c.addView(row, Ui.fill());
             }

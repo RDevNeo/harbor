@@ -141,7 +141,6 @@ public class Settings extends Base {
             WhatsApp.show(this, hub, hub.via());
         });
         wa.addView(Ui.chevron(this));
-        Ui.wrapSub(wa, 3);
         whatsappBox.addView(Ui.gap(this));
         whatsappBox.addView(wa, Ui.fill());
         apps.addView(whatsappBox, Ui.fill());

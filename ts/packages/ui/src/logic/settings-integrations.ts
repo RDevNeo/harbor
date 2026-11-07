@@ -28,7 +28,6 @@ export interface IntApp {
   action: IntegrationAction;
   action_text: string;
   action_primary: boolean;
-  badge: boolean;
   gear: boolean;
   form: IntegrationForm;
   code: string;
@@ -114,12 +113,11 @@ function card(a: mcp.App, i: IntInput): IntApp {
   let action: IntegrationAction = "signin";
   let actionText = "Sign in";
   let primary = true;
-  let badge = false;
   let gear = false;
   if (pending) [action, actionText, primary] = ["cancel", "Cancel", false];
   else if (form) [action, actionText, primary] = ["cancel-form", "Cancel", false];
   else if (signed && google) [action, actionText, primary] = ["add", "Add account", false];
-  else if (signed) [action, actionText, primary, badge] = ["signout", "Sign out", false, true];
+  else if (signed) [action, actionText, primary] = ["signout", "Sign out", false];
   else if (builtin) [action, actionText, gear] = ["google", "Sign in with Google", true];
 
   let sub = a.about;
@@ -152,7 +150,6 @@ function card(a: mcp.App, i: IntInput): IntApp {
     action,
     action_text: actionText,
     action_primary: primary,
-    badge,
     gear,
     form: open,
     code: pending?.code ?? "",
@@ -164,7 +161,7 @@ function card(a: mcp.App, i: IntInput): IntApp {
     builtin: view.googleBuiltin(),
     client_id: form?.kind === "google" ? form.clientId : "",
     client_secret: form?.kind === "google" ? form.secret : "",
-    accounts: accounts.map((email, n) => ({ email, default: n === 0, label: n === 0 ? (accounts.length > 1 ? "Default" : "Signed in") : "" })),
+    accounts: accounts.map((email, n) => ({ email, default: n === 0, label: n === 0 && accounts.length > 1 ? "Default" : "" })),
   };
 }
 

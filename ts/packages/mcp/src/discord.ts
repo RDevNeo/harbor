@@ -141,8 +141,6 @@ export function troubleWord(s: Json): string | undefined {
 
 export type CardLine = { text: string; tone: 0 | 1 | 2 };
 
-const PHASES: Record<string, string> = { ready: "Running", frozen: "Frozen while idle", stopped: "Not running", starting: "Starting", setup: "Starting", moving: "Stopping", signin: "Signing in" };
-
 /**
  * The line the Discord card shows, on the desktop and the phone alike (the hub sends it): who's
  * signed in and how the client is, or what's wrong. Tone 1: something in progress, 2: trouble.
@@ -161,8 +159,7 @@ export function cardLine(s: Json, about: string): CardLine {
   // Another PC of the account runs the client: one session, one PC.
   const host = str(get(s, "host"));
   if (host !== undefined) return { text: `${who} · Runs on ${host}`, tone: 0 };
-  const phase = PHASES[str(get(s, "phase")) ?? ""];
-  return { text: phase !== undefined ? `${who} · ${phase}` : who, tone: 0 };
+  return { text: who, tone: 0 };
 }
 
 let lastCard: { at: number; s: Json | undefined } | undefined;

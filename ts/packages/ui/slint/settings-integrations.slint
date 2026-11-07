@@ -26,7 +26,6 @@ export struct IntApp {
     action: string,
     action-text: string,
     action-primary: bool,
-    badge: bool,
     gear: bool,
     form: string,
     code: string,
@@ -257,13 +256,6 @@ component AppCard {
                     alignment: center;
                     Spinner { }
                 }
-                if root.app.badge: VerticalLayout {
-                    alignment: center;
-                    Badge {
-                        text: "Signed in";
-                        tone: green;
-                    }
-                }
                 if root.app.gear: VerticalLayout {
                     alignment: center;
                     Btn {
@@ -282,7 +274,7 @@ component AppCard {
                         text: root.app.action-text;
                         icon: root.app.action == "add" ? Icons.plus : "";
                         size: sm;
-                        variant: root.app.action-primary ? primary : root.app.action == "signout" || root.app.action == "cancel" || root.app.action == "cancel-form" || root.app.action == "add" ? ghost : outline;
+                        variant: root.app.action-primary ? primary : root.app.action == "signout" ? ghost-destructive : root.app.action == "cancel" || root.app.action == "cancel-form" || root.app.action == "add" ? ghost : outline;
                         tip: root.app.action == "add" ? "Connect another Google account" : "";
                         clicked => {
                             root.act(root.app.action, root.app.id, "", "");
@@ -440,7 +432,7 @@ component AppCard {
                             tone: green;
                         }
                     }
-                    if e.label == "": VerticalLayout {
+                    if e.label == "" && !e.default: VerticalLayout {
                         alignment: center;
                         Btn {
                             text: "Make default";
@@ -457,7 +449,7 @@ component AppCard {
                         Btn {
                             text: "Sign out";
                             size: sm;
-                            variant: ghost;
+                            variant: ghost-destructive;
                             tip: "Sign " + e.email + " out: agents lose its mail";
                             clicked => {
                                 root.act("signout-account", root.app.id, e.email, "");

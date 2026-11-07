@@ -13,7 +13,7 @@ import org.json.JSONObject;
 
 /** The WhatsApp app of a PC, from the phone (Settings › Apps; hub `/v1/apps/whatsapp`,
  *  android/PROTOCOL.md), as the desktop's Integrations card has it: one row (logo, "WhatsApp",
- *  the card's line) with Sign in (straight to the QR), or the green "Signed in" badge and Sign out, or Cancel while
+ *  the card's line) with Sign in (straight to the QR), or Sign out (in red), or Cancel while
  *  a link waits, its QR under it. A link runs on the PC, which shows the same QR: a phone can't
  *  scan its own screen, so it's scanned from another phone, or this one scans the PC's. The
  *  sheet asks again every 2 s while it's open: the QR rotates. Every call goes to one PC, the
@@ -95,13 +95,10 @@ final class WhatsApp {
         LinearLayout row = Ui.cardRow(a, Ui.appTile(a, "whatsapp.a8", BRAND, 40), "WhatsApp", summary(r), Ui.FG, null);
         TextView sub = Discord.subOf(row);
         if (sub != null) sub.setTextColor(Discord.toneColor(tone(r)));
-        // The whole line, as the desktop's wider card shows it: it wraps beside the badge and button.
-        Ui.wrapSub(row, 3);
         if (link != null) {
             row.addView(Ui.rowButton(a, "Cancel", false, v -> post(a, hub, pc, s, "cancel")), trailing());
         } else if (linked) {
-            row.addView(Ui.pill(a, "Signed in"), trailing());
-            row.addView(Ui.rowButton(a, "Sign out", false, v -> confirmOut(a, hub, pc, s)), trailing());
+            row.addView(Ui.danger(Ui.rowButton(a, "Sign out", false, v -> confirmOut(a, hub, pc, s))), trailing());
         } else {
             row.addView(Ui.rowButton(a, "Sign in", true, v -> post(a, hub, pc, s, "link")), trailing());
         }

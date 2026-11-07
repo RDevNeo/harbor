@@ -108,7 +108,7 @@ final class Discord {
             String user = acc.optString("username");
             c.addView(Ui.gap(a));
             LinearLayout row = Ui.cardRow(a, Ui.I_USER, name.isEmpty() ? user : name, name.isEmpty() || user.isEmpty() || name.equals(user) ? "" : user, Ui.FG, null);
-            row.addView(Ui.button(a, "Sign out", false, v -> confirmOut(a, hub, pc, s)));
+            row.addView(Ui.danger(Ui.button(a, "Sign out", false, v -> confirmOut(a, hub, pc, s))));
             c.addView(row, Ui.fill());
         } else if (!signing) {
             c.addView(Ui.gap(a));

@@ -43,7 +43,7 @@ test("integrations lists every app two to a row, the last alone", () => {
 
 test("integrations shows a signed-in app with who it is and a Sign out button", () => {
   const d = data(view({ signedIn: (id) => id === "github", account: () => "someone" }));
-  expect(find(d, "github")).toMatchObject({ sub: "Signed in as someone", action: "signout", badge: true, action_primary: false });
+  expect(find(d, "github")).toMatchObject({ sub: "Signed in as someone", action: "signout", action_primary: false });
   const named = data(view({ signedIn: (id) => id === "github" }));
   expect(find(named, "github")?.sub).toBe("Repos, issues, PRs; gh and git push");
 });
@@ -67,7 +67,7 @@ test("integrations signs Google apps in with one click when Harbor has a client,
 
 test("integrations lists a Google app's accounts, the first as the default when there are several", () => {
   const one = find(data(view({ signedIn: () => true, googleAccounts: () => ["a@example.test"] })), "gmail");
-  expect([one?.action, one?.form, one?.accounts]).toEqual(["add", "accounts", [{ email: "a@example.test", default: true, label: "Signed in" }]]);
+  expect([one?.action, one?.form, one?.accounts]).toEqual(["add", "accounts", [{ email: "a@example.test", default: true, label: "" }]]);
   const two = find(data(view({ signedIn: () => true, googleAccounts: () => ["a@example.test", "b@example.test"] })), "gmail");
   expect([two?.sub, two?.accounts.map((a) => a.label)]).toEqual(["2 accounts", ["Default", ""]]);
 });
@@ -98,8 +98,8 @@ test("integrations shows Discord's trouble in amber", () => {
 test("the Discord card's line, which the phone shows too", () => {
   const about = "About";
   const base = { phase: "frozen", account: { id: "1", username: "ana", name: "Ana" }, attention: "", failing: [], repairing: false, signin: { active: false }, captcha: null };
-  expect(discord.cardLine(base, about)).toEqual({ text: "Signed in as Ana · Frozen while idle", tone: 0 });
-  expect(discord.cardLine({ ...base, phase: "ready" }, about).text).toBe("Signed in as Ana · Running");
+  expect(discord.cardLine(base, about)).toEqual({ text: "Signed in as Ana", tone: 0 });
+  expect(discord.cardLine({ ...base, phase: "ready" }, about).text).toBe("Signed in as Ana");
   expect(discord.cardLine({ ...base, account: null }, about)).toEqual({ text: "About", tone: 0 });
   expect(discord.cardLine({ ...base, failing: ["ReactionActions"] }, about)).toEqual({ text: "Signed in as Ana · Discord changed: some tools can't work", tone: 2 });
   expect(discord.cardLine({ ...base, attention: "Discord tools need attention" }, about)).toEqual({ text: "Discord tools need attention", tone: 2 });
@@ -203,7 +203,7 @@ test("integrations' remaining buttons reach mcp and the host", () => {
 
 test("WhatsApp's card is a sign-in row: Sign in goes straight to its QR; signed in, the number and Sign out", () => {
   const r = rig();
-  expect(find(data(view()), "whatsapp")).toMatchObject({ action: "signin", action_text: "Sign in", action_primary: true, badge: false, sub: "Read and send as you" });
+  expect(find(data(view()), "whatsapp")).toMatchObject({ action: "signin", action_text: "Sign in", action_primary: true, sub: "Read and send as you" });
   r.act("signin", "whatsapp");
   expect(r.calls).toContain("signIn whatsapp");
   expect(r.forms.has("whatsapp")).toBe(false);
@@ -216,7 +216,7 @@ test("WhatsApp's card is a sign-in row: Sign in goes straight to its QR; signed 
   const qr = find(data(view({ pending: (id) => (id === "whatsapp" ? { qr: "2@x", note: "Scan with WhatsApp" } : undefined) })), "whatsapp");
   expect(qr).toMatchObject({ form: "whatsapp-qr", has_qr: true, busy: false, sub: "Scan with WhatsApp", sub_tone: 1, window_btn: false, action: "cancel", action_text: "Cancel" });
   const linked = find(data(view({ signedIn: (id) => id === "whatsapp", whatsappLine: () => ({ text: "Signed in as +1 555 123 4567", tone: 0 }) })), "whatsapp");
-  expect(linked).toMatchObject({ action: "signout", action_text: "Sign out", action_primary: false, badge: true, sub: "Signed in as +1 555 123 4567", sub_tone: 0 });
+  expect(linked).toMatchObject({ action: "signout", action_text: "Sign out", action_primary: false, sub: "Signed in as +1 555 123 4567", sub_tone: 0 });
   const offline = find(data(view({ signedIn: (id) => id === "whatsapp", whatsappLine: () => ({ text: "Offline, retrying · +1 555 123 4567", tone: 2 }) })), "whatsapp");
-  expect(offline).toMatchObject({ action: "signout", badge: true, sub_tone: 2 });
+  expect(offline).toMatchObject({ action: "signout", sub_tone: 2 });
 });

@@ -398,13 +398,9 @@ final class Ui {
         return f;
     }
 
-    /** The desktop's green "Signed in" badge. */
-    static TextView pill(Context c, String label) {
-        TextView t = bold(c, label, 12, GREEN);
-        t.setIncludeFontPadding(false);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(dp(9), dp(5), dp(9), dp(5));
-        t.setBackground(round((GREEN & 0x00ffffff) | 0x24000000, (GREEN & 0x00ffffff) | 0x55000000, 12));
+    /** A sign-out button: its label in the destructive red, as the desktop's. */
+    static TextView danger(TextView t) {
+        t.setTextColor(RED);
         return t;
     }
 
