@@ -79,5 +79,7 @@ describe("screenshot peers (HARBOR_FAKE_PEERS)", () => {
     ]);
     // Standing in for a PC the data knows, by its id.
     expect(fakePeers("ts:laptop=laptop:2970").map((p) => [p.id, p.name, p.ram])).toEqual([["ts:laptop", "laptop", 2970]]);
+    // An owner and its own accounts, for the model picker's shared accounts.
+    expect(fakePeers("laptop:9000@Dana_Reyes+opencode.codex").map((p) => [p.owner, p.accounts.map((a) => a[2])])).toEqual([["Dana Reyes", ["opencode", "codex"]]]);
   });
 });

@@ -16,6 +16,7 @@ import { newPeer } from "../src/shared.ts";
 import { newHost, type RemoteHost } from "../src/remote.ts";
 import { StoreReplica } from "../src/meshstore.ts";
 import { GLYPHS } from "../src/glyphs.ts";
+import { sharedAccounts } from "../src/meshaccounts.ts";
 import { cardJson, catalogOf, clock, composerDefaults, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
@@ -816,6 +817,80 @@ describe("phone: Runs on › Auto", () => {
     const no = await call({ device: "auto" });
     expect(no.status).toBe(409);
     expect(moved.length).toBe(1);
+    store.close();
+  });
+});
+
+describe("phone: the mesh's shared accounts", () => {
+  test("another PC's account is listed with its owner's badge, and a chat on it starts on that PC with its own id", async () => {
+    const store = Store.openAt(join(tmp, "shared.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.me = { id: "ts:desk", name: "desk" };
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const forwarded: [string, Record<string, unknown>][] = [];
+    mesh.forward = async (d, _name, _method, _path, body) => {
+      forwarded.push([d.addr, body]);
+      return { status: 200, body: { id: 9, gid: "g-there" } };
+    };
+    const laptop = newPeer({ id: "ts:laptop", name: "laptop", owner: "Sam Lee", online: true, addr: "10.0.0.2:1", provs: [{ id: "opencode", short: "OpenCode", kind: "opencode", ident: "", person: "", main: true, models: [["nvidia/glm", "GLM"]] }] });
+    const off = newPeer({ id: "ts:off", name: "tower", owner: "Kim Ro", online: false, addr: "10.0.0.3:1", provs: [{ id: "codex", short: "Codex", kind: "codex", ident: "", person: "", main: true, models: [] }] });
+    hub.mesh.peers.set(laptop.id, laptop);
+    hub.mesh.peers.set(off.id, off);
+    const acct = (id: string, kind: string): CatalogAccount => ({ id, kind, name: id, badge: "AB", bin: "/bin/true", loggedIn: true, usage: [] });
+    const catalog = catalogOf(providers, () => [acct("claude", "Claude")], store);
+    const shared = () =>
+      sharedAccounts({
+        me: { id: "ts:desk", name: "desk", owner: "Ana Lu", github: "" },
+        local: [{ id: "claude", kind: "Claude", email: "ana@example.com", badge: "AB", short: "Claude · AB", usable: true }],
+        peers: [laptop, off],
+        provs: new Map([laptop, off].map((p) => [p.id, p.provs])),
+      });
+    catalog.shared = shared;
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, catalog });
+    const s = routes.state("", true) as { accounts: Record<string, Json>[] };
+    expect(s.accounts.map((a) => [a.id, a.label, a.pc, a.can_start])).toEqual([
+      ["claude", "Claude · AL", "", true],
+      ["opencode@ts:laptop/opencode", "OpenCode · SL", "ts:laptop", true],
+      ["codex@ts:off/codex", "Codex · KR", "ts:off", false],
+    ]);
+    expect(s.accounts[1]).toMatchObject({ name: "Sam Lee on laptop", owner: "Sam Lee", pc_name: "laptop", models: [{ id: "nvidia/glm", label: "GLM", more: false }] });
+    expect(s.accounts[2]?.why).toBe("tower is offline");
+    const call = (body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body, token: "", device: "Pixel", global: true });
+    // Picked: the chat starts on the laptop, on the laptop's own OpenCode; this PC's device pick doesn't matter.
+    const r = await call({ account: "opencode@ts:laptop/opencode", model: "nvidia/glm", device: "", text: "hi" });
+    expect(r.status).toBe(200);
+    expect(forwarded[0]?.[0]).toBe("10.0.0.2:1");
+    expect(forwarded[0]?.[1]).toMatchObject({ account: "opencode", model: "nvidia/glm", device: "", shared_account: true, text: "hi" });
+    // An off PC's, or one that's gone: said, nothing forwarded, nothing made here.
+    expect(await call({ account: "codex@ts:off/codex", text: "hi" })).toMatchObject({ status: 409, body: { error: "tower is offline" } });
+    expect((await call({ account: "claude:feedfeed", text: "hi" })).status).toBe(400);
+    expect(forwarded.length).toBe(1);
+    expect(store.chats().length).toBe(0);
+    store.close();
+  });
+
+  test("a chat another PC starts on one of this PC's accounts does at most what this PC shares with that PC", async () => {
+    const store = Store.openAt(join(tmp, "shared-owner.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.me = { id: "ts:laptop", name: "laptop" };
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const acct = (id: string, kind: string): CatalogAccount => ({ id, kind, name: id, badge: "SL", bin: "/bin/true", loggedIn: true, usage: [] });
+    const catalog = catalogOf(providers, () => [acct("claude", "Claude"), acct("opencode", "OpenCode")], store);
+    const levels = new Map<string, string>([["ts:desk", "read"]]);
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog, shareLevel: (p) => levels.get(p) ?? "full" });
+    const from = { peer: "ts:desk", name: "desk", ctx: null, sender: "", device: "", who: "", dev: "", via: null };
+    const call = (body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body: { shared_account: true, text: "", ...body }, token: "", device: "", global: true, from });
+    const made = await call({ account: "claude", access: "full" });
+    expect(made.status).toBe(200);
+    expect(store.chats().find((c) => c.gid === (made.body as { gid: string }).gid)?.access).toBe("plan");
+    expect(await call({ account: "opencode", access: "full" })).toMatchObject({ status: 403, body: { error: "laptop lets this PC's chats only read there, and OpenCode runs with full access only" } });
+    levels.set("ts:desk", "off");
+    expect((await call({ account: "claude" })).status).toBe(403);
+    // A chat not on a shared account (Runs on › that PC) keeps what it asked for, as before.
+    const plain = await routes.route({ method: "POST", path: ["v1", "chats"], query: [], body: { account: "claude", access: "full", text: "" }, token: "", device: "", global: true, from });
+    expect(store.chats().find((c) => c.gid === (plain.body as { gid: string }).gid)?.access).toBe("full");
     store.close();
   });
 });

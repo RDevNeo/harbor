@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, providers, recap, waiting, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
-import { AUTO_DEVICE, CHAT_SCHEME, RESUME_TEXT, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
+import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionFromJson, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
@@ -52,7 +52,7 @@ import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
 import { ChatCaptcha, FRAME_W, hereCaptcha, noChatCaptcha } from "./chatcaptcha.ts";
 import { fakeCaptcha } from "./fakecaptcha.ts";
-import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
+import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
@@ -195,6 +195,8 @@ export class Shell {
   private modelRows = new slint.ArrayModel<ModelRow>([]);
   private picker: PickerState = { rail: null, search: "", more: false, hover: 0 };
   private pickerRowsNow: Row[] = [];
+  private sharedList: SharedAccount[] = [];
+  private sharedAt = 0;
   private favorites: Favorites;
   private keys: Keys;
   private stripRows = new slint.ArrayModel<StripRow>([]);
@@ -1093,7 +1095,7 @@ export class Shell {
       subs.map(([c, secs]) => {
         const acc = this.account(c.account);
         const kind = acc?.kind ?? kindOfAccount(c.account);
-        return { id: c.id, name: c.name, logo: this.logoOf(kind), badge: acc?.badge ?? "", tip: richTip({ title: c.name, sub: this.modelLabel(kind, c.model), rows: [["Task", c.title], ["Working", stripElapsed(secs)]] }) };
+        return { id: c.id, name: c.name, logo: this.logoOf(kind), badge: this.badgeOf(c.account, acc), tip: richTip({ title: c.name, sub: this.modelLabel(kind, c.model), rows: [["Task", c.title], ["Working", stripElapsed(secs)]] }) };
       }),
       (a, b) => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 }),
     );
@@ -1154,7 +1156,7 @@ export class Shell {
         running: since !== null,
         settled: isSettled,
         logo: this.logos.get(`${kind}:${this.dark}`) ?? { width: 1, height: 1, data: new Uint8Array(4) },
-        badge: acc?.badge ?? "",
+        badge: this.badgeOf(c.account, acc),
       };
     };
     sync(this.teamAgentRows, active.map((c) => row(c, false)), sameJsonRow);
@@ -1587,10 +1589,14 @@ export class Shell {
     const editing = this.queueEdit !== null && this.queueEdit.chat === this.key();
     const resume = this.view === "chat" ? this.resumeOf(this.chatId) : null;
     const device = this.deviceLabel(kind);
+    // The account as the mesh names it: its owner's badge, and another PC's where it runs (meshaccounts.ts).
+    // Another PC's chat runs on that PC's accounts.
+    const at = copy && open ? open.home : "";
+    const mine = this.shared().find((x) => (x.pc === at && x.account === sel.account) || (at === "" && x.id === sel.account));
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
-      model_tip: acc ? providers.short(acc) : kind,
-      badge: acc?.badge ?? "",
+      model_tip: mine ? `${mine.label} · ${sharedTip(mine)}` : acc ? providers.short(acc) : kind,
+      badge: mine?.badge ?? acc?.badge ?? "",
       has_effort: providers.efforts(kind).length > 0,
       effort: providers.effortLabel(kind, sel.effort) + (providers.hasFast(kind) && this.data.store.get("fast_mode") === "1" ? " · Fast" : ""),
       access: providers.accessLabel(kind, sel.access),
@@ -2311,6 +2317,19 @@ export class Shell {
     let sel = this.newSel();
     let startOn = this.view !== "chat" && joinsMain === null ? (this.draftTarget() ?? sel.device) : "";
     let auto = false;
+    let shared = false;
+    // Another PC's account (meshaccounts.ts): the chat starts on the PC that has it (another with the same sign-in when
+    // that one is off), which runs it with its own login.
+    if (this.view !== "chat" && isSharedId(sel.account)) {
+      const t = sharedTarget(this.hub.sharedAccounts?.() ?? [], sel.account);
+      if (t === null || t.why !== "") {
+        this.toast(t === null ? "That account isn't in the workspace anymore: pick another" : t.why);
+        return;
+      }
+      sel = { ...sel, account: t.account, device: t.pc };
+      startOn = t.pc;
+      shared = t.pc !== "";
+    }
     if (startOn === AUTO_DEVICE) {
       const kind = this.account(sel.account)?.kind ?? kindOfAccount(sel.account);
       startOn = this.hub.auto?.resolve(AUTO_DEVICE, kind).device ?? "";
@@ -2321,6 +2340,8 @@ export class Shell {
       const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
       const body: Record<string, unknown> = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: sel.account, model: sel.model, effort: sel.effort, access: sel.access, text };
       if (auto) body.auto_placed = true;
+      // That PC holds what it lets this PC's chats do with its accounts (phone.ts `sharedAccess`).
+      if (shared) body.shared_account = true;
       // The project's main chat, started on its PC: that PC's main chat for it (this row opens it once its copy is here).
       if (this.draftMain && this.draftRepo !== null) body.main = true;
       const place = startOn;
@@ -2328,6 +2349,11 @@ export class Shell {
       if (this.meshChat.create(place, body, files, this.draftRepo, DRAFT, { text, mentions }, made)) {
         clear();
         this.refreshAll();
+        return;
+      }
+      // Never on this PC's own account of that name instead.
+      if (shared) {
+        this.toast("That PC isn't in the workspace anymore: pick another account");
         return;
       }
     }
@@ -3100,18 +3126,73 @@ export class Shell {
     return { width: 1, height: 1, data: new Uint8Array(4) };
   }
 
+  /** The mesh's accounts, each sign-in once (meshaccounts.ts), read at most every 2 s; none without a hub. */
+  private shared(): SharedAccount[] {
+    const now = Date.now();
+    if (now - this.sharedAt > 2000) {
+      this.sharedList = this.hub.sharedAccounts?.() ?? [];
+      this.sharedAt = now;
+    }
+    return this.sharedList;
+  }
+
+  /** One of this PC's accounts' badge: its owner's while the mesh has other PCs (meshaccounts.ts), else its own. */
+  private badgeOf(id: string, acc: Account | undefined): string {
+    return this.shared().find((x) => x.pc === "" && x.account === id)?.badge ?? acc?.badge ?? "";
+  }
+
+  /** The picker's accounts: this PC's (a second profile of the same sign-in left out), then the other PCs' (as accounts
+   *  whose id is meshaccounts.ts' key), each with its owner's badge. */
+  private pickerAccounts(): { on: Account[]; mesh: Map<string, SharedAccount> } {
+    // Accounts turned off in Settings › Providers aren't offered.
+    const own = this.data.accounts.filter((a) => a.off !== true);
+    const shared = this.shared();
+    const mesh = new Map<string, SharedAccount>();
+    if (shared.length === 0) return { on: own, mesh };
+    const on: Account[] = [];
+    for (const a of own) {
+      const s = shared.find((x) => x.pc === "" && x.account === a.id);
+      if (s === undefined && providers.usable(a)) continue;
+      if (s) mesh.set(a.id, s);
+      on.push(s ? { ...a, badge: s.badge } : a);
+    }
+    for (const s of shared) {
+      if (s.pc === "") continue;
+      const kind = providers.kindOf(kindLabel(s.kind));
+      if (kind === undefined) continue;
+      mesh.set(s.id, s);
+      on.push({ id: s.id, kind, name: s.person === "" ? kindLabel(s.kind) : s.person, email: "", badge: s.badge, plan: "", configDir: null, bin: "mesh", loggedIn: true, usage: [] });
+    }
+    return { on, mesh };
+  }
+
   private refreshPicker(): void {
     const sel = this.chatSel();
     const locked = this.lockedKind();
-    // Accounts turned off in Settings › Providers aren't offered.
-    const on = this.data.accounts.filter((a) => a.off !== true);
+    const { on, mesh } = this.pickerAccounts();
     const accounts = on.filter(providers.installed);
+    // Another PC's account starts a new chat there: not one for a chat that runs here already.
+    const ok = (a: Account) => !isSharedId(a.id) || (this.view !== "chat" && (mesh.get(a.id)?.why ?? "") === "");
+    const tipOf = (a: Account) => {
+      const s = mesh.get(a.id);
+      if (!s) return railTip(a);
+      const why = ok(a) ? "" : s.why !== "" ? s.why : `Runs on ${s.pcName}: pick it for a new chat`;
+      return railTip(a, { title: s.label, owner: sharedTip(s), why });
+    };
     sync(
       this.railItems,
-      accounts.map((a) => ({ id: a.id, logo: this.logoOf(a.kind), badge: a.badge, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind), tip: railTip(a) })),
+      accounts.map((a) => ({ id: a.id, logo: this.logoOf(a.kind), badge: a.badge, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind) || !ok(a), tip: tipOf(a) })),
       (a, b) => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 }),
     );
-    const { rows, more } = pickerRows(this.picker, on, this.favorites.list, locked);
+    const look: PickerLook = {
+      label: (a) => mesh.get(a.id)?.label ?? providers.short(a),
+      models: (a) => {
+        const m = mesh.get(a.id)?.models ?? [];
+        return m.length > 0 && isSharedId(a.id) ? m.map(([id, label]) => ({ id, label, more: false })) : providers.staticModels(a.kind);
+      },
+      ok,
+    };
+    const { rows, more } = pickerRows(this.picker, on, this.favorites.list, locked, look);
     this.pickerRowsNow = rows;
     sync(
       this.modelRows,
@@ -3290,8 +3371,11 @@ export class Shell {
         ["default_effort", s.effort],
         ["default_access", s.access],
         ["default_device", s.device],
-      ] as const)
+      ] as const) {
+        // Another PC's account is this draft's pick alone: the saved defaults (synced to every PC) stay this PC's own.
+        if (isSharedId(s.account) && (k === "default_account" || k === "default_model" || k === "default_effort")) continue;
         this.data.store.set(k, v);
+      }
     }
     this.refreshComposer();
   }
@@ -4267,6 +4351,8 @@ function transferRow(x: DeviceTransfer): TransferRow {
 export interface ShellHub extends PageHub {
   /** The composer's "Runs on" menu for a chat (null: the draft) whose device is `current`. */
   runOnRows: (chatId: number | null, current: string, kind: string) => { id: string; name: string; glyph: string; desc: string; online: boolean | null; current: boolean; enabled: boolean }[];
+  /** This PC's and the mesh's agent accounts, each sign-in once (meshaccounts.ts); absent: this PC's alone. */
+  sharedAccounts?: () => SharedAccount[];
   relocate: (chatId: number, to: string) => Promise<string>;
   /** The composer's "Auto" pick of where a new chat runs (runon.ts): resolved at the first message, remembered, shown as "Auto → <PC>". */
   auto?: {

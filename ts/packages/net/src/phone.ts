@@ -15,6 +15,7 @@ import { basename } from "node:path";
 import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.ts";
 import { dest, type Peer } from "./shared.ts";
 import { AUTO_DEVICE, ramText } from "./ram.ts";
+import { isSharedId, kindLabel, sharedAccess, sharedTarget, type SharedAccount } from "./meshaccounts.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, groups, project, type Media, type Shown } from "./view.ts";
 import { captchaRoles } from "./captchanote.ts";
@@ -106,6 +107,8 @@ export interface Catalog {
   relocateBlocker?(chat: Chat): string | null;
   deviceWhy?(chat: Chat): Json;
   movingTo?(chat: Chat): string | null;
+  /** This PC's and the mesh's accounts, each sign-in once (meshaccounts.ts `sharedAccounts`); absent: this PC's alone. */
+  shared?(): SharedAccount[];
 }
 
 /** "Move to PC…" as the phone routes ask for it (movepcrun.ts `MovePc`). */
@@ -156,6 +159,8 @@ export interface PhoneDeps {
   move?: PhoneMove;
   /** This PC's instructions and memory for a call that may start a turn on another PC, with `repo`'s memory (meshctx.ts `outgoingCtx`). */
   ctx?: (repo: number | null) => Json;
+  /** What this PC lets `peer`'s chats do here (machines.rs level: "off", "read", "edit", "full"); absent: full. */
+  shareLevel?: (peer: string) => string;
   /** Where a project's folder is when it isn't on this PC (null: it's here); its `pc` is a mesh PC's id ("": none known). */
   projectPlace?: (repo: number) => { pc: string; name: string; online: boolean } | null;
   /** A started chat moved between this PC, its devices and other PCs (relocate.rs). */
@@ -655,18 +660,46 @@ export class PhoneRoutes {
     const slug = (k: string) => k.toLowerCase();
     const choice = (c: Choice) => ({ id: c[0], label: c[1], desc: c[2] });
     const perKind = <T extends Json>(f: (k: string) => T): Record<string, Json> => Object.fromEntries((cat?.kinds ?? []).map((k) => [slug(k), f(k)]));
+    // Each sign-in once, badged with its owner (meshaccounts.ts); another PC's run there, and say which and whether it's on.
+    const shared = cat?.shared?.() ?? null;
     const accounts: Json[] = (cat?.accounts() ?? [])
       .filter((a) => a.bin !== null && a.off !== true)
-      .map((a) => ({
-        id: a.id,
-        label: a.kind === "Claude" ? `Claude · ${a.badge}` : a.kind,
-        name: a.name,
-        kind: slug(a.kind),
-        signed_in: a.loggedIn ?? true,
-        // Every provider can lead a new chat (OpenCode's has no team tools: it works alone).
-        can_start: true,
-        usage: a.usage.map((u) => ({ label: u.label, percent: new F64(Math.round(u.percent * 1000) / 10) })),
-      }));
+      .flatMap((a) => {
+        const sh = shared?.find((x) => x.pc === "" && x.account === a.id);
+        // A second profile signed in as the same person as an earlier one is that one.
+        if (shared !== null && sh === undefined && a.loggedIn !== false) return [];
+        const o: Record<string, Json> = {
+          id: a.id,
+          label: sh ? sh.label : a.kind === "Claude" ? `Claude · ${a.badge}` : a.kind,
+          name: a.name,
+          kind: slug(a.kind),
+          signed_in: a.loggedIn ?? true,
+          // Every provider can lead a new chat (OpenCode's has no team tools: it works alone).
+          can_start: true,
+          usage: a.usage.map((u) => ({ label: u.label, percent: new F64(Math.round(u.percent * 1000) / 10) })),
+        };
+        if (sh) Object.assign(o, { badge: sh.badge, owner: sh.person, pc: "", pc_name: sh.pcName });
+        return [o];
+      });
+    for (const sh of shared ?? []) {
+      if (sh.pc === "") continue;
+      accounts.push({
+        id: sh.id,
+        label: sh.label,
+        name: `${sh.person === "" ? kindLabel(sh.kind) : sh.person} on ${sh.pcName}`,
+        kind: sh.kind,
+        signed_in: true,
+        // Picked, a new chat starts on that PC, which runs it with its own sign-in.
+        can_start: sh.why === "",
+        usage: [],
+        badge: sh.badge,
+        owner: sh.person,
+        pc: sh.pc,
+        pc_name: sh.pcName,
+        why: sh.why === "" ? null : sh.why,
+        models: sh.models.length === 0 ? null : sh.models.map(([id, label]) => ({ id, label, more: false })),
+      });
+    }
     const sel = cat?.defaults() ?? { account: "", model: "", effort: "", access: "full", device: "" };
     const updates = this.d.updates?.() ?? { hub_update: null };
     const me = hub.mesh.me;
@@ -1064,6 +1097,18 @@ export class PhoneRoutes {
 
   /** api.rs `api_create_in`. */
   private async create(body: Record<string, unknown>, sender: string, global: boolean, from: SentBy | null = null, who: Who = NOBODY): Promise<Reply> {
+    // Another PC's account (meshaccounts.ts): the chat starts on that PC (or another that has the same sign-in, when it's
+    // off) and runs there with its own login; this PC never holds it.
+    if (typeof body.account === "string" && isSharedId(body.account)) {
+      const t = sharedTarget(this.d.catalog?.shared?.() ?? [], body.account);
+      if (t === null) return err(400, `no account ${body.account}`);
+      if (t.why !== "") return err(409, t.why);
+      body = { ...body, account: t.account, device: t.pc, shared_account: true };
+      if (t.pc === "") return this.createAt(body, sender, global, from, who);
+      const peer = this.d.hub.mesh.peer(t.pc);
+      if (peer === null) return err(409, "that PC isn't in the mesh anymore");
+      return this.createOnPeer(peer, body, sender, global, who);
+    }
     // "Auto": the PC with the most free memory now, decided once here; the chat stays there. `auto_placed`: another PC's
     // Auto sent it here, so this PC remembers it too.
     let auto = body.auto_placed === true;
@@ -1118,7 +1163,14 @@ export class PhoneRoutes {
     if (kind === undefined) return err(400, `no account ${account}`);
     const effort = s("effort", kind === (kindOf(d.account) ?? "Claude") ? d.effort : "");
     if (cat && effort !== "" && !cat.efforts(kind).some((e) => e[0] === effort)) return err(400, `${kind} has no effort ${effort}`);
-    const access = s("access", "full");
+    let access = s("access", "full");
+    // Another PC's chat on one of this PC's accounts does at most what this PC's owner lets that PC's chats do here.
+    if (from !== null && body.shared_account === true) {
+      const me = this.d.hub.mesh.me.name === "" ? hostname() : this.d.hub.mesh.me.name;
+      const r = sharedAccess(this.d.shareLevel?.(from.peer) ?? "full", access, (cat?.access(kind) ?? []).map((a) => a[0]), { me, kind: kind.toLowerCase() });
+      if ("why" in r) return err(403, r.why);
+      access = r.access;
+    }
     if (cat && !cat.access(kind).some((a) => a[0] === access)) return err(400, `${kind} has no access level ${access}`);
     // Only Claude runs on another device.
     const device = kind === "Claude" ? s("device", "") : "";

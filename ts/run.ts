@@ -170,6 +170,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       gh: run.services.gh,
       funnel: run.funnel,
       runOnRows: (chatId: number | null, current: string, kind: string) => run.runOn.rows(chatId, current, kind),
+      sharedAccounts: () => run.sharedAccounts(),
       relocate: (chatId: number, to: string) => run.runOn.relocate(chatId, to),
       auto: {
         pick: (kind: string) => run.runOn.autoPick(kind),
