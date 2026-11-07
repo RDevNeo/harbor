@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.165.1] - 2026-11-07
+
 ### Changed
 - Agents (lead and subagents) are told to do platform actions (deploying, publishing, infra on Vercel,
   Convex, etc.) through the service's connected MCP integration, and to tell the user and stop when there
