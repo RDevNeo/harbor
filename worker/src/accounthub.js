@@ -16,7 +16,7 @@ const MAX_WAITERS = 64;
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
-const WHAT = new Set(['invites', 'directory']);
+const WHAT = new Set(['invites', 'directory', 'vault']);
 
 export class AccountHub {
   constructor(ctx, env) {

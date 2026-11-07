@@ -1,4 +1,4 @@
-import { agoShort, inviteNote, short as keyShort, type AccountDir, type AccountPc, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
+import { agoShort, inviteNote, short as keyShort, type VaultStatus, type AccountDir, type AccountPc, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, copy, field, form, gap, list, row, rows, status, title, type Block, type BlockImage, type BlockRow, type BlockTab } from "./settings-blocks.ts";
 import { devicesPressed, devicesSubmitted, newDevicesState, otherDevices, ownDeviceRows, pcRow, peerDeviceRows, phoneRow, renameForm, thisPcRow, type DevicesHost, type DevicesState } from "./settings-devices.ts";
@@ -20,6 +20,70 @@ export interface AccountPort {
   declineInvite(id: string): Promise<void>;
   cancelInvite(ws: string, id: string): Promise<void>;
   removeMember(ws: string, user: string): Promise<void>;
+  /** Redraws Settings after something of the vault changed. */
+  notifyChanged?(): void;
+  /** The account vault (the running app's): what follows the account to its other PCs. */
+  vault?(): VaultPort | undefined;
+}
+
+/** The part of the vault (net/src/vault.ts) this tab reads and presses. */
+export interface VaultPort {
+  status(): VaultStatus;
+  unlock(code: string): Promise<void>;
+  reset(): Promise<void>;
+  codeSaved(): void;
+}
+
+/** What the vault part of the tab holds between redraws. */
+interface VaultUi {
+  show: boolean;
+  error: string;
+  busy: boolean;
+  /** "Start a new vault" was pressed once: the second press does it. */
+  confirm: boolean;
+}
+
+const newVaultUi = (): VaultUi => ({ show: false, error: "", busy: false, confirm: false });
+
+const VAULT_ABOUT =
+  "Your integrations' sign-ins (Gmail, GitHub, Convex and the other apps), the keys you saved for agents, and WhatsApp's and Discord's sessions follow your account to every PC you sign in on, end-to-end encrypted: the account service only stores ciphertext. Agents still ask you before they use a key on each PC. Signing out here takes your copies off this PC; they stay in the vault.";
+
+/** The vault's part of the tab: open (with the recovery code), locked (waiting for a PC, or the code), or trouble. */
+export function vaultBlocks(v: VaultStatus, ui: VaultUi): Block[] {
+  if (v.state === "off") return [];
+  const out: Block[] = [title("Your vault")];
+  if (v.state === "open") {
+    const n = v.items === 1 ? "1 item" : `${v.items} items`;
+    out.push(copy(`${VAULT_ABOUT} ${n} now.`, 12));
+    if (v.fresh) {
+      out.push(
+        status(badge("Write it down", "amber"), "Your recovery code opens the vault on a new PC when none of your other PCs is on. Keep it somewhere safe, away from your PCs.", {
+          before: 12,
+          buttons: [btn("vault_show", ui.show ? "Hide the code" : "Show the code", { variant: "primary" }), btn("vault_saved", "I wrote it down")],
+        }),
+      );
+    } else {
+      out.push(rows([row("Recovery code", { desc: "Opens your vault on a new PC when none of your other PCs is on.", buttons: [btn("vault_show", ui.show ? "Hide" : "Show")] })], { before: 12 }));
+    }
+    if (ui.show && v.code !== null) out.push(status(badge("Code"), v.code, { before: 10, buttons: [btn("vault_copy", "", { icon: ICONS.COPY, variant: "muted", tip: "Copy the recovery code" })] }));
+  } else {
+    out.push(copy(VAULT_ABOUT, 12));
+    out.push(
+      status(badge("Locked", "amber"), "Waiting for one of your other PCs to share the vault's key: one that's on does within a minute. None of them on? Open it with your recovery code.", {
+        before: 12,
+      }),
+    );
+    out.push(form("vault_code", [field("code", "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX", { width: 300, mono: true })], btn("vault_unlock", "Open", { variant: "primary", enabled: !ui.busy }), { before: 12 }));
+    out.push(
+      status(badge(""), ui.confirm ? "A new vault leaves the old one's items behind for good: this PC's sign-ins and keys go in it. Press again to do it." : "Lost the code, and no PC of yours has the key any more?", {
+        before: 12,
+        buttons: [btn("vault_reset", ui.confirm ? "Start a new vault" : "Start over…", { variant: ui.confirm ? "destructive" : "outline", enabled: !ui.busy })],
+      }),
+    );
+  }
+  const err = ui.error !== "" ? ui.error : v.error;
+  if (err !== "") out.push(status(badge("Vault", "red"), err, { before: 10 }));
+  return out;
 }
 
 export interface AccountHost {
@@ -35,9 +99,11 @@ export interface AccountHost {
   devices?: DevicesHost;
   /** A person's photo by its URL, round (null until it's here, or none): in their row's icon place. */
   photo?: (url: string) => BlockImage | null;
+  /** Puts text on the clipboard (the recovery code). */
+  copyText?: (text: string) => void;
 }
 
-const SIGN_OUT_TIP = "Signs this PC out. It stays in its workspace, so its people's phones and PCs keep reaching it.";
+const SIGN_OUT_TIP = "Signs this PC out. It stays in its workspace, so its people's phones and PCs keep reaching it. Your integrations and saved keys leave this PC with you: they stay in your vault.";
 const ACCEPT_TIP = "Join this workspace: its PCs and chats reach you on every device. This PC stays in its workspace.";
 
 const roleBadge = (owner: boolean) => badge(owner ? "Owner" : "Member");
@@ -51,7 +117,7 @@ function thisPc(d: DevicesHost | undefined, ds: DevicesState, known?: readonly A
 
 /** The Workspace page: the account, the workspace, its people each with their PCs and phones, invitations, the
  * other workspaces. Each PC lists the machines it added over SSH under it. */
-export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesState()): Block[] {
+export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesState(), vu: VaultUi = newVaultUi()): Block[] {
   const d = host.devices;
   const acc = host.account;
   const st = acc.status();
@@ -74,6 +140,8 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
   }
   const who = me.name === "" ? me.email : me.name;
   out.push(rows([row(who, { desc: `${me.email} · signed in with Google. To use another account, sign out and sign in again.`, buttons: [btn("signout", "Sign out", { variant: "destructive", tip: SIGN_OUT_TIP })] })]));
+  const vs = acc.vault?.()?.status();
+  if (vs) out.push(...vaultBlocks(vs, vu));
 
   const pending = acc.invites();
   if (pending.length > 0) {
@@ -216,8 +284,37 @@ function banners(st: AccountStatus, signedIn: boolean, ago: (t: number) => strin
 export function accountTab(host: AccountHost): BlockTab {
   const acc = host.account;
   const ds = newDevicesState();
+  const vu = newVaultUi();
+  const vaultDo = (f: () => Promise<void>): void => {
+    vu.busy = true;
+    vu.error = "";
+    void f()
+      .catch((e: unknown) => (vu.error = e instanceof Error ? e.message : String(e)))
+      .finally(() => {
+        vu.busy = false;
+        acc.notifyChanged?.();
+      });
+  };
   const press = (key: string): void => {
     if (host.devices && devicesPressed(host.devices, ds, key)) return;
+    const v = acc.vault?.();
+    if (v && key.startsWith("vault_")) {
+      if (key !== "vault_reset") vu.confirm = false;
+      if (key === "vault_show") vu.show = !vu.show;
+      else if (key === "vault_saved") v.codeSaved();
+      else if (key === "vault_copy") {
+        const c = v.status().code;
+        if (c !== null) host.copyText?.(c);
+      } else if (key === "vault_reset" && !vu.busy) {
+        if (!vu.confirm) vu.confirm = true;
+        else {
+          vu.confirm = false;
+          vaultDo(() => v.reset());
+        }
+      }
+      acc.notifyChanged?.();
+      return;
+    }
     const at = key.indexOf(":");
     const verb = at < 0 ? key : key.slice(0, at);
     const id = at < 0 ? "" : key.slice(at + 1);
@@ -237,12 +334,18 @@ export function accountTab(host: AccountHost): BlockTab {
     else if (verb === "cancel_invite" && dir) void acc.cancelInvite(dir.id, id);
   };
   return {
-    blocks: () => accountBlocks(host, ds),
+    blocks: () => accountBlocks(host, ds, vu),
     pressed: press,
     toggled: () => {},
     edited: () => {},
     submitted(key, values) {
       if (host.devices && devicesSubmitted(host.devices, ds, key, values)) return "";
+      const v = acc.vault?.();
+      if (key === "vault_code" && v && !vu.busy) {
+        const code = values[0] ?? "";
+        vaultDo(() => v.unlock(code));
+        return "";
+      }
       const email = (values[0] ?? "").trim().toLowerCase();
       const dir = acc.directory().workspaces.find((w) => w.id === acc.workspace());
       if (key === "invite" && dir && email.includes("@") && !acc.status().busy) void acc.invite(dir.id, email);

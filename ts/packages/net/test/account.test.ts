@@ -27,6 +27,7 @@ import {
   type AccountSettingsSync,
   type HarborClaims,
 } from "../src/account.ts";
+import { Vault } from "../src/vault.ts";
 import { MemKv } from "../src/kv.ts";
 import { generateIdentity } from "../src/tls.ts";
 
@@ -151,6 +152,7 @@ function get(v: unknown, k: string): unknown {
 const nowSec = () => Math.floor(Date.now() / 1000);
 
 interface World {
+  vaultRows: Record<string, unknown>[];
   session: { workspaces: { id: string; name: string; role: string; personal: boolean }[]; pc?: unknown; invites: unknown[] };
   directory: unknown;
   invites: unknown[];
@@ -169,6 +171,7 @@ interface World {
 
 function newWorld(): World {
   return {
+    vaultRows: [],
     session: { workspaces: [{ id: "org_personal", name: "Sam's workspace", role: "owner", personal: true }], invites: [] },
     directory: { at: 0, workspaces: [] },
     invites: [],
@@ -246,6 +249,11 @@ function serviceHandler(w: World): (c: Call) => Reply | Promise<Reply> {
       return hold ? hold.then(() => r) : r;
     }
     if (key === "GET /v1/invites") return { status: 200, body: { invites: w.invites } };
+    if (key.startsWith("GET /v1/vault")) return { status: 200, body: { now: Date.now(), seq: 0, items: w.vaultRows, devices: [] } };
+    if (key === "PUT /v1/vault") {
+      const set = (get(c.json, "set") as { id: string; v: string | null; at: number }[]) ?? [];
+      return { status: 200, body: { now: Date.now(), results: set.map((e, i) => { w.vaultRows.push({ ...e, by: "me", seq: w.vaultRows.length + i + 1 }); return { id: e.id, ok: true, seq: w.vaultRows.length }; }) } };
+    }
     if (key === "GET /v1/settings") return { status: 200, body: { settings: { theme: { v: "dark", at: 5 } }, at: 5 } };
     if (key === "PUT /v1/settings") return { status: 200, body: { settings: get(c.json, "set"), at: 6 } };
     if (/^POST \/v1\/invites\/[^/]+\/(accept|decline)$/.test(key)) return { status: w.acceptStatus, body: w.accept };
@@ -1026,6 +1034,33 @@ describe("the account loop", () => {
     expect(callPaths(r.calls)).toEqual(["GET /v1/settings", "PUT /v1/settings"]);
     expect(r.calls[1]?.auth).toBe(token);
     await expect(r.svc.settingsCall("clerk-access-9")).rejects.toBeInstanceOf(AccountFail);
+  });
+
+  test("the vault's round runs in the loop with the Harbor token, and a sign-out hands the vault back", async () => {
+    const r = rig();
+    const items = new Map<string, Uint8Array>([["s:K", new Uint8Array([1])]]);
+    const vault = new Vault({
+      stateDir: join(r.stateDir, "v"),
+      identity: () => generateIdentity(),
+      name: () => "Desk",
+      sources: () => [{ prefix: "s:", list: () => [...items].map(([id, data]) => ({ id, data, at: 1 })), write: (id, d) => void (d ? items.set(id, d) : items.delete(id)) }],
+    });
+    await r.svc.stop();
+    r.svc = r.make({ vault });
+    await signedIn(r);
+    r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r)] };
+    await r.svc.tick(true);
+    const token = String(secrets(r).token);
+    const vaultCalls = r.calls.filter((c) => c.path.startsWith("/v1/vault"));
+    expect(vaultCalls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /v1/vault", "PUT /v1/vault", "PUT /v1/vault", "PUT /v1/vault"]);
+    expect(vaultCalls.every((c) => c.auth === token)).toBe(true);
+    expect(vault.status().state).toBe("open");
+    expect(r.svc.vault()).toBe(vault);
+    // The meta row, this PC's wrap, the recovery wrap, the code and the item went out sealed.
+    expect(r.world.vaultRows.length).toBe(5);
+    r.svc.signOut();
+    await until(() => vault.status().state === "off", "the vault handed back");
+    expect(items.size).toBe(0);
   });
 
   test("start loads the cache and runs the loop until stopped; a poke runs everything now", async () => {

@@ -5,6 +5,8 @@ export * from "./shared.ts";
 export * from "./client.ts";
 export * from "./discover.ts";
 export * from "./account.ts";
+export * from "./vault.ts";
+export * as vaultcrypto from "./vaultcrypto.ts";
 export * from "./wire.ts";
 export * from "./http.ts";
 export * from "./hub.ts";

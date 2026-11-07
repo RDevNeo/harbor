@@ -9,6 +9,7 @@ import type { Pending } from "./apps.ts";
 import { CAPTCHA_WAIT, Display, expireSaved, loadSaved, statusOffline, writeLastCaptcha } from "./discordhost.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, pretty, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
+import { askRemote, claimHere, remoteOf } from "./remotehost.ts";
 
 export type { Pending };
 
@@ -89,8 +90,18 @@ function spawnHost(): void {
   }
 }
 
-/** One request to the host, started if it wasn't. */
+/** Another PC of the account runs Discord now (the vault's lease): its mesh address, or undefined. */
+export const remote = () => remoteOf(setup.root());
+
+/** One request to the host, started if it wasn't; on the PC that runs it, when that's another (a captcha then shows there, not in this PC's chat). */
 export async function request(req: Json, waitMs: number): Promise<Json> {
+  const r = remote();
+  if (r) return (await askRemote(NAME, r, isObj(req) ? { ...req, chat: null } : {}, waitMs)) as Json;
+  return requestHere(req, waitMs);
+}
+
+/** One request to this PC's own host, started if it wasn't (also what `/mesh/v1/app` runs for the account's other PCs). */
+export async function requestHere(req: Json, waitMs: number): Promise<Json> {
   const sock = setup.socket();
   if (!(await canConnect(sock))) {
     spawnHost();
@@ -105,6 +116,15 @@ export async function request(req: Json, waitMs: number): Promise<Json> {
 
 /** What the card and the hub show. Doesn't start anything. */
 export async function status(): Promise<Json> {
+  const r = remote();
+  if (r) {
+    try {
+      const s = await askRemote(NAME, r, { op: "status" }, 5000);
+      return isObj(s) ? { ...s, host: r.pc.name } : s as Json;
+    } catch (e) {
+      return { ...(isObj(statusOffline()) ? (statusOffline() as Obj) : {}), account: r.account === "" ? null : { name: r.account, username: r.account }, host: r.pc.name, attention: message(e) };
+    }
+  }
   try {
     return await ask(setup.socket(), { op: "status" }, 3000);
   } catch {
@@ -138,6 +158,9 @@ export function cardLine(s: Json, about: string): CardLine {
   const who = `Signed in as ${str(get(a, "name")) || str(get(a, "username")) || "someone"}`;
   if (items(get(s, "failing")).length > 0) return { text: `${who} · Discord changed: some tools can't work`, tone: 2 };
   if (isObj(get(s, "captcha"))) return { text: `${who} · A captcha waits for you`, tone: 1 };
+  // Another PC of the account runs the client: one session, one PC.
+  const host = str(get(s, "host"));
+  if (host !== undefined) return { text: `${who} · Runs on ${host}`, tone: 0 };
   const phase = PHASES[str(get(s, "phase")) ?? ""];
   return { text: phase !== undefined ? `${who} · ${phase}` : who, tone: 0 };
 }
@@ -159,9 +182,11 @@ export function card(about: string, changed: () => void = () => {}): CardLine {
   return lastCard.s === undefined ? { text: about, tone: 0 } : cardLine(lastCard.s, about);
 }
 
-export const signedIn = (): boolean => setup.account() !== undefined;
+export const signedIn = (): boolean => (remote()?.account ? true : setup.account() !== undefined);
 
 export function accountName(): string | undefined {
+  const r = remote();
+  if (r?.account) return r.account;
   const a = setup.account();
   return a === undefined ? undefined : a.name === "" ? a.username : a.name;
 }
@@ -170,11 +195,13 @@ const SHORT = 10_000;
 
 /** The user accepted the warning: signs in from this desktop. */
 export async function signin(): Promise<void> {
-  await request({ op: "signin", accept: true, display: { ...Display.here() } }, SHORT);
+  // Always here: the sign-in window opens on this desktop, and this PC becomes the one that runs Discord (singlehost.ts claims it).
+  await claimHere(NAME);
+  await requestHere({ op: "signin", accept: true, display: { ...Display.here() } }, SHORT);
 }
 
 export async function window(): Promise<void> {
-  await request({ op: "window" }, SHORT);
+  await requestHere({ op: "window" }, SHORT);
 }
 
 export async function cancel(): Promise<void> {

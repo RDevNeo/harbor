@@ -246,6 +246,14 @@ export class Shell {
   private readonly invitesClosed: string[] = [];
 
   /** The top-right invitation card: "Sam invited you to Team", Accept or Decline (logic/invitecard.ts). */
+  /** Light or dark and the team view as the account has them now (settingsync took another PC's change). */
+  private followSynced(): void {
+    const dark = parseMode(this.data.store.get("theme") ?? "") === "dark";
+    if (dark !== this.dark) this.applyTheme(dark);
+    const team = this.data.store.get("show_team") !== "0";
+    if (this.win.team_on !== team) this.win.team_on = team;
+  }
+
   private refreshInvite(): void {
     const acc = this.hub.account;
     const card = acc ? inviteCard(acc.invites(), this.invitesClosed) : null;
@@ -762,6 +770,7 @@ export class Shell {
     this.hub.account?.subscribe(() => {
       this.refreshInvite();
       this.refreshMe();
+      this.followSynced();
       this.changed(null);
     });
     this.refreshInvite();

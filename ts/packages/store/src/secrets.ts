@@ -264,6 +264,14 @@ export function save(name: string, value: string, description: string, path: str
   return env;
 }
 
+/** The account vault's copy of one key, as it is (its `updated` too), or its removal: what another PC of the account saved. */
+export function put(name: string, secret: Secret | null, path: string = secretsPath()): void {
+  const all = read(path).filter((s) => s.name !== name);
+  if (secret !== null) all.push({ name, description: secret.description, value: secret.value, updated: secret.updated });
+  all.sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)));
+  write(path, all);
+}
+
 export function remove(name: string, path: string = secretsPath()): void {
   write(
     path,

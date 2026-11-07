@@ -10,6 +10,7 @@ import type { Pending } from "./apps.ts";
 import { selfCommand } from "./discordsetup.ts";
 import * as setup from "./whatsappsetup.ts";
 import { phoneOf } from "./whatsappstore.ts";
+import { askRemote, claimHere, remoteOf } from "./remotehost.ts";
 import { INSTRUCTIONS, tools } from "./whatsapptools.ts";
 
 export const NAME = setup.NAME;
@@ -89,8 +90,18 @@ function spawnHost(): void {
   }
 }
 
-/** One request to the host, started if it wasn't. */
+/** Another PC of the account runs WhatsApp now (the vault's lease): its mesh address, or undefined. */
+export const remote = () => remoteOf(setup.root());
+
+/** One request to the host, started if it wasn't; on the PC that runs it, when that's another. */
 export async function request(req: Obj, waitMs: number): Promise<unknown> {
+  const r = remote();
+  if (r) return askRemote(NAME, r, req, waitMs);
+  return requestHere(req, waitMs);
+}
+
+/** One request to this PC's own host, started if it wasn't (also what `/mesh/v1/app` runs for the account's other PCs). */
+export async function requestHere(req: Obj, waitMs: number): Promise<unknown> {
   if (!(await canConnect())) {
     spawnHost();
     const until = Date.now() + 15_000;
@@ -139,10 +150,12 @@ function fakeStatus(mode: string): Obj {
   };
 }
 
-export const signedIn = (): boolean => (fakeMode() !== undefined ? fakeMode() === "linked" : setup.linked() !== undefined);
+export const signedIn = (): boolean => (fakeMode() !== undefined ? fakeMode() === "linked" : remote()?.account ? true : setup.linked() !== undefined);
 
 export function accountName(): string | undefined {
   if (fakeMode() === "linked") return "Sam (+15550100000)";
+  const r = remote();
+  if (r?.account) return r.account;
   const l = setup.linked();
   if (l === undefined) return undefined;
   const phone = phoneOf(l.jid);
@@ -153,9 +166,13 @@ export function accountName(): string | undefined {
 export async function status(): Promise<Obj> {
   const f = fakeMode();
   if (f !== undefined) return fakeStatus(f);
+  const r = remote();
   try {
+    // On the PC that runs it: its status, and where.
+    if (r) return { ...obj(await askRemote(NAME, r, { op: "status" }, 5000)), host: r.pc.name };
     return obj(await ask({ op: "status" }, 3000));
-  } catch {
+  } catch (e) {
+    if (r) return { phase: "remote", linked: r.account !== "", account: r.account === "" ? null : { jid: "", name: r.account }, pairing: null, error: e instanceof Error ? e.message : String(e), sync: "", busy: 0, host: r.pc.name };
     const l = setup.linked();
     return { phase: "stopped", linked: l !== undefined, account: l === undefined ? null : { jid: l.jid, name: l.name }, pairing: null, error: null, sync: "", busy: 0 };
   }
@@ -172,6 +189,12 @@ export function cardLine(s: Obj, about: string): CardLine {
   if (s.linked !== true) return err !== undefined ? { text: err, tone: 2 } : { text: about, tone: 0 };
   const jid = str(acct.jid) ?? "";
   const who = `Linked as ${str(acct.name) ?? phoneOf(jid) ?? "you"}`;
+  // Another PC of the account runs it: one link, one PC (WhatsApp would drop or ban a second copy of the keys).
+  const host = str(s.host);
+  if (host !== undefined) {
+    if (str(s.phase) === "remote") return { text: `${who} · Runs on ${host}, which this PC can't reach now`, tone: 2 };
+    return { text: `${who} · Runs on ${host}`, tone: str(s.phase) === "closed" ? 2 : 0 };
+  }
   switch (str(s.phase)) {
     case "open":
       return { text: str(s.sync) !== undefined ? `${who} · Syncing chats (${String(s.sync)})` : `${who} · Connected`, tone: 0 };
@@ -208,6 +231,8 @@ export async function link(phone?: string): Promise<Obj> {
   if (process.env.HARBOR_FAKE_WHATSAPP === "rig") rigMode = "qr";
   const f = fakeMode();
   if (f !== undefined) return fakeStatus(f);
+  // Linked here, run here: the account's other PCs then reach it through this one.
+  await claimHere(NAME);
   return obj(await request(phone === undefined ? { op: "link" } : { op: "link", phone }, SHORT));
 }
 
@@ -218,6 +243,7 @@ export async function code(phone: string): Promise<Obj> {
     fakeCode = "K7QX-2M9P";
     return fakeStatus(f);
   }
+  await claimHere(NAME);
   return obj(await request({ op: "code", phone }, CODE_WAIT));
 }
 
@@ -226,7 +252,8 @@ export async function uncode(): Promise<Obj> {
   if (process.env.HARBOR_FAKE_WHATSAPP === "rig") fakeCode = undefined;
   const f = fakeMode();
   if (f !== undefined) return fakeStatus(f);
-  return obj(await ask({ op: "uncode" }, 5000));
+  const r = remote();
+  return obj(r ? await askRemote(NAME, r, { op: "uncode" }, 5000) : await ask({ op: "uncode" }, 5000));
 }
 
 export async function cancel(): Promise<void> {
@@ -235,12 +262,15 @@ export async function cancel(): Promise<void> {
     fakeCode = undefined;
     return;
   }
-  await ask({ op: "cancel" }, 15_000).catch(() => {});
+  const r = remote();
+  await (r ? askRemote(NAME, r, { op: "cancel" }, 15_000) : ask({ op: "cancel" }, 15_000)).catch(() => {});
 }
 
 /** Unlinks: WhatsApp drops this device and what Harbor stored of the account goes. */
 export async function unlink(): Promise<void> {
-  if (await canConnect()) await ask({ op: "signout" }, 30_000);
+  const r = remote();
+  if (r) await askRemote(NAME, r, { op: "signout" }, 30_000);
+  else if (await canConnect()) await ask({ op: "signout" }, 30_000);
   else {
     await request({ op: "signout" }, 30_000);
   }
@@ -288,12 +318,21 @@ export async function login(signal: AbortSignal, update: (p: Pending) => void): 
  * as they come and WhatsApp doesn't drop an idle device; the host's notices become Harbor
  * notifications. Returns what stops it.
  */
+let hostGate: () => boolean = () => true;
+
+/** Whether this PC may run its own host now (singlehost.ts: not while another PC of the account holds the lease, or while it's being taken). */
+export function setHostGate(f: () => boolean): void {
+  hostGate = f;
+}
+
+const mayHost = (): boolean => hostGate();
+
 export function keep(notify: (n: { key: string; title: string; body: string }) => void, everyMs = 60_000): () => void {
   const look = (): void => {
     readNotices(notify);
-    if (!signedIn()) return;
+    if (!signedIn() || remote() !== undefined || !mayHost()) return;
     void canConnect().then((up) => {
-      if (!up && signedIn()) {
+      if (!up && signedIn() && remote() === undefined && mayHost()) {
         try {
           spawnHost();
         } catch {
@@ -335,7 +374,7 @@ const WAIT = 700_000;
 const MAX_TEXT = 80_000;
 
 export async function call(name: string, args: unknown): Promise<Obj> {
-  if (!signedIn()) {
+  if (!signedIn() && remote() === undefined) {
     if (!(await canConnect())) return { content: [{ type: "text", text: NOT_LINKED }], isError: name !== "status" };
   }
   try {

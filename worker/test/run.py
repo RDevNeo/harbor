@@ -221,7 +221,8 @@ def verify_jwt(tok, x):
     return json.loads(unb64u(h)), json.loads(unb64u(p))
 
 
-def main():
+def serve():
+    """Starts the fake Clerk and the Worker (fresh local D1); returns the Worker's signing key."""
     # fake clerk
     state = os.path.join(HERE, "state.json")
     if os.path.exists(state):
@@ -248,6 +249,11 @@ def main():
           "wrangler.log", WORKER)
     if not wait_http(W + "/invite", 240):
         raise SystemExit("wrangler dev did not start; see " + os.path.join(HERE, "wrangler.log"))
+    return sk
+
+
+def main():
+    sk = serve()
 
     # keys + basic routes
     st, js, _, _ = http("GET", W + "/v1/keys")
@@ -406,6 +412,50 @@ def main():
     check("settings: whole object over 128 KB gives 413", st == 413, st)
     st, js, _, _ = http("PUT", W + "/v1/settings", raw=b"[1]", token=sam_pc)
     check("settings: malformed body is 400", st == 400)
+
+    # vault: opaque rows per account, PCs only
+    pc2 = Device("pc", "laptop")
+    p2j, _ = sess_ok("sam@example.com", pc2)
+    sam_pc2 = p2j["token"]
+    st, js, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
+    check("vault: empty at first, lists the account's PCs (not phones)", st == 200 and js["items"] == [] and js["seq"] == 0
+          and {pc.fp, pc2.fp} <= {d["fp"] for d in js["devices"]} and phone.fp not in {d["fp"] for d in js["devices"]}, js)
+    st, js, _, _ = http("GET", W + "/v1/vault", token=sam_phone)
+    check("vault: a phone is refused (403)", st == 403, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "meta", "v": "e1", "at": 5, "prev": 0}]}, token=sam_pc)
+    check("vault: create meta with prev 0", st == 200 and js["results"][0]["ok"] is True, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "meta", "v": "e1-other", "at": 6, "prev": 0}]}, token=sam_pc2)
+    check("vault: a second create loses and gets the row", st == 200 and js["results"][0]["ok"] is False and js["results"][0]["cur"]["v"] == "e1", js)
+    seq_meta = js["results"][0]["cur"]["seq"]
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:aa", "v": "ct1", "at": 100}, {"id": "lease:bb", "v": "l1", "at": 1, "prev": 0}]}, token=sam_pc)
+    check("vault: item and lease written", all(r["ok"] for r in js["results"]), js)
+    lease_seq = js["results"][1]["seq"]
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:aa", "v": "old", "at": 99}]}, token=sam_pc2)
+    check("vault: an older write loses", js["results"][0]["ok"] is False and js["results"][0]["cur"]["v"] == "ct1", js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "lease:bb", "v": "l2", "at": 2, "prev": lease_seq - 1}]}, token=sam_pc2)
+    check("vault: a lease taken with a stale seq loses", js["results"][0]["ok"] is False, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "lease:bb", "v": "l2", "at": 2, "prev": lease_seq}]}, token=sam_pc2)
+    check("vault: a lease taken with the current seq wins", js["results"][0]["ok"] is True, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:aa", "v": None, "at": 200}]}, token=sam_pc2)
+    st, g, _, _ = http("GET", W + f"/v1/vault?since={seq_meta}", token=sam_pc)
+    rows = {r["id"]: r for r in g["items"]}
+    check("vault: since gives the newer rows only, a delete is a null row by the other PC",
+          "meta" not in rows and rows["i:aa"]["v"] is None and rows["i:aa"]["by"] == pc2.fp and rows["lease:bb"]["v"] == "l2" and g["seq"] >= rows["i:aa"]["seq"], g)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "bad id!", "v": "x", "at": 1}]}, token=sam_pc)
+    check("vault: a bad id is 400", st == 400, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:big", "v": "x" * (768 * 1024 + 1), "at": 1}]}, token=sam_pc)
+    check("vault: an item over 768 KB is 413", st == 413, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:ok", "v": "x" * (512 * 1024), "at": 1}]}, token=sam_pc)
+    check("vault: an item of 512 KB is fine", st == 200 and js["results"][0]["ok"], js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "key:" + pc2.fp, "v": "w", "at": 1}, {"id": "req:" + pc2.fp, "v": "r", "at": 1}]}, token=sam_pc)
+    http("DELETE", W + f"/v1/devices/{pc2.fp}", token=sam_pc)
+    st, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
+    check("vault: removing a PC drops its wrapped key and request", not any(r["id"] in ("key:" + pc2.fp, "req:" + pc2.fp) for r in g["items"]) and "i:ok" in {r["id"] for r in g["items"]}, [r["id"] for r in g["items"]])
+    st, js, _, _ = http("GET", W + "/v1/vault", token=sam_pc2)
+    check("vault: a removed PC is refused even with an unexpired token (403)", st == 403, js)
+    st, js, _, _ = http("DELETE", W + "/v1/vault", token=sam_pc)
+    st, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
+    check("vault: reset empties it", st == 200 and g["items"] == [], g)
 
     # invites
     alice, _ = sess_ok("alice@example.com", Device("phone", "a-phone"))

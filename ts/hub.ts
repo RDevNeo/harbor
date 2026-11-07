@@ -15,6 +15,7 @@ import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, 
 import { discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
+  Vault,
   fakePeers,
   RamMeter,
   deviceSshArgs,
@@ -131,9 +132,10 @@ import {
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
-import { type Chat, dataDir, home, repoDir, secrets, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, home, repoDir, secrets, settingsync, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
+import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
 
 export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover">;
 
@@ -319,7 +321,52 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const portmap = new Portmap({ kv: store, net: lanPortmapNet() });
   const addrs = () => phoneAddrs(port, lanAddrs(env), portmap.publicAddr());
   const meshAddrs = () => addrs().map((a) => (parseIp(a) ? hostPort(a, port) : a));
-  const account = new AccountService({ kv: store, stateDir: state, identity: () => id, me: () => hub.mesh.me, addrs: meshAddrs, version: o.version, env });
+  // The account vault: the integrations' sign-ins, the saved keys and the single-host sessions follow the account (accountvault.ts).
+  let single: SingleHost | null = null;
+  const vaultLog = env.HARBOR_ACCOUNT_LOG === "1" ? (line: string) => process.stderr.write(`vault: ${line}\n`) : undefined;
+  const vault = new Vault({
+    stateDir: state,
+    identity: () => id,
+    name: () => (hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name),
+    sources: () => [fileSource(), secretSource(), ...(single?.sources() ?? [])],
+    log: vaultLog,
+    notice: (title, body) => notifier.post("pc", `vault:${title}`, title, body, "", false),
+    onChange: () => account.notifyChanged(),
+  });
+  single = new SingleHost({
+    vault,
+    me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name }),
+    dest: (pid, fp) => {
+      const p = hub.mesh.peers.get(pid);
+      return p && p.fp === fp ? dest(p) : null;
+    },
+    log: vaultLog,
+  });
+  single.attach();
+  const account = new AccountService({
+    kv: store,
+    stateDir: state,
+    identity: () => id,
+    me: () => hub.mesh.me,
+    addrs: meshAddrs,
+    version: o.version,
+    env,
+    vault,
+    // The account's settings (settingsync KEYS of class account): pulled each minute, sent shortly after a change here.
+    settings: {
+      load: () => settingsync.load(store),
+      signedIn: () => settingsync.signedIn(store),
+      sync: async (token, pull) => {
+        await settingsync.sync(store, token, pull, async (t, body) => (await account.settingsCall(t, body as never)) as settingsync.SettingsReply);
+        // Values another PC of the account set: the window takes them now (the theme, the team view).
+        if (settingsync.sync_state.reload) {
+          settingsync.sync_state.reload = false;
+          account.notifyChanged();
+        }
+      },
+    },
+  });
+  settingsync.onChanged(() => account.pokeSync());
   account.load();
   // Copies of this owner's other PCs' chats follow their project's move and shares; other people's don't.
   let matesAt: [unknown, string, string, ReadonlySet<string>] | null = null;
@@ -598,6 +645,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
           else if (parakeet.preload()) console.error(`harbor: loading the speech model for ${hub.mesh.peers.get(call.device)?.name ?? "a peer"}'s dictation`);
         }
         return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name, speech ?? undefined))));
+      }
+      case "POST app": {
+        // A tool call of WhatsApp or Discord from another of this account's PCs: this PC runs it for the account (accountvault.ts).
+        const r = single ? await single.serveMesh(hub.mesh.peers.get(call.device)?.fp, b) : { status: 404, body: { error: "no such app" } };
+        return { status: r.status, body: r.body as Json };
       }
       case "POST memory": {
         const r = acceptMemory(store, b);

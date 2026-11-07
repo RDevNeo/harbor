@@ -7,6 +7,7 @@ import { type Kv } from "./kv.ts";
 import { loadRemote, newHost, saveRemote } from "./remote.ts";
 import { peerDevices, type Allowed, type Me, type PeerDevice } from "./shared.ts";
 import { sha256Hex, short, signWith, spkiOf, type Identity } from "./tls.ts";
+import type { Vault } from "./vault.ts";
 import { wire, type Json } from "./wire.ts";
 
 /** Clerk's Frontend API of Harbor's Clerk app (OAuth endpoints). */
@@ -36,6 +37,8 @@ const SOON_EVERY = 20_000;
 const ANSWERED_MS = 10 * 60_000;
 const PC_EVERY = 300_000;
 const SYNC_EVERY = 60_000;
+/** The vault's round: also what renews a single-host integration's lease (vault.ts LEASE_TTL is three times it). */
+const VAULT_EVERY = 20_000;
 const KEYS_EVERY = 6 * 3600_000;
 const HTTP_TIMEOUT = 20_000;
 
@@ -729,6 +732,8 @@ export interface AccountOptions {
   /** Called when anything the desktop shows changed. */
   onChange?: (() => void) | undefined;
   settings?: AccountSettingsSync | undefined;
+  /** The account vault (vault.ts): synced on each turn of the loop while signed in, handed back on a sign-out. */
+  vault?: Vault | undefined;
   env?: Record<string, string | undefined> | undefined;
   /** Keys shipped in this build; defaults to `ACCOUNT_KEYS`. */
   keys?: readonly (readonly [string, string])[] | undefined;
@@ -803,6 +808,9 @@ export class AccountService {
   /** A push came: the loop runs a turn now, also if it was in the middle of one when it came. */
   private pushed = false;
   private fetchedKeys: AccountKey[] = [];
+  /** The vault changed on another PC (a push): its round runs this turn. */
+  private vaultDue = true;
+  private vaultAt = 0;
   private st: AccountStatus = {
     signingIn: false,
     url: "",
@@ -1473,6 +1481,8 @@ export class AccountService {
 
   /** Signs this PC out: Clerk's tokens go. The PC stays in its workspace and keeps serving its members with what it has cached (Option A: only a member takes it out). */
   signOut(): void {
+    // The vault takes what changed here and this PC's copies go (it holds the token it was last given).
+    void this.o.vault?.leave();
     rmSync(this.secretsPath(), { force: true });
     this.hangUp();
     this.setAccount(null, null);
@@ -1655,6 +1665,7 @@ export class AccountService {
         // A connect: what changed while it was away isn't known, unless nothing did since the last one.
         if (seq !== this.sockSeq || seq < 0) this.timers.dir = null;
       } else if (what === "invites") this.timers.inv = null;
+      else if (what === "vault") this.vaultDue = true;
       else this.timers.dir = null;
       if (seq >= 0) this.sockSeq = seq;
       this.pushed = true;
@@ -1795,7 +1806,11 @@ export class AccountService {
     const ws = kv.get("account_ws") ?? "";
     if ((this.acct?.id ?? null) === (next?.id ?? null) && this.ws === ws) return;
     this.log(() => `kv changed: account ${JSON.stringify(next?.email ?? null)} ws ${JSON.stringify(ws)}`);
-    if ((this.acct?.id ?? null) !== (next?.id ?? null)) this.hangUp();
+    if ((this.acct?.id ?? null) !== (next?.id ?? null)) {
+      this.hangUp();
+      // Signed out from a terminal (`harbor account logout`): the vault is handed back as on the button.
+      if (this.acct !== null) void this.o.vault?.leave();
+    }
     const came = next !== null && !this.signedIn();
     this.acct = next;
     if (this.ws !== ws) this.dir = tryParse(kv.get("account_dir"), parseDirectory) ?? emptyDirectory();
@@ -1898,10 +1913,35 @@ export class AccountService {
     const pull = this.due(t.pull, SYNC_EVERY);
     if (pull) t.pull = this.nowMs();
     const settings = this.o.settings;
-    if (!settings) return;
-    const r = await attempt(() => settings.sync(token, pull));
-    if (r || pull) this.log(() => `settings: ${r ? r.text() : "ok"}`);
-    result(r);
+    if (settings) {
+      const r = await attempt(() => settings.sync(token, pull));
+      if (r || pull) this.log(() => `settings: ${r ? r.text() : "ok"}`);
+      result(r);
+    }
+    const vault = this.o.vault;
+    const who = this.acct?.id ?? "";
+    // Every turn while something's due (a push, a change here is found by the round itself), at least each VAULT_EVERY.
+    if (vault && who !== "" && (this.vaultDue || this.due(this.vaultAt, VAULT_EVERY))) {
+      this.vaultDue = false;
+      this.vaultAt = this.nowMs();
+      await vault.sync(who, (method, path, body) => this.service(method, path, token, body));
+    }
+  }
+
+  /** The account vault, when this PC has one (the running app's). */
+  vault(): Vault | undefined {
+    return this.o.vault;
+  }
+
+  /** Something Settings and the window show changed outside the loop (the vault, settings from the account). */
+  notifyChanged(): void {
+    this.changed();
+  }
+
+  /** Runs the vault's round on the next turn (a sign-in of an integration here, Settings). */
+  pokeVault(): void {
+    this.vaultDue = true;
+    this.pokeWake?.();
   }
 
   private takeRenew(): boolean {
