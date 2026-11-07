@@ -25,7 +25,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** One hub's chats the way the reference's drawer shows them: a bold title and search, a few
- *  nav rows (Projects, Pull requests, Issues, PCs, Settings, and Update when there is one), a
+ *  nav rows (Projects, Settings, and Update when there is one), a
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
  *  dot while a turn runs. A round avatar (your photo, else the workspace's initial), the round light/dark button beside
@@ -183,13 +183,6 @@ final class Sidebar {
 
     private void settings() { a.startActivity(new Intent(a, Settings.class).putExtra("hub", a.hub.id)); }
 
-    /** The PC's pull requests or issues (GhList); from inside a list, the other one replaces it. */
-    private void github(String kind) {
-        if (a instanceof GhList && kind.equals(((GhList) a).kind)) { a.closeDrawer(); return; }
-        a.startActivity(new Intent(a, GhList.class).putExtra("hub", a.hub.id).putExtra("kind", kind));
-        if (a instanceof GhList) a.finish(); else a.closeDrawer();
-    }
-
     private void addProject() {
         NewProject.open(a, a.hub);
         a.closeDrawer();
@@ -251,9 +244,8 @@ final class Sidebar {
         // Their Update buttons need the PC: not while it doesn't answer.
         if (offTitle == null) banners(st);
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
-        list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
-        list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
-        // No Browser row (a link in a chat opens it) and no PCs row (Settings lists the workspace's PCs).
+        // No Browser row (a link in a chat opens it), no PCs row (Settings lists the workspace's PCs), and no
+        // Pull requests or Issues rows (the search's pages and a project's sheet open them).
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
         // A newer app: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
         JSONObject app = st.optJSONObject("app");

@@ -468,8 +468,6 @@ export component Sidebar inherits Rectangle {
     property <int> drop-id: -1;
     property <bool> drop-above;
     callback settings();
-    callback prs();
-    callback issues();
     callback back();
     callback refresh();
     background: Theme.bg200;
@@ -784,24 +782,6 @@ export component Sidebar inherits Rectangle {
             ThemeBtn {
                 toggled => {
                     root.toggle-theme();
-                }
-            }
-            if !root.pages-back: Btn {
-                icon: Icons.pull;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Pull requests";
-                clicked => {
-                    root.prs();
-                }
-            }
-            if !root.pages-back: Btn {
-                icon: Icons.circle-dot;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Issues";
-                clicked => {
-                    root.issues();
                 }
             }
             Rectangle {

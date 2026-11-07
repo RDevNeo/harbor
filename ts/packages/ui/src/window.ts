@@ -444,8 +444,6 @@ export interface AppWindow extends slint.ComponentHandle {
   sel_mention: () => void;
   sel_hover: (on: boolean) => void;
   settings: () => void;
-  prs: () => void;
-  issues: () => void;
   leave_page: () => void;
   refresh: () => void;
 

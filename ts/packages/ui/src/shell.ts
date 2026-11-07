@@ -647,8 +647,6 @@ export class Shell {
       this.refreshDevices();
     };
     w.settings = () => void this.pages.openSettings();
-    w.prs = () => this.pages.openPrs();
-    w.issues = () => this.pages.openIssues();
     w.leave_page = () => this.leavePage();
     w.refresh = () => {
       this.data.reload();
