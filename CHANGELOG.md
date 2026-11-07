@@ -5,6 +5,28 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.162.0] - 2026-11-07
+
+### Added
+- Sign out of a PC and sign in on another: everything but your agent accounts comes along. Your
+  integrations' sign-ins (Gmail, GitHub for gh, Convex, Vercel, Linear, Sentry, Supabase, Context7),
+  the keys you saved for agents, and WhatsApp's and Discord's sessions follow your account in an
+  end-to-end encrypted vault: Harbor's account service only stores ciphertext. Agents still ask you
+  before using a saved key on each PC.
+- A new PC opens the vault as soon as one of your other PCs is on (you're notified when it does), or
+  with your recovery code when none is: Settings › Workspace shows the code on any PC that has the
+  vault, and opens a locked one with it.
+- WhatsApp and Discord run on one of your PCs at a time (two copies of a linked device get it dropped
+  or banned): your other PCs' agents use them through that PC, and Settings shows "Runs on <PC>".
+  Linking or signing in on a PC moves them there; signing out hands them on with the newest session.
+- Signing out of an integration on one PC signs it out on all of them; a refreshed sign-in reaches the
+  others within a minute.
+
+### Changed
+- Signing out of a PC takes your sign-ins, keys and sessions off it (they stay in the vault).
+- Your settings follow your account again (they hadn't since the TypeScript app), and so do your name
+  and GitHub login for who-is-who, the browser's recent pages, the video volume and the team view.
+
 ## [0.161.0] - 2026-11-07
 
 ### Changed
