@@ -5,6 +5,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- A message that mentions another message with a note under it: the bubble now grows with the note
+  when the note takes two lines or more, so the message's last lines no longer spill out below it.
+
 ## [0.157.0] - 2026-11-07
 
 ### Changed

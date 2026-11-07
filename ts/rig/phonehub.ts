@@ -123,6 +123,8 @@ const cards = chat({ repoId: web, title: "Speed up the checkout page", updated: 
   done(ago(10), 0.18),
   // A message of a mention alone (its note is what the user wrote).
   { kind: "user", text: "", files: [], at: ago(8), mentions: [{ item: 10, from: "Claude", at: ago(10), text: "put behind `fast_total` (off by default)", len: 40, excerpt: true, note: "Turn it on for 10% of users first.", kind: "", chat: "", title: "" }], sender: "", intent: "" },
+  // An excerpt with a note that wraps, then the message's own text (the bubble holds all three).
+  { kind: "user", text: "Can you show me how it looks?", files: [], at: ago(7), mentions: [{ item: 10, from: "Claude", at: ago(10), text: "Committed as `4f2a9c1` and put behind `fast_total` (off by default).", len: 70, excerpt: true, note: "It shouldn't be off for everyone: staff accounts should get the fast total right away.", kind: "", chat: "", title: "" }], sender: "", intent: "" },
   notice("process", "dev server", "http://127.0.0.1:5173"),
   notice("clock", "Wakes up at 9:00 to check the error rate"),
   notice("wake", "Woke up: the error rate is back under 1%", "Checked the dashboard at 9:00."),

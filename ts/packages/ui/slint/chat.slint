@@ -187,7 +187,9 @@ component ThumbGrid {
 // A mention in a sent message: the composer's chip (mentions.rs `draft`) with its tooltip, its note under it.
 component CiteView {
     in property <Cite> cite;
-    VerticalLayout {
+    min-height: lay.min-height;
+    preferred-height: lay.preferred-height;
+    lay := VerticalLayout {
         spacing: 4px;
         Rectangle {
             height: 26px;
