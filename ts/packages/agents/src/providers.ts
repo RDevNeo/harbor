@@ -402,7 +402,11 @@ export function opencodeModelList(ids: readonly string[], configured: readonly s
 /** Runs `opencode models` (without blocking) and keeps its list; a failed run keeps the last one. */
 export function refreshOpencodeModels(binPath: string | null = which(bin("OpenCode"))): Promise<void> {
   if (ocFetching !== null) return ocFetching;
-  if (binPath === null) return Promise.resolve();
+  if (binPath === null) {
+    // Not installed: looked for again when the list is next stale.
+    ocAt = Date.now();
+    return Promise.resolve();
+  }
   ocFetching = (async () => {
     try {
       const p = Bun.spawn([binPath, "models"], { env: { ...process.env, PATH: childPath() }, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
