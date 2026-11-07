@@ -80,4 +80,28 @@ final class Rig {
             return "[]";
         }
     }
+
+    /** The update the rig's screens show (the sheet, Settings › App): one minor version newer
+     *  than this build, from the release Update.look found on GitHub (this build's own version
+     *  until it has looked). Update then downloads that real release's APK from GitHub and checks
+     *  its signature, and Android refuses it: the rig's APK is signed with another key. Only
+     *  until its sheet has shown once (Update.prompt): from then on the real answer, which for a
+     *  build of the latest release is "up to date" (shots of both: Settings, chats, Settings). */
+    static void update(android.content.Context c) {
+        long mine = Settings.myCode(c), fake = (mine / 1000 + 1) * 1000;
+        if (Ui.prefs(c).getLong("prompt_code", 0) == fake) return;
+        if (Update.bestRelease == null) Update.bestRelease = Settings.name(mine);
+        Update.bestCode = fake;
+    }
+
+    /** Update.check in the rig: the real look at GitHub (its latest release's harbor-app.json,
+     *  signature checked; logged, tag harbor-rig), then the made-up newer version. */
+    static long update(android.content.Context c, boolean force) {
+        String r;
+        try { r = "GitHub's latest release ships app " + Update.look(c, force) + " in v" + Update.bestRelease; }
+        catch (Exception e) { r = "GitHub check failed: " + e; }
+        android.util.Log.i("harbor-rig", r);
+        update(c);
+        return Update.bestCode;
+    }
 }

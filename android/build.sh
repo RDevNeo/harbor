@@ -181,6 +181,8 @@ java -cp "$W/classes:$W/test" dev.harbor.app.TagTest
 # And when an automatic update may install (Quiet).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/UpdateTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.UpdateTest
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/MinisignTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.MinisignTest
 # And the chat list's workspace filter (src/sidebar.rs).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/WsFilterTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.WsFilterTest

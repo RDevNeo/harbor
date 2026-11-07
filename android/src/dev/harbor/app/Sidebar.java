@@ -247,9 +247,7 @@ final class Sidebar {
         // No Browser row (a link in a chat opens it), no PCs row (Settings lists the workspace's PCs), and no
         // Pull requests or Issues rows (the search's pages and a project's sheet open them).
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
-        // A newer app: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
-        JSONObject app = st.optJSONObject("app");
-        if (app != null) Update.saw(a, a.hub.id, app.optLong("version_code"));
+        // A newer app on GitHub: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
         long offered = Update.known(a);
         if (offered > Settings.myCode(a)) Ui.main.post(() -> Update.prompt(a, offered));
         View line = new View(a);

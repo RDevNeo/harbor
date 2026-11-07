@@ -1911,7 +1911,9 @@ and scrolls to the card. Without a `chat` (key `discord-captcha`) it opens the c
 ### `GET /v1/app`
 
 `{"version_code": 7000, "url": "/app.apk", "hub": {…}}`; `version_code` 0: the hub has no app
-to offer. Cheap (no UI thread), so the phone asks every PC of every pairing with it.
+to offer. Phone apps before 0.157 asked every PC of every pairing with it for their update; from
+0.157 the phone updates from GitHub only (below), and still calls it as a cheap "is Harbor
+there" probe (Route).
 
 `hub` (optional, from 0.51; missing: an older Harbor, show no Update for it): the PC's own Harbor,
 `{"version": "0.51.0", "managed": true, "latest": "0.51.1" | null, "ready": false,
@@ -1944,24 +1946,35 @@ looks at it (window closed, or focused and left alone for a few minutes with not
 it shows no update toast meanwhile and its `/v1/state` `hub_update` stays null while it installs
 or waits to swap in (an Update asked from the phone still shows as before).
 
+**Phone app updates come from GitHub, never from a PC (from 0.157).** The app does a `HEAD
+https://github.com/RDevNeo/harbor/releases/latest` (the website's redirect to the tag, ~5 KB;
+not the rate-limited API) at most every 5 minutes, while the app runs and from its background jobs.
+Settings › App's row has no tap: Update shows on it by itself when the latest app is newer, and
+downloads and installs it at once. Only a new tag costs
+more: that release's `harbor-app.json` + `.minisig`, checked with Harbor's release key (the
+desktop updater's, `packaging/minisign.pub`) before its `apk` `{code, release}` is believed.
+Update downloads `releases/download/v<release>/harbor-android.apk` straight from GitHub into the
+PackageInstaller session, hashing it as it goes, and commits it only when
+`harbor-android.apk.minisig` (trusted comment `harbor v<release> harbor-android.apk`) checks out
+(Minisign.java: BLAKE2b-512 + Ed25519 in plain Java, the phone supports Android 8).
+
 The phone always updates automatically (since 0.147 there is no setting; before, it followed
 `auto` until chosen on the phone): the background jobs (Alive, Listen) look for a
-newer app (this call, at most every 10 minutes) and install it only while none of Harbor's
+newer app (GitHub, as above) and install it only while none of Harbor's
 screens is in front and the screen is off or locked: Android always ends an app's process when
 it replaces it. The next start opens the chat the user had (drafts are kept). A version that
 didn't go in by itself is never tried again in the background: one notification per version
-offers it ("Harbor X is ready: tap to install", which installs it in front, from the PC that
-offered it), and Settings shows Android's whole reason (`INSTALL_FAILED_…`, with the status).
+offers it ("Harbor X is ready: tap to install", which installs it in front), and Settings shows Android's whole reason (`INSTALL_FAILED_…`, with the status).
 When the phone's verifier refused it (Google Play Protect wants to ask "Scan app?" for a build
 it hasn't seen, which it can't with nobody there: `INSTALL_FAILED_VERIFICATION_FAILURE`), later
-versions skip the background and go straight to the notification, until the user asks to try the
-background again in Settings (after turning on Play Protect's "Improve harmful app detection").
+versions skip the background and go straight to the notification, until a version installs: the
+next one then tries the background once more (from 0.157; before, Settings' row asked to try again).
 Nothing on the wire changed for this (0.55.1).
 
 ### `GET /app.apk` (and `HEAD`)
 
 No token needed on the PC's network; from outside it a signed-in phone (or a pairing from before
-accounts, so old apps can update and then sign in). The APK the hub has (`404` when none), `application/vnd.android.package-archive`.
+accounts, so old apps can update and then sign in). Only phone apps before 0.157 update from it. The APK the hub has (`404` when none), `application/vnd.android.package-archive`.
 
 ## Every PC is a hub
 

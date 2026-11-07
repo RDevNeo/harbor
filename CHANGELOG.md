@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Phone app updates come straight from Harbor's GitHub releases, not from your PCs: the app looks at
+  the latest release (every 5 minutes, also in the background), downloads the
+  APK from GitHub and installs it only when its signature checks out with Harbor's release key, the
+  one PCs check theirs with. No more "Checking every PC…". Settings › App's row no longer does
+  anything when tapped: it says "X · up to date", or shows Update by itself when a newer version is
+  out, and Update installs it at once.
+- The update sheet reads "Harbor", then installed → new version ("0.156.0 → 0.157.0"), and on phones
+  that install by themselves "Or it installs by itself next time the screen is off." Bottom sheets
+  slide up without fading in, so nothing shows through them while they open.
+
 ## [0.156.2] - 2026-11-07
 
 ### Changed

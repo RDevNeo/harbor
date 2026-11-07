@@ -55,7 +55,8 @@ final class Sheet {
             w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             w.setGravity(Gravity.BOTTOM);
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            w.setWindowAnimations(android.R.style.Animation_InputMethod);
+            // Slides up without fading: the system's keyboard animation fades in from see-through.
+            w.setWindowAnimations(0);
             w.setDimAmount(0.35f);
             w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         }
@@ -69,7 +70,15 @@ final class Sheet {
     }
 
     Sheet show() {
+        View root = ((ViewGroup) dialog.findViewById(android.R.id.content)).getChildAt(0);
+        root.setVisibility(View.INVISIBLE);
         dialog.show();
+        root.post(() -> {
+            root.setTranslationY(root.getHeight());
+            root.setVisibility(View.VISIBLE);
+            root.animate().translationY(0).setDuration(220)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        });
         return this;
     }
 
