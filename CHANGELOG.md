@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.155.0] - 2026-11-07
+
 ### Added
 - WhatsApp app (desktop and phone): agents can read and send on your personal WhatsApp, as a device
   linked to your phone like WhatsApp Web. Settings › Integrations › WhatsApp › Link shows a warning
