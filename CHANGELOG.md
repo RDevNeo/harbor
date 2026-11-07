@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.163.0] - 2026-11-07
+
+### Fixed
+- The model picker's provider rail scrolls when its accounts don't fit (mouse wheel and touchpad), with
+  faded edges where more are, under the favourites star. The picked account is scrolled into view when the
+  picker opens, and Tab / Shift+Tab step through the rail.
+
+### Changed
+- Another person's account shows their workspace photo (as Settings › Workspace has it), round in the
+  logo's corner, instead of their initials: on the picker's rail, the composer's model chip and the phone's
+  account list, where its name now reads "Claude · Dana Reyes". A PC tells its accounts' owners' photos to
+  the others (the address only, never an email). Only someone with no photo keeps their initials, and the
+  tooltip says so.
+
 ## [0.162.0] - 2026-11-07
 
 ### Added
