@@ -347,13 +347,15 @@ refetch everything.
   /v1/chats/{id}/retire`). It's off its team, so `GET …/team` no longer lists it, and its chat
   stays to read, `writable: false`: say it was retired instead of "<home_name> is off".
 - `tree` (optional, older hubs leave it out): where the desktop sidebar places each chat, so the
-  list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed": false,
+  list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed_label": null,
   "chats": [14, 12]}], "threads": [9], "settled": [3]}`, chat ids in display order. Each project
   lists all its unsettled leads, newest first, as siblings; `threads` are leads with no project
-  (or a project the hub doesn't have); `settled` holds every settled lead. Sub-agents and
-  snoozed chats are in none of them; a `snoozed` project shows only while searching. From 0.78
-  `snoozed` (optional) lists the snoozed unsettled leads: a search shows the matching ones back
-  in their project (or Threads, when the project isn't in `projects`), as the desktop does. Without
+  (or a project the hub doesn't have); `settled` holds every settled lead. Sub-agents are in none
+  of them. A snooze moves nothing (0.161): snoozed chats stay in their places, and a snoozed
+  project's `snoozed_label` says when it wakes ("Tomorrow, 9:00"; null when it isn't snoozed), for
+  its header to show it muted with the clock glyph and that label, as a snoozed chat's row does.
+  Hubs from 0.78 to 0.160 left snoozed chats out of the lists (in `tree.snoozed`, shown only while
+  searching) and marked a snoozed project `"snoozed": true` (shown only while searching). Without
   `tree`, group `chats` by `project_id` and `settled` as before. With `X-Harbor-Ids: global`
   its chats are gids and its projects paths from 0.64.1; hubs 0.55.2 to 0.64.0 left this hub's
   ids there, so when `tree` places none of the chats, ignore it and group as without it.
@@ -435,9 +437,9 @@ refetch everything.
   every chat's there), the same icon after the title on its sidebar row; the phone does the same
   in its footer chips (tap: open `url`, long-press: the title) and list.
 - `snoozed_until_ms` / `snoozed_label` (optional, 0.78; missing: an older hub, so offer no
-  Snooze): the chat is snoozed out of this hub's sidebar until then, and that time as the
-  desktop's row says it ("Tomorrow, 9:00", "Thu, 14:00"); both null when it isn't. Such a chat is
-  in `tree.snoozed`, shown only while searching, its row marked with the clock glyph and the label
+  Snooze): the chat is snoozed on this hub's sidebar until then, and that time as the
+  desktop's row says it ("Tomorrow, 9:00", "Thu, 14:00"); both null when it isn't. Such a chat
+  keeps its place in `tree`, its row muted and marked with the clock glyph and the label
   (see [Snooze](#snooze-078)).
 
 ### `GET /v1/chats/{id}/items?since=<rev>`
@@ -1054,9 +1056,9 @@ account that can take it. Messages sent while it moves follow it.
 
 ### Snooze (0.78)
 
-The desktop sidebar's clock menu ("Snooze until"): a snoozed chat leaves the list until its time
-comes, then comes back unread (`unread: true`). A snooze belongs to the hub's sidebar, which is
-the phone's list: the phone and that PC's desktop hide the same chats, and a snooze from either
+The desktop sidebar's clock menu ("Snooze until"): a snoozed chat stays where it is, its row muted
+with when it wakes, until its time comes, then it's unread (`unread: true`). A snooze belongs to
+the hub's sidebar, which is the phone's list: the phone and that PC's desktop mark the same chats, and a snooze from either
 shows on both. It's never forwarded to a copy's home PC (another PC's list, maybe another
 person's, keeps the chat). Offer it on unsettled leads when the chat has `snoozed_until_ms`
 (older hubs: no Snooze).

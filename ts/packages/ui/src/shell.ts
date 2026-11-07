@@ -1386,7 +1386,10 @@ export class Shell {
       const main = d.mainChat(p.repo.id);
       const mainChat = main === null ? undefined : d.chat(main);
       const wakeUps = d.timers.some((x) => p.chats.some((c) => c.id === x.chatId) || x.chatId === main);
-      const idle = projectIdle(wakeUps);
+      // Snoozed, it stays where it is: muted, with when it wakes where its status goes.
+      const until = snoozed.get(`r${p.repo.id}`) ?? null;
+      const asleep = until !== null && until > t;
+      const idle = projectIdle(wakeUps, asleep ? snoozedLabel(until, t, utcOffset()) : null);
       const selected = (main !== null && this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftMain && this.draftRepo === p.repo.id);
       rows.push({
         kind: "project",
@@ -1398,7 +1401,7 @@ export class Shell {
         avatar: this.avatar(p.repo.id) ?? noPixels,
         has_avatar: this.avatar(p.repo.id) !== null,
         settled: false,
-        snoozed: snoozed.has(`r${p.repo.id}`),
+        snoozed: asleep,
         worktree: "",
         worktree_tip: "",
         pr: "",

@@ -83,7 +83,6 @@ export function inWorkspaces(
     projects: t.projects.filter((p) => own(p.id) || repos.has(p.id)).map((p) => ({ ...p, chats: keep(p.chats) })),
     threads: keep(t.threads),
     settled: keep(t.settled),
-    snoozed: keep(t.snoozed),
     settledProjects: t.settledProjects.filter((p) => own(p) || ours.some((c) => c.repoId === p)),
   };
 }
@@ -242,26 +241,24 @@ export interface ProjectRows<C> {
   chats: C[];
 }
 
-/** What the sidebar lists for search `query`: projects with their chat rows, Threads, Settled. Snoozed chats come back only while searching. */
+/** What the sidebar lists for search `query`: projects with their chat rows, Threads, Settled. Snoozed chats and projects stay in their places. */
 export function sidebarList<C extends SidebarChat>(t: Tree, chats: readonly C[], repos: readonly SidebarRepo[], query: string): { projects: ProjectRows<C>[]; loose: C[]; settled: C[]; settledProjects: SidebarRepo[] } {
   const q = query.trim().toLowerCase();
   const chat = (id: number) => chats.find((c) => c.id === id);
   const all = (ids: readonly number[]) => ids.map(chat).filter((c): c is C => c !== undefined);
   const matches = (c: C) => q === "" || c.title.toLowerCase().includes(q);
-  const asleep = q === "" ? [] : all(t.snoozed);
   const projects: ProjectRows<C>[] = [];
   for (const p of t.projects) {
     const repo = repos.find((r) => r.id === p.id);
-    if (!repo || (p.snoozed && q === "")) continue;
+    if (!repo) continue;
     // A search finds a project by its name, or its main chat's title.
     const m = p.main === null ? undefined : chat(p.main);
     const named = repo.name.toLowerCase().includes(q) || (m !== undefined && q !== "" && matches(m));
-    const cs = [...all(p.chats), ...asleep.filter((c) => c.repoId === p.id)].filter((c) => named || matches(c));
+    const cs = all(p.chats).filter((c) => named || matches(c));
     if (q === "" || named || cs.length > 0) projects.push({ repo, chats: cs });
   }
-  const homeless = asleep.filter((c) => !t.projects.some((p) => p.id === c.repoId));
   const settledProjects = t.settledProjects.map((id) => repos.find((r) => r.id === id)).filter((r): r is SidebarRepo => r !== undefined && (q === "" || r.name.toLowerCase().includes(q)));
-  return { projects, loose: [...all(t.threads), ...homeless].filter(matches), settled: all(t.settled), settledProjects };
+  return { projects, loose: all(t.threads).filter(matches), settled: all(t.settled), settledProjects };
 }
 
 /** A sidebar row as Alt+Up / Alt+Down walk them: `kind` is SideRow's ("project", "thread", "loose", "label", "settled-project"). */
@@ -389,8 +386,9 @@ export function chatIdle(snoozeLabel: string | null, updated: number, now: numbe
   return snoozeLabel === null ? { kind: "text", icon: null, text: ago(updated, now), color: "gray-800" } : { kind: "text", icon: "CLOCK", text: snoozeLabel, color: "gray-800" };
 }
 
-/** A project row's idle status: an alarm while one of its chats has a wake-up, else nothing. */
-export function projectIdle(wakeUps: boolean): Status {
+/** A project row's idle status: when a snoozed one wakes (`snoozeLabel`), else an alarm while one of its chats has a wake-up, else nothing. */
+export function projectIdle(wakeUps: boolean, snoozeLabel: string | null = null): Status {
+  if (snoozeLabel !== null) return { kind: "text", icon: "CLOCK", text: snoozeLabel, color: "gray-800" };
   return wakeUps ? { kind: "text", icon: "ALARM", text: "", color: "subtle" } : { kind: "text", icon: null, text: "", color: "gray-800" };
 }
 

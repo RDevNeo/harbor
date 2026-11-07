@@ -85,7 +85,7 @@ export function sharedWith<C extends PlacedChat>(c: C, chat: (id: number) => C |
 /** A project in the sidebar `Tree`. */
 export interface Place {
   id: number;
-  /** Snoozed: it shows only while searching. */
+  /** Snoozed: it keeps its place, its row only drawn muted with when it wakes. */
   snoozed: boolean;
   /** Its main chat, drawn as the project row itself (in none of the lists). */
   main: number | null;
@@ -93,12 +93,11 @@ export interface Place {
   chats: number[];
 }
 
-/** Where every chat sits: projects in the sidebar's order, Threads (leads of no project here), Settled, and snoozed leads (shown only while searching). */
+/** Where every chat sits: projects in the sidebar's order, Threads (leads of no project here) and Settled. A snooze moves nothing: snoozed chats keep their places. */
 export interface Tree {
   projects: Place[];
   threads: number[];
   settled: number[];
-  snoozed: number[];
   /** Settled projects, in the sidebar's order: under Settled, every chat of theirs too. */
   settledProjects: number[];
 }
@@ -108,7 +107,7 @@ export function isMainOf(c: SidebarChat | null | undefined, repo: number): boole
   return !!c && c.role === "lead" && c.repoId === repo && !c.settled;
 }
 
-/** The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `mains` is each project's stored main chat, `snoozed` takes "r<project>" and "c<chat>", `settledRepos` the settled projects. */
+/** The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `mains` is each project's stored main chat, `snoozed` takes "r<project>" (it only marks the project), `settledRepos` the settled projects. */
 export function tree(repos: readonly number[], chats: readonly SidebarChat[], mains: ReadonlyMap<number, number>, snoozed: (key: string) => boolean, settledRepos: ReadonlySet<number> = new Set()): Tree {
   const leads = chats.filter((c) => c.role === "lead").sort((a, b) => b.updated - a.updated || b.id - a.id);
   const main = (r: number): number | null => {
@@ -119,15 +118,13 @@ export function tree(repos: readonly number[], chats: readonly SidebarChat[], ma
     projects: repos.filter((r) => !settledRepos.has(r)).map((r) => ({ id: r, snoozed: snoozed(`r${r}`), main: main(r), chats: [] })),
     threads: [],
     settled: [],
-    snoozed: [],
     settledProjects: repos.filter((r) => settledRepos.has(r)),
   };
   for (const c of leads) {
     if (c.settled || (c.repoId !== null && settledRepos.has(c.repoId))) t.settled.push(c.id);
     else if (t.projects.some((p) => p.main === c.id)) {
       // The project row is the main chat.
-    } else if (snoozed(`c${c.id}`)) t.snoozed.push(c.id);
-    else {
+    } else {
       const p = t.projects.find((p) => p.id === c.repoId);
       if (p) p.chats.push(c.id);
       else t.threads.push(c.id);

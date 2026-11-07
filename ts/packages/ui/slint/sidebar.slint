@@ -85,7 +85,8 @@ component ThreadRow {
             text: root.data.title;
             font-size: 14px;
             font-weight: root.data.active ? 500 : 400;
-            color: Theme.fg;
+            // Snoozed: it stays in its place, muted, its status saying when it wakes.
+            color: root.data.snoozed ? Theme.gray-800 : Theme.fg;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -254,6 +255,7 @@ component ProjectRow {
         width: 16px;
         height: 16px;
         source: root.data.avatar;
+        opacity: root.data.snoozed ? 0.45 : 1;
     }
     if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Rectangle {
         x: 8px;
@@ -261,6 +263,7 @@ component ProjectRow {
         height: 16px;
         border-radius: 4px;
         background: root.data.active || root.hovering ? Theme.gray-400 : Theme.gray-300;
+        opacity: root.data.snoozed ? 0.45 : 1;
         Text {
             text: root.data.letter;
             font-size: 10.5px;
@@ -277,7 +280,8 @@ component ProjectRow {
         text: root.data.title;
         font-size: 14px;
         font-weight: root.data.active ? 500 : 400;
-        color: Theme.fg;
+        // Snoozed: it stays in its place, muted (its icon too), its status saying when it wakes.
+        color: root.data.snoozed ? Theme.gray-800 : Theme.fg;
         overflow: elide;
         vertical-alignment: center;
     }

@@ -49,6 +49,8 @@ final class Sidebar {
     private final Map<String, List<String>> projectShared = new HashMap<>();
     /** The PC a project's folder is on when it isn't the answering PC's ("": none known); absent: the answering PC's. */
     private final Map<String, String> projectPc = new HashMap<>();
+    /** Snoozed projects, as last drawn: when each wakes ("": a hub before 0.161 doesn't say). */
+    private final Map<String, String> snoozedProjects = new HashMap<>();
     /** The account's workspaces by id, as last drawn (for the shared mark's line). */
     private Map<String, String> wsNames = new HashMap<>();
 
@@ -216,6 +218,7 @@ final class Sidebar {
         projectWs.clear();
         projectShared.clear();
         projectPc.clear();
+        snoozedProjects.clear();
         JSONArray pa = st.optJSONArray("projects");
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
             JSONObject p = pa.optJSONObject(i);
@@ -301,11 +304,14 @@ final class Sidebar {
         if (tree != null && !placesAny(tree, byId)) tree = null;
         if (tree != null) {
             // The desktop sidebar's own placement (newer hubs): the same chats in the same
-            // places, snoozed ones left out as there.
+            // places. A snooze moves nothing: a snoozed project keeps its place, its header muted
+            // with when it wakes (`snoozed_label`; hubs 0.78 to 0.160 only said `snoozed`).
             JSONArray tp = tree.optJSONArray("projects");
             if (tp != null) for (int i = 0; i < tp.length(); i++) {
                 JSONObject p = tp.optJSONObject(i);
-                if (p == null || (p.optBoolean("snoozed") && q.isEmpty())) continue;
+                if (p == null) continue;
+                if (!p.isNull("snoozed_label")) snoozedProjects.put(p.optString("id"), p.optString("snoozed_label"));
+                else if (p.optBoolean("snoozed")) snoozedProjects.put(p.optString("id"), "");
                 groups.put(p.optString("id"), pick(byId, p.optJSONArray("chats")));
                 if (p.has("main")) withMains.add(p.optString("id"));
                 JSONObject m = p.isNull("main") ? null : byId.get(p.optString("main"));
@@ -313,11 +319,17 @@ final class Sidebar {
             }
             loose = pick(byId, tree.optJSONArray("threads"));
             settled = pick(byId, tree.optJSONArray("settled"));
-            // Snoozed chats (0.78): out of the list until they wake; a search shows them back in
-            // their places, as the desktop's does.
-            if (!q.isEmpty()) for (JSONObject c : pick(byId, tree.optJSONArray("snoozed"))) {
+            // Hubs 0.78 to 0.160 kept snoozed chats apart (`snoozed`): back in their places,
+            // newest first as the rest, since a snooze moves nothing.
+            List<JSONObject> apart = pick(byId, tree.optJSONArray("snoozed"));
+            for (JSONObject c : apart) {
                 List<JSONObject> g = groups.get(c.isNull("project_id") ? "" : c.optString("project_id"));
                 (g != null ? g : loose).add(c);
+            }
+            if (!apart.isEmpty()) {
+                java.util.Comparator<JSONObject> newest = (x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms"));
+                for (List<JSONObject> g : groups.values()) g.sort(newest);
+                loose.sort(newest);
             }
         } else {
             List<JSONObject> chats = new ArrayList<>(byId.values());
@@ -564,11 +576,16 @@ final class Sidebar {
         h.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(6));
         String mainId = main == null ? null : main.optString("id");
         h.setBackground(mainId != null && mainId.equals(current) ? Ui.press(Ui.G100, 0, 10) : Ui.press(0, 0, 10));
-        h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
+        // Snoozed (the desktop's muted project row): its place kept, its name and icon muted, and
+        // when it wakes before its status.
+        String asleep = key.isEmpty() ? null : snoozedProjects.get(key);
+        h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, asleep != null ? Ui.G500 : Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
         String where = key.isEmpty() ? "" : Place.hint(st, key);
-        if (where.isEmpty()) h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, mains ? Ui.FG : Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
-        else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), mains ? Ui.FG : Ui.G700), new LinearLayout.LayoutParams(0, -2, 1));
+        int color = asleep != null ? Ui.G600 : mains ? Ui.FG : Ui.G700;
+        if (where.isEmpty()) h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, color)), new LinearLayout.LayoutParams(0, -2, 1));
+        else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), color), new LinearLayout.LayoutParams(0, -2, 1));
         if (!key.isEmpty()) sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, ""), projectPc.get(key)), projectShared.getOrDefault(key, new ArrayList<>()));
+        if (asleep != null) snoozeMark(h, asleep);
         if (main != null) status(h, main, you);
         boolean busy = false;
         for (JSONObject c : cs) busy |= working(c) || waiting(c) || Hub.queued(c) > 0;
@@ -725,7 +742,8 @@ final class Sidebar {
         String id = c.optString("id");
         String title = c.optString("title");
         boolean settled = c.optBoolean("settled");
-        LinearLayout r = Ui.listRow(a, Ui.I_CHAT, Ui.G700, title.isEmpty() ? "New chat" : title, settled ? Ui.G700 : Ui.FG);
+        boolean asleep = c.has("snoozed_until_ms") && !c.isNull("snoozed_until_ms");
+        LinearLayout r = Ui.listRow(a, Ui.I_CHAT, asleep ? Ui.G500 : Ui.G700, title.isEmpty() ? "New chat" : title, asleep ? Ui.G600 : settled ? Ui.G700 : Ui.FG);
         r.setBackground(id.equals(current) ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
         // Runs in a worktree of its own (the desktop row's folder-git mark).
         JSONObject wt = c.optJSONObject("worktree");
@@ -742,11 +760,8 @@ final class Sidebar {
             m.setContentDescription(pr.optString("label"));
             r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
         }
-        // Snoozed (shown while searching): when it wakes, as the desktop row says it.
-        if (!c.isNull("snoozed_until_ms")) {
-            r.addView(Ui.icon(a, Ui.I_CLOCK, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 8, 0, 0, 0));
-            r.addView(Ui.text(a, c.optString("snoozed_label"), 12, Ui.G600), Ui.margins(Ui.wrap(), 4, 0, 0, 0));
-        }
+        // Snoozed: in its place, muted, with when it wakes, as the desktop row says it.
+        if (asleep) snoozeMark(r, c.optString("snoozed_label"));
         // Shared (Share with workspace…): a chat under its project's header shows it only for shares of its own.
         List<String> shared = strings(c.optJSONArray("shared"));
         String pid = c.isNull("project_id") ? "" : c.optString("project_id");
@@ -757,6 +772,14 @@ final class Sidebar {
         r.setOnClickListener(v -> open(id));
         r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
         return r;
+    }
+
+    /** A snoozed row's mark: the clock glyph and when it wakes ("Tomorrow, 9:00"; "": unknown). */
+    private void snoozeMark(LinearLayout r, String label) {
+        TextView clock = Ui.icon(a, Ui.I_CLOCK, 13, Ui.G600);
+        clock.setContentDescription(label.isEmpty() ? "Snoozed" : "Snoozed until " + label);
+        r.addView(clock, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 8, 0, 0, 0));
+        if (!label.isEmpty()) r.addView(Ui.text(a, label, 12, Ui.G600), Ui.margins(Ui.wrap(), 4, 0, 0, 0));
     }
 
     /** The workspaces picked on this phone, ids joined by commas ("": all), some maybe gone since. */

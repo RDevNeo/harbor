@@ -654,11 +654,19 @@ export class PhoneRoutes {
     const carried = sidebartree.carriedProjects(chats, place);
     const placed = sidebartree.tree(repos.map((r) => r.id), chats, this.d.store.mainChats(), (key) => this.snoozeUntil(key) !== null, new Set(settledRepos.keys()));
     const idsOf = (list: number[]): Json[] => list.map((id) => this.idOf(chats.find((c) => c.id === id) as Chat, global));
+    // A snoozed project or chat keeps its place: the project says when it wakes (`snoozed_label`,
+    // the chat its own), for its row to show it muted. No `snoozed: true` (older apps left
+    // those projects out) and no list of snoozed chats (they searched those apart).
+    const t = now();
     const tree = {
-      projects: placed.projects.map((p) => ({ id: pid(p.id), snoozed: p.snoozed, main: p.main === null ? null : idsOf([p.main])[0] ?? null, chats: idsOf(p.chats) })),
+      projects: placed.projects.map((p) => ({
+        id: pid(p.id),
+        main: p.main === null ? null : idsOf([p.main])[0] ?? null,
+        chats: idsOf(p.chats),
+        snoozed_label: p.snoozed ? sidebartree.snoozedLabel(this.snoozeUntil(`r${p.id}`), t, utcOffset(t)) : null,
+      })),
       threads: idsOf(placed.threads),
       settled: idsOf(placed.settled),
-      snoozed: idsOf(placed.snoozed),
       settled_projects: placed.settledProjects.map(pid),
     };
     const cat = this.d.catalog;

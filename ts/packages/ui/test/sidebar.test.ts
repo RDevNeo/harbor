@@ -21,6 +21,7 @@ import {
   sharedWith,
   parseSnooze,
   picked,
+  projectIdle,
   projectWorkspace,
   reordered,
   sidebarList,
@@ -46,7 +47,7 @@ function place(id: number, snoozed: boolean, main: number | null, chats: number[
 }
 
 function emptyTree(t: Partial<Tree>): Tree {
-  return { projects: [], threads: [], settled: [], snoozed: [], settledProjects: [], ...t };
+  return { projects: [], threads: [], settled: [], settledProjects: [], ...t };
 }
 
 function only(ws: string): string[] {
@@ -247,11 +248,11 @@ test("a_settled_chat_alone_keeps_no_project_in_a_workspace", () => {
   expect(got).toEqual(emptyTree({ settled: [1] }));
 });
 
-test("a_snoozed_chat_keeps_its_project_in_its_workspace", () => {
-  const t = emptyTree({ projects: [place(1, false, null, [])], snoozed: [2, 3] });
+test("a_snoozed_project_keeps_its_place_in_its_workspace", () => {
+  const t = emptyTree({ projects: [place(1, true, null, [2, 3])] });
   const chats = [fromPc(2, 1, "ts:b"), fromPc(3, 1, "")];
   const got = inWorkspaces(t, only("b"), "a", new Map([["ts:b", "b"]]), chats);
-  expect(got).toEqual(emptyTree({ projects: [place(1, false, null, [])], snoozed: [2] }));
+  expect(got).toEqual(emptyTree({ projects: [place(1, true, null, [2])] }));
 });
 
 test("chats_of_no_workspace_show_only_under_all", () => {
@@ -368,12 +369,11 @@ test("the_main_chat_is_the_project_row_and_stays_put", () => {
   const second = settled[1];
   if (second) second.settled = true;
   t = tree([6], settled, mains, (k) => k === "c3");
-  expect(t.projects).toEqual([place(6, false, 1, [])]);
-  expect([t.settled, t.snoozed]).toEqual([[2], [3]]);
+  expect(t.projects).toEqual([place(6, false, 1, [3])]);
+  expect(t.settled).toEqual([2]);
   // Snoozed itself, it's still the project row.
   t = tree([6], chats, mains, (k) => k === "c1");
   expect(t.projects[0]?.main).toBe(1);
-  expect(t.snoozed).toEqual([]);
 });
 
 test("a_main_chat_that_no_longer_qualifies_is_none", () => {
@@ -416,12 +416,23 @@ test("loose_unknown_and_settled_chats", () => {
   expect(t.settled).toEqual([4]);
 });
 
-test("snoozed_chats_and_projects", () => {
-  const chats = [chat(1, 7, "lead", 1), chat(2, 7, "lead", 2), chat(3, 8, "lead", 3)];
-  const t = tree([7, 8], chats, none(), (k) => k === "c2" || k === "r8");
-  expect(t.projects).toEqual([place(7, false, null, [1]), place(8, true, null, [3])]);
-  // Out of its project, kept apart for a search.
-  expect(t.snoozed).toEqual([2]);
+test("snoozed_chats_and_projects_keep_their_places", () => {
+  const chats = [chat(1, 7, "lead", 1), chat(2, 7, "lead", 2), chat(3, 8, "lead", 3), chat(4, null, "lead", 4)];
+  const snoozed = (k: string) => k === "c2" || k === "c4" || k === "r8";
+  const t = tree([7, 8], chats, none(), snoozed);
+  // A snooze moves nothing: the chat stays in its project (newest first), the project in its place, only marked.
+  expect(t.projects).toEqual([place(7, false, null, [2, 1]), place(8, true, null, [3])]);
+  expect(t.threads).toEqual([4]);
+  expect({ ...t, projects: [] }).toEqual({ ...tree([7, 8], chats, none(), () => false), projects: [] });
+  // The sidebar lists them where they are, with or without a search.
+  const repos = [{ id: 7, name: "alpha", path: "/a" }, { id: 8, name: "beta", path: "/b" }] as never;
+  const list = sidebarList(t, chats, repos, "");
+  expect(list.projects.map((p) => [p.repo.id, p.chats.map((c) => c.id)])).toEqual([[7, [2, 1]], [8, [3]]]);
+  expect(list.loose.map((c) => c.id)).toEqual([4]);
+  expect(sidebarList(t, chats, repos, "chat 2").projects.map((p) => [p.repo.id, p.chats.map((c) => c.id)])).toEqual([[7, [2]]]);
+  // A snoozed project's row says when it wakes, as a snoozed chat's does.
+  expect(projectIdle(true, "Tomorrow, 9:00")).toEqual({ kind: "text", icon: "CLOCK", text: "Tomorrow, 9:00", color: "gray-800" });
+  expect(projectIdle(true)).toEqual({ kind: "text", icon: "ALARM", text: "", color: "subtle" });
 });
 
 test("same_update_time_orders_newest_id_first", () => {
