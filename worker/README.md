@@ -35,6 +35,9 @@ Secret values are typed at the prompt (or set in the Cloudflare dashboard), neve
    `KEYS` in `src/account.rs` (PCs check phones' tokens with it, offline); without it a build trusts the
    keys `GET /v1/keys` serves over HTTPS.
 6. `npx wrangler secret put CLERK_SECRET_KEY` and `npx wrangler secret put HARBOR_SIGNING_KEY` (paste the keygen private key).
+   Also `VAULT_SECRET`: 32 random bytes, base64 (`openssl rand -base64 32 | npx wrangler secret put VAULT_SECRET`).
+   It seals each account's vault key at rest (`vault_keys`, src/vault.js). If it's ever lost or changed, the
+   stored keys stop opening and the account's PCs that hold a key hand it over again on their next round.
 7. Edit `[vars]` in `wrangler.toml`: `CLERK_FRONTEND_URL`, `PUBLIC_URL`, and the rest if needed.
 8. `npx wrangler deploy`
 9. Optional: attach a custom domain to the Worker in the Cloudflare dashboard, and set `PUBLIC_URL` to it.

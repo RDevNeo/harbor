@@ -3,7 +3,7 @@
 
 import { releasePing, releaseWait } from './release.js';
 import { events, tell } from './accounthub.js';
-import { VaultError, forgetDevice, getVault, putVault, resetVault } from './vault.js';
+import { VaultError, getVault, getVaultKey, putVault, putVaultKey } from './vault.js';
 
 export { ReleaseHub } from './release.js';
 export { AccountHub } from './accounthub.js';
@@ -772,7 +772,7 @@ async function deleteDevice(req, env, fp) {
   }
   if (!allowed) throw new HttpError(403, 'You cannot remove that device.');
   const pc = await env.DB.prepare(`SELECT ws FROM pcs WHERE fp=?`).bind(fp).first();
-  const stmts = [env.DB.prepare(`DELETE FROM devices WHERE fp=?`).bind(fp), env.DB.prepare(`DELETE FROM device_refresh WHERE fp=?`).bind(fp), forgetDevice(env, dev.user_id, fp)];
+  const stmts = [env.DB.prepare(`DELETE FROM devices WHERE fp=?`).bind(fp), env.DB.prepare(`DELETE FROM device_refresh WHERE fp=?`).bind(fp)];
   if (pc && (dev.user_id === p.sub || mine.some((w) => w.id === pc.ws))) stmts.push(env.DB.prepare(`DELETE FROM pcs WHERE fp=?`).bind(fp));
   await env.DB.batch(stmts);
   return json({ ok: true });
@@ -989,13 +989,17 @@ async function route(req, env) {
     if (m === 'PUT') return putPhoto(req, env);
     if (m === 'DELETE') return deletePhoto(req, env);
   }
-  if (path === '/v1/vault') {
+  if (path === '/v1/vault' || path === '/v1/vault/key') {
     const p = await harborAuth(req, env);
     const vtell = (users) => tell(env, users, 'vault');
     try {
-      if (m === 'GET') return json(await getVault(req, env, p));
-      if (m === 'PUT') return json(await putVault(req, env, p, vtell));
-      if (m === 'DELETE') return json(await resetVault(env, p, vtell));
+      if (path === '/v1/vault/key') {
+        if (m === 'GET') return json(await getVaultKey(env, p, vtell));
+        if (m === 'PUT') return json(await putVaultKey(req, env, p, vtell));
+      } else {
+        if (m === 'GET') return json(await getVault(req, env, p));
+        if (m === 'PUT') return json(await putVault(req, env, p, vtell));
+      }
     } catch (e) {
       if (e instanceof VaultError) throw new HttpError(e.status, e.message);
       throw e;

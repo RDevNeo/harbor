@@ -329,10 +329,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const vault = new Vault({
     stateDir: state,
     identity: () => id,
-    name: () => (hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name),
     sources: () => [fileSource(), secretSource(), ...(single?.sources() ?? [])],
     log: vaultLog,
-    notice: (title, body) => notifier.post("pc", `vault:${title}`, title, body, "", false),
     onChange: () => account.notifyChanged(),
   });
   single = new SingleHost({

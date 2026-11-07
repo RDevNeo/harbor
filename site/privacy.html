@@ -24,14 +24,14 @@
 
 <main class="doc wrap">
   <h1>Privacy policy</h1>
-  <p class="meta">Effective 2 November 2026</p>
+  <p class="meta">Effective 7 November 2026</p>
 
   <p>Harbor is a desktop app for Linux and a companion Android app for working with AI coding agents such as Claude Code and Codex. It is free, open-source software made by the Harbor open-source project. All of its code is public at <a href="https://github.com/RDevNeo/harbor">github.com/RDevNeo/harbor</a>, so you can check everything this page says.</p>
 
   <h2 id="summary">Summary</h2>
   <ul>
-    <li>Harbor runs on your own devices. <b>The Harbor project runs no server that receives your data</b>: no accounts, no analytics, no telemetry, no crash reporting, no ads.</li>
-    <li>Your chats, settings and sign-ins are stored on your own computer. They go to your other devices only when you pair them with each other.</li>
+    <li>Harbor runs on your own devices. No analytics, no telemetry, no crash reporting, no ads. The one server the Harbor project runs that receives your data is its account service, and only if you sign in to Harbor with Google: it keeps your account, workspaces and settings, and a vault with your integrations' sign-ins and saved keys so they follow you to every PC you sign in on (see <a href="#network">below</a>).</li>
+    <li>Your chats, settings and sign-ins are stored on your own computer. Chats go to your other devices only when you pair them with each other; settings and sign-ins also follow your Harbor account, if you sign in to one.</li>
     <li>When you use a service through Harbor, such as an AI provider, GitHub, Gmail or Discord, Harbor talks to that service directly from your device, with your own account. That service's own privacy policy then applies.</li>
     <li>Google user data is used only to do what you ask your AI agent to do with your mail. It is never sold, used for ads or used to train AI models.</li>
   </ul>
@@ -52,7 +52,7 @@
     <li><b>Updates.</b> Harbor checks GitHub for new releases of itself and downloads them from GitHub, verifying their signature. Phones get their updates from your own PC. Harbor also asks the npm registry for the latest version number of each agent program you installed.</li>
     <li><b>Reaching your PCs from outside.</b> To let your phone reach your PC away from home, Harbor can ask your home router to open its port (UPnP/NAT-PMP/PCP). It can also look up your public IP address with api.ipify.org or icanhazip.com. Only devices you paired get an answer on that port.</li>
     <li><b>Webhooks (off unless you turn them on).</b> If you turn on public webhooks, Harbor gets a TLS certificate from Let's Encrypt. Its default name is an sslip.io name made from your public IP address.</li>
-    <li><b>Your Harbor account and its vault.</b> When you sign in to Harbor with Google, Harbor's account service (harbor-accounts.rdevneo.workers.dev, on Cloudflare) keeps your account's workspaces, PCs and settings. Your integrations' sign-ins, the keys you saved for agents and your WhatsApp and Discord sessions go there too, end-to-end encrypted on your PC with a key the service never has: it stores only ciphertext, so it can't read them. Your PCs share that key with each other, and your recovery code opens it on a new PC. Signing out of a PC removes those sign-ins from it; they stay in the vault for your other PCs.</li>
+    <li><b>Your Harbor account and its vault.</b> When you sign in to Harbor with Google, Harbor's account service (harbor-accounts.rdevneo.workers.dev, on Cloudflare) keeps your account's workspaces, PCs and settings. Your integrations' sign-ins, the keys you saved for agents and your WhatsApp and Discord sessions go there too, in your account's vault, so that any PC you sign in on gets them on its own, even with your other PCs off. Your PC encrypts them (AES-256) before sending them, with a key that belongs to your account. The account service keeps that key, itself encrypted with a secret only the service has, and gives it only to PCs signed in to your account. This is not end-to-end encryption: the service (and so whoever runs it) could technically decrypt your vault, though Harbor's code decrypts it only on your PCs. Signing out of a PC removes those sign-ins from it; they stay in the vault for your other PCs.</li>
     <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex, Gmail, Discord and WhatsApp are used only after you sign in to (or link) them in Harbor. They are reached directly with your own sign-in. For Discord and WhatsApp, see <a href="#discord">below</a>.</li>
     <li><b>Project icons.</b> To show a project's icon, Harbor may fetch the favicon from that project's own website.</li>
     <li><b>The optional browser panel</b> loads the pages you open in it, like any browser.</li>
@@ -99,7 +99,7 @@
   <p>Harbor has an optional Discord app. It lets the AI agents you run in Harbor read and send Discord messages as you, when you ask them to. It is off until you sign in to Discord under Settings › Integrations › Apps on the desktop, after a warning: Discord's terms don't allow automating a personal account, and Discord may suspend accounts that do.</p>
   <h3>What Harbor stores</h3>
   <ul>
-    <li>Signing in creates a <b>Discord session on your PC</b>: a private browser profile in Harbor's data folder (owner-only permissions) with Discord's sign-in, like the one a browser keeps. Harbor never reads or copies your password or Discord's token out of it, and it never leaves the PC. Phones you pair don't get it: they only see whether it's signed in, and can sign it out.</li>
+    <li>Signing in creates a <b>Discord session on your PC</b>: a private browser profile in Harbor's data folder (owner-only permissions) with Discord's sign-in, like the one a browser keeps. Harbor never reads your password or Discord's token out of it. If you're signed in to a Harbor account, the session's files go to your account's vault (described above), so that another PC of yours can take over when this one is off; otherwise it never leaves the PC. Phones you pair don't get it: they only see whether it's signed in, and can sign it out.</li>
     <li>Harbor keeps a small file of notes agents save about your Discord world (when they use the notes tool), the days' sign-in and pacing counts, and the parts it downloaded to run Discord (see below).</li>
     <li>Messages agents read become part of the chat, like anything else an agent reads, and go to the AI provider you chose, as described above.</li>
   </ul>
@@ -120,7 +120,7 @@
   <p>Harbor has an optional WhatsApp app. It lets the AI agents you run in Harbor read your WhatsApp chats and send messages as you, when you ask them to. It is off until you link it under Settings › Integrations on the desktop (or Settings › Apps on the phone), after a warning: Harbor links as another device of your account, like WhatsApp Web, through an unofficial client (Baileys), which WhatsApp's terms don't allow; WhatsApp may ban accounts that use one.</p>
   <h3>What Harbor stores</h3>
   <ul>
-    <li>Linking creates a <b>linked device</b> of your WhatsApp account on that PC: its encryption keys are kept in Harbor's data folder there (owner-only permissions) and never leave the PC.</li>
+    <li>Linking creates a <b>linked device</b> of your WhatsApp account on that PC: its encryption keys are kept in Harbor's data folder there (owner-only permissions). If you're signed in to a Harbor account, they also go to your account's vault (described above), so that another PC of yours can take over when this one is off; otherwise they never leave the PC.</li>
     <li>While linked, Harbor keeps the chats, contacts' names and messages WhatsApp sends to the linked device (recent history from your phone, then new messages) in a database in the same private folder, so that agents can read them without asking WhatsApp each time. Attachments are downloaded only when an agent asks for one. Unlinking (in Harbor, or from your phone's Linked devices) deletes the keys and everything stored.</li>
     <li>Messages agents read become part of the chat, like anything else an agent reads, and go to the AI provider you chose, as described above.</li>
   </ul>

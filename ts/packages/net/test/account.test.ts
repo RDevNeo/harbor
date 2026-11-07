@@ -28,6 +28,7 @@ import {
   type HarborClaims,
 } from "../src/account.ts";
 import { Vault } from "../src/vault.ts";
+import * as vaultcrypto from "../src/vaultcrypto.ts";
 import { MemKv } from "../src/kv.ts";
 import { generateIdentity } from "../src/tls.ts";
 
@@ -153,6 +154,7 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 
 interface World {
   vaultRows: Record<string, unknown>[];
+  vaultKey: { key: string; epoch: string; check: string } | null;
   session: { workspaces: { id: string; name: string; role: string; personal: boolean }[]; pc?: unknown; invites: unknown[] };
   directory: unknown;
   invites: unknown[];
@@ -172,6 +174,7 @@ interface World {
 function newWorld(): World {
   return {
     vaultRows: [],
+    vaultKey: null,
     session: { workspaces: [{ id: "org_personal", name: "Sam's workspace", role: "owner", personal: true }], invites: [] },
     directory: { at: 0, workspaces: [] },
     invites: [],
@@ -249,6 +252,15 @@ function serviceHandler(w: World): (c: Call) => Reply | Promise<Reply> {
       return hold ? hold.then(() => r) : r;
     }
     if (key === "GET /v1/invites") return { status: 200, body: { invites: w.invites } };
+    if (key === "GET /v1/vault/key") {
+      // The service makes the account's key on the first ask, with its meta row.
+      if (!w.vaultKey) {
+        const vk = vaultcrypto.newVaultKey();
+        w.vaultKey = { key: Buffer.from(vk).toString("base64"), epoch: "e1", check: vaultcrypto.keyCheck(vk, "e1") };
+        w.vaultRows.push({ id: "meta", v: JSON.stringify({ epoch: "e1", check: w.vaultKey.check }), at: 1, by: "", seq: w.vaultRows.length + 1 });
+      }
+      return { status: 200, body: w.vaultKey };
+    }
     if (key.startsWith("GET /v1/vault")) return { status: 200, body: { now: Date.now(), seq: 0, items: w.vaultRows, devices: [] } };
     if (key === "PUT /v1/vault") {
       const set = (get(c.json, "set") as { id: string; v: string | null; at: number }[]) ?? [];
@@ -1042,7 +1054,6 @@ describe("the account loop", () => {
     const vault = new Vault({
       stateDir: join(r.stateDir, "v"),
       identity: () => generateIdentity(),
-      name: () => "Desk",
       sources: () => [{ prefix: "s:", list: () => [...items].map(([id, data]) => ({ id, data, at: 1 })), write: (id, d) => void (d ? items.set(id, d) : items.delete(id)) }],
     });
     await r.svc.stop();
@@ -1052,12 +1063,12 @@ describe("the account loop", () => {
     await r.svc.tick(true);
     const token = String(secrets(r).token);
     const vaultCalls = r.calls.filter((c) => c.path.startsWith("/v1/vault"));
-    expect(vaultCalls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /v1/vault", "PUT /v1/vault", "PUT /v1/vault", "PUT /v1/vault"]);
+    expect(vaultCalls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /v1/vault", "GET /v1/vault/key", "GET /v1/vault", "PUT /v1/vault"]);
     expect(vaultCalls.every((c) => c.auth === token)).toBe(true);
     expect(vault.status().state).toBe("open");
-    expect(r.svc.vault()).toBe(vault);
-    // The meta row, this PC's wrap, the recovery wrap, the code and the item went out sealed.
-    expect(r.world.vaultRows.length).toBe(5);
+    // The service's meta row, and the item sealed with the key it handed out.
+    expect(r.world.vaultRows.length).toBe(2);
+    expect(String(r.world.vaultRows[1]?.v)).toStartWith("v1.");
     r.svc.signOut();
     await until(() => vault.status().state === "off", "the vault handed back");
     expect(items.size).toBe(0);

@@ -1928,12 +1928,7 @@ export class AccountService {
     }
   }
 
-  /** The account vault, when this PC has one (the running app's). */
-  vault(): Vault | undefined {
-    return this.o.vault;
-  }
-
-  /** Something Settings and the window show changed outside the loop (the vault, settings from the account). */
+  /** Something Settings and the window show changed outside the loop (a single-host lease, settings from the account). */
   notifyChanged(): void {
     this.changed();
   }

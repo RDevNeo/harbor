@@ -1,26 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { generateIdentity, signWith, spkiOf } from "../src/tls.ts";
 import {
   checks,
   decodeItem,
   encodeItem,
   keyCheck,
   leaseRow,
-  newDeviceKey,
-  newRecoveryCode,
   newVaultKey,
-  normalizeCode,
   open,
   packFiles,
-  requestText,
-  requestValid,
   rowId,
   seal,
   unpackFiles,
-  unwrap,
-  unwrapRecovery,
-  wrapFor,
-  wrapRecovery,
 } from "../src/vaultcrypto.ts";
 
 const bytes = (s: string) => new Uint8Array(Buffer.from(s));
@@ -60,41 +50,12 @@ describe("vault crypto", () => {
     expect(decodeItem(new Uint8Array([0, 0]))).toBeNull();
   });
 
-  test("the key wrapped for a PC opens only with that PC's key pair", () => {
-    const vk = newVaultKey();
-    const mine = newDeviceKey();
-    const w = wrapFor(vk, "fp1", mine.pub, "e1");
-    expect(Buffer.from(unwrap(w, "fp1", mine) ?? []).equals(Buffer.from(vk))).toBe(true);
-    expect(unwrap(w, "fp1", newDeviceKey())).toBeNull();
-    expect(unwrap(w, "fp2", mine)).toBeNull(); // bound to the fingerprint
-    expect(unwrap({ ...w, epoch: "e2" }, "fp1", mine)).toBeNull();
-    expect(checks(vk, "e1", keyCheck(vk, "e1"))).toBe(true);
-    expect(checks(newVaultKey(), "e1", keyCheck(vk, "e1"))).toBe(false);
-  });
-
-  test("a key request is valid only signed by the TLS key its fingerprint is of", () => {
-    const id = generateIdentity();
-    const dk = newDeviceKey();
-    const req = { pub: dk.pub, spki: Buffer.from(spkiOf(id)).toString("base64"), sig: Buffer.from(signWith(id, requestText(id.fp, dk.pub))).toString("base64"), name: "laptop" };
-    expect(requestValid(id.fp, req)).toBe(true);
-    expect(requestValid(generateIdentity().fp, req)).toBe(false);
-    expect(requestValid(id.fp, { ...req, pub: newDeviceKey().pub })).toBe(false); // someone else's X25519 key
-    const other = generateIdentity();
-    expect(requestValid(other.fp, { ...req, spki: Buffer.from(spkiOf(other)).toString("base64") })).toBe(false);
-  });
-
-  test("the recovery code: 125 bits in five groups, forgiving to type, opens only its vault", () => {
-    const code = newRecoveryCode();
-    expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){4}$/);
-    expect(newRecoveryCode()).not.toBe(code);
-    expect(normalizeCode(code.toLowerCase().replace(/-/g, " "))).toBe(code.replace(/-/g, ""));
-    expect(normalizeCode("ABCDE")).toBeNull();
-    const vk = newVaultKey();
-    const w = wrapRecovery(vk, code, "e1");
-    expect(JSON.stringify(w).includes(code)).toBe(false);
-    expect(Buffer.from(unwrapRecovery(w, code) ?? []).equals(Buffer.from(vk))).toBe(true);
-    expect(unwrapRecovery(w, newRecoveryCode())).toBeNull();
-    expect(unwrapRecovery({ ...w, n: 2 }, code)).toBeNull(); // no weakened cost from the service
+  test("the key check: only the vault's key passes, and it's the one the account service computes (worker/src/vault.js)", () => {
+    const vk = new Uint8Array(Array.from({ length: 32 }, (_, i) => i));
+    expect(keyCheck(vk, "0123456789abcdef")).toBe("9015c7632b1a7ffa5ae683539317b0a8");
+    expect(checks(vk, "0123456789abcdef", keyCheck(vk, "0123456789abcdef"))).toBe(true);
+    expect(checks(newVaultKey(), "0123456789abcdef", keyCheck(vk, "0123456789abcdef"))).toBe(false);
+    expect(checks(vk, "another epoch", keyCheck(vk, "0123456789abcdef"))).toBe(false);
   });
 
   test("a session's files pack the same way every time, and unsafe names don't unpack", () => {

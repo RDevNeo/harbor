@@ -1,7 +1,9 @@
 // The account vault: what follows the account to every PC it signs in on, besides the settings
 // (settingsync): the integrations' sign-ins (Gmail, GitHub, Convex, the OAuth and key apps), the
 // keys the user saved for agents, and the single-host integrations' sessions (WhatsApp, Discord),
-// end-to-end encrypted (vaultcrypto.ts) through the account service's `/v1/vault`.
+// encrypted (vaultcrypto.ts) through the account service's `/v1/vault`. The key is the account's:
+// the service keeps it for the account's own signed-in PCs (`/v1/vault/key`), so a new PC opens the
+// vault on its first round with no other PC on. Nothing to set up, nothing to write down.
 //
 // Items: one per file or key, named by its source ("f:gmail.accounts/x.json", "s:OPENAI_KEY",
 // "b:whatsapp"). The newest change of an item wins (its `at`, ms): the service keeps the newer
@@ -10,37 +12,12 @@
 // what's newer of each side: a file's change time stands for its `at` the first time.
 //
 // The single-host integrations (singlehost.ts) also keep a lease here: which PC runs them.
-import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { privateDir, writePrivate } from "@harbor/store";
-import { signWith, spkiOf, type Identity } from "./tls.ts";
+import type { Identity } from "./tls.ts";
 import type { Json } from "./wire.ts";
-import {
-  checks,
-  decodeItem,
-  encodeItem,
-  hashOf,
-  keyCheck,
-  leaseRow,
-  newDeviceKey,
-  newRecoveryCode,
-  newVaultKey,
-  normalizeCode,
-  open,
-  requestText,
-  requestValid,
-  rowId,
-  seal,
-  unwrap,
-  unwrapRecovery,
-  wrapFor,
-  wrapRecovery,
-  type DeviceKey,
-  type KeyRequest,
-  type RecoveryWrap,
-  type Wrapped,
-} from "./vaultcrypto.ts";
+import { checks, decodeItem, encodeItem, hashOf, KEY_BYTES, leaseRow, open, rowId, seal } from "./vaultcrypto.ts";
 
 /** One item as this PC has it now: `at` is when it last changed here (ms; a file's change time). */
 export interface VaultLocal {
@@ -72,7 +49,7 @@ export interface VaultSource {
 }
 
 /** A call to the account service's `/v1/vault` with this PC's Harbor token. Throws on failure. */
-export type VaultCall = (method: "GET" | "PUT" | "DELETE", path: string, body?: Json) => Promise<unknown>;
+export type VaultCall = (method: "GET" | "PUT", path: string, body?: Json) => Promise<unknown>;
 
 export interface VaultRow {
   id: string;
@@ -89,32 +66,25 @@ export interface VaultDevice {
 }
 
 export interface VaultOptions {
-  /** Where `vault.json` and this PC's vault key pair live (the private state directory). */
+  /** Where `vault.json` lives (the private state directory). */
   stateDir: string;
   identity: () => Identity;
-  /** This PC's name, in its key request. */
-  name: () => string;
   sources: () => readonly VaultSource[];
   clock?: (() => number) | undefined;
   log?: ((line: string) => void) | undefined;
-  /** Something Settings shows changed. */
+  /** Something the window shows changed (who runs a single-host integration). */
   onChange?: () => void;
-  /** A line for the user (a notification): the vault was opened on another PC. */
-  notice?: (title: string, body: string) => void;
 }
 
 export type VaultStateName = "off" | "locked" | "open";
 
 export interface VaultStatus {
+  /** Locked: the vault was made by a Harbor that kept its key on its PCs, and none of them has handed it to the service yet. */
   state: VaultStateName;
   /** Items held in the vault. */
   items: number;
   syncedAt: number;
   error: string;
-  /** The recovery code (only where the vault is open). */
-  code: string | null;
-  /** The code was made on this PC and not yet confirmed as written down. */
-  fresh: boolean;
   /** The account's PCs, as the service lists them. */
   devices: VaultDevice[];
 }
@@ -134,15 +104,14 @@ interface Saved {
   vk: string;
   cursor: number;
   rows: Record<string, Entry>;
-  /** The recovery code was made here and the user hasn't said it's written down. */
-  fresh?: boolean;
   /** The account that signed out and left items here it couldn't put in the vault. */
   left?: string;
 }
 
 const blank = (account = ""): Saved => ({ account, epoch: "", vk: "", cursor: 0, rows: {} });
 
-const RECOVERY_ITEM = "~recovery";
+/** The recovery code's item of Harbor 0.162-0.164: dropped once the service holds the key. */
+const OLD_RECOVERY_ITEM = "~recovery";
 /** Rows per PUT (the service takes 64) and about how many bytes. */
 const BATCH = 48;
 const BATCH_BYTES = 1500 << 10;
@@ -167,9 +136,6 @@ function parseJson<T>(s: string | null | undefined, ok: (v: Record<string, unkno
   }
 }
 
-const isWrapped = (v: Record<string, unknown>) => v.v === 1 && typeof v.epoch === "string" && typeof v.pub === "string" && typeof v.eph === "string" && typeof v.ct === "string";
-const isRecovery = (v: Record<string, unknown>) => v.v === 1 && typeof v.epoch === "string" && typeof v.salt === "string" && typeof v.n === "number" && typeof v.ct === "string";
-const isRequest = (v: Record<string, unknown>) => typeof v.pub === "string" && typeof v.spki === "string" && typeof v.sig === "string";
 const isMeta = (v: Record<string, unknown>) => typeof v.epoch === "string" && typeof v.check === "string";
 
 /** Who runs a single-host integration now (vault row `lease:<hash>`). */
@@ -190,19 +156,19 @@ export class Vault {
   private readonly o: VaultOptions;
   private saved: Saved;
   private vk: Uint8Array | null = null;
-  /** Every row that isn't an item: meta, wrapped keys, requests, leases. */
+  /** Every row that isn't an item: meta, leases. */
   private others = new Map<string, VaultRow>();
   private loaded = false;
   private devs: VaultDevice[] = [];
   /** The service's clock at `serverAt` (this PC's ms). */
   private serverNow = 0;
   private serverAt = 0;
-  private code: string | null = null;
+  /** The service keeps this vault's key (its answer to the last GET); false: this PC hands it over. */
+  private held = true;
   private err = "";
   private syncedAt = 0;
   private last: VaultCall | null = null;
   private running: Promise<void> | null = null;
-  private deviceKeyMemo: DeviceKey | null = null;
   /** Called after each round, with the vault open or not (singlehost.ts). */
   afterSync: (() => Promise<void>)[] = [];
   /** Called first on a sign-out (singlehost.ts stops what runs here, for its newest session to go out). */
@@ -214,6 +180,10 @@ export class Vault {
     this.o = o;
     this.saved = this.load();
     if (this.saved.vk !== "") this.vk = new Uint8Array(Buffer.from(this.saved.vk, "base64"));
+    // What Harbor 0.162-0.164 kept for its per-PC key wraps and recovery code: the vault key is the service's to hand out now.
+    rmSync(join(o.stateDir, "vault-device.json"), { force: true });
+    for (const [row, e] of Object.entries(this.saved.rows)) if (e.id.startsWith("~")) delete this.saved.rows[row];
+    delete (this.saved as { fresh?: boolean }).fresh;
   }
 
   private now(): number {
@@ -250,20 +220,6 @@ export class Vault {
     return this.o.identity().fp;
   }
 
-  /** This PC's vault key pair (`vault-device.json`, made once). */
-  deviceKey(): DeviceKey {
-    if (this.deviceKeyMemo) return this.deviceKeyMemo;
-    const p = join(this.o.stateDir, "vault-device.json");
-    let k = parseJson<DeviceKey>(existsSync(p) ? readFileSync(p, "utf8") : null, (v) => typeof v.pub === "string" && typeof v.key === "string");
-    if (!k) {
-      k = newDeviceKey();
-      privateDir(this.o.stateDir);
-      writePrivate(p, JSON.stringify(k));
-    }
-    this.deviceKeyMemo = k;
-    return k;
-  }
-
   /** The service's clock now, as last heard. */
   serverTime(): number {
     return this.serverNow === 0 ? this.now() : this.serverNow + (this.now() - this.serverAt);
@@ -271,8 +227,8 @@ export class Vault {
 
   status(): VaultStatus {
     const state: VaultStateName = this.saved.account === "" ? "off" : this.vk ? "open" : "locked";
-    const items = Object.values(this.saved.rows).filter((e) => e.h !== "" && !e.id.startsWith("~")).length;
-    return { state, items, syncedAt: this.syncedAt, error: this.err, code: this.vk ? this.code : null, fresh: this.saved.fresh === true && this.vk !== null, devices: this.devs };
+    const items = Object.values(this.saved.rows).filter((e) => e.h !== "").length;
+    return { state, items, syncedAt: this.syncedAt, error: this.err, devices: this.devs };
   }
 
   isOpen(): boolean {
@@ -288,15 +244,6 @@ export class Vault {
     return this.devs.find((d) => d.fp === fp)?.name ?? "";
   }
 
-  /** The user wrote the recovery code down. */
-  codeSaved(): void {
-    if (this.saved.fresh) {
-      this.saved.fresh = false;
-      this.save();
-      this.changed();
-    }
-  }
-
   /** One round (the account loop, about every 20 s, and at once on a push): never two at once. */
   sync(account: string, call: VaultCall): Promise<void> {
     if (this.running) return this.running;
@@ -304,7 +251,7 @@ export class Vault {
     return this.running;
   }
 
-  /** What Settings shows, but the sync time: a round that changed nothing tells nobody. */
+  /** The vault's state, but the sync time: a round that changed nothing tells nobody. */
   private shown(): string {
     const { syncedAt: _, ...rest } = this.status();
     return JSON.stringify(rest);
@@ -342,7 +289,7 @@ export class Vault {
     this.others.clear();
     this.pending.clear();
     this.loaded = false;
-    this.code = null;
+    this.held = true;
     this.save();
   }
 
@@ -376,11 +323,12 @@ export class Vault {
       this.serverNow = r.now;
       this.serverAt = this.now();
     }
+    if (typeof r.held === "boolean") this.held = r.held;
     if (Array.isArray(r.devices)) {
       this.devs = r.devices.flatMap((d: unknown) => (isObj(d) && typeof d.fp === "string" ? [{ fp: d.fp, name: text(d, "name"), seen: typeof d.seen === "number" ? d.seen : 0 }] : []));
     }
     const rows = r.items.map(parseRow).filter((x): x is VaultRow => x !== null);
-    // Kept until the vault is open to read them (a locked PC's rounds still move the cursor on).
+    // Kept until the vault is open to read them (a waiting PC's rounds still move the cursor on).
     for (const x of rows) if (x.id.startsWith("i:") && (this.pending.get(x.id)?.seq ?? -1) < x.seq) this.pending.set(x.id, x);
     for (const x of rows) {
       if (!x.id.startsWith("i:")) this.others.set(x.id, x);
@@ -419,30 +367,32 @@ export class Vault {
     return m && m.v !== null ? parseJson<{ epoch: string; check: string }>(m.v, isMeta) : null;
   }
 
-  /** The vault key: made (a new vault), unwrapped (one of the account's PCs shared it), or asked for. True when open. */
+  /**
+   * The vault key: the account service's, made with the vault on the first PC's ask and handed to
+   * each of the account's PCs. A PC that has a key the service doesn't (a vault made by Harbor
+   * 0.162-0.164, which kept it on the PCs) hands it over. True when open.
+   */
   private async keys(call: VaultCall): Promise<boolean> {
-    const fp = this.myFp();
-    const meta = this.meta();
-    if (!meta) {
-      if (this.vk && this.saved.epoch !== "") {
-        // The vault was reset on another PC (it makes a new one at once): start over with what's here.
-        this.dropKey();
-        return false;
-      }
-      await this.create(call);
-      return this.vk !== null;
+    let meta = this.meta();
+    // The vault started over (no PC could open it): this PC joins the new one with what it has.
+    if (this.vk && (!meta || meta.epoch !== this.saved.epoch)) this.dropKey();
+    if (this.vk && meta) {
+      if (!this.held) await this.handOver(call, meta.epoch);
+      return true;
     }
-    if (this.vk && this.saved.epoch !== meta.epoch) this.dropKey();
-    if (!this.vk) {
-      const w = parseJson<Wrapped>(this.others.get(`key:${fp}`)?.v, isWrapped);
-      const vk = w && w.epoch === meta.epoch ? unwrap(w, fp, this.deviceKey()) : null;
-      if (vk && checks(vk, meta.epoch, meta.check)) this.setKey(vk, meta.epoch);
-      else {
-        await this.ask(call);
-        return false;
-      }
+    const r = await call("GET", "/v1/vault/key");
+    if (!isObj(r) || typeof r.key !== "string" || typeof r.epoch !== "string") {
+      this.log("waiting for a PC of the account that has the vault's key to hand it to the service");
+      return false;
     }
-    await this.share(call, meta.epoch);
+    const vk = new Uint8Array(Buffer.from(r.key, "base64"));
+    // Made just now: its meta row came after this round's fetch.
+    if (!meta || meta.epoch !== r.epoch) {
+      await this.fetch(call);
+      meta = this.meta();
+    }
+    if (vk.length !== KEY_BYTES || !meta || meta.epoch !== r.epoch || !checks(vk, meta.epoch, meta.check)) throw new Error("the account service's vault key doesn't open this vault");
+    this.setKey(vk, meta.epoch);
     return true;
   }
 
@@ -456,79 +406,23 @@ export class Vault {
 
   private dropKey(): void {
     this.vk = null;
-    this.code = null;
     this.saved = { ...blank(this.saved.account) };
     this.save();
     this.log("the vault changed elsewhere: joining it again");
   }
 
-  private async create(call: VaultCall): Promise<void> {
-    const vk = newVaultKey();
-    const epoch = randomBytes(8).toString("hex");
-    const at = this.now();
-    const r = await this.put(call, [{ id: "meta", v: JSON.stringify({ epoch, check: keyCheck(vk, epoch), at }), at, prev: this.others.get("meta")?.seq ?? 0 }]);
-    if (!r[0]?.ok) return; // another PC made it first: this one asks for its key next round
-    const code = newRecoveryCode();
-    this.setKey(vk, epoch);
-    const dk = this.deviceKey();
-    const fp = this.myFp();
-    const rec = this.sealItem({ id: RECOVERY_ITEM, data: Buffer.from(code) });
-    await this.put(call, [
-      { id: `key:${fp}`, v: JSON.stringify(wrapFor(vk, fp, dk.pub, epoch)), at },
-      { id: "key:recovery", v: JSON.stringify(wrapRecovery(vk, code, epoch)), at },
-      { id: rec.row, v: rec.v, at },
-    ]);
-    this.saved.rows[rec.row] = { id: RECOVERY_ITEM, h: hashOf(Buffer.from(code)), at };
-    this.code = code;
-    this.saved.fresh = true;
-    this.save();
-    this.log("made a new vault");
-  }
-
-  /** Asks the account's other PCs for the key: this PC's X25519 key, signed with its TLS key. */
-  private async ask(call: VaultCall): Promise<void> {
-    const fp = this.myFp();
-    const dk = this.deviceKey();
-    const cur = parseJson<KeyRequest>(this.others.get(`req:${fp}`)?.v, isRequest);
-    if (cur && cur.pub === dk.pub) return;
-    const id = this.o.identity();
-    const req: KeyRequest = { pub: dk.pub, spki: Buffer.from(spkiOf(id)).toString("base64"), sig: Buffer.from(signWith(id, requestText(fp, dk.pub))).toString("base64"), name: this.o.name() };
-    await this.put(call, [{ id: `req:${fp}`, v: JSON.stringify(req), at: this.now() }]);
-    this.log("asked the account's other PCs for the vault key");
-  }
-
-  /** Wraps the key for the account's PCs that asked, and keeps this PC's own wrap and the recovery wrap there. */
-  private async share(call: VaultCall, epoch: string): Promise<void> {
+  /** Gives the service this PC's key (checked against the vault's meta row there); the old recovery code's item goes. */
+  private async handOver(call: VaultCall, epoch: string): Promise<void> {
     const vk = this.vk;
     if (!vk) return;
-    const fp = this.myFp();
-    const dk = this.deviceKey();
-    const set: { id: string; v: string | null; at: number }[] = [];
-    const at = this.now();
-    const shared: string[] = [];
-    for (const [id, row] of this.others) {
-      if (!id.startsWith("req:") || row.v === null) continue;
-      const who = id.slice(4);
-      const req = parseJson<KeyRequest>(row.v, isRequest);
-      // Only a PC the service lists as this account's, asking with its own TLS key.
-      if (who === fp || !req || !this.isMine(who) || !requestValid(who, req)) continue;
-      const have = parseJson<Wrapped>(this.others.get(`key:${who}`)?.v, isWrapped);
-      if (!have || have.pub !== req.pub || have.epoch !== epoch) {
-        set.push({ id: `key:${who}`, v: JSON.stringify(wrapFor(vk, who, req.pub, epoch)), at });
-        shared.push(req.name !== "" ? req.name : this.deviceName(who) || "another PC");
-      }
-      set.push({ id, v: null, at: Math.max(at, row.at + 1) });
-    }
-    const own = parseJson<Wrapped>(this.others.get(`key:${fp}`)?.v, isWrapped);
-    if (!own || own.pub !== dk.pub || own.epoch !== epoch) set.push({ id: `key:${fp}`, v: JSON.stringify(wrapFor(vk, fp, dk.pub, epoch)), at });
-    const rec = parseJson<RecoveryWrap>(this.others.get("key:recovery")?.v, isRecovery);
-    if ((!rec || rec.epoch !== epoch) && this.code !== null) set.push({ id: "key:recovery", v: JSON.stringify(wrapRecovery(vk, this.code, epoch)), at });
-    if (set.length === 0) return;
-    await this.put(call, set);
-    for (const n of shared) {
-      this.log(`shared the vault key with ${n}`);
-      this.o.notice?.("Your vault opened on another PC", `${n} signed in to your account and now has your integrations and saved keys. If that isn't you, remove it in Settings › Workspace.`);
-    }
+    await call("PUT", "/v1/vault/key", { key: Buffer.from(vk).toString("base64"), epoch });
+    this.held = true;
+    const id = rowId(vk, OLD_RECOVERY_ITEM);
+    const r = await this.put(call, [{ id, v: null, at: this.now() }]);
+    // Written at this PC's clock or later: once more just after it.
+    const cur = r[0]?.cur;
+    if (r[0]?.ok === false && cur && cur.v !== null) await this.put(call, [{ id, v: null, at: cur.at + 1 }]);
+    this.log("handed the vault's key to the account service");
   }
 
   private rowOf(id: string): string {
@@ -593,11 +487,6 @@ export class Vault {
       }
       const rh = p.data === null ? "" : hashOf(p.data);
       const e = this.saved.rows[r.id];
-      if (p.id === RECOVERY_ITEM) {
-        this.code = p.data === null ? null : Buffer.from(p.data).toString("utf8");
-        this.saved.rows[r.id] = { id: p.id, h: rh, at: r.at };
-        return;
-      }
       if (e && e.h === rh && e.at >= r.at) return;
       const src = this.sourceOf(p.id, srcs);
       if (!src) return;
@@ -632,7 +521,7 @@ export class Vault {
       set.push({ id: row, v: this.sealItem({ id: it.id, data: it.data }).v, at, meta: { id: it.id, h, at } });
     }
     for (const [row, e] of Object.entries(this.saved.rows)) {
-      if (e.h === "" || seen.has(row) || e.id.startsWith("~") || !takes(e.id)) continue;
+      if (e.h === "" || seen.has(row) || !takes(e.id)) continue;
       const s = this.sealItem({ id: e.id, data: null });
       const at = Math.max(now, e.at + 1);
       set.push({ id: row, v: s.v, at, meta: { id: e.id, h: "", at } });
@@ -659,36 +548,6 @@ export class Vault {
       this.save();
     }
     this.save();
-  }
-
-  /** Opens the vault with the recovery code (Settings › Workspace). Throws with what to say. */
-  async unlock(code: string): Promise<void> {
-    if (normalizeCode(code) === null) throw new Error("That isn't a recovery code: it has 25 letters and digits, in five groups.");
-    const meta = this.meta();
-    const w = parseJson<RecoveryWrap>(this.others.get("key:recovery")?.v, isRecovery);
-    if (!meta || !w) throw new Error("This account has no vault yet.");
-    const vk = w.epoch === meta.epoch ? unwrapRecovery(w, code) : null;
-    if (!vk || !checks(vk, meta.epoch, meta.check)) throw new Error("That code doesn't open this account's vault.");
-    this.setKey(vk, meta.epoch);
-    this.code = normalizeCode(code)?.match(/.{5}/g)?.join("-") ?? null;
-    if (this.last) await this.sync(this.saved.account, this.last);
-    this.changed();
-  }
-
-  /** Starts a new, empty vault (Settings, when no PC has the key and the code is lost): what this PC has goes in it. */
-  async reset(): Promise<void> {
-    const call = this.last;
-    if (!call) throw new Error("Not signed in.");
-    await call("DELETE", "/v1/vault");
-    const account = this.saved.account;
-    this.saved = blank(account);
-    this.vk = null;
-    this.code = null;
-    this.others.clear();
-    this.pending.clear();
-    this.loaded = false;
-    this.save();
-    await this.sync(account, call);
   }
 
   // ---- leases of the single-host integrations
@@ -785,7 +644,7 @@ export class Vault {
       this.log("signed out without reaching the vault: this PC keeps its copies");
     }
     this.vk = null;
-    this.code = null;
+    this.held = true;
     this.others.clear();
     this.pending.clear();
     this.loaded = false;

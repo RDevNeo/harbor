@@ -85,7 +85,7 @@ async function pc(name: string, email: string) {
   const app = stand(join(apps, "rigapp"));
   mkdirSync(app.root(), { recursive: true });
   let single: SingleHost | null = null;
-  const vault = new Vault({ stateDir: join(dir, "state"), identity: () => id, name: () => name, sources: () => [fileSource(() => apps), secretSource(secretsFile), ...(single?.sources() ?? [])], log: process.env.RIG_LOG ? (l) => console.log(`  ${name}: ${l}`) : undefined });
+  const vault = new Vault({ stateDir: join(dir, "state"), identity: () => id, sources: () => [fileSource(() => apps), secretSource(secretsFile), ...(single?.sources() ?? [])], log: process.env.RIG_LOG ? (l) => console.log(`  ${name}: ${l}`) : undefined });
   single = new SingleHost({ vault, me: () => ({ id: `ts:${name}`, name }), dest: (pid, fp) => ({ addr: `${pid}:47930`, fp }) }, [app]);
   vault.afterSync.push(() => single?.tick() ?? Promise.resolve());
   vault.beforeLeave.push(() => (single as unknown as { leaving(): Promise<void> }).leaving());
@@ -112,16 +112,13 @@ async function main(): Promise<void> {
   desk.app.up = true;
   await desk.sync();
   await desk.sync();
-  check("desk: a new vault is open, with its recovery code", desk.vault.status().state === "open" && desk.vault.status().code !== null);
+  check("desk: a new vault is open, its key made by the service", desk.vault.status().state === "open");
   check("desk: runs the single-host app", desk.vault.lease("rigapp")?.mine === true);
 
-  // Sam signs in on a new laptop.
+  // Sam signs in on a new laptop (the desk doesn't run in between).
   const laptop = await pc("laptop", "sam@example.com");
   await laptop.sync();
-  check("laptop: locked until another PC shares the key", laptop.vault.status().state === "locked");
-  await desk.sync();
-  await laptop.sync();
-  check("laptop: open after the desk's round", laptop.vault.status().state === "open");
+  check("laptop: open on its first round, nobody else running", laptop.vault.status().state === "open");
   check("laptop: Gmail's sign-in came", readFileSync(join(laptop.apps, "gmail.accounts", "sam@example.com.json"), "utf8").includes("1//rig-refresh"));
   check("laptop: gh's login came", readFileSync(join(laptop.apps, "github", "hosts.yml"), "utf8").includes("gho_rigtoken"));
   check("laptop: the saved key came, with its description", JSON.stringify(secrets.load(laptop.secretsFile)) === JSON.stringify(secrets.load(desk.secretsFile)));
@@ -129,7 +126,7 @@ async function main(): Promise<void> {
 
   // What the service holds: nothing readable.
   const raw = await (await fetch(`${W}/v1/vault`, { headers: { authorization: `Bearer ${desk.token}` } })).text();
-  check("the service holds ciphertext only", !["ya29", "rig-refresh", "gho_", "sk-rig", "OPENAI", "sam@example.com.json", "linked-device", desk.vault.status().code ?? "x"].some((s) => raw.includes(s)));
+  check("the vault's rows hold ciphertext only", !["ya29", "rig-refresh", "gho_", "sk-rig", "OPENAI", "sam@example.com.json", "linked-device"].some((s) => raw.includes(s)));
 
   // A token refresh on the laptop and a sign-out of GitHub on the desk.
   writeFileSync(join(laptop.apps, "gmail.accounts", "sam@example.com.json"), JSON.stringify({ access_token: "ya29.refreshed", refresh_token: "1//rig-refresh", account: "sam@example.com" }));
@@ -147,11 +144,11 @@ async function main(): Promise<void> {
   await laptop.sync();
   check("laptop runs the app now, with the desk's newest keys", laptop.vault.lease("rigapp")?.mine === true && readFileSync(join(laptop.app.root(), "auth", "creds.json"), "utf8") === "linked-device keys v2");
 
-  // A third PC with every other PC off: the recovery code.
+  // A third PC with every other PC off: it needs nothing from them.
   const spare = await pc("spare", "sam@example.com");
   await spare.sync();
-  await spare.vault.unlock(desk.vault.status().code ?? laptop.vault.status().code ?? "");
-  check("spare: the recovery code opens it with nobody else on", spare.vault.status().state === "open" && secrets.load(spare.secretsFile)[0]?.value === "sk-rig-value");
+  check("spare: everything comes with every other PC off", spare.vault.status().state === "open" && secrets.load(spare.secretsFile)[0]?.value === "sk-rig-value" && readFileSync(join(spare.apps, "gmail.accounts", "sam@example.com.json"), "utf8").includes("ya29.refreshed"));
+  check("spare: nothing of the old per-PC key pair", !existsSync(join(base, "spare", "state", "vault-device.json")));
 
   // Another account's PC sees nothing of Sam's.
   const eve = await pc("eve", "eve@example.com");

@@ -93,7 +93,7 @@ function pc(svc: FakeVaultService, name: string) {
   const root = tmp();
   const app = fakeApp(root);
   let single: SingleHost | null = null;
-  const vault = new Vault({ stateDir: tmp(), identity: () => id, name: () => name, clock, sources: () => single?.sources() ?? [] });
+  const vault = new Vault({ stateDir: tmp(), identity: () => id, clock, sources: () => single?.sources() ?? [] });
   single = new SingleHost({ vault, me: () => ({ id: `ts:${name}`, name }), dest: (pid, fp) => ({ addr: `${pid}:47930`, fp }), clock }, [app]);
   vault.afterSync.push(() => single?.tick() ?? Promise.resolve());
   vault.beforeLeave.push(() => (single as unknown as { leaving(): Promise<void> }).leaving());
