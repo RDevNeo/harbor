@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.156.2] - 2026-11-07
+
+### Changed
+- Your photo in the sidebar's bottom row is bigger, in a ring, so it stands out.
+
 ## [0.156.1] - 2026-11-07
 
 ### Changed

@@ -379,25 +379,30 @@ component MeBtn {
     in property <bool> has-photo;
     in property <string> letter;
     callback clicked;
-    width: 28px;
-    height: 28px;
+    width: 34px;
+    height: 34px;
+    // A ring around you, so your photo stands out in the bar.
     Rectangle {
+        width: 34px;
+        height: 34px;
+        border-radius: 17px;
         background: area.has-hover ? Theme.accent : transparent;
-        border-radius: Theme.radius-md;
+        border-width: root.has-photo || root.letter != "" ? 2px : 0px;
+        border-color: area.has-hover ? Theme.fg : Theme.border;
     }
     if root.has-photo: Image {
-        width: 20px;
-        height: 20px;
+        width: 28px;
+        height: 28px;
         source: root.photo;
     }
     if !root.has-photo && root.letter != "": Rectangle {
-        width: 20px;
-        height: 20px;
-        border-radius: 10px;
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
         background: #7a6ad8;
         Text {
             text: root.letter;
-            font-size: 11px;
+            font-size: 14px;
             font-weight: 600;
             color: white;
         }
@@ -753,7 +758,7 @@ export component Sidebar inherits Rectangle {
             }
         }
         HorizontalLayout {
-            height: 40px;
+            height: 46px;
             padding-top: 9px;
             padding-bottom: 3px;
             spacing: 4px;
