@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.154.0] - 2026-11-07
+
 ### Added
 - Merged worktrees clean themselves up (desktop and phone), like T3 Code's "Delete merged
   worktrees": once a chat's PR is merged on GitHub (squash and rebase merges included: the PR's
