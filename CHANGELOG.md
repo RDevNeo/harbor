@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.155.1] - 2026-11-07
+
 ### Fixed
 - WhatsApp: linking by code ("Get a code") failed with "Couldn't link device" on the phone. Harbor
   now connects as the WhatsApp Web version WhatsApp serves today (Baileys' own had gone stale) and
