@@ -601,6 +601,8 @@ export interface MeshPcsInput {
   versions: readonly PcVersion[];
   /** Short names of this PC's installed agent accounts. */
   accounts: readonly string[];
+  /** Every PC's accounts, each sign-in once (meshaccounts.ts `accountsByPc`, "" this PC): used instead of `accounts` and what peers said. */
+  byPc?: ReadonlyMap<string, readonly string[]>;
   /** The mesh's PCs (this PC's `mesh_hosts`). */
   hosts: readonly Peer[];
   elsewhere: ReadonlyMap<string, readonly [string, readonly Sighting[]]>;
@@ -615,6 +617,11 @@ function phoneApps(phones: readonly { name: string; app: number }[]): Map<string
     if (a !== null) m.set(p.name, a);
   }
   return m;
+}
+
+/** Names once each, in order (a phone paired twice is one phone), without empty ones. */
+function uniq(v: readonly string[]): string[] {
+  return [...new Set(v.filter((n) => n !== ""))];
 }
 
 /** This PC and the mesh's other PCs, with owners, phones and accounts. */
@@ -637,8 +644,8 @@ export function meshPcs(i: MeshPcsInput): Pc[] {
       online: true,
       owner: mine.owner,
       github: mine.github,
-      phones: i.localPhones.map((p) => p.name).filter((n) => n !== ""),
-      accounts: [...i.accounts],
+      phones: uniq(i.localPhones.map((p) => p.name)),
+      accounts: [...(i.byPc ? (i.byPc.get("") ?? []) : i.accounts)],
       suggested,
       why: suggested && detected ? detected.me.why : "",
       harbor: first ? harborLine(first, newest, i.at) : "",
@@ -654,8 +661,8 @@ export function meshPcs(i: MeshPcsInput): Pc[] {
       online: p.online,
       owner: p.owner,
       github: p.github,
-      phones: sightings.map((x) => x.name).filter((n) => n !== ""),
-      accounts: p.accounts.map((a) => a[1]),
+      phones: uniq(sightings.map((x) => x.name)),
+      accounts: i.byPc ? [...(i.byPc.get(p.id) ?? [])] : uniq(p.accounts.map((a) => a[1])),
       suggested: p.owner_suggested,
       harbor: harborOf(p.id),
       phone_apps: phoneApps(sightings),

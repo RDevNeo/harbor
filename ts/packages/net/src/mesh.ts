@@ -12,6 +12,7 @@ import { cleanAddrs, dest, downOf, label, newPeer, peerDevices, peerId, socketAd
 import { connect, DEFAULT_PORT, hostPort, normalizeFp, tailnetIp, type Identity } from "./tls.ts";
 import { Ordered, type Json } from "./wire.ts";
 import { PIECE_BYTES } from "./foldercopy.ts";
+import { meshAccountJson, meshAccounts } from "./meshaccounts.ts";
 import { PROJECT_MOVES_VERSION } from "./projectmove.ts";
 import { ramOf } from "./ram.ts";
 
@@ -26,8 +27,8 @@ export const MOVES_VERSION = 1;
 
 /** The app's side of the mesh (mesh.rs on Rust's UI thread). */
 export interface MeshApp {
-  /** What `hello` says beyond id, name, epoch, keys and addresses. */
-  helloExtra(): { version: string; accounts: Json[]; update: Json; owner: string; github: string; owner_suggested: boolean };
+  /** What `hello` says beyond id, name, epoch, keys and addresses (to `peer`: its accounts are what this PC shares with it). */
+  helloExtra(peer?: string): { version: string; accounts: Json[]; update: Json; owner: string; github: string; owner_suggested: boolean };
   /** `GET /mesh/v1/chats`: this PC's own chats changed after `since` (all when `full`). */
   chats(since: number, full: boolean): { chats: Json[]; update: Json } | Promise<{ chats: Json[]; update: Json }>;
   /** `GET /mesh/v1/chats/{id}/items`; null: not one of this PC's own chats. */
@@ -135,6 +136,7 @@ function peerJson(p: Peer): Ordered {
     ["seen", p.seen],
     ["version", p.version],
     ["accounts", p.accounts],
+    ["provs", p.provs.map(meshAccountJson)],
     ["node", p.node],
     ["phones", p.phones],
     ["fp", p.fp],
@@ -172,6 +174,9 @@ export function loadPeers(kv: Kv): Map<string, Peer> {
         github: s("github"),
         owner_suggested: o.owner_suggested === true,
         devices: peerDevices(o.devices),
+        // Its accounts, so an off PC's still show (as off) in the pickers.
+        provs: meshAccounts(o.provs ?? o.accounts),
+        accounts: meshAccounts(o.provs ?? o.accounts).map((a): [string, string, string] => [a.id, a.short, a.kind]),
       }),
     );
   }
@@ -294,7 +299,7 @@ export class Mesh {
       return { status: 403, body: { error: `${me} doesn't share chats with this PC yet: pair them in Settings › Workspace`, harbor: true, name: me } };
     }
     if (is("GET", "mesh", "v1", "hello")) {
-      const x = this.d.app.helloExtra();
+      const x = this.d.app.helloExtra(peer);
       const me = shared.me;
       return ok({
         id: me.id,
@@ -684,6 +689,7 @@ export class Mesh {
         const s = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : "");
         return [s("id"), s("short"), s("kind")] as [string, string, string];
       });
+      p.provs = meshAccounts(hello.accounts);
       shared.peers.set(id, p);
       this.savePeers();
       const still = () => (target.kind === "key" ? shared.usableFp(target.fp) !== null : true);

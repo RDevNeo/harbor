@@ -26,6 +26,8 @@ export interface Peer {
   seen: number;
   version: string;
   accounts: [string, string, string][];
+  /** Its accounts as it told them (meshaccounts.ts): who each signs in as, its owner and models. Kept for when it's off. */
+  provs: import("./meshaccounts.ts").MeshAccount[];
   node: string;
   phones: boolean;
   fp: string;
@@ -76,6 +78,7 @@ export function newPeer(p: Partial<Peer> & { id: string }): Peer {
     seen: 0,
     version: "",
     accounts: [],
+    provs: [],
     node: "",
     phones: false,
     fp: "",

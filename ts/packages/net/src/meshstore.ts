@@ -52,7 +52,8 @@ export interface StoreReplicaOptions {
   items?: (chat: number) => Item[];
   /** The Engine's transcript only while it holds one in memory (null: the saved one is current). */
   liveItems?: (chat: number) => Item[] | null;
-  accounts?: () => Json[];
+  /** This PC's accounts as hello tells them to `peer` (meshaccounts.ts `helloAccounts`; `shared: false` on those `peer` may not use). */
+  accounts?: (peer?: string) => Json[];
   update?: () => Json;
   about?: () => { owner: string; github: string; owner_suggested: boolean };
   followUp?: () => "steer" | "queue";
@@ -140,9 +141,9 @@ export class StoreReplica implements MeshApp {
     this.o.hub.touch(chat, true);
   }
 
-  helloExtra() {
+  helloExtra(peer?: string) {
     const a = this.o.about?.() ?? { owner: "", github: "", owner_suggested: false };
-    return { version: this.o.version, accounts: this.o.accounts?.() ?? [], update: this.o.update?.() ?? null, ...a };
+    return { version: this.o.version, accounts: this.o.accounts?.(peer) ?? [], update: this.o.update?.() ?? null, ...a };
   }
 
   private idleStatus(): Json {

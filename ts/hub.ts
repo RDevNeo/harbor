@@ -110,6 +110,15 @@ import {
   type Json,
   type MeshApp,
   type MovePcAccount,
+  accountsByPc,
+  helloAccounts,
+  type LocalAccount,
+  meshAccountJson,
+  type Person,
+  type SharedAccount,
+  sharedAccounts,
+  sharedWith,
+  kindLabel,
   type Reply,
   preview,
   outgoingCtx,
@@ -172,6 +181,8 @@ export interface RunningHub {
   move: MovePc;
   projectMove: ProjectMove;
   runOn: RunOn;
+  /** This PC's and the mesh's agent accounts, each sign-in once (meshaccounts.ts); another PC's run there. */
+  sharedAccounts: () => SharedAccount[];
   windowMesh: WindowMesh;
   funnel: Funnel;
   prs: chatpr.ChatPrs;
@@ -421,6 +432,36 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const profile = new ProfileScheduler();
   const profileCheckNow = (): Json => profileCheckJson(profileCheck(store, { confirmed: ownerConfirmed(store, owners), owner: ownerOf(store, owners), github: githubOf(store, owners) }));
   const peersNow = (): Peer[] => [...hub.mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  // meshaccounts.ts: this PC's accounts and every other PC's, each sign-in once; another PC's run there.
+  const localAccounts = (): LocalAccount[] =>
+    accounts
+      .filter((a) => a.off !== true && a.bin !== null)
+      .map((a) => ({ id: a.id, kind: a.kind, email: a.email, badge: a.badge, short: providers.short(a), usable: providers.usable(a), models: a.kind === "Claude" ? [] : providers.staticModels(a.kind).map((m): [string, string] => [m.id, m.label]) }));
+  const meshPeople = (): Person[] => {
+    const me = aboutOwner(store, owners);
+    return [{ name: me.owner, github: me.github }, ...[...hub.mesh.peers.values()].map((p) => ({ name: p.owner, github: p.github }))];
+  };
+  const sharedNow = (): SharedAccount[] => {
+    const me = aboutOwner(store, owners);
+    // Only the PCs this account uses (account.ts `pcScope`), as the window's chats.
+    const peers = hub.mesh.on ? peersNow().filter((p) => scopeHas(account.scope(), p.id)) : [];
+    return sharedAccounts({
+      me: { id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, owner: me.owner, github: me.github },
+      local: localAccounts(),
+      peers,
+      provs: new Map(peers.filter((p) => p.provs.length > 0).map((p) => [p.id, p.provs])),
+    });
+  };
+  /** hello's `accounts` to `peer`: those this PC doesn't let its chats use (Settings › Workspace, as its files) say `shared: false`. */
+  const helloAccountsFor = (peer?: string): Json[] => {
+    const level = peer === undefined ? "full" : machines.levelFor(store, peer);
+    const kindOk = (k: string) => {
+      const kind = providers.kindOf(kindLabel(k));
+      return kind !== undefined && sharedWith(level, providers.access(kind).map((c) => c[0]));
+    };
+    // Every account, as before (Runs on and Move to PC read them); one this PC doesn't let `peer`'s chats use says so.
+    return helloAccounts(localAccounts(), meshPeople()).map((a) => meshAccountJson(kindOk(a.kind) ? a : { ...a, shared: false }));
+  };
   const pcsNow = (): Pc[] => {
     const [versions] = gatherVersions(versionsInput(hub, versionsOwn()));
     return meshPcs({
@@ -432,6 +473,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       localPhones: hub.localPhones().map((p) => ({ name: p.name, app: p.app })),
       versions,
       accounts: accounts.filter(providers.usable).map((a) => providers.short(a)),
+      byPc: accountsByPc(sharedNow()),
       hosts: peersNow(),
       elsewhere: hub.elsewhere,
     });
@@ -502,7 +544,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     route: (call) => phoneRoute(call),
     version: o.version,
     update: () => (o.updater ? asJson(o.updater.info()) : null),
-    accounts: () => accounts.filter(providers.usable).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
+    accounts: (peer) => helloAccountsFor(peer),
     copied: (chat) => engine?.storeChanged(chat),
     cwd: (c) => engine?.chatCwd(c) ?? null,
     // A project's main chat is its owner's: another PC's project, or one shared or moved here by that PC (projectfold.ts).
@@ -697,6 +739,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     return relocateBlocker({ foreignHome: c.home !== "" ? hub.mesh.nameOf(c.home) : null, isSub: c.role === "sub", movingTo: move?.movingTo(c.id) ?? null, chats, leadDevice: lead ? { os: lead.os } : null });
   };
   catalog.relocateBlocker = blockerOf;
+  catalog.shared = sharedNow;
   catalog.movingTo = (c) => move?.movingTo(c.id) ?? null;
   catalog.deviceWhy = (c) => {
     const devs = deviceList();
@@ -727,6 +770,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const phone = new PhoneRoutes({
     ctx: ctxFor,
+    shareLevel: (peer) => machines.levelFor(store, peer),
     projectPlace: (repo) => projectClones.place(repo),
     store,
     hub,
@@ -1164,6 +1208,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     move: mover,
     projectMove: pm,
     runOn,
+    sharedAccounts: sharedNow,
     windowMesh,
     setBusyIn: (f) => {
       busyIn = f;
