@@ -50,6 +50,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     updater,
     store,
     discordNotices: true,
+    whatsappKeep: true,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
     preview: {
       refuses: (full, offer) => preview.refuses(cfg, full, offer),

@@ -52,6 +52,7 @@ export {
   phoneRedirectOk,
   signIn,
   signOut,
+  whatsappCode,
   wellKnown,
 } from "./signin.ts";
 

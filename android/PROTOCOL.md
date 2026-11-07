@@ -1819,6 +1819,44 @@ drops anything outside the captcha. "Don't join" → `POST /v1/apps/discord/capt
 closed", timeout "Not joined: nobody solved the captcha in time", stopped "Not joined: Discord
 stopped".
 
+### WhatsApp: `GET /v1/apps/whatsapp`, `POST /v1/apps/whatsapp/{link,code,cancel,signout}`
+
+From 0.155. The WhatsApp app on this PC (packages/mcp whatsapp*.ts): agents running here read and
+send on the user's personal WhatsApp through a device linked to their phone, like WhatsApp Web.
+The link, its keys and the stored chats live on that PC only. Unlike Discord, the phone may start
+a link: a phone can't scan its own screen, so it asks for a code by number instead. Hubs without
+it answer `404`; the phone then hides the WhatsApp row of Settings › Apps. Calls go to one PC
+(`callOn`), the one Settings shows.
+
+`GET /v1/apps/whatsapp`, and the answer of every POST:
+
+`{"phase": "open", "linked": true, "account": {"jid": "15550100000@s.whatsapp.net", "name": "…"} | null, "pairing": {"qr": "…" | null, "code": "K7QX-2M9P" | null, "note": "…"} | null, "error": null, "sync": "", "busy": 0, "qr": null, "card": {"text": "…", "tone": 0}}`
+
+- `phase`: `stopped` (no host running: a linked PC starts one within a minute), `idle`,
+  `installing`, `pairing`, `connecting`, `open` or `closed` (offline, retrying).
+- `account`: the linked account (its number is the jid's digits); null when nothing is linked.
+- `pairing`: a link waiting for the phone, or null. `qr` the text WhatsApp's QR stands for (it
+  changes every 20 s or so), `code` the code to type in WhatsApp › Linked devices › Link a device
+  › Link with phone number instead (once asked for), `note` the line to show.
+- `error`: why the last link failed (expired, nobody scanned in 5 minutes), or null.
+- `qr`: null, or `pairing.qr` as `{"size", "rows"}`, drawn as Discord's.
+- `card`: the exact line the desktop's WhatsApp card shows (`text`, `tone` 0 plain, 1 accent, 2
+  warning): the phone shows it verbatim.
+
+`POST /v1/apps/whatsapp/link` `{"accept": true, "phone"?: "+1 555…"}` starts a link (the phone
+showed the warning first; without `accept`: `409`); with `phone`, also asks for its code.
+`POST /v1/apps/whatsapp/code` `{"phone": "+1 555…"}` asks for a code for that number (starting
+a link if none runs). `POST /v1/apps/whatsapp/cancel` `{}` ends a link that waits.
+`POST /v1/apps/whatsapp/signout` `{}` unlinks: WhatsApp drops the device and the PC deletes what
+it stored. A refusal: `409 {"error": "…"}`.
+
+The phone's sheet (WhatsApp.java): `card.text`; linked: the name and number, and Unlink (asked
+first). Not linked: Link, after the warning ("Harbor links to your WhatsApp as another device…").
+While `pairing`: `pairing.note`; with a `code`, the code large with Copy code; otherwise the QR
+("Scan from the phone with WhatsApp: Settings › Linked devices › Link a device.") and a number
+field with Get a code; Cancel. It asks again every 2 s while open, but not while the number is
+being typed. Notification kind `whatsapp` (the link ended) opens this sheet.
+
 ### A chat's Discord captcha: `POST /v1/chats/{chat}/captcha`
 
 From 0.117 (`404` before, and whenever no captcha waits for that chat). When an agent's Discord

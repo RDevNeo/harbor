@@ -7,6 +7,7 @@ import pkg from "../../../package.json" with { type: "json" };
 import { Desktop, spawnNotifySend, testNote } from "@harbor/net";
 import { uiDir } from "./assets.ts";
 import { Keys } from "./logic/keys.ts";
+import { loadQr } from "./qr.ts";
 import { tabFromSlug } from "./logic/pages.ts";
 import { type NotifyEnv } from "./logic/settings-notifications.ts";
 import { busOf } from "./pages/bus.ts";
@@ -45,7 +46,7 @@ await mountSettings(
     back: () => {},
     providers: { login: () => {}, addClaudeAccount: () => {} },
     integrations: { discordWindow: () => {} },
-    qr: () => ({ width: 1, height: 1, data: new Uint8Array(4) }),
+    qr: await loadQr(),
     notify,
     copy: () => {},
   },

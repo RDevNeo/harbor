@@ -21,7 +21,7 @@ test("an unknown app is refused", async () => {
 
 test("the apps agents get from Harbor are the ones serve starts", async () => {
   const names = mcp.APPS.flatMap((a) => (a.mcp.kind === "harbor" ? [a.mcp.name] : []));
-  expect(names).toEqual(["gmail", "discord"]);
+  expect(names).toEqual(["gmail", "discord", "whatsapp"]);
 });
 
 test("Discord's repair runs on this PC's signed-in Claude Code, the main login first", () => {

@@ -5,7 +5,7 @@ import { notificationsSections, setNotifications } from "../src/logic/settings-n
 test("Notifications only lists event kinds, with sub-agent notifications off by default", () => {
   const sections = notificationsSections(new MemKv());
   expect(sections.map((s) => s.title)).toEqual(["Notify me when"]);
-  expect(sections[0]?.rows).toHaveLength(7);
+  expect(sections[0]?.rows).toHaveLength(8);
   expect(sections[0]?.rows.find((r) => r.key === "kind:agent")?.on).toBe(false);
 });
 

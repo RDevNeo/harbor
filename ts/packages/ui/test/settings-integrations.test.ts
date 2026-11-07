@@ -16,6 +16,7 @@ function view(over: Partial<AppsView> = {}): AppsView {
     googleClient: () => ({ id: "", secret: "" }),
     googleAccounts: () => [],
     discordLine: (about: string) => ({ text: about, tone: 0 }),
+    whatsappLine: (about: string) => ({ text: about, tone: 0 }),
     locals: () => [
       { id: "discord", label: "Discord", found: false },
       { id: "playwright", label: "Playwright", found: true },
@@ -35,7 +36,7 @@ test("integrations lists every app two to a row, the last alone", () => {
     ["linear", "sentry"],
     ["supabase", "context7"],
     ["convex", "gmail"],
-    ["discord", null],
+    ["discord", "whatsapp"],
   ]);
   expect(find(d, "github")).toMatchObject({ sub: "Repos, issues, PRs; gh and git push", action: "signin", action_text: "Sign in", action_primary: true, form: "" });
 });
@@ -130,6 +131,7 @@ function rig() {
     setGoogleDefault: (id, e) => calls.push(`default ${id} ${e}`),
     signOutAccount: (id, e) => calls.push(`signOutAccount ${id} ${e}`),
     toggleOff: (id) => calls.push(`toggleOff ${id}`),
+    whatsappCode: (id, phone) => calls.push(`whatsappCode ${id} ${phone}`),
     pendingUrl: () => "https://example.test/page",
   };
   const host: IntHost = { changed: () => calls.push("changed"), openUrl: (u) => calls.push(`open ${u}`), copy: (t) => calls.push(`copy ${t}`), discordWindow: () => calls.push("discordWindow") };
@@ -198,4 +200,25 @@ test("integrations' remaining buttons reach mcp and the host", () => {
     "dismiss vercel",
     "forget gmail",
   ]);
+});
+
+test("WhatsApp's card: Link opens the warning, then its QR or code; linked, Unlink and the card's line", () => {
+  const r = rig();
+  r.act("signin", "whatsapp");
+  expect(r.forms.get("whatsapp")).toEqual({ kind: "whatsapp" });
+  expect(find(data(view(), r.forms), "whatsapp")).toMatchObject({ sub: "Read this first", form: "whatsapp", action: "cancel-form" });
+  r.act("whatsapp-ok", "whatsapp");
+  expect(r.calls).toContain("signIn whatsapp");
+  expect(r.forms.has("whatsapp")).toBe(false);
+  r.act("whatsapp-code", "whatsapp", "+1 555");
+  expect(r.calls.some((c) => c.startsWith("whatsappCode"))).toBe(false);
+  r.act("whatsapp-code", "whatsapp", "+1 555 010 0000");
+  expect(r.calls).toContain("whatsappCode whatsapp +1 555 010 0000");
+  const qr = find(data(view({ pending: (id) => (id === "whatsapp" ? { qr: "2@x", note: "Scan with WhatsApp" } : undefined) })), "whatsapp");
+  expect(qr).toMatchObject({ form: "whatsapp-qr", has_qr: true, sub: "Scan with WhatsApp", sub_tone: 1, window_btn: false, action: "cancel" });
+  const coded = find(data(view({ pending: (id) => (id === "whatsapp" ? { qr: "2@x", code: "K7QX-2M9P" } : undefined) })), "whatsapp");
+  expect(coded).toMatchObject({ form: "whatsapp-qr", code: "K7QX-2M9P", sub: "Enter the code on your phone" });
+  const linked = find(data(view({ signedIn: (id) => id === "whatsapp", whatsappLine: () => ({ text: "Linked as Sam · Connected", tone: 0 }) })), "whatsapp");
+  expect(linked).toMatchObject({ action: "signout", action_text: "Unlink", badge: true, sub: "Linked as Sam · Connected" });
+  expect(find(data(view()), "whatsapp")).toMatchObject({ action: "signin", action_text: "Link", sub: "Read and send as you" });
 });

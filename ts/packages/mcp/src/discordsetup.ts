@@ -286,6 +286,9 @@ export function shellFiles(): [string, string][] {
   return out;
 }
 
+/** The commit (or tag) this build was made from, if it knows: the WhatsApp engine is fetched at it too. */
+export const buildRef = (): string | undefined => ports.shellRef();
+
 /** The commit (or tag) of this repository whose `discord/` this build goes with: the build's own, never a version guessed at run time. */
 export function shellRef(): string {
   const r = process.env.HARBOR_DISCORD_REF ?? ports.shellRef();

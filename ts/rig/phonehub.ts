@@ -31,6 +31,8 @@ Object.assign(process.env, {
   // The PC's name as the phone shows it: a made-up one, not the machine's.
   HARBOR_MESH_ID: "pc:rig-pc",
   HARBOR_MESH_NAME: "rig-pc",
+  // WhatsApp with no WhatsApp: unlinked, and Link / Get a code show a made-up QR and code.
+  HARBOR_FAKE_WHATSAPP: "rig",
 });
 for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
 // OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.

@@ -15,6 +15,8 @@ export * as discordfreeze from "./discordfreeze.ts";
 export * as discordhost from "./discordhost.ts";
 export * as discordrepair from "./discordrepair.ts";
 export * as discordsetup from "./discordsetup.ts";
+export * as whatsapp from "./whatsapp.ts";
+export * as whatsappsetup from "./whatsappsetup.ts";
 export * as issues from "./github/issues.ts";
 export * as gh from "./github/gh.ts";
 export * as prs from "./github/prs.ts";

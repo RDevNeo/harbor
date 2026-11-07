@@ -23,7 +23,8 @@ export type Auth =
   | { kind: "oauth" }
   | { kind: "key"; header: string; get: string }
   | { kind: "google"; scope: string; help: string }
-  | { kind: "discord" };
+  | { kind: "discord" }
+  | { kind: "whatsapp" };
 
 export type Transport = { kind: "http"; url: string } | { kind: "stdio"; argv: readonly string[] } | { kind: "harbor"; name: string };
 
@@ -37,6 +38,7 @@ export interface App {
 
 export const GMAIL = "gmail";
 export const DISCORD = "discord";
+export const WHATSAPP = "whatsapp";
 
 export const APPS: readonly App[] = [
   { id: "github", label: "GitHub", about: "Repos, issues, PRs; gh and git push", auth: { kind: "github" }, mcp: { kind: "http", url: "https://api.githubcopilot.com/mcp/" } },
@@ -64,6 +66,7 @@ export const APPS: readonly App[] = [
     mcp: { kind: "harbor", name: GMAIL },
   },
   { id: DISCORD, label: "Discord", about: "Read and send as you", auth: { kind: "discord" }, mcp: { kind: "harbor", name: DISCORD } },
+  { id: WHATSAPP, label: "WhatsApp", about: "Read and send as you", auth: { kind: "whatsapp" }, mcp: { kind: "harbor", name: WHATSAPP } },
 ];
 
 export function app(id: string): App | undefined {
@@ -84,6 +87,7 @@ export function localFor(name: string): Local | undefined {
 
 export interface Integrations {
   discord?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> };
+  whatsapp?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void>; code(phone: string): Promise<void> };
   profileEmail?: (token: string) => Promise<string>;
 }
 
@@ -234,6 +238,8 @@ export function signedIn(id: string): boolean {
       return googleAccounts(id).length > 0;
     case "discord":
       return integrations.discord?.signedIn() ?? false;
+    case "whatsapp":
+      return integrations.whatsapp?.signedIn() ?? false;
     case undefined:
       return false;
     default:
@@ -253,6 +259,8 @@ export function account(id: string): string | undefined {
       return googleAccounts(id)[0];
     case "discord":
       return integrations.discord?.accountName();
+    case "whatsapp":
+      return integrations.whatsapp?.accountName();
     case undefined:
       return undefined;
     default: {
@@ -280,6 +288,8 @@ export async function token(id: string): Promise<string | undefined> {
     }
     case "discord":
       return integrations.discord?.signedIn() ? "" : undefined;
+    case "whatsapp":
+      return integrations.whatsapp?.signedIn() ? "" : undefined;
   }
 }
 

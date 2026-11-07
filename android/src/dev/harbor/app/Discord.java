@@ -154,6 +154,9 @@ final class Discord {
         }
     }
 
+    /** A cardRow's line under its title (WhatsApp's sheet too). */
+    static TextView subOf(LinearLayout row) { return sub(row); }
+
     /** A cardRow's line under its title. */
     private static TextView sub(LinearLayout row) {
         for (int i = 0; i < row.getChildCount(); i++) {

@@ -86,6 +86,9 @@ export function signOut(id: string): void {
     case "discord":
       integrations.discord?.signOut();
       break;
+    case "whatsapp":
+      integrations.whatsapp?.signOut();
+      break;
     default:
       rmSync(credPath(id), { force: true });
   }
@@ -117,6 +120,11 @@ export function signIn(id: string, changed: () => void = () => undefined): void 
         if (!d) throw new Error("Discord isn't available here.");
         return d.login(flow.abort.signal, update);
       }
+      case "whatsapp": {
+        const w = integrations.whatsapp;
+        if (!w) throw new Error("WhatsApp isn't available here.");
+        return w.login(flow.abort.signal, update);
+      }
       default:
         throw new Error("This app signs in with a key.");
     }
@@ -132,6 +140,19 @@ export function signIn(id: string, changed: () => void = () => undefined): void 
       if (!flow.abort.signal.aborted) FLOWS.delete(id);
       changed();
     });
+}
+
+/** WhatsApp's link by number: a code for the user to type on their phone, into the running link's card. */
+export function whatsappCode(id: string, phone: string, changed: () => void = () => undefined): void {
+  const w = integrations.whatsapp;
+  if (!w) return;
+  ERRORS.delete(id);
+  void w
+    .code(phone)
+    .catch((e: unknown) => {
+      ERRORS.set(id, e instanceof Error ? e.message : String(e));
+    })
+    .finally(changed);
 }
 
 interface Cmd {

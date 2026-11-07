@@ -26,8 +26,8 @@ import org.json.JSONObject;
  *  (Asr keeps no model), and notifications are instant (Listen) and come whether or not you're
  *  at that PC (Notes). */
 public class Settings extends Base {
-    private TextView updateNote, gmailSub, discordSub, appsHead;
-    private LinearLayout gmailCard, gmailRowBox, discordBox, voiceCard;
+    private TextView updateNote, gmailSub, discordSub, whatsappSub, appsHead;
+    private LinearLayout gmailCard, gmailRowBox, discordBox, whatsappBox, voiceCard;
     private TextView voiceHead;
     private TextView wtHead;
     private LinearLayout wtCard;
@@ -133,6 +133,23 @@ public class Settings extends Base {
         if (getIntent().getBooleanExtra("discord", false)) {
             Discord.changed = this::discordRow;
             Discord.show(this, hub, hub.via());
+        }
+        // WhatsApp (GET /v1/apps/whatsapp; hidden on hubs without it): the desktop card's line.
+        whatsappBox = Ui.col(this);
+        whatsappBox.setVisibility(View.GONE);
+        LinearLayout wa = Ui.cardRow(this, Ui.I_PLUG, "WhatsApp", "…", Ui.FG, v -> {
+            WhatsApp.changed = this::whatsappRow;
+            WhatsApp.show(this, hub, hub.via());
+        });
+        wa.addView(Ui.chevron(this));
+        Ui.wrapSub(wa, 3);
+        whatsappBox.addView(Ui.gap(this));
+        whatsappBox.addView(wa, Ui.fill());
+        apps.addView(whatsappBox, Ui.fill());
+        whatsappSub = (TextView) ((LinearLayout) wa.getChildAt(1)).getChildAt(1);
+        if (getIntent().getBooleanExtra("whatsapp", false)) {
+            WhatsApp.changed = this::whatsappRow;
+            WhatsApp.show(this, hub, hub.via());
         }
 
         // Dictation in the composer (Voice): the PC's dictionary (GET /v1/voice, PUT
@@ -877,6 +894,7 @@ public class Settings extends Base {
         }
         gmailRow(); // back from Google's page or the account sheet
         discordRow();
+        whatsappRow();
         // An install that fails after its download (Android or Play Protect refused it).
         Update.changed = () -> { if (!isFinishing()) checkUpdates(); };
     }
@@ -917,6 +935,25 @@ public class Settings extends Base {
                     discordSub.setTextColor(Discord.toneColor(Discord.tone(r)));
                     discordGap.setVisibility(gmailRowBox.getVisibility() == View.VISIBLE ? View.VISIBLE : View.GONE);
                     discordBox.setVisibility(View.VISIBLE);
+                    gmailCard.setVisibility(View.VISIBLE);
+                    appsHead.setVisibility(View.VISIBLE);
+                });
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+    }
+
+    /** The Apps card's WhatsApp row: `card.text` as the desktop shows it, coloured by its tone;
+     *  hidden on hubs without the WhatsApp app. */
+    private void whatsappRow() {
+        if (whatsappBox == null) return;
+        String pc = hub.via();
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject r = hub.callOn(pc, "GET", "/v1/apps/whatsapp", null);
+                runOnUiThread(() -> {
+                    whatsappSub.setText(WhatsApp.summary(r));
+                    whatsappSub.setTextColor(Discord.toneColor(WhatsApp.tone(r)));
+                    whatsappBox.setVisibility(View.VISIBLE);
                     gmailCard.setVisibility(View.VISIBLE);
                     appsHead.setVisibility(View.VISIBLE);
                 });

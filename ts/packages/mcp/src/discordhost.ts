@@ -1858,7 +1858,7 @@ const LOCK_EX = 2;
 const LOCK_NB = 4;
 
 /** The lock fd, or undefined when another host holds it for the next two seconds. */
-async function takeLock(path: string): Promise<number | undefined> {
+export async function takeLock(path: string): Promise<number | undefined> {
   const fd = openSync(path, "a+", 0o600);
   const until = Date.now() + 2000;
   while (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) !== 0) {

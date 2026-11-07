@@ -132,6 +132,107 @@ component DiscordForm {
     }
 }
 
+component WhatsAppForm {
+    callback clicked;
+    VerticalLayout {
+        padding-top: 8px;
+        spacing: 6px;
+        Note {
+            text: "Harbor links to your WhatsApp as another device, like WhatsApp Web, through an unofficial client. WhatsApp's terms don't allow that and can ban the account.";
+        }
+        Note {
+            text: "Agents send only what you ask, paced, never in bulk. Chats are stored on this PC only.";
+        }
+        HorizontalLayout {
+            alignment: start;
+            Btn {
+                text: "I understand, link";
+                size: sm;
+                variant: primary;
+                clicked => {
+                    root.clicked();
+                }
+            }
+        }
+        // The card measures wrapped notes a line short: this keeps the button inside it.
+        Rectangle {
+            height: 12px;
+        }
+    }
+}
+
+component WhatsAppLink {
+    in property <IntApp> app;
+    callback act(string, string, string, string);
+    VerticalLayout {
+        padding-top: 8px;
+        spacing: 8px;
+        if root.app.has-qr && root.app.code == "": Image {
+            source: root.app.qr;
+            width: 200px;
+            height: 200px;
+            image-fit: contain;
+            image-rendering: pixelated;
+        }
+        if root.app.code == "": Note {
+            text: "On your phone: WhatsApp \u{203a} Settings \u{203a} Linked devices \u{203a} Link a device, then scan this code.";
+        }
+        if root.app.code != "": HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Rectangle {
+                width: wa-code.preferred-width + 22px;
+                height: 32px;
+                background: Theme.gray-100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-md;
+                wa-code := Text {
+                    text: root.app.code;
+                    font-size: 16px;
+                    font-family: "Geist Mono";
+                    color: Theme.fg;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            Btn {
+                icon: Icons.copy;
+                text: "Copy";
+                size: sm;
+                variant: ghost;
+                clicked => {
+                    root.act("copy", root.app.id, root.app.code, "");
+                }
+            }
+        }
+        if root.app.code != "": Note {
+            text: "On your phone: WhatsApp \u{203a} Linked devices \u{203a} Link a device \u{203a} Link with phone number instead, then type this code.";
+        }
+        if root.app.code == "": HorizontalLayout {
+            spacing: 8px;
+            phone := Input {
+                hint: "Or link by number: +1 555 123 4567";
+                accepted => {
+                    root.act("whatsapp-code", root.app.id, self.text, "");
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    text: "Get a code";
+                    size: sm;
+                    variant: outline;
+                    tip: "For a phone that can't scan this screen: a code to type in WhatsApp";
+                    clicked => {
+                        root.act("whatsapp-code", root.app.id, phone.text, "");
+                    }
+                }
+            }
+        }
+    }
+}
+
 component GoogleForm {
     in property <IntApp> app;
     callback act(string, string, string, string);
@@ -286,6 +387,12 @@ component AppCard {
                     text: "In the Discord app on your phone: Settings \u{203a} Scan QR Code.";
                 }
             }
+            if root.app.form == "whatsapp-qr": WhatsAppLink {
+                app: root.app;
+                act(w, i, a, b) => {
+                    root.act(w, i, a, b);
+                }
+            }
             if root.app.window-btn: VerticalLayout {
                 padding-top: 8px;
                 alignment: start;
@@ -351,6 +458,11 @@ component AppCard {
             if root.app.form == "discord": DiscordForm {
                 clicked => {
                     root.act("discord-ok", root.app.id, "", "");
+                }
+            }
+            if root.app.form == "whatsapp": WhatsAppForm {
+                clicked => {
+                    root.act("whatsapp-ok", root.app.id, "", "");
                 }
             }
             if root.app.form == "google": GoogleForm {

@@ -5,6 +5,8 @@ import * as discordhost from "./discordhost.ts";
 import * as discordrepair from "./discordrepair.ts";
 import * as discordsetup from "./discordsetup.ts";
 import * as gmail from "./gmail.ts";
+import * as whatsapp from "./whatsapp.ts";
+import * as whatsapphost from "./whatsapphost.ts";
 import { harborVersion } from "./version.ts";
 
 /** The Claude Code login Discord's repair runs on: the main one first, as discordrepair.rs did. */
@@ -27,6 +29,11 @@ export async function serve(args: string[], build: { version?: string; shellRef?
       return 0;
     case discord.HOST:
       return discordhost.run();
+    case whatsapp.NAME:
+      await whatsapp.run(v ?? harborVersion());
+      return 0;
+    case whatsapp.HOST:
+      return whatsapphost.run();
     case discord.REPAIR:
       await discordrepair.run();
       return 0;

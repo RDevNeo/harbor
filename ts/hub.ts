@@ -12,7 +12,7 @@ import { WorktreeCleaner } from "./worktreeclean.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
-import { discord, Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
+import { discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
   fakePeers,
@@ -141,6 +141,8 @@ export interface HubOptions {
   preview?: HubPreview;
   /** Posts what the Discord host wants the user to know (signed out, a captcha to solve): the real app only, a test hub would take the user's. */
   discordNotices?: boolean;
+  /** Keeps a linked WhatsApp's host running and posts its notices: the real app only, like discordNotices. */
+  whatsappKeep?: boolean;
 }
 
 export interface HubPreview {
@@ -871,6 +873,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
           return discord.watch(post, 5000, () => void captchas.check(post));
         })()
       : () => {};
+  const stopWhatsapp = o.whatsappKeep === true && !offline ? whatsapp.keep((n) => live.host.notify?.("whatsapp", n.key, n.title, n.body)) : () => {};
   const funnel = new Funnel(() => providers.which("tailscale") !== null, () => live.hookPort);
   const moveAccounts = (): MovePcAccount[] =>
     accounts.map((a) => ({
@@ -1206,6 +1209,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       clearInterval(refresh);
       services?.stop();
       stopDiscord();
+      stopWhatsapp();
       stopSettled();
       mesh.stop();
       disc?.stop();

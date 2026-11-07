@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { commits } from "./packages/agents/src/index.ts";
 import { ghapi, prdetail } from "./packages/mcp/src/index.ts";
 import { repoDir } from "./packages/store/src/index.ts";
-import { discord, mcp } from "./packages/mcp/src/index.ts";
+import { discord, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import { qrRows } from "./packages/ui/src/qr.ts";
 import { googleDesktopClient, googlePhoneCode, googlePhoneFinish, googlePhoneStart, googleWebClientId } from "./packages/mcp/src/signin.ts";
 import * as limits from "./packages/store/src/limits.ts";
@@ -341,6 +341,42 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     return ok(await discordInfo());
   };
 
+  /** WhatsApp's link on this PC as the phone shows it: the desktop card's line, and a running link's QR drawn as rows and its code. */
+  const whatsappInfo = async (): Promise<Json> => {
+    const raw = await whatsapp.status();
+    const s = plain(raw) as Record<string, Json>;
+    const url = (s.pairing as Record<string, Json> | null)?.qr;
+    const qr = typeof url === "string" && url !== "" ? ((await qrRows(url)) ?? null) : null;
+    return { ...s, qr, card: whatsapp.cardLine(raw, mcp.app("whatsapp")?.about ?? "") };
+  };
+
+  const whatsappCall = async (action: string, b: Record<string, unknown>): Promise<Reply> => {
+    const phone = typeof b.phone === "string" ? b.phone.trim() : "";
+    try {
+      switch (action) {
+        case "link":
+          if (b.accept !== true) throw new Error("Linking needs the warning accepted first.");
+          await whatsapp.link(phone === "" ? undefined : phone);
+          break;
+        case "code":
+          if (phone === "") throw new Error("Pass the phone number.");
+          await whatsapp.code(phone);
+          break;
+        case "cancel":
+          await whatsapp.cancel();
+          break;
+        case "signout":
+          await whatsapp.unlink();
+          break;
+        default:
+          return err(404, "no such call");
+      }
+    } catch (x) {
+      return err(409, x instanceof Error ? x.message : String(x));
+    }
+    return ok(await whatsappInfo());
+  };
+
   const commit = async (c: Chat, sha: string, withDiff: boolean): Promise<Reply> => {
     const e = h.engine();
     const repo = e.repo(c.repoId);
@@ -564,6 +600,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     if (p[1] === "apps" && p.length === 3 && m === "GET") {
       if (p[2] === "gmail") return ok(gmailInfo());
       if (p[2] === "discord") return ok(await discordInfo());
+      if (p[2] === "whatsapp") return ok(await whatsappInfo());
     }
     if (p[1] === "apps" && p[2] === "discord" && p[3] === "captcha" && p.length === 4 && m === "GET") {
       const f = await discord.captchaFrame();
@@ -572,6 +609,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     if (p[1] === "apps" && p.length === 4 && m === "POST") {
       if (p[2] === "gmail") return gmail(p[3] ?? "", body(call));
       if (p[2] === "discord") return discordCall(p[3] ?? "", body(call));
+      if (p[2] === "whatsapp") return whatsappCall(p[3] ?? "", body(call));
     }
     if (p[1] === "projects") return h.projects.route(call);
     if (p[1] === "worktrees" && p[2] === "settings" && p.length === 3) {

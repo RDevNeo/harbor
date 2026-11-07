@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- WhatsApp app (desktop and phone): agents can read and send on your personal WhatsApp, as a device
+  linked to your phone like WhatsApp Web. Settings › Integrations › WhatsApp › Link shows a warning
+  (an unofficial client, against WhatsApp's terms), then a QR code to scan from WhatsApp › Linked
+  devices, or a code to type there for a number ("Link with phone number instead"); the phone's
+  Settings › Apps › WhatsApp does the same and shows the code large. Chats, contacts and messages
+  are stored on that PC only, so reads don't wait on the network; unlinking deletes them. Tools:
+  status, list_chats (unread counts, a query), history (oldest first, pages back, asks the phone
+  for older), search, download_attachment (a photo comes back inline), send (a reply to a message,
+  files), mark_read, wait_for_message (chat, sender, words, timeout) and find_contact. Sends are
+  paced (3 s apart, 6 a minute, 40 an hour, 200 a day), a number you never wrote to needs the
+  user's explicit ask and at most 5 new chats a day, and the same text to several chats is refused
+  as bulk. The engine (Baileys, GPL) lives in `whatsapp/` and is downloaded and checked by hash on
+  first link, not shipped inside Harbor. A linked PC keeps its link running with Harbor; a link
+  that ends (unlinked from the phone) is a notification.
+
 ## [0.154.0] - 2026-11-07
 
 ### Added

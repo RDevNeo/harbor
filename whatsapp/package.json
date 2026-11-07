@@ -1,0 +1,12 @@
+{
+  "name": "harbor-whatsapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Harbor's WhatsApp engine: a linked device of the user's personal WhatsApp account, through Baileys",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "main": "engine.mjs",
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14"
+  }
+}

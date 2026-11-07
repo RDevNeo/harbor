@@ -52,7 +52,7 @@
     <li><b>Updates.</b> Harbor checks GitHub for new releases of itself and downloads them from GitHub, verifying their signature. Phones get their updates from your own PC. Harbor also asks the npm registry for the latest version number of each agent program you installed.</li>
     <li><b>Reaching your PCs from outside.</b> To let your phone reach your PC away from home, Harbor can ask your home router to open its port (UPnP/NAT-PMP/PCP). It can also look up your public IP address with api.ipify.org or icanhazip.com. Only devices you paired get an answer on that port.</li>
     <li><b>Webhooks (off unless you turn them on).</b> If you turn on public webhooks, Harbor gets a TLS certificate from Let's Encrypt. Its default name is an sslip.io name made from your public IP address.</li>
-    <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex, Gmail and Discord are used only after you sign in to them in Harbor. They are reached directly with your own sign-in. For Discord, see <a href="#discord">below</a>.</li>
+    <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex, Gmail, Discord and WhatsApp are used only after you sign in to (or link) them in Harbor. They are reached directly with your own sign-in. For Discord and WhatsApp, see <a href="#discord">below</a>.</li>
     <li><b>Project icons.</b> To show a project's icon, Harbor may fetch the favicon from that project's own website.</li>
     <li><b>The optional browser panel</b> loads the pages you open in it, like any browser.</li>
   </ul>
@@ -113,6 +113,20 @@
   <ul>
     <li><b>Sign out</b> on the Discord card (on the desktop, or in the Android app's Settings) ends the session at Discord and deletes the session's profile folder from your PC. Downloaded parts and agents' notes stay until you delete Harbor's data folders.</li>
     <li>Messages agents read stay in your chat histories until you delete those chats.</li>
+  </ul>
+
+  <h2 id="whatsapp">WhatsApp app</h2>
+  <p>Harbor has an optional WhatsApp app. It lets the AI agents you run in Harbor read your WhatsApp chats and send messages as you, when you ask them to. It is off until you link it under Settings › Integrations on the desktop (or Settings › Apps on the phone), after a warning: Harbor links as another device of your account, like WhatsApp Web, through an unofficial client (Baileys), which WhatsApp's terms don't allow; WhatsApp may ban accounts that use one.</p>
+  <h3>What Harbor stores</h3>
+  <ul>
+    <li>Linking creates a <b>linked device</b> of your WhatsApp account on that PC: its encryption keys are kept in Harbor's data folder there (owner-only permissions) and never leave the PC.</li>
+    <li>While linked, Harbor keeps the chats, contacts' names and messages WhatsApp sends to the linked device (recent history from your phone, then new messages) in a database in the same private folder, so that agents can read them without asking WhatsApp each time. Attachments are downloaded only when an agent asks for one. Unlinking (in Harbor, or from your phone's Linked devices) deletes the keys and everything stored.</li>
+    <li>Messages agents read become part of the chat, like anything else an agent reads, and go to the AI provider you chose, as described above.</li>
+  </ul>
+  <h3>What WhatsApp gets</h3>
+  <ul>
+    <li>WhatsApp's servers see a linked device of your account, your IP address, and what agents do: the messages they send, the read receipts they send when you ask them to mark a chat read, and media they download. WhatsApp's <a href="https://www.whatsapp.com/legal/privacy-policy">privacy policy</a> applies. Harbor doesn't show the linked device as online, so your phone keeps its notifications.</li>
+    <li>To run WhatsApp, Harbor downloads its small WhatsApp engine from GitHub, checked against hashes built into Harbor, and the npm packages it uses from the npm registry, checked against the hashes in the engine's lockfile.</li>
   </ul>
 
   <h2 id="security">Security</h2>

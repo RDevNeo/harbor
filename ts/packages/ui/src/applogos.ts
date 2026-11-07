@@ -8,6 +8,7 @@ import robloxstudio from "../../../../assets/logos/robloxstudio.a8" with { type:
 import sentry from "../../../../assets/logos/sentry.a8" with { type: "file" };
 import supabase from "../../../../assets/logos/supabase.a8" with { type: "file" };
 import vercel from "../../../../assets/logos/vercel.a8" with { type: "file" };
+import whatsapp from "../../../../assets/logos/whatsapp.a8" with { type: "file" };
 import { ICONS } from "./icons.ts";
 import { type Pixels, pixels } from "./logos.ts";
 import { token } from "./theme.ts";
@@ -34,6 +35,7 @@ const MARKS: [string, Mark][] = [
   ["blender", { mask: blender, brand: 0xe87d0d }],
   ["roblox", { mask: robloxstudio, brand: 0x00a2ff }],
   ["gmail", { mask: gmail, brand: 0xea4335 }],
+  ["whatsapp", { mask: whatsapp, brand: 0x25d366 }],
   ["playwright", { glyph: ICONS.DRAMA, brand: 0x2ead33 }],
   ["context7", { glyph: ICONS.LIBRARY, brand: null }],
   ["omarchy", { glyph: ICONS.MONITOR, brand: null }],
