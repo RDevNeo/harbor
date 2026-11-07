@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.164.0] - 2026-11-07
+
+### Changed
+- WhatsApp's card in Settings › Integrations is a sign-in row like GitHub's: "Sign in" shows only a QR
+  to scan from WhatsApp › Settings › Linked devices › Link a device, with Cancel; once linked it reads
+  "Signed in as +1 555 123 4567" with Sign out. No warning step before the QR, and no pairing codes
+  (the number field, Get a code, Try without the 9 and Other number are gone). The phone's WhatsApp
+  sheet is the same row, and its QR can be scanned from another phone or by this one off the PC's screen.
+- Signed-in app rows lose their green "Signed in" pill and show Sign out in red (desktop and phone);
+  Discord's line is just "Signed in as <name>".
+- Settings › Integrations takes the whole window width, always in two columns, so each card's line
+  shows in full.
+
+### Fixed
+- Phone: a tap on the WhatsApp sheet could be lost to a redraw; it now redraws only when something changed.
+
 ## [0.163.0] - 2026-11-07
 
 ### Fixed
