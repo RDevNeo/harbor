@@ -34,7 +34,7 @@ export async function blockTabs(store: Store, refresh: () => void, copy: (text: 
   // People's photos load in the background (sharp only once one is asked for); the page draws again when one came.
   const { photos } = await import("@harbor/media");
   const photo = photos.source(() => refresh());
-  tabs.set("account", accountTab({ account, myFp, onlineFps: online, openUrl: () => {}, now, devices, photo, copyText: copy }));
+  tabs.set("account", accountTab({ account, myFp, onlineFps: online, openUrl: () => {}, now, devices, photo }));
   const chatLabel = (id: number): string => {
     const c = store.chats().find((x) => x.id === id);
     return c === undefined ? "" : c.role === "sub" ? `${c.name} · ${c.title}` : c.title;

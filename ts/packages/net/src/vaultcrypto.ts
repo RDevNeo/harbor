@@ -1,12 +1,8 @@
 // The account vault's cryptography (vault.ts runs the sync). One random 256-bit vault key per
-// account encrypts every item with AES-256-GCM; the account service only stores what comes out.
-// The key reaches a PC in one of two ways, both opened only on that PC:
-// - wrapped for the PC's own X25519 key (ECIES: an ephemeral X25519 key, HKDF-SHA256, AES-256-GCM),
-//   by another PC of the account that holds the key. The PC asks with its X25519 public key signed
-//   by its TLS key (the one its fingerprint and the account service's device record are of);
-// - wrapped with the account's recovery code (scrypt, AES-256-GCM): the way in when none of the
-//   other PCs is on. The code is shown in Settings › Workspace on every PC that has the key.
-import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, scryptSync, timingSafeEqual, verify, type KeyObject } from "node:crypto";
+// account encrypts every item with AES-256-GCM, and keys the hashes that name its rows. The account
+// service makes the key (worker/src/vault.js mirrors newVaultKey and keyCheck), keeps it sealed with
+// a secret of its own, and hands it to the account's signed-in PCs.
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 const INFO = "harbor-vault-v1";
@@ -17,7 +13,7 @@ const unb64 = (s: string): Buffer => Buffer.from(s, "base64");
 const sha256 = (b: Uint8Array | string): Buffer => createHash("sha256").update(b).digest();
 export const sha256Hex = (b: Uint8Array | string): string => createHash("sha256").update(b).digest("hex");
 
-/** A new vault key. */
+/** A new vault key (as the service makes one; tests). */
 export function newVaultKey(): Uint8Array {
   return new Uint8Array(randomBytes(KEY_BYTES));
 }
@@ -104,130 +100,6 @@ export function decodeItem(b: Uint8Array): Plain | null {
   } catch {
     return null;
   }
-}
-
-// ---- this PC's own vault key pair (X25519), kept beside identity.pem
-
-export interface DeviceKey {
-  /** SPKI DER, base64. */
-  pub: string;
-  /** PKCS#8 DER, base64. */
-  key: string;
-}
-
-export function newDeviceKey(): DeviceKey {
-  const { publicKey, privateKey } = generateKeyPairSync("x25519");
-  return { pub: b64(publicKey.export({ type: "spki", format: "der" })), key: b64(privateKey.export({ type: "pkcs8", format: "der" })) };
-}
-
-const pubOf = (s: string): KeyObject => createPublicKey({ key: unb64(s), format: "der", type: "spki" });
-const privOf = (s: string): KeyObject => createPrivateKey({ key: unb64(s), format: "der", type: "pkcs8" });
-
-/** What a PC asks for the key with (`req:<fp>`): its X25519 key, signed with its TLS key. */
-export interface KeyRequest {
-  pub: string;
-  /** The TLS key's SPKI (base64): its SHA-256 is the PC's fingerprint. */
-  spki: string;
-  sig: string;
-  name: string;
-}
-
-export const requestText = (fp: string, pub: string): string => `harbor-vault-req-v1\n${fp}\n${pub}`;
-
-/** The request is the PC's own: its TLS key hashes to `fp` and signed this X25519 key. */
-export function requestValid(fp: string, r: KeyRequest): boolean {
-  try {
-    const spki = unb64(r.spki);
-    if (sha256Hex(spki) !== fp) return false;
-    const k = createPublicKey({ key: spki, format: "der", type: "spki" });
-    if (pubOf(r.pub).asymmetricKeyType !== "x25519") return false;
-    return verify("sha256", Buffer.from(requestText(fp, r.pub)), k, unb64(r.sig));
-  } catch {
-    return false;
-  }
-}
-
-/** The vault key for one PC (`key:<fp>`). */
-export interface Wrapped {
-  v: 1;
-  epoch: string;
-  /** The X25519 key it's for: a PC that made a new one asks again. */
-  pub: string;
-  eph: string;
-  ct: string;
-}
-
-function wrapKey(shared: Buffer, eph: string, pub: string, fp: string, epoch: string): Buffer {
-  return Buffer.from(hkdfSync("sha256", shared, Buffer.concat([unb64(eph), unb64(pub)]), `${INFO} wrap ${fp} ${epoch}`, 32));
-}
-
-export function wrapFor(vk: Uint8Array, fp: string, pub: string, epoch: string): Wrapped {
-  const e = generateKeyPairSync("x25519");
-  const eph = b64(e.publicKey.export({ type: "spki", format: "der" }));
-  const k = wrapKey(diffieHellman({ privateKey: e.privateKey, publicKey: pubOf(pub) }), eph, pub, fp, epoch);
-  return { v: 1, epoch, pub, eph, ct: b64(gcmSeal(k, `wrap\n${fp}\n${epoch}`, vk)) };
-}
-
-export function unwrap(w: Wrapped, fp: string, mine: DeviceKey): Uint8Array | null {
-  if (w.pub !== mine.pub) return null;
-  try {
-    const k = wrapKey(diffieHellman({ privateKey: privOf(mine.key), publicKey: pubOf(w.eph) }), w.eph, w.pub, fp, w.epoch);
-    const vk = gcmOpen(k, `wrap\n${fp}\n${w.epoch}`, unb64(w.ct));
-    return vk && vk.length === KEY_BYTES ? new Uint8Array(vk) : null;
-  } catch {
-    return null;
-  }
-}
-
-// ---- the recovery code
-
-/** Crockford's base32: no I, L, O or U to misread. */
-const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const CODE_CHARS = 25;
-
-/** 125 random bits, as five groups of five ("7KQ2M-…"). */
-export function newRecoveryCode(): string {
-  const r = randomBytes(CODE_CHARS);
-  const chars = [...r].map((b) => ALPHABET[b & 31]).join("");
-  return (chars.match(/.{5}/g) ?? []).join("-");
-}
-
-/** As typed: case, spaces and dashes don't matter; O, I and L read as 0, 1 and 1. Null: not a code. */
-export function normalizeCode(s: string): string | null {
-  const c = s
-    .toUpperCase()
-    .replace(/[\s-]/g, "")
-    .replace(/O/g, "0")
-    .replace(/[IL]/g, "1");
-  return c.length === CODE_CHARS && [...c].every((x) => ALPHABET.includes(x)) ? c : null;
-}
-
-export interface RecoveryWrap {
-  v: 1;
-  epoch: string;
-  salt: string;
-  n: number;
-  ct: string;
-}
-
-const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 << 20 };
-
-function codeKey(code: string, salt: Buffer, n: number): Buffer {
-  return scryptSync(code, salt, 32, { ...SCRYPT, N: n });
-}
-
-export function wrapRecovery(vk: Uint8Array, code: string, epoch: string): RecoveryWrap {
-  const c = normalizeCode(code);
-  if (c === null) throw new Error("not a recovery code");
-  const salt = randomBytes(16);
-  return { v: 1, epoch, salt: b64(salt), n: SCRYPT.N, ct: b64(gcmSeal(codeKey(c, salt, SCRYPT.N), `recovery\n${epoch}`, vk)) };
-}
-
-export function unwrapRecovery(w: RecoveryWrap, code: string): Uint8Array | null {
-  const c = normalizeCode(code);
-  if (c === null || !Number.isInteger(w.n) || w.n < 1 << 14 || w.n > 1 << 20) return null;
-  const vk = gcmOpen(codeKey(c, unb64(w.salt), w.n), `recovery\n${w.epoch}`, unb64(w.ct));
-  return vk && vk.length === KEY_BYTES ? new Uint8Array(vk) : null;
 }
 
 // ---- a folder as one item (WhatsApp's linked-device keys, Discord's session)

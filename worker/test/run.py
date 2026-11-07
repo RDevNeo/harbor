@@ -221,6 +221,27 @@ def verify_jwt(tok, x):
     return json.loads(unb64u(h)), json.loads(unb64u(p))
 
 
+VAULT_SECRET = base64.b64encode(os.urandom(32)).decode()
+
+
+def vault_check(key, epoch):
+    """vaultcrypto.ts keyCheck: HMAC-SHA256 of the epoch under HKDF(key, "harbor-vault-v1 check"), 32 hex."""
+    import hmac
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    sub = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"harbor-vault-v1 check").derive(key)
+    return hmac.new(sub, epoch.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def d1(sql):
+    """Runs SQL on the local D1 the Worker uses; returns the rows of its last statement."""
+    r = subprocess.run(["npx", "wrangler", "d1", "execute", "harbor-accounts", "--local", "--json", "--command", sql],
+                       cwd=WORKER, env=ENV, capture_output=True, text=True, timeout=120)
+    if r.returncode:
+        raise RuntimeError(r.stdout[-1000:] + r.stderr[-1000:])
+    out = json.loads(r.stdout)
+    return out[-1].get("results", []) if out else []
+
+
 def serve():
     """Starts the fake Clerk and the Worker (fresh local D1); returns the Worker's signing key."""
     # fake clerk
@@ -237,7 +258,7 @@ def serve():
                                               serialization.NoEncryption())).decode()
     with open(os.path.join(WORKER, ".dev.vars"), "w") as f:
         f.write(f"CLERK_FRONTEND_URL={CLERK}\nCLERK_API_URL={CLERK}/v1\nCLERK_SECRET_KEY=sk_test_fake\n"
-                f"HARBOR_SIGNING_KEY={pkcs8}\nPUBLIC_URL={W}\n"
+                f"HARBOR_SIGNING_KEY={pkcs8}\nPUBLIC_URL={W}\nVAULT_SECRET={VAULT_SECRET}\n"
                 f"GOOGLE_WEB_CLIENT_ID=web-client.apps.example\nGOOGLE_JWKS_URL={CLERK}/google/certs\n")
     shutil.rmtree(os.path.join(WORKER, ".wrangler/state"), ignore_errors=True)
     m = subprocess.run(["nice", "-n", "19", "npx", "wrangler", "d1", "migrations", "apply", "harbor-accounts", "--local"],
@@ -413,20 +434,36 @@ def main():
     st, js, _, _ = http("PUT", W + "/v1/settings", raw=b"[1]", token=sam_pc)
     check("settings: malformed body is 400", st == 400)
 
-    # vault: opaque rows per account, PCs only
+    # vault: opaque rows per account, PCs only; the service keeps each account's key, sealed, for its PCs
     pc2 = Device("pc", "laptop")
     p2j, _ = sess_ok("sam@example.com", pc2)
     sam_pc2 = p2j["token"]
     st, js, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
-    check("vault: empty at first, lists the account's PCs (not phones)", st == 200 and js["items"] == [] and js["seq"] == 0
+    check("vault: empty at first, lists the account's PCs (not phones)", st == 200 and js["items"] == [] and js["seq"] == 0 and js["held"] is True
           and {pc.fp, pc2.fp} <= {d["fp"] for d in js["devices"]} and phone.fp not in {d["fp"] for d in js["devices"]}, js)
     st, js, _, _ = http("GET", W + "/v1/vault", token=sam_phone)
     check("vault: a phone is refused (403)", st == 403, js)
-    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "meta", "v": "e1", "at": 5, "prev": 0}]}, token=sam_pc)
-    check("vault: create meta with prev 0", st == 200 and js["results"][0]["ok"] is True, js)
-    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "meta", "v": "e1-other", "at": 6, "prev": 0}]}, token=sam_pc2)
-    check("vault: a second create loses and gets the row", st == 200 and js["results"][0]["ok"] is False and js["results"][0]["cur"]["v"] == "e1", js)
-    seq_meta = js["results"][0]["cur"]["seq"]
+    st, js, _, _ = http("GET", W + "/v1/vault/key", token=sam_phone)
+    check("vault: a phone gets no key (403)", st == 403 and "key" not in js, js)
+    st, k1, _, _ = http("GET", W + "/v1/vault/key", token=sam_pc)
+    vk = base64.b64decode(k1.get("key") or "")
+    check("vault: the first PC's ask makes the account's key", st == 200 and len(vk) == 32 and k1["check"] == vault_check(vk, k1["epoch"]), k1)
+    st, k2, _, _ = http("GET", W + "/v1/vault/key", token=sam_pc2)
+    check("vault: another PC of the account gets the same key, with nobody else on", st == 200 and k2 == k1, k2)
+    st, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
+    meta = next((r for r in g["items"] if r["id"] == "meta"), None)
+    check("vault: the service wrote the meta row (epoch and check), and holds the key",
+          meta is not None and json.loads(meta["v"])["epoch"] == k1["epoch"] and json.loads(meta["v"])["check"] == k1["check"] and g["held"] is True, g)
+    seq_meta = meta["seq"] if meta else 0
+    sealed = d1("SELECT user_id, epoch, k FROM vault_keys")
+    check("vault: the key is sealed at rest (one row, no plain key in it)",
+          len(sealed) == 1 and sealed[0]["epoch"] == k1["epoch"] and k1["key"] not in sealed[0]["k"] and vk not in base64.b64decode(sealed[0]["k"]), sealed)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "meta", "v": "mine", "at": 5, "prev": seq_meta}]}, token=sam_pc2)
+    check("vault: a PC can't write meta (it gets the service's)", st == 200 and js["results"][0]["ok"] is False and js["results"][0]["cur"]["v"] == meta["v"], js)
+    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "key:" + pc2.fp, "v": "w", "at": 1}, {"id": "req:" + pc2.fp, "v": "r", "at": 1}]}, token=sam_pc)
+    st2, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
+    check("vault: an older Harbor's key wraps and requests are taken and dropped", st == 200 and all(r["ok"] for r in js["results"])
+          and not any(r["id"].startswith(("key:", "req:")) for r in g["items"]), [js, g])
     st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:aa", "v": "ct1", "at": 100}, {"id": "lease:bb", "v": "l1", "at": 1, "prev": 0}]}, token=sam_pc)
     check("vault: item and lease written", all(r["ok"] for r in js["results"]), js)
     lease_seq = js["results"][1]["seq"]
@@ -447,15 +484,45 @@ def main():
     check("vault: an item over 768 KB is 413", st == 413, js)
     st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "i:ok", "v": "x" * (512 * 1024), "at": 1}]}, token=sam_pc)
     check("vault: an item of 512 KB is fine", st == 200 and js["results"][0]["ok"], js)
-    st, js, _, _ = http("PUT", W + "/v1/vault", {"set": [{"id": "key:" + pc2.fp, "v": "w", "at": 1}, {"id": "req:" + pc2.fp, "v": "r", "at": 1}]}, token=sam_pc)
+    st, js, _, _ = http("DELETE", W + "/v1/vault", token=sam_pc)
+    st2, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
+    check("vault: no reset any more (the rows stay)", st in (404, 405) and "i:ok" in {r["id"] for r in g["items"]}, [st, js])
     http("DELETE", W + f"/v1/devices/{pc2.fp}", token=sam_pc)
-    st, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
-    check("vault: removing a PC drops its wrapped key and request", not any(r["id"] in ("key:" + pc2.fp, "req:" + pc2.fp) for r in g["items"]) and "i:ok" in {r["id"] for r in g["items"]}, [r["id"] for r in g["items"]])
     st, js, _, _ = http("GET", W + "/v1/vault", token=sam_pc2)
     check("vault: a removed PC is refused even with an unexpired token (403)", st == 403, js)
-    st, js, _, _ = http("DELETE", W + "/v1/vault", token=sam_pc)
-    st, g, _, _ = http("GET", W + "/v1/vault", token=sam_pc)
-    check("vault: reset empties it", st == 200 and g["items"] == [], g)
+    st, js, _, _ = http("GET", W + "/v1/vault/key", token=sam_pc2)
+    check("vault: a removed PC gets no key (403)", st == 403 and "key" not in js, js)
+
+    # vault made by Harbor 0.162-0.164 (its key on its PCs only): one of them hands the key over
+    http("POST", CLERK + "/test/users", {"email": "lee@example.com", "first_name": "Lee"})
+    lee_pc, lee_new = Device("pc", "lee-desk"), Device("pc", "lee-laptop")
+    lj, _ = sess_ok("lee@example.com", lee_pc)
+    lee_t = lj["token"]
+    lee_new_t = sess_ok("lee@example.com", lee_new)[0]["token"]
+    lee_sub = json.loads(base64.urlsafe_b64decode(lee_t.split(".")[1] + "==="))["sub"]
+    sam_sub = json.loads(base64.urlsafe_b64decode(sam_pc.split(".")[1] + "==="))["sub"]
+    check("vault (old): another account", lee_sub != sam_sub, lee_sub)
+    old_key, old_epoch = os.urandom(32), "0123456789abcdef"
+    now_ms = int(time.time() * 1000)
+    meta_v = json.dumps({"epoch": old_epoch, "check": vault_check(old_key, old_epoch), "at": now_ms}).replace("'", "''")
+    d1(f"INSERT INTO vault (user_id,id,v,at,by,seq) VALUES ('{lee_sub}','meta','{meta_v}',{now_ms},'{lee_pc.fp}',{now_ms}),"
+       f"('{lee_sub}','key:{lee_pc.fp}','w',{now_ms},'{lee_pc.fp}',{now_ms + 1}),('{lee_sub}','req:{lee_new.fp}','r',{now_ms},'{lee_new.fp}',{now_ms + 2})")
+    st, g, _, _ = http("GET", W + "/v1/vault", token=lee_t)
+    check("vault (old): the service says it doesn't hold the key", st == 200 and g["held"] is False, g)
+    st, js, _, _ = http("GET", W + "/v1/vault/key", token=lee_new_t)
+    check("vault (old): a new PC waits for the key (no new vault over the old one)", st == 200 and js == {"key": None}, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault/key", {"key": base64.b64encode(os.urandom(32)).decode(), "epoch": old_epoch}, token=lee_t)
+    check("vault (old): a wrong key is refused (409)", st == 409, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault/key", {"key": base64.b64encode(old_key).decode(), "epoch": old_epoch}, token=lee_t)
+    check("vault (old): the PC that has it hands it over", st == 200 and js.get("ok") is True, js)
+    st, js, _, _ = http("PUT", W + "/v1/vault/key", {"key": base64.b64encode(old_key).decode(), "epoch": old_epoch}, token=lee_new_t)
+    check("vault (old): handing the same key over again is fine", st == 200 and js.get("ok") is True, js)
+    st, g, _, _ = http("GET", W + "/v1/vault", token=lee_t)
+    check("vault (old): held now, the per-PC wraps and requests are gone", g["held"] is True and {r["id"] for r in g["items"]} == {"meta"}, g)
+    st, js, _, _ = http("GET", W + "/v1/vault/key", token=lee_new_t)
+    check("vault (old): the new PC gets the old key", st == 200 and base64.b64decode(js.get("key") or "") == old_key and js["epoch"] == old_epoch, js)
+    st, js, _, _ = http("GET", W + "/v1/vault/key", token=sam_pc)
+    check("vault: each account its own key", st == 200 and js["key"] == k1["key"] and js["key"] != base64.b64encode(old_key).decode(), js)
 
     # invites
     alice, _ = sess_ok("alice@example.com", Device("phone", "a-phone"))

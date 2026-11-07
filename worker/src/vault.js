@@ -1,12 +1,11 @@
-// The account vault: rows an account's PCs encrypt end to end (ts/packages/net/src/vault.ts). The
-// service never sees a key or a plaintext: it stores opaque rows per account and decides only which
-// write wins. Ids are either hashes the PCs make with the vault key (items, leases) or
-// key-management ids: `meta` (the vault's epoch), `key:<fp>` (the vault key wrapped for one PC's
-// own key), `key:recovery` (wrapped with the recovery code), `req:<fp>` (a PC asking for the key:
-// its public key, signed with its TLS key).
+// The account vault: rows an account's PCs encrypt (ts/packages/net/src/vault.ts) with one key per
+// account that the service keeps for them (`vault_keys`, sealed with the Worker secret VAULT_SECRET)
+// and hands to the account's own signed-in PCs only, so a new PC opens the vault with nobody else on.
+// The rows are opaque here: ids are hashes the PCs make with the key (items, leases), but `meta`
+// (the vault's epoch and a check of its key), which only the service writes.
 //
 // Writes: last writer wins per row by the PC's `at` (ms), ties by `by`; or, with `prev`, only when
-// the row's `seq` is still `prev` (0: absent), for the vault's creation and the single-host leases.
+// the row's `seq` is still `prev` (0: absent), for the single-host leases.
 
 const MAX_VALUE = 768 * 1024;
 const MAX_BODY = 2 * 1024 * 1024;
@@ -24,6 +23,89 @@ export class VaultError extends Error {
 
 /** Rows the push doesn't announce: lease renewals come every minute and wake nobody. */
 const quiet = (id) => id.startsWith('lease:');
+/** The per-PC key wraps and key requests of Harbor 0.162-0.164: no longer kept, and dropped when such a PC writes them. */
+const legacy = (id) => id.startsWith('key:') || id.startsWith('req:');
+/** A vault whose key no PC handed over (made by Harbor 0.162-0.164) and nobody wrote to for this long starts over. */
+const STALE_MS = 7 * 86400 * 1000;
+const INFO = 'harbor-vault-v1';
+
+const te = new TextEncoder();
+const b64 = (u8) => btoa(String.fromCharCode(...u8));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+let secretCache = null;
+/** The AES-GCM key the vault keys are sealed with at rest: the Worker secret VAULT_SECRET (32 bytes, base64). */
+async function sealKey(env) {
+  const raw = (env.VAULT_SECRET || '').trim();
+  if (secretCache && secretCache.raw === raw) return secretCache.key;
+  let bytes;
+  try {
+    bytes = unb64(raw);
+  } catch {
+    bytes = new Uint8Array(0);
+  }
+  if (bytes.length !== 32) throw new VaultError(500, 'The vault is not configured yet.');
+  const key = await crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  secretCache = { raw, key };
+  return key;
+}
+
+const sealAad = (sub, epoch) => te.encode(`harbor-vault-key\n${sub}\n${epoch}`);
+
+async function sealVaultKey(env, sub, epoch, vk) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: sealAad(sub, epoch) }, await sealKey(env), vk));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv);
+  out.set(ct, 12);
+  return b64(out);
+}
+
+/** The account's key, or null when it doesn't open (the secret changed: a PC that has the key hands it over again). */
+async function openVaultKey(env, sub, row) {
+  try {
+    const box = unb64(row.k);
+    const vk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: box.subarray(0, 12), additionalData: sealAad(sub, row.epoch) }, await sealKey(env), box.subarray(12)));
+    return vk.length === 32 ? vk : null;
+  } catch (e) {
+    if (e instanceof VaultError) throw e;
+    return null;
+  }
+}
+
+/** What the PCs check a key against (vaultcrypto.ts keyCheck): HMAC of the epoch under the key's "check" subkey. */
+async function keyCheck(vk, epoch) {
+  const ikm = await crypto.subtle.importKey('raw', vk, 'HKDF', false, ['deriveBits']);
+  const sub = await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: te.encode(`${INFO} check`) }, ikm, 256);
+  const h = await crypto.subtle.importKey('raw', sub, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(new Uint8Array(await crypto.subtle.sign('HMAC', h, te.encode(epoch)))).slice(0, 32);
+}
+
+function sameBytes(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+  return d === 0;
+}
+
+async function metaOf(env, sub) {
+  const r = await env.DB.prepare(`SELECT v,seq FROM vault WHERE user_id=? AND id='meta'`).bind(sub).first();
+  if (!r || typeof r.v !== 'string') return null;
+  try {
+    const m = JSON.parse(r.v);
+    return m && typeof m.epoch === 'string' && typeof m.check === 'string' ? { epoch: m.epoch, check: m.check, seq: r.seq } : null;
+  } catch {
+    return null;
+  }
+}
+
+const keyRow = (env, sub) => env.DB.prepare(`SELECT epoch,k FROM vault_keys WHERE user_id=?`).bind(sub).first();
+
+async function nextSeq(env, sub) {
+  const top = await env.DB.prepare(`SELECT COALESCE(MAX(seq),0) AS s FROM vault WHERE user_id=?`).bind(sub).first();
+  return Math.max(Date.now(), (top?.s || 0) + 1);
+}
 
 async function vaultBody(req) {
   const text = await req.text();
@@ -58,7 +140,85 @@ export async function getVault(req, env, p) {
     .bind(p.sub, since)
     .all();
   const top = await env.DB.prepare(`SELECT MAX(seq) AS s FROM vault WHERE user_id=?`).bind(p.sub).first();
-  return { now: Date.now(), seq: top?.s || 0, items: rows.results.map(rowJson), devices: await devices(env, p.sub) };
+  // `held`: the service keeps this vault's key (false: a PC that has it hands it over, PUT /v1/vault/key).
+  const [meta, kr] = await Promise.all([metaOf(env, p.sub), keyRow(env, p.sub)]);
+  const held = meta === null || (kr !== null && kr.epoch === meta.epoch);
+  return { now: Date.now(), seq: top?.s || 0, held, items: rows.results.map(rowJson), devices: await devices(env, p.sub) };
+}
+
+/**
+ * `GET /v1/vault/key`: the account's vault key {key, epoch, check}, made with its `meta` row the
+ * first time. {key: null}: the vault was made by a Harbor that kept the key on its PCs, and none of
+ * them has handed it over yet (one does on its next round once it updates).
+ */
+export async function getVaultKey(env, p, tell) {
+  await vaultDevice(env, p);
+  const sub = p.sub;
+  const meta = await metaOf(env, sub);
+  const kr = await keyRow(env, sub);
+  if (kr && meta && kr.epoch === meta.epoch) {
+    const vk = await openVaultKey(env, sub, kr);
+    if (vk) return { key: b64(vk), epoch: kr.epoch, check: meta.check };
+  }
+  if (kr) await env.DB.prepare(`DELETE FROM vault_keys WHERE user_id=?`).bind(sub).run();
+  if (meta) {
+    const top = await env.DB.prepare(`SELECT COALESCE(MAX(seq),0) AS s FROM vault WHERE user_id=?`).bind(sub).first();
+    if (Date.now() - (top?.s || 0) < STALE_MS) return { key: null };
+  }
+  // A new vault (or an old one nobody can open any more: its rows go).
+  const vk = crypto.getRandomValues(new Uint8Array(32));
+  const epoch = hex(crypto.getRandomValues(new Uint8Array(8)));
+  const check = await keyCheck(vk, epoch);
+  const at = Date.now();
+  const seq = await nextSeq(env, sub);
+  const stmts = [];
+  if (meta) stmts.push(env.DB.prepare(`DELETE FROM vault WHERE user_id=?`).bind(sub));
+  stmts.push(
+    env.DB.prepare(`INSERT OR IGNORE INTO vault_keys (user_id,epoch,k,at) VALUES (?,?,?,?)`).bind(sub, epoch, await sealVaultKey(env, sub, epoch, vk), at),
+    env.DB.prepare(`INSERT OR IGNORE INTO vault (user_id,id,v,at,by,seq) VALUES (?,'meta',?,?,'',?)`).bind(sub, JSON.stringify({ epoch, check, at }), at, seq),
+  );
+  await env.DB.batch(stmts);
+  // Two PCs made one at once: both take the one stored.
+  const won = await keyRow(env, sub);
+  const m2 = await metaOf(env, sub);
+  const got = won && m2 && won.epoch === m2.epoch ? await openVaultKey(env, sub, won) : null;
+  if (!got) return { key: null };
+  await tell([sub]);
+  return { key: b64(got), epoch: won.epoch, check: m2.check };
+}
+
+/** `PUT /v1/vault/key {key, epoch}`: a PC that made or opened the vault under Harbor 0.162-0.164 hands its key over. */
+export async function putVaultKey(req, env, p, tell) {
+  await vaultDevice(env, p);
+  const b = await vaultBody(req);
+  const sub = p.sub;
+  let vk;
+  try {
+    vk = typeof b.key === 'string' ? unb64(b.key) : null;
+  } catch {
+    vk = null;
+  }
+  if (!vk || vk.length !== 32 || typeof b.epoch !== 'string') throw new VaultError(400, 'Missing the key.');
+  const meta = await metaOf(env, sub);
+  if (!meta || meta.epoch !== b.epoch || (await keyCheck(vk, b.epoch)) !== meta.check) throw new VaultError(409, "That key isn't this account's vault's.");
+  const kr = await keyRow(env, sub);
+  if (kr && kr.epoch === meta.epoch) {
+    const have = await openVaultKey(env, sub, kr);
+    if (have) {
+      if (!sameBytes(have, vk)) throw new VaultError(409, 'The service has another key for this vault.');
+      return { ok: true };
+    }
+  }
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO vault_keys (user_id,epoch,k,at) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET epoch=excluded.epoch, k=excluded.k, at=excluded.at`,
+    ).bind(sub, meta.epoch, await sealVaultKey(env, sub, meta.epoch, vk), Date.now()),
+    // The per-PC wraps and requests are of no use any more.
+    env.DB.prepare(`DELETE FROM vault WHERE user_id=? AND (id LIKE 'key:%' OR id LIKE 'req:%')`).bind(sub),
+  ]);
+  // The account's PCs waiting for the key take it now.
+  await tell([sub]);
+  return { ok: true };
 }
 
 /** `PUT /v1/vault {set: [{id, v, at, prev?}]}`: each row's outcome, and the row as it stands when it lost. */
@@ -84,7 +244,17 @@ export async function putVault(req, env, p, tell) {
   const stmts = [];
   let loud = false;
   for (const e of b.set) {
+    // Harbor 0.162-0.164 still sends its key wraps and requests: taken and dropped, so the rest of its round goes on.
+    if (legacy(e.id)) {
+      results.push({ id: e.id, ok: true });
+      continue;
+    }
     const old = cur.get(e.id);
+    // `meta` is the service's: a PC that tries to make a vault of its own gets the one there is.
+    if (e.id === 'meta') {
+      results.push({ id: e.id, ok: false, cur: old ? rowJson(old) : null });
+      continue;
+    }
     let win;
     if (e.prev !== undefined) win = (old ? old.seq : 0) === e.prev;
     else win = !old || e.at > old.at || (e.at === old.at && fp > old.by);
@@ -109,17 +279,4 @@ export async function putVault(req, env, p, tell) {
   if (stmts.length > 0) await env.DB.batch(stmts);
   if (loud) await tell([p.sub]);
   return { now: Date.now(), results };
-}
-
-/** `DELETE /v1/vault`: everything goes (a reset, when no PC holds the key and the recovery code is lost). */
-export async function resetVault(env, p, tell) {
-  await vaultDevice(env, p);
-  await env.DB.prepare(`DELETE FROM vault WHERE user_id=?`).bind(p.sub).run();
-  await tell([p.sub]);
-  return { ok: true };
-}
-
-/** A device signed out for good: its wrapped key and its request go with it. */
-export function forgetDevice(env, sub, fp) {
-  return env.DB.prepare(`DELETE FROM vault WHERE user_id=? AND (id=? OR id=?)`).bind(sub, `key:${fp}`, `req:${fp}`);
 }

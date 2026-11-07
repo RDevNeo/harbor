@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Your integrations, saved keys and WhatsApp/Discord sessions follow your account with nothing to set
+  up: any PC you sign in on gets them on its first sync, even with every other PC of yours off. The
+  account service keeps your vault's key (sealed with a secret of its own) and gives it only to PCs
+  signed in to your account; the items stay AES-256-GCM encrypted. This replaces end-to-end
+  encryption: the service could technically decrypt the vault (the privacy page says so).
+- The Vault section is gone from Settings › Workspace: no recovery code, no unlock, no start over.
+  Vaults made by 0.162-0.164 move over on their own: the first PC that has the key hands it to the
+  service, and the per-PC key wraps, requests and the recovery code are dropped.
+
 ## [0.164.1] - 2026-11-07
 
 ### Fixed

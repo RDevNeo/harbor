@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateIdentity, type Identity } from "../src/tls.ts";
 import { LEASE_TTL, Vault, type VaultLocal, type VaultSource } from "../src/vault.ts";
+import { encodeItem, hashOf, newVaultKey, rowId, seal } from "../src/vaultcrypto.ts";
 import { FakeVaultService } from "./fakevault.ts";
 
 const dirs: string[] = [];
@@ -50,7 +51,6 @@ interface Pc {
   files: Mem;
   keys: Mem;
   vault: Vault;
-  notices: string[];
   account: string;
   sync(): Promise<void>;
 }
@@ -61,10 +61,9 @@ function pc(svc: FakeVaultService, account: string, name: string, keep?: { id: I
   if (!keep) dirs.push(dir);
   const files = keep?.files ?? new Mem("f:");
   const keys = keep?.keys ?? new Mem("s:");
-  const notices: string[] = [];
-  const vault = new Vault({ stateDir: dir, identity: () => id, name: () => name, sources: () => [files, keys], clock, log: process.env.VDBG ? (l) => console.log(name, l) : undefined, notice: (title, body) => notices.push(`${title}: ${body}`) });
+  const vault = new Vault({ stateDir: dir, identity: () => id, sources: () => [files, keys], clock, log: process.env.VDBG ? (l) => console.log(name, l) : undefined });
   svc.signIn(account, id.fp, name);
-  const p: Pc = { id, dir, files, keys, vault, notices, account, sync: () => vault.sync(p.account, svc.call(p.account, id.fp)) };
+  const p: Pc = { id, dir, files, keys, vault, account, sync: () => vault.sync(p.account, svc.call(p.account, id.fp)) };
   return p;
 }
 
@@ -78,36 +77,78 @@ async function rounds(pcs: Pc[], n = 2): Promise<void> {
 }
 
 describe("account vault", () => {
-  test("a new PC of the account gets every item once another of its PCs shares the key; the service sees only ciphertext", async () => {
+  test("a new PC of the account gets every item on its first round, with no other PC on; the service sees only ciphertext", async () => {
     const svc = new FakeVaultService(clock);
     const a = pc(svc, "user_sam", "desk");
     a.files.set("f:gmail.accounts/sam@example.com.json", '{"access_token":"ya29.SECRET-ACCESS","refresh_token":"1//SECRET-REFRESH"}');
     a.files.set("f:github/hosts.yml", "github.com:\n    oauth_token: gho_SECRETGH\n");
     a.keys.set("s:OPENAI_KEY", '{"name":"OPENAI_KEY","value":"sk-SECRETVALUE"}');
+    a.files.set("f:whatsapp-session.bin", "linked-device keys");
     await a.sync();
     expect(a.vault.status().state).toBe("open");
-    expect(a.vault.status().code).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){4}$/);
-    expect(a.vault.status().fresh).toBe(true);
-    expect(a.vault.status().items).toBe(3);
+    expect(a.vault.status().items).toBe(4);
+    expect(svc.keys.has("user_sam")).toBe(true);
 
-    // Sam signs in on a new laptop.
+    // The desk is off for good (never syncs again); Sam signs in on a new laptop.
     const b = pc(svc, "user_sam", "laptop");
-    await b.sync();
-    expect(b.vault.status().state).toBe("locked");
-    expect(b.files.m.size).toBe(0);
-    await a.sync(); // the desk wraps the key for the laptop
-    expect(a.notices.some((n) => n.includes("laptop"))).toBe(true);
     await b.sync();
     expect(b.vault.status().state).toBe("open");
     expect(b.files.dump()).toEqual(a.files.dump());
     expect(b.keys.dump()).toEqual(a.keys.dump());
-    expect(b.vault.status().code).toBe(a.vault.status().code);
-    expect(b.vault.status().fresh).toBe(false);
+    // And a third, the same.
+    const c = pc(svc, "user_sam", "spare");
+    await c.sync();
+    expect(c.keys.get("s:OPENAI_KEY")).toContain("sk-SECRETVALUE");
 
-    // Nothing readable reached the service: no item name, no value, no recovery code.
+    // Nothing readable in the rows: no item name, no value; only hashes and the service's meta row.
     const stored = JSON.stringify(svc.all("user_sam"));
-    for (const s of ["SECRET", "sam@example.com", "gmail", "hosts.yml", "OPENAI", "sk-", a.vault.status().code ?? "x"]) expect(stored.includes(s)).toBe(false);
-    for (const r of svc.all("user_sam")) expect(r.id === "meta" || /^(i|lease):[0-9a-f]{40}$/.test(r.id) || /^(key|req):([0-9a-f]{64}|recovery)$/.test(r.id)).toBe(true);
+    for (const s of ["SECRET", "sam@example.com", "gmail", "hosts.yml", "OPENAI", "sk-", "linked-device"]) expect(stored.includes(s)).toBe(false);
+    for (const r of svc.all("user_sam")) expect(r.id === "meta" || /^(i|lease):[0-9a-f]{40}$/.test(r.id)).toBe(true);
+    // Nothing of the old per-PC key pair is made any more.
+    for (const p of [a, b, c]) expect(existsSync(join(p.dir, "vault-device.json"))).toBe(false);
+  });
+
+  test("a vault made by Harbor 0.162-0.164 (its key on its PCs only): a PC that has the key hands it over on its own, and the new PC opens", async () => {
+    const svc = new FakeVaultService(clock);
+    const vk = newVaultKey();
+    const epoch = "00112233aabbccdd";
+    const a = pc(svc, "u", "desk");
+    svc.legacy("u", vk, epoch, a.id.fp);
+    // The desk's state as the old Harbor left it: the key in vault.json, its X25519 pair beside it, a synced key and the recovery code's item.
+    const row = rowId(vk, "s:OLD_KEY");
+    const rec = rowId(vk, "~recovery");
+    const now = t;
+    svc.rows.get("u")?.set(row, { id: row, v: seal(vk, row, epoch, encodeItem({ id: "s:OLD_KEY", data: enc("old value") })), at: now, by: a.id.fp, seq: now + 10 });
+    svc.rows.get("u")?.set(rec, { id: rec, v: seal(vk, rec, epoch, encodeItem({ id: "~recovery", data: enc("AAAAA-BBBBB") })), at: now, by: a.id.fp, seq: now + 11 });
+    a.keys.set("s:OLD_KEY", "old value", now);
+    const saved = { account: "u", epoch, vk: Buffer.from(vk).toString("base64"), cursor: 0, rows: { [row]: { id: "s:OLD_KEY", h: hashOf(enc("old value")), at: now }, [rec]: { id: "~recovery", h: "x", at: now } }, fresh: true };
+    writeFileSync(join(a.dir, "vault.json"), JSON.stringify(saved));
+    writeFileSync(join(a.dir, "vault-device.json"), JSON.stringify({ pub: "p", key: "k" }));
+    a.keys.mark = `u:${epoch}`;
+    const desk = pc(svc, "u", "desk", { id: a.id, dir: a.dir, files: a.files, keys: a.keys });
+    expect(existsSync(join(a.dir, "vault-device.json"))).toBe(false);
+
+    // A new laptop first, while the desk is still off: it waits, and makes no vault of its own over the old one.
+    const b = pc(svc, "u", "laptop");
+    await b.sync();
+    expect(b.vault.status().state).toBe("locked");
+    expect(svc.keys.has("u")).toBe(false);
+    // The desk (updated) runs: it hands its key over; the old wraps and the recovery code's item go.
+    await desk.sync();
+    expect(svc.keys.get("u")?.epoch).toBe(epoch);
+    expect(svc.all("u").some((r) => r.id.startsWith("key:"))).toBe(false);
+    expect(svc.rows.get("u")?.get(rec)?.v).toBeNull();
+    expect(desk.keys.get("s:OLD_KEY")).toBe("old value");
+    // The laptop opens on its next round, with the desk off again.
+    await b.sync();
+    expect(b.vault.status().state).toBe("open");
+    expect(b.keys.get("s:OLD_KEY")).toBe("old value");
+    expect(b.vault.status().items).toBe(1);
+    // And a change on the laptop reaches the desk: same key, same vault.
+    t += 1000;
+    b.keys.set("s:NEW_KEY", "from the laptop");
+    await rounds([b, desk]);
+    expect(desk.keys.get("s:NEW_KEY")).toBe("from the laptop");
   });
 
   test("the newest change of an item wins everywhere; a refreshed token and a sign-out of an integration follow", async () => {
@@ -161,22 +202,14 @@ describe("account vault", () => {
     }
   });
 
-  test("with every other PC off, the recovery code opens the vault on a new PC; a wrong code doesn't", async () => {
+  test("a restart keeps the vault open; a wiped data folder rejoins and deletes nothing anywhere", async () => {
     const svc = new FakeVaultService(clock);
     const a = pc(svc, "u", "a");
     a.keys.set("s:BOAT_API_KEY", "boat");
     await a.sync();
-    const code = a.vault.status().code ?? "";
     const c = pc(svc, "u", "new-pc");
     await c.sync();
-    expect(c.vault.status().state).toBe("locked");
-    await expect(c.vault.unlock("not a code")).rejects.toThrow(/isn't a recovery code/);
-    await expect(c.vault.unlock("00000-00000-00000-00000-00000")).rejects.toThrow(/doesn't open/);
-    // Typed loosely: lower case, no dashes, O for 0.
-    await c.vault.unlock(code.toLowerCase().replace(/-/g, " ").replace(/0/g, "o"));
-    expect(c.vault.status().state).toBe("open");
     expect(c.keys.get("s:BOAT_API_KEY")).toBe("boat");
-    // It wrapped the key for itself: a restart opens without the code.
     const again = pc(svc, "u", "new-pc", { id: c.id, dir: c.dir, files: c.files, keys: c.keys });
     await again.sync();
     expect(again.vault.status().state).toBe("open");
@@ -189,29 +222,17 @@ describe("account vault", () => {
     expect(a.keys.get("s:BOAT_API_KEY")).toBe("boat");
   });
 
-  test("the key goes only to the account's own PCs, asking with their own TLS key", async () => {
+  test("a PC no longer signed in to the account gets nothing", async () => {
     const svc = new FakeVaultService(clock);
     const a = pc(svc, "u", "a");
+    a.keys.set("s:K", "v");
     await a.sync();
     const b = pc(svc, "u", "b");
+    svc.remove("u", b.id.fp);
     await b.sync();
-    // b is removed from the account before a's round: no key for it.
-    svc.devices.get("u")?.delete(b.id.fp);
-    await a.sync();
-    expect(svc.all("u").some((r) => r.id === `key:${b.id.fp}`)).toBe(false);
-    // A request for c's fingerprint signed with another key: refused too.
-    const c = pc(svc, "u", "c");
-    await c.sync();
-    const rows = svc.rows.get("u");
-    const req = rows?.get(`req:${c.id.fp}`);
-    const other = generateIdentity();
-    if (req?.v) {
-      const r = JSON.parse(req.v) as Record<string, string>;
-      const forged = { ...r, spki: Buffer.from(other.der).toString("base64") };
-      rows?.set(req.id, { ...req, v: JSON.stringify(forged), seq: req.seq + 1 });
-    }
-    await a.sync();
-    expect(svc.all("u").some((r) => r.id === `key:${c.id.fp}`)).toBe(false);
+    expect(b.vault.status().state).not.toBe("open");
+    expect(b.vault.status().error).toContain("no longer signed in");
+    expect(b.keys.m.size).toBe(0);
   });
 
   test("signing out takes this PC's copies away once the vault has them; signing in again brings them back", async () => {
@@ -225,17 +246,16 @@ describe("account vault", () => {
     expect(a.files.m.size).toBe(0);
     expect(a.keys.m.size).toBe(0);
     expect(a.vault.status().state).toBe("off");
-    // The new key went out before the copies went: another PC has it.
+    // The new key went out before the copies went: another PC has it at once.
     const b = pc(svc, "u", "b");
     await rounds([b]);
+    expect(b.keys.get("s:NEW")).toBe("made just before signing out");
+    // a signs in again: everything comes back.
     const back = pc(svc, "u", "a", { id: a.id, dir: a.dir, files: a.files, keys: a.keys });
-    expect(b.vault.status().state).toBe("locked"); // no PC with the key ran since b asked…
-    await rounds([back]); // …a signs in again: its own wrapped key opens it at once, and it shares with b
+    await rounds([back]);
     expect(back.vault.status().state).toBe("open");
     expect(back.keys.get("s:NEW")).toBe("made just before signing out");
     expect(back.files.get("f:gmail.accounts/x.json")).toBe("tok");
-    await b.sync();
-    expect(b.keys.get("s:NEW")).toBe("made just before signing out");
   });
 
   test("a sign-out that can't reach the vault keeps everything; another account signing in then finds it set aside, not in its vault", async () => {
@@ -290,21 +310,21 @@ describe("account vault", () => {
     expect(svc.told).toBe(told);
   });
 
-  test("a vault reset on one PC: the others join the new one with what they have", async () => {
+  test("a vault the service started over: every PC joins the new one with what it has", async () => {
     const svc = new FakeVaultService(clock);
     const a = pc(svc, "u", "a");
     a.files.set("f:x.json", "x");
     await a.sync();
     const b = pc(svc, "u", "b");
-    await rounds([b, a, b]);
+    await rounds([b]);
     expect(b.files.get("f:x.json")).toBe("x");
     b.files.set("f:only-b.json", "b");
-    await a.vault.reset();
-    const code = a.vault.status().code;
-    await rounds([b, a, b, a, b]);
+    svc.startOver("u");
+    await rounds([b, a, b, a]);
+    expect(a.vault.status().state).toBe("open");
     expect(b.vault.status().state).toBe("open");
-    expect(b.vault.status().code).toBe(code);
     expect(a.files.get("f:only-b.json")).toBe("b");
+    expect(b.files.get("f:x.json")).toBe("x");
   });
 
   test("a single-host source another PC runs sends nothing and deletes nothing", async () => {
