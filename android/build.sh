@@ -58,6 +58,8 @@ mkdir -p "$W/assets/logos"
 cp "$ROOT/assets/logos/"p-*.{a8,rgba} "$W/assets/logos/"
 # GitHub's mark, for the GitHub repository rows of Add project (NewProject).
 cp "$ROOT/assets/logos/github.a8" "$W/assets/logos/"
+# WhatsApp's, for its sheet's row (WhatsApp.java), as the desktop's Integrations card has it.
+cp "$ROOT/assets/logos/whatsapp.a8" "$W/assets/logos/"
 
 # Dictation on the phone (Voice, Asr): sherpa-onnx's JNI library (onnxruntime linked in) and
 # Silero VAD's model, pinned by SHA-256 and cached between builds. ANDROID_ABIS picks the ABIs

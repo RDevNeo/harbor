@@ -123,6 +123,16 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     hostState = speech.hostState();
     show();
   }, 1000).unref();
+  // WhatsApp's link may start on a phone (hub /v1/apps/whatsapp/link): its QR shows here too.
+  let waSeen = "";
+  setInterval(() => {
+    if (tab !== "integrations") return;
+    const p = mcp.pending("whatsapp");
+    const seen = `${p === undefined ? "-" : (p.qr ?? "")}|${mcp.signedIn("whatsapp")}`;
+    if (seen === waSeen) return;
+    waSeen = seen;
+    show();
+  }, 1000).unref();
   bus.pick = (s) => {
     tab = tabFromSlug(s) ?? tab;
     if (tab === "voice") refreshInputs();

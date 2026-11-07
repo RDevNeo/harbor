@@ -87,7 +87,7 @@ export function localFor(name: string): Local | undefined {
 
 export interface Integrations {
   discord?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> };
-  whatsapp?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void>; code(phone: string): Promise<void>; uncode(): Promise<void> };
+  whatsapp?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> };
   profileEmail?: (token: string) => Promise<string>;
 }
 
@@ -103,11 +103,6 @@ export interface Pending {
   qr?: string;
   note?: string;
   window?: boolean;
-  /** WhatsApp's code: what to try when it didn't link, and a number to try instead. */
-  hint?: string;
-  retry?: { phone: string; label: string };
-  /** How long the code lasts, "5:42". */
-  left?: string;
 }
 
 export const endpoints = {

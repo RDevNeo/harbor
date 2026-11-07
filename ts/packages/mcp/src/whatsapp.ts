@@ -114,36 +114,33 @@ export async function requestHere(req: Obj, waitMs: number): Promise<unknown> {
 }
 
 /**
- * A link with no WhatsApp, for screenshots (scripts/shot --env HARBOR_FAKE_WHATSAPP=…): "qr" and
- * "code" show a link waiting for the phone (a made-up code), "linked" a linked account; "rig"
- * starts unlinked and follows Link, Get a code and Cancel (the phone rig, ts/rig/phonehub.ts).
+ * A link with no WhatsApp, for screenshots (scripts/shot --env HARBOR_FAKE_WHATSAPP=…): "qr" shows a
+ * link waiting for the phone, "linked" a linked account; "rig" starts unlinked and follows Sign in,
+ * Cancel and Sign out, and its QR "is scanned" after 20 s (the phone rig, ts/rig/phonehub.ts).
  */
 const fakeMode = (): string | undefined => {
   const m = process.env.HARBOR_FAKE_WHATSAPP || undefined;
-  return m === "rig" ? rigMode : m;
+  if (m !== "rig") return m;
+  if (rigMode === "qr" && Date.now() - rigSince > 20_000) rigMode = "linked";
+  return rigMode;
 };
-let fakeCode: string | undefined;
 let rigMode = "idle";
+let rigSince = 0;
+const rigTo = (m: string): void => {
+  rigMode = m;
+  rigSince = Date.now();
+};
+/** The made-up account of the fakes (+1 555 123 4567). */
+const FAKE_JID = "15551234567@s.whatsapp.net";
 
 function fakeStatus(mode: string): Obj {
   if (mode === "idle") return { phase: "idle", linked: false, account: null, pairing: null, error: null, sync: "", busy: 0 };
   const linkedNow = mode === "linked";
-  const code = mode === "code" ? "K7QX-2M9P" : fakeCode;
   return {
     phase: linkedNow ? "open" : "pairing",
     linked: linkedNow,
-    account: linkedNow ? { jid: "15550100000@s.whatsapp.net", name: "Sam" } : null,
-    pairing: linkedNow
-      ? null
-      : {
-          qr: "https://wa.me/settings/linked_devices#2@not-a-real-link-code-made-up-for-a-screenshot",
-          code: code ?? null,
-          note: code !== undefined ? "Enter the code on your phone \u{b7} 5:42 left" : "Scan with WhatsApp",
-          // A made-up Brazilian number (no mobile there starts with 1): the hint and its other form.
-          left: code !== undefined ? "5:42" : null,
-          hint: code !== undefined ? "Didn't link? Some Brazilian numbers are on WhatsApp without the 9 after the area code: try +55 11 1234 5678." : null,
-          retry: code !== undefined ? { phone: "+551112345678", label: "Try without the 9" } : null,
-        },
+    account: linkedNow ? { jid: FAKE_JID, name: "Sam" } : null,
+    pairing: linkedNow ? null : { qr: "https://wa.me/settings/linked_devices#2@not-a-real-link-code-made-up-for-a-screenshot", code: null, note: "Scan with WhatsApp" },
     error: null,
     sync: "",
     busy: 0,
@@ -152,14 +149,38 @@ function fakeStatus(mode: string): Obj {
 
 export const signedIn = (): boolean => (fakeMode() !== undefined ? fakeMode() === "linked" : remote()?.account ? true : setup.linked() !== undefined);
 
+/**
+ * A number as people write it: "+1 555 123 4567", "+55 21 98765 4321", else the country code
+ * (by its first digits) and the rest in groups.
+ */
+export function formatPhone(phone: string): string {
+  const d = phone.replace(/\D/g, "");
+  if (d.length < 7) return phone;
+  if (d.startsWith("1") && d.length === 11) return `+1 ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7)}`;
+  if (d.startsWith("55") && (d.length === 12 || d.length === 13)) {
+    const n = d.slice(4);
+    return `+55 ${d.slice(2, 4)} ${n.slice(0, n.length - 4)} ${n.slice(-4)}`;
+  }
+  const one = d[0] === "1" || d[0] === "7";
+  const two = /^(2[07]|3[0-469]|4[013-9]|5[1-8]|6[0-6]|8[1246]|9[0-58])/.test(d);
+  const cc = d.slice(0, one ? 1 : two ? 2 : 3);
+  const groups = d.slice(cc.length).match(/\d{1,4}(?=(\d{4})*$)/g) ?? [];
+  return `+${cc} ${groups.join(" ")}`;
+}
+
+/** Who is linked, as the card says it: the number, else the name. */
+function who(jid: string, name: string | undefined): string {
+  const phone = phoneOf(jid);
+  return phone !== undefined ? formatPhone(phone) : (name ?? "you");
+}
+
 export function accountName(): string | undefined {
-  if (fakeMode() === "linked") return "Sam (+15550100000)";
+  if (fakeMode() === "linked") return who(FAKE_JID, "Sam");
   const r = remote();
   if (r?.account) return r.account;
   const l = setup.linked();
   if (l === undefined) return undefined;
-  const phone = phoneOf(l.jid);
-  return l.name !== "" ? (phone !== undefined ? `${l.name} (${phone})` : l.name) : (phone ?? l.jid);
+  return who(l.jid, l.name !== "" ? l.name : undefined);
 }
 
 /** The host's status, or what's known without it. Doesn't start anything. */
@@ -180,31 +201,34 @@ export async function status(): Promise<Obj> {
 
 export type CardLine = { text: string; tone: 0 | 1 | 2 };
 
-/** The card's line, the same on the desktop and the phone (the hub sends it). Tone 1: in progress, 2: trouble. */
+/**
+ * The card's line, the same on the desktop and the phone (the hub sends it). Tone 1: in progress,
+ * 2: trouble. Linked: "Signed in as +1 555 123 4567", like the other apps' cards; a link that isn't
+ * up says so first ("Connecting… · +1 555…"), so the row keeps one line.
+ */
 export function cardLine(s: Obj, about: string): CardLine {
   const p = obj(s.pairing);
   if (s.pairing !== null && s.pairing !== undefined) return { text: str(p.note) ?? "Linking…", tone: 1 };
   const err = str(s.error);
   const acct = obj(s.account);
   if (s.linked !== true) return err !== undefined ? { text: err, tone: 2 } : { text: about, tone: 0 };
-  const jid = str(acct.jid) ?? "";
-  const who = `Linked as ${str(acct.name) ?? phoneOf(jid) ?? "you"}`;
+  const as = who(str(acct.jid) ?? "", str(acct.name));
   // Another PC of the account runs it: one link, one PC (WhatsApp would drop or ban a second copy of the keys).
   const host = str(s.host);
   if (host !== undefined) {
-    if (str(s.phase) === "remote") return { text: `${who} · Runs on ${host}, which this PC can't reach now`, tone: 2 };
-    return { text: `${who} · Runs on ${host}`, tone: str(s.phase) === "closed" ? 2 : 0 };
+    if (str(s.phase) === "remote") return { text: `Signed in as ${as} · Runs on ${host}, which this PC can't reach now`, tone: 2 };
+    return { text: `Signed in as ${as} · Runs on ${host}`, tone: str(s.phase) === "closed" ? 2 : 0 };
   }
   switch (str(s.phase)) {
     case "open":
-      return { text: str(s.sync) !== undefined ? `${who} · Syncing chats (${String(s.sync)})` : `${who} · Connected`, tone: 0 };
+      return str(s.sync) !== undefined ? { text: `Syncing chats (${String(s.sync)}) · ${as}`, tone: 1 } : { text: `Signed in as ${as}`, tone: 0 };
     case "connecting":
     case "installing":
-      return { text: `${who} · Connecting…`, tone: 1 };
+      return { text: `Connecting… · ${as}`, tone: 1 };
     case "closed":
-      return { text: `${who} · Offline, retrying`, tone: 2 };
+      return { text: `Offline, retrying · ${as}`, tone: 2 };
     default:
-      return { text: `${who} · Starts with Harbor`, tone: 0 };
+      return { text: `Signed in as ${as}`, tone: 0 };
   }
 }
 
@@ -219,55 +243,30 @@ export function card(about: string, changed: () => void = () => {}): CardLine {
       changed();
     });
   }
-  return lastCard.s === undefined ? { text: signedIn() ? `Linked as ${accountName() ?? "you"}` : about, tone: 0 } : cardLine(lastCard.s, about);
+  return lastCard.s === undefined ? { text: signedIn() ? `Signed in as ${accountName() ?? "you"}` : about, tone: 0 } : cardLine(lastCard.s, about);
 }
 
 const SHORT = 60_000;
-/** A code: the first link may install the engine, and the code gets a new link of its own (and a second number for Brazil). */
-const CODE_WAIT = 180_000;
 
-/** Starts a link on this PC; with `phone`, also asks for a code to type on that phone. */
-export async function link(phone?: string): Promise<Obj> {
-  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") rigMode = "qr";
+/** Starts a link on this PC: its QR, for WhatsApp › Settings › Linked devices › Link a device. */
+export async function link(): Promise<Obj> {
+  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") rigTo("qr");
   const f = fakeMode();
   if (f !== undefined) return fakeStatus(f);
   // Linked here, run here: the account's other PCs then reach it through this one.
   await claimHere(NAME);
-  return obj(await request(phone === undefined ? { op: "link" } : { op: "link", phone }, SHORT));
-}
-
-/** A code to type on the phone instead of scanning (WhatsApp › Linked devices › Link with phone number). */
-export async function code(phone: string): Promise<Obj> {
-  const f = fakeMode();
-  if (f !== undefined) {
-    fakeCode = "K7QX-2M9P";
-    return fakeStatus(f);
-  }
-  await claimHere(NAME);
-  return obj(await request({ op: "code", phone }, CODE_WAIT));
-}
-
-/** Back from a code to the QR and the number field: a different number, or the QR after all. */
-export async function uncode(): Promise<Obj> {
-  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") fakeCode = undefined;
-  const f = fakeMode();
-  if (f !== undefined) return fakeStatus(f);
-  const r = remote();
-  return obj(r ? await askRemote(NAME, r, { op: "uncode" }, 5000) : await ask({ op: "uncode" }, 5000));
+  return obj(await request({ op: "link" }, SHORT));
 }
 
 export async function cancel(): Promise<void> {
-  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") {
-    rigMode = "idle";
-    fakeCode = undefined;
-    return;
-  }
+  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") return rigTo("idle");
   const r = remote();
   await (r ? askRemote(NAME, r, { op: "cancel" }, 15_000) : ask({ op: "cancel" }, 15_000)).catch(() => {});
 }
 
 /** Unlinks: WhatsApp drops this device and what Harbor stored of the account goes. */
 export async function unlink(): Promise<void> {
+  if (process.env.HARBOR_FAKE_WHATSAPP === "rig") return rigTo("idle");
   const r = remote();
   if (r) await askRemote(NAME, r, { op: "signout" }, 30_000);
   else if (await canConnect()) await ask({ op: "signout" }, 30_000);
@@ -280,7 +279,7 @@ export function signOut(): void {
   void unlink().catch(() => {});
 }
 
-/** The Settings card's link: follows the host until linked, putting the QR and code in `Pending`. */
+/** The Settings card's link: follows the host until linked, putting the QR in `Pending`. */
 export async function login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> {
   await link();
   for (;;) {
@@ -298,17 +297,9 @@ export async function login(signal: AbortSignal, update: (p: Pending) => void): 
     }
     const out: Pending = {};
     const qr = str(p.qr);
-    const c = str(p.code);
     const note = str(p.note);
-    const hint = str(p.hint);
-    const retry = obj(p.retry);
     if (qr !== undefined) out.qr = qr;
-    if (c !== undefined) out.code = c;
     if (note !== undefined) out.note = note;
-    if (hint !== undefined) out.hint = hint;
-    const left = str(p.left);
-    if (left !== undefined) out.left = left;
-    if (str(retry.phone) !== undefined) out.retry = { phone: str(retry.phone) ?? "", label: str(retry.label) ?? "Try again" };
     update(out);
   }
 }

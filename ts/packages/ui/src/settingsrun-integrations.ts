@@ -16,7 +16,7 @@ export async function integrationsFeed(host: IntHost, qr: (url: string) => Pixel
   };
   // A rig has no pointer: HTS_SIGNIN=context7,discord presses those apps' Sign in once the page opens
   // (HARBOR_SHOT_SIGNIN too, which scripts/shot passes on); "what:id" presses another of the card's
-  // buttons, e.g. "signin:whatsapp,whatsapp-ok:whatsapp" with HARBOR_FAKE_WHATSAPP=qr shows its QR.
+  // buttons, e.g. "signin:discord,discord-ok:discord" passes Discord's warning.
   for (const step of (process.env.HTS_SIGNIN ?? process.env.HARBOR_SHOT_SIGNIN ?? "").split(",")) {
     const [what, id] = step.includes(":") ? step.split(":") : ["signin", step];
     if (what && id) integrationsAct(api, forms, { ...host, changed: () => void setTimeout(() => host.changed(), 0) }, what, id, "", "");

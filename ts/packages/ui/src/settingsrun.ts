@@ -25,7 +25,9 @@ const ctor = Reflect.get(ui, "SettingsWindow");
 if (typeof ctor !== "function") throw new Error("settings.slint has no SettingsWindow");
 const win: SettingsWindow = new ctor();
 const bus = busOf<SettingsView>(win, "SettingsBus");
-win.dark = process.env.HTS_LIGHT === undefined;
+// HTS_LIGHT=1 (HARBOR_SHOT_LIGHT=1 through scripts/shot --env): the light theme.
+const light = (process.env.HTS_LIGHT ?? process.env.HARBOR_SHOT_LIGHT) !== undefined;
+win.dark = !light;
 
 // The rig doesn't reach Hugging Face: a model download fails at once, here.
 voice.setFetcher(() => Promise.reject(new Error("no network in the settings runner")));
@@ -40,7 +42,7 @@ await mountSettings(
     theme: {
       dark: () => win.dark,
       set: (dark) => {
-        win.dark = process.env.HTS_LIGHT === undefined && dark;
+        win.dark = !light && dark;
       },
     },
     back: () => {},

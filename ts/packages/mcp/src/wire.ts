@@ -11,7 +11,5 @@ integrate({
     accountName: () => whatsapp.accountName(),
     signOut: () => whatsapp.signOut(),
     login: (signal, update) => whatsapp.login(signal, update),
-    code: async (phone) => void (await whatsapp.code(phone)),
-    uncode: async () => void (await whatsapp.uncode()),
   },
 });

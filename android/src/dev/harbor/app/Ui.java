@@ -382,6 +382,42 @@ final class Ui {
         return b;
     }
 
+    /** An app's mark as the desktop's Integrations cards draw it: the logo (an alpha mask in
+     *  `brand`) in a rounded tile, `size` dp. */
+    static View appTile(Context c, String file, int brand, float size) {
+        FrameLayout f = new FrameLayout(c);
+        f.setBackground(round(G100, LINE, 10));
+        android.graphics.Bitmap b = logo(c, file);
+        if (b != null) {
+            ImageView iv = new ImageView(c);
+            iv.setImageBitmap(b);
+            iv.setColorFilter(brand, android.graphics.PorterDuff.Mode.SRC_IN);
+            f.addView(iv, new FrameLayout.LayoutParams(dp(size * 0.56f), dp(size * 0.56f), Gravity.CENTER));
+        }
+        f.setLayoutParams(new LinearLayout.LayoutParams(dp(size), dp(size)));
+        return f;
+    }
+
+    /** The desktop's green "Signed in" badge. */
+    static TextView pill(Context c, String label) {
+        TextView t = bold(c, label, 12, GREEN);
+        t.setIncludeFontPadding(false);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(9), dp(5), dp(9), dp(5));
+        t.setBackground(round((GREEN & 0x00ffffff) | 0x24000000, (GREEN & 0x00ffffff) | 0x55000000, 12));
+        return t;
+    }
+
+    /** A card row's own button, smaller than button(): primary the black pill, else plain text. */
+    static TextView rowButton(Context c, String label, boolean primary, View.OnClickListener on) {
+        TextView t = bold(c, label, 14, primary ? ON_INK : FG);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(14), dp(8), dp(14), dp(8));
+        t.setBackground(primary ? press(INK, 0, 18) : press(0, 0, 18));
+        t.setOnClickListener(on);
+        return t;
+    }
+
     /** The desktop's account mark: the provider's logo with the account badge ("AB") in its
      *  lower right corner. `size` in dp. */
     static View accountMark(Context c, String file, String badge, int size) {

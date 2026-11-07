@@ -341,7 +341,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     return ok(await discordInfo());
   };
 
-  /** WhatsApp's link on this PC as the phone shows it: the desktop card's line, and a running link's QR drawn as rows and its code. */
+  /** WhatsApp's link on this PC as the phone shows it: the desktop card's line, and and a running link's QR drawn as rows. */
   const whatsappInfo = async (): Promise<Json> => {
     const raw = await whatsapp.status();
     const s = plain(raw) as Record<string, Json>;
@@ -351,26 +351,23 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
   };
 
   const whatsappCall = async (action: string, b: Record<string, unknown>): Promise<Reply> => {
-    const phone = typeof b.phone === "string" ? b.phone.trim() : "";
     try {
       switch (action) {
-        case "link":
+        case "link": {
           if (b.accept !== true) throw new Error("Linking needs the warning accepted first.");
-          await whatsapp.link(phone === "" ? undefined : phone);
-          break;
-        case "code": {
-          if (phone === "") throw new Error("Pass the phone number.");
-          // The phone waits 25 s at most: a slower code (a first install, Brazil's second form)
-          // still comes, in the sheet's next look ("Getting a code…" until then).
-          const asked = whatsapp.code(phone);
-          asked.catch(() => {});
-          await Promise.race([asked, new Promise((r) => setTimeout(r, 20_000))]);
+          // The desktop card's own sign-in: the PC's Settings shows the same QR, for this phone to scan.
+          mcp.signIn("whatsapp");
+          const until = Date.now() + 8000;
+          for (;;) {
+            const s = await whatsapp.status();
+            if (s.pairing !== null && s.pairing !== undefined) break;
+            if (s.linked === true || mcp.pending("whatsapp") === undefined || Date.now() > until) break;
+            await new Promise((r) => setTimeout(r, 300));
+          }
           break;
         }
-        case "uncode":
-          await whatsapp.uncode();
-          break;
         case "cancel":
+          mcp.cancel("whatsapp");
           await whatsapp.cancel();
           break;
         case "signout":

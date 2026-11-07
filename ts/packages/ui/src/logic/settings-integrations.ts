@@ -13,9 +13,9 @@ export interface IntAccount {
 export type IntegrationAction = "" | "signin" | "google" | "signout" | "cancel" | "cancel-form" | "add";
 
 /** What opens under the card's head. */
-export type IntegrationForm = "" | "pending" | "discord-qr" | "discord" | "whatsapp-qr" | "whatsapp" | "google" | "key" | "accounts";
+export type IntegrationForm = "" | "pending" | "discord-qr" | "discord" | "whatsapp-qr" | "google" | "key" | "accounts";
 
-const ACTS = ["signin", "google", "signout", "cancel", "cancel-form", "add", "own-client", "save-key", "save-google", "get-key", "google-help", "harbors", "discord-ok", "discord-window", "whatsapp-ok", "whatsapp-code", "whatsapp-uncode", "copy", "open-page", "make-default", "signout-account", "dismiss", "chip"] as const;
+const ACTS = ["signin", "google", "signout", "cancel", "cancel-form", "add", "own-client", "save-key", "save-google", "get-key", "google-help", "harbors", "discord-ok", "discord-window", "copy", "open-page", "make-default", "signout-account", "dismiss", "chip"] as const;
 
 /** One app's card, as slint/settings-integrations.slint draws it (`IntApp`). */
 export interface IntApp {
@@ -32,12 +32,6 @@ export interface IntApp {
   gear: boolean;
   form: IntegrationForm;
   code: string;
-  /** WhatsApp's code: what to try when it didn't link, and the other number's button (Brazil's 9). */
-  hint: string;
-  retry: string;
-  retry_text: string;
-  /** How long the code lasts: "5:42 left". */
-  code_left: string;
   has_url: boolean;
   qr: Pixels;
   has_qr: boolean;
@@ -76,7 +70,7 @@ export interface IntData {
 }
 
 /** The form a card has open, which the Rust app keeps in the page's memory. */
-export type Form = { kind: "key" } | { kind: "google"; clientId: string; secret: string } | { kind: "discord" } | { kind: "whatsapp" };
+export type Form = { kind: "key" } | { kind: "google"; clientId: string; secret: string } | { kind: "discord" };
 
 /** What the page reads of the apps; `mcp` answers it for real, a test answers it with canned values. */
 export interface AppsView {
@@ -118,34 +112,32 @@ function card(a: mcp.App, i: IntInput): IntApp {
   const line = discord ? view.discordLine(a.about) : wa ? view.whatsappLine(a.about) : undefined;
 
   let action: IntegrationAction = "signin";
-  let actionText = wa ? "Link" : "Sign in";
+  let actionText = "Sign in";
   let primary = true;
   let badge = false;
   let gear = false;
   if (pending) [action, actionText, primary] = ["cancel", "Cancel", false];
   else if (form) [action, actionText, primary] = ["cancel-form", "Cancel", false];
   else if (signed && google) [action, actionText, primary] = ["add", "Add account", false];
-  else if (signed) [action, actionText, primary, badge] = ["signout", wa ? "Unlink" : "Sign out", false, true];
+  else if (signed) [action, actionText, primary, badge] = ["signout", "Sign out", false, true];
   else if (builtin) [action, actionText, gear] = ["google", "Sign in with Google", true];
 
   let sub = a.about;
   let tone: IntApp["sub_tone"] = 0;
   if (pending?.note !== undefined) [sub, tone] = [pending.note, 1];
-  else if (pending?.code !== undefined) [sub, tone] = [wa ? "Enter the code on your phone" : "Enter the code below in your browser", 1];
+  else if (pending?.code !== undefined) [sub, tone] = ["Enter the code below in your browser", 1];
   else if (pending && wa) [sub, tone] = ["Getting WhatsApp ready\u{2026}", 1];
   else if (pending) [sub, tone] = ["Finish in your browser\u{2026}", 1];
-  else if (form && (discord || wa)) sub = "Read this first";
+  else if (form?.kind === "discord") sub = "Read this first";
   else if (form?.kind === "google") sub = "Add your Google OAuth client below";
   else if (form) sub = "Paste an API key below";
   else if (accounts.length > 1) sub = `${accounts.length} accounts`;
   else if (line !== undefined && (signed || line.tone !== 0)) [sub, tone] = [line.text, line.tone === 2 ? 2 : line.tone === 1 ? 1 : 0];
   else if (signed) sub = view.account(a.id) !== undefined ? `Signed in as ${view.account(a.id)}` : a.about;
-  // WhatsApp's note carries the code's time left, which its card shows beside the code instead.
-  if (wa && pending?.code !== undefined) [sub, tone] = ["Enter the code on your phone", 1];
 
   let open: IntegrationForm = "";
   if (pending && discord) open = pending.qr !== undefined ? "discord-qr" : "";
-  else if (pending && wa) open = pending.qr !== undefined || pending.code !== undefined ? "whatsapp-qr" : "";
+  else if (pending && wa) open = pending.qr !== undefined ? "whatsapp-qr" : "";
   else if (pending) open = pending.code !== undefined || pending.url !== undefined ? "pending" : "";
   else if (form) open = form.kind;
   else if (accounts.length > 0) open = "accounts";
@@ -155,7 +147,8 @@ function card(a: mcp.App, i: IntInput): IntApp {
     sub,
     sub_tone: tone,
     tile: i.tile(a.id),
-    busy: pending !== undefined,
+    // WhatsApp's QR is the whole of its link: no spinner beside it (one while the QR comes).
+    busy: pending !== undefined && !(wa && pending.qr !== undefined),
     action,
     action_text: actionText,
     action_primary: primary,
@@ -163,10 +156,6 @@ function card(a: mcp.App, i: IntInput): IntApp {
     gear,
     form: open,
     code: pending?.code ?? "",
-    hint: pending?.hint ?? "",
-    retry: pending?.retry?.phone ?? "",
-    retry_text: pending?.retry?.label ?? "",
-    code_left: pending?.left !== undefined ? `${pending.left} left` : "",
     has_url: pending?.url !== undefined,
     qr: pending?.qr !== undefined ? i.qr(pending.qr) : blank,
     has_qr: pending?.qr !== undefined,
@@ -239,9 +228,6 @@ export interface AppsApi {
   setGoogleDefault(id: string, email: string): void;
   signOutAccount(id: string, email: string): void;
   toggleOff(id: string): void;
-  /** WhatsApp's link by number: a code for the phone (signin.ts `whatsappCode`). */
-  whatsappCode(id: string, phone: string, changed: () => void): void;
-  whatsappUncode(id: string, changed: () => void): void;
   pendingUrl(id: string): string | undefined;
 }
 
@@ -258,7 +244,6 @@ export function integrationsAct(api: AppsApi, forms: Map<string, Form>, host: In
     case "signin":
       if (app?.auth.kind === "key") forms.set(id, { kind: "key" });
       else if (app?.auth.kind === "discord") forms.set(id, { kind: "discord" });
-      else if (app?.auth.kind === "whatsapp") forms.set(id, { kind: "whatsapp" });
       else if (app?.auth.kind === "google") {
         const c = api.googleClient(id);
         forms.set(id, { kind: "google", clientId: c.id, secret: c.secret });
@@ -300,17 +285,6 @@ export function integrationsAct(api: AppsApi, forms: Map<string, Form>, host: In
     case "discord-ok":
       api.signIn(id, changed);
       forms.delete(id);
-      break;
-    case "whatsapp-ok":
-      api.signIn(id, changed);
-      forms.delete(id);
-      break;
-    case "whatsapp-code":
-      if (a.replace(/\D/g, "").length < 8) return;
-      api.whatsappCode(id, a, changed);
-      break;
-    case "whatsapp-uncode":
-      api.whatsappUncode(id, changed);
       break;
     case "discord-window":
       host.discordWindow();

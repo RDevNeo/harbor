@@ -3,10 +3,7 @@ package dev.harbor.app;
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
-import android.text.InputType;
 import android.view.Gravity;
-import android.view.View;
-import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -15,12 +12,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** The WhatsApp app of a PC, from the phone (Settings › Apps; hub `/v1/apps/whatsapp`,
- *  android/PROTOCOL.md), as the desktop's card has it: the card's line, who is linked and
- *  Unlink, or a link to start. A link runs on the PC; this sheet shows its QR code (for
- *  another phone's camera) and, since a phone can't scan its own screen, asks for this
- *  phone's number to get the code WhatsApp's "Link with phone number instead" takes. The
- *  sheet asks again every 2 s while it's open: the QR rotates. Every call goes to one PC,
- *  the one Settings shows (the link lives on that PC). */
+ *  android/PROTOCOL.md), as the desktop's Integrations card has it: one row (logo, "WhatsApp",
+ *  the card's line) with Sign in (straight to the QR), or the green "Signed in" badge and Sign out, or Cancel while
+ *  a link waits, its QR under it. A link runs on the PC, which shows the same QR: a phone can't
+ *  scan its own screen, so it's scanned from another phone, or this one scans the PC's. The
+ *  sheet asks again every 2 s while it's open: the QR rotates. Every call goes to one PC, the
+ *  one Settings shows (the link lives on that PC). */
 final class WhatsApp {
     private WhatsApp() { }
 
@@ -31,18 +28,14 @@ final class WhatsApp {
     private static int round;
     private static String qrKey;
     private static Bitmap qrBitmap;
-    /** The number typed so far: the sheet redraws every 2 s and mustn't lose it. */
-    private static String typed = "";
-
-    static final String WARNING = "Harbor links to your WhatsApp as another device, like WhatsApp Web, through an "
-            + "unofficial client. WhatsApp's terms don't allow that and can ban the account. Agents send only what "
-            + "you ask, paced, never in bulk. Chats are stored on the PC only.";
+    /** WhatsApp's mark, in its brand green (assets/logos/whatsapp.a8, the desktop's). */
+    static final int BRAND = 0xff25d366;
 
     /** The row's subtitle: `card.text`, verbatim (the desktop card's line). */
     static String summary(JSONObject r) {
         JSONObject c = r.optJSONObject("card");
         if (c != null) return c.optString("text");
-        return r.optBoolean("linked") ? "Linked" : "Not linked";
+        return r.optBoolean("linked") ? "Signed in" : "Not signed in";
     }
 
     static int tone(JSONObject r) {
@@ -59,7 +52,6 @@ final class WhatsApp {
         if (sheet != null) sheet.dismiss();
         Sheet s = new Sheet(a, "WhatsApp");
         sheet = s;
-        typed = "";
         int my = ++round;
         render(a, hub, pc, s, r);
         s.dialog.setOnDismissListener(d -> {
@@ -79,105 +71,61 @@ final class WhatsApp {
             JSONObject got = r;
             Ui.main.post(() -> {
                 if (my != round || a.isFinishing() || a.isDestroyed()) return;
-                // Never while the number is being typed: a redraw would take the keyboard away.
-                if (got != null && !typing(s)) render(a, hub, pc, s, got);
+                if (got != null) render(a, hub, pc, s, got);
                 Ui.main.postDelayed(() -> poll(a, hub, pc, s, my), 2000);
             });
         });
     }
 
-    private static boolean typing(Sheet s) {
-        View f = s.body.findFocus();
-        return f instanceof EditText;
-    }
-
     private static void render(Activity a, Hub hub, String pc, Sheet s, JSONObject r) {
         s.body.removeAllViews();
         String where = hub.labelOn(pc);
-        JSONObject acc = r.optJSONObject("account");
         JSONObject link = r.optJSONObject("pairing");
         boolean linked = r.optBoolean("linked");
 
         s.body.addView(Ui.text(a, "Agents on " + where + " can read and send on WhatsApp as you, only when you ask them to. The link and your chats stay on the PC.", 14, Ui.G700),
                 Ui.margins(Ui.fill(), 6, 0, 6, 12));
 
+        // The desktop card's head: logo, name, its line, and its badge and button.
         LinearLayout c = s.card();
-        LinearLayout state = Ui.cardRow(a, Ui.I_PLUG, "WhatsApp on " + where, summary(r), Ui.FG, null);
-        TextView sub = Discord.subOf(state);
+        LinearLayout row = Ui.cardRow(a, Ui.appTile(a, "whatsapp.a8", BRAND, 40), "WhatsApp", summary(r), Ui.FG, null);
+        TextView sub = Discord.subOf(row);
         if (sub != null) sub.setTextColor(Discord.toneColor(tone(r)));
-        Ui.wrapSub(state, 4);
-        c.addView(state, Ui.fill());
-        if (linked && acc != null) {
-            String name = acc.optString("name");
-            String jid = acc.optString("jid");
-            String phone = jid.contains("@") ? "+" + jid.substring(0, jid.indexOf('@')) : jid;
-            c.addView(Ui.gap(a));
-            LinearLayout row = Ui.cardRow(a, Ui.I_USER, name.isEmpty() ? phone : name, name.isEmpty() ? "" : phone, Ui.FG, null);
-            row.addView(Ui.button(a, "Unlink", false, v -> confirmOut(a, hub, pc, s)));
-            c.addView(row, Ui.fill());
-        } else if (link == null) {
-            c.addView(Ui.button(a, "Link", true, v -> confirmLink(a, hub, pc, s)), Ui.margins(Ui.fill(), 16, 4, 16, 14));
+        if (link != null) {
+            row.addView(Ui.rowButton(a, "Cancel", false, v -> post(a, hub, pc, s, "cancel")), trailing());
+        } else if (linked) {
+            row.addView(Ui.pill(a, "Signed in"), trailing());
+            row.addView(Ui.rowButton(a, "Sign out", false, v -> confirmOut(a, hub, pc, s)), trailing());
+        } else {
+            row.addView(Ui.rowButton(a, "Sign in", true, v -> post(a, hub, pc, s, "link")), trailing());
         }
-
-        if (link != null) linking(a, hub, pc, s, r, link, where);
+        c.addView(row, Ui.fill());
+        if (link != null) qrCode(a, c, r);
     }
 
-    /** A link waiting for the phone: its QR, its code or a number to get one, Cancel. */
-    private static void linking(Activity a, Hub hub, String pc, Sheet s, JSONObject r, JSONObject link, String where) {
-        LinearLayout sc = s.card();
-        String code = link.isNull("code") ? "" : link.optString("code");
-        String note = link.optString("note");
-        sc.addView(Ui.text(a, note.isEmpty() ? "Linking on " + where + "…" : note, 15, Ui.FG), Ui.margins(Ui.fill(), 18, 14, 18, 8));
-        if (!code.isEmpty()) {
-            TextView big = Ui.text(a, code, 30, Ui.FG);
-            big.setGravity(Gravity.CENTER);
-            big.setTypeface(android.graphics.Typeface.MONOSPACE);
-            sc.addView(big, Ui.margins(Ui.fill(), 18, 4, 18, 6));
-            sc.addView(Ui.text(a, "In WhatsApp: Settings › Linked devices › Link a device › Link with phone number instead, then type this code.", 13, Ui.G700),
-                    Ui.margins(Ui.fill(), 18, 0, 18, 8));
-            sc.addView(Ui.button(a, "Copy code", true, v -> { Ui.copy(a, code.replace("-", "")); Ui.toast(a, "Copied"); }), Ui.margins(Ui.fill(), 16, 4, 16, 4));
-            // Didn't link: what to check, and for Brazil the number's other form (the 9 after the area code).
-            String hint = link.isNull("hint") ? "" : link.optString("hint");
-            if (!hint.isEmpty()) sc.addView(Ui.text(a, hint, 13, Ui.G700), Ui.margins(Ui.fill(), 18, 8, 18, 6));
-            JSONObject retry = link.optJSONObject("retry");
-            if (retry != null && !retry.optString("phone").isEmpty()) {
-                String other = retry.optString("phone");
-                sc.addView(Ui.button(a, retry.optString("label", "Try again"), false, v -> post(a, hub, pc, s, "code", other)), Ui.margins(Ui.fill(), 16, 0, 16, 4));
-            }
-            sc.addView(Ui.button(a, "Other number", false, v -> post(a, hub, pc, s, "uncode", null)), Ui.margins(Ui.fill(), 16, 0, 16, 4));
-        } else {
-            Bitmap qr = qr(r.optJSONObject("qr"));
-            if (qr != null) {
-                ImageView iv = new ImageView(a);
-                BitmapDrawable d = new BitmapDrawable(a.getResources(), qr);
-                d.setFilterBitmap(false);
-                iv.setImageDrawable(d);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(qr.getWidth(), qr.getHeight());
-                lp.gravity = Gravity.CENTER_HORIZONTAL;
-                lp.topMargin = Ui.dp(4);
-                sc.addView(iv, lp);
-                TextView cap = Ui.text(a, "Scan from the phone with WhatsApp: Settings › Linked devices › Link a device.", 13, Ui.G700);
-                cap.setGravity(Gravity.CENTER);
-                sc.addView(cap, Ui.margins(Ui.fill(), 18, 8, 18, 4));
-            }
-            sc.addView(Ui.text(a, "WhatsApp is on this phone? Get a code instead: your number, with its country code.", 13, Ui.G700), Ui.margins(Ui.fill(), 18, 8, 18, 6));
-            EditText num = Ui.input(a, "+1 555 123 4567", false);
-            num.setInputType(InputType.TYPE_CLASS_PHONE);
-            num.setText(typed);
-            num.addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence x, int b, int c2, int d) { }
-                @Override public void onTextChanged(CharSequence x, int b, int c2, int d) { typed = x.toString(); }
-                @Override public void afterTextChanged(android.text.Editable e) { }
-            });
-            sc.addView(num, Ui.margins(Ui.fill(), 16, 0, 16, 6));
-            sc.addView(Ui.button(a, "Get a code", false, v -> {
-                String p = num.getText().toString().trim();
-                if (p.replaceAll("\\D", "").length() < 8) { Ui.toast(a, "Type the number with its country code"); return; }
-                num.clearFocus();
-                post(a, hub, pc, s, "code", p);
-            }), Ui.margins(Ui.fill(), 16, 0, 16, 4));
+    private static LinearLayout.LayoutParams trailing() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = Ui.dp(6);
+        lp.gravity = Gravity.CENTER_VERTICAL;
+        return lp;
+    }
+
+    /** A link waiting for a phone: only its QR and how to scan it, under the row. */
+    private static void qrCode(Activity a, LinearLayout c, JSONObject r) {
+        Bitmap qr = qr(r.optJSONObject("qr"));
+        if (qr != null) {
+            ImageView iv = new ImageView(a);
+            BitmapDrawable d = new BitmapDrawable(a.getResources(), qr);
+            d.setFilterBitmap(false);
+            iv.setImageDrawable(d);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(qr.getWidth(), qr.getHeight());
+            lp.gravity = Gravity.CENTER_HORIZONTAL;
+            lp.topMargin = Ui.dp(2);
+            c.addView(iv, lp);
         }
-        sc.addView(Ui.button(a, "Cancel", false, v -> post(a, hub, pc, s, "cancel", null)), Ui.margins(Ui.fill(), 16, 4, 16, 14));
+        TextView cap = Ui.text(a, "Scan it with WhatsApp on another phone, or scan the PC's screen with this one: WhatsApp › Settings › Linked devices › Link a device.", 13, Ui.G700);
+        cap.setGravity(Gravity.CENTER);
+        c.addView(cap, Ui.margins(Ui.fill(), 18, 10, 18, 16));
     }
 
     /** The hub's `qr` ({size, rows}) as a bitmap of whole pixels a module, about 240 dp wide. */
@@ -195,25 +143,17 @@ final class WhatsApp {
         return qrBitmap;
     }
 
-    private static void confirmLink(Activity a, Hub hub, String pc, Sheet s) {
-        Ui.dialog(a).setTitle("Link WhatsApp on " + hub.labelOn(pc) + "?")
-                .setMessage(WARNING)
-                .setPositiveButton("I understand, link", (d, w) -> post(a, hub, pc, s, "link", null))
-                .setNegativeButton("Cancel", null).show();
-    }
-
     private static void confirmOut(Activity a, Hub hub, String pc, Sheet s) {
-        Ui.dialog(a).setTitle("Unlink WhatsApp on " + hub.labelOn(pc) + "?")
+        Ui.dialog(a).setTitle("Sign out of WhatsApp on " + hub.labelOn(pc) + "?")
                 .setMessage("WhatsApp drops that device, and the chats Harbor stored there are deleted. Agents there can't use WhatsApp until you link it again.")
-                .setPositiveButton("Unlink", (d, w) -> post(a, hub, pc, s, "signout", null))
+                .setPositiveButton("Sign out", (d, w) -> post(a, hub, pc, s, "signout"))
                 .setNegativeButton("Cancel", null).show();
     }
 
-    private static void post(Activity a, Hub hub, String pc, Sheet s, String action, String phone) {
+    private static void post(Activity a, Hub hub, String pc, Sheet s, String action) {
         Ui.bg(a, () -> {
             JSONObject b = new JSONObject();
             if ("link".equals(action)) b.put("accept", true);
-            if (phone != null) b.put("phone", phone);
             return hub.callOn(pc, "POST", "/v1/apps/whatsapp/" + action, b);
         }, r -> {
             if (sheet == s) render(a, hub, pc, s, r);

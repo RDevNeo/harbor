@@ -142,30 +142,6 @@ export function signIn(id: string, changed: () => void = () => undefined): void 
     });
 }
 
-/** WhatsApp's link by number: a code for the user to type on their phone, into the running link's card. */
-export function whatsappCode(id: string, phone: string, changed: () => void = () => undefined): void {
-  const w = integrations.whatsapp;
-  if (!w) return;
-  ERRORS.delete(id);
-  void w
-    .code(phone)
-    .catch((e: unknown) => {
-      ERRORS.set(id, e instanceof Error ? e.message : String(e));
-    })
-    .finally(changed);
-}
-
-/** WhatsApp's code card back to the QR and the number field (another number). */
-export function whatsappUncode(id: string, changed: () => void = () => undefined): void {
-  const w = integrations.whatsapp;
-  if (!w) return;
-  ERRORS.delete(id);
-  void w
-    .uncode()
-    .catch(() => {})
-    .finally(changed);
-}
-
 interface Cmd {
   argv: string[];
   env: Record<string, string | undefined>;

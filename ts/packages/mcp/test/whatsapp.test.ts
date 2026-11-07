@@ -463,6 +463,21 @@ class FakeProc implements EngineProc {
   }
 }
 
+test("the card says the linked number as people write it, and a link that isn't up first", () => {
+  expect(whatsapp.formatPhone("+15551234567")).toBe("+1 555 123 4567");
+  expect(whatsapp.formatPhone("+5521987654321")).toBe("+55 21 98765 4321");
+  expect(whatsapp.formatPhone("+552187654321")).toBe("+55 21 8765 4321");
+  expect(whatsapp.formatPhone("+447911123456")).toBe("+44 79 1112 3456");
+  expect(whatsapp.formatPhone("+351912345678")).toBe("+351 9 1234 5678");
+  const linked = { linked: true, account: { jid: "15551234567@s.whatsapp.net", name: "Sam" }, pairing: null, error: null, sync: "" };
+  expect(whatsapp.cardLine({ ...linked, phase: "open" }, "About")).toEqual({ text: "Signed in as +1 555 123 4567", tone: 0 });
+  expect(whatsapp.cardLine({ ...linked, phase: "stopped" }, "About")).toEqual({ text: "Signed in as +1 555 123 4567", tone: 0 });
+  expect(whatsapp.cardLine({ ...linked, phase: "connecting" }, "About")).toEqual({ text: "Connecting… · +1 555 123 4567", tone: 1 });
+  expect(whatsapp.cardLine({ ...linked, phase: "closed" }, "About")).toEqual({ text: "Offline, retrying · +1 555 123 4567", tone: 2 });
+  expect(whatsapp.cardLine({ ...linked, linked: false, account: null, phase: "idle", error: "The link ended" }, "About")).toEqual({ text: "The link ended", tone: 2 });
+  expect(whatsapp.cardLine({ ...linked, linked: false, account: null, phase: "pairing", pairing: { qr: "2@q", note: "Scan with WhatsApp" } }, "About")).toEqual({ text: "Scan with WhatsApp", tone: 1 });
+});
+
 describe("host", () => {
   test("links by QR or code, stores what comes, and forgets everything when the phone unlinks", async () => {
     const store = new Store(join(tmp(), "wa.db"));
@@ -478,7 +493,7 @@ describe("host", () => {
     proc.onEvent("open", { id: "15550000001:3@s.whatsapp.net", name: "Me", lid: "123@lid" });
     expect(setup.linked()).toMatchObject({ jid: ME, name: "Me" });
     expect(whatsapp.signedIn()).toBe(true);
-    expect(whatsapp.cardLine(host.status(), "About")).toEqual({ text: "Linked as Me · Syncing chats (receiving recent chats)", tone: 0 });
+    expect(whatsapp.cardLine(host.status(), "About")).toEqual({ text: "Syncing chats (receiving recent chats) · +1 555 000 0001", tone: 1 });
     proc.onEvent("messaging-history.set", { chats: [{ id: ANA, name: "Ana", unreadCount: 3 }], contacts: [{ id: BO, notify: "Bo" }], messages: [wa(ANA, "from history")], progress: 100 });
     proc.onEvent("messages.upsert", { type: "notify", messages: [wa(ANA, "new one")] });
     await Bun.sleep(5);
