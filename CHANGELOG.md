@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.157.0] - 2026-11-07
+
 ### Changed
 - Phone app updates come straight from Harbor's GitHub releases, not from your PCs: the app looks at
   the latest release (every 5 minutes, also in the background), downloads the
