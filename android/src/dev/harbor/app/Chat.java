@@ -28,6 +28,7 @@ import java.util.TreeMap;
  *  The chat list slides in from the left, its team (Team) from the right. */
 public class Chat extends Base implements Images.Gallery {
     private String chatId;
+    private PatchLinks links;
     private WorkBar work;
     private ScrollView scroll;
     /** Over the transcript's lower edge while it's scrolled up from the latest message. */
@@ -176,6 +177,9 @@ public class Chat extends Base implements Images.Gallery {
         work = new WorkBar(this, hub);
         work.chat = chatId;
         LinearLayout below = Ui.col(this);
+        // The chat's patch buttons that open a page (PatchLinks), over the rest.
+        links = new PatchLinks(this, hub, chatId);
+        below.addView(links.view, Ui.margins(Ui.fill(), 8, 4, 8, 2));
         // Clear of the agents strip above and the composer below; its pills start under the strip's edge.
         below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 4, 8, 4));
         below.addView(comp.view, Ui.fill());
@@ -205,6 +209,7 @@ public class Chat extends Base implements Images.Gallery {
         Update.shown(this, hub.id, chatId);
         load(!loaded);
         refreshState();
+        links.load();
     }
 
     @Override

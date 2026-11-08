@@ -249,6 +249,56 @@ component ImageTile {
     }
 }
 
+// A patch's button on the shelf over the composer (logic/patchchips.ts): a command, a message, a page or a
+// panel; tone "trust" for patches waiting to be trusted, "error" for ones that failed, "more" for "+N".
+export struct PatchChip {
+    icon: string,
+    text: string,
+    tip: string,
+    tone: string,
+}
+
+component PatchChipView {
+    in property <PatchChip> chip;
+    callback clicked(length, length);
+    property <color> ink: chip.tone == "error" ? Theme.red-900 : area.has-hover ? Theme.fg : Theme.gray-700;
+    height: 26px;
+    preferred-width: row.preferred-width;
+    min-width: min(row.preferred-width, 72px);
+    max-width: 220px;
+    Rectangle {
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: chip.tone == "trust" ? Theme.gray-600 : Theme.border;
+        background: area.has-hover ? Theme.gray-100 : (chip.tone == "trust" ? Theme.bg200 : transparent);
+    }
+    row := HorizontalLayout {
+        padding-left: chip.icon == "" ? 9px : 8px;
+        padding-right: 9px;
+        spacing: 6px;
+        alignment: start;
+        if chip.icon != "": Glyph {
+            icon: root.chip.icon;
+            size: 12px;
+            color: root.ink;
+        }
+        Text {
+            text: root.chip.text;
+            font-size: 12px;
+            font-weight: root.chip.tone == "trust" ? 500 : 400;
+            color: root.ink;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+    area := TipArea {
+        tip: root.chip.tip;
+        clicked => {
+            root.clicked(self.absolute-position.x, self.absolute-position.y + self.height);
+        }
+    }
+}
+
 // The footer under the composer (logic/workbar.ts): where the agent works, its branch and its pull request.
 export struct WorkChip {
     shown: bool,
@@ -472,6 +522,8 @@ export component Composer {
     callback strip-stop-all();
     in property <bool> untrusted;
     callback trust();
+    in property <[PatchChip]> patch-chips;
+    callback patch-chip(int, length, length);
     in property <WorkBarData> bar;
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
@@ -575,6 +627,17 @@ export component Composer {
                     font-size: 13px;
                     color: Theme.subtle;
                     wrap: word-wrap;
+                }
+            }
+        }
+        if root.patch-chips.length > 0: HorizontalLayout {
+            padding-left: 2px;
+            spacing: 6px;
+            alignment: start;
+            for c[i] in root.patch-chips: PatchChipView {
+                chip: c;
+                clicked(x, y) => {
+                    root.patch-chip(i, x, y);
                 }
             }
         }

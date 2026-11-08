@@ -2,10 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
-import { type Account, chatpr, git, type Kind, memory, providers, recap, waiting, Work } from "@harbor/agents";
-import { type Chat, dataDir, type Item, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
+import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
+import { type Chat, dataDir, hot, type Item, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
 import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
-import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
+import * as cardsModule from "./cards.ts";
+import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionFromJson, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
@@ -26,6 +27,9 @@ import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { richTip } from "./logic/tips.ts";
 import { MemWatch } from "./memwatch.ts";
+import { PatchBar } from "./patchbar.ts";
+import { HotDev, hotDir, shareHost, tsRoot } from "./hotdev.ts";
+import type { PatchChipData } from "./logic/patchchips.ts";
 import type { PcCard } from "./logic/mempop.ts";
 import { fakeMemory } from "./fakememory.ts";
 import { localHm, until } from "./logic/team.ts";
@@ -56,7 +60,10 @@ import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, ra
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
+
+/** The transcript's cards, swapped by dev hot reload (hotdev.ts). */
+const transcript = hot.unit("cards", "packages/ui/src/cards.ts", cardsModule);
 
 /** How long the reader stays at a chat's end before the earlier pages they scrolled up to are let go. */
 const TRIM_MS = 30_000;
@@ -356,6 +363,10 @@ export class Shell {
     changed: () => this.refreshPanes(),
     focus: (d, terminal) => setTimeout(() => this.win.focus_pane(d, terminal), 30),
   });
+  /** The open chat's patches: the chips over the composer and their list panels (patchbar.ts). */
+  readonly patchBar: PatchBar;
+  private readonly patchChips = new slint.ArrayModel<PatchChipData>([]);
+  private readonly listRows = { right: new slint.ArrayModel<ListRow>([]), bottom: new slint.ArrayModel<ListRow>([]) };
   private readonly prs: chatpr.ChatPrs;
   private readonly workspaces: () => Workspaces;
   private readonly hub: ShellHub;
@@ -430,6 +441,22 @@ export class Shell {
     this.draftSync = new DraftSync(() => shellMesh.me());
     shellMesh.watch?.((chats) => {
       for (const c of chats) this.syncDraft(c);
+    });
+    this.patchBar = new PatchBar(data.store, {
+      where: () => this.patchWhere(),
+      chipsChanged: (chips) => sync(this.patchChips, chips, sameJson),
+      runCommand: (title, cwd, command) => this.surfaces.openTerminal(title, cwd, ["bash", "-lc", runScript(title, command)], "bottom"),
+      sendPrompt: (text) => this.sendCanned(text),
+      openUrl: (url) => this.openExternal(url),
+      openPage: (url) => this.surfaces.openBrowser(url, "right"),
+      openList: (list) => this.surfaces.openList(list, "right"),
+      listsChanged: () => this.refreshPanes(),
+      popup: (id, x, y, items) => this.popup(id, x, y, items, 320),
+      item: (label, act, extra) => this.item(label, act, extra),
+      label: (text) => this.label(text),
+      separator: () => this.separator(),
+      toast: (text) => this.toast(text),
+      openFile: (path) => void Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
     });
     this.meshChat = new MeshChat(hub.mesh ?? solo, {
       restore: (chat, text, mentions, append) => this.restoreSend(chat, text, mentions, append),
@@ -668,6 +695,14 @@ export class Shell {
       for (const m of keyMessages(text, down, { ctrl, shift, alt, meta })) e?.send(m);
     };
     w.files_act = (d, a, i) => this.filesAct(d === "right" ? "right" : "bottom", a, i);
+    w.patch_chips = this.patchChips;
+    w.patch_chip = (i, x, y) => this.patchBar.click(i, x, y);
+    w.right_list_rows = this.listRows.right;
+    w.bottom_list_rows = this.listRows.bottom;
+    w.list_act = (d, a, i) => {
+      const s = this.surfaces.showing(dock(d));
+      if (s?.kind === "list") this.patchBar.listAct(s.list.id, a, i);
+    };
     w.files_go = (d, p) => {
       const fb = this.filesOf(d === "right" ? "right" : "bottom");
       if (fb && p.trim() !== "") fb.go(p.trim());
@@ -742,7 +777,7 @@ export class Shell {
     };
     w.toggle = (seq) => {
       if (seq === EARLIER) return this.loadEarlier();
-      toggleCard(this.openedOf(this.chatId), seq);
+      transcript.now.toggle(this.openedOf(this.chatId), seq);
       this.refreshCards();
     };
     w.transcript_near_top = () => this.loadEarlier();
@@ -1236,7 +1271,7 @@ export class Shell {
       if (this.liveBlocks.length > 0) sync(this.liveBlocks, []);
       return cards;
     }
-    sync(this.liveBlocks, card.blocks, sameBlock);
+    sync(this.liveBlocks, card.blocks, transcript.now.sameBlock);
     if (this.win.live_seq !== card.seq) this.win.live_seq = card.seq;
     let bare = this.bare.get(card);
     if (!bare) this.bare.set(card, (bare = { ...card, blocks: [] }));
@@ -1305,22 +1340,22 @@ export class Shell {
     const since = this.engine.liveSince(chat.id);
     const subs = chat.role === "lead" ? this.engine.liveSubs(chat.id).length : 0;
     const waits = since === null ? this.engine.waiting(chat.id) : null;
-    const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : waits !== null ? { text: waiting.waitText(waits, now(), utcOffset()), tone: "waiting" as const } : "";
+    const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${transcript.now.subsRunning(subs)}` : waits !== null ? { text: waiting.waitText(waits, now(), utcOffset()), tone: "waiting" as const } : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
     // Another PC's chat: an image that isn't on this PC comes from that PC.
     const homeImage = this.hub.homeImage;
     const fetch = homeImage && this.meshChat.foreign(chat) ? (path: string) => homeImage(chat.id, path) : undefined;
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor, fetch) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat), this.linkTitle());
+    const next = transcript.now.transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor, fetch) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat), this.linkTitle());
     if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);
-    const queue = queueCards(
+    const queue = transcript.now.queueCards(
       this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing, mentions: m.mentions })),
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
     );
     rows?.sweep();
-    sync(this.cards, withQueue(this.live(next, running), queue), sameCard);
+    sync(this.cards, transcript.now.withQueue(this.live(next, running), queue), sameCard);
     this.chatCap.cards(chat.id, next.filter((c) => c.kind === "captcha").map((c) => c.detail));
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
@@ -1611,6 +1646,7 @@ export class Shell {
     this.refreshMentions();
     const repo = this.currentRepo();
     this.win.untrusted = repo !== undefined && !this.engine.trusted(repo.id);
+    this.patchBar.refresh();
     const sel = this.chatSel();
     const kind = this.kind(sel);
     const acc = this.account(sel.account);
@@ -2725,6 +2761,7 @@ export class Shell {
       if (!this.engine.running(id) && repo !== null && repo !== undefined) this.gitOf(repo, true);
     }
     this.wasRunning = new Set(this.engine.turns.keys());
+    if (this.page === null) this.patchBar.refresh();
     this.spin();
     this.trimEarlier();
   }
@@ -2933,6 +2970,13 @@ export class Shell {
         p.surfaces.map((s) => ({ kind: s.kind, title: tabTitle(s) })),
         sameJson,
       );
+      const shown = this.surfaces.showing(d);
+      if (shown?.kind === "list") {
+        const v = this.patchBar.listView(shown.list.id);
+        if (d === "right") w.right_list = v.data;
+        else w.bottom_list = v.data;
+        sync(this.listRows[d], v.rows, sameJson);
+      }
       if (d === "right") {
         w.right_open = p.open;
         w.right_active = p.active;
@@ -2943,6 +2987,44 @@ export class Shell {
       this.fitTerm(d);
     }
     w.pane_max = this.surfaces.max ?? "";
+  }
+
+  /** Where the composer's patches come from: the open chat's folder, a draft's project, else home; null for another PC's chat. */
+  private patchWhere(): { cwd: string; project: string | null; chat: number | null } | null {
+    if (this.view === "chat") {
+      const chat = this.data.chat(this.chatId);
+      const away: boolean = this.meshChat.foreign(chat);
+      if (!chat || away) return null;
+      const r = chat.repoId === null ? undefined : this.data.repo(chat.repoId);
+      return { cwd: this.data.cwd(chat), project: r ? (r.local ?? r.path) : null, chat: chat.id };
+    }
+    if (this.view !== "draft") return null;
+    const r = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
+    return r ? { cwd: r.local ?? r.path, project: r.local ?? r.path, chat: null } : { cwd: homedir(), project: null, chat: null };
+  }
+
+  /** A reloadable unit was swapped (hotdev.ts): what it draws is drawn again with it. */
+  hotSwapped(unit: string): void {
+    if (unit !== "cards") return;
+    for (const o of this.opened.values()) o.memo.clear();
+    this.refreshCards();
+  }
+
+  /** A patch's message: sent in the open chat as if typed (the draft stays); in a draft, it becomes the draft. */
+  private sendCanned(text: string): void {
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const mode = this.engine.followDefault();
+    if (!open) {
+      if (this.win.draft.trim() !== "") return this.toast("Send or clear the draft first: this button writes its message there");
+      this.win.draft = text;
+      this.win.focus_composer();
+      return;
+    }
+    const away: boolean = this.meshChat.foreign(open);
+    if (away) this.meshChat.send(open, text, [], [], mode);
+    else this.engine.send(open.id, text, { files: [], mentions: [], mode });
+    this.refreshAll();
+    setTimeout(() => this.win.scroll_to_end(), 30);
   }
 
   /** app.rs `cwd_here`: the open chat's folder, else the draft's project, else home. */
@@ -4577,14 +4659,51 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   scripted(win.window, process.env.HARBOR_POINTER);
   hooks.shown?.(win.window);
   const tick = setInterval(() => shell.tick(), 1000);
+  const unhot = followHot(shell);
+  // Where agents read the patch format (team.ts points them at it).
+  patches.writeDoc(homedir());
   await runLoop();
+  unhot();
   clearInterval(tick);
   shell.shutdown();
 }
 
 export type { Item };
 
+/** Dev hot reload (hotdev.ts), while `harbor hot on DIR` (or HARBOR_HOT) points at a checkout: checked every 3 s. */
+function followHot(shell: Shell): () => void {
+  let dev: HotDev | null = null;
+  let dir: string | null = null;
+  const check = (): void => {
+    const d = hotDir();
+    if (d === dir) return;
+    dir = d;
+    dev?.stop();
+    dev = null;
+    if (d === null) return;
+    const ts = tsRoot(d);
+    if (ts === null) return shell.toast(`Hot reload: no Harbor checkout in ${d}`);
+    shareHost();
+    const next = new HotDev(ts, { notice: (t) => shell.toast(t), log: (l) => console.error(l) });
+    next.onSwapped = (t) => shell.hotSwapped(t.unit);
+    dev = next;
+    void next.start().then(() => shell.toast(`Hot reload: following ${ts.replace(/\/ts$/, "")}`));
+  };
+  check();
+  const timer = setInterval(check, 3000);
+  return () => {
+    clearInterval(timer);
+    dev?.stop();
+  };
+}
+
 /** The UTF-16 index of UTF-8 byte offset `byte` of `text` (the composer's cursor). */
 function utf16At(text: string, byte: number): number {
   return Buffer.from(text).subarray(0, byte).toString().length;
+}
+
+/** A patch's command in a terminal: it runs, says how it ended, then the shell stays for another go. */
+export function runScript(title: string, command: string): string {
+  const q = (t: string) => `'${t.replaceAll("'", "'\\''")}'`;
+  return `${command}\ncode=$?\nprintf '\\n\\033[2m[%s exited %d]\\033[0m\\n' ${q(title)} "$code"\nexec "\${SHELL:-bash}" -l`;
 }

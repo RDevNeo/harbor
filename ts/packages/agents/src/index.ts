@@ -23,3 +23,4 @@ export { Work } from "./work.ts";
 export * as memory from "./memory.ts";
 export * as waiting from "./waiting.ts";
 export type { Waiting } from "./waiting.ts";
+export * as patches from "./patches.ts";

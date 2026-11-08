@@ -9,7 +9,7 @@ import { parseSnooze, snoozePresets, snoozePreview } from "./packages/ui/src/log
 import { sidebartree } from "./packages/store/src/index.ts";
 import { composerRoutes } from "./phonecomposer.ts";
 import { basename } from "node:path";
-import { worktree as wt, wtclean } from "./packages/agents/src/index.ts";
+import { patches, worktree as wt, wtclean } from "./packages/agents/src/index.ts";
 import type { ProjectClones } from "./projectclones.ts";
 import type { ProjectsApi } from "./projectsapi.ts";
 import type { WorkspaceMoves } from "./workspacemoves.ts";
@@ -556,6 +556,18 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     );
   };
 
+  // The chat's patch buttons that open a page (agents/src/patches.ts): the phone shows those over its composer.
+  const patchScan = new patches.Patches(h.store);
+  const patchLinks = async (chat: Chat): Promise<{ title: string; url: string }[]> => {
+    if (chat.home !== "") return [];
+    const e = h.engine();
+    const r = chat.repoId === null ? undefined : e.repo(chat.repoId);
+    const dirs = patches.patchDirs(e.chatCwd(chat), r ? (r.local ?? r.path) : null, homedir());
+    patchScan.scan(dirs);
+    await patchScan.settled();
+    return patchScan.scan(dirs).flatMap((f) => f.actions.filter((a) => a.kind === "url").map((a) => ({ title: a.title, url: a.value })));
+  };
+
   return async (call, chat) => {
     const p = call.path;
     const m = call.method;
@@ -595,6 +607,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
       if (m === "GET" && ["mention", "team", "slash", "tags"].includes(name)) return action(chat, name, call);
       if (m === "GET" && name === "move_targets") return ok(await moveTargets(chat));
+      if (m === "GET" && name === "patches") return ok({ links: await patchLinks(chat) });
       return null;
     }
     if (p[0] !== "v1") return null;

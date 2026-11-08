@@ -1,0 +1,166 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, Spinner, TipArea } from "widgets.slint";
+
+// A patch's list panel (agents/src/patches.ts `items`): a section heading or a row.
+export struct ListRow {
+    head: bool,
+    title: string,
+    detail: string,
+    trailing: string,
+    // The row opens a page when clicked.
+    link: bool,
+}
+
+export struct ListData {
+    title: string,
+    note: string,
+    // Where it comes from: "dev patch · ~/app".
+    source: string,
+    loading: bool,
+    error: string,
+}
+
+component ListEntry inherits Rectangle {
+    in property <ListRow> entry;
+    callback open();
+    height: entry.head ? 30px : (entry.detail != "" ? 44px : 30px);
+    if !entry.head && root.entry.link: Rectangle {
+        background: area.has-hover ? Theme.gray-100 : transparent;
+        border-radius: Theme.radius-md;
+    }
+    area := TouchArea {
+        enabled: root.entry.link;
+        mouse-cursor: root.entry.link ? pointer : default;
+        clicked => {
+            root.open();
+        }
+    }
+    if entry.head: Text {
+        x: 8px;
+        y: 10px;
+        text: root.entry.title;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: Theme.subtle;
+    }
+    if !entry.head: HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.entry.title;
+                font-size: 13px;
+                color: Theme.fg;
+                overflow: elide;
+            }
+            if root.entry.detail != "": Text {
+                text: root.entry.detail;
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+            }
+        }
+        if root.entry.trailing != "": Text {
+            text: root.entry.trailing;
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        if root.entry.link: Glyph {
+            icon: Icons.external;
+            size: 12px;
+            color: Theme.subtle;
+        }
+    }
+}
+
+export component PatchListView inherits Rectangle {
+    in property <ListData> data;
+    in property <[ListRow]> rows;
+    callback refresh();
+    callback open(int);
+    property <length> top: 44px + (root.data.note != "" ? 18px : 0px);
+    VerticalLayout {
+        x: 14px;
+        y: 6px;
+        width: root.width - 28px;
+        height: self.preferred-height;
+        spacing: 2px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                text: root.data.title;
+                font-size: 14px;
+                font-weight: 600;
+                color: Theme.fg;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Btn {
+                icon: Icons.refresh;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Refresh";
+                clicked => {
+                    root.refresh();
+                }
+            }
+        }
+        Text {
+            text: root.data.source;
+            font-size: 11.5px;
+            color: Theme.subtle;
+            overflow: elide;
+        }
+        if root.data.note != "": Text {
+            text: root.data.note;
+            font-size: 12px;
+            color: Theme.subtle;
+            overflow: elide;
+        }
+    }
+    if root.data.error != "": Text {
+        x: 14px;
+        y: root.top + 8px;
+        width: root.width - 28px;
+        text: root.data.error;
+        font-size: 13px;
+        color: Theme.red-900;
+        wrap: word-wrap;
+    }
+    if root.rows.length == 0 && root.data.loading: Spinner {
+        x: (root.width - self.width) / 2;
+        y: root.top + 20px;
+        radius: 7px;
+        color: Theme.subtle;
+    }
+    if root.rows.length == 0 && !root.data.loading && root.data.error == "": Text {
+        y: root.top + 20px;
+        width: root.width;
+        text: "Nothing here";
+        font-size: 13px;
+        color: Theme.subtle;
+        horizontal-alignment: center;
+    }
+    Flickable {
+        y: root.top + (root.data.error != "" ? 40px : 4px);
+        height: max(root.height - self.y, 60px);
+        interactive: false;
+        VerticalLayout {
+            alignment: start;
+            padding-left: 6px;
+            padding-right: 6px;
+            for r[i] in root.rows: ListEntry {
+                entry: r;
+                open => {
+                    root.open(i);
+                }
+            }
+        }
+    }
+}

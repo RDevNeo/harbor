@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Patches: small TypeScript files in a project's `.harbor/patches/` (or `~/.harbor/patches/` for every
+  project) add buttons over the composer (run a command in a terminal pane, send a message, open a
+  page) and side panels (a page such as localhost:3000 in Harbor's browser, or a list). They show up
+  within a couple of seconds of being saved, with no restart. A patch is code, so it runs only once
+  you trust it from the "Patch to trust" chip, for that exact content: an edit asks again. Agents
+  know the format (`~/.harbor/patches/README.md`), so "add a button that runs the tests" just works.
+- Dev hot reload: `harbor hot on DIR` makes the running Harbor follow a checkout. A save to the
+  transcript's cards, the team tools or the agents' instructions is live in well under a second,
+  with no restart and nothing lost; a broken save keeps the running version and says why.
+
 ## [0.166.0] - 2026-11-08
 
 ### Added

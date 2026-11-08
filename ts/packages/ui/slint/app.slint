@@ -6,6 +6,7 @@ import "fonts/lucide.ttf";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
+import { ListData, ListRow } from "patchlist.slint";
 import { DeviceRow, TransferRow } from "devices.slint";
 import { FilesData, FileRow } from "files.slint";
 import { BrowserData } from "browser.slint";
@@ -16,7 +17,7 @@ import { TermKey } from "terminal.slint";
 import { Spin, Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge, Meter } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
-import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip, WorkBarData } from "composer.slint";
+import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip, WorkBarData, PatchChip } from "composer.slint";
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
@@ -431,6 +432,11 @@ export component AppWindow inherits Window {
     callback files-go(string, string);
     in property <BrowserData> right-browser;
     in property <BrowserData> bottom-browser;
+    in property <ListData> right-list;
+    in property <[ListRow]> right-list-rows;
+    in property <ListData> bottom-list;
+    in property <[ListRow]> bottom-list-rows;
+    callback list-act(string, string, int);
     in property <[string]> browser-servers;
     callback browser-nav(string, string);
     callback browser-go(string, string);
@@ -518,6 +524,8 @@ export component AppWindow inherits Window {
 
     in property <bool> untrusted;
     callback trust();
+    in property <[PatchChip]> patch-chips;
+    callback patch-chip(int, length, length);
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
     callback note-edited(int, string);
@@ -1130,6 +1138,10 @@ export component AppWindow inherits Window {
                                     root.popup(id, x, y);
                                 }
                                 untrusted: root.untrusted;
+                                patch-chips: root.patch-chips;
+                                patch-chip(i, x, y) => {
+                                    root.patch-chip(i, x, y);
+                                }
                                 bar: root.work-bar;
                                 mentions: root.mentions;
                                 remove-mention(i) => {
@@ -1342,6 +1354,11 @@ export component AppWindow inherits Window {
             files-go(p) => {
                 root.files-go("right", p);
             }
+            list: root.right-list;
+            list-rows: root.right-list-rows;
+            list-act(a, i) => {
+                root.list-act("right", a, i);
+            }
             browser: root.right-browser;
             servers: root.browser-servers;
             browser-nav(a) => {
@@ -1454,6 +1471,11 @@ export component AppWindow inherits Window {
             }
             files-go(p) => {
                 root.files-go("bottom", p);
+            }
+            list: root.bottom-list;
+            list-rows: root.bottom-list-rows;
+            list-act(a, i) => {
+                root.list-act("bottom", a, i);
             }
             browser: root.bottom-browser;
             servers: root.browser-servers;

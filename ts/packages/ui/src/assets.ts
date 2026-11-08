@@ -24,6 +24,7 @@ import lightbox from "../slint/lightbox.slint" with { type: "file" };
 import captcha from "../slint/captcha.slint" with { type: "file" };
 import video from "../slint/video.slint" with { type: "file" };
 import listdetail from "../slint/listdetail.slint" with { type: "file" };
+import patchlist from "../slint/patchlist.slint" with { type: "file" };
 import markdown from "../slint/markdown.slint" with { type: "file" };
 import palette from "../slint/palette.slint" with { type: "file" };
 import picker from "../slint/picker.slint" with { type: "file" };
@@ -58,6 +59,7 @@ export const FILES: Readonly<Record<string, string>> = {
   "captcha.slint": captcha,
   "video.slint": video,
   "listdetail.slint": listdetail,
+  "patchlist.slint": patchlist,
   "markdown.slint": markdown,
   "palette.slint": palette,
   "picker.slint": picker,

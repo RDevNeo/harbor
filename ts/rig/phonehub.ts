@@ -100,6 +100,11 @@ const notes = seed.addRepo(project("field-notes", null));
 seed.setRepoWorkspace(notes, "org_team");
 // Share with workspace…: acme-api is owned by Sam's workspace and shared with Team (the rows' link mark).
 seed.setRepoShares(api, ["org_team"]);
+// A trusted patch in acme-api with buttons that open a page (agents/src/patches.ts): its chats show them over the composer.
+const patchSrc = 'export default { actions: [{ title: "Staging", url: "https://staging.example.com" }, { title: "Run tests", run: "bun test" }, { title: "Grafana", url: "https://grafana.example.com/d/api" }] };\n';
+mkdirSync(join(home, "code", "acme-api", ".harbor", "patches"), { recursive: true });
+writeFileSync(join(home, "code", "acme-api", ".harbor", "patches", "links.ts"), patchSrc);
+seed.set("patch_trust", JSON.stringify({ [new Bun.CryptoHasher("sha256").update(patchSrc).digest("hex")]: t0 }));
 // Another PC's acme-web, its folder there: the row names that PC (projectplace.ts, Place.java).
 seed.setProjectPc(seed.addRepo("/home/someone/projects/acme-web"), "pc:studio");
 

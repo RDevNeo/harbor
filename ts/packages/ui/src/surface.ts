@@ -22,7 +22,13 @@ export interface PaneFiles {
   title(): string;
 }
 
-export type Surface<T extends PaneTerm = PaneTerm> = { kind: "chooser" } | { kind: "terminal"; term: T } | { kind: "browser"; url: string; engine?: PaneEngine } | { kind: "devices" } | { kind: "files"; files: PaneFiles };
+/** A patch's list panel (agents/src/patches.ts): its id ("file#panel:title") and its title. */
+export interface PaneList {
+  id: string;
+  title: string;
+}
+
+export type Surface<T extends PaneTerm = PaneTerm> = { kind: "chooser" } | { kind: "terminal"; term: T } | { kind: "browser"; url: string; engine?: PaneEngine } | { kind: "devices" } | { kind: "files"; files: PaneFiles } | { kind: "list"; list: PaneList };
 
 export interface Pane<T extends PaneTerm> {
   surfaces: Surface<T>[];
@@ -54,6 +60,8 @@ export function title(s: Surface): string {
       return "Devices";
     case "files":
       return s.files.title();
+    case "list":
+      return s.list.title;
   }
 }
 
@@ -184,6 +192,15 @@ export class Surfaces<T extends PaneTerm> {
     const p = this.panes[d];
     p.surfaces.push({ kind: "files", files });
     this.show(d, p.surfaces.length - 1);
+  }
+
+  /** A patch's list panel: the tab it has already, else a new one in the right pane. */
+  openList(list: PaneList, d: Dock = "right"): void {
+    for (const dock of [d, "right", "bottom"] as const) {
+      const i = this.panes[dock].surfaces.findIndex((s) => s.kind === "list" && s.list.id === list.id);
+      if (i >= 0) return this.show(dock, i);
+    }
+    this.place(d, { kind: "list", list });
   }
 
   stopEngine(s: Surface<T> & { kind: "browser" }): void {

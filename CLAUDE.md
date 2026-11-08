@@ -63,6 +63,20 @@ ends with a screenshot of each screen it touches, before you report done:
   `--key BACK`, `--shot NAME` step through the app, `--dark`, `--help`. Minutes, not seconds: start
   it with Harbor's start_process, and shoot every screen you need in one run.
 
+## Hot reload (dev)
+
+`harbor hot on DIR` (DIR a checkout; `off`, `status`; or `HARBOR_HOT=DIR` for a rig) makes the
+running Harbor follow that checkout's TypeScript with no restart: on a save, the reloadable units it
+touches are built from the checkout with `Bun.build` and swapped in (`ts/packages/ui/src/hotdev.ts`,
+`ts/packages/store/src/hot.ts`), and the open chat is drawn again. About 35 ms from the save to the
+swap, 0.2-0.35 s to the screen. Open chats, running turns and drafts stay. A build or load that
+fails keeps the running version and says why in a toast. Units today: `cards` (the transcript's
+cards, `ui/src/cards.ts` and what it imports, plus `@harbor/net` files changed since), `tools` (the
+team tools, `agents/src/tools.ts`) and `prompts` (the agents' instructions, `agents/src/team.ts`).
+A new unit is `hot.unit(name, entry, module)` at its caller, called through `.now`. A file that
+holds state is `pin`ned in `hotdev.ts` `shareHost` (fresh builds use the app's instance; a change
+to it says it needs a restart). Slint, `.slint` files and everything else still need a restart.
+
 ## Compute runs on boat.dev
 
 Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on the PCs

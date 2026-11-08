@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Chat, type CopyTurn, type Item, limits, liveSince, type Mention, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
+import { type Chat, type CopyTurn, hot, type Item, limits, liveSince, type Mention, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import * as compaction from "./compaction.ts";
 import { parse as parseJson } from "./json.ts";
@@ -18,11 +18,16 @@ import { alive as aliveNow } from "./procfs.ts";
 import * as procs from "./procs.ts";
 import { access as accessLevels, type Account, accountEnv, applyUsage, binStr, installed, type Kind, kindOf, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
-import * as tools from "./tools.ts";
+import * as toolsModule from "./tools.ts";
 import { fromJson as waitFromJson, type Waiting, waitingOf } from "./waiting.ts";
 import { type FromAgent, type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode, withWho } from "./queue.ts";
 export { type FromAgent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, type Mode } from "./queue.ts";
 import { Recaps } from "./recap.ts";
+
+/** Harbor's team tools (send_message, spawn_agent…), swapped by dev hot reload (ui/src/hotdev.ts). */
+const tools = hot.unit("tools", "packages/agents/src/tools.ts", toolsModule);
+/** The lead's and subagents' instructions (team.ts), swapped the same way. */
+const prompts = hot.unit("prompts", "packages/agents/src/team.ts", team);
 
 /** What the engine needs from the app around it; the optional parts belong to other packages. */
 /** The PC that forwarded a message, and the context it sent with it. */
@@ -458,10 +463,10 @@ export class Engine {
     const r = this.repo(c.repoId);
     const name = r ? r.name : "No project";
     const path = r ? (r.local ?? r.path) : home();
-    if (c.role === "lead") return { role: "lead", system: team.leadPrompt(name, path) };
+    if (c.role === "lead") return { role: "lead", system: prompts.now.leadPrompt(name, path) };
     if (c.role === "sub") {
       const mates = c.parent === null ? [] : this.subsOf(c.parent).filter((x) => x.id !== c.id).map((x) => x.name);
-      return { role: "sub", system: team.subPrompt(c.name, name, path, mates) };
+      return { role: "sub", system: prompts.now.subPrompt(c.name, name, path, mates) };
     }
     return null;
   }
@@ -1657,8 +1662,8 @@ export class Engine {
     if (me.retired) throw new Error("this agent was retired");
     const other = this.host.tool?.(me, name, args);
     if (other !== undefined) return other;
-    if (name === "retire_agent") return tools.retireCall(this, me, args);
-    return tools.teamTool(this, me, name, args);
+    if (name === "retire_agent") return tools.now.retireCall(this, me, args);
+    return tools.now.teamTool(this, me, name, args);
   }
 
   /** Takes one of this PC's subagents off its team for good, its transcript kept to read. */

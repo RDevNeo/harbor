@@ -5,6 +5,7 @@ import { join } from "node:path";
 import * as slint from "slint-ui";
 import { malloc } from "@harbor/store";
 import type { TermKey } from "./logic/terminal.ts";
+import type { PatchChipData } from "./logic/patchchips.ts";
 import { type TipParts, tipParts } from "./logic/tips.ts";
 import type { TermFrame } from "./terminal.ts";
 import { uiDir } from "./assets.ts";
@@ -200,6 +201,25 @@ export interface MenuEntry {
   desc: string;
   section: string;
 }
+
+/** patchlist.slint `ListRow` / `ListData`: a patch's list panel. */
+export interface ListRow {
+  head: boolean;
+  title: string;
+  detail: string;
+  trailing: string;
+  link: boolean;
+}
+
+export interface ListData {
+  title: string;
+  note: string;
+  source: string;
+  loading: boolean;
+  error: string;
+}
+
+export type { PatchChipData };
 
 /** composer.slint `WorkChip` / `WorkBarData`: the footer under the composer. */
 export interface WorkChip {
@@ -541,6 +561,11 @@ export interface AppWindow extends slint.ComponentHandle {
   files_go: (d: string, path: string) => void;
   right_browser: BrowserData;
   bottom_browser: BrowserData;
+  right_list: ListData;
+  right_list_rows: slint.Model<ListRow>;
+  bottom_list: ListData;
+  bottom_list_rows: slint.Model<ListRow>;
+  list_act: (d: string, action: string, i: number) => void;
   browser_servers: slint.Model<string>;
   browser_nav: (d: string, action: string) => void;
   browser_go: (d: string, url: string) => void;
@@ -578,6 +603,8 @@ export interface AppWindow extends slint.ComponentHandle {
   popup: (id: string, x: number, y: number) => void;
   untrusted: boolean;
   trust: () => void;
+  patch_chips: slint.Model<PatchChipData>;
+  patch_chip: (i: number, x: number, y: number) => void;
   mentions: slint.Model<{ head: string; snippet: string; tip: string; note: string; hint: string; focus: boolean }>;
   note_edited: (i: number, text: string) => void;
   remove_mention: (i: number) => void;

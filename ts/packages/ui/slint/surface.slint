@@ -5,6 +5,7 @@ import { TerminalView, TermLine, TermKey } from "terminal.slint";
 import { DevicesView, DeviceRow, TransferRow } from "devices.slint";
 import { FilesView, FilesData, FileRow } from "files.slint";
 import { BrowserView, BrowserData } from "browser.slint";
+import { PatchListView, ListData, ListRow } from "patchlist.slint";
 
 export struct SurfaceTab {
     kind: string,
@@ -25,7 +26,7 @@ component PaneTab inherits TouchArea {
     in property <bool> active;
     callback open();
     callback close();
-    property <string> icon: tab.kind == "terminal" ? Icons.terminal : tab.kind == "browser" ? Icons.globe : tab.kind == "devices" ? Icons.smartphone : tab.kind == "files" ? Icons.folder : Icons.plus;
+    property <string> icon: tab.kind == "terminal" ? Icons.terminal : tab.kind == "browser" ? Icons.globe : tab.kind == "devices" ? Icons.smartphone : tab.kind == "files" ? Icons.folder : tab.kind == "list" ? Icons.list-checks : Icons.plus;
     property <bool> lit: root.active || root.has-hover || x-area.has-hover;
     width: label.preferred-width + 58px;
     height: 28px;
@@ -213,6 +214,9 @@ export component SurfacePane inherits Rectangle {
     callback browser-pointer(string, float, float, int);
     callback browser-wheel(float, float, float, float);
     callback browser-key(string, bool, bool, bool, bool, bool);
+    in property <ListData> list;
+    in property <[ListRow]> list-rows;
+    callback list-act(string, int);
     public function focus-chooser() {
         chooser.grab();
     }
@@ -374,6 +378,18 @@ export component SurfacePane inherits Rectangle {
         }
         go(p) => {
             root.files-go(p);
+        }
+    }
+    if root.kind == "list": PatchListView {
+        y: root.top;
+        height: root.height - self.y;
+        data: root.list;
+        rows: root.list-rows;
+        refresh => {
+            root.list-act("refresh", 0);
+        }
+        open(i) => {
+            root.list-act("open", i);
         }
     }
     if root.kind == "browser": BrowserView {

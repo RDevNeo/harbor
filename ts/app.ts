@@ -1,6 +1,6 @@
 import pkg from "./package.json";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, repoRef, updateCommands, versionLabel } from "./packages/update/src/index.ts";
 
 declare const HARBOR_MIN_RUNTIME: string | undefined;
@@ -66,6 +66,40 @@ const commands: Record<string, Command> = {
   },
   "--check-window": async (args) => (await import("./run.ts")).checkWindow(args, version),
   "--speech-worker": async () => (await import("./packages/media/src/speech-worker.ts")).runSpeechWorker(),
+  // Dev hot reload (packages/ui/src/hotdev.ts): this PC's running Harbor follows a checkout's TypeScript.
+  hot: async (args) => {
+    const { stateDir, writePrivate } = await import("./packages/store/src/index.ts");
+    const { rmSync, readFileSync } = await import("node:fs");
+    const file = join(stateDir(), "hot.json");
+    const [verb = "status", dir] = args;
+    if (verb === "on") {
+      const d = resolve(dir ?? process.cwd());
+      if (!["ts/packages/ui/src/cards.ts", "packages/ui/src/cards.ts"].some((f) => existsSync(join(d, f)))) {
+        console.error(`harbor hot: ${d} isn't a Harbor checkout (no ts/packages/ui/src/cards.ts)`);
+        return 1;
+      }
+      writePrivate(file, `${JSON.stringify({ dir: d })}\n`);
+      console.log(`Hot reload on: the running Harbor follows ${d} within 3 s. Saves to the transcript's cards, the team tools and the agents' instructions swap in without a restart.`);
+      return 0;
+    }
+    if (verb === "off") {
+      rmSync(file, { force: true });
+      console.log("Hot reload off: what's loaded stays until the next start.");
+      return 0;
+    }
+    if (verb !== "status") {
+      console.error("usage: harbor hot on [DIR] | off | status");
+      return 2;
+    }
+    let on = "";
+    try {
+      on = String((JSON.parse(readFileSync(file, "utf8")) as { dir?: unknown }).dir ?? "");
+    } catch {
+      // off
+    }
+    console.log(process.env.HARBOR_HOT ? `on (HARBOR_HOT): ${process.env.HARBOR_HOT}` : on !== "" ? `on: ${on}` : "off");
+    return 0;
+  },
   "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
   turn: async (args) => {
     const { runTurn } = await import("./packages/agents/src/index.ts");

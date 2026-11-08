@@ -1035,6 +1035,15 @@ next turn resumes there. → `{"ok": true, "chat": {...}, "moved": [ids]}`. `409
 when it can't move now: a sub-agent (move its lead), a lead mid-turn, a chat on a device, another
 PC's chat, or a project folder that isn't on this PC.
 
+### `GET /v1/chats/{id}/patches`
+
+The chat's patch buttons that open a page (optional; hubs without it answer `404`, and the app
+shows nothing): `{"links": [{"title", "url"}]}`, the `url` actions of the trusted patches in the
+chat's folder, its project's and the PC's own `~/.harbor/patches/` (ts/packages/agents/src/patches.md).
+`url` is always `http(s)`; the app opens it in the phone's browser, over the composer as a row of
+chips. Empty for another PC's chat. The desktop's other buttons (commands, messages) and panels
+aren't sent.
+
 ### `GET /v1/chats/{id}/move_targets`, `POST /v1/chats/{id}/move_pc`
 
 "Move to PC…" (optional; hubs without it answer `404`, and the app says so; for a copy whose
