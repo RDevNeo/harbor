@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.167.0] - 2026-11-08
+
 ### Added
 - Patches: small TypeScript files in a project's `.harbor/patches/` (or `~/.harbor/patches/` for every
   project) add buttons over the composer (run a command in a terminal pane, send a message, open a
