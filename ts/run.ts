@@ -43,7 +43,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   let follow: FollowMain | null = null;
   const updater = new Updater(cfg, { swap: () => void reloader?.now(), advertise: advertised, keep: (v) => follow?.keeps(v) ?? false });
   const store = Store.open(dataDir());
-  // Builds of Harbor's main on a PC that develops it (followmain.ts): off unless turned on.
+  // Builds of Harbor's main on a PC that develops it (followmain.ts): on wherever there's a Harbor checkout.
   follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv });
   const offline = isOffline();
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
@@ -160,7 +160,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     // The window shows only this PC's chats and copies from the PCs this account uses (account.ts `pcScope`).
     data.scope = (home: string) => scopeHas(run.account.scope(), home);
     const hub = {
-      settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version, followMain: follow },
+      settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version },
       call: (method: string, path: string, query?: Record<string, string>, body?: unknown) => run.call(method, path, query, body),
       newWorktree: run.newWorktree,
       account: {

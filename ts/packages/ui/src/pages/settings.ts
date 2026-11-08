@@ -6,7 +6,7 @@ import { providers } from "@harbor/agents";
 import { AUTOSTART_DEFAULT_KEY, autostart, installedLauncher, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
-import { FOLLOW_MAIN, generalSections, navTabs, setGeneral, type SettingSection } from "../logic/settings.ts";
+import { generalSections, navTabs, setGeneral, type SettingSection } from "../logic/settings.ts";
 import { parseMode } from "../theme.ts";
 import { type Block } from "../logic/settings-blocks.ts";
 import { type IntData, type IntHost } from "../logic/settings-integrations.ts";
@@ -90,13 +90,8 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const blocks = await blockTabs(store, () => show(), deps.copy, deps.runtime);
 
   function sections(t: Tab): SettingSection[] {
-    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion(), followMain: followMainEnv() });
+    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion() });
     return [];
-  }
-
-  function followMainEnv() {
-    const f = deps.runtime?.followMain;
-    return f?.possible() ? { checkout: f.checkout(), on: f.on(), line: f.line() } : undefined;
   }
 
   /** Light or dark as kv `theme` holds it now (the sidebar's button, or another PC's pick synced in). */
@@ -138,16 +133,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     waSeen = seen;
     show();
   }, 1000).unref();
-  // Follow main's line moves on its own (building, checking, restarting).
-  let followSeen = "";
-  setInterval(() => {
-    if (tab !== "general") return;
-    const f = followMainEnv();
-    const seen = f === undefined ? "" : `${f.on}|${f.line}`;
-    if (seen === followSeen) return;
-    followSeen = seen;
-    show();
-  }, 1000).unref();
   bus.pick = (s) => {
     tab = tabFromSlug(s) ?? tab;
     if (tab === "voice") refreshInputs();
@@ -165,7 +150,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
         // the entry couldn't be written: the toggle shows what is there
       }
     }
-    if (k === FOLLOW_MAIN) deps.runtime?.followMain?.setOn(v);
     setGeneral(store, k, v);
     setNotifications(store, k, v);
     voiceToggled(speech, k, v);

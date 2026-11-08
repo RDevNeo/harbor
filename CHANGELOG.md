@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Follow main is on by default on every PC with a Harbor checkout (a project whose remote is Harbor's
+  repository), and its row is gone from Settings › General › Updates. A PC without a checkout keeps
+  taking releases, with nothing to say about it. `harbor follow-main off` still turns it off for that
+  PC and stays off (`on` and `status` too); 0.166's opt-in setting isn't read, so every PC starts on.
+
 ## [0.167.0] - 2026-11-08
 
 ### Added

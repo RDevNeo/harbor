@@ -1,6 +1,7 @@
 // Follow main: a PC where Harbor itself is developed runs Harbor's main branch, not only its releases.
-// Off unless turned on (kv `follow_main`, Settings › General, `harbor follow-main on`), and only in an
-// installed copy.
+// On by default wherever there is a Harbor checkout, in an installed copy; `harbor follow-main off` turns
+// it off (kv `follow_main_off`). A PC without a checkout just takes the releases, saying nothing. (0.166's
+// opt-in kv `follow_main` is no longer read: everyone starts on.)
 //
 // - Which checkout: kv `follow_main_checkout`, else the project whose origin is Harbor's repository.
 //   Which main: the newer of its `main` and `origin/main` (agents push with `git push origin HEAD:main`,
@@ -31,7 +32,8 @@ import { current, hasPrevious, onDisk, PREVIOUS, rollback, rolledBack, runtimeOn
 import { lane } from "./lane.ts";
 import { buildOf, GIT_COMMIT, newer, parse } from "./version.ts";
 
-export const KEY = "follow_main";
+/** "1": turned off with `harbor follow-main off`. Unset (the default) or anything else: on. */
+export const KEY = "follow_main_off";
 export const CHECKOUT_KEY = "follow_main_checkout";
 export const DIR = "follow-main";
 export const SOON_MS = 3_000;
@@ -131,7 +133,9 @@ export function findCheckout(kv: Kv, repos: FollowDeps["repos"]): string | null 
   return null;
 }
 
-export const enabled = (kv: Kv): boolean => kv.get(KEY) === "1";
+export const enabled = (kv: Kv): boolean => kv.get(KEY) !== "1";
+
+export const setEnabled = (kv: Kv, on: boolean): void => kv.set(KEY, on ? "0" : "1");
 
 const nice = (cmd: string[]): string[] => (Bun.which("ionice") ? ["nice", "-n", "19", "ionice", "-c3", ...cmd] : ["nice", "-n", "19", ...cmd]);
 
@@ -222,8 +226,9 @@ export class FollowMain {
     return this.st;
   }
 
+  /** Following: not turned off, and there's a Harbor checkout to follow (without one, releases only, silently). */
   on(): boolean {
-    return enabled(this.d.kv);
+    return enabled(this.d.kv) && this.checkout() !== null;
   }
 
   /** Usable here: an installed copy, not running a preview. */
@@ -236,7 +241,7 @@ export class FollowMain {
   }
 
   setOn(on: boolean): void {
-    this.d.kv.set(KEY, on ? "1" : "0");
+    setEnabled(this.d.kv, on);
     this.sync();
   }
 
@@ -279,7 +284,7 @@ export class FollowMain {
     this.disarm();
   }
 
-  /** Settings' line: the state, and how long the last build took to go live. */
+  /** The status line: the state, and how long the last build took to go live. */
   line(): string {
     const t = this.on() && this.st.state === "idle" && this.st.last?.commit === this.commit ? ` ${timelineText(this.st.last)}` : "";
     return statusLine(this.st, this.on()) + t;
@@ -494,7 +499,7 @@ export class FollowMain {
   async check(): Promise<void> {
     if (!this.on() || !this.possible()) return;
     const checkout = this.checkout();
-    if (checkout === null) return this.set({ state: "idle", checkout: "", reason: "no Harbor checkout found (Settings › General, or harbor follow-main on --checkout DIR)" });
+    if (checkout === null) return this.set({ state: "idle", checkout: "", reason: "no Harbor checkout found (harbor follow-main on --checkout DIR)" });
     this.st.checkout = checkout;
     const noticedAt = this.cfg.now();
     const tip = await this.tipOf(checkout);
@@ -605,7 +610,7 @@ export class FollowMain {
   }
 }
 
-/** One line for Settings and `harbor follow-main status`. */
+/** One line for `harbor follow-main status`. */
 export function statusLine(s: FollowStatus, on: boolean): string {
   if (!on) return "Off: this PC takes Harbor's releases only.";
   const short = s.commit.slice(0, 7);

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Updater } from "../src/delivery.ts";
-import { defaultRunner, FollowMain, installLocal, isHarborRemote, localVersion, shipsInApp, statusLine, timelineText, type Runner } from "../src/followmain.ts";
+import { defaultRunner, enabled, FollowMain, installLocal, isHarborRemote, localVersion, setEnabled, shipsInApp, statusLine, timelineText, type Runner } from "../src/followmain.ts";
 import { begin, beat, earlyCrashes, end, readHealth, recordChecks, soak, type HealthFile } from "../src/health.ts";
 import { rollback } from "../src/install.ts";
 import { useEmbedded, type AppBundle } from "../src/launcher.ts";
@@ -184,7 +184,7 @@ function rig(opts: { runningVersion?: string; running?: string; tsc?: () => numb
   const version = opts.runningVersion ?? "1.0.0";
   const inst = makeInstall({ version });
   const cfg = configFor(inst, { version });
-  const kv = new Map<string, string>([["follow_main", "1"], ["follow_main_checkout", repo]]);
+  const kv = new Map<string, string>([["follow_main_checkout", repo]]);
   const data = tmp("hfm-data-");
   const calls: string[] = [];
   const run: Runner = async (cmd, o) => {
@@ -335,8 +335,27 @@ test("follow-main: a release whose tag the build of main already holds is kept o
   expect(tagged).not.toBe(later);
   expect(await fm.keeps("1.0.1")).toBe(true);
   expect(await fm.keeps("1.0.2")).toBe(false);
-  kv.set("follow_main", "0");
+  kv.set("follow_main_off", "1");
   expect(await fm.keeps("1.0.1")).toBe(false);
+});
+
+test("follow-main is on by default where there's a Harbor checkout; off only when turned off; 0.166's opt-in key is ignored", () => {
+  const kv = new Map<string, string>();
+  const store = { get: (k: string) => kv.get(k) ?? null, set: (k: string, v: string) => void kv.set(k, v) };
+  let repos: { path: string; remote: string; local: string | null }[] = [];
+  const fm = new FollowMain({ cfg: configFor(makeInstall({ version: "1.0.0" }), { version: "1.0.0" }), kv: store, dataDir: tmp("hfm-def-"), repos: () => repos, busy: () => false, commit: null, run: defaultRunner, watchRefs: () => () => undefined });
+  expect(enabled(store)).toBe(true);
+  // No checkout: releases only, and nothing to say about it.
+  expect(fm.on()).toBe(false);
+  repos = [{ path: "/src/harbor", remote: "git@github.com:RDevNeo/harbor.git", local: null }];
+  expect(fm.on()).toBe(true);
+  kv.set("follow_main", "0");
+  expect(fm.on()).toBe(true);
+  fm.setOn(false);
+  expect(kv.get("follow_main_off")).toBe("1");
+  expect(fm.on()).toBe(false);
+  setEnabled(store, true);
+  expect(fm.on()).toBe(true);
 });
 
 test("the edit-to-running line", () => {
