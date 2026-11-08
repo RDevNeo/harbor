@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.166.0] - 2026-11-08
+
 ### Added
 - Follow main (Settings › General › Updates, or `harbor follow-main on [--checkout DIR]`; off unless turned
   on, per PC): a PC where Harbor is developed builds Harbor's main branch whenever it moves (the newer of
