@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Follow main (Settings › General › Updates, or `harbor follow-main on [--checkout DIR]`; off unless turned
+  on, per PC): a PC where Harbor is developed builds Harbor's main branch whenever it moves (the newer of
+  `main` and `origin/main` in the checkout) and runs it a few seconds later, as `0.x.y+commit`. Built in
+  Harbor's own clone under its data folder, niced, never the checkout's working tree; tsc and the
+  installer's bundle check must pass; a commit that changes only tests or docs builds nothing, one that
+  needs a new runtime waits for the release and says so. A build that doesn't start, or crashes twice in
+  its first minutes, is rolled back and not built again until main moves. A newer release whose commit
+  the running build already has is ignored; any other installs as usual.
+- Soak-gated releases: `bun ts/scripts/soaked.ts [status|gate|release]` cuts a release only for a commit
+  that ran on this PC through Follow main for 6 hours (`--hours`) without a crash, with its checks passed
+  and `scripts/boat/check` green on the release commit. Run health per commit is kept in
+  `follow-main/health.json` in Harbor's data folder. Tagging by hand works as before.
+
 ## [0.165.1] - 2026-11-07
 
 ### Changed

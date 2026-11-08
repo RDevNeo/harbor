@@ -7,7 +7,7 @@ import { forget, readMeta, SLOT } from "./previewmeta.ts";
 import { RELOADED_PID } from "./reload.ts";
 import { captureStart } from "./startlog.ts";
 import { beginAttempt, readAttempt, recoverUnconfirmed, watch } from "./startup.ts";
-import { newer, RUNTIME_VERSION } from "./version.ts";
+import { buildOf, newer, RUNTIME_VERSION } from "./version.ts";
 
 // Loading a bundle must start nothing: main does.
 export interface AppBundle {
@@ -68,7 +68,10 @@ function secondary(cfg: UpdateConfig, env: Record<string, string | undefined>): 
 // A single executable runs the bundle it carries unless an update put a newer one beside it.
 export function useEmbedded(chosen: Chosen, embedded: AppBundle | undefined): embedded is AppBundle {
   if (embedded === undefined || chosen.kind !== "release") return false;
-  return !isFile(chosen.path) || !newer(chosen.version, embedded.meta.version);
+  if (!isFile(chosen.path)) return true;
+  // A build of main (`0.165.1+abc1234`) is newer than the release of the same number it was built after.
+  if (buildOf(chosen.version) !== null) return newer(embedded.meta.version, chosen.version);
+  return !newer(chosen.version, embedded.meta.version);
 }
 
 /**

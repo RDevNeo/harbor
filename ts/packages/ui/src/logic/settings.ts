@@ -36,6 +36,8 @@ export interface GeneralEnv {
   autostart: boolean;
   /** This Harbor's version, "0.124.0". */
   version: string;
+  /** Follow main (update/followmain.ts), where this copy can: its checkout, switch and status line. */
+  followMain?: { checkout: string | null; on: boolean; line: string } | undefined;
 }
 
 /** The General tab: starting at login, automatic work and the version. The rest is fixed: Enter steers, threads continue after restarts, Harbor keeps running with the window closed, suggestions are on and updates install by themselves. */
@@ -63,7 +65,18 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
       ],
     },
     worktreesSection(kv),
-    { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Harbor ${env.version}` })] },
+    { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Harbor ${env.version}` }), ...followMainRows(env.followMain)] },
+  ];
+}
+
+/** kv key of Follow main (followmain.ts `KEY`), set through the follow-main object, not `setGeneral`. */
+export const FOLLOW_MAIN = "follow_main";
+
+function followMainRows(f: GeneralEnv["followMain"]): SettingItem[] {
+  if (f === undefined) return [];
+  const where = f.checkout === null ? "a Harbor checkout (none found among your projects)" : f.checkout;
+  return [
+    toggle(FOLLOW_MAIN, "Follow main", `Builds Harbor's main branch from ${where} whenever it changes, and runs it before it's released. ${f.line}`, f.on),
   ];
 }
 

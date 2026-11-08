@@ -62,6 +62,35 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
   entry imports; a test keeps that list equal to the real import graph). Publishes as a draft, signs, verifies against
   `packaging/minisign.pub`, undrafts, then pings the worker, then attests.
 
+## Follow main (followmain.ts, health.ts, soak.ts)
+
+- Opt-in per PC (kv `follow_main`), installed copies only, not while a preview runs. Checkout: kv
+  `follow_main_checkout`, else the project whose origin is RDevNeo/harbor. Tip: the newer of `main` and
+  `origin/main` (worktree pushes move only the latter); diverged: `origin/main`.
+- Watches the ref files (3 s debounce) plus a 5-minute poll; first look 40 s after start. Builds only when
+  `shipsInApp` paths changed since the running commit (`GIT_COMMIT`) and lane.ts says "bundle" counted from
+  the tag of RUNTIME. Steps run with the installed runtime as Bun (`BUN_BE_BUN=1`), nice 19 + idle I/O, in
+  `<data>/follow-main/src`: `bun install --frozen-lockfile`, tsc's own entry (not `bun run`: `node` on
+  PATH may be a mise shim), `scripts/build.ts app --version X+sha --min-runtime R --sha C`, `smoke-bundle`.
+  The running build's Google clients are passed in its environment so Gmail's one-click sign-in stays.
+- `installLocal` = install.ts's layout (`.previous`, VERSION last): run.ts's VERSION watcher restarts at
+  once (no idle wait: the user asked for that for local builds; turns live in their own scopes and are
+  reattached), the start watchdog rolls a build back that doesn't come up. After a confirmed start,
+  `CRASH_LIMIT` (2) early crashes (within 10 min of their start, in the last hour) roll it back too.
+  Failed builds (by commit) and rolled-back commits wait for main to move.
+- Precedence: `Deps.keep` asks follow-main for each newer release; kept when the release tag's commit is
+  an ancestor of the running build (tags fetched from the checkout, else its origin). Otherwise the release
+  installs, and follow-main builds again only if main isn't already in the release's commit and the
+  release isn't newer than main's version: the two never take turns.
+- `version.ts`: `+build` doesn't order versions (`0.165.1+abc` = `0.165.1`); `useEmbedded` lets such a
+  bundle beat a single executable's own of the same number.
+- Health (`<data>/follow-main/health.json`): per commit uptime from 60 s beats (gaps over 150 s are suspends),
+  crashes = runs that ended with a nonzero code or vanished in the same boot (another boot id: shutdown),
+  clean ends, the build's checks. `soak()` = uptime ≥ hours, no crash, checks passed.
+- Rig: `~/.cache/hfollow/rig.sh` (own HOME/XDG, offline, background). Measured: commit → running 7.5 s
+  (3.2 s debounce, 2.1 s install+tsc+build+smoke, 2.4 s restart); a build that exits while starting was
+  back on the previous build 2.3 s after its swap.
+
 ## Decisions
 
 - Runtime and bundle are separate signed assets; `runtime` in the manifest points at the release that carries the newest runtime.

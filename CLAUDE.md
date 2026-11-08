@@ -12,6 +12,14 @@ slint-ui's, patched so a compiled UI doesn't keep the compiler's state (`slint/`
 Bun (`cd ts && bun install && bunx tsc --noEmit && bun test`). `scripts/boat/check` runs the same on
 a clean sandbox and builds the release executable. Everything else keeps the boat.dev rule below.
 
+## Follow main and soaked releases
+
+A PC with Follow main on (`ts/packages/update/src/followmain.ts`) builds and runs every main commit that
+changes the app bundle within seconds, from its own clone, so a push from your worktree goes live there:
+keep main working. `harbor follow-main status` says what it's doing. To release only what has run there
+for hours without a crash: `bun ts/scripts/soaked.ts status`, then `bun ts/scripts/soaked.ts release`
+(`--dry-run`, `--minor`, `--note TEXT`); `gate [COMMIT]` is the check alone. Manual tagging still works.
+
 ## Show UI changes
 
 Any change to what the user sees (`ts/packages/ui/**`, `*.slint`, cards, icons, text in the window)

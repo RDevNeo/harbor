@@ -25,8 +25,18 @@ export function repoRef(commit: string | null = GIT_COMMIT, version: string = VE
 
 export type Parsed = readonly [major: number, minor: number, patch: number, release: boolean];
 
+/**
+ * A build of a commit that isn't a release (follow-main, followmain.ts) is named `0.165.1+abc1234`: the
+ * release its source says, then the commit. As in SemVer, the part after `+` doesn't order versions.
+ */
+export function buildOf(v: string): string | null {
+  const at = v.indexOf("+");
+  return at < 0 || at === v.length - 1 ? null : v.slice(at + 1).trim();
+}
+
 export function parse(v: string): Parsed | null {
-  const t = v.trim().replace(/^v/, "");
+  const plus = v.indexOf("+");
+  const t = (plus < 0 ? v : v.slice(0, plus)).trim().replace(/^v/, "");
   const dash = t.indexOf("-");
   const core = dash < 0 ? t : t.slice(0, dash);
   const parts = core.split(".");

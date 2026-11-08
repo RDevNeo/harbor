@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { control, setHarborVersion } from "./packages/mcp/src/index.ts";
+import { apps, control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview, scopeHas } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, malloc, single, Store } from "./packages/store/src/index.ts";
 import {
+  FollowMain,
   Reloader,
   advertised,
   Updater,
@@ -39,8 +40,11 @@ export async function runApp(o: RunOptions): Promise<number> {
   wire();
 
   let reloader: Reloader | null = null;
-  const updater = new Updater(cfg, { swap: () => void reloader?.now(), advertise: advertised });
+  let follow: FollowMain | null = null;
+  const updater = new Updater(cfg, { swap: () => void reloader?.now(), advertise: advertised, keep: (v) => follow?.keeps(v) ?? false });
   const store = Store.open(dataDir());
+  // Builds of Harbor's main on a PC that develops it (followmain.ts): off unless turned on.
+  follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv });
   const offline = isOffline();
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
@@ -105,6 +109,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     stopped = true;
     stopTrims();
     sock?.stop();
+    follow?.stop();
     await run.stop();
   };
   reloader = new Reloader({
@@ -124,6 +129,8 @@ export async function runApp(o: RunOptions): Promise<number> {
   // back to do it all again.
   if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
   if (!offline) updater.start();
+  // Local git and a local build only: it runs offline too (rigs), wherever it was turned on.
+  follow.start();
   autostartByDefault(store, updater.managed() && !cfg.preview && !offline);
 
   const restore = offline ? null : takeSnapshot(run.store);
@@ -153,7 +160,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     // The window shows only this PC's chats and copies from the PCs this account uses (account.ts `pcScope`).
     data.scope = (home: string) => scopeHas(run.account.scope(), home);
     const hub = {
-      settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version },
+      settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version, followMain: follow },
       call: (method: string, path: string, query?: Record<string, string>, body?: unknown) => run.call(method, path, query, body),
       newWorktree: run.newWorktree,
       account: {
@@ -242,6 +249,16 @@ export async function runApp(o: RunOptions): Promise<number> {
   }
   await stopAll();
   return 0;
+}
+
+/** The Google clients this build has (baked in, or from the environment), for a build of main to keep. */
+function googleBuildEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const desk = apps.googleBuiltinFromEnv();
+  const web = apps.googleWebFromEnv();
+  if (desk) Object.assign(out, { HARBOR_GOOGLE_CLIENT_ID: desk.id, HARBOR_GOOGLE_CLIENT_SECRET: desk.secret });
+  if (web) Object.assign(out, { HARBOR_GOOGLE_WEB_CLIENT_ID: web.id, HARBOR_GOOGLE_WEB_CLIENT_SECRET: web.secret });
+  return out;
 }
 
 /**

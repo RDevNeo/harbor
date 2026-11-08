@@ -11,6 +11,16 @@ export interface SettingsRuntime {
   mesh: Mesh;
   /** This Harbor's own version (the mesh advertises an older one to old peers). */
   version: string;
+  /** Builds of Harbor's main on this PC (update/followmain.ts); absent where it can't run. */
+  followMain?: FollowMainView | null;
+}
+
+export interface FollowMainView {
+  possible(): boolean;
+  on(): boolean;
+  checkout(): string | null;
+  line(): string;
+  setOn(on: boolean): void;
 }
 
 export function devicesHost(store: Store, refresh: () => void, myFp: () => string, copy: (text: string) => void, runtime?: SettingsRuntime): DevicesHost {

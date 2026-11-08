@@ -27,6 +27,11 @@ export type State =
 
 export interface Deps {
   swap?: (version: string) => void | Promise<void>;
+  /**
+   * True when this PC keeps what it runs rather than take that release: a build of main that already
+   * holds the release's commit (followmain.ts `keeps`). Asked only for a release newer than this one.
+   */
+  keep?: (version: string) => boolean | Promise<boolean>;
   changed?: () => void;
   advertise?: (version: string) => string;
 }
@@ -204,7 +209,7 @@ export class Updater {
       if (this.st.t !== "installing" && this.st.t !== "installed") this.set({ t: "upToDate" });
       return;
     }
-    if (this.hasNoBuild(version)) {
+    if (this.hasNoBuild(version) || (await this.keeps(version))) {
       if (this.st.t !== "installing" && this.st.t !== "installed") this.set({ t: "upToDate" });
       return;
     }
@@ -238,7 +243,7 @@ export class Updater {
     this.set({ t: "checking" });
     try {
       const v = await this.latest();
-      if (newer(v, this.current())) await this.runInstall(v);
+      if (newer(v, this.current()) && !(await this.keeps(v))) await this.runInstall(v);
       else this.set({ t: "upToDate" });
     } catch (e) {
       this.set({ t: "failed", error: e instanceof Error ? e.message : String(e) });
@@ -276,6 +281,15 @@ export class Updater {
     });
     this.job = job;
     return job;
+  }
+
+  private async keeps(version: string): Promise<boolean> {
+    try {
+      return (await this.deps.keep?.(version)) === true;
+    } catch (e) {
+      this.cfg.log(`can't tell whether this build holds ${version}: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
   }
 
   private hasNoBuild(version: string): boolean {

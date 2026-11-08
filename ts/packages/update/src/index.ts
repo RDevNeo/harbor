@@ -13,3 +13,6 @@ export { launch, choose, isWindowLaunch, type AppBundle } from "./launcher.ts";
 export { updateCli, updateCommands, versionLabel } from "./commands.ts";
 export { releaseCli } from "./release-cli.ts";
 export { lane, buildManifest, type Lane } from "./lane.ts";
+export * as followMain from "./followmain.ts";
+export { FollowMain } from "./followmain.ts";
+export * as health from "./health.ts";
