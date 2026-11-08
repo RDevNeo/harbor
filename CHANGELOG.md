@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.167.1] - 2026-11-08
+
 ### Changed
 - Follow main is on by default on every PC with a Harbor checkout (a project whose remote is Harbor's
   repository), and its row is gone from Settings › General › Updates. A PC without a checkout keeps
