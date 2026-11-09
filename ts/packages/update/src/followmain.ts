@@ -1,12 +1,18 @@
-// Follow main: a PC where Harbor itself is developed runs Harbor's main branch, not only its releases.
-// On by default wherever there is a Harbor checkout, in an installed copy; `harbor follow-main off` turns
-// it off (kv `follow_main_off`). A PC without a checkout just takes the releases, saying nothing. (0.166's
-// opt-in kv `follow_main` is no longer read: everyone starts on.)
+// Follow main: every installed Harbor runs Harbor's main branch, not only its releases, seconds after a
+// push. On by default; `harbor follow-main off` turns it off (kv `follow_main_off`). (0.166's opt-in kv
+// `follow_main` is no longer read: everyone starts on.)
 //
-// - Which checkout: kv `follow_main_checkout`, else the project whose origin is Harbor's repository.
-//   Which main: the newer of its `main` and `origin/main` (agents push with `git push origin HEAD:main`,
-//   which moves only `origin/main`); when they've gone apart, `origin/main`.
-// - When: the ref files are watched (3 s after the last write), and looked at every 5 minutes anyway.
+// - Which main: Harbor's public repository's (`REMOTE`, over HTTPS only, the PC's git config left out),
+//   or a local checkout's when that one is ahead of it (commits not pushed yet). The checkout: kv
+//   `follow_main_checkout`, else the project whose origin is Harbor's repository; its main is the newer
+//   of `main` and `origin/main` (agents push with `git push origin HEAD:main`, which moves only
+//   `origin/main`). A PC without a checkout keeps a partial clone (`--filter=blob:none`: commits and
+//   trees, blobs only as a build needs them) in the data folder.
+// - Only forward from what runs: a commit of the public main is built only when it descends from the
+//   running build's commit, so a force-push that rewrote main builds nothing; releases still install.
+// - When: a push to main reaches the account worker as GitHub's webhook, and every PC holds a long poll
+//   there (`/v1/main/wait`): the look starts about a second after the push. Checkout refs are watched too
+//   (3 s after the last write), and `git ls-remote` looks every 3 minutes anyway.
 // - What: only a commit that changes what the app bundle is built from (`shipsInApp`: ts/ sources,
 //   package.json, bun.lock, assets/; not tests, docs, rigs or scripts) is built. A commit that would need
 //   a new runtime (lane.ts says "runtime", counted from the runtime this PC has) is skipped and says why.
@@ -23,10 +29,10 @@
 //   ignored; any other newer release installs as usual, and main is followed again from there (a build
 //   is made only when main isn't already in what runs, and never older than a running release).
 // - Run health per commit (health.ts) is what `ts/scripts/soaked.ts` releases from.
-import { closeSync, copyFileSync, openSync, watch, type FSWatcher } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, openSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
-import { alive, BUNDLE_FILE, ensureDir, fresh, isFile, read, readJson, remove, replace, RUNTIME_FILE, writeAtomic } from "./files.ts";
+import { alive, BUNDLE_FILE, ensureDir, exists, fresh, isFile, read, readJson, remove, replace, RUNTIME_FILE, writeAtomic } from "./files.ts";
 import { bootId, begin, beat, BEAT_MS, CRASH_LIMIT, earlyCrashes, end, readHealth, recordChecks, recordCrash } from "./health.ts";
 import { current, hasPrevious, onDisk, PREVIOUS, rollback, rolledBack, runtimeOnDisk, smokeBundle, SKIP } from "./install.ts";
 import { lane } from "./lane.ts";
@@ -40,6 +46,8 @@ export const SOON_MS = 3_000;
 export const POLL_MS = 5 * 60_000;
 /** The first look waits until this start has shown it stays up: a build about to be rolled back builds nothing. */
 export const FIRST_MS = 40_000;
+/** With push news waiting, the first look comes this soon after start (the start watchdog settles in ~2 s). */
+export const FIRST_NEWS_MS = 10_000;
 const TOGGLE_MS = 10_000;
 const WAIT_MS = 30_000;
 const GIT_MS = 60_000;
@@ -47,6 +55,13 @@ const INSTALL_MS = 5 * 60_000;
 const TSC_MS = 5 * 60_000;
 const BUILD_MS = 5 * 60_000;
 const REPO_RE = /github\.com[:/]+RDevNeo\/harbor(\.git)?\/?$/i;
+/** Harbor's public repository: the only main followed without a checkout (rigs pass their own). */
+export const REMOTE = "https://github.com/RDevNeo/harbor.git";
+/** Without a checkout's refs to watch, `git ls-remote` this often besides the push news. */
+export const REMOTE_POLL_MS = 3 * 60_000;
+const NEWS_TIMEOUT_MS = 75_000;
+const NEWS_BACKOFF_MS = [5_000, 15_000, 60_000, 5 * 60_000];
+const LS_MS = 30_000;
 
 export type FollowState = "off" | "idle" | "building" | "checking" | "waiting" | "swapping" | "failed" | "skipped";
 
@@ -70,6 +85,8 @@ export interface Timeline {
   noticedAt: number;
   builtAt: number;
   liveAt: number;
+  /** When the account worker heard of the push (GitHub's webhook), if the build came from that news. */
+  pushedAt?: number;
 }
 
 interface Memory {
@@ -105,6 +122,11 @@ export interface FollowDeps {
   buildEnv?: () => Record<string, string>;
   /** The running build's commit (version.ts `GIT_COMMIT`). */
   commit?: string | null;
+  /**
+   * The repository whose main is followed besides (or without) a checkout: `REMOTE` in an installed
+   * copy; null (the default) for none, checkouts only (tests, offline rigs).
+   */
+  remote?: string | null;
   run?: Runner;
   watchRefs?: (gitDir: string, onChange: () => void) => () => void;
   changed?: () => void;
@@ -114,7 +136,8 @@ export interface FollowDeps {
 
 /** What the app bundle is built from: a change elsewhere (tests, docs, rigs, the other apps) builds nothing. */
 export function shipsInApp(path: string): boolean {
-  if (path === "ts/scripts/build.ts") return true;
+  // build.ts, and the engine checksums the bundle embeds (discordsetup.ts, whatsappsetup.ts).
+  if (path === "ts/scripts/build.ts" || path === "discord/SHA256SUMS" || path === "whatsapp/SHA256SUMS") return true;
   if (!path.startsWith("ts/") && !path.startsWith("assets/")) return false;
   if (/(^|\/)test\//.test(path) || /\.test\.ts$/.test(path) || /\.md$/i.test(path)) return false;
   return !/^ts\/(rig|scripts|proto)\//.test(path) && !/^ts\/parity/.test(path) && path !== "ts/run.sh";
@@ -209,12 +232,21 @@ export class FollowMain {
   private exitHooked = false;
   private readonly commit: string | null;
   private readonly pid: number;
+  private readonly remote: string | null;
+  private news: AbortController | null = null;
+  /** The public main the worker last told of, when, and when the worker heard the push. */
+  private heard: { sha: string; at: number; pushedAt: number } | null = null;
+  /** The first look has run (news before it waits for it: a start about to be rolled back builds nothing). */
+  private looked = false;
+  private armedAt = 0;
+  private warmed = false;
 
   constructor(private readonly d: FollowDeps) {
     this.home = join(d.dataDir, DIR);
     this.run = d.run ?? defaultRunner;
     this.commit = d.commit === undefined ? GIT_COMMIT : d.commit;
     this.pid = d.pid ?? process.pid;
+    this.remote = d.remote ?? null;
     this.st = readJson<FollowStatus>(join(this.home, "status.json")) ?? { state: "off", checkout: "", commit: "", subject: "", version: "", reason: "", at: 0 };
   }
 
@@ -226,9 +258,14 @@ export class FollowMain {
     return this.st;
   }
 
-  /** Following: not turned off, and there's a Harbor checkout to follow (without one, releases only, silently). */
+  /** Following: not turned off, and there's a main to follow (the public repository's, or a checkout's). */
   on(): boolean {
-    return enabled(this.d.kv) && this.checkout() !== null;
+    return enabled(this.d.kv) && (this.remote !== null || this.checkout() !== null);
+  }
+
+  /** What `status` names as followed: the checkout, else the public repository. */
+  private source(checkout: string | null): string {
+    return checkout ?? (this.remote === null ? "" : this.remote.replace(/^https:\/\//, "").replace(/\.git$/, ""));
   }
 
   /** Usable here: an installed copy, not running a preview. */
@@ -302,6 +339,7 @@ export class FollowMain {
 
   private arm(): void {
     this.armed = true;
+    this.armedAt = this.cfg.now();
     this.startHealth();
     this.afterStart();
     const checkout = this.checkout();
@@ -309,11 +347,53 @@ export class FollowMain {
       const common = this.commonDir(checkout);
       if (common !== null) this.unwatch = (this.d.watchRefs ?? watchMainRefs)(common, () => this.soon());
     }
-    this.pollTimer = setInterval(() => this.poke(), POLL_MS);
+    this.pollTimer = setInterval(() => this.poke(), this.remote !== null ? REMOTE_POLL_MS : POLL_MS);
     this.pollTimer.unref?.();
     this.soonTimer = setTimeout(() => this.poke(), FIRST_MS);
     this.soonTimer.unref?.();
-    if (this.st.state === "off") this.set({ state: "idle", checkout: checkout ?? "", commit: this.commit ?? "", version: current(this.cfg), reason: checkout === null ? "no Harbor checkout found" : "" });
+    if (this.remote !== null && this.cfg.worker !== null) {
+      const news = new AbortController();
+      this.news = news;
+      void this.newsLoop(news.signal);
+    }
+    if (this.st.state === "off") this.set({ state: "idle", checkout: this.source(checkout), commit: this.commit ?? "", version: current(this.cfg), reason: "" });
+  }
+
+  /**
+   * The push news: a long poll on the account worker, answered with main's commit when it isn't `have`
+   * (GitHub's webhook tells the worker of every push). Only a reason to look: what's built is what
+   * the repository itself says main is.
+   */
+  private async newsLoop(signal: AbortSignal): Promise<void> {
+    let fails = 0;
+    while (!signal.aborted) {
+      try {
+        const url = `${this.cfg.worker}/v1/main/wait?have=${encodeURIComponent(this.heard?.sha ?? "")}`;
+        const res = await this.cfg.fetch(url, { headers: { "user-agent": `harbor/${this.cfg.version}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(NEWS_TIMEOUT_MS)]) });
+        if (res.status === 204) {
+          fails = 0;
+          continue;
+        }
+        if (!res.ok) throw new Error(`main news: HTTP ${res.status}`);
+        const body = (await res.json()) as { sha?: unknown; at?: unknown };
+        fails = 0;
+        const sha = typeof body.sha === "string" && /^[0-9a-f]{40}$/.test(body.sha) ? body.sha : null;
+        if (sha === null || sha === this.heard?.sha) {
+          await this.cfg.sleep(NEWS_BACKOFF_MS[0] as number, signal);
+          continue;
+        }
+        const first = this.heard === null;
+        this.heard = { sha, at: this.cfg.now(), pushedAt: typeof body.at === "number" ? body.at : 0 };
+        // The first answer is only where main is: worth a look when it isn't what runs.
+        if (first && sha === this.commit) continue;
+        if (this.looked) void this.poke();
+        else this.firstLookIn(this.armedAt + FIRST_NEWS_MS - this.cfg.now());
+      } catch (e) {
+        if (signal.aborted) return;
+        if (e instanceof DOMException && e.name === "TimeoutError") continue;
+        await this.cfg.sleep(NEWS_BACKOFF_MS[Math.min(fails++, NEWS_BACKOFF_MS.length - 1)] as number, signal);
+      }
+    }
   }
 
   private disarm(): void {
@@ -321,6 +401,8 @@ export class FollowMain {
     for (const t of [this.pollTimer, this.beatTimer]) if (t !== null) clearInterval(t);
     if (this.soonTimer !== null) clearTimeout(this.soonTimer);
     this.pollTimer = this.beatTimer = this.soonTimer = null;
+    this.news?.abort();
+    this.news = null;
     this.unwatch?.();
     this.unwatch = null;
   }
@@ -328,6 +410,14 @@ export class FollowMain {
   private commonDir(checkout: string): string | null {
     const r = Bun.spawnSync(["git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdout: "pipe", stderr: "ignore" });
     return r.exitCode === 0 ? r.stdout.toString().trim() : null;
+  }
+
+  /** Brings the first look forward (never later than it was). */
+  private firstLookIn(ms: number): void {
+    if (!this.armed || this.looked) return;
+    if (this.soonTimer !== null) clearTimeout(this.soonTimer);
+    this.soonTimer = setTimeout(() => this.poke(), Math.max(0, ms));
+    this.soonTimer.unref?.();
   }
 
   /** Ref writes come in bursts (a merge, then a push's packed-refs): one look 3 s after the last. */
@@ -350,6 +440,7 @@ export class FollowMain {
         this.again = false;
         try {
           await this.check();
+          await this.warm();
         } catch (e) {
           this.set({ state: "failed", reason: e instanceof Error ? e.message : String(e) });
         }
@@ -400,7 +491,8 @@ export class FollowMain {
         m.pending = null;
       });
       this.st = { ...this.st, last };
-      this.cfg.log(`follow-main: ${last.version} running, ${Math.round((now - last.committedAt) / 1000)} s after its commit (noticed ${Math.round((last.noticedAt - last.committedAt) / 1000)} s, built ${Math.round((last.builtAt - last.noticedAt) / 1000)} s, restarted ${Math.round((now - last.builtAt) / 1000)} s)`);
+      const push = last.pushedAt ? `${Math.round((now - last.pushedAt) / 1000)} s after its push, ` : "";
+      this.cfg.log(`follow-main: ${last.version} running, ${push}${Math.round((now - last.committedAt) / 1000)} s after its commit (noticed ${Math.round((last.noticedAt - last.committedAt) / 1000)} s, built ${Math.round((last.builtAt - last.noticedAt) / 1000)} s, restarted ${Math.round((now - last.builtAt) / 1000)} s)`);
       this.set({ state: "idle", commit: this.commit, version: running, reason: "" });
     }
     // A build of main that keeps crashing soon after it starts goes back to what ran before it.
@@ -424,19 +516,52 @@ export class FollowMain {
 
   // ---- git ----
 
+  /** Git in Harbor's own clone: the PC's git config left out (no `insteadOf` sends it elsewhere), never a prompt. */
+  private gitEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("GIT_")) env[k] = v;
+    return { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" };
+  }
+
   private async git(cwd: string, args: string[], timeoutMs = GIT_MS): Promise<string> {
-    const r = await this.run(["git", "-C", cwd, ...args], { cwd, timeoutMs });
+    const own = cwd === this.src || cwd === this.home;
+    const r = await this.run(["git", "-C", cwd, ...args], { cwd, timeoutMs, ...(own ? { env: this.gitEnv() } : {}) });
     if (r.code !== 0) throw new Error(`git ${args[0]} failed${r.out ? `: ${r.out.split("\n").pop()}` : ""}`);
     return r.out;
   }
 
   private async gitOk(cwd: string, args: string[]): Promise<boolean> {
-    return (await this.run(["git", "-C", cwd, ...args], { cwd, timeoutMs: GIT_MS })).code === 0;
+    return (await this.git(cwd, args).then(() => true, () => false));
   }
 
   private async revParse(cwd: string, ref: string): Promise<string | null> {
-    const r = await this.run(["git", "-C", cwd, "rev-parse", "--verify", "-q", `${ref}^{commit}`], { cwd, timeoutMs: GIT_MS });
-    return r.code === 0 && /^[0-9a-f]{40}$/.test(r.out) ? r.out : null;
+    const out = await this.git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]).catch(() => "");
+    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+  }
+
+  /** The public main's commit, asked of the repository (`git ls-remote`, a few hundred bytes); null when unreachable. */
+  private async lsRemote(): Promise<string | null> {
+    if (this.remote === null) return null;
+    ensureDir(this.home);
+    const out = await this.git(this.home, ["ls-remote", "--", this.remote, "refs/heads/main"], LS_MS).catch((e: unknown) => {
+      this.cfg.log(`follow-main: ${this.remote} not reached: ${e instanceof Error ? e.message : String(e)}`);
+      return "";
+    });
+    const sha = out.split(/\s/)[0] ?? "";
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  }
+
+  /**
+   * Which main a look builds: the public one, or the checkout's when that one is ahead of it (commits
+   * not pushed yet) or the public one can't be reached.
+   */
+  private async pickTip(checkout: string | null): Promise<{ tip: string; from: "checkout" | "remote" } | null> {
+    const local = checkout === null ? null : await this.tipOf(checkout);
+    const remote = local !== null && this.heard?.sha === local ? local : await this.lsRemote();
+    if (remote === null) return local === null ? null : { tip: local, from: "checkout" };
+    if (local === remote) return { tip: local, from: "checkout" };
+    if (local !== null && checkout !== null && (await this.revParse(checkout, remote)) !== null && (await this.ancestor(checkout, remote, local))) return { tip: local, from: "checkout" };
+    return { tip: remote, from: "remote" };
   }
 
   private ancestor(cwd: string, a: string, b: string): Promise<boolean> {
@@ -456,23 +581,41 @@ export class FollowMain {
     return join(this.home, "src");
   }
 
-  /** Harbor's own clone, brought to the checkout's main refs and tags. */
-  private async syncClone(checkout: string): Promise<void> {
+  /**
+   * Harbor's own clone, brought to the checkout's main refs and tags (`checkout`), or to the public main
+   * (null: `refs/follow/remote-main`). Made from the checkout when there is one, else a partial clone of
+   * the public repository.
+   */
+  private async syncClone(checkout: string | null): Promise<void> {
     if (!isFile(join(this.src, ".git", "HEAD"))) {
       remove(this.src);
       ensureDir(this.home);
-      await this.git(this.home, ["clone", "--quiet", "--no-checkout", checkout, this.src], INSTALL_MS);
+      if (checkout !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", checkout, this.src], INSTALL_MS);
+      else if (this.remote !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", "main", "--no-tags", "--", this.remote, this.src], INSTALL_MS);
+      else throw new Error("no Harbor checkout found");
     }
+    if (checkout === null) return this.fetchRemote(["+refs/heads/main:refs/follow/remote-main"]);
     await this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, "+refs/heads/main:refs/follow/main", "+refs/remotes/origin/main:refs/follow/origin-main"], INSTALL_MS).catch(() =>
       this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, "+refs/heads/main:refs/follow/main"], INSTALL_MS),
     );
   }
 
-  /** A release tag's commit: from the checkout's tags, else fetched from the checkout's origin. */
+  /** Fetches from the public repository: through `origin` in the partial clone (its filter goes along), else by address. */
+  private async fetchRemote(refspecs: string[]): Promise<void> {
+    if (this.remote === null) throw new Error("no repository to fetch from");
+    const origin = (await this.git(this.src, ["config", "--get", "remote.origin.url"]).catch(() => "")) === this.remote;
+    await this.git(this.src, ["fetch", "--quiet", "--force", "--no-tags", "--", origin ? "origin" : this.remote, ...refspecs], INSTALL_MS);
+  }
+
+  /** A release tag's commit: from the clone's tags, else fetched from the public repository (or the checkout's origin). */
   private async tagCommit(version: string): Promise<string | null> {
     const tag = `refs/tags/v${version}`;
     const have = await this.revParse(this.src, tag);
     if (have !== null) return have;
+    if (this.remote !== null) {
+      await this.fetchRemote([`+${tag}:${tag}`]).catch(() => undefined);
+      return this.revParse(this.src, tag);
+    }
     const checkout = this.checkout();
     if (checkout === null) return null;
     const url = await this.git(checkout, ["remote", "get-url", "origin"]).catch(() => "");
@@ -485,8 +628,8 @@ export class FollowMain {
   async keeps(version: string): Promise<boolean> {
     if (!this.possible() || !this.on() || this.commit === null || buildOf(current(this.cfg)) === null) return false;
     const checkout = this.checkout();
-    if (checkout === null) return false;
     if (!isFile(join(this.src, ".git", "HEAD"))) await this.syncClone(checkout);
+    if (this.remote !== null && (await this.revParse(this.src, this.commit)) === null) await this.fetchRemote(["+refs/heads/main:refs/follow/remote-main"]).catch(() => undefined);
     const tag = await this.tagCommit(version);
     if (tag === null) return false;
     const keep = await this.ancestor(this.src, tag, this.commit);
@@ -498,12 +641,16 @@ export class FollowMain {
 
   async check(): Promise<void> {
     if (!this.on() || !this.possible()) return;
+    this.looked = true;
     const checkout = this.checkout();
-    if (checkout === null) return this.set({ state: "idle", checkout: "", reason: "no Harbor checkout found (harbor follow-main on --checkout DIR)" });
-    this.st.checkout = checkout;
-    const noticedAt = this.cfg.now();
-    const tip = await this.tipOf(checkout);
-    if (tip === null) return this.set({ state: "failed", checkout, reason: `no main branch in ${checkout}` });
+    const startedAt = this.cfg.now();
+    const pick = await this.pickTip(checkout);
+    if (pick === null) return this.set({ state: "failed", checkout: this.source(checkout), reason: checkout === null ? `${this.source(null)} can't be reached` : `no main branch in ${checkout}` });
+    const from = pick.from === "checkout" ? checkout : null;
+    this.st.checkout = this.source(from);
+    const tip = pick.tip;
+    const news = this.heard !== null && this.heard.sha === tip && startedAt - this.heard.at < 60_000 ? this.heard : null;
+    const noticedAt = news?.at ?? startedAt;
     const short = tip.slice(0, 7);
     const running = current(this.cfg);
     if (tip === this.commit) return this.set({ state: "idle", commit: tip, version: running, reason: "" });
@@ -513,7 +660,17 @@ export class FollowMain {
     if (crashed) return this.set({ state: "failed", commit: tip, version: crashed.version, reason: `${crashed.version} was rolled back: ${crashed.why}; waiting for main to move` });
     if (this.d.busy() || onDisk(this.cfg) !== null) return this.waitThen(tip, "a release is being installed");
 
-    await this.syncClone(checkout);
+    await this.syncClone(from);
+    if (from === null) {
+      // What the repository says main is now (it may have moved since ls-remote).
+      const fetched = await this.revParse(this.src, "refs/follow/remote-main");
+      if (fetched === null) return this.set({ state: "failed", commit: tip, reason: `main didn't come from ${this.source(null)}` });
+      if (fetched !== tip) {
+        // It moved since ls-remote: look again from the top with the newer one.
+        this.again = true;
+        return;
+      }
+    }
     const subject = await this.git(this.src, ["log", "-1", "--format=%s", tip]).catch(() => "");
     const committedAt = Number(await this.git(this.src, ["log", "-1", "--format=%ct", tip]).catch(() => "0")) * 1000;
     const pkgText = await this.git(this.src, ["show", `${tip}:ts/package.json`]).catch(() => "");
@@ -523,8 +680,12 @@ export class FollowMain {
 
     if (buildOf(running) === null && newer(running, pkgVersion)) return this.set({ state: "idle", commit: tip, subject, version: running, reason: `release ${running} is newer than main (${pkgVersion})` });
     const mine = this.commit !== null && (await this.revParse(this.src, this.commit)) !== null ? this.commit : null;
+    if (mine !== null && (await this.ancestor(this.src, tip, mine))) return this.set({ state: "idle", commit: tip, subject, version: running, reason: `${running} already has main (${short})` });
+    // The public main only forward from what runs: never a rewritten history (a force-push), never older.
+    if (from === null && (mine === null || !(await this.ancestor(this.src, mine, tip)))) {
+      return this.set({ state: "skipped", commit: tip, subject, version, reason: `${short} doesn't descend from what runs (${(this.commit ?? "no commit").slice(0, 7)}): releases only until main does` });
+    }
     if (mine !== null) {
-      if (await this.ancestor(this.src, tip, mine)) return this.set({ state: "idle", commit: tip, subject, version: running, reason: `${running} already has main (${short})` });
       const changed = (await this.git(this.src, ["diff", "--name-only", mine, tip])).split("\n").filter(Boolean);
       if (!changed.some(shipsInApp)) return this.set({ state: "idle", commit: tip, subject, version: running, reason: `main (${short}) changed nothing the app is built from` });
     }
@@ -546,10 +707,37 @@ export class FollowMain {
     if (!this.on() || !this.armed) return;
     installLocal(this.cfg, built, version);
     this.remember((m) => {
-      m.pending = { commit: tip, version, committedAt, noticedAt, builtAt: this.cfg.now() };
+      m.pending = { commit: tip, version, committedAt, noticedAt, builtAt: this.cfg.now(), ...(news?.pushedAt ? { pushedAt: news.pushedAt } : {}) };
     });
     this.cfg.log(`follow-main: ${version} installed, restarting into it`);
     this.set({ state: "swapping", commit: tip, subject, version, reason: "" });
+  }
+
+  /**
+   * Once per start, when the clone has no node_modules yet (a PC that never built main): the clone and
+   * `bun install` now, at idle priority, so the first push builds in seconds rather than downloading.
+   */
+  private async warm(): Promise<void> {
+    if (this.warmed || !this.armed || !this.on() || this.d.busy()) return;
+    if (exists(join(this.src, "ts", "node_modules"))) {
+      this.warmed = true;
+      return;
+    }
+    if (this.st.state !== "idle" && this.st.state !== "skipped") return;
+    this.warmed = true;
+    const checkout = this.checkout();
+    try {
+      await this.syncClone(checkout);
+      const at = (this.commit !== null ? await this.revParse(this.src, this.commit) : null) ?? (await this.revParse(this.src, checkout === null ? "refs/follow/remote-main" : "refs/follow/main"));
+      if (at === null) return;
+      await this.git(this.src, ["checkout", "--quiet", "--force", "--detach", at]);
+      const { exe, env } = this.bunCmd();
+      const log = join(this.home, "build.log");
+      writeAtomic(log, `follow-main: getting ready (bun install at ${at.slice(0, 7)})\n`);
+      await this.run([exe, "install", "--frozen-lockfile"], { cwd: join(this.src, "ts"), env, timeoutMs: INSTALL_MS, log, nice: true });
+    } catch (e) {
+      this.cfg.log(`follow-main: getting ready failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private waitThen(commit: string, why: string): void {
@@ -586,9 +774,21 @@ export class FollowMain {
       return null;
     };
     this.set({ state: "building", commit, subject, version, reason: "" });
+    const t0 = this.cfg.now();
+    const mark = (what: string): void => {
+      try {
+        appendFileSync(log, `follow-main: [${((this.cfg.now() - t0) / 1000).toFixed(1)} s] ${what}\n`);
+      } catch {
+        // the log is for people
+      }
+    };
     await this.git(this.src, ["checkout", "--quiet", "--force", "--detach", commit]);
     await this.git(this.src, ["clean", "-fdq"]);
-    const step = (cmd: string[], timeoutMs: number) => this.run([exe, ...cmd], { cwd: ts, env, timeoutMs, log, nice: true });
+    mark("checked out");
+    const step = async (cmd: string[], timeoutMs: number) => {
+      mark(cmd[0] === "install" ? "bun install" : cmd[0]?.includes("tsc") ? "tsc" : (cmd[0] ?? ""));
+      return this.run([exe, ...cmd], { cwd: ts, env, timeoutMs, log, nice: true });
+    };
     if ((await step(["install", "--frozen-lockfile"], INSTALL_MS)).code !== 0) return fail("bun install failed");
     this.set({ state: "checking", commit, subject, version, reason: "tsc" });
     // tsc's own entry, run by this Bun: `bun run check` reaches it through `node`, which may be anything (a mise shim).
@@ -596,6 +796,7 @@ export class FollowMain {
     this.set({ state: "building", commit, subject, version, reason: "" });
     const bundle = join(out, BUNDLE_FILE);
     if ((await step(["scripts/build.ts", "app", bundle, "--version", version, "--min-runtime", minRuntime, "--sha", commit], BUILD_MS)).code !== 0 || !isFile(bundle)) return fail("the build failed");
+    mark("smoke-bundle");
     this.set({ state: "checking", commit, subject, version, reason: "smoke-bundle" });
     try {
       await smokeBundle(join(this.cfg.dir ?? "", RUNTIME_FILE), bundle, version);
@@ -603,6 +804,7 @@ export class FollowMain {
       return fail(e instanceof Error ? e.message : String(e), { tsc: true, smoke: false });
     }
     recordChecks(this.home, commit, version, { tsc: true, smoke: true }, this.cfg.now());
+    mark("built");
     this.remember((m) => {
       if (m.failed?.commit === commit) m.failed = null;
     });
@@ -637,5 +839,6 @@ export function statusLine(s: FollowStatus, on: boolean): string {
 export function timelineText(t: Timeline | undefined): string {
   if (t === undefined) return "";
   const s = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`;
+  if (t.pushedAt) return `${t.version} ran ${s(t.liveAt - t.pushedAt)} after its push (heard ${s(t.noticedAt - t.pushedAt)}, built ${s(t.builtAt - t.noticedAt)}, restarted ${s(t.liveAt - t.builtAt)}).`;
   return `${t.version} ran ${s(t.liveAt - t.committedAt)} after its commit (noticed ${s(t.noticedAt - t.committedAt)}, built ${s(t.builtAt - t.noticedAt)}, restarted ${s(t.liveAt - t.builtAt)}).`;
 }

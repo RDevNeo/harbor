@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { dirname, resolve } from "node:path";
-import { ReleaseHub, newer, parseVersion, releasePing, releaseWait, tagFrom, type ReleaseEnv, type Storage } from "../../../../worker/src/release.js";
+import { ReleaseHub, githubHook, mainWait, newer, parseVersion, releasePing, releaseWait, signedBy, tagFrom, type ReleaseEnv, type Storage } from "../../../../worker/src/release.js";
 
 const realFetch = globalThis.fetch;
 const stub = (fn: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch => Object.assign(fn, { preconnect: () => undefined });
@@ -307,4 +307,77 @@ test("the worker routes the two endpoints and leaves the rest alone", async () =
   expect(wrong.status).toBe(404);
   const other = await worker.fetch(new Request("https://w/v1/nothing"), e);
   expect(other.status).toBe(404);
+});
+
+// ---- main's news: GitHub's push webhook → /v1/main/wait ----
+
+const SECRET = "hook-secret";
+const A = "a".repeat(40);
+const B = "b".repeat(40);
+
+async function sign(body: string, secret = SECRET): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return `sha256=${Buffer.from(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body))).toString("hex")}`;
+}
+
+async function hook(e: ReleaseEnv, payload: unknown, o: { event?: string; secret?: string; signature?: string } = {}): Promise<Response> {
+  const body = JSON.stringify(payload);
+  const headers = { "content-type": "application/json", "x-github-event": o.event ?? "push", "x-hub-signature-256": o.signature ?? (await sign(body, o.secret)) };
+  return githubHook(new Request("https://w/v1/github", { method: "POST", headers, body }), e);
+}
+
+const push = (sha: string, over: Record<string, unknown> = {}) => ({ ref: "refs/heads/main", after: sha, forced: false, repository: { full_name: "o/r" }, ...over });
+
+test("the webhook's signature is checked in full", async () => {
+  const body = new TextEncoder().encode("{}");
+  expect(await signedBy(SECRET, body, await sign("{}"))).toBe(true);
+  expect(await signedBy(SECRET, body, await sign("{}", "other"))).toBe(false);
+  expect(await signedBy(SECRET, body, (await sign("{}")).replace("sha256=", "sha1="))).toBe(false);
+  expect(await signedBy(SECRET, body, null)).toBe(false);
+  expect(await signedBy("", body, await sign("{}"))).toBe(false);
+});
+
+test("a signed push to main wakes every PC waiting on main; anything else is turned away or ignored", async () => {
+  const { hub: h } = hub(new Memory(), env({ RELEASE_WAIT_MS: "5000" }));
+  const e = { ...routed(h), RELEASE_REPO: "o/r", GITHUB_WEBHOOK_SECRET: SECRET };
+  expect((await githubHook(new Request("https://w/v1/github", { method: "POST", body: "{}" }), { ...e, GITHUB_WEBHOOK_SECRET: "" })).status).toBe(503);
+  // Nothing known yet: held.
+  const a = mainWait(new Request(`https://w/v1/main/wait?have=`), e);
+  const b = mainWait(new Request(`https://w/v1/main/wait?have=${A}`), e);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(h.mainWaiters.size).toBe(2);
+  expect((await hook(e, push(A), { secret: "wrong" })).status).toBe(401);
+  expect((await hook(e, push(A), { signature: "sha256=00" })).status).toBe(401);
+  expect((await hook(e, {}, { event: "ping" })).status).toBe(200);
+  expect((await hook(e, push(A, { ref: "refs/heads/side" }))).status).toBe(202);
+  expect((await hook(e, push(A, { repository: { full_name: "someone/fork" } }))).status).toBe(202);
+  expect((await hook(e, push("0".repeat(40)))).status).toBe(202);
+  expect(h.main ?? null).toBeNull();
+  const t0 = Date.now();
+  const r = await hook(e, push(A));
+  expect(r.status).toBe(202);
+  // The PC that knew nothing hears A; the one that already had A keeps waiting.
+  const first = (await (await a).json()) as { sha: string; at: number };
+  expect(first.sha).toBe(A);
+  expect(first.at).toBeGreaterThanOrEqual(t0);
+  expect(h.mainWaiters.size).toBe(1);
+  await hook(e, push(B, { forced: true }));
+  expect(((await (await b).json()) as { sha: string }).sha).toBe(B);
+  // Asked again with an old commit: answered at once. With the newest: held, then 204.
+  expect(((await (await mainWait(new Request(`https://w/v1/main/wait?have=${A}`), e)).json()) as { sha: string }).sha).toBe(B);
+  expect((await mainWait(new Request("https://w/v1/main/wait?have=junk"), e)).status).toBe(400);
+  const { hub: quick } = hub(new Memory(), env());
+  await quick.setMain(B, 1);
+  expect((await mainWait(new Request(`https://w/v1/main/wait?have=${B}`), routed(quick))).status).toBe(204);
+});
+
+test("the worker routes the webhook and main's wait", async () => {
+  const path = resolve(dirname(new URL(import.meta.url).pathname), "../../../../worker/src/index.js");
+  const worker = ((await import(path)) as { default: { fetch: (req: Request, env: ReleaseEnv) => Promise<Response> } }).default;
+  const { hub: h } = hub();
+  const e = { ...routed(h), RELEASE_REPO: "o/r", GITHUB_WEBHOOK_SECRET: SECRET };
+  const body = JSON.stringify(push(A));
+  const r = await worker.fetch(new Request("https://w/v1/github", { method: "POST", headers: { "x-github-event": "push", "x-hub-signature-256": await sign(body) }, body }), e);
+  expect(r.status).toBe(202);
+  expect(((await (await worker.fetch(new Request("https://w/v1/main/wait"), e)).json()) as { sha: string }).sha).toBe(A);
 });

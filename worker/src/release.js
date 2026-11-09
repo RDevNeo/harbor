@@ -7,6 +7,9 @@ const RECHECK_MS = 10 * 60 * 1000;
 const MISSING_ASSET_MS = 5_000;
 const MISSING_ASSET_TRIES = 36;
 const MAX_WAITERS = 1000;
+const SHA_RE = /^[0-9a-f]{40}$/;
+const ZERO_SHA = '0'.repeat(40);
+const MAX_HOOK_BYTES = 30 * 1024 * 1024;
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
@@ -48,6 +51,10 @@ export class ReleaseHub {
     // GitHub, whose /releases/latest can still name the previous tag for a while after a release is
     // created. Kept in memory only: if the object is thrown away, the 10-minute recheck remains.
     this.hint = null;
+    // Main's newest commit, as GitHub's push webhook told it ({ sha, at }), and the PCs waiting to hear
+    // it moved (followmain.ts). Like the release, never believed by the PCs: only a reason to look.
+    this.main = undefined;
+    this.mainWaiters = new Set();
   }
 
   get repo() {
@@ -156,6 +163,39 @@ export class ReleaseHub {
     return json({ version: this.version, at: Math.floor(Date.now() / 1000) });
   }
 
+  async loadMain() {
+    if (this.main === undefined) this.main = (await this.state.storage.get('main')) || null;
+    return this.main;
+  }
+
+  async setMain(sha, at) {
+    const known = await this.loadMain();
+    if (known && known.sha === sha) return known;
+    this.main = { sha, at };
+    await this.state.storage.put('main', this.main);
+    for (const w of [...this.mainWaiters]) if (w.have !== sha) w.finish(json(this.main));
+    return this.main;
+  }
+
+  async waitMain(have, signal) {
+    const main = await this.loadMain();
+    if (main && main.sha !== have) return json(main);
+    if (this.waiters.size + this.mainWaiters.size >= MAX_WAITERS) return json({ error: 'Too many waiting PCs.' }, 503, { 'retry-after': '30' });
+    return new Promise((resolve) => {
+      const waiter = {
+        have,
+        finish: (res) => {
+          clearTimeout(timer);
+          this.mainWaiters.delete(waiter);
+          resolve(res);
+        },
+      };
+      const timer = setTimeout(() => waiter.finish(new Response(null, { status: 204 })), Number(this.env.RELEASE_WAIT_MS) || WAIT_MS);
+      this.mainWaiters.add(waiter);
+      signal?.addEventListener('abort', () => waiter.finish(new Response(null, { status: 204 })), { once: true });
+    });
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/refresh') {
@@ -169,6 +209,12 @@ export class ReleaseHub {
       return json({ ok: true, version });
     }
     if (request.method === 'GET' && url.pathname === '/wait') return this.wait(url.searchParams.get('have'), request.signal);
+    if (request.method === 'POST' && url.pathname === '/main') {
+      const b = await request.json().catch(() => ({}));
+      if (!SHA_RE.test(String(b?.sha || ''))) return json({ error: 'Send { sha }.' }, 400);
+      return json({ ok: true, main: await this.setMain(b.sha, Number(b.at) || Date.now()) });
+    }
+    if (request.method === 'GET' && url.pathname === '/main/wait') return this.waitMain(url.searchParams.get('have') || '', request.signal);
     return json({ error: 'Not found.' }, 404);
   }
 }
@@ -195,4 +241,57 @@ export async function releaseWait(req, env) {
   const have = new URL(req.url).searchParams.get('have') || '';
   if (!parseVersion(have)) return json({ error: 'Send ?have=<the version this PC runs>.' }, 400);
   return hub(env).fetch(`https://release/wait?have=${encodeURIComponent(have)}`, { signal: req.signal });
+}
+
+// ---- Main's news (follow-main) ----
+// GitHub's push webhook on the repository (secret GITHUB_WEBHOOK_SECRET, `X-Hub-Signature-256`) names main's
+// new commit; every PC holds GET /v1/main/wait?have=<the commit it knows> and is answered { sha, at } when
+// main isn't that one any more. The PCs only take it as a reason to look: they build what the repository
+// itself says main is, and only forward from what they run.
+
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** True when `header` is `sha256=<HMAC-SHA256 of body with secret>` (compared in constant time). */
+export async function signedBy(secret, body, header) {
+  if (!secret || typeof header !== 'string' || !header.startsWith('sha256=')) return false;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const want = 'sha256=' + hex(await crypto.subtle.sign('HMAC', key, body));
+  if (want.length !== header.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ header.charCodeAt(i);
+  return diff === 0;
+}
+
+export async function githubHook(req, env) {
+  if (!env.GITHUB_WEBHOOK_SECRET) return json({ error: 'Not set up.' }, 503);
+  const size = Number(req.headers.get('content-length') || 0);
+  if (size > MAX_HOOK_BYTES) return json({ error: 'Too large.' }, 413);
+  const body = await req.arrayBuffer();
+  if (!(await signedBy(env.GITHUB_WEBHOOK_SECRET, body, req.headers.get('x-hub-signature-256')))) return json({ error: 'Bad signature.' }, 401);
+  const event = req.headers.get('x-github-event');
+  if (event === 'ping') return json({ ok: true });
+  if (event !== 'push') return json({ ok: true, ignored: event || 'no event' }, 202);
+  let p;
+  try {
+    p = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    return json({ error: 'Not JSON.' }, 400);
+  }
+  const repo = env.RELEASE_REPO || DEFAULT_REPO;
+  const name = String(p?.repository?.full_name || '');
+  if (name.toLowerCase() !== repo.toLowerCase() || p?.ref !== 'refs/heads/main') return json({ ok: true, ignored: 'not main' }, 202);
+  const sha = String(p?.after || '');
+  if (!SHA_RE.test(sha) || sha === ZERO_SHA) return json({ ok: true, ignored: 'no commit' }, 202);
+  const res = await hub(env).fetch('https://release/main', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sha, at: Date.now() }),
+  });
+  return json({ ok: true, main: (await res.json()).main || null }, 202);
+}
+
+export async function mainWait(req, env) {
+  const have = new URL(req.url).searchParams.get('have') || '';
+  if (have !== '' && !SHA_RE.test(have)) return json({ error: 'Send ?have=<the commit this PC knows main at>, or nothing.' }, 400);
+  return hub(env).fetch(`https://release/main/wait?have=${have}`, { signal: req.signal });
 }

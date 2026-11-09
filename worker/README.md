@@ -22,6 +22,8 @@ Wire format: see "Accounts" in `android/PROTOCOL.md`.
 - `GET /invite`: a landing page (unused while invitations aren't emailed)
 - `POST /v1/release`: the release workflow's ping. The body is ignored; the worker re-reads GitHub's latest release itself (`src/release.js`)
 - `GET /v1/release/wait?have=<version>`: held until a release newer than `have` exists (answers `{version}` at once if one already does, `204` after about 50 s so the PC reconnects)
+- `POST /v1/github`: GitHub's push webhook on the repository (content type JSON, secret `GITHUB_WEBHOOK_SECRET`, checked against `X-Hub-Signature-256`); a push to `main` is told to the PCs below
+- `GET /v1/main/wait?have=<commit>`: held until main's newest commit (as the webhook told it) isn't `have`; answers `{sha, at}`, or `204` after about 50 s. PCs following main (followmain.ts) only take it as a reason to look
 
 ## Deploy
 
@@ -38,6 +40,9 @@ Secret values are typed at the prompt (or set in the Cloudflare dashboard), neve
    Also `VAULT_SECRET`: 32 random bytes, base64 (`openssl rand -base64 32 | npx wrangler secret put VAULT_SECRET`).
    It seals each account's vault key at rest (`vault_keys`, src/vault.js). If it's ever lost or changed, the
    stored keys stop opening and the account's PCs that hold a key hand it over again on their next round.
+   Also `GITHUB_WEBHOOK_SECRET`: the secret of the repository's push webhook (payload URL `{PUBLIC_URL}/v1/github`,
+   content type `application/json`, the push event only). Unset, `/v1/github` answers 503 and PCs following main
+   fall back to `git ls-remote` every 3 minutes.
 7. Edit `[vars]` in `wrangler.toml`: `CLERK_FRONTEND_URL`, `PUBLIC_URL`, and the rest if needed.
 8. `npx wrangler deploy`
 9. Optional: attach a custom domain to the Worker in the Cloudflare dashboard, and set `PUBLIC_URL` to it.

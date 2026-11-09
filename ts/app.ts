@@ -57,10 +57,10 @@ const commands: Record<string, Command> = {
     if (at >= 0) kv.set(followMain.CHECKOUT_KEY, (await import("node:path")).resolve(args[at + 1] as string));
     if (verb !== "status") followMain.setEnabled(kv, verb === "on");
     const checkout = followMain.findCheckout(kv, () => kv.repos());
-    const on = followMain.enabled(kv) && checkout !== null;
+    const on = followMain.enabled(kv);
     const { readJson } = await import("./packages/update/src/files.ts");
     const st = readJson<import("./packages/update/src/followmain.ts").FollowStatus>(join(dataDir(), followMain.DIR, "status.json"));
-    console.log(`checkout: ${checkout ?? "none found (--checkout DIR)"}`);
+    console.log(`main: ${process.env.HARBOR_FOLLOW_REMOTE || followMain.REMOTE}${checkout === null ? "" : `, or ${checkout} when it's ahead`}`);
     const off = { state: "off" as const, checkout: "", commit: "", subject: "", version: "", reason: "", at: 0 };
     console.log(st === null || !on ? (on ? "On: the running Harbor starts following main within 10 s." : followMain.statusLine(off, false)) : followMain.statusLine(st, on));
     if (st?.last) console.log(followMain.timelineText(st.last));

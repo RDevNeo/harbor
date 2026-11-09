@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Follow main runs on every installed Harbor, not only on PCs with a Harbor checkout: a push to
+  Harbor's main is running on each PC about 5–15 s later. A PC without a checkout (or with a stale
+  one) keeps a small partial clone of the public repository (`https://github.com/RDevNeo/harbor.git`,
+  HTTPS only, the PC's git config left out) in Harbor's data folder and builds there, as before:
+  app-only commits, the same checks, `+commit` versions, crash rollback, run health. A local checkout
+  still wins when it's ahead (commits not pushed yet). It is ready before the first push (clone and
+  `bun install` once, at idle priority).
+- Pushes are heard at once: GitHub's push webhook reaches the account worker (`POST /v1/github`,
+  signature checked), which answers every PC's long poll (`GET /v1/main/wait`); without it,
+  `git ls-remote` looks every 3 minutes. After a restart, news brings the first look forward to 10 s.
+- Only forward: a commit of the public main is built only when it descends from the commit the PC
+  runs, so a force-push that rewrites main builds nothing and releases keep coming. `harbor follow-main
+  off` still turns it off; `status` names the main followed and, after a push, "ran N s after its push".
+  build.log times each step.
+
 ## [0.167.3] - 2026-11-08
 
 ### Fixed

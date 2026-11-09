@@ -24,7 +24,7 @@ test("a build of main is named 0.x.y+commit, and the commit doesn't order versio
 });
 
 test("what the app bundle is built from: sources, packages, assets; not tests, docs, rigs or scripts", () => {
-  for (const p of ["ts/run.ts", "ts/packages/ui/src/shell.ts", "ts/package.json", "ts/bun.lock", "ts/packages/ui/slint/app.slint", "assets/fonts/lucide.ttf", "ts/scripts/build.ts"]) expect(shipsInApp(p)).toBe(true);
+  for (const p of ["discord/SHA256SUMS", "whatsapp/SHA256SUMS", "ts/run.ts", "ts/packages/ui/src/shell.ts", "ts/package.json", "ts/bun.lock", "ts/packages/ui/slint/app.slint", "assets/fonts/lucide.ttf", "ts/scripts/build.ts"]) expect(shipsInApp(p)).toBe(true);
   for (const p of ["ts/test/x.test.ts", "ts/packages/update/test/support.ts", "ts/README.md", "ts/rig/phonehub.ts", "ts/scripts/soaked.ts", "ts/proto/main.ts", "ts/parity.ts", "android/app.java", "CHANGELOG.md", "docs/x.md"]) expect(shipsInApp(p)).toBe(false);
   expect(ships("android/src/Main.java")).toBe(true);
   expect(ships("ts/test/a.test.ts")).toBe(false);
@@ -239,7 +239,8 @@ test("follow-main: tests and docs alone build nothing; a runtime change is skipp
   await r.fm.poke();
   expect(r.fm.status().state).toBe("skipped");
   expect(r.fm.status().reason).toContain("needs a new runtime (ts/runtime.ts is part of the runtime)");
-  expect(r.calls).toEqual([]);
+  // Only the one-time `bun install` that gets a PC ready for the first build.
+  expect(r.calls).toEqual(["install"]);
   expect(readFileSync(join(r.inst.dir, "VERSION"), "utf8")).toBe("1.0.0");
   r.fm.stop();
 });
@@ -360,4 +361,138 @@ test("follow-main is on by default where there's a Harbor checkout; off only whe
 
 test("the edit-to-running line", () => {
   expect(timelineText({ commit: "c", version: "1.0.0+c", committedAt: 0, noticedAt: 3000, builtAt: 9000, liveAt: 12000 })).toBe("1.0.0+c ran 12 s after its commit (noticed 3 s, built 6 s, restarted 3 s).");
+});
+
+// ---- the public main, without a checkout or ahead of a stale one ----
+
+function remoteRig(opts: { checkout?: boolean; worker?: string; fetch?: typeof fetch } = {}) {
+  const upstream = tmp("hfm-up-");
+  sh(upstream, "git", "init", "-q", "-b", "main");
+  const base = commit(upstream, { "ts/package.json": '{ "version": "1.0.0", "packageManager": "bun@1.4.3" }\n', "ts/app.ts": "1\n", "ts/runtime.ts": "r\n" }, "1.0.0");
+  sh(upstream, "git", "tag", "v1.0.0");
+  const running = commit(upstream, { "ts/app.ts": "running\n" }, "what runs");
+  const inst = makeInstall({ version: "1.0.0" });
+  const cfg = configFor(inst, { version: "1.0.0", ...(opts.worker ? { worker: opts.worker } : {}), ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+  const kv = new Map<string, string>();
+  let checkout: string | null = null;
+  if (opts.checkout) {
+    checkout = join(tmp("hfm-co-"), "harbor");
+    sh(upstream, "git", "clone", "-q", upstream, checkout);
+    kv.set("follow_main_checkout", checkout);
+  }
+  const data = tmp("hfm-data-");
+  const calls: string[] = [];
+  const run: Runner = async (cmd, o) => {
+    if (cmd[0] === "git") return defaultRunner(cmd, o);
+    const step = cmd.slice(1).join(" ");
+    calls.push(step.includes("bin/tsc") ? "check" : (step.split(" ")[0] ?? ""));
+    if (step.startsWith("scripts/build.ts")) writeFileSync(cmd[3] as string, bundleSource(cmd[cmd.indexOf("--version") + 1] as string));
+    return { code: 0, out: "" };
+  };
+  const fm = new FollowMain({
+    cfg,
+    kv: { get: (k) => kv.get(k) ?? null, set: (k, v) => void kv.set(k, v) },
+    dataDir: data,
+    repos: () => [],
+    busy: () => false,
+    commit: running,
+    remote: upstream,
+    run,
+    watchRefs: () => () => undefined,
+    boot: "boot-1",
+  });
+  return { upstream, base, running, checkout, inst, data, fm, calls, kv };
+}
+
+test("follow-main without a checkout: the public main is cloned into the data folder and built", async () => {
+  const r = remoteRig();
+  expect(r.fm.on()).toBe(true);
+  r.fm.start();
+  await r.fm.poke();
+  expect(r.fm.status()).toMatchObject({ state: "idle", commit: r.running });
+  const c = commit(r.upstream, { "ts/app.ts": "pushed\n" }, "pushed");
+  await r.fm.poke();
+  expect(r.fm.status()).toMatchObject({ state: "swapping", commit: c, version: `1.0.0+${c.slice(0, 7)}` });
+  expect(readFileSync(join(r.inst.dir, "VERSION"), "utf8")).toBe(`1.0.0+${c.slice(0, 7)}`);
+  // The first look found nothing to build: the clone got ready (`bun install`) for the first push.
+  expect(r.calls).toEqual(["install", "install", "check", "scripts/build.ts"]);
+  expect(sh(join(fmHome(r.data), "src"), "git", "config", "remote.origin.url")).toBe(r.upstream);
+  expect(r.fm.status().checkout).toBe(r.upstream);
+  r.fm.stop();
+});
+
+test("follow-main without a checkout: a rewritten main (force-push) that doesn't descend from what runs is skipped", async () => {
+  const r = remoteRig();
+  r.fm.start();
+  sh(r.upstream, "git", "reset", "-q", "--hard", r.base);
+  const rewritten = commit(r.upstream, { "ts/app.ts": "other history\n" }, "rewritten");
+  await r.fm.poke();
+  expect(r.fm.status()).toMatchObject({ state: "skipped", commit: rewritten });
+  expect(r.fm.status().reason).toContain("doesn't descend from what runs");
+  expect(r.calls.filter((c) => c !== "install")).toEqual([]);
+  expect(readFileSync(join(r.inst.dir, "VERSION"), "utf8")).toBe("1.0.0");
+  r.fm.stop();
+});
+
+test("follow-main with a stale checkout builds the public main; with the checkout ahead, the checkout's", async () => {
+  const r = remoteRig({ checkout: true });
+  r.fm.start();
+  const pushed = commit(r.upstream, { "ts/app.ts": "from elsewhere\n" }, "pushed from another PC");
+  await r.fm.poke();
+  expect(r.fm.status()).toMatchObject({ state: "swapping", commit: pushed });
+  r.fm.stop();
+  const co = r.checkout as string;
+  sh(co, "git", "pull", "-q", "--ff-only");
+  const local = commit(co, { "ts/app.ts": "not pushed yet\n" }, "local");
+  const kv = r.kv;
+  const next = new FollowMain({
+    cfg: configFor(r.inst, { version: `1.0.0+${pushed.slice(0, 7)}` }),
+    kv: { get: (k) => kv.get(k) ?? null, set: (k, v) => void kv.set(k, v) },
+    dataDir: r.data,
+    repos: () => [],
+    busy: () => false,
+    commit: pushed,
+    remote: r.upstream,
+    run: async (cmd, o) => (cmd[0] === "git" ? defaultRunner(cmd, o) : (cmd.join(" ").includes("scripts/build.ts") && writeFileSync(cmd[3] as string, bundleSource(cmd[cmd.indexOf("--version") + 1] as string)), { code: 0, out: "" })),
+    watchRefs: () => () => undefined,
+  });
+  next.start();
+  await next.poke();
+  expect(next.status()).toMatchObject({ state: "swapping", commit: local, checkout: co });
+  next.stop();
+});
+
+test("follow-main hears of a push from the worker's long poll and looks at once", async () => {
+  const asked: string[] = [];
+  let answer: ((sha: string) => void) | null = null;
+  const fake = Object.assign(
+    async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      asked.push(url.replace(/^.*\/v1/, "/v1"));
+      return new Promise<Response>((resolve) => {
+        answer = (sha) => resolve(Response.json({ sha, at: 1234 }));
+        init?.signal?.addEventListener("abort", () => resolve(new Response(null, { status: 204 })), { once: true });
+      });
+    },
+    { preconnect: () => undefined },
+  ) as typeof fetch;
+  const r = remoteRig({ worker: "http://worker", fetch: fake });
+  r.fm.start();
+  await r.fm.poke();
+  await Bun.sleep(20);
+  expect(asked).toEqual(["/v1/main/wait?have="]);
+  (answer as unknown as (sha: string) => void)(r.running);
+  await Bun.sleep(20);
+  expect(asked[1]).toBe(`/v1/main/wait?have=${r.running}`);
+  const c = commit(r.upstream, { "ts/app.ts": "pushed\n" }, "pushed");
+  (answer as unknown as (sha: string) => void)(c);
+  for (let i = 0; i < 100 && r.fm.status().state !== "swapping"; i++) await Bun.sleep(50);
+  expect(r.fm.status()).toMatchObject({ state: "swapping", commit: c });
+  const st = JSON.parse(readFileSync(join(fmHome(r.data), "state.json"), "utf8")) as { pending: { pushedAt?: number } };
+  expect(st.pending.pushedAt).toBe(1234);
+  r.fm.stop();
+});
+
+test("the push-to-running line", () => {
+  expect(timelineText({ commit: "c", version: "1.0.0+c", committedAt: 0, pushedAt: 10_000, noticedAt: 11_000, builtAt: 16_000, liveAt: 19_000 })).toBe("1.0.0+c ran 9 s after its push (heard 1 s, built 5 s, restarted 3 s).");
 });

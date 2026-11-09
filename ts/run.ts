@@ -4,6 +4,7 @@ import { directoryPcWorkspaces, preview as meshPreview, scopeHas } from "./packa
 import { type Chat, dataDir, malloc, single, Store } from "./packages/store/src/index.ts";
 import {
   FollowMain,
+  FOLLOW_REMOTE as REMOTE,
   Reloader,
   advertised,
   Updater,
@@ -43,9 +44,11 @@ export async function runApp(o: RunOptions): Promise<number> {
   let follow: FollowMain | null = null;
   const updater = new Updater(cfg, { swap: () => void reloader?.now(), advertise: advertised, keep: (v) => follow?.keeps(v) ?? false });
   const store = Store.open(dataDir());
-  // Builds of Harbor's main on a PC that develops it (followmain.ts): on wherever there's a Harbor checkout.
-  follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv });
   const offline = isOffline();
+  // Builds of Harbor's main, seconds after each push (followmain.ts): the public repository's main, or a
+  // local checkout's when it's ahead. Offline (rigs): a checkout only, or HARBOR_FOLLOW_REMOTE's repository.
+  const remote = process.env.HARBOR_FOLLOW_REMOTE || (offline ? null : REMOTE);
+  follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv, remote });
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
   let taking = Promise.resolve();
@@ -130,7 +133,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   // back to do it all again.
   if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
   if (!offline) updater.start();
-  // Local git and a local build only: it runs offline too (rigs), wherever it was turned on.
+  // Runs offline too (rigs): a checkout's main, or HARBOR_FOLLOW_REMOTE's.
   follow.start();
   autostartByDefault(store, updater.managed() && !cfg.preview && !offline);
 
