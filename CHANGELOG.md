@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.167.3] - 2026-11-08
+
+### Fixed
+- Esc right after sending, then sending again at once, could leave the chat stuck on Working: the
+  new turn's events were dropped while the undone turn hadn't reported its exit yet.
+
 ## [0.167.2] - 2026-11-08
 
 ### Added
