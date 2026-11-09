@@ -37,7 +37,10 @@ export interface Deps {
 }
 
 export interface UpdateInfo {
+  /** What peers compare (advertised: older PCs and phones read only the first three numbers). */
   version: string;
+  /** The version actually running, e.g. "0.167.1" or a follow-main build "0.167.1+abc1234" (newer PCs show it). */
+  build: string;
   runtime: string;
   managed: boolean;
   latest: string | null;
@@ -359,6 +362,7 @@ export class Updater {
     else if (s.t === "failed") status = `update failed: ${s.error}`;
     return {
       version: this.deps.advertise?.(cur) ?? cur,
+      build: cur,
       runtime: this.cfg.runtime,
       managed,
       latest,

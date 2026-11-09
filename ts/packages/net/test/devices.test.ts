@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { APP_INBOX, Hub, type Token } from "../src/hub.ts";
 import { newConfig, newHost } from "../src/remote.ts";
 import { newPeer } from "../src/shared.ts";
-import { newPcVersion } from "../src/versions.ts";
+import { newPcVersion, runningVersion } from "../src/versions.ts";
 import {
   DEVICE_SEND_MAX,
   FileBrowser,
@@ -171,6 +171,12 @@ describe("devices beyond the Rust tests", () => {
     expect(clearDeviceTransfers([newDeviceTransfer({ done: true }), newDeviceTransfer({ error: "x" }), newDeviceTransfer({})]).length).toBe(1);
   });
 
+  test("a PC's running version is its update info's build, else the advertised one", () => {
+    expect(runningVersion(newPcVersion({ version: "0.109.0.ts", update: { managed: true, build: "0.167.1+abc1234" } }))).toBe("0.167.1+abc1234");
+    expect(runningVersion(newPcVersion({ version: "0.109.0.ts", update: { managed: true } }))).toBe("0.109.0.ts");
+    expect(runningVersion(newPcVersion({ version: "0.66.0", update: null }))).toBe("0.66.0");
+  });
+
   test("paired devices: this PC first, PCs from the mesh, phones from the hub", () => {
     const hub = new Hub([tok("t1", "g1", "Pixel")], 0);
     hub.mesh.on = true;
@@ -185,7 +191,7 @@ describe("devices beyond the Rust tests", () => {
     hub.seen.set("t1", ["", 990]);
     hub.alive.set("t1", [995, 0]);
     hub.apps.set("t1", 66000);
-    const versions = [newPcVersion({ id: "pc:lap", name: "lap", version: "0.60.0" }), newPcVersion({ id: "pc:desk", name: "desk", online: true, version: "0.66.0", update: { managed: true, latest: "0.66.0" } })];
+    const versions = [newPcVersion({ id: "pc:lap", name: "lap", version: "0.60.0" }), newPcVersion({ id: "pc:desk", name: "desk", online: true, version: "0.66.0", update: { managed: true, latest: "0.66.0", build: "0.66.0+abc1234" } })];
     const [self, ...v] = pairedDevices(hub, versions, 1000);
     expect(self).toMatchObject({ key: hub.mesh.me.id, name: hub.mesh.me.name, kind: "pc", online: true, here: true });
     expect(deviceCanSend(self!)).toBe(false);
@@ -195,7 +201,7 @@ describe("devices beyond the Rust tests", () => {
       ["pc:lap", "pc", false, "harbor", 40],
       ["phone:g1", "android", true, "", 995],
     ]);
-    expect(v[0]?.harbor.startsWith("Harbor 0.66.0")).toBe(true);
+    expect(v[0]?.harbor.startsWith("Harbor 0.66.0+abc1234")).toBe(true);
     expect(v[1]?.harbor).toBe("Harbor 0.60.0");
     expect(v[2]).toMatchObject({ name: "Pixel", open: true, app: 66000 });
     hub.mesh.on = false;

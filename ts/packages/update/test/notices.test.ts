@@ -81,6 +81,7 @@ const info = (over: Partial<UpdateInfo> = {}): UpdateInfo => ({
   auto: true,
   skipped: null,
   rolled_back: null,
+  build: "1.0.0",
   preview_on: false,
   preview_kind: "bundle",
   preview: null,

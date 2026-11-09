@@ -87,6 +87,7 @@ test("the updater stays up to date on a Rust-only release, says no error, doesn'
   expect(info.error).toBeNull();
   expect(info.status).toBe("up to date");
   expect(info.version).toBe("0.109.0.ts");
+  expect(info.build).not.toContain(".ts");
   expect(swapped).toEqual([]);
   expect(logs).toEqual([]);
   expect(readFileSync(join(inst.dir, "harbor-android.apk"))).toEqual(Buffer.from(apk));

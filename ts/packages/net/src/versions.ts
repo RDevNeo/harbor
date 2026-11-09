@@ -103,6 +103,13 @@ function agoText(ts: number, at: number): string {
 }
 
 /** A PC's Harbor in a line: "0.66.0 (latest, updates automatically)", "0.64.1, offline (last seen 2d ago)". */
+/** The version a PC really runs (its update info's `build`, e.g. "0.167.1+abc1234"); else the one it advertises. */
+export function runningVersion(p: Pick<PcVersion, "version" | "update">): string {
+  const u = p.update;
+  const b = typeof u === "object" && u !== null && !Array.isArray(u) ? (u as Record<string, unknown>).build : undefined;
+  return typeof b === "string" && b.trim() !== "" ? b.trim() : p.version;
+}
+
 export function pcLine(p: PcVersion, newest: string, at: number = now()): string {
   if (!p.me && !p.online) {
     const v = p.version === "" ? "version unknown" : p.version;

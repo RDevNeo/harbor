@@ -10,7 +10,7 @@ import { tildeOf } from "./movepc.ts";
 import { outputWithin, type Spawner } from "./proc.ts";
 import { pairedPcs, shQuote, sshOpts, type RemoteConfig, type RemoteCtx, type RemoteHost } from "./remote.ts";
 import { dest as peerDest, type Dest, type Down, type Peer } from "./shared.ts";
-import { agoShort, newestVersion, pcLine, type PcVersion } from "./versions.ts";
+import { agoShort, newestVersion, pcLine, runningVersion, type PcVersion } from "./versions.ts";
 import { sip13, type Json } from "./wire.ts";
 
 /** Images above this aren't fetched for a preview. */
@@ -171,12 +171,14 @@ export function pairedDevices(hub: Hub, versions: readonly PcVersion[], at: numb
   const newest = newestVersion(versions);
   const me = hub.mesh.me;
   const mine = versions.find((y) => y.me);
-  const self = newPairedDevice({ key: me.id, name: me.name, kind: "pc", online: true, here: true, seen: at, harbor: mine ? `Harbor ${pcLine(mine, newest, at)}` : "" });
+  // Each PC's Harbor as it really runs (its update info's build), not the version it advertises to old peers.
+  const real = (x: PcVersion): PcVersion => ({ ...x, version: runningVersion(x) });
+  const self = newPairedDevice({ key: me.id, name: me.name, kind: "pc", online: true, here: true, seen: at, harbor: mine ? `Harbor ${pcLine(real(mine), newest, at)}` : "" });
   const v: PairedDevice[] = [self, ...pairedPcs(hub.mesh.workspacePeers().filter((a) => a.use !== false), hub.mesh.peers).map((p) => {
     const down = meshOn && !p.online ? (hub.mesh.down.get(p.id) ?? "") : "";
     const x = versions.find((y) => y.id === p.id);
     // Its Harbor: "0.66.0 (latest)", or the version it ran when last seen.
-    const harbor = x && x.online ? `Harbor ${pcLine(x, newest, at)}` : x && x.version !== "" ? `Harbor ${x.version}` : "";
+    const harbor = x && x.online ? `Harbor ${pcLine(real(x), newest, at)}` : x && x.version !== "" ? `Harbor ${runningVersion(x)}` : "";
     return newPairedDevice({ seen: hub.mesh.peers.get(p.id)?.seen ?? 0, key: p.id, name: p.name, kind: "pc", online: meshOn && p.online, ip: p.ip, down, harbor });
   })];
   if (hub.enabled) {
