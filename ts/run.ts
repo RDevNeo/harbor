@@ -51,6 +51,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   let taking = Promise.resolve();
   const run = await startHub({
     version: advertised(o.version),
+    build: o.version,
     updater,
     store,
     discordNotices: true,

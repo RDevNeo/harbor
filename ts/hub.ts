@@ -142,7 +142,10 @@ import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
 export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover">;
 
 export interface HubOptions {
+  /** What peers and phones compare (advertised: older ones read only the first three numbers). */
   version: string;
+  /** The version actually running (e.g. "0.167.1+abc1234"); peers show it as the `build` of its update info. */
+  build?: string;
   env?: Record<string, string | undefined>;
   updater?: Updater;
   store?: Store;
@@ -582,7 +585,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     );
   };
   let profileFull = false;
-  const versionsOwn = () => ({ hostname: hostname(), version: o.version, update: o.updater ? asJson(o.updater.info()) : null, served: apkInfo()?.code ?? 0 });
+  // The updater's info plus the version really running (`build`): it's in the hello, so peers can show it.
+  const updateInfo = () => (o.updater ? asJson({ ...o.updater.info(), build: o.build ?? o.version }) : null);
+  const versionsOwn = () => ({ hostname: hostname(), version: o.version, update: updateInfo(), served: apkInfo()?.code ?? 0 });
   const homeName = (c: Chat): string => (c.home !== "" ? hub.mesh.nameOf(c.home) : hub.mesh.me.name);
   const replica = new StoreReplica({
     about: () => aboutOwner(store, owners),
@@ -605,7 +610,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     hub,
     route: (call) => phoneRoute(call),
     version: o.version,
-    update: () => (o.updater ? asJson(o.updater.info()) : null),
+    update: updateInfo,
     accounts: (peer) => helloAccountsFor(peer),
     copied: (chat) => engine?.storeChanged(chat),
     cwd: (c) => engine?.chatCwd(c) ?? null,
