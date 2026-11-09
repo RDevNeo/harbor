@@ -28,7 +28,8 @@
 // - Releases (delivery.ts `keep`): a newer release whose tag is already in the running build of main is
 //   ignored; any other newer release installs as usual, and main is followed again from there (a build
 //   is made only when main isn't already in what runs, and never older than a running release).
-// - Run health per commit (health.ts) is what `ts/scripts/soaked.ts` releases from.
+// - Run health per commit (health.ts) is what `ts/scripts/soaked.ts` releases from (`status` shows the
+//   last build's push-to-running time).
 import { appendFileSync, closeSync, copyFileSync, openSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
