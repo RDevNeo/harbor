@@ -496,3 +496,53 @@ test("follow-main hears of a push from the worker's long poll and looks at once"
 test("the push-to-running line", () => {
   expect(timelineText({ commit: "c", version: "1.0.0+c", committedAt: 0, pushedAt: 10_000, noticedAt: 11_000, builtAt: 16_000, liveAt: 19_000 })).toBe("1.0.0+c ran 9 s after its push (heard 1 s, built 5 s, restarted 3 s).");
 });
+
+test("a push from this PC's checkout tells the worker at once, with this PC's token, once per commit", async () => {
+  const posts: { url: string; auth: string | null; body: string }[] = [];
+  const fake = Object.assign(
+    async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url.includes("/v1/main/wait")) return new Promise<Response>((resolve) => init?.signal?.addEventListener("abort", () => resolve(new Response(null, { status: 204 })), { once: true }));
+      posts.push({ url: url.replace(/^.*\/v1/, "/v1"), auth: new Headers(init?.headers).get("authorization"), body: String(init?.body) });
+      return Response.json({ ok: true }, { status: 202 });
+    },
+    { preconnect: () => undefined },
+  ) as typeof fetch;
+  const upstream = tmp("hfm-up-");
+  sh(upstream, "git", "init", "-q", "-b", "main");
+  const base = commit(upstream, { "ts/package.json": '{ "version": "1.0.0" }\n', "ts/app.ts": "1\n" }, "1.0.0");
+  sh(upstream, "git", "checkout", "-q", "--detach");
+  const checkout = join(tmp("hfm-co-"), "harbor");
+  sh(upstream, "git", "clone", "-q", upstream, checkout);
+  let fire: () => void = () => undefined;
+  let token: string | null = "pc-token";
+  const kv = new Map<string, string>([["follow_main_checkout", checkout]]);
+  const fm = new FollowMain({
+    cfg: configFor(makeInstall({ version: "1.0.0" }), { version: "1.0.0", worker: "http://worker", fetch: fake }),
+    kv: { get: (k) => kv.get(k) ?? null, set: (k, v) => void kv.set(k, v) },
+    dataDir: tmp("hfm-data-"),
+    repos: () => [],
+    busy: () => false,
+    commit: base,
+    remote: upstream,
+    token: () => token,
+    run: defaultRunner,
+    watchRefs: (_dir, on) => ((fire = on), () => undefined),
+  });
+  fm.start();
+  // A push from the checkout: a new commit lands upstream and origin/main moves.
+  const c = commit(checkout, { "ts/app.ts": "2\n" }, "pushed from here");
+  sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
+  fire();
+  fire();
+  for (let i = 0; i < 40 && posts.length === 0; i++) await Bun.sleep(25);
+  expect(posts).toEqual([{ url: "/v1/main", auth: "Bearer pc-token", body: JSON.stringify({ sha: c }) }]);
+  // The same commit again (any other ref write): nothing more. Signed out: nothing.
+  expect(await fm.nudge(checkout)).toBe(false);
+  token = null;
+  sh(checkout, "git", "commit", "-q", "--allow-empty", "-m", "x");
+  sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
+  expect(await fm.nudge(checkout)).toBe(false);
+  expect(posts.length).toBe(1);
+  fm.stop();
+});

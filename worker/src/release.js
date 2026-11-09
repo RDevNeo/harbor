@@ -10,6 +10,10 @@ const MAX_WAITERS = 1000;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const ZERO_SHA = '0'.repeat(40);
 const MAX_HOOK_BYTES = 30 * 1024 * 1024;
+// A nudge (a PC that just pushed) reads GitHub at most this often, and a few times while GitHub doesn't show the commit yet.
+const NUDGE_GAP_MS = 1000;
+const NUDGE_TRIES = 6;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
@@ -55,6 +59,11 @@ export class ReleaseHub {
     // it moved (followmain.ts). Like the release, never believed by the PCs: only a reason to look.
     this.main = undefined;
     this.mainWaiters = new Set();
+    this.mainReadAt = 0;
+    this.nudging = null;
+    this.nudgeWant = null;
+    // Mains seen before the current one: a lagging read of GitHub never takes main back to one.
+    this.pastMains = [];
   }
 
   get repo() {
@@ -171,10 +180,47 @@ export class ReleaseHub {
   async setMain(sha, at) {
     const known = await this.loadMain();
     if (known && known.sha === sha) return known;
+    if (known) this.pastMains = [...this.pastMains.filter((p) => p !== known.sha), known.sha].slice(-50);
+    this.pastMains = this.pastMains.filter((p) => p !== sha);
     this.main = { sha, at };
     await this.state.storage.put('main', this.main);
     for (const w of [...this.mainWaiters]) if (w.have !== sha) w.finish(json(this.main));
     return this.main;
+  }
+
+  /** Main's commit as GitHub's git endpoint advertises it (no API rate limit): what a nudge is checked against. */
+  async readGithubMain() {
+    const res = await fetch(`${this.origin}/${this.repo}.git/info/refs?service=git-upload-pack`, { headers: { 'user-agent': 'git/2.47.0 (harbor-accounts)' } });
+    if (!res.ok) throw new Error(`GitHub: HTTP ${res.status}`);
+    const m = /([0-9a-f]{40}) refs\/heads\/main(?:\0|\n)/.exec(await res.text());
+    return m ? m[1] : null;
+  }
+
+  /**
+   * A signed-in PC says it just pushed main (`want`). Never believed: main becomes what GitHub itself
+   * says. `want` only keeps this reading GitHub (once a second, a few times) while GitHub shows another commit.
+   */
+  nudge(want) {
+    if (want) this.nudgeWant = want;
+    if (this.nudging) return this.nudging;
+    this.nudging = (async () => {
+      for (let i = 0; i < NUDGE_TRIES; i++) {
+        const wait = this.mainReadAt + (Number(this.env.NUDGE_GAP_MS) || NUDGE_GAP_MS) - Date.now();
+        if (wait > 0) await sleep(wait);
+        this.mainReadAt = Date.now();
+        let sha = null;
+        try {
+          sha = await this.readGithubMain();
+        } catch {}
+        if (sha && !this.pastMains.includes(sha)) await this.setMain(sha, Date.now());
+        if (!this.nudgeWant || sha === this.nudgeWant) break;
+      }
+      this.nudgeWant = null;
+      return this.main || null;
+    })().finally(() => {
+      this.nudging = null;
+    });
+    return this.nudging;
   }
 
   async waitMain(have, signal) {
@@ -213,6 +259,11 @@ export class ReleaseHub {
       const b = await request.json().catch(() => ({}));
       if (!SHA_RE.test(String(b?.sha || ''))) return json({ error: 'Send { sha }.' }, 400);
       return json({ ok: true, main: await this.setMain(b.sha, Number(b.at) || Date.now()) });
+    }
+    if (request.method === 'POST' && url.pathname === '/main/nudge') {
+      const b = await request.json().catch(() => ({}));
+      const want = SHA_RE.test(String(b?.sha || '')) ? b.sha : null;
+      return json({ ok: true, main: await this.nudge(want) });
     }
     if (request.method === 'GET' && url.pathname === '/main/wait') return this.waitMain(url.searchParams.get('have') || '', request.signal);
     return json({ error: 'Not found.' }, 404);
@@ -294,4 +345,23 @@ export async function mainWait(req, env) {
   const have = new URL(req.url).searchParams.get('have') || '';
   if (have !== '' && !SHA_RE.test(have)) return json({ error: 'Send ?have=<the commit this PC knows main at>, or nothing.' }, 400);
   return hub(env).fetch(`https://release/main/wait?have=${have}`, { signal: req.signal });
+}
+
+/**
+ * POST /v1/main: a signed-in PC (its Harbor token, `claims`) that just pushed main says so, `{ sha }`. The
+ * object checks GitHub before anyone hears of it; the webhook stays the backup for pushes from elsewhere.
+ */
+export async function mainNudge(req, env, claims) {
+  if (claims?.kind !== 'pc') return json({ error: 'Only a PC can say it pushed.' }, 403);
+  let sha = null;
+  try {
+    const v = (await req.json())?.sha;
+    if (typeof v === 'string' && SHA_RE.test(v)) sha = v;
+  } catch {}
+  const res = await hub(env).fetch('https://release/main/nudge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sha }),
+  });
+  return json({ ok: true, main: (await res.json()).main || null }, 202);
 }

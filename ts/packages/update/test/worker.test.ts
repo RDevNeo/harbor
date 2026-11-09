@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { dirname, resolve } from "node:path";
-import { ReleaseHub, githubHook, mainWait, newer, parseVersion, releasePing, releaseWait, signedBy, tagFrom, type ReleaseEnv, type Storage } from "../../../../worker/src/release.js";
+import { ReleaseHub, githubHook, mainNudge, mainWait, newer, parseVersion, releasePing, releaseWait, signedBy, tagFrom, type ReleaseEnv, type Storage } from "../../../../worker/src/release.js";
 
 const realFetch = globalThis.fetch;
 const stub = (fn: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch => Object.assign(fn, { preconnect: () => undefined });
@@ -380,4 +380,57 @@ test("the worker routes the webhook and main's wait", async () => {
   const r = await worker.fetch(new Request("https://w/v1/github", { method: "POST", headers: { "x-github-event": "push", "x-hub-signature-256": await sign(body) }, body }), e);
   expect(r.status).toBe(202);
   expect(((await (await worker.fetch(new Request("https://w/v1/main/wait"), e)).json()) as { sha: string }).sha).toBe(A);
+});
+
+// ---- a PC's own push: POST /v1/main, checked against GitHub's git endpoint ----
+
+function gitRefs(main: () => string | null): { reads: () => number } {
+  let reads = 0;
+  globalThis.fetch = stub(async (input) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (!url.endsWith("/o/r.git/info/refs?service=git-upload-pack")) return new Response("unexpected", { status: 500 });
+    reads++;
+    const m = main();
+    const tag = "c".repeat(40);
+    return new Response(`001e# service=git-upload-pack\n0000${m ? `0099${m} HEAD\0multi_ack side-band-64k\n003f${m} refs/heads/main\n` : ""}0041${tag} refs/tags/v1.0.0\n0000`);
+  });
+  return { reads: () => reads };
+}
+
+test("a PC's nudge is never believed: main becomes what GitHub says, read again while GitHub shows another commit", async () => {
+  let github: string | null = A;
+  const g = gitRefs(() => github);
+  const { hub: h } = hub(new Memory(), env({ RELEASE_WAIT_MS: "5000", NUDGE_GAP_MS: "20" }));
+  const e = { ...routed(h), RELEASE_REPO: "o/r" };
+  const waiting = mainWait(new Request("https://w/v1/main/wait?have="), e);
+  await new Promise((r) => setTimeout(r, 10));
+  const r = await mainNudge(new Request("https://w/v1/main", { method: "POST", body: JSON.stringify({ sha: A }) }), e, { kind: "pc" });
+  expect(r.status).toBe(202);
+  expect(((await (await waiting).json()) as { sha: string }).sha).toBe(A);
+  expect(g.reads()).toBe(1);
+  // A claim GitHub doesn't back: read a few times, main stays what GitHub says.
+  await mainNudge(new Request("https://w/v1/main", { method: "POST", body: JSON.stringify({ sha: B }) }), e, { kind: "pc" });
+  expect(h.main?.sha).toBe(A);
+  expect(g.reads()).toBe(7);
+  // GitHub catches up during the tries: the PCs hear it.
+  setTimeout(() => (github = B), 30);
+  await h.nudge(B);
+  expect(h.main?.sha).toBe(B);
+  // A lagging read never takes main back to an older one.
+  github = A;
+  await h.nudge(null);
+  expect(h.main?.sha).toBe(B);
+  // Only a PC's token; GitHub unreachable or without main changes nothing.
+  expect((await mainNudge(new Request("https://w/v1/main", { method: "POST", body: "{}" }), e, { kind: "phone" })).status).toBe(403);
+  github = null;
+  await h.nudge(null);
+  expect(h.main?.sha).toBe(B);
+});
+
+test("POST /v1/main needs a Harbor token", async () => {
+  const path = resolve(dirname(new URL(import.meta.url).pathname), "../../../../worker/src/index.js");
+  const worker = ((await import(path)) as { default: { fetch: (req: Request, env: ReleaseEnv) => Promise<Response> } }).default;
+  const { hub: h } = hub();
+  const r = await worker.fetch(new Request("https://w/v1/main", { method: "POST", body: JSON.stringify({ sha: A }) }), { ...routed(h), RELEASE_REPO: "o/r" });
+  expect(r.status).toBe(401);
 });

@@ -1,7 +1,7 @@
 // Harbor accounts API: Clerk (Google sign-in, organizations) behind a small
 // Worker that issues offline-verifiable Harbor tokens. Wire format: android/PROTOCOL.md.
 
-import { githubHook, mainWait, releasePing, releaseWait } from './release.js';
+import { githubHook, mainNudge, mainWait, releasePing, releaseWait } from './release.js';
 import { events, tell } from './accounthub.js';
 import { VaultError, getVault, getVaultKey, putVault, putVaultKey } from './vault.js';
 
@@ -975,6 +975,7 @@ async function route(req, env) {
   if (m === 'GET' && path === '/v1/release/wait') return releaseWait(req, env);
   if (m === 'POST' && path === '/v1/github') return githubHook(req, env);
   if (m === 'GET' && path === '/v1/main/wait') return mainWait(req, env);
+  if (m === 'POST' && path === '/v1/main') return mainNudge(req, env, await harborAuth(req, env));
   if (m === 'POST' && path === '/v1/session') return session(req, env);
   if (m === 'POST' && path === '/v1/session/google') return googleSession(req, env);
   if (m === 'POST' && path === '/v1/session/refresh') return refreshSession(req, env);

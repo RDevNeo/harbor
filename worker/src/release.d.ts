@@ -14,6 +14,7 @@ export interface ReleaseEnv {
   RELEASE_ORIGIN?: string;
   RELEASE_WAIT_MS?: string;
   GITHUB_WEBHOOK_SECRET?: string;
+  NUDGE_GAP_MS?: string;
   RELEASES?: { idFromName(name: string): unknown; get(id: unknown): { fetch(url: string, init?: RequestInit): Promise<Response> } };
 }
 
@@ -31,6 +32,9 @@ export class ReleaseHub {
   mainWaiters: Set<unknown>;
   setMain(sha: string, at: number): Promise<{ sha: string; at: number }>;
   waitMain(have: string, signal?: AbortSignal): Promise<Response>;
+  mainReadAt: number;
+  readGithubMain(): Promise<string | null>;
+  nudge(want: string | null): Promise<{ sha: string; at: number } | null>;
   fetch(request: Request): Promise<Response>;
 }
 
@@ -39,3 +43,4 @@ export function releaseWait(req: Request, env: ReleaseEnv): Promise<Response>;
 export function signedBy(secret: string, body: ArrayBuffer | Uint8Array, header: string | null): Promise<boolean>;
 export function githubHook(req: Request, env: ReleaseEnv): Promise<Response>;
 export function mainWait(req: Request, env: ReleaseEnv): Promise<Response>;
+export function mainNudge(req: Request, env: ReleaseEnv, claims: { kind?: string } | null): Promise<Response>;

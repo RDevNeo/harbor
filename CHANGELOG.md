@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Follow main no longer waits on GitHub's webhook, which sometimes arrives half a minute late (a push
+  of main right before a tag, as every release does): the PC that pushed tells the account worker
+  itself as soon as its checkout's `origin/main` moves (`POST /v1/main`, with that PC's Harbor
+  token). The worker never takes its word: it reads main from GitHub (at most once a second, a few
+  tries while GitHub still shows the previous commit) and only then tells the other PCs. The webhook
+  stays as the backup for pushes from elsewhere.
+
 ## [0.169.0] - 2026-11-09
 
 ### Added

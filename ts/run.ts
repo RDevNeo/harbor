@@ -48,7 +48,9 @@ export async function runApp(o: RunOptions): Promise<number> {
   // Builds of Harbor's main, seconds after each push (followmain.ts): the public repository's main, or a
   // local checkout's when it's ahead. Offline (rigs): a checkout only, or HARBOR_FOLLOW_REMOTE's repository.
   const remote = process.env.HARBOR_FOLLOW_REMOTE || (offline ? null : REMOTE);
-  follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv, remote });
+  // Its pushes to main reach the other PCs through the worker at once (followmain.ts `nudge`): the account's token, once the hub is up.
+  let bearer: () => string | null = () => null;
+  follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv, remote, token: () => bearer() });
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
   let taking = Promise.resolve();
@@ -76,6 +78,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       file: (kind, id) => preview.offeredFile(cfg, kind, id),
     },
   });
+  bearer = () => run.account.bearer();
   const engine = run.engine;
   const data = made.data;
 

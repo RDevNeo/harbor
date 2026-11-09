@@ -1114,6 +1114,11 @@ export class AccountService {
     }
   }
 
+  /** This PC's Harbor token for the account worker's own calls (follow-main's push nudge), if signed in. */
+  bearer(): string | null {
+    return this.harborToken();
+  }
+
   /** The Harbor token this PC has now (for the account service and Settings), if any. */
   private harborToken(): string | null {
     const s = this.loadSecrets();

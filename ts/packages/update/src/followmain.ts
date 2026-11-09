@@ -10,9 +10,12 @@
 //   trees, blobs only as a build needs them) in the data folder.
 // - Only forward from what runs: a commit of the public main is built only when it descends from the
 //   running build's commit, so a force-push that rewrote main builds nothing; releases still install.
-// - When: a push to main reaches the account worker as GitHub's webhook, and every PC holds a long poll
-//   there (`/v1/main/wait`): the look starts about a second after the push. Checkout refs are watched too
-//   (3 s after the last write), and `git ls-remote` looks every 3 minutes anyway.
+// - When: every PC holds a long poll on the account worker (`/v1/main/wait`), answered when main moves:
+//   the look starts about a second after the push. The worker hears of a push from the PC that made it
+//   (its checkout's `origin/main` moved: `POST /v1/main` with its Harbor token, which the worker checks
+//   against GitHub before telling anyone), and from GitHub's webhook (the backup: GitHub sometimes
+//   delivers it half a minute late). Checkout refs are watched too (3 s after the last write), and
+//   `git ls-remote` looks every 3 minutes anyway.
 // - What: only a commit that changes what the app bundle is built from (`shipsInApp`: ts/ sources,
 //   package.json, bun.lock, assets/; not tests, docs, rigs or scripts) is built. A commit that would need
 //   a new runtime (lane.ts says "runtime", counted from the runtime this PC has) is skipped and says why.
@@ -63,6 +66,8 @@ export const REMOTE_POLL_MS = 3 * 60_000;
 const NEWS_TIMEOUT_MS = 75_000;
 const NEWS_BACKOFF_MS = [5_000, 15_000, 60_000, 5 * 60_000];
 const LS_MS = 30_000;
+/** After a ref write, before reading `origin/main` (a push writes the lock, then renames it). */
+const NUDGE_SOON_MS = 100;
 
 export type FollowState = "off" | "idle" | "building" | "checking" | "waiting" | "swapping" | "failed" | "skipped";
 
@@ -128,6 +133,8 @@ export interface FollowDeps {
    * copy; null (the default) for none, checkouts only (tests, offline rigs).
    */
   remote?: string | null;
+  /** This PC's Harbor token (account.ts), to tell the worker of its own pushes to main; null when signed out. */
+  token?: () => string | null;
   run?: Runner;
   watchRefs?: (gitDir: string, onChange: () => void) => () => void;
   changed?: () => void;
@@ -241,6 +248,9 @@ export class FollowMain {
   private looked = false;
   private armedAt = 0;
   private warmed = false;
+  private nudgeTimer: Timer | null = null;
+  /** The last `origin/main` this PC told the worker of. */
+  private nudged: string | null = null;
 
   constructor(private readonly d: FollowDeps) {
     this.home = join(d.dataDir, DIR);
@@ -346,7 +356,11 @@ export class FollowMain {
     const checkout = this.checkout();
     if (checkout !== null) {
       const common = this.commonDir(checkout);
-      if (common !== null) this.unwatch = (this.d.watchRefs ?? watchMainRefs)(common, () => this.soon());
+      if (common !== null)
+        this.unwatch = (this.d.watchRefs ?? watchMainRefs)(common, () => {
+          this.nudgeSoon(checkout);
+          this.soon();
+        });
     }
     this.pollTimer = setInterval(() => this.poke(), this.remote !== null ? REMOTE_POLL_MS : POLL_MS);
     this.pollTimer.unref?.();
@@ -401,7 +415,8 @@ export class FollowMain {
     this.armed = false;
     for (const t of [this.pollTimer, this.beatTimer]) if (t !== null) clearInterval(t);
     if (this.soonTimer !== null) clearTimeout(this.soonTimer);
-    this.pollTimer = this.beatTimer = this.soonTimer = null;
+    if (this.nudgeTimer !== null) clearTimeout(this.nudgeTimer);
+    this.pollTimer = this.beatTimer = this.soonTimer = this.nudgeTimer = null;
     this.news?.abort();
     this.news = null;
     this.unwatch?.();
@@ -411,6 +426,37 @@ export class FollowMain {
   private commonDir(checkout: string): string | null {
     const r = Bun.spawnSync(["git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdout: "pipe", stderr: "ignore" });
     return r.exitCode === 0 ? r.stdout.toString().trim() : null;
+  }
+
+  /** A ref write in the checkout: if `origin/main` moved (a push from here), the worker hears it now. */
+  private nudgeSoon(checkout: string): void {
+    if (!this.armed || this.remote === null || this.cfg.worker === null || this.d.token === undefined) return;
+    if (this.nudgeTimer !== null) clearTimeout(this.nudgeTimer);
+    this.nudgeTimer = setTimeout(() => {
+      this.nudgeTimer = null;
+      void this.nudge(checkout);
+    }, NUDGE_SOON_MS);
+    this.nudgeTimer.unref?.();
+  }
+
+  /** Tells the worker main moved (it reads GitHub itself before anyone hears of it). */
+  async nudge(checkout: string): Promise<boolean> {
+    const token = this.d.token?.() ?? null;
+    if (token === null || this.cfg.worker === null || this.remote === null) return false;
+    const sha = await this.revParse(checkout, "refs/remotes/origin/main");
+    if (sha === null || sha === this.nudged || sha === this.heard?.sha) return false;
+    this.nudged = sha;
+    try {
+      const res = await this.cfg.fetch(`${this.cfg.worker}/v1/main`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "user-agent": `harbor/${this.cfg.version}` },
+        body: JSON.stringify({ sha }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   /** Brings the first look forward (never later than it was). */
