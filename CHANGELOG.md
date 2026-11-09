@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.168.0] - 2026-11-08
+
 ### Changed
 - Follow main runs on every installed Harbor, not only on PCs with a Harbor checkout: a push to
   Harbor's main is running on each PC about 5–15 s later. A PC without a checkout (or with a stale
