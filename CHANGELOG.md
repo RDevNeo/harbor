@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.167.2] - 2026-11-08
+
+### Added
+- The Devices panel (bottom or right side panel) lists this PC first, labelled "This PC", with its
+  Terminal and Files buttons: both open here, with no ssh.
+- Device rows show the Harbor each PC really runs (e.g. `0.167.1+abc1234` on a PC that follows main),
+  not the older version PCs advertise to each other for compatibility; a PC before this release still
+  shows the advertised one.
+
+### Fixed
+- A pull request lookup that finished after Harbor stopped no longer touches its closed database
+  (the cause of the occasional "Cannot use a closed database" failure in the test runs).
+
 ## [0.167.1] - 2026-11-08
 
 ### Changed
