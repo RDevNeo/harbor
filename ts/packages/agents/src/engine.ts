@@ -198,8 +198,8 @@ export class Engine {
   }
   /** Per chat, the message that started its running turn. */
   private readonly undoStarted = new Map<number, Started>();
-  /** Chats whose undone turn hasn't reported its exit yet: their events are dropped. */
-  private readonly undoSwallow = new Set<number>();
+  /** Undone turns that haven't reported their exit yet: their events are dropped (theirs only: the chat's next turn may already run). */
+  private readonly undoSwallow = new Set<Running>();
   /** The port control.rs's webhook listener got (47920 or one of the next nine). */
   hookPort = 47920;
 
@@ -598,8 +598,8 @@ export class Engine {
   }
 
   onEvent(id: number, ev: Event, from: Running): void {
-    if (this.undoSwallow.has(id)) {
-      if (ev.type === "exited") this.undoSwallow.delete(id);
+    if (this.undoSwallow.has(from)) {
+      if (ev.type === "exited") this.undoSwallow.delete(from);
       return;
     }
     if (ev.type === "exited" && this.swallow.delete(from)) return;
@@ -1180,7 +1180,7 @@ export class Engine {
     const run = this.turns.get(id);
     if (!run) return;
     this.turns.delete(id);
-    this.undoSwallow.add(id);
+    this.undoSwallow.add(run);
     await run.turn?.stopWait();
     const chat = this.chat(id);
     const config = chat ? (this.account(chat.account)?.configDir ?? null) : null;
