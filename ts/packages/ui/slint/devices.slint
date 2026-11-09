@@ -9,6 +9,7 @@ export struct DeviceRow {
     online: bool,
     details: string,
     can-send: bool,
+    here: bool,
 }
 
 export enum TransferState { run, wait, done, error }
@@ -51,7 +52,8 @@ component Device {
     callback terminal();
     height: 56px;
     property <color> ink: d.online ? Theme.fg : Theme.subtle;
-    property <bool> acts: area.has-hover && d.can-send;
+    property <bool> acts: area.has-hover && (d.can-send || d.here);
+    property <length> acts-w: d.phone ? 32px : d.here ? 64px : 96px;
     area := TouchArea {
         if area.has-hover: Rectangle {
             y: 2px;
@@ -84,7 +86,7 @@ component Device {
         Text {
             x: 54px;
             y: root.height / 2 - 17px;
-            width: root.width - self.x - 8px - 8px - (root.acts ? (root.d.phone ? 32px : 96px) : 0px);
+            width: root.width - self.x - 8px - 8px - (root.acts ? root.acts-w : 0px);
             text: root.d.name;
             font-size: 14px;
             font-weight: 500;
@@ -94,7 +96,7 @@ component Device {
         Text {
             x: 54px;
             y: root.height / 2 + 2px;
-            width: root.width - self.x - 8px - 8px - (root.acts ? (root.d.phone ? 32px : 96px) : 0px);
+            width: root.width - self.x - 8px - 8px - (root.acts ? root.acts-w : 0px);
             text: root.d.details;
             font-size: 12.5px;
             color: Theme.subtle;
@@ -119,7 +121,7 @@ component Device {
                     root.files();
                 }
             }
-            DeviceAction {
+            if !root.d.here: DeviceAction {
                 icon: Icons.send;
                 tip: "Send";
                 clicked(x, y) => {
@@ -227,22 +229,10 @@ export component DevicesView inherits Rectangle {
             }
             Text {
                 height: 16px;
-                text: root.devices.length == 0 ? "Nothing paired yet" : root.summary;
+                text: root.summary;
                 font-size: 13px;
                 color: Theme.subtle;
                 vertical-alignment: center;
-            }
-            if root.devices.length == 0: VerticalLayout {
-                padding-top: 8px + 12px + 24px;
-                Empty {
-                    icon: Icons.monitor;
-                    title: "Nothing paired yet";
-                    desc: "Your PCs show up here once they're paired in Settings › Devices, and your phones once Harbor for Android is paired in Settings › Phones.";
-                    action: "Open Settings › Devices";
-                    act => {
-                        root.settings();
-                    }
-                }
             }
             if root.devices.length > 0: VerticalLayout {
                 padding-top: 8px + 12px;
@@ -273,6 +263,18 @@ export component DevicesView inherits Rectangle {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            if root.devices.length <= 1: VerticalLayout {
+                padding-top: 8px + 12px + 24px;
+                Empty {
+                    icon: Icons.monitor;
+                    title: "No other devices yet";
+                    desc: "Your PCs show up here once they're paired in Settings › Devices, and your phones once Harbor for Android is paired in Settings › Phones.";
+                    action: "Open Settings › Devices";
+                    act => {
+                        root.settings();
                     }
                 }
             }

@@ -1300,12 +1300,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const me = hub.mesh.me;
       const peers = [...hub.mesh.peers.values()];
       const served = apkInfo()?.code ?? 0;
-      const [pcs] = gatherVersions({ me, hostname: me.name, meshOn: hub.mesh.on, peers, version: o.version, update: null, paired: [], local: [], elsewhere: [], served });
+      const [pcs] = gatherVersions({ me, hostname: me.name, meshOn: hub.mesh.on, peers, version: o.version, update: versionsOwn().update, paired: [], local: [], elsewhere: [], served });
       return { list: pairedDevices(hub, pcs), served };
     },
     deviceEnv: { hub, peer: (key) => hub.mesh.peers.get(key) ?? null },
     deviceHost: (d) => {
       if (isPhoneDevice(d)) return null;
+      // This PC: its own shell and files, no ssh.
+      if (d.here) return { shell: [], ssh: [] };
       // surface.rs device_host: as Settings › Workspace knows it, else the PC with the defaults.
       const cfg = loadRemote(store);
       const h = remotes.find(cfg, remotes.tailnetCached(), d.key) ?? newHost({ id: d.key, name: d.name, host: d.ip, bridge: true });

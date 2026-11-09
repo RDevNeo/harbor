@@ -36,6 +36,7 @@ import {
   type DeliverSink,
   type DeviceTransfer,
   type SshSpawn,
+  spawnLocal,
 } from "../src/devices.ts";
 
 function tmp(tag: string): string {
@@ -170,7 +171,7 @@ describe("devices beyond the Rust tests", () => {
     expect(clearDeviceTransfers([newDeviceTransfer({ done: true }), newDeviceTransfer({ error: "x" }), newDeviceTransfer({})]).length).toBe(1);
   });
 
-  test("paired devices: PCs from the mesh, phones from the hub", () => {
+  test("paired devices: this PC first, PCs from the mesh, phones from the hub", () => {
     const hub = new Hub([tok("t1", "g1", "Pixel")], 0);
     hub.mesh.on = true;
     hub.enabled = true;
@@ -185,7 +186,10 @@ describe("devices beyond the Rust tests", () => {
     hub.alive.set("t1", [995, 0]);
     hub.apps.set("t1", 66000);
     const versions = [newPcVersion({ id: "pc:lap", name: "lap", version: "0.60.0" }), newPcVersion({ id: "pc:desk", name: "desk", online: true, version: "0.66.0", update: { managed: true, latest: "0.66.0" } })];
-    const v = pairedDevices(hub, versions, 1000);
+    const [self, ...v] = pairedDevices(hub, versions, 1000);
+    expect(self).toMatchObject({ key: hub.mesh.me.id, name: hub.mesh.me.name, kind: "pc", online: true, here: true });
+    expect(deviceCanSend(self!)).toBe(false);
+    expect(deviceDetails(self!, 0, 1000).startsWith("This PC")).toBe(true);
     expect(v.map((d) => [d.key, d.kind, d.online, d.down, d.seen])).toEqual([
       ["pc:desk", "pc", true, "", 50],
       ["pc:lap", "pc", false, "harbor", 40],
@@ -196,7 +200,7 @@ describe("devices beyond the Rust tests", () => {
     expect(v[2]).toMatchObject({ name: "Pixel", open: true, app: 66000 });
     hub.mesh.on = false;
     hub.enabled = false;
-    expect(pairedDevices(hub, versions, 1000).map((d) => d.online)).toEqual([false, false]);
+    expect(pairedDevices(hub, versions, 1000).map((d) => d.online)).toEqual([true, false, false]);
   });
 
   test("sends go to a phone through the hub and to a PC over the mesh", async () => {
@@ -305,6 +309,20 @@ describe("devices beyond the Rust tests", () => {
     };
     return { spawn: spawnFake, ran };
   }
+
+  test.skipIf(Bun.which("python3") === null)("this PC's file browser lists its own folders without ssh", async () => {
+    const root = tmp("fblocal");
+    try {
+      writeFileSync(join(root, "here.txt"), "local");
+      mkdirSync(join(root, "sub"));
+      const fb = new FileBrowser(newPairedDevice({ key: "pc:me", name: "me", kind: "pc", here: true }), [], root, { home: root, spawn: spawnLocal, downloads: () => join(root, "dl") });
+      await fb.idle();
+      expect(fb.error).toBeNull();
+      expect(fb.entries.map((e) => e.name).sort()).toEqual(["here.txt", "sub"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test("the file browser lists, goes back on errors, downloads and uploads", async () => {
     const root = tmp("fb");

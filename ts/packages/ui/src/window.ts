@@ -266,6 +266,8 @@ export interface DeviceRow {
   online: boolean;
   details: string;
   can_send: boolean;
+  /** This PC itself: Terminal and Files, no Send. */
+  here: boolean;
 }
 
 export interface TransferRow {

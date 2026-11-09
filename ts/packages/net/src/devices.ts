@@ -119,10 +119,12 @@ export interface PairedDevice {
   open: boolean;
   /** PCs: its Harbor version and updates in a line ("" when unknown). */
   harbor: string;
+  /** The PC this Harbor runs on (first in the list; its files and terminal are local). */
+  here: boolean;
 }
 
 export function newPairedDevice(d: Partial<PairedDevice> = {}): PairedDevice {
-  return { key: "", name: "", kind: "", online: false, ip: "", seen: 0, via: "", app: 0, owner: "", down: "", open: false, harbor: "", ...d };
+  return { key: "", name: "", kind: "", online: false, ip: "", seen: 0, via: "", app: 0, owner: "", down: "", open: false, harbor: "", here: false, ...d };
 }
 
 export function isPhoneDevice(d: Pick<PairedDevice, "kind">): boolean {
@@ -134,21 +136,22 @@ export function deviceGroup(d: Pick<PairedDevice, "key">): string {
   return d.key.startsWith("phone:") ? d.key.slice("phone:".length) : "";
 }
 
-/** Phones take sends any time (they wait for the app); PCs while they answer. */
-export function deviceCanSend(d: Pick<PairedDevice, "kind" | "online">): boolean {
+/** Phones take sends any time (they wait for the app); PCs while they answer; never this PC itself. */
+export function deviceCanSend(d: Pick<PairedDevice, "kind" | "online"> & { here?: boolean }): boolean {
+  if (d.here === true) return false;
   return isPhoneDevice(d) || d.online;
 }
 
 /** For hot reload: what a device tab needs to come back. */
 export function deviceJson(d: PairedDevice): Json {
-  return { key: d.key, name: d.name, kind: d.kind, online: d.online, ip: d.ip, seen: d.seen, via: d.via, app: d.app, owner: d.owner, down: d.down, open: d.open, harbor: d.harbor };
+  return { key: d.key, name: d.name, kind: d.kind, online: d.online, ip: d.ip, seen: d.seen, via: d.via, app: d.app, owner: d.owner, down: d.down, open: d.open, harbor: d.harbor, here: d.here };
 }
 
 export function deviceFrom(v: unknown): PairedDevice {
   const o: Record<string, unknown> = typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   const s = (k: string): string => (typeof o[k] === "string" ? (o[k] as string) : "");
   const i = (k: string): number => (typeof o[k] === "number" && Number.isInteger(o[k]) ? (o[k] as number) : 0);
-  return newPairedDevice({ key: s("key"), name: s("name"), kind: kindOf(s("kind")), online: o.online === true, ip: s("ip"), seen: i("seen"), via: s("via"), app: i("app"), owner: s("owner"), down: downOfText(s("down")), open: o.open === true, harbor: s("harbor") });
+  return newPairedDevice({ key: s("key"), name: s("name"), kind: kindOf(s("kind")), online: o.online === true, ip: s("ip"), seen: i("seen"), via: s("via"), app: i("app"), owner: s("owner"), down: downOfText(s("down")), open: o.open === true, harbor: s("harbor"), here: o.here === true });
 }
 
 /** What a phone's app is, for Devices and Settings > Phones: "app 0.18.1", or how it's behind the app this PC serves (`served`: its versionCode, 0 when none). Null while the phone hasn't been seen. Second: it needs an update. */
@@ -162,17 +165,20 @@ export function phoneAppNote(app: number, seen: number, served: number): [string
   return [`app ${name(app)}`, false];
 }
 
-/** The workspace's PCs, then (with phone access on) the phones, one per pairing. `versions` is versions.ts's PCs. */
+/** This PC first, the workspace's PCs, then (with phone access on) the phones, one per pairing. `versions` is versions.ts's PCs. */
 export function pairedDevices(hub: Hub, versions: readonly PcVersion[], at: number = now()): PairedDevice[] {
   const meshOn = hub.mesh.on;
   const newest = newestVersion(versions);
-  const v: PairedDevice[] = pairedPcs(hub.mesh.workspacePeers().filter((a) => a.use !== false), hub.mesh.peers).map((p) => {
+  const me = hub.mesh.me;
+  const mine = versions.find((y) => y.me);
+  const self = newPairedDevice({ key: me.id, name: me.name, kind: "pc", online: true, here: true, seen: at, harbor: mine ? `Harbor ${pcLine(mine, newest, at)}` : "" });
+  const v: PairedDevice[] = [self, ...pairedPcs(hub.mesh.workspacePeers().filter((a) => a.use !== false), hub.mesh.peers).map((p) => {
     const down = meshOn && !p.online ? (hub.mesh.down.get(p.id) ?? "") : "";
     const x = versions.find((y) => y.id === p.id);
     // Its Harbor: "0.66.0 (latest)", or the version it ran when last seen.
     const harbor = x && x.online ? `Harbor ${pcLine(x, newest, at)}` : x && x.version !== "" ? `Harbor ${x.version}` : "";
     return newPairedDevice({ seen: hub.mesh.peers.get(p.id)?.seen ?? 0, key: p.id, name: p.name, kind: "pc", online: meshOn && p.online, ip: p.ip, down, harbor });
-  });
+  })];
   if (hub.enabled) {
     for (const p of hub.pairedPhones()) {
       const open = p.seen > 0 && at - p.seen < PHONE_OPEN_SECS;
@@ -185,6 +191,7 @@ export function pairedDevices(hub: Hub, versions: readonly PcVersion[], at: numb
 
 /** A device row's details: kind, state, owner or Harbor version, address. */
 export function deviceDetails(d: PairedDevice, served: number, at: number = now()): string {
+  if (d.here) return ["This PC", ...(d.harbor === "" ? [] : [d.harbor])].join(" · ");
   const bits = [isPhoneDevice(d) ? "Phone" : "PC"];
   const ago = (s: number): string => {
     const a = agoShort(s, at);
@@ -492,6 +499,9 @@ function lines(b: string): string[] {
 export type SshSpawn = (args: string[], stdin: "ignore" | "pipe", stdout: "ignore" | "pipe") => ChildProcess;
 
 export const spawnSsh: SshSpawn = (args, stdin, stdout) => spawn("ssh", args, { stdio: [stdin, stdout, "pipe"] });
+
+/** FileBrowser on this PC itself (no ssh options): the command ssh would hand the remote shell, run by a local one. */
+export const spawnLocal: SshSpawn = (args, stdin, stdout) => spawn("sh", ["-c", args[args.length - 1] ?? "true"], { stdio: [stdin, stdout, "pipe"] });
 
 export interface FileBrowserEnv {
   home: string;

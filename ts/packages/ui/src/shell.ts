@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
 import { type Chat, dataDir, hot, type Item, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
-import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
+import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
@@ -3926,12 +3926,13 @@ export class Shell {
   private refreshDevices(): void {
     const { list, served } = this.hub.devices();
     this.paired = list;
-    const online = list.filter((d) => d.online).length;
+    const others = list.filter((d) => !d.here);
+    const online = others.filter((d) => d.online).length;
     const w = this.win;
-    w.devices_summary = `${online} of ${list.length} online`;
+    w.devices_summary = others.length === 0 ? "Nothing else paired yet" : `${online} of ${others.length} online`;
     sync(
       this.deviceRows,
-      list.map((d) => ({ key: d.key, name: d.name, phone: isPhoneDevice(d), online: d.online, details: deviceDetails(d, served), can_send: deviceCanSend(d) })),
+      list.map((d) => ({ key: d.key, name: d.name, phone: isPhoneDevice(d), online: d.online, details: deviceDetails(d, served), can_send: deviceCanSend(d), here: d.here })),
       sameJson,
     );
     sync(
@@ -3986,7 +3987,7 @@ export class Shell {
     const host = dev ? this.hub.deviceHost(dev) : null;
     if (!dev || !host) return;
     const home = homedir();
-    this.surfaces.openFiles(d, new FileBrowser(dev, host.ssh, null, { home, downloads: () => deviceDownloadsDir(home), wake: () => this.refreshPanes() }));
+    this.surfaces.openFiles(d, new FileBrowser(dev, host.ssh, null, { home, downloads: () => deviceDownloadsDir(home), wake: () => this.refreshPanes(), ...(dev.here ? { spawn: spawnLocal } : {}) }));
   }
 
   private filesOf(d: Dock): FileBrowser | null {
