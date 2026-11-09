@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Chat, Store } from "@harbor/store";
 import * as pr from "../src/chatpr.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-chatpr-"));
@@ -65,4 +66,35 @@ test("only_pushed_branches_off_the_default_have_a_place", async () => {
   sh(dir, "config", "branch.harbor/abc123.merge", "refs/heads/fix-it");
   sh(dir, "remote", "add", "upstream", "https://github.com/acme/proj");
   expect(await pr.place(dir, "harbor/abc123", false)).toEqual({ head: "fix-it", repos: ["acme/proj", "sam/proj"], owner: "sam" });
+});
+
+test("a lookup that lands after stop leaves the closed store alone", async () => {
+  const dir = join(base, "stopped");
+  mkdirSync(dir, { recursive: true });
+  sh(dir, "init", "-q", "-b", "harbor/gone");
+  sh(dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "one");
+  const store = Store.openTemp();
+  const chat = { id: 1, role: "lead", home: "", device: "" } as unknown as Chat;
+  let changed = 0;
+  const prs = new pr.ChatPrs({ store, chats: () => store.chats(), chat: (id) => (id === 1 ? chat : undefined), folders: () => ({ repo: dir, dir }), changed: () => void changed++ });
+  // Known before; the lookup finds none now (no remote), so landing would save and read the chats.
+  prs.found.set(1, { number: 5, state: "open", url: "u", title: "t", branch: "harbor/gone" });
+  const errors: string[] = [];
+  const was = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  try {
+    prs.want(1, null);
+    prs.stop();
+    store.close();
+    await prs.idle();
+  } finally {
+    console.error = was;
+  }
+  expect(errors).toEqual([]);
+  expect(changed).toBe(0);
+  expect(prs.found.get(1)?.number).toBe(5);
+  // Nothing new starts once stopped.
+  prs.want(1, null);
+  await prs.idle();
+  expect(changed).toBe(0);
 });

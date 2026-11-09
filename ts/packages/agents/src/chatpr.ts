@@ -178,6 +178,9 @@ export class ChatPrs {
   private readonly again = new Set<number>();
   private swept: number | null = null;
   private todo: number[] | null = null;
+  /** After stop() nothing new starts and lookups still out land nowhere: the store may be closed by then. */
+  private stopped = false;
+  private readonly pending = new Set<Promise<void>>();
 
   constructor(private readonly host: PrHost) {
     const v = parse(host.store.get("chat_prs") ?? "");
@@ -192,8 +195,19 @@ export class ChatPrs {
     return this.found.get(leadOf(c)) ?? null;
   }
 
+  /** Harbor stops: lookups still out (git, gh) are dropped when they land, and nothing new starts. */
+  stop(): void {
+    this.stopped = true;
+  }
+
+  /** Resolves when every lookup started so far has landed (tests). */
+  async idle(): Promise<void> {
+    while (this.pending.size > 0) await Promise.all([...this.pending]);
+  }
+
   /** Looks a chat's PR up again when it was last looked up longer than `ttlMs` ago (null: now, after a turn). */
   want(chat: number, ttlMs: number | null): void {
+    if (this.stopped) return;
     const c = this.host.chat(chat);
     if (!c) return;
     const lead = leadOf(c);
@@ -209,14 +223,19 @@ export class ChatPrs {
     const f = this.host.folders(lc);
     if (!f || !existsSync(join(f.repo, ".git"))) return;
     this.busy.add(lead);
-    lookup(f.dir, f.repo, this.found.get(lead) ?? null).then(
-      (pr) => this.landed(lead, pr, false),
-      () => this.landed(lead, null, true),
-    );
+    const p = lookup(f.dir, f.repo, this.found.get(lead) ?? null)
+      .then(
+        (pr) => this.landed(lead, pr, false),
+        () => this.landed(lead, null, true),
+      )
+      .catch((e: unknown) => console.error(`harbor: pull request lookup: ${e instanceof Error ? e.message : String(e)}`))
+      .finally(() => this.pending.delete(p));
+    this.pending.add(p);
   }
 
   private landed(lead: number, pr: ChatPr | null, failed: boolean): void {
     this.busy.delete(lead);
+    if (this.stopped) return;
     if (failed) this.checked.set(lead, [Date.now(), true]);
     else if (JSON.stringify(this.found.get(lead) ?? null) !== JSON.stringify(pr)) {
       if (pr) this.found.set(lead, pr);
@@ -243,6 +262,7 @@ export class ChatPrs {
     this.checked.set(lead, [Date.now(), false]);
     try {
       const pr = await lookup(f.dir, f.repo, this.found.get(lead) ?? null);
+      if (this.stopped) return pr;
       if (JSON.stringify(this.found.get(lead) ?? null) !== JSON.stringify(pr)) {
         if (pr) this.found.set(lead, pr);
         else this.found.delete(lead);
@@ -265,6 +285,7 @@ export class ChatPrs {
 
   /** Now and then: open and draft PRs nobody looked at for a while, then unsettled chats in worktrees not looked up since the start, newest first. */
   sweep(inWorktree: (c: Chat) => boolean): void {
+    if (this.stopped) return;
     if (this.swept !== null && Date.now() - this.swept < SWEEP_EVERY_MS) return;
     this.swept = Date.now();
     const due: number[] = [];

@@ -1328,6 +1328,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     stop: async () => {
       clearInterval(tick);
+      // Pull request lookups still out (git, gh) would land on a closed store.
+      prs.stop();
       hub.saveDrafts(store);
       if (engineTimer) clearTimeout(engineTimer);
       for (const [id, r] of live.turns) {
