@@ -437,6 +437,23 @@ jobs:
           rm -f "$ks" art/harbor-android/harbor-android.apk.idsig
           "$bt/apksigner" verify --print-certs art/harbor-android/harbor-android.apk | head -2
           "$bt/aapt2" dump badging art/harbor-android/harbor-android.apk | head -3
+      # DRAFT (issue #88), off until the Play Console app exists: Google Play builds and scans
+      # each release before phones see it, and the release carries Play's universal APK (signed
+      # by Play App Signing with our own key) instead of ours, so Play Protect knows its bytes.
+      # Needs android/build.sh to also give an app bundle (aapt2 --proto-format + bundletool,
+      # the Servo libraries included the same way as above), signed with the upload key, and
+      # targetSdk 36 (Play's floor for new apps and updates since 2026-08-31).
+      - name: Play upload (internal testing)
+        if: false && needs.plan.outputs.apk == 'build' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          PLAY_SERVICE_ACCOUNT: ${{ secrets.PLAY_SERVICE_ACCOUNT }}
+          PLAY_APP_CERT_SHA256: ${{ vars.PLAY_APP_CERT_SHA256 }}
+        run: |
+          set -eu
+          v="${{ needs.plan.outputs.version }}"; IFS=. read -r ma mi pa <<<"${v%%-*}"
+          code=$((ma * 1000000 + mi * 1000 + pa))
+          .github/play/upload.sh art/harbor-android-bundle/harbor-android.aab "$code" /tmp/play.apk
+          mv /tmp/play.apk art/harbor-android/harbor-android.apk
       - name: Assemble
         run: |
           set -eu
