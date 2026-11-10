@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.173.0] - 2026-11-10
+
+### Added
+- Harbor comes back exactly where it was after a restart (an update, a build of main, `harbor restart`):
+  the same chat at the same place in its transcript, the same Settings page with what was typed in its
+  fields (passwords never), the same panes, sidebar search and scroll, model picks and an open Rename,
+  and every composer with its text, cursor, mentions and files.
+- The new window shows before the old one closes, so there's no moment without Harbor; on Hyprland it
+  opens on the same workspace and takes the focus only if the old one had it.
+- What's typed in a composer survives a crash or a forced kill too: it's saved a moment after each change.
+- `harbor restart` restarts the running Harbor that way.
+
 ## [0.172.2] - 2026-11-10
 
 ### Fixed
