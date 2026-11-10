@@ -177,6 +177,8 @@ component ThreadRow {
     property <bool> lead-status: data.status.kind == "working" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
     // The branch it works on, on a second line under the title.
     property <bool> two-lines: data.branch != "";
+    // The hover buttons' width: the clock and Settle, icons only.
+    property <length> act-w: root.data.settled ? 28px : 56px;
     // The worktree glyph stands in for a branch that isn't known.
     property <bool> wt-glyph: data.worktree != "" && data.branch == "";
     height: two-lines ? 46px : Theme.row-h;
@@ -224,7 +226,8 @@ component ThreadRow {
         }
         // The title, then its marks: the PR, the share mark. Hovered, the last mark keeps 30px (glyph to glyph) before
         // the clock, as the clock does before Settle.
-        property <length> right-w: (root.hovering ? actions.preferred-width + 11px : status.width + 16px) + (root.data.owner != "" ? 22px : 0px);
+        // Hovered, nothing moves: the clock and Settle sit over the title's end, which fades out under them.
+        property <length> right-w: status.width + 16px + (root.data.owner != "" ? 22px : 0px);
         property <length> marks-w: (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px) + (root.data.shared != "" ? 20px : 0px) + (root.data.place != "" ? place.width + 6px : 0px);
         property <length> room: self.width - title.x - self.right-w - self.marks-w;
         title := Text {
@@ -308,7 +311,7 @@ component ThreadRow {
             tip: root.data.shared-tip;
         }
         owner := OwnerMark {
-            visible: root.data.owner != "";
+            visible: root.data.owner != "" && !root.hovering;
             x: parent.width - parent.right-w + 6px;
             y: parent.line-y + (parent.line-h - self.height) / 2;
             letters: root.data.owner;
@@ -324,11 +327,21 @@ component ThreadRow {
             status: root.data.status;
             ago: root.data.ago;
         }
+        // The title's end fades out under the buttons, on its line only.
+        if root.hovering: Rectangle {
+            x: actions.x - 30px;
+            y: parent.line-y;
+            width: parent.width - self.x;
+            height: parent.line-h;
+            background: @linear-gradient(90deg, Theme.accent.transparentize(1) 0%, Theme.accent 45%, Theme.accent 100%);
+        }
         actions := HorizontalLayout {
             visible: root.hovering;
-            x: parent.width - 2px - self.preferred-width;
-            y: (parent.height - 28px) / 2;
+            // On the title's line, centred on it as the title is.
+            x: parent.width - 4px - root.act-w;
+            y: parent.line-y + (parent.line-h - 28px) / 2;
             height: 28px;
+            width: root.act-w;
             spacing: 0px;
             snooze-btn := Btn {
                 visible: !root.data.settled;
@@ -343,9 +356,10 @@ component ThreadRow {
                 }
             }
             settle-btn := Btn {
+                width: 28px;
                 icon: root.data.settled ? Icons.unarchive : Icons.check;
-                text: root.data.settled ? "Unsettle" : "Settle";
-                size: xs;
+                tip: root.data.settled ? "Unsettle" : "Settle";
+                size: icon-xs;
                 variant: ghost-muted;
                 clicked => {
                     root.settle(!root.data.settled);
