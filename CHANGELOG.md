@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.169.2] - 2026-11-10
+
+### Fixed
+- The direct push-notification test waits for the notification instead of assuming the PC can finish
+  its Git work within one second, so it remains reliable while the full test suite runs under load.
+
 ## [0.169.1] - 2026-11-10
 
 ### Changed
