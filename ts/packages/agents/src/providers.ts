@@ -229,7 +229,14 @@ function isDir(p: string): boolean {
 export function which(name: string): string | null {
   for (const d of childPath().split(":")) {
     const p = join(d, name);
-    if (isFile(p)) return p;
+    if (isFile(p)) {
+      // A GUI can inherit a versioned mise PATH. Stable shims let future turns pick up updates.
+      if ((name === "claude" || name === "codex") && p.includes("/mise/installs/")) {
+        const shim = p.slice(0, p.indexOf("/mise/installs/")) + `/mise/shims/${name}`;
+        if (isFile(shim)) return shim;
+      }
+      return p;
+    }
   }
   return null;
 }

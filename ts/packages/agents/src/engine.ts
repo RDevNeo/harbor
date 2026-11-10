@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } 
 import { join } from "node:path";
 import { type Chat, type CopyTurn, hot, type Item, limits, liveSince, type Mention, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
+import { providerUpdates } from "./provupdate.ts";
 import * as compaction from "./compaction.ts";
 import { parse as parseJson } from "./json.ts";
 import type { Event, RemoteSpec, Turn } from "./agent.ts";
@@ -484,6 +485,11 @@ export class Engine {
     /** Starts one agent turn for a chat (user message, report, wake-up, webhook…). */
   startTurn(id: number, prompt: string, files: string[] = []): void {
     if (this.foreign(id) || this.chat(id)?.retired) return;
+    const updating = providerUpdates.pending();
+    if (updating) {
+      void updating.then(() => this.startTurn(id, prompt, files));
+      return;
+    }
     // One turn per chat. A runner still going for it, even one this Harbor lost track of, holds
     // the session: the prompt waits for that turn instead.
     if (this.turns.has(id) || (this.host.moving?.(id) ?? false) || this.adoptRunner(id)) {

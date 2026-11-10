@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Every PC keeps its Claude Code and Codex CLIs on the latest version by itself, with no setting:
+  Harbor finds what installed each one (mise, Claude's or Codex's own installer, global npm or
+  Homebrew) and updates it with that tool, only while no turn runs on the PC; turns that start
+  meanwhile wait for it. Phones get a notification and the PC a toast or desktop pop-up, e.g.
+  "Claude Code updated to 2.1.322 on <PC>", one per PC for the updates done together. An install
+  Harbor can't place is left alone; a failure is a log line only.
+
 ## [0.169.4] - 2026-11-10
 
 ### Fixed

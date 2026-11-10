@@ -1,3 +1,4 @@
+import { provupdate } from "./packages/agents/src/index.ts";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -200,6 +201,8 @@ export interface RunningHub {
   setBusyIn(f: (dir: string) => string | null): void;
   /** What the window does when a phone changes a project's icon or removes it. */
   setWindowProjects(p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void }): void;
+  /** How the window shows "Claude Code updated to … on <PC>": a toast while it's in front, a desktop notification otherwise. */
+  setProviderPopup(t: (text: string) => void): void;
   /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
   devices(): { list: PairedDevice[]; served: number };
   deviceEnv: DeviceSendEnv;
@@ -1181,6 +1184,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     engineTimer = setTimeout(engineTick, Math.min(Math.max(next ?? 1000, 50), 1000));
   };
   engineTick();
+  let providerPopup: (text: string) => void = () => {};
+  // Provider CLIs (Claude Code, Codex) stay on their latest version by themselves, between turns; what changed is told once.
+  const providerUpdater = provupdate.configureUpdates(() => { rediscover(); hub.touch(null, true); }, () => live.turns.size === 0, (done) => {
+    const text = provupdate.updatedText(done, hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name);
+    // Kept for phones; the window (when there is one) pops it up here.
+    notifier.post("pc", `providers:${hub.mesh.me.id}`, text, "", "", false);
+    providerPopup(text);
+  });
   const route = async (call: Call): Promise<Reply> => {
     const updated = await updateRoute(o.updater ?? null, call, store);
     if (updated !== null) return updated;
@@ -1265,6 +1276,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   if (signIn) account.start();
   const tick = setInterval(() => {
     hub.enabled = true;
+    if (!offline) providerUpdater.tick();
     const a = addrs();
     if (JSON.stringify(a) !== JSON.stringify(hub.net.addrs)) {
       hub.net = { ...hub.net, addrs: a };
@@ -1281,6 +1293,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (o.updater) for (const p of hub.mesh.peers.values()) o.updater.peerNews(p.update);
   }, 10_000);
   const refresh = setInterval(rediscover, 60_000);
+  const checkProviders = () => { if (!offline) for (const tool of ["claude", "codex"] as const) void providerUpdater.check(tool); };
+  checkProviders();
+  const providerCheck = setInterval(checkProviders, 6 * 3600_000);
+  providerCheck.unref();
   return {
     store,
     hub,
@@ -1298,6 +1314,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     setWindowProjects: (p) => {
       windowProjects = p;
+    },
+    setProviderPopup: (t) => {
+      providerPopup = t;
     },
     funnel,
     prs,
@@ -1339,6 +1358,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         r.turn?.release();
       }
       clearInterval(refresh);
+      clearInterval(providerCheck);
       services?.stop();
       stopDiscord();
       stopWhatsapp();

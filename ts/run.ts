@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { apps, control, setHarborVersion } from "./packages/mcp/src/index.ts";
-import { directoryPcWorkspaces, preview as meshPreview, scopeHas } from "./packages/net/src/index.ts";
+import { directoryPcWorkspaces, preview as meshPreview, newNote, scopeHas } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, malloc, single, Store } from "./packages/store/src/index.ts";
 import {
   FollowMain,
@@ -245,7 +245,11 @@ export async function runApp(o: RunOptions): Promise<number> {
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
       homeImage: async (chat: number, path: string) => (await run.mesh.homeImage(chat, path, null))?.body ?? null,
     };
-    await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; }, busyIn: (f) => run.setBusyIn(f), projects: (p) => run.setWindowProjects(p) });
+    await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; run.setProviderPopup((text) => {
+      const desk = data.notifier.desktop;
+      if (desk?.focused) t(text);
+      else desk?.show(newNote({ kind: "pc", key: "providers", title: text }));
+    }); }, busyIn: (f) => run.setBusyIn(f), projects: (p) => run.setWindowProjects(p) });
     tray?.stop();
     if (!quitting && keepsRunning()) {
       const note = ui.stillRunning(run.store, tray !== null);
