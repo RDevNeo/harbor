@@ -15,7 +15,7 @@ import { basename } from "node:path";
 import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.ts";
 import { dest, type Peer } from "./shared.ts";
 import { AUTO_DEVICE, ramText } from "./ram.ts";
-import { isSharedId, kindLabel, sharedAccess, sharedTarget, type SharedAccount } from "./meshaccounts.ts";
+import { accountOn, isSharedId, kindLabel, sharedAccess, sharedTarget, type SharedAccount } from "./meshaccounts.ts";
 import type { MoveWant } from "./movepc.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, groups, project, type Media, type Shown } from "./view.ts";
@@ -1163,6 +1163,8 @@ export class PhoneRoutes {
       body = { ...body, device: r.device, auto_placed: true };
       auto = true;
     }
+    // This PC's account run on another PC: that PC's id for the same sign-in ("claude" here may be "claude2" there).
+    if (typeof body.account === "string" && typeof body.device === "string" && body.device !== "") body = { ...body, account: accountOn(this.d.catalog?.shared?.() ?? [], body.account, body.device) };
     // A first message to a project's main chat may join the one there is: that chat isn't Auto's.
     const had = auto && body.main === true ? new Set(this.d.store.chats().map((c) => c.gid)) : null;
     const r = await this.createAt(body, sender, global, from, who);

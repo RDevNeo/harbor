@@ -248,6 +248,20 @@ export function badgeFrom(email: string, fallback: string): string {
   return letters.length === 2 ? letters.toUpperCase() : fallback;
 }
 
+/** Read display identity from the saved ID token, never from the usage cache (which can outlive a login).
+ * This is only for grouping local sign-ins, not for authenticating or authorizing requests. */
+export function codexEmail(auth: unknown): string {
+  const token = str(at(at(auth, "tokens"), "id_token"));
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return "";
+    const email = str(at(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")), "email"));
+    return email.includes("@") ? email.trim().toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
 function claudeAccount(id: string, dir: string, json: string, n: number): Account {
   const oauth = at(readJson(json), "oauthAccount");
   const email = str(at(oauth, "emailAddress"));
@@ -290,7 +304,7 @@ export function discover(): Account[] {
   }
   extra.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   for (const [n, dir] of extra) out.push(claudeAccount(`claude${n}`, dir, join(dir, ".claude.json"), n));
-  out.push({ id: "codex", kind: "Codex", name: "Codex", email: "", badge: "", plan: "", configDir: null, bin: which(bin("Codex")), loggedIn: existsSync(join(h, ".codex/auth.json")), usage: [] });
+  out.push({ id: "codex", kind: "Codex", name: "Codex", email: codexEmail(readJson(join(h, ".codex/auth.json"))), badge: "", plan: "", configDir: null, bin: which(bin("Codex")), loggedIn: existsSync(join(h, ".codex/auth.json")), usage: [] });
   // OpenCode can run on providers from its config alone (no `auth login`): whether it's signed in isn't known.
   out.push({ id: "opencode", kind: "OpenCode", name: "OpenCode", email: "", badge: "", plan: "", configDir: null, bin: which(bin("OpenCode")), loggedIn: null, usage: [] });
   const off = offIds();
@@ -324,7 +338,7 @@ export function applyUsage(accounts: readonly Account[]): void {
       const ms = t === undefined ? NaN : Date.parse(t);
       return { label: str(at(x, "label")), percent: f64(at(x, "percent")) ?? 0, resetsAt: Number.isNaN(ms) ? null : Math.floor(ms / 1000) };
     });
-    if (a.email === "") a.email = str(at(prov, "account"));
+    if (a.email === "" && a.kind !== "Codex") a.email = str(at(prov, "account"));
   }
 }
 

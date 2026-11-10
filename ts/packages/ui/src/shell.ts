@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
 import { type Chat, dataDir, hot, type Item, limits, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
-import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
+import { accountOn, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
@@ -2429,9 +2429,11 @@ export class Shell {
       sel = { ...sel, device: startOn };
       auto = true;
     }
+    // This PC's account run on another PC: that PC's id for the same sign-in ("claude" here may be "claude2" there).
     if (startOn !== "") {
+      const there = shared ? sel.account : accountOn(this.hub.sharedAccounts?.() ?? [], sel.account, startOn);
       const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
-      const body: Record<string, unknown> = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: sel.account, model: sel.model, effort: sel.effort, access: sel.access, text };
+      const body: Record<string, unknown> = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: there, model: sel.model, effort: sel.effort, access: sel.access, text };
       if (auto) body.auto_placed = true;
       // That PC holds what it lets this PC's chats do with its accounts (phone.ts `sharedAccess`).
       if (shared) body.shared_account = true;

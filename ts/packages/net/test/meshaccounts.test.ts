@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  accountOn,
   accountsByPc,
   helloAccounts,
   identOf,
@@ -120,6 +121,24 @@ describe("the mesh's accounts, each once", () => {
     expect(v[5]!.why).toBe("tower is offline");
     expect(sharedTarget(v, "claude2")).toMatchObject({ pc: "", account: "claude2", why: "" });
     expect(sharedTarget(v, "nope")).toBeNull();
+  });
+
+  test("run on another PC, this PC's account is that PC's id for the same sign-in", () => {
+    const v = list();
+    // Dana's login is claude2 here and claude on the laptop.
+    expect(accountOn(v, "claude2", "ts:laptop")).toBe("claude");
+    expect(accountOn(v, "claude2", "")).toBe("claude2");
+    // Mara's login isn't on the laptop: the id stays.
+    expect(accountOn(v, "claude", "ts:laptop")).toBe("claude");
+  });
+
+  test("one Codex sign-in on two PCs is one entry", () => {
+    const here = sharedAccounts({ me, local: [...mine, local("codex", "Codex", DARIO, "")], peers: [towerPc, laptopPc], provs: new Map([laptopPc, towerPc].map((p) => [p.id, p.provs])) });
+    const twin = peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", DARIO)]);
+    const both = sharedAccounts({ me, local: [...mine, local("codex", "Codex", DARIO, "")], peers: [twin], provs: new Map([[twin.id, twin.provs]]) });
+    expect(both.filter((s) => s.kind === "codex").map((s) => [s.pc, s.also])).toEqual([["", ["tower"]]]);
+    // The tower that told no sign-in (an older PC) stays apart.
+    expect(here.filter((s) => s.kind === "codex").length).toBe(2);
   });
 
   test("the same on another PC: its own first, then this one's, one entry per sign-in", () => {

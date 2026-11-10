@@ -268,6 +268,8 @@ export interface SharedAccount {
   why: string;
   /** The other PCs that have it too (names). */
   also: string[];
+  /** Every PC's copy of this sign-in ("" this PC) with the id it has there: "claude" here can be "claude2" there. */
+  copies?: { pc: string; account: string; online: boolean }[];
 }
 
 export interface SharedInput {
@@ -390,6 +392,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
       label,
       models: run.acc.models,
       why: run.online ? "" : `${run.pcName} is offline`,
+      copies: hs.map((h) => ({ pc: h.pc, account: h.acc.id, online: h.online })),
       also: hs.filter((h) => h !== run).map((h) => h.pcName),
     });
   }
@@ -410,6 +413,12 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
 export function sharedTarget(list: readonly SharedAccount[], id: string): { pc: string; account: string; kind: string; label: string; why: string } | null {
   const s = list.find((x) => x.id === id) ?? list.find((x) => x.key === id);
   return s ? { pc: s.pc, account: s.account, kind: s.kind, label: s.label, why: s.why } : null;
+}
+
+/** The id a picked account has on PC `pc` (Runs on picked it): the same sign-in's id there, else `id` unchanged. */
+export function accountOn(list: readonly SharedAccount[], id: string, pc: string): string {
+  const s = list.find((x) => x.id === id) ?? list.find((x) => x.key === id);
+  return s?.copies?.find((h) => h.pc === pc)?.account ?? id;
 }
 
 /** An account id another PC runs (`sharedAccounts`' key): never one of this PC's own ids ("claude2", "opencode"). */

@@ -255,3 +255,11 @@ test("OpenCode's models: `opencode models` run without blocking, the config's up
   await p.refreshOpencodeModels(join(base, "missing-opencode"));
   expect(p.opencodeModels(false).length).toBe(listed.length);
 });
+
+test("Codex's sign-in email comes from its saved ID token", () => {
+  const jwt = (o: object) => `h.${Buffer.from(JSON.stringify(o)).toString("base64url")}.s`;
+  expect(p.codexEmail({ tokens: { id_token: jwt({ email: "Dana@Example.com" }) } })).toBe("dana@example.com");
+  expect(p.codexEmail({ tokens: { id_token: "garbage" } })).toBe("");
+  expect(p.codexEmail({ OPENAI_API_KEY: "k" })).toBe("");
+  expect(p.codexEmail(null)).toBe("");
+});
