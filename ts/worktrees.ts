@@ -103,20 +103,20 @@ export class Worktrees {
     };
   }
 
-  namer(about: string): wt.Namer | null {
+  /** Asks the first signed-in Claude account that isn't at (or near) a usage limit: one near its limit doesn't leave the worktree with the slug. */
+  namer(about: string, repo: string): wt.Namer | null {
     const e = this.e;
-    const usable = e.host
+    const a = e.host
       .accounts()
       .filter((a) => a.kind === "Claude" && providers.signedIn(a) && e.limits.blocked(a.id) === undefined)
-      .sort((a, b) => Number(a.id !== "claude") - Number(b.id !== "claude"));
-    const a = usable[0];
+      .filter((a) => !(e.limits.quota.get(a.id) ?? []).some(([, used]) => used >= 0.9))
+      .sort((a, b) => Number(a.id !== "claude") - Number(b.id !== "claude"))[0];
     if (!a) return null;
-    if ((e.limits.quota.get(a.id) ?? []).some(([, used]) => used >= 0.9)) return null;
-    return wt.namer(providers.binStr(a), providers.accountEnv(a), about);
+    return wt.namer(providers.binStr(a), providers.accountEnv(a), about, wt.projectPart(repo));
   }
 
   make(repo: string, base: string, about: string): Promise<wt.Made> {
-    return wt.make(repo, base, about, this.namer(about));
+    return wt.make(repo, base, about, this.namer(about, repo));
   }
 
   attach(chat: number, made: wt.Made): void {
@@ -168,7 +168,7 @@ export class Worktrees {
     const about = this.e.chat(chat)?.title ?? "";
     let made: wt.Made;
     try {
-      made = await wt.make(info.repo, "", about, this.namer(about));
+      made = await wt.make(info.repo, "", about, this.namer(about, info.repo));
     } finally {
       this.busy = null;
     }

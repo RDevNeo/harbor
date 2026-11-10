@@ -236,8 +236,8 @@ export function ask(bin: string, env: Env, system: string, prompt: string): Prom
   return askWithin(bin, env, system, prompt, TIMEOUT_MS);
 }
 
-/** `ask` with its own time limit; rejects with the reason. */
-export async function askWithin(bin: string, env: Env, system: string, prompt: string, timeoutMs: number): Promise<string> {
+/** `ask` with its own time limit (and model: Haiku by default); rejects with the reason. */
+export async function askWithin(bin: string, env: Env, system: string, prompt: string, timeoutMs: number, model: string = MODEL): Promise<string> {
   const dir = join(dataDir(), "recap");
   mkdirSync(dir, { recursive: true });
   const e: Record<string, string | undefined> = { ...process.env };
@@ -246,7 +246,7 @@ export async function askWithin(bin: string, env: Env, system: string, prompt: s
     else e[k] = v;
   }
   const p = Bun.spawn(
-    [bin, "-p", "--model", MODEL, "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--setting-sources", "user", "--settings", '{"disableAllHooks":true}', "--system-prompt", system],
+    [bin, "-p", "--model", model, "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--setting-sources", "user", "--settings", '{"disableAllHooks":true}', "--system-prompt", system],
     { cwd: dir, env: e, stdin: "pipe", stdout: "pipe", stderr: "ignore" },
   );
   try {

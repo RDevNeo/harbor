@@ -126,14 +126,27 @@ export function root(): string {
   return join(dataDir(), "worktrees");
 }
 
-/** Words that say little about what a chat is about, left out of its worktree's name. */
+/** Words that say little about what a chat is about, left out of its worktree's name (accents folded: "não" is "nao"). */
 const FILLER = new Set([
-  "a", "an", "the", "to", "of", "and", "or", "in", "on", "at", "by", "for", "from", "with", "into", "as", "is", "are", "be", "it", "its", "that", "this", "these",
-  "there", "here", "so", "i", "im", "me", "my", "we", "our", "you", "your", "can", "could", "would", "should", "please", "pls", "lets", "let", "just", "also", "now",
-  "then", "when", "where", "what", "how", "why", "do", "does", "some", "all", "about", "hey", "hi", "ok", "okay",
+  ..."a an the to of and or but nor in on at by for from with into onto as is are was were be been being am it its that this these those there here so if than"
+    .split(" "),
+  ..."i im ive id ill me my mine we us our you your u ur he she they them their his her one ones someone".split(" "),
+  ..."can could would should will shall may might must please pls plz lets let just also now right then when whenever where what which who how why".split(" "),
+  ..."do does did doing done some any all every about hey hi hello ok okay yeah yes no not neither either".split(" "),
+  ..."dont doesnt didnt isnt arent wasnt werent cant couldnt wont wouldnt shouldnt havent hasnt aint".split(" "),
+  ..."want wants wanted wanna gonna gotta need needs needed like think know see make makes making sure get gets got have has had".split(" "),
+  ..."thing things stuff something anything everything kinda sort really very much many more most only even still actually basically".split(" "),
+  ..."again too aswell well currently current ever maybe same other another way able tell try trying going ofc idk tho though related lot lots simply under instead whole".split(" "),
   // Portuguese, as people write to Harbor in it too.
-  "o", "os", "as", "um", "uma", "de", "da", "do", "das", "dos", "e", "que", "para", "pra", "por", "com", "em", "no", "na", "nos", "nas", "eu", "voce", "quero",
-  "queria", "preciso", "pode", "favor", "se", "isso", "esse", "essa", "ao", "aos",
+  ..."o os as um uma uns umas de da do das dos e ou mas que para pra pro pros por pelo pela pelos pelas com sem em no na nos nas num numa ao aos"
+    .split(" "),
+  ..."eu voce vc vcs tu ele ela eles elas meu minha meus minhas seu sua seus suas teu tua nosso nossa me te lhe se".split(" "),
+  ..."isso esse essa esses essas este esta isto aquele aquela aquilo ai la aqui ali".split(" "),
+  ..."quero queria quer querendo preciso precisa pode podia poderia consegue nao sim ja tambem mais muito muita so agora entao quando onde como"
+    .split(" "),
+  ..."porque pq qual quais tipo coisa coisas negocio namoral mano cara faz faca fazer ver vejo ter tem tenho ta to estou ser era foi vai vou ir"
+    .split(" "),
+  ..."oi ola opa beleza blz favor obrigado acha achar vezes sobre".split(" "),
 ]);
 
 const FOLD: Record<string, string> = {};
@@ -154,44 +167,68 @@ function fold(c: string): string | null {
   return FOLD[l] ?? null;
 }
 
-/** "Fix the login bug where users…" → "fix-login-bug-users": always a valid ref, "" when nothing's left. */
-export function slug(about: string): string {
-  const line = about.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
+/** At most this many words and characters in a slug, and in Claude's name. */
+const SLUG_WORDS = 4;
+const SLUG_CHARS = 28;
+const NAME_WORDS = 4;
+const NAME_CHARS = 28;
+
+/** "Blox_Survivors" → ["blox", "survivors"]. */
+function nameWords(project: string): string[] {
+  return [...project].map((c) => fold(c) ?? "-").join("").split("-").filter((x) => x !== "");
+}
+
+/** Joins whole words while they fit in `max` characters (the first, cut, always does). */
+function joinWithin(words: readonly string[], maxWords: number, max: number): string {
+  let out = "";
+  for (const w of words.slice(0, maxWords)) {
+    if (out !== "" && out.length + 1 + w.length > max) break;
+    if (out !== "") out += "-";
+    out += w.slice(0, max);
+  }
+  return out;
+}
+
+/** "Fix the login bug where users…" → "fix-login-bug-users": the words that say what it's about, without filler or the project's
+ *  own name (`project`), always a valid ref, "" when nothing's left. */
+export function slug(about: string, project = ""): string {
+  // "[Image #1]", "[message from lead]": markers, not what it's about.
+  const text = about.replace(/\[[^\]\n]{0,40}\]/g, " ");
+  const line = text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
   // Links and apostrophes ("let's", "don't") aren't words of their own.
   const words: string[] = line
     .split(/\s+/)
     .filter((w) => w !== "" && !w.includes("://"))
     .flatMap((w) => [...w.replace(/['’]/g, "")].map((c) => fold(c) ?? " ").join("").split(" "))
     .filter((w) => w !== "");
-  const kept = words.filter((w) => !FILLER.has(w));
-  const pick = kept.length === 0 ? words : kept;
-  let out = "";
-  for (const w of pick.slice(0, 5)) {
-    if (out !== "" && out.length + 1 + w.length > 32) break;
-    if (out !== "") out += "-";
-    out += w.slice(0, 32);
-  }
-  return out;
+  const own = new Set(nameWords(project));
+  const kept = [...new Set(words.filter((w) => !FILLER.has(w) && !own.has(w)))];
+  return joinWithin(kept.length === 0 ? words : kept, SLUG_WORDS, SLUG_CHARS);
 }
 
 /** How long a new worktree waits for its name from Claude before it's made with `slug`'s. */
 export const timing = { nameWaitMs: 5000, nameLateMs: 45_000 };
 
+/** Names come from Sonnet: as quick as Haiku for this (about 1 s of API time, 2.5 s with Claude Code's start), and it reads informal
+ *  Portuguese better and keeps fewer of the user's words. */
+export const NAME_MODEL = "claude-sonnet-5-5";
+
 const NAME_SYSTEM =
-  "You name git branches. You get the first message a user sent an AI coding agent. Reply with a short name for the task it asks for: 2 to 5 lowercase English words joined by hyphens, only a-z and 0-9, like inline-chat-mention-links or fix-login-redirect. Say what is to be done, not how the user phrased it; no filler words. Reply with only the name: no prefix, quotes or explanation.";
+  'You name git branches. You get the first message a user sent an AI coding agent: informal, maybe with typos, in English or Portuguese. Reply with a name for the task it asks for: 2 to 4 lowercase English words joined by hyphens, at most 24 characters, only a-z, 0-9 and "-". Put the thing it\'s about first, then what happens to it: a terse label, not a sentence. Good names: invoice-pdf-export, fix-webhook-retries, dark-mode-toggle, onboarding-redesign, stripe-integration, cache-memory-leak. Leave out filler and the user\'s own phrasing: no pronouns or articles, and none of want, please, dont, like, make, can, current, now, new, task, feature, request, issue. Translate a Portuguese message into English. For a question or research, name its subject (login-flow-question, gpu-pricing-research). Reply with only the name: no quotes, prefix or explanation.';
 
 /** Asks for a worktree's name: Claude's answer, cleaned (`cleanName`). */
 export type Namer = () => Promise<string | null>;
 
-/** A Namer asking Haiku through this Claude account what the chat is about; null when the message gives nothing to name. */
-export function namer(bin: string, env: Env, about: string): Namer | null {
+/** A Namer asking Claude (`NAME_MODEL`) through this account what the chat is about; null when the message gives nothing to name. `project` is left out of the name. */
+export function namer(bin: string, env: Env, about: string, project = ""): Namer | null {
   const text = [...about.trim()].slice(0, 2000).join("");
   if (slug(text) === "") return null;
-  return () => askWithin(bin, env, NAME_SYSTEM, `<message>\n${text}\n</message>`, timing.nameLateMs).then(cleanName, () => null);
+  return () => askWithin(bin, env, NAME_SYSTEM, `<message>\n${text}\n</message>`, timing.nameLateMs, NAME_MODEL).then((a) => cleanName(a, project), () => null);
 }
 
-/** Claude's answer as a branch and folder name. Only a-z, 0-9 and "-", at most 5 words and 40 characters; null when it isn't a name. */
-export function cleanName(answer: string): string | null {
+/** Claude's answer as a branch and folder name: only a-z, 0-9 and "-", at most 4 words and 28 characters, without the project's
+ *  name in front ("harbor-copy-images" in harbor is "copy-images"); null when it isn't a name. */
+export function cleanName(answer: string, project = ""): string | null {
   let line = answer.split("\n").map((l) => l.trim()).find((l) => l !== "");
   if (line === undefined) return null;
   line = line.replace(/^[`"'*.]+|[`"'*.]+$/g, "");
@@ -199,12 +236,10 @@ export function cleanName(answer: string): string | null {
   line = (line.split("/").pop() ?? line).trim();
   if (line.split(/\s+/).filter((w) => w !== "").length > 5 || line.includes(":")) return null;
   const s = [...line].map((c) => (/^[A-Za-z0-9]$/.test(c) ? c.toLowerCase() : "-")).join("");
-  let out = "";
-  for (const w of s.split("-").filter((x) => x !== "").slice(0, 5)) {
-    if (out !== "" && out.length + 1 + w.length > 40) break;
-    if (out !== "") out += "-";
-    out += w.slice(0, 40);
-  }
+  let words = s.split("-").filter((x) => x !== "");
+  const own = nameWords(project);
+  if (own.length > 0 && words.length > own.length && own.every((w, i) => words[i] === w)) words = words.slice(own.length);
+  const out = joinWithin(words, NAME_WORDS, NAME_CHARS);
   return out.length >= 3 && /[a-z]/.test(out) ? out : null;
 }
 
@@ -283,7 +318,7 @@ async function renameNew(repo: string, dir: string, name: string): Promise<strin
 /** Makes a worktree of `repo` in `rootDir` on a new branch `harbor/<slug>` from `base` ("" for the checkout's HEAD). Returns its folder. */
 async function addIn(rootDir: string, repo: string, base: string, about: string): Promise<string> {
   const project = projectPart(repo);
-  const s = slug(about);
+  const s = slug(about, project);
   const taken = await takenBranches(repo);
   let last = "";
   let n = 1;

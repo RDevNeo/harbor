@@ -108,8 +108,14 @@ test("claude_answers_are_cleaned_into_names", () => {
   expect(wt.cleanName("inline-chat-mention-links")).toBe("inline-chat-mention-links");
   expect(wt.cleanName("  `Harbor/Fix_Login Redirect`.\n")).toBe("fix-login-redirect");
   expect(wt.cleanName('"dark-mode"\nBecause the user wants…')).toBe("dark-mode");
-  expect(wt.cleanName("one-two-three-four-five-six-seven")).toBe("one-two-three-four-five");
-  expect((wt.cleanName("averyveryverylongwordthatgoeson-andanotherlongword") ?? "").length).toBeLessThanOrEqual(40);
+  expect(wt.cleanName("one-two-three-four-five-six-seven")).toBe("one-two-three-four");
+  expect(wt.cleanName("integrations-resource-usage-check")).toBe("integrations-resource-usage");
+  expect((wt.cleanName("averyveryverylongwordthatgoeson-andanotherlongword") ?? "").length).toBeLessThanOrEqual(28);
+  // The project's own name in front says nothing: its worktrees' folders already start with it.
+  expect(wt.cleanName("harbor-copy-with-image", "harbor")).toBe("copy-with-image");
+  expect(wt.cleanName("blox-survivors-wave-spawner", "Blox_Survivors")).toBe("wave-spawner");
+  expect(wt.cleanName("harbor-sidebar", "harbor")).toBe("sidebar");
+  expect(wt.cleanName("harbor", "harbor")).toBe("harbor");
   // A sentence.
   expect(wt.cleanName("Here is a name for the task you asked for")).toBeNull();
   expect(wt.cleanName("Name: fix-it")).toBeNull();
@@ -120,13 +126,26 @@ test("claude_answers_are_cleaned_into_names", () => {
 
 test("names_come_from_what_the_chat_is_about", () => {
   expect(wt.slug("Main thread per project")).toBe("main-thread-per-project");
-  expect(wt.slug("Fix the login bug where users get logged out")).toBe("fix-login-bug-users-get");
-  expect(wt.slug("\n  Can you make the sidebar's chips blue? https://example.com/x")).toBe("make-sidebars-chips-blue");
+  expect(wt.slug("Fix the login bug where users get logged out")).toBe("fix-login-bug-users");
+  expect(wt.slug("\n  Can you make the sidebar's chips blue? https://example.com/x")).toBe("sidebars-chips-blue");
   expect(wt.slug("Quero que a migração funcione")).toBe("migracao-funcione");
+  // What people really write: filler, "don't", pasted-image markers, the project's name, repeats.
+  expect(wt.slug("I dont like the look of the current chats right now neither their separation")).toBe("look-chats-separation");
+  expect(wt.slug("[Image #1] Remove those buttons please and also for mobile.")).toBe("remove-buttons-mobile");
+  expect(wt.slug("make the sidebar resizable")).toBe("sidebar-resizable");
+  expect(wt.slug("I want to have something in the harbor related to automating the deletion of worktrees", "harbor")).toBe("automating-deletion");
+  expect(wt.slug("right now, if i log out of this machine and simply log in in another")).toBe("log-out-machine");
+  expect(wt.slug("Atualiza meu saldo aí no site!!")).toBe("atualiza-saldo-site");
+  expect(wt.slug("o webhook do github tá falhando às vezes e não tenta de novo")).toBe("webhook-github-falhando");
   // Only filler: kept rather than nothing.
   expect(wt.slug("the and of")).toBe("the-and-of");
   expect(wt.slug("日本語")).toBe("");
-  expect(wt.slug("supercalifragilisticexpialidocious and more").length).toBe(32);
+  expect(wt.slug("[Image #1]")).toBe("");
+  expect(wt.slug("supercalifragilisticexpialidocious and more").length).toBe(28);
+  for (const s of ["one two three four five six", "abcdefghij klmnopqrst uvwxyzabcd efghijklmn"]) {
+    expect(wt.slug(s).split("-").length).toBeLessThanOrEqual(4);
+    expect(wt.slug(s).length).toBeLessThanOrEqual(28);
+  }
   expect(wt.folderPart("harbor/fix-login")).toBe("fix-login");
   expect(wt.folderPart("Feature/A b")).toBe("feature-a-b");
   expect(wt.isNamed("app-fix", "app-fix") && wt.isNamed("app-fix-2", "app-fix") && !wt.isNamed("app-fix-it", "app-fix")).toBe(true);
@@ -170,17 +189,17 @@ test("a_pushed_branch_is_renamed_on_its_remote_or_let_go", async () => {
   expect(Bun.spawnSync(["git", "init", "-q", "--bare", bare]).success).toBe(true);
   await wt.git(d, ["remote", "add", "origin", bare]);
   const root = `${d}.wts`;
-  const m = await wt.makeIn(root, d, "", "Push branch", null);
+  const m = await wt.makeIn(root, d, "", "Ship branch", null);
   expect(await wt.pushedAs(m.dir)).toBeNull();
-  await wt.git(m.dir, ["push", "-q", "-u", "origin", "harbor/push-branch"]);
-  expect(await wt.pushedAs(m.dir)).toBe("origin/harbor/push-branch");
+  await wt.git(m.dir, ["push", "-q", "-u", "origin", "harbor/ship-branch"]);
+  expect(await wt.pushedAs(m.dir)).toBe("origin/harbor/ship-branch");
   // Not GitHub: the new name is pushed and tracked; the old one stays there.
   let r = await wt.renameBranch(m.dir, "harbor/pushed", true);
-  expect(r.remote?.startsWith("Pushed as origin/harbor/pushed; origin/harbor/push-branch is still there")).toBe(true);
+  expect(r.remote?.startsWith("Pushed as origin/harbor/pushed; origin/harbor/ship-branch is still there")).toBe(true);
   expect(await wt.pushedAs(m.dir)).toBe("origin/harbor/pushed");
   const there = await wt.git(bare, ["branch", "--format=%(refname:short)"]);
   expect(there).toContain("harbor/pushed");
-  expect(there).toContain("harbor/push-branch");
+  expect(there).toContain("harbor/ship-branch");
   // Here only: it stops tracking the remote branch, which keeps its name.
   r = await wt.renameBranch(m.dir, "harbor/local-only", false);
   expect(r.remote).toBe("origin/harbor/pushed keeps its name; push again to publish harbor/local-only");
