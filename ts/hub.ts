@@ -545,7 +545,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return kind !== undefined && sharedWith(level, providers.access(kind).map((c) => c[0]));
     };
     // Every account, as before (Runs on and Move to PC read them); one this PC doesn't let `peer`'s chats use says so.
-    return helloAccounts(localAccounts(), meshPeople(), { owner: aboutOwner(store, owners).owner, book: meshPhotos() }).map((a) => meshAccountJson(kindOk(a.kind) ? a : { ...a, shared: false }));
+    return helloAccounts(localAccounts(), meshPeople(), { book: meshPhotos() }).map((a) => meshAccountJson(kindOk(a.kind) ? a : { ...a, shared: false }));
   };
   const pcsNow = (): Pc[] => {
     const [versions] = gatherVersions(versionsInput(hub, versionsOwn()));

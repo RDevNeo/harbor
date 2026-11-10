@@ -234,9 +234,9 @@ export interface LocalAccount {
 }
 
 /** This PC's usable accounts as hello tells them: sign-ins of one identity once (the first), each with who it is and, when
- *  `photos` knows one, that person's photo: the workspace member who signs in with its email, else the person by name
- *  (`owner`'s, this PC's owner, for one nobody else is known to own). */
-export function helloAccounts(local: readonly LocalAccount[], people: readonly Person[], photos?: { owner: string; book: PhotoBook }): MeshAccount[] {
+ *  `photos` knows one, the photo of whoever signs in: the workspace member with its email, else the person its email
+ *  names, by name. Never this PC's owner's for one nobody is known to own: no photo beats someone else's. */
+export function helloAccounts(local: readonly LocalAccount[], people: readonly Person[], photos?: { book: PhotoBook }): MeshAccount[] {
   const out: MeshAccount[] = [];
   const seen = new Set<string>();
   const kinds = new Map<string, number>();
@@ -250,7 +250,7 @@ export function helloAccounts(local: readonly LocalAccount[], people: readonly P
     seen.add(key);
     const person = a.email === "" ? "" : personOfEmail(a.email, people);
     const m: MeshAccount = { id: a.id, short: a.short, kind, ident, person, main: a.id === kind || kinds.get(kind) === 1, models: (a.models ?? []).slice(0, MODELS_MAX) };
-    const photo = photos ? photoUrl(photos.book.byEmail(a.email)?.photo || photos.book.byName(person !== "" ? person : photos.owner)) : "";
+    const photo = photos ? photoUrl(photos.book.byEmail(a.email)?.photo || (person !== "" ? photos.book.byName(person) : "")) : "";
     if (photo !== "") m.photo = photo;
     out.push(m);
   }
@@ -385,11 +385,12 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   // Alone (no other PC), the accounts keep their own badges: the owner's would be the same on every one.
   const alone = !i.peers.some((p) => p.id !== i.me.id);
   const badges = alone ? new Map<string, string>() : personBadges([...owners.values()]);
-  // The photos PCs told, by whose they are (the account's person, else that PC's owner): the first of each.
+  // The photos PCs told, by the person each account's email names: the first of each. Never filed under the PC's owner:
+  // a PC's account can be someone else's sign-in (the photo it told is theirs).
   const told = new Map<string, string>();
   for (const hs of groups.values())
     for (const h of hs) {
-      const who = h.acc.person !== "" ? h.acc.person : h.owner;
+      const who = h.acc.person;
       if (who !== "" && (h.acc.photo ?? "") !== "" && !told.has(who)) told.set(who, h.acc.photo ?? "");
     }
   const out: SharedAccount[] = [];
@@ -401,9 +402,11 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
     const own = run.acc.kind === "claude" ? (run.local?.badge ?? "") : "";
     const badge = alone ? own : (badges.get(person) ?? own);
     // Their photo: the workspace member's it signs in as (alone too: that's certain); while the badge says whose it is,
-    // else the one its PC told, this PC's directory's by name, or one a PC told with any of theirs.
+    // else, for the person its sign-in's email names, the one its PC told, this PC's directory's by name, or one a PC
+    // told with any of theirs. One whose person is only guessed (its PC's owner) has none: no photo beats a wrong one.
     const face = faces.get(key);
-    const byWho = alone || person === "" ? "" : hs.map((h) => h.acc.photo ?? "").find((u) => u !== "") || book.byName(person) || (told.get(person) ?? "");
+    const named = hs.find((h) => h.acc.person !== "")?.acc.person ?? "";
+    const byWho = alone || named === "" ? "" : hs.map((h) => (h.acc.person !== "" ? (h.acc.photo ?? "") : "")).find((u) => u !== "") || book.byName(named) || (told.get(named) ?? "");
     const photo = face?.photo || byWho;
     const shown = face && face.name !== "" ? face.name : person;
     const label = photo !== "" && shown !== "" ? `${kindLabel(run.acc.kind)} \u{b7} ${shown}` : badge === "" ? kindLabel(run.acc.kind) : `${kindLabel(run.acc.kind)} \u{b7} ${badge}`;

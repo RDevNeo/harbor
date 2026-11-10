@@ -860,7 +860,7 @@ describe("phone: the mesh's shared accounts", () => {
     // No photo known: no `photo`, the initials stay.
     expect(s.accounts.some((a) => "photo" in a)).toBe(false);
     // With the owners' workspace photos: each account carries its owner's, and its label names them; OpenCode is nobody's.
-    catalog.shared = () => sharedAccounts({ ...shared.input, photos: photoBook([{ name: "Sam Lee", image: "https://img.example/sam.png" }, { name: "Ana Lu", image: "https://img.example/ana.png" }]) });
+    catalog.shared = () => sharedAccounts({ ...shared.input, photos: photoBook([{ name: "Sam Lee", image: "https://img.example/sam.png" }, { name: "Ana Lu", email: "ana@example.com", image: "https://img.example/ana.png" }]) });
     const p = routes.state("", true) as { accounts: Record<string, Json>[] };
     expect(p.accounts.map((a) => [a.label, a.photo ?? null])).toEqual([
       ["Claude · Ana Lu", "https://img.example/ana.png"],
