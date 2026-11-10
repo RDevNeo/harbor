@@ -1,7 +1,11 @@
 import { afterAll } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
+
+// Fake CLIs use env bun, and runners spawn bun by name. Keep them on this suite's interpreter:
+// after HOME/XDG are sandboxed, mise shims cannot find their real configuration or installations.
+process.env.PATH = [dirname(process.execPath), process.env.PATH].filter(Boolean).join(delimiter);
 
 const base = tmpdir();
 

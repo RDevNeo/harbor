@@ -77,7 +77,7 @@ test("parses Harbor's compaction lines and Claude Code's boundary", () => {
 const fake = join(base, "claude");
 writeFileSync(
   fake,
-  `#!/usr/bin/env bun
+  `#!${process.execPath}
 ${GUARD()}const fs = require("node:fs");
 const out = (v) => process.stdout.write(JSON.stringify(v) + "\\n");
 let buf = "";

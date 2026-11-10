@@ -13,7 +13,7 @@ let port = 0;
 const saved = { ...process.env };
 let ids: { plain: Chat; failing: Chat; lead: Chat; sub: Chat; other: Chat; limited: Chat; nofolder: Chat };
 
-const fakeClaude = `#!/usr/bin/env bun
+const fakeClaude = `#!${process.execPath}
 const a = process.argv;
 const sid = a[a.indexOf("--session-id") + 1] ?? a[a.indexOf("--resume") + 1] ?? "s";
 const out = (v) => process.stdout.write(JSON.stringify(v) + "\\n");

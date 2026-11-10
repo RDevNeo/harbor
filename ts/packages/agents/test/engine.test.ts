@@ -33,7 +33,7 @@ afterAll(() => {
 const fake = join(base, "claude");
 writeFileSync(
   fake,
-  `#!/usr/bin/env bun
+  `#!${process.execPath}
 ${GUARD()}const a = process.argv;
 const sid = a[a.indexOf("--session-id") + 1] ?? a[a.indexOf("--resume") + 1] ?? "s";
 const out = (v) => process.stdout.write(JSON.stringify(v) + "\\n");
@@ -77,7 +77,7 @@ const account: Account = { id: "claude", kind: "Claude", name: "Claude", email: 
 const race = join(base, "claude-race");
 writeFileSync(
   race,
-  `#!/usr/bin/env bun
+  `#!${process.execPath}
 import { appendFileSync } from "node:fs";
 ${GUARD()}const a = process.argv;
 const flag = (f) => (a.includes(f) ? a[a.indexOf(f) + 1] : undefined);
@@ -1208,7 +1208,7 @@ const ocBin = join(base, "opencode");
 const ocLog = join(base, "opencode-args.log");
 writeFileSync(
   ocBin,
-  `#!/usr/bin/env bun
+  `#!${process.execPath}
 import { appendFileSync } from "node:fs";
 ${GUARD()}const a = process.argv.slice(2);
 appendFileSync(${JSON.stringify(ocLog)}, JSON.stringify(a) + "\\n");
