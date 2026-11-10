@@ -60,10 +60,10 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function call(method: string, path: string, body = ""): Promise<[number, string]> {
+function call(method: string, path: string, body = "", extra = ""): Promise<[number, string]> {
   return new Promise((resolve, reject) => {
     const c = connect(port, "127.0.0.1", () =>
-      c.write(`${method} ${path} HTTP/1.1\r\nAuthorization: Bearer tok\r\nX-Harbor-Id: pc:probe\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`),
+      c.write(`${method} ${path} HTTP/1.1\r\nAuthorization: Bearer tok\r\nX-Harbor-Id: pc:probe\r\n${extra}Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`),
     );
     let out = Buffer.alloc(0);
     c.on("data", (d: Buffer) => (out = Buffer.concat([out, d])));
@@ -110,6 +110,12 @@ test("every_route_the_rust_hub_answers_is_answered_by_the_ts_hub", async () => {
 
 async function json(method: string, path: string, body: unknown = {}): Promise<[number, Record<string, unknown>]> {
   const [status, text] = await call(method, path, method === "GET" ? "" : JSON.stringify(body));
+  return [status, text === "" ? {} : (JSON.parse(text) as Record<string, unknown>)];
+}
+
+/** As a phone asks: chats by gid, projects by path (`X-Harbor-Ids: global`). */
+async function phoneJson(method: string, path: string, body: unknown = {}): Promise<[number, Record<string, unknown>]> {
+  const [status, text] = await call(method, path, method === "GET" ? "" : JSON.stringify(body), "X-Harbor-Ids: global\r\n");
   return [status, text === "" ? {} : (JSON.parse(text) as Record<string, unknown>)];
 }
 
@@ -194,6 +200,37 @@ test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
   expect(Array.isArray(usage.limits)).toBe(true);
   const [, versions] = await json("GET", "/v1/versions");
   expect(versions.pcs).toHaveLength(1);
+});
+
+test("a_phone_opens_a_sub_agent_chat_by_the_ids_its_state_uses", async () => {
+  const lead = h.store.createChat(blankChat({ title: "Lead", account: "claude", role: "lead", name: "lead", repoId: chat }));
+  // Spawned just now: the mesh's gid index (re-read every 10 s) doesn't hold it yet.
+  const sub = h.store.createChat(blankChat({ title: "Agent task", account: "claude", role: "sub", parent: lead.id, name: "helper" }));
+  const gone = h.store.createChat(blankChat({ title: "Old", account: "claude", role: "sub", parent: lead.id, name: "old", retired: true }));
+  h.store.saveItems(sub.id, [{ kind: "text", text: "On it.", at: 7 }]);
+  h.store.saveItems(lead.id, [{ kind: "notice", icon: "fork", text: "Forked", detail: `harbor:chat/${gone.id}/0` }]);
+  h.engine.reload();
+  // The Agents panel names each agent, and its lead, by the gid the phone's state and events use.
+  const [, team] = await phoneJson("GET", `/v1/chats/${lead.gid}/team`);
+  const path = h.store.repos().find((r) => r.id === chat)?.path;
+  expect(team).toMatchObject({ lead: lead.gid, project_id: path });
+  // (a retired agent is off the team, as on the desktop: its chat still opens from its lead's transcript)
+  expect((team.agents as { id: unknown }[]).map((a) => a.id)).toEqual([sub.gid]);
+  const [, state] = await phoneJson("GET", "/v1/state");
+  const ids = (state.chats as { id: unknown; role: unknown; retired: unknown; parent: unknown }[]).filter((c) => c.parent === lead.gid);
+  expect(ids.map((c) => c.id).sort()).toEqual([sub.gid, gone.gid].sort());
+  expect(ids.find((c) => c.id === gone.gid)).toMatchObject({ role: "sub", retired: true });
+  // Its transcript opens by that gid (a 404 here is what the phone takes for "deleted").
+  const [code, items] = await phoneJson("GET", `/v1/chats/${sub.gid}/items?since=0`);
+  expect(code).toBe(200);
+  expect((items.items as { markdown?: string }[]).some((i) => i.markdown === "On it.")).toBe(true);
+  expect((await phoneJson("GET", `/v1/chats/${sub.gid}/team`))[1]).toMatchObject({ lead: lead.gid });
+  expect((await phoneJson("GET", `/v1/chats/${crypto.randomUUID()}/items?since=0`))[0]).toBe(404);
+  // "Open source conversation" under a fork opens it by its gid too.
+  const [, leadItems] = await phoneJson("GET", `/v1/chats/${lead.gid}/items?since=0`);
+  expect((leadItems.items as { kind: string; chat?: unknown }[]).find((i) => i.kind === "forked_from")?.chat).toBe(gone.gid);
+  // The desktop's numbers stay as they were.
+  expect((await json("GET", `/v1/chats/${lead.id}/team`))[1]).toMatchObject({ lead: lead.id, project_id: chat });
 });
 
 test("a_phone_creates_a_project_on_the_pc_and_starts_its_main_chat", async () => {

@@ -253,9 +253,14 @@ export class Shared {
     return n !== "" ? n : label(id);
   }
 
+  /** The store's lookup for a gid the maps don't hold yet (a chat made since the last re-index, such as a sub-agent just spawned). */
+  findGid: ((gid: string) => number | null) | null = null;
+
   byGid(gid: string): number | null {
     for (const [id, g] of this.gids) if (g === gid) return id;
-    return null;
+    const id = gid === "" ? null : (this.findGid?.(gid) ?? null);
+    if (id !== null) this.gids.set(id, gid);
+    return id;
   }
 
   localId(peer: string, id: number): number | null {

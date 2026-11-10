@@ -658,6 +658,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       });
     },
   });
+  // A chat made since the replica's last re-index (every 10 s), such as a sub-agent just spawned, opens by its gid too.
+  hub.mesh.findGid = (gid) => store.chatIdByGid(gid);
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;
   let move: MovePc | null = null;

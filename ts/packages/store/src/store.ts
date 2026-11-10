@@ -696,6 +696,12 @@ export class Store {
     return (this.db.query(`SELECT ${CHAT_COLS} FROM chats WHERE parent=?1 ORDER BY updated DESC`).all(parent) as Row[]).map(chatFrom);
   }
 
+  /** The chat with this gid's id, without reading the others; null: none. */
+  chatIdByGid(gid: string): number | null {
+    const r = this.db.query("SELECT id FROM chats WHERE gid=?1").get(gid) as { id: number } | null;
+    return r ? r.id : null;
+  }
+
   /** One chat, without reading the others. */
   chat(id: number): Chat | undefined {
     const r = this.db.query(`SELECT ${CHAT_COLS} FROM chats WHERE id=?1`).get(id) as Row | null;

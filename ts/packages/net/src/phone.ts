@@ -876,6 +876,8 @@ export class PhoneRoutes {
       .map((s) => {
         const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null, look, links, looks[s.seq] ?? null);
         if (v.kind === "chat_link") v.chat = byId(this.chats().find((x) => x.gid === v.gid)?.id ?? null);
+        // The chat a fork came from, in the caller's ids (a phone opens it by its gid).
+        if (v.kind === "forked_from" && global && typeof v.chat === "number") v.chat = this.d.store.chat(v.chat)?.gid ?? v.chat;
         return v;
       });
     return { rev: hub.rev(), count: items.length, running: this.running(c), queued: this.queuedCount(c), typing: this.typing(c.id), draft: this.draft(c.id), status: this.status(c.id), items: out };

@@ -187,7 +187,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         if (!h.hub.mesh.on) return err(409, "the PCs aren't sharing chats now: turn the mesh on, or start the chat on that PC");
         return h.projectClones.runOnOwner(c, h.hub.callerLabel(call.token, call.device), call.global);
       case "team":
-        return ok(team(c));
+        return ok(team(c, call.global));
       case "slash":
         return call.method === "GET" ? ok(composer.slashChat(c)) : composer.slashCommand(c, call);
       case "tags":
@@ -209,17 +209,19 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
           return err(409, x instanceof Error ? x.message : String(x));
         }
         h.hub.touch(null, true);
-        return ok({ ok: true, chat: h.phone().chatJson(e.chat(c.id) ?? c, call.global), moved: [c.id, ...e.allSubsOf(c.id).map((s) => s.id)] });
+        return ok({ ok: true, chat: h.phone().chatJson(e.chat(c.id) ?? c, call.global), moved: [c, ...e.allSubsOf(c.id)].map((x) => (call.global ? x.gid : x.id)) });
       }
       default:
         return null;
     }
   };
 
-  const team = (c: Chat): Json => {
+  /** `global` (phones): chat ids as gids, the ids its state and events use: a number there matched no chat ("This chat was deleted"). */
+  const team = (c: Chat, global = false): Json => {
     const e = h.engine();
     const lead = c.role === "sub" ? (c.parent ?? c.id) : c.id;
     const lc = e.chat(lead);
+    const idOf = (x: Chat | undefined, id: number): Json => (global && x !== undefined && x.gid !== "" ? x.gid : id);
     const repo = lc?.repoId ?? null;
     const home = lc && lc.home !== "" ? h.hub.mesh.nameOf(lc.home) : "";
     const at = Date.now();
@@ -235,7 +237,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       const usage = cost.ofItems(items);
       const queued = h.phone().queuedCount(s);
       return {
-        id: s.id,
+        id: idOf(s, s.id),
         name: s.name,
         title: s.title,
         account: acc ? providers.short(acc) : "",
@@ -257,7 +259,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         const [local, pub] = e.hookUrl(w.token);
         return { id: w.id, name: w.name, description: w.description, hits: w.hits, last_ms: w.lastHit * 1000, public: pub !== null, url: pub ?? local };
       });
-    return plain({ lead, project_id: repo, home, agents, processes, wakeups, webhooks });
+    return plain({ lead: idOf(lc, lead), project_id: global && lc?.repoId != null ? (e.repo(lc.repoId)?.path ?? repo) : repo, home, agents, processes, wakeups, webhooks });
   };
 
   const gmailInfo = (): Record<string, Json> => ({

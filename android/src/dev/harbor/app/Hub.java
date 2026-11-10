@@ -900,7 +900,7 @@ final class Hub {
         JSONArray a = state == null ? null : state.optJSONArray("chats");
         if (a != null) for (int i = 0; i < a.length(); i++) {
             JSONObject c = a.optJSONObject(i);
-            if (c != null && id.equals(c.optString("id"))) return c;
+            if (c != null && (id.equals(c.optString("id")) || id.equals(c.optString("gid")))) return c;
         }
         return null;
     }

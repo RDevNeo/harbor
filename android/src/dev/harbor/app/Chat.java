@@ -273,7 +273,9 @@ public class Chat extends Base implements Images.Gallery {
                 Ui.main.post(() -> {
                     if (isFinishing()) return;
                     JSONObject c = Hub.chat(st, chatId);
-                    if (c == null) { Ui.toast(this, "This chat was deleted"); deleted(); return; }
+                    // Not in the list (an id the list names otherwise, or a chat made since it was read)
+                    // isn't gone: only the hub's 404 for its transcript says so (load).
+                    if (c == null) { load(false); return; }
                     showChat(c);
                     if (side != null && drawerOpen()) side.render(st);
                 });
