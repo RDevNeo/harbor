@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.169.1] - 2026-11-10
+
 ### Changed
 - Follow main no longer waits on GitHub's webhook, which sometimes arrives half a minute late (a push
   of main right before a tag, as every release does): the PC that pushed tells the account worker
