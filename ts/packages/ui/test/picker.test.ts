@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Account } from "@harbor/agents";
 import { tipParts } from "../src/logic/tips.ts";
-import { emptyText, favoritesValue, parseFavorites, pickerRows, railStep, railTip, workspaceLine } from "../src/picker.ts";
+import { emptyText, favoritesValue, migrateFavorites, parseFavorites, pickerRows, railStep, railTip, workspaceLine } from "../src/picker.ts";
 
 const acc = (id: string, kind: Account["kind"], bin: string | null): Account => ({ id, kind, name: id, email: "", badge: "", plan: "", configDir: null, bin, loggedIn: true, usage: [] });
 const claude = acc("claude", "Claude", "/usr/bin/claude");
@@ -66,4 +66,25 @@ test("a model row's second line is its owner's workspace, without the provider",
   expect(workspaceLine({ shown: "", person: "Dana Reyes" })).toBe("Dana Reyes's Workspace");
   expect(workspaceLine({ shown: "", person: "" })).toBeNull();
   expect(workspaceLine(undefined)).toBeNull();
+});
+
+test("a favorite on another PC's OpenCode by its old id moves to the entry that PC's copy is in now", () => {
+  const shared = [
+    { id: "opencode", kind: "opencode", copies: [{ pc: "", account: "opencode" }, { pc: "ts:laptop", account: "opencode" }] },
+    { id: "opencode:abc", kind: "opencode", copies: [{ pc: "ts:desk", account: "opencode" }] },
+  ];
+  const list: [string, string][] = [
+    ["opencode@ts:laptop/opencode", "nvidia/glm"],
+    ["opencode@ts:desk/opencode", "x/y"],
+    ["opencode", "nvidia/glm"],
+    ["opencode@ts:gone/opencode", "a/b"],
+    ["claude", "claude-opus-5-5"],
+  ];
+  expect(migrateFavorites(list, shared)).toEqual([
+    ["opencode", "nvidia/glm"],
+    ["opencode:abc", "x/y"],
+    ["opencode@ts:gone/opencode", "a/b"],
+    ["claude", "claude-opus-5-5"],
+  ]);
+  expect(migrateFavorites([["claude", "m"]], shared)).toBeNull();
 });

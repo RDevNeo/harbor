@@ -3441,6 +3441,7 @@ export class Shell {
       },
       ok,
     };
+    this.favorites.migrate(this.shared());
     const { rows, more } = pickerRows(this.picker, on, this.favorites.list, locked, look);
     this.pickerRowsNow = rows;
     sync(
