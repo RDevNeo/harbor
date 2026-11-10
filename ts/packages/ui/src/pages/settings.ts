@@ -44,6 +44,10 @@ export interface SettingsView {
   blocks_toggled: (k: string, v: boolean) => void;
   blocks_edited: (k: string, t: string) => void;
   blocks_submitted: (k: string, a: string, b: string, c: string) => string;
+  /** The page's scroll (px from the top, negative as Slint has it). */
+  scroll_y: number;
+  /** The nav's search field. */
+  search: string;
   pick: (s: string) => void;
   searched: (t: string) => void;
   back: () => void;
@@ -71,6 +75,37 @@ export interface SettingsDeps {
 
 export interface SettingsHandle {
   show: (tab?: Tab) => void;
+  /** What a restart keeps: the tab, the nav's search, the scroll and the text typed in fields not saved yet. */
+  state: () => { tab: Tab; search: string; scroll: number; fields: Record<string, string> };
+  /** Puts the page back as `state` had it (after `show` of its tab). */
+  restore: (s: { search: string; scroll: number; fields: Record<string, string> }) => void;
+}
+
+/** The text fields of `blocks` (forms, rows' inputs and their editors): key and whether it hides what's typed. */
+function blockFields(blocks: readonly Block[]): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  for (const b of blocks) {
+    for (const f of b.fields) out.set(f.key, f.password);
+    for (const r of b.rows) {
+      if (r.control === "input") out.set(r.key, false);
+      for (const e of r.edit) for (const f of e.fields) out.set(f.key, f.password || e.kind === "replace");
+    }
+  }
+  return out;
+}
+
+/** `blocks` with what was typed in their fields (and not submitted) put back into them. */
+export function filledBlocks(blocks: Block[], typed: ReadonlyMap<string, string>): Block[] {
+  if (typed.size === 0) return blocks;
+  const fill = <T extends { key: string; text: string }>(f: T): T => {
+    const t = typed.get(f.key);
+    return t === undefined ? f : { ...f, text: t };
+  };
+  return blocks.map((b) => ({
+    ...b,
+    fields: b.fields.map((f) => (f.password ? f : fill(f))),
+    rows: b.rows.map((r) => ({ ...(r.control === "input" ? fill(r) : r), edit: r.edit.map((e) => (e.kind === "replace" ? e : { ...e, fields: e.fields.map((f) => (f.password ? f : fill(f))) })) })),
+  }));
 }
 
 /** The dictation controller the Voice tab drives: no peers to forward to, nowhere to type into. */
@@ -112,8 +147,18 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     if (tab === "voice") bus.voice = voiceView(voiceFacts(speech, label(keys.get("voice"))));
     if (tab === "providers") bus.providers = providersTab.view(dark);
     if (tab === "integrations") bus.integrations = integrationsTab.view(dark);
-    bus.blocks = blocks.get(tab)?.blocks() ?? [];
+    const built = blocks.get(tab)?.blocks() ?? [];
+    fieldKinds = blockFields(built);
+    bus.blocks = filledBlocks(built, typedIn(tab));
   }
+  /** Text typed in the blocks' fields since the page opened (passwords never), until a form goes: by "tab:key". */
+  const typed = new Map<string, string>();
+  const typedIn = (t: Tab): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const [k, v] of typed) if (k.startsWith(`${t}:`)) out.set(k.slice(t.length + 1), v);
+    return out;
+  };
+  let fieldKinds = new Map<string, boolean>();
 
   const refreshInputs = () => void speech.refreshInputs().then(() => show());
   // An SSH device being set up to transcribe: its step shows as it goes.
@@ -189,11 +234,15 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     show();
   };
   bus.blocks_edited = (k, t) => {
+    if (fieldKinds.get(k) === false) typed.set(`${tab}:${k}`, t);
     blocks.get(tab)?.edited(k, t);
   };
   bus.blocks_submitted = (k, a, b, c) => {
     const err = blocks.get(tab)?.submitted(k, [a, b, c]) ?? "";
-    if (err === "") show();
+    if (err === "") {
+      for (const key of [...typed.keys()]) if (key.startsWith(`${tab}:`)) typed.delete(key);
+      show();
+    }
     return err;
   };
   bus.pressed = (k) => {
@@ -210,5 +259,21 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   };
   show();
   if (first === "voice") refreshInputs();
-  return { show: (next) => { show(next); if (next === "voice") refreshInputs(); } };
+  return {
+    show: (next) => {
+      show(next);
+      if (next === "voice") refreshInputs();
+    },
+    state: () => ({ tab, search: bus.search, scroll: bus.scroll_y, fields: Object.fromEntries(typed) }),
+    restore: (st) => {
+      for (const [k, t] of Object.entries(st.fields)) typed.set(k, t);
+      if (st.search !== "") {
+        bus.search = st.search;
+        bus.searched(st.search);
+      }
+      show();
+      // The page lays out its rows first: the scroll goes on after that.
+      for (const ms of [0, 60, 250]) setTimeout(() => (bus.scroll_y = st.scroll), ms);
+    },
+  };
 }

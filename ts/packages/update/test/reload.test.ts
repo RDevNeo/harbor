@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Store } from "@harbor/store";
 import { Updater } from "../src/delivery.ts";
 import { readMeta, writeMeta } from "../src/previewmeta.ts";
-import { RELOADED_PID, Reloader, STATE_KEY, draftsFrom, draftsOf, takeSnapshot, watchFiles, type Kv } from "../src/reload.ts";
+import { HANDOVER, RELOADED_PID, Reloader, STATE_KEY, draftsFrom, draftsOf, handoverSay, takeSnapshot, watchFiles, type Kv } from "../src/reload.ts";
 import { FakeHost, cleanup, configFor, makeInstall, makeKey, tmp, wait } from "./support.ts";
 
 afterEach(cleanup);
@@ -189,6 +189,62 @@ test("a composer draft survives the swap: saved before the restart, read back by
   } finally {
     second.close();
   }
+});
+
+test("a handover: the new process starts first; once its window is built this one saves, stops, lets go, and leaves when it shows", async () => {
+  const file = join(tmp(), "handover");
+  let ended: () => void = () => {};
+  const { r, calls, kv, spawned } = reloader({
+    handover: file,
+    leaving: () => void calls.push("leaving"),
+    place: async () => ({ HL_EXEC_RULE_TOKEN: "tok" }),
+    spawn: (cmd, env) => {
+      calls.push("spawn");
+      spawned.push({ cmd, env });
+      return { exited: new Promise<void>((res) => (ended = res)) };
+    },
+  });
+  const going = r.now();
+  await wait(() => spawned.length === 1);
+  expect(spawned[0]?.env[HANDOVER]).toBe(file);
+  expect(spawned[0]?.env.HL_EXEC_RULE_TOKEN).toBe("tok");
+  expect(r.handingOver).toBe(true);
+  // Still running while the new one builds its window: nothing saved, nothing stopped.
+  await new Promise((res) => setTimeout(res, 60));
+  expect(calls).toEqual(["spawn"]);
+  handoverSay(file, "ready");
+  await wait(() => calls.includes("release"));
+  expect(calls).toEqual(["spawn", "snapshot", "leaving", "beforeExit", "release"]);
+  expect(JSON.parse(kv.get(STATE_KEY) ?? "{}")).toEqual({ drafts: { "5": "a draft" } });
+  // The window stays until the new one shows.
+  await new Promise((res) => setTimeout(res, 60));
+  expect(calls).not.toContain("exit 0");
+  handoverSay(file, "shown");
+  expect(await going).toBe(true);
+  expect(calls.at(-1)).toBe("exit 0");
+  ended();
+});
+
+test("a handover whose new process ends before it's ready (an older Harbor) restarts the plain way", async () => {
+  const file = join(tmp(), "handover");
+  const { r, calls, spawned } = reloader({
+    handover: file,
+    spawn: (cmd, env) => {
+      calls.push("spawn");
+      spawned.push({ cmd, env });
+      return { exited: Promise.resolve() };
+    },
+  });
+  expect(await r.now()).toBe(true);
+  expect(calls).toEqual(["spawn", "snapshot", "beforeExit", "release", "spawn", "exit 0"]);
+  expect(spawned[1]?.env[HANDOVER]).toBeUndefined();
+  expect(r.handingOver).toBe(false);
+});
+
+test("a hidden Harbor (no window) restarts the plain way: nothing to hand over", async () => {
+  const { r, calls } = reloader({ handover: join(tmp(), "handover"), hidden: () => true });
+  await r.now();
+  expect(calls).toEqual(["snapshot", "beforeExit", "release", "spawn", "exit 0"]);
 });
 
 test("a build written in place is noticed once it is finished writing", async () => {

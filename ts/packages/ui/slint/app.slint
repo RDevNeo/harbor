@@ -668,6 +668,8 @@ export component AppWindow inherits Window {
     callback viewer-key(KeyEvent) -> bool;
     // The sidebar row Alt+Up / Alt+Down last opened ("kind:id"), scrolled into view.
     in property <string> side-reveal;
+    // The sidebar's scroll, kept through a restart.
+    in-out property <length> side-scroll;
 
     public function focus-composer() {
         composer-el.focus-text();
@@ -709,6 +711,11 @@ export component AppWindow inherits Window {
     }
     public function transcript-anchor-off() {
         transcript.anchor-off();
+    }
+    // The transcript's place for a restart: px from the view's top to the content's end, and putting it back.
+    out property <length> transcript-from-end: transcript.from-end-now;
+    public function transcript-keep(d: length) {
+        transcript.keep-from-end(d);
     }
 
     property <length> content-w: 760px;
@@ -813,6 +820,7 @@ export component AppWindow inherits Window {
                     height: root.height;
                     rows: root.side-rows;
                     reveal: root.side-reveal;
+                    scroll-y <=> root.side-scroll;
                     settled: root.side-settled;
                     settled-count: root.settled-count;
                     settled-open <=> root.settled-open;

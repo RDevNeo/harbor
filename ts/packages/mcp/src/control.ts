@@ -32,7 +32,8 @@ export type Incoming<Api = never, MeshMsg = never, Offer = never> =
   | { kind: "focus"; raised: boolean }
   | { kind: "mesh"; msg: MeshMsg }
   | { kind: "preview"; offer: Offer | undefined; here: boolean }
-  | { kind: "previewBack"; off: boolean };
+  | { kind: "previewBack"; off: boolean }
+  | { kind: "restart" };
 
 export const socketPath = single.socketPath;
 
@@ -75,6 +76,10 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
       const got = opts.previewReceived ? opts.previewReceived(v.preview) : "Previews are not available here.";
       if (typeof got === "string" || !("then" in got)) return answer(got);
       return void got.then(answer, (e: unknown) => reply(socket, { ok: false, text: e instanceof Error ? e.message : String(e) }));
+    }
+    if (v.restart === true) {
+      opts.send({ kind: "restart" });
+      return reply(socket, { ok: true });
     }
     if (v.preview_back !== undefined) {
       opts.send({ kind: "previewBack", off: v.off === true });

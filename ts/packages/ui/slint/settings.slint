@@ -170,6 +170,8 @@ export global SettingsBus {
     callback blocks-edited(string, string);
     callback blocks-submitted(string, string, string, string) -> string;
     in-out property <string> search;
+    // The page's scroll, kept through a restart.
+    in-out property <length> scroll-y;
     in property <ProvidersData> providers;
     in property <[NotifySection]> notifications;
     in property <KeysView> keybindings;
@@ -306,6 +308,7 @@ export component SettingsPage inherits Rectangle {
         }
         ScrollView {
             vertical-stretch: 1;
+            viewport-y <=> SettingsBus.scroll-y;
             HorizontalLayout {
                 alignment: center;
                 VerticalLayout {

@@ -14,6 +14,7 @@ import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
 import { DraftSync } from "./logic/shareddraft.ts";
+import { type ComposerEntry, type Composers, COMPOSERS_KEY, Debounce, fresh, keptJson, LATE_KEY, type PaneSnap, type PaneTab, parseKept, parseSnapshot, SAVE_MS, snapshotJson, type UiSnapshot } from "./logic/uistate.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Invite, inviteCard } from "./logic/invitecard.ts";
 import { initials, popRows, popStart, popStep, type PopRow as ProjRow, tint } from "./logic/projectpop.ts";
@@ -178,6 +179,15 @@ export class Shell {
   private sel: Sel;
   private opened = new Map<number, Opened>();
   private drafts = new Map<number, string>();
+  /** Each composer's cursor (UTF-8 bytes) when it was last left: it's where it comes back. */
+  private cursors = new Map<number, number>();
+  /** Writes the composers (kv `composer_drafts`) a moment after they change: a crash keeps what was typed. */
+  private readonly keepComposers = new Debounce(SAVE_MS, () => this.persistComposers());
+  private keptJson = "";
+  /** The snapshot was taken and the next process is starting: edits from now go to kv `composer_late` at once. */
+  private leavingNow = false;
+  /** The chat whose Rename dialog is open (a restart opens it again, with what it held). */
+  private renaming: number | null = null;
   private query = "";
   private rows = new slint.ArrayModel<SideRow>([]);
   private settledRows = new slint.ArrayModel<SideRow>([]);
@@ -863,6 +873,7 @@ export class Shell {
     w.edited = (t) => {
       const before = this.drafts.get(this.key()) ?? "";
       this.drafts.set(this.key(), t);
+      this.composerChanged();
       if (this.followImages(before, t)) return;
       // Typed into or emptied: the send button turns Send, Stop or Resume (keys refresh it too; a paste with the mouse doesn't).
       if ((before.trim() === "") !== (t.trim() === "")) this.refreshComposer();
@@ -1040,24 +1051,275 @@ export class Shell {
     return this.data.engine;
   }
 
-  snapshot(): Record<string, unknown> {
-    this.drafts.set(this.key(), this.win.draft);
-    const drafts: Record<string, string> = {};
-    for (const [k, t] of this.drafts) if (t.trim() !== "") drafts[String(k)] = t;
-    return { view: this.view === "chat" ? { t: "chat", id: this.chatId } : { t: "draft" }, draft_repo: this.draftRepo, draft_main: this.draftMain, drafts };
+  /** What the composer for `key` holds now (the open one from the window itself). A queued message being edited
+   * isn't the chat's draft: the draft set aside is. */
+  private composerOf(key: number): ComposerEntry {
+    if (this.queueEdit?.chat === key) {
+      const a = this.queueEdit.aside;
+      return { text: a.text, cursor: Buffer.byteLength(a.text), mentions: [...a.mentions], files: [...a.files], picked: [] };
+    }
+    const shown = key === this.key();
+    const text = shown ? this.win.draft : (this.drafts.get(key) ?? "");
+    const cursor = Math.min(Buffer.byteLength(text), shown ? this.win.cursor : (this.cursors.get(key) ?? Buffer.byteLength(text)));
+    return { text, cursor, mentions: [...(this.mentions.get(key) ?? [])], files: [...(this.attached.get(key) ?? [])], picked: [...(this.pickedTokens.get(key) ?? [])] };
   }
 
-  restore(s: Record<string, unknown>): void {
-    const drafts = s.drafts;
-    if (typeof drafts === "object" && drafts !== null) {
-      for (const [k, t] of Object.entries(drafts)) if (Number.isInteger(Number(k)) && typeof t === "string") this.drafts.set(Number(k), t);
+  private composers(): Composers {
+    const keys = new Set<number>([this.key(), ...this.drafts.keys(), ...this.mentions.keys(), ...this.attached.keys(), ...this.pickedTokens.keys()]);
+    if (this.queueEdit) keys.add(this.queueEdit.chat);
+    const out: Composers = new Map();
+    for (const k of keys) out.set(k, this.composerOf(k));
+    return out;
+  }
+
+  /** This PC's own chat: its composer's text, mentions and files are kept by the hub's shared draft (kv `shared_drafts`). */
+  private ownDraft(key: number): boolean {
+    if (key === DRAFT) return false;
+    const c = this.data.chat(key);
+    return c !== undefined && c.home === "";
+  }
+
+  /** kv `composer_drafts` as the composers stand, when that changed. */
+  private persistComposers(): void {
+    if (this.leavingNow) return;
+    const json = JSON.stringify(keptJson(this.composers(), (k) => this.ownDraft(k)));
+    if (json === this.keptJson) return;
+    this.keptJson = json;
+    try {
+      this.data.store.set(COMPOSERS_KEY, json);
+    } catch {
+      // The store closed under it (the window outlives the hub by a moment at a restart).
     }
-    const view = s.view as { t?: unknown; id?: unknown } | null | undefined;
-    if (view?.t === "chat" && typeof view.id === "number" && this.data.chat(view.id)) this.openChat(view.id);
-    else {
-      const repo = typeof s.draft_repo === "number" && this.data.repo(s.draft_repo) ? s.draft_repo : null;
-      this.newDraft(repo, s.draft_main === true);
+  }
+
+  /** A composer changed: it's written a moment later (several changes write once); after the snapshot, at once. */
+  private composerChanged(): void {
+    if (this.leavingNow) {
+      const k = this.key();
+      try {
+        this.data.store.set(LATE_KEY, JSON.stringify({ key: k, ...this.composerOf(k) }));
+      } catch {
+        // as above
+      }
+      return;
     }
+    this.keepComposers.poke();
+  }
+
+  /** The composer for `key` holds `e` (the window's own if it's the one shown). */
+  private putComposer(key: number, e: ComposerEntry): void {
+    if (e.text === "") this.drafts.delete(key);
+    else this.drafts.set(key, e.text);
+    const mentions = e.mentions.map(mentionFromJson).filter((m): m is Mention => m !== null);
+    if (mentions.length > 0) this.mentions.set(key, mentions);
+    else this.mentions.delete(key);
+    const files = e.files.filter((f) => existsSync(f));
+    if (files.length > 0) this.attached.set(key, files);
+    else this.attached.delete(key);
+    if (e.picked.length > 0) this.pickedTokens.set(key, [...e.picked]);
+    else this.pickedTokens.delete(key);
+    this.cursors.set(key, e.cursor);
+    if (key === this.key()) {
+      this.win.draft = e.text;
+      this.win.set_cursor(Math.min(e.cursor, Buffer.byteLength(e.text)));
+      this.refreshFiles();
+    }
+  }
+
+  /**
+   * The composers as the last run left them, crash or not: this PC's own chats from the hub's shared drafts (the ones
+   * this PC wrote: another device's comes in as it always does, when the chat opens), the rest from kv `composer_drafts`.
+   */
+  resumeComposers(): void {
+    const kept = parseKept(this.data.store.get(COMPOSERS_KEY));
+    const me = this.shellMesh.me();
+    for (const c of this.data.chats) {
+      if (c.home !== "" || !this.shellMesh.draft) continue;
+      const d = this.shellMesh.draft(c.id);
+      if (!d || d.by !== me || (d.text.trim() === "" && d.mentions.length === 0 && (d.files ?? []).length === 0)) continue;
+      const files = d.files ?? [];
+      const cursor = kept.cursors.get(c.id) ?? Buffer.byteLength(d.text);
+      this.putComposer(c.id, { text: d.text, cursor, mentions: d.mentions, files, picked: kept.picked.get(c.id) ?? [] });
+      this.draftSync.took(c.id, d, { text: d.text, mentions: this.mentions.get(c.id) ?? [], files: this.attached.get(c.id) ?? [] });
+    }
+    for (const [k, e] of kept.full) if (k === DRAFT || (this.data.chat(k) && !this.ownDraft(k))) this.putComposer(k, e);
+    this.keptJson = this.data.store.get(COMPOSERS_KEY) ?? "";
+  }
+
+  /** The window's state for the next process (kv `reload_state`), taken the moment before it takes over. */
+  snapshot(): Record<string, unknown> {
+    this.drafts.set(this.key(), this.win.draft);
+    this.persistComposers();
+    const open = this.view === "chat" ? this.openedOf(this.chatId) : null;
+    const settings = this.page === "settings" ? this.pages.settingsNow() : null;
+    const snap: UiSnapshot = {
+      at: Date.now(),
+      view: this.view === "chat" ? { t: "chat", id: this.chatId } : { t: "draft" },
+      draftRepo: this.draftRepo,
+      draftMain: this.draftMain,
+      composers: this.composers(),
+      sel: { ...this.sel },
+      draftWt: { ...this.draftWt },
+      draftHere: [...this.draftHere],
+      draftPicked: [...this.draftPicked],
+      page: this.page === "settings" ? (settings ? { kind: "settings", ...settings } : { kind: "settings", tab: "general", search: "", scroll: 0, fields: {} }) : this.page === null ? null : { kind: this.page },
+      pageBack: this.pageBack,
+      transcript: open ? { chat: this.chatId, limit: open.limit, follow: this.win.at_end, fromEnd: this.win.transcript_from_end, groups: [...open.groups], cards: [...open.cards] } : null,
+      sideQuery: this.query,
+      sideScroll: this.win.side_scroll,
+      panes: { right: this.paneSnap("right"), bottom: this.paneSnap("bottom"), max: this.surfaces.max },
+      dialog: this.renaming !== null && this.win.dialog_id === "dialog" ? { kind: "rename-chat", id: this.renaming, input: this.win.dialog_input } : null,
+      revs: this.draftSync.appliedRevs(),
+    };
+    return snapshotJson(snap);
+  }
+
+  /** The snapshot is written and the next process starts: what the composer takes until then goes to kv `composer_late`. */
+  leaving(): void {
+    this.keepComposers.flush();
+    this.leavingNow = true;
+  }
+
+  /** The old window's last edits (kv `composer_late`), once it's gone: into the composer if nothing was typed here since. */
+  takeLate(restored: { key: number; text: string } | null): void {
+    const raw = this.data.store.get(LATE_KEY);
+    if (raw === null || raw === "") return;
+    this.data.store.set(LATE_KEY, "");
+    let late: (ComposerEntry & { key: number }) | null = null;
+    try {
+      const v = JSON.parse(raw) as Partial<ComposerEntry & { key: number }>;
+      if (typeof v.key === "number" && typeof v.text === "string") late = { key: v.key, text: v.text, cursor: Number(v.cursor) || 0, mentions: Array.isArray(v.mentions) ? v.mentions : [], files: Array.isArray(v.files) ? v.files : [], picked: Array.isArray(v.picked) ? v.picked : [] };
+    } catch {
+      return;
+    }
+    if (late === null) return;
+    const before = restored?.key === late.key ? restored.text : (this.drafts.get(late.key) ?? "");
+    const now = late.key === this.key() ? this.win.draft : (this.drafts.get(late.key) ?? "");
+    if (now !== before || late.text === now) return;
+    this.putComposer(late.key, late);
+    this.composerChanged();
+  }
+
+  private paneSnap(d: Dock): PaneSnap {
+    const p = this.surfaces.panes[d];
+    const tabs: PaneTab[] = [];
+    let active = 0;
+    p.surfaces.forEach((s, i) => {
+      let t: PaneTab | null = null;
+      if (s.kind === "chooser" || s.kind === "devices") t = { kind: s.kind };
+      else if (s.kind === "terminal") t = s.term.shell && s.term.alive ? { kind: "shell", title: s.term.title, cwd: s.term.cwd } : null;
+      else if (s.kind === "browser") t = { kind: "browser", url: s.url };
+      else if (s.kind === "files" && s.files instanceof FileBrowser) t = { kind: "files", device: s.files.dev.key, path: s.files.path };
+      else if (s.kind === "list") t = { kind: "list", id: s.list.id, title: s.list.title };
+      if (t === null) return;
+      if (i <= p.active) active = tabs.length;
+      tabs.push(t);
+    });
+    return { open: p.open && tabs.length > 0, active: Math.min(active, Math.max(0, tabs.length - 1)), tabs };
+  }
+
+  /** The panes' tabs as a restart left them (a terminal is a new shell in its folder). */
+  private restorePanes(panes: NonNullable<UiSnapshot["panes"]>, again = true): void {
+    let missing = false;
+    for (const d of ["right", "bottom"] as const) {
+      const snap = panes[d];
+      const pane = this.surfaces.panes[d];
+      if (pane.surfaces.length > 0 || snap.tabs.length === 0) continue;
+      for (const t of snap.tabs) {
+        if (t.kind === "chooser" || t.kind === "devices") pane.surfaces.push({ kind: t.kind });
+        else if (t.kind === "browser") pane.surfaces.push({ kind: "browser", url: t.url });
+        else if (t.kind === "list") pane.surfaces.push({ kind: "list", list: { id: t.id, title: t.title } });
+        else if (t.kind === "shell") {
+          if (!existsSync(t.cwd)) continue;
+          try {
+            pane.surfaces.push({ kind: "terminal", term: new Terminal(t.title, t.cwd, [], { PATH: providers.childPath() }, () => this.termWake()) });
+          } catch {
+            // no PTY: the tab stays closed
+          }
+        } else if (t.kind === "files") {
+          const dev = this.paired.find((x) => x.key === t.device);
+          const host = dev ? this.hub.deviceHost(dev) : null;
+          if (!dev || !host) {
+            missing = true;
+            continue;
+          }
+          const home = homedir();
+          pane.surfaces.push({ kind: "files", files: new FileBrowser(dev, host.ssh, t.path, { home, downloads: () => deviceDownloadsDir(home), wake: () => this.refreshPanes(), ...(dev.here ? { spawn: spawnLocal } : {}) }) });
+        }
+      }
+      pane.active = Math.min(snap.active, Math.max(0, pane.surfaces.length - 1));
+      pane.open = snap.open && pane.surfaces.length > 0;
+    }
+    if (panes.max !== null && this.surfaces.panes[panes.max].open) this.surfaces.max = panes.max;
+    this.refreshPanes();
+    // A PC's files need the paired devices, which come in a moment after the start.
+    if (missing && again) {
+      setTimeout(() => {
+        const files = { right: { ...panes.right, tabs: panes.right.tabs.filter((t) => t.kind === "files") }, bottom: { ...panes.bottom, tabs: panes.bottom.tabs.filter((t) => t.kind === "files") }, max: null };
+        for (const d of ["right", "bottom"] as const) {
+          for (const t of files[d].tabs) {
+            if (t.kind !== "files") continue;
+            const dev = this.paired.find((x) => x.key === t.device);
+            const host = dev ? this.hub.deviceHost(dev) : null;
+            if (!dev || !host) continue;
+            const home = homedir();
+            this.surfaces.panes[d].surfaces.push({ kind: "files", files: new FileBrowser(dev, host.ssh, t.path, { home, downloads: () => deviceDownloadsDir(home), wake: () => this.refreshPanes(), ...(dev.here ? { spawn: spawnLocal } : {}) }) });
+          }
+        }
+        this.refreshPanes();
+      }, 2500);
+    }
+  }
+
+  /**
+   * Back where the previous process was (its snapshot, read once): the page and chat, every composer with its cursor,
+   * the transcript's place, the sidebar's search and scroll, the panes, an open Rename. A snapshot that's too old
+   * (the restart didn't happen when it was taken) gives back only its composers. Returns the shown composer, for
+   * `takeLate`.
+   */
+  restore(raw: Record<string, unknown>): { key: number; text: string } | null {
+    const s = parseSnapshot(raw);
+    if (s === null) return null;
+    for (const [chat, rev] of s.revs) this.draftSync.seed(chat, rev);
+    for (const [k, e] of s.composers) if (k === DRAFT || this.data.chat(k)) this.putComposer(k, e);
+    if (!fresh(s, Date.now())) return null;
+    if (s.sel) this.sel = { ...this.sel, ...s.sel };
+    if (s.draftWt) this.draftWt = { ...s.draftWt };
+    this.draftHere = new Set(s.draftHere);
+    this.draftPicked = new Map(s.draftPicked);
+    if (s.sideQuery !== "") {
+      this.win.search = s.sideQuery;
+      this.query = s.sideQuery;
+    }
+    const t = s.transcript;
+    if (s.view.t === "chat" && this.data.chat(s.view.id)) {
+      if (t && t.chat === s.view.id) {
+        const o = this.openedOf(t.chat);
+        o.limit = Math.max(o.limit, t.limit);
+        o.groups = new Set(t.groups);
+        o.cards = new Set(t.cards);
+      }
+      this.openChat(s.view.id, t && t.chat === s.view.id && !t.follow ? t.fromEnd : null);
+    } else {
+      const repo = s.draftRepo !== null && this.data.repo(s.draftRepo) ? s.draftRepo : null;
+      this.newDraft(repo, s.draftMain);
+    }
+    if (s.page?.kind === "settings") {
+      const tab = tabFromSlug(s.page.tab) ?? "general";
+      void this.pages.restoreSettings({ ...s.page, tab });
+    } else if (s.page?.kind === "prs") this.pages.openPrs();
+    else if (s.page?.kind === "issues") this.pages.openIssues();
+    if (s.page !== null) this.pageBack = s.pageBack !== null && this.data.chat(s.pageBack) ? s.pageBack : null;
+    if (s.panes) this.restorePanes(s.panes);
+    if (s.dialog?.kind === "rename-chat" && this.data.chat(s.dialog.id)) {
+      this.renameDialog(s.dialog.id);
+      this.win.dialog_input = s.dialog.input;
+    }
+    this.refreshAll();
+    // The sidebar lays its rows out first.
+    for (const ms of [0, 60, 300]) setTimeout(() => (this.win.side_scroll = s.sideScroll), ms);
+    const k = this.key();
+    return { key: k, text: this.win.draft };
   }
 
   /** HARBOR_VIEW, for screenshots: `chat[:id]` (the last chat), `settings[:tab]` or a tab's slug, `prs`, `issues`.
@@ -1085,9 +1347,10 @@ export class Shell {
     void shown.then(() => console.error("harbor-view shown"));
   }
 
-  openChat(id: number): void {
+  /** `fromEnd`: the transcript's place to keep (a restart's), px from the view's top to the end; else it shows the end. */
+  openChat(id: number, fromEnd: number | null = null): void {
     if (!this.data.chat(id)) return;
-    this.drafts.set(this.key(), this.win.draft);
+    this.leaveComposer();
     this.page = null;
     this.refreshInvite();
     this.view = "chat";
@@ -1097,13 +1360,34 @@ export class Shell {
     this.engine.unread.delete(id);
     this.engine.failed.delete(id);
     this.data.store.set("last_chat", String(id));
-    this.win.draft = this.drafts.get(id) ?? "";
+    this.enterComposer(id);
     this.syncDraft(id);
     this.draftSync.shown(id, { text: this.win.draft, mentions: this.mentions.get(id) ?? [], files: this.attached.get(id) ?? [] });
     this.closePopup();
     this.refreshAll();
-    // A long chat's first layout takes a few frames: its end is sought until then.
-    for (const ms of [30, 120, 400, 900]) setTimeout(() => this.win.scroll_to_end(), ms);
+    // A long chat's first layout takes a few frames: its end (or the place kept) is sought until then.
+    if (fromEnd === null) for (const ms of [30, 120, 400, 900]) setTimeout(() => this.win.scroll_to_end(), ms);
+    else {
+      for (const ms of [0, 30, 120, 400, 900, 1600]) setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_keep(fromEnd), ms);
+      // Its images have come in by then: the view goes back to its usual anchoring.
+      setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_anchor_off(), 4000);
+    }
+    this.composerChanged();
+  }
+
+  /** The shown composer is left: its text and cursor stay with its key. */
+  private leaveComposer(): void {
+    const k = this.key();
+    this.drafts.set(k, this.win.draft);
+    this.cursors.set(k, this.win.cursor);
+  }
+
+  /** The composer for `key` comes on screen, its cursor where it was left. */
+  private enterComposer(key: number): void {
+    const text = this.drafts.get(key) ?? "";
+    this.win.draft = text;
+    const at = this.cursors.get(key);
+    if (at !== undefined) this.win.set_cursor(Math.min(at, Buffer.byteLength(text)));
   }
 
   private openProject(repo: number): void {
@@ -1113,16 +1397,17 @@ export class Shell {
   }
 
   newDraft(repo: number | null, main = false): void {
-    this.drafts.set(this.key(), this.win.draft);
+    this.leaveComposer();
     this.page = null;
     this.refreshInvite();
     this.view = "draft";
     this.draftRepo = repo;
     this.draftMain = main && repo !== null;
-    this.win.draft = this.drafts.get(DRAFT) ?? "";
+    this.enterComposer(DRAFT);
     this.closePopup();
     this.refreshAll();
     this.win.focus_composer();
+    this.composerChanged();
   }
 
   refreshAll(): void {
@@ -1725,6 +2010,7 @@ export class Shell {
   }
 
   private refreshComposer(): void {
+    this.composerChanged();
     this.shareDraft();
     this.refreshMentions();
     const repo = this.currentRepo();
@@ -2830,6 +3116,8 @@ export class Shell {
 
   tick(): void {
     this.tickMesh();
+    // A cursor moved without an edit (arrows, a click) is kept too.
+    if (!this.keepComposers.pending && !this.leavingNow) this.persistComposers();
     if (this.view === "chat") {
       this.syncDraft(this.chatId);
       this.shareDraft();
@@ -4382,6 +4670,7 @@ export class Shell {
     this.dialogExtra = null;
     w.dialog_input = input ?? "";
     this.dialogAction = act;
+    this.renaming = null;
     w.dialog_id = "dialog";
   }
 
@@ -4394,6 +4683,7 @@ export class Shell {
       this.data.saveChat(c);
       this.refreshAll();
     });
+    this.renaming = id;
   }
 
   private deleteDialog(id: number): void {
@@ -4800,6 +5090,10 @@ export interface ShellHooks {
   restore?: Record<string, unknown> | null;
   /** Gets a function that reads the screen's state, for the next restart. */
   snapshotWith?: (read: () => Record<string, unknown>) => void;
+  /** Gets what the window does once its snapshot is taken: edits from then on go to the next process at once. */
+  leaveWith?: (leave: () => void) => void;
+  /** Gets what the new window does once the old process is gone: takes the edits it made after its snapshot. */
+  lateWith?: (late: () => void) => void;
   /** The first frame is on screen. */
   shown?: (window: slint.Window) => void;
   quit?: () => void;
@@ -4813,8 +5107,18 @@ export interface ShellHooks {
   projects?: (p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void }) => void;
 }
 
+let warm: Promise<AppWindow> | null = null;
+
+/** Builds the window ahead (Slint compiles the UI: the slow part of a start), for a restart's handover while the old
+ * process still runs; `run` takes it. */
+export function prewarm(): Promise<void> {
+  warm ??= loadWindow();
+  return warm.then(() => undefined);
+}
+
 export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Promise<void> {
-  const win = await loadWindow();
+  const win = await (warm ?? loadWindow());
+  warm = null;
   const shell = new Shell(win, data, hub);
   data.onChange = (id) => shell.changed(id);
   data.onRestoreDraft = (id, text, files, mentions) => shell.restoreDraft(id, { text, files, mentions });
@@ -4828,10 +5132,14 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
     shell.changed(null);
   });
   const last = Number(data.store.get("last_chat") ?? 0);
+  // What was typed comes back after a crash too (kv `composer_drafts` and the hub's shared drafts).
+  shell.resumeComposers();
   shell.newDraft(null);
   if (process.env.HARBOR_VIEW) shell.devView(process.env.HARBOR_VIEW, last);
-  if (hooks.restore) shell.restore(hooks.restore);
+  const restored = hooks.restore ? shell.restore(hooks.restore) : null;
   hooks.snapshotWith?.(() => shell.snapshot());
+  hooks.leaveWith?.(() => shell.leaving());
+  hooks.lateWith?.(() => shell.takeLate(restored));
   shell.onQuit = hooks.quit ?? null;
   hooks.closer?.(() => win.hide());
   hooks.toaster?.((t) => shell.toast(t));

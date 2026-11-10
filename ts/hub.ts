@@ -178,6 +178,8 @@ export function isOffline(env: Record<string, string | undefined> = process.env)
   return env.HARBOR_OFFLINE === "1";
 }
 
+/** How soon after a change the shared drafts are written (kv `shared_drafts`). */
+const DRAFTS_SAVE_MS = 300;
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
 
 export interface RunningHub {
@@ -302,6 +304,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // API, new activity waking a settled project), other PCs and phones hear of each chat at once.
   const stopSettled = store.onSettled((chat) => hub.touch(chat, true));
   hub.loadDrafts(store);
+  // The drafts are written a moment after they change (not only on the 10 s tick): a crash or a kill keeps what was typed.
+  let draftsTimer: ReturnType<typeof setTimeout> | null = null;
+  hub.onDrafts = () => {
+    if (draftsTimer !== null) return;
+    draftsTimer = setTimeout(() => {
+      draftsTimer = null;
+      hub.saveDrafts(store);
+    }, DRAFTS_SAVE_MS);
+  };
   setHello(me.id, me.name, id);
   const notes = new Notes();
   const notifier = new Notifier({ notes });
@@ -1373,6 +1384,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       prs.stop();
       // Turns still starting would land on a closed store: they're left to their runners, as the running ones below.
       live.close();
+      hub.onDrafts = null;
+      if (draftsTimer !== null) clearTimeout(draftsTimer);
       hub.saveDrafts(store);
       if (engineTimer) clearTimeout(engineTimer);
       for (const [id, r] of live.turns) {

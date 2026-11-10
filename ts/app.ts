@@ -102,6 +102,13 @@ const commands: Record<string, Command> = {
     console.log(process.env.HARBOR_HOT ? `on (HARBOR_HOT): ${process.env.HARBOR_HOT}` : on !== "" ? `on: ${on}` : "off");
     return 0;
   },
+  // Restarts the running Harbor the way an update does: the window comes back where it was, with what was typed.
+  restart: async () => {
+    const { single } = await import("./packages/store/src/index.ts");
+    if (await single.restartRunning()) return (console.log("Harbor is restarting."), 0);
+    console.error("harbor: no running Harbor answered");
+    return 1;
+  },
   "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
   turn: async (args) => {
     const { runTurn } = await import("./packages/agents/src/index.ts");

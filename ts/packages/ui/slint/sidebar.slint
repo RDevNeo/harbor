@@ -654,6 +654,7 @@ export component Sidebar inherits Rectangle {
     in property <bool> pages-back;
     // The row Alt+Up / Alt+Down opened ("kind:id"): scrolled into view.
     in property <string> reveal;
+    in-out property <length> scroll-y <=> list.viewport-y;
     callback open-chat(int);
     callback open-project(int);
     callback fold-project(int);

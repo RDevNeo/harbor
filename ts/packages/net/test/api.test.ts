@@ -379,6 +379,18 @@ describe("hub (api.rs)", () => {
     expect((hub.draft(5) as SharedDraft).rev).toBeGreaterThan(r5);
   });
 
+  test("each draft change says so (the hub writes it soon after: a crash keeps it); an unchanged one doesn't", () => {
+    const a = new Hub([], 0);
+    let told = 0;
+    a.onDrafts = () => void told++;
+    a.setDraft(3, "pc:desk", "desk", "half", null, null);
+    expect(told).toBe(1);
+    a.setDraft(3, "pc:desk", "desk", "half", null, null);
+    expect(told).toBe(1);
+    a.clearDraft(3);
+    expect(told).toBe(2);
+  });
+
   test("shared drafts outlive a hub restart, and revs go on from them", () => {
     const kv = new MemKv();
     const up = join(tmp, "uploads-restart");

@@ -521,6 +521,8 @@ component FormBlock inherits VerticalLayout {
     alignment: start;
     in property <Block> b;
     callback pressed(string);
+    // A field's text as it's typed (the window keeps it through a restart).
+    callback edited(string, string);
     callback submitted(string, string, string, string) -> string;
     property <[string]> vals: ["", "", ""];
     property <string> err;
@@ -560,6 +562,7 @@ component FormBlock inherits VerticalLayout {
                 text: f.text;
                 edited(t) => {
                     root.vals[i] = t;
+                    root.edited(f.key, t);
                 }
                 accepted(t) => {
                     root.go();
@@ -597,6 +600,7 @@ component FormBlock inherits VerticalLayout {
                 text: f.text;
                 edited(t) => {
                     root.vals[i] = t;
+                    root.edited(f.key, t);
                 }
                 accepted(t) => {
                     root.go();
@@ -777,6 +781,9 @@ component BlockView inherits VerticalLayout {
         pressed(k) => {
             root.pressed(k);
         }
+        edited(k, t) => {
+            root.edited(k, t);
+        }
         submitted(k, a, c, d) => {
             return root.submitted(k, a, c, d);
         }
@@ -795,6 +802,9 @@ component BlockView inherits VerticalLayout {
                     b: root.b;
                     pressed(k) => {
                         root.pressed(k);
+                    }
+                    edited(k, t) => {
+                        root.edited(k, t);
                     }
                     submitted(k, a, c, d) => {
                         return root.submitted(k, a, c, d);

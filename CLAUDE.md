@@ -19,6 +19,10 @@ changes the app bundle within seconds, from its own clone, so a push from your w
 keep main working. `harbor follow-main status` says what it's doing. To release only what has run there
 for hours without a crash: `bun ts/scripts/soaked.ts status`, then `bun ts/scripts/soaked.ts release`
 (`--dry-run`, `--minor`, `--note TEXT`); `gate [COMMIT]` is the check alone. Manual tagging still works.
+Every restart (follow-main, release, `harbor restart`) hands over: the new process builds its window first,
+the old one saves the screen (kv `reload_state`, `ui/src/logic/uistate.ts`) and leaves once the new window shows.
+New UI state that a restart should keep goes into `Shell.snapshot`/`restore`; composers are also kept through a
+crash (kv `composer_drafts` plus the hub's `shared_drafts`).
 
 ## Show UI changes
 

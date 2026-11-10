@@ -35,6 +35,8 @@ export class Terminal {
   private cursorHidden = false;
   alive = true;
   readonly exited: Promise<number>;
+  /** The user's shell, not a command (a restart opens a new one in its folder). */
+  readonly shell: boolean;
 
   constructor(
     readonly title: string,
@@ -43,6 +45,7 @@ export class Terminal {
     env: Record<string, string | null>,
     wake: () => void,
   ) {
+    this.shell = argv.length === 0;
     const [rows, cols] = this.size;
     this.term = new Xterm({ rows, cols, scrollback: 5000, allowProposedApi: true });
     this.term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (p) => this.dectcem(p, false));

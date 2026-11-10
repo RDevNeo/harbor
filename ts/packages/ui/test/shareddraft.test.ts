@@ -81,3 +81,14 @@ describe("the window's shared draft (api.rs should_apply)", () => {
     expect(s.decide(2, cleared(33))).toBe("now");
   });
 });
+
+test("a restart's window starts from the revs its predecessor took: an older clear doesn't empty the composer given back", () => {
+  const a = new DraftSync(() => "pc:desk", () => 10_000);
+  const clear = { text: "", files: [], mentions: [], by: "", rev: 40 };
+  expect(a.decide(3, clear)).toBe("now");
+  a.took(3, clear, { text: "", mentions: [], files: [] });
+  const b = new DraftSync(() => "pc:desk", () => 20_000);
+  for (const [chat, rev] of a.appliedRevs()) b.seed(chat, rev);
+  expect(b.decide(3, clear)).toBe("skip");
+  expect(b.decide(3, { ...clear, text: "from the phone", by: "tok:1", rev: 41 })).toBe("now");
+});

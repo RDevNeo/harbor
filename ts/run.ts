@@ -1,10 +1,13 @@
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { apps, control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview, newNote, scopeHas } from "./packages/net/src/index.ts";
-import { type Chat, dataDir, malloc, single, Store } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, malloc, runDir, single, Store } from "./packages/store/src/index.ts";
 import {
   FollowMain,
   FOLLOW_REMOTE as REMOTE,
+  HANDOVER,
+  handoverSay,
   Reloader,
   advertised,
   Updater,
@@ -32,7 +35,23 @@ export async function runApp(o: RunOptions): Promise<number> {
   const cfg = defaultConfig();
   // Before the native libraries start work on Bun's threads: each would get an arena of its own.
   malloc.capArenas();
-  if (!(await single.acquire())) {
+  // A restart (reload.ts): the old process, its pid; with a window, the file this one tells it it's ready in.
+  const reloadedFrom = Number(process.env.HARBOR_RELOADED_PID) || 0;
+  const handover = o.window ? (process.env[HANDOVER] ?? null) : null;
+  delete process.env[HANDOVER];
+  // The window's place (single.ts placeEnv): Hyprland reads it from this process's starting environment
+  // (/proc/PID/environ), which keeps it; what this process starts (terminals, agents' apps) mustn't open there too.
+  if (handover !== null) delete process.env.HL_EXEC_RULE_TOKEN;
+  if (handover !== null) {
+    // The window is built (Slint compiles the UI) while the old Harbor still runs; then it steps aside.
+    try {
+      await (await import("./packages/ui/src/index.ts")).prewarm();
+    } catch (e) {
+      console.error(`harbor: the window couldn't be built ahead: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    handoverSay(handover, "ready");
+  }
+  if (!(await single.acquire(process.env, handover !== null ? 60_000 : undefined))) {
     if (o.window) await single.focusRunning();
     return 0;
   }
@@ -89,6 +108,8 @@ export async function runApp(o: RunOptions): Promise<number> {
     void reloader?.now();
   };
   const sock = control.startSocket<never, never, preview.Offer>({
+    // The new Harbor of a restart asks the running one to show itself when it can't start: that isn't the user.
+    raise: () => (reloader?.handingOver ? true : single.raise()),
     previewReceived: (v) => preview.received(cfg, v as Partial<preview.PushRequest>),
     send: (i) => {
       if (i.kind === "tool") {
@@ -104,6 +125,8 @@ export async function runApp(o: RunOptions): Promise<number> {
         })();
       } else if (i.kind === "focus") {
         if (!o.window) reopen();
+      } else if (i.kind === "restart") {
+        void reloader?.now();
       } else if (i.kind === "previewBack") {
         void preview.back(cfg, i.off, () => void reloader?.now());
       }
@@ -119,6 +142,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     follow?.stop();
     await run.stop();
   };
+  let leave = (): void => {};
   reloader = new Reloader({
     cfg,
     kv: run.store,
@@ -127,6 +151,9 @@ export async function runApp(o: RunOptions): Promise<number> {
     hidden: () => hidden,
     beforeExit: stopAll,
     release: () => single.release(),
+    handover: join(process.env.XDG_RUNTIME_DIR || runDir(), `harbor-handover-${process.pid}`),
+    leaving: () => leave(),
+    place: () => single.placeEnv(),
   });
 
   const bundle = runtimeInfo()?.bundle;
@@ -140,7 +167,8 @@ export async function runApp(o: RunOptions): Promise<number> {
   follow.start();
   autostartByDefault(store, updater.managed() && !cfg.preview && !offline);
 
-  const restore = offline ? null : takeSnapshot(run.store);
+  // Offline rigs restore only their own restarts (a copied database may hold the real window's snapshot).
+  const restore = offline && reloadedFrom === 0 ? null : takeSnapshot(run.store);
   if (!o.window && restore) snapshot = () => restore;
   const { trayStart } = await import("./packages/ui/src/tray.ts");
   if (!o.window) {
@@ -245,7 +273,13 @@ export async function runApp(o: RunOptions): Promise<number> {
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
       homeImage: async (chat: number, path: string) => (await run.mesh.homeImage(chat, path, null))?.body ?? null,
     };
-    await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; run.setProviderPopup((text) => {
+    let late = (): void => {};
+    const shown = (w: slint.Window): void => {
+      void confirmStart(cfg);
+      o.shown?.(w, quit);
+      if (handover !== null) void handedOver(handover, reloadedFrom, () => late(), ui.loopState);
+    };
+    await ui.runShell(data, hub, { restore, shown, snapshotWith: (f) => (snapshot = f), leaveWith: (f) => (leave = f), lateWith: (f) => (late = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; run.setProviderPopup((text) => {
       const desk = data.notifier.desktop;
       if (desk?.focused) t(text);
       else desk?.show(newNote({ kind: "pc", key: "providers", title: text }));
@@ -260,6 +294,24 @@ export async function runApp(o: RunOptions): Promise<number> {
   }
   await stopAll();
   return 0;
+}
+
+/**
+ * The new window of a handover is up: once the display has woken its loop (its first frames are drawn) the old
+ * process is told, and leaves; then the edits its window took after its snapshot come in (`late`).
+ */
+async function handedOver(file: string, oldPid: number, late: () => void, loop: { wakes: number }): Promise<void> {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 50 && loop.wakes < 2; i++) await sleep(20);
+  await sleep(50);
+  handoverSay(file, "shown");
+  for (let i = 0; i < 250 && oldPid > 0 && existsSync(`/proc/${oldPid}`); i++) await sleep(20);
+  rmSync(file, { force: true });
+  try {
+    late();
+  } catch (e) {
+    console.error(`harbor: the old window's last edits didn't come in: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /** The Google clients this build has (baked in, or from the environment), for a build of main to keep. */

@@ -1146,6 +1146,14 @@ export component Transcript {
     public function anchor-off() {
         root.anchoring = false;
     }
+    // From the view's top to the content's end (px): what a restart keeps, and puts back with `keep-from-end`.
+    out property <length> from-end-now: list.content-height + list.content-y;
+    public function keep-from-end(d: length) {
+        root.follow = false;
+        root.anchoring = true;
+        root.from-end = d;
+        root.apply-anchor();
+    }
     function apply-anchor() {
         list.content-y = max(min(0px, list.height - list.content-height), min(0px, root.from-end - list.content-height));
     }

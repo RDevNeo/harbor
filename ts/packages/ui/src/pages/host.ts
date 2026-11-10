@@ -71,6 +71,7 @@ export interface PageShell {
 /** The Settings, Pull requests and Issues pages and the palette and add-project overlays, mounted on first use. */
 export class PageHost {
   private settings: Promise<SettingsHandle> | null = null;
+  private settingsDone: SettingsHandle | null = null;
   private prs: PrsHandle | null = null;
   private issues: IssuesPage | null = null;
   private palette: PaletteHandle | null = null;
@@ -100,15 +101,27 @@ export class PageHost {
         },
         tab,
       ));
+      void this.settings.then((h) => (this.settingsDone = h), () => {});
     }
     return this.settings.then(
       (h) => h.show(tab),
       (e: unknown) => {
         this.settings = null;
+        this.settingsDone = null;
         this.s.leave();
         this.s.toast(`Settings couldn't open: ${e instanceof Error ? e.message : String(e)}`);
       },
     );
+  }
+
+  /** Settings as a restart left it: its tab, then the search, the fields' text and the scroll. */
+  restoreSettings(s: { tab: Tab; search: string; scroll: number; fields: Record<string, string> }): Promise<void> {
+    return this.openSettings(s.tab).then(() => this.settings?.then((h) => h.restore(s)));
+  }
+
+  /** The Settings page's state now, when it's mounted and has answered once (sync: for the snapshot). */
+  settingsNow(): ReturnType<SettingsHandle["state"]> | null {
+    return this.settingsDone?.state() ?? null;
   }
 
   /** app.rs `login`: installs a missing CLI, else signs the account in with its own environment. */

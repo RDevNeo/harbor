@@ -59,6 +59,17 @@ export class DraftSync {
     return "now";
   }
 
+  /** The newest shared draft taken per chat, for a restart: the next window starts from them (`seed`). */
+  appliedRevs(): [number, number][] {
+    return [...this.applied];
+  }
+
+  /** A restart's snapshot said this window's predecessor had taken the chat's drafts up to `rev`: an older one (a clear
+   * it saw long ago) doesn't overwrite what the composer was given back. */
+  seed(chat: number, rev: number): void {
+    if (rev > (this.applied.get(chat) ?? 0)) this.applied.set(chat, rev);
+  }
+
   /** The draft went into the composer: it's what the composer holds now, not an edit to send back. */
   took(chat: number, d: DraftIn, held: DraftOut): void {
     this.applied.set(chat, d.rev);

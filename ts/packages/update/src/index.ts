@@ -6,7 +6,7 @@ export { install, rollback, rolledBack, onDisk, current, hasPrevious, skipped, t
 export { Updater, backoffMs, installDue, news, type State, type UpdateInfo } from "./delivery.ts";
 export { apk, putApk, APK, NO_BROWSER, VIDEO_LIB, engineStale, videoStale, browserUnsupported, retryAfter } from "./extras.ts";
 export { confirmStart, recoverUnconfirmed, failedStart, readAttempt, START_LIMIT_MS, SETTLE_MS } from "./startup.ts";
-export { Reloader, takeSnapshot, draftsOf, draftsFrom, watchFiles, STATE_KEY, RELOADED_PID, type Snapshot, type Kv } from "./reload.ts";
+export { Reloader, takeSnapshot, draftsOf, draftsFrom, watchFiles, handoverSaid, handoverSay, HANDOVER, STATE_KEY, RELOADED_PID, type Snapshot, type Kv, type Spawned } from "./reload.ts";
 export * as preview from "./preview.ts";
 export * as notices from "./notices.ts";
 export { launch, choose, isWindowLaunch, type AppBundle } from "./launcher.ts";

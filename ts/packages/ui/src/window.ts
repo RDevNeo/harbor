@@ -785,6 +785,12 @@ export interface AppWindow extends slint.ComponentHandle {
   transcript_grew_above(before: number): void;
   /** The view goes back to keeping its distance from the top while content changes. */
   transcript_anchor_off(): void;
+  /** From the transcript view's top to its content's end (px): a restart keeps it. */
+  readonly transcript_from_end: number;
+  /** Shows the transcript `d` px from its view's top to its content's end, kept while cards come in above. */
+  transcript_keep(d: number): void;
+  /** The sidebar list's scroll (px, negative down). */
+  side_scroll: number;
   focus_composer(): void;
   set_cursor(at: number): void;
   scroll_to_end(): void;

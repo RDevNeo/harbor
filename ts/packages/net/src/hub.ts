@@ -249,6 +249,8 @@ export class Hub {
   private viewingMap = new Map<number, Typer[]>();
   private drafts = new Map<number, SharedDraft>();
   private draftsDirty = false;
+  /** A draft changed (it's written soon after, so a crash keeps it). */
+  onDrafts: (() => void) | null = null;
   private waiters = new Set<() => void>();
 
   constructor(tokens: Token[], port: number, private clock: () => number = () => performance.now()) {
@@ -421,6 +423,7 @@ export class Hub {
     } else d.held = true;
     this.drafts.set(chat, d);
     this.draftsDirty = true;
+    this.onDrafts?.();
     if (changed) {
       this.mark(chat);
       this.notify();
@@ -457,6 +460,7 @@ export class Hub {
     this.rev_ += 1;
     this.drafts.set(chat, { ...emptyDraft(), rev: this.rev_ });
     this.draftsDirty = true;
+    this.onDrafts?.();
     this.mark(chat);
     this.notify();
   }
