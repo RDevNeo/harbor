@@ -635,6 +635,9 @@ export component AppWindow inherits Window {
     callback picker-key(KeyEvent) -> bool;
 
     in property <string> dialog-id;
+    callback modal-visibility(bool);
+    changed dialog-id => { root.modal-visibility(root.dialog-id != "" || root.add-project-open); }
+    changed add-project-open => { root.modal-visibility(root.dialog-id != "" || root.add-project-open); }
     in property <string> dialog-title;
     in property <string> dialog-text;
     in-out property <string> dialog-input;
@@ -2112,7 +2115,7 @@ export component AppWindow inherits Window {
         // pages.rs `dialogs`: egui's Modal, 512px of content for forms and 448 for confirms, 24px margins,
         // a 20px title, the close button in its corner; egui's 8px item spacing comes on top of each gap.
         if root.dialog-id != "": Rectangle {
-            background: black.with-alpha(0.5);
+            background: Theme.scrim;
             TouchArea { }
             Rectangle {
                 width: min((root.dialog-has-input ? 512px : 448px) + 50px, root.width - 32px);
@@ -2133,14 +2136,19 @@ export component AppWindow inherits Window {
                         letter-spacing: -0.4px;
                         color: Theme.fg;
                     }
+                    // One rhythm for every dialog: title, 12px, note, 16px, field, 24px, buttons (a field
+                    // without a note sits 20px under the title).
                     if root.dialog-text != "" || root.dialog-has-input: Rectangle {
-                        height: root.dialog-has-input ? 20px : 12px;
+                        height: root.dialog-text != "" ? 12px : 20px;
                     }
                     if root.dialog-text != "": Text {
                         text: root.dialog-text;
                         font-size: 14px;
                         color: Theme.subtle;
                         wrap: word-wrap;
+                    }
+                    if root.dialog-text != "" && root.dialog-has-input: Rectangle {
+                        height: 16px;
                     }
                     if root.dialog-has-input: dialog-field := Input {
                         text <=> root.dialog-input;

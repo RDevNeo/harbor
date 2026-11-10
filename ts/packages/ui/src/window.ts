@@ -725,6 +725,7 @@ export interface AppWindow extends slint.ComponentHandle {
   dialog_ok: string;
   dialog_danger: boolean;
   dialog_done: (id: string, ok: boolean) => void;
+  modal_visibility: (open: boolean) => void;
 
   global_key: (e: KeyEvent) => boolean;
   /** Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken. */

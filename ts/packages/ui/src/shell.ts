@@ -43,6 +43,7 @@ import { linkAt, selectionAt } from "./markdown.ts";
 import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
+import { ModalOpacity } from "./modalopacity.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
@@ -153,6 +154,7 @@ export class Shell {
   readonly win: AppWindow;
   readonly data: Data;
   private dark = true;
+  private readonly modalOpacity = new ModalOpacity();
   private view: "draft" | "chat" = "draft";
   /** The page over the draft or chat: it leaves back to the chat it was opened from, or the draft. */
   private page: Page | null = null;
@@ -890,6 +892,7 @@ export class Shell {
       this.closePopup();
       act?.();
     };
+    w.modal_visibility = (open) => void this.modalOpacity.update(open);
     w.dialog_done = (_id, ok) => {
       const act = this.dialogAction;
       const input = w.dialog_input;
@@ -3085,6 +3088,7 @@ export class Shell {
   }
 
   shutdown(): void {
+    void this.modalOpacity.update(false);
     if (this.spinTimer !== null) clearInterval(this.spinTimer);
     if (this.zoomCards !== null) clearTimeout(this.zoomCards);
     this.surfaces.dispose();

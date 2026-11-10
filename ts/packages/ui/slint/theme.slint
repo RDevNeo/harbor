@@ -60,6 +60,8 @@ export global Theme {
     out property <color> on-primary: bg100;
     out property <color> accent: gray-200;
     out property <color> destructive: red-800;
+    // The backdrop behind modal dialogs: dark enough that nothing behind them stays readable.
+    out property <color> scrim: dark ? #000000cc : #00000099;
     out property <length> row-h: 32px;
     out property <length> radius-md: 6px;
     out property <length> radius-lg: 8px;

@@ -81,7 +81,7 @@ export component AddProjectOverlay inherits Rectangle {
     public function focus-field() {
         field.focus();
     }
-    background: #00000064;
+    background: Theme.scrim;
     TouchArea {
         clicked => {
             root.key(AddKey.esc);
