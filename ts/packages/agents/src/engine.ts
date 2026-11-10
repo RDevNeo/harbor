@@ -171,6 +171,9 @@ export class Engine {
   repos: Repo[] = [];
   readonly transcripts = new Map<number, Transcript>();
   readonly turns = new Map<number, Running>();
+  /** After close() no turn starts, and starts still out land nowhere: the store may be closed by then. */
+  private stopped = false;
+  private readonly starting = new Set<Promise<void>>();
   /** Prompts waiting for a chat's turn to end (Rust's `pending`). */
   readonly pending = new Map<number, string[]>();
   readonly queue = new QueueState();
@@ -499,7 +502,7 @@ export class Engine {
 
     /** Starts one agent turn for a chat (user message, report, wake-up, webhook…). */
   startTurn(id: number, prompt: string, files: string[] = []): void {
-    if (this.foreign(id) || this.chat(id)?.retired) return;
+    if (this.stopped || this.foreign(id) || this.chat(id)?.retired) return;
     // The chat's CLI being updated: the turn starts on the new one.
     const updating = providerUpdates.pending(this.cliOf(id));
     if (updating) {
@@ -598,20 +601,40 @@ export class Engine {
     const run: Running = { turn: null, at: Date.now() };
     this.turns.set(id, run);
     this.persist(id);
-    agent.start(spec, (cid, ev) => this.onEvent(cid, ev, run), () => {}).then(
-      (turn) => {
-        run.turn = turn;
-        // Stopped while it started.
-        if (this.turns.get(id) !== run) turn.stop();
-        this.changed(id);
-      },
-      (e: unknown) => {
-        if (this.turns.get(id) === run) this.turns.delete(id);
-        tr.items.push({ kind: "error", text: `Could not start the agent: ${e instanceof Error ? e.message : String(e)}` });
-        this.persist(id);
-        this.afterTurn(id, false);
-      },
-    );
+    const p = agent
+      .start(spec, (cid, ev) => this.onEvent(cid, ev, run), () => {})
+      .then(
+        (turn) => {
+          // Harbor stopped while it started: its runner goes on, for the next Harbor to pick up, as the hub's stop leaves the others.
+          if (this.stopped) return turn.release();
+          run.turn = turn;
+          // Stopped while it started.
+          if (this.turns.get(id) !== run) turn.stop();
+          this.changed(id);
+        },
+        (e: unknown) => {
+          if (this.stopped) return;
+          if (this.turns.get(id) === run) this.turns.delete(id);
+          tr.items.push({ kind: "error", text: `Could not start the agent: ${e instanceof Error ? e.message : String(e)}` });
+          this.persist(id);
+          this.afterTurn(id, false);
+        },
+      )
+      .catch((e: unknown) => console.error(`harbor: starting a turn: ${e instanceof Error ? e.message : String(e)}`))
+      .finally(() => this.starting.delete(p));
+    this.starting.add(p);
+  }
+
+  /** Harbor stops: no turn starts after this, and the ones still starting land nowhere (their runners go on). */
+  close(): void {
+    this.stopped = true;
+    // Their runners go on; following them stops (a follower would outlive the store it saves to).
+    for (const r of this.turns.values()) r.turn?.release();
+  }
+
+  /** Resolves when every turn start begun so far has landed (tests). */
+  async idle(): Promise<void> {
+    while (this.starting.size > 0) await Promise.all([...this.starting]);
   }
 
   pushPending(id: number, p: string): void {
@@ -637,6 +660,8 @@ export class Engine {
   }
 
   onEvent(id: number, ev: Event, from: Running): void {
+    // Harbor stopped: the runner goes on writing, the next Harbor replays it; the store may be closed.
+    if (this.stopped) return;
     if (this.undoSwallow.has(from)) {
       if (ev.type === "exited") this.undoSwallow.delete(from);
       return;

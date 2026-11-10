@@ -1354,6 +1354,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       clearInterval(tick);
       // Pull request lookups still out (git, gh) would land on a closed store.
       prs.stop();
+      // Turns still starting would land on a closed store: they're left to their runners, as the running ones below.
+      live.close();
       hub.saveDrafts(store);
       if (engineTimer) clearTimeout(engineTimer);
       for (const [id, r] of live.turns) {

@@ -42,7 +42,8 @@ describe("harbor (main.rs)", () => {
     expect(out).toContain("this workspace's PCs:");
     expect((await harbor(["mesh", "pair"]))[0]).toBe(2);
     expect((await harbor(["mesh", "join", "x", "y"]))[0]).toBe(2);
-  });
+    // Three whole-Harbor starts: 2-3 s on a quick sandbox, twice that on a slow one.
+  }, 20_000);
 
   test("nc pipes stdin to a host's port and back", async () => {
     const s = createServer((c) => c.pipe(c));

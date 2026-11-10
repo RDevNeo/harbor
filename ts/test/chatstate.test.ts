@@ -117,7 +117,7 @@ async function rows(): Promise<Map<number, Row>> {
   return new Map((JSON.parse(body) as { chats: Row[] }).chats.map((c) => [c.id, c]));
 }
 
-async function until(what: string, f: () => Promise<boolean>, ms = 10000): Promise<void> {
+async function until(what: string, f: () => Promise<boolean>, ms = 15000): Promise<void> {
   const t = Date.now();
   while (!(await f())) {
     if (Date.now() - t > ms) throw new Error(`timed out waiting for ${what}`);
@@ -166,7 +166,7 @@ test("a_lead_works_while_a_sub_agent_runs_though_its_own_turn_is_idle", async ()
   await until("the lead's rest", async () => (await rows()).get(ids.lead.id)?.running === false);
   r = await rows();
   expect(r.get(ids.lead.id)?.working).toBe(false);
-}, 20000);
+}, 45_000);
 
 type Bars = { working: { since_ms: number; subagents: number; text: string } | null; waiting: { agents: { name: string; title: string }[]; queued: number } | null; agents: { title: string; rows: { name: string; task: string; model: string; badge: string; doing: string }[] } | null; limit: { text: string; can_cancel: boolean; targets: { id: string; name: string }[] } | null; folder: { text: string; cloning: boolean; owner: unknown; action: string } | null };
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,10 @@ import * as team from "../src/team.ts";
 import { teamTool } from "../src/tools.ts";
 import { Work } from "../src/work.ts";
 import { GUARD, reap } from "./reap.ts";
+
+// Every turn here starts two processes (the runner and the fake CLI), 0.1-0.6 s each on a sandbox, more on a
+// slow one: a test of a few turns can't be held to 5 s. Each wait still has its own limit (`until`).
+setDefaultTimeout(30_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-engine-"));
 const env = { XDG_STATE_HOME: process.env.XDG_STATE_HOME, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
@@ -173,13 +177,27 @@ const gotBy = (c: Chat): string[] => {
 
 let n = 0;
 
+/** Every engine a test makes is closed after it: a turn it left running is no longer followed, nothing it starts late lands in the next test. */
+const made: Engine[] = [];
+function track(e: Engine): Engine {
+  made.push(e);
+  return e;
+}
+afterEach(async () => {
+  for (const e of made.splice(0)) {
+    e.close();
+    await e.idle();
+  }
+});
+
 /** Its own data folder each, so its own turns folder: chat ids repeat across temp stores. */
 function setup(bin = fake): { e: Engine; store: Store; changed: (number | null)[] } {
   process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
   const store = Store.openTemp();
   const changed: (number | null)[] = [];
   const host: EngineHost = { store, accounts: () => [{ ...account, bin }], changed: (id) => changed.push(id) };
-  return { e: new Engine(host), store, changed };
+  const e = track(new Engine(host));
+  return { e, store, changed };
 }
 
 function newChat(store: Store, over: Partial<Chat> = {}): Chat {
@@ -430,6 +448,41 @@ describe("a chat's turn", () => {
   });
 });
 
+describe("Harbor stopping", () => {
+  test("a turn still starting when Harbor stops lands nowhere: nothing reads the closed store, nothing new starts", async () => {
+    const said: string[] = [];
+    const was = console.error;
+    console.error = (...a: unknown[]) => void said.push(a.map(String).join(" "));
+    try {
+      const { e, store } = setup();
+      const ok = newChat(store);
+      const bad = newChat(store, { account: "codex" });
+      e.host.accounts = () => [account, { ...account, id: "codex", kind: "Codex", bin: "/nonexistent/codex" }];
+      e.reload();
+      // One start that comes up and one that fails, both still out when the hub stops and closes the store.
+      e.send(ok.id, "hello");
+      e.send(bad.id, "hi");
+      e.close();
+      store.close();
+      await e.idle();
+      const held = [...e.turns.keys()];
+      e.startTurn(ok.id, "after");
+      e.startTurn(newChat(Store.openTemp()).id, "new");
+      expect([...e.turns.keys()]).toEqual(held);
+      await e.idle();
+      // A runner's output still coming in (its turn released) goes nowhere either.
+      const run = { turn: null, at: Date.now() };
+      e.turns.set(ok.id, run);
+      e.onEvent(ok.id, { type: "textFinal", text: "late" }, run);
+      e.onEvent(ok.id, { type: "result", costUsd: 0, durationMs: 1, turns: 1, inputTokens: 1, outputTokens: 1, cached: 0 }, run);
+      expect(() => e.onEvent(ok.id, { type: "exited", ok: true, dir: "" }, run)).not.toThrow();
+      expect(said.filter((l) => /closed database|starting a turn/.test(l))).toEqual([]);
+    } finally {
+      console.error = was;
+    }
+  });
+});
+
 describe("transcripts in memory", () => {
   test("a chat read for another PC isn't kept, and an idle chat's transcript goes once released", async () => {
     const { e, store } = setup();
@@ -526,7 +579,7 @@ describe("switching a subagent's account", () => {
       { ...account, id: "claude3", badge: "FS", configDir: dirB, bin: race },
       { ...account, id: "codex", kind: "Codex", name: "Codex", badge: "", bin: "/nonexistent/codex" },
     ];
-    const e = new Engine({ store, accounts: () => accounts, changed: () => {} });
+    const e = track(new Engine({ store, accounts: () => accounts, changed: () => {} }));
     const lead = newChat(store, { role: "lead", name: "lead", account: "claude3", started: true });
     const sub = newChat(store, { role: "sub", parent: lead.id, name: "worker", account: "claude", ...subOver });
     e.reload();
@@ -638,7 +691,7 @@ describe("pickup at start", () => {
     await until("the runner", () => e.turnOf(c.id) !== null);
     // The app quits: its follower goes, the turn doesn't.
     e.turnOf(c.id)?.release();
-    const next = new Engine({ store, accounts: () => [account], changed: () => {} });
+    const next = track(new Engine({ store, accounts: () => [account], changed: () => {} }));
     next.reattachTurns();
     expect(next.running(c.id)).toBe(true);
     await until("the replayed end", () => !next.running(c.id));
@@ -1049,7 +1102,7 @@ describe("a chat being handed to another PC", () => {
   function withHost(over: Partial<EngineHost>): { e: Engine; store: Store } {
     process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
     const store = Store.openTemp();
-    return { e: new Engine({ store, accounts: () => [account], changed: () => {}, ...over }), store };
+    return { e: track(new Engine({ store, accounts: () => [account], changed: () => {}, ...over })), store };
   }
 
   test("webhook tools give the public URL while /hooks is reachable from outside (team.rs hook_url)", async () => {
@@ -1130,7 +1183,7 @@ test("a copy's turns read as live from its home PC's word, never as this PC's", 
   process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
   const store = Store.openTemp();
   const copies = new Map<number, { running: boolean; sinceMs: number | null }>();
-  const e = new Engine({ store, accounts: () => [account], changed: () => {}, copyTurn: (id) => copies.get(id) ?? null });
+  const e = track(new Engine({ store, accounts: () => [account], changed: () => {}, copyTurn: (id) => copies.get(id) ?? null }));
   const lead = newChat(store, { role: "lead", name: "lead", home: "pc2", homeId: 7 });
   const sub = newChat(store, { role: "sub", name: "usage-ts", parent: lead.id, home: "pc2", homeId: 8 });
   const mine = newChat(store);
@@ -1180,7 +1233,7 @@ describe("list_models", () => {
         { ...account, id: "claude4", badge: "C4", loggedIn: false, usage: [] },
       ];
       let reads = 0;
-      const e = new Engine({ store, accounts: () => accounts, rediscover: () => reads++, changed: () => {} });
+      const e = track(new Engine({ store, accounts: () => accounts, rediscover: () => reads++, changed: () => {} }));
       const lead = newChat(store, { role: "lead", name: "lead" });
       e.reload();
       const said = await e.tool(lead.id, "list_models", {});
@@ -1227,7 +1280,7 @@ describe("OpenCode as a chat's main model", () => {
   const ocSetup = (): { e: Engine; store: Store } => {
     process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
     const store = Store.openTemp();
-    return { e: new Engine({ store, accounts: () => [account, ocAccount], changed: () => {} }), store };
+    return { e: track(new Engine({ store, accounts: () => [account, ocAccount], changed: () => {} })), store };
   };
   const runs = (): string[][] => (existsSync(ocLog) ? readFileSync(ocLog, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as string[]) : []);
 

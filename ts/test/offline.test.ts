@@ -52,8 +52,12 @@ function start(name: string, offline: boolean): { trap: string; started: string;
   return { trap: env.HARBOR_TEST_TRAP as string, started, proc };
 }
 
-async function settle(run: { proc: Bun.Subprocess }): Promise<void> {
+/** Lets Harbor run for 8 s; `until` (what the run should come to) keeps it going until then, up to 30 s: a slow
+ *  sandbox may take longer than 8 s to start Harbor at all. */
+async function settle(run: { proc: Bun.Subprocess }, until?: () => boolean): Promise<void> {
+  const t = Date.now();
   await Bun.sleep(8000);
+  while (until && !until() && Date.now() - t < 30_000) await Bun.sleep(100);
   run.proc.kill("SIGTERM");
   await run.proc.exited;
 }
@@ -68,7 +72,7 @@ test("offline_mode_starts_no_turn_and_connects_nowhere", async () => {
 // The same db without the switch: the wake-up starts a turn and discovery broadcasts, so the test above would see them.
 test("without_offline_the_same_db_acts_on_its_own", async () => {
   const run = start("online", false);
-  await settle(run);
+  await settle(run, () => existsSync(run.started) && readFileSync(run.trap, "utf8") !== "");
   expect(readFileSync(run.trap, "utf8")).not.toBe("");
   expect(existsSync(run.started)).toBe(true);
-}, 30_000);
+}, 45_000);
