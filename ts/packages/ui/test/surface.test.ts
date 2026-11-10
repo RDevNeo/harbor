@@ -87,3 +87,20 @@ test("a live terminal in a folder or under it holds the folder; a dead one or a 
   for (const t of spawned) t.alive = false;
   expect(s.terminalIn("/w/harbor-add-thing")).toBe(false);
 });
+
+
+test("Devices restores a maximized pane and cannot be maximized", () => {
+  const { s } = panes();
+  s.openBrowser("https://example.com");
+  s.toggleMax("right");
+  expect(s.max).toBe("right");
+  s.openDevices("right");
+  expect(s.max).toBeNull();
+  s.toggleMax("right");
+  expect(s.max).toBeNull();
+  s.open("right", 0);
+  s.toggleMax("right");
+  expect(s.max).toBe("right");
+  s.openDevices("right");
+  expect(s.max).toBeNull();
+});

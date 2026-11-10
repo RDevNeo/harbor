@@ -264,10 +264,13 @@ export interface DeviceRow {
   name: string;
   phone: boolean;
   online: boolean;
-  details: string;
   can_send: boolean;
   /** This PC itself: Terminal and Files, no Send. */
   here: boolean;
+  /** The owner's workspace and photo from the account directory. */
+  workspace: string;
+  photo: Pixels;
+  has_photo: boolean;
 }
 
 export interface TransferRow {

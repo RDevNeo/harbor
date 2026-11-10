@@ -7,9 +7,11 @@ export struct DeviceRow {
     name: string,
     phone: bool,
     online: bool,
-    details: string,
     can-send: bool,
     here: bool,
+    workspace: string,
+    photo: image,
+    has-photo: bool,
 }
 
 export enum TransferState { run, wait, done, error }
@@ -44,16 +46,19 @@ component DeviceAction {
     }
 }
 
-// devices.rs `device_row`: a 32px disc with the status dot, name and details, the actions on hover.
+// Fixed-height rows keep device state and photo updates from moving the list.
 component Device {
     in property <DeviceRow> d;
     callback send(length, length);
     callback files();
     callback terminal();
-    height: 56px;
+    height: 48px;
     property <color> ink: d.online ? Theme.fg : Theme.subtle;
     property <bool> acts: area.has-hover && (d.can-send || d.here);
     property <length> acts-w: d.phone ? 32px : d.here ? 64px : 96px;
+    property <length> disc: 28px;
+    property <length> text-x: 10px + disc + 12px;
+    property <length> name-max: root.width - text-x - 8px - 8px - root.acts-w - (d.here ? here-tag.preferred-width + 8px : 0px);
     area := TouchArea {
         if area.has-hover: Rectangle {
             y: 2px;
@@ -63,44 +68,66 @@ component Device {
         }
         Rectangle {
             x: 10px;
-            width: 32px;
-            height: 32px;
-            border-radius: 16px;
+            width: root.disc;
+            height: root.disc;
+            border-radius: root.disc / 2;
             background: Theme.gray-200;
+            opacity: root.d.online ? 1 : 0.6;
             Glyph {
                 icon: root.d.phone ? Icons.smartphone : Icons.monitor;
-                size: 16px;
+                size: 14px;
                 color: root.ink;
             }
-            Rectangle {
-                x: 16px + 11px - 4px;
-                y: 16px + 11px - 4px;
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.d.online ? Theme.green-800 : Theme.gray-600;
-                border-width: 1.5px;
-                border-color: Theme.gray-200;
-            }
         }
-        Text {
-            x: 54px;
-            y: root.height / 2 - 17px;
-            width: root.width - self.x - 8px - 8px - (root.acts ? root.acts-w : 0px);
+        // The status dot: green online; offline rows only dim.
+        if root.d.online: Rectangle {
+            x: 10px + root.disc / 2 + root.disc * 0.34 - 4px;
+            y: (root.height - root.disc) / 2 + root.disc / 2 + root.disc * 0.34 - 4px;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: Theme.green-800;
+            border-width: 1.5px;
+            border-color: Theme.gray-200;
+        }
+        name := Text {
+            x: root.text-x;
+            y: root.height / 2 - 18px;
+            width: min(self.preferred-width, root.name-max);
             text: root.d.name;
             font-size: 14px;
             font-weight: 500;
             color: root.ink;
             overflow: elide;
         }
-        Text {
-            x: 54px;
-            y: root.height / 2 + 2px;
-            width: root.width - self.x - 8px - 8px - (root.acts ? root.acts-w : 0px);
-            text: root.d.details;
-            font-size: 12.5px;
+        here-tag := Text {
+            visible: root.d.here;
+            x: name.x + name.width + 8px;
+            y: name.y + (name.height - self.height) / 2 + 1px;
+            text: "This PC";
+            font-size: 12px;
             color: Theme.subtle;
-            overflow: elide;
+        }
+        HorizontalLayout {
+            x: root.text-x;
+            y: root.height / 2 + 3px;
+            height: 16px;
+            width: root.width - self.x - 16px - root.acts-w;
+            spacing: 5px;
+            Image {
+                visible: root.d.has-photo;
+                width: 14px;
+                height: 14px;
+                source: root.d.photo;
+                opacity: root.d.online ? 1 : 0.7;
+            }
+            Text {
+                text: root.d.workspace;
+                font-size: 12.5px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+                overflow: elide;
+            }
         }
         if root.acts: HorizontalLayout {
             x: root.width - 8px - self.preferred-width;
@@ -246,8 +273,8 @@ export component DevicesView inherits Rectangle {
                         padding: 5px;
                         for d[i] in root.devices: VerticalLayout {
                             if i > 0: VerticalLayout {
-                                padding-top: 8px;
-                                padding-bottom: 8px;
+                                padding-top: 2px;
+                                padding-bottom: 2px;
                                 Separator { }
                             }
                             Device {

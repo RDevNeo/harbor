@@ -262,7 +262,8 @@ export component SurfacePane inherits Rectangle {
         }
         HorizontalLayout {
             spacing: 4px;
-            Btn {
+            // The Devices tab is a list: it doesn't take the whole window.
+            if root.kind != "devices": Btn {
                 y: 2px;
                 icon: root.maximized ? Icons.minimize : Icons.maximize;
                 size: icon-xs;

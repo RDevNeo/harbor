@@ -12,6 +12,9 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   token). The worker never takes its word: it reads main from GitHub (at most once a second, a few
   tries while GitHub still shows the previous commit) and only then tells the other PCs. The webhook
   stays as the backup for pushes from elsewhere.
+- Devices shows each device's owner's workspace and photo below its name, with a green dot for
+  online devices and dimmed offline rows. Rows keep their size as state and photos change; the
+  panel keeps the online count and hover actions and no longer opens fullscreen.
 
 ## [0.169.0] - 2026-11-09
 

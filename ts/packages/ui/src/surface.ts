@@ -86,6 +86,7 @@ export class Surfaces<T extends PaneTerm> {
     p.active = Math.min(i, Math.max(0, p.surfaces.length - 1));
     p.open = true;
     const s = p.surfaces[p.active];
+    if (s?.kind === "devices" && this.max === d) this.max = null;
     if (s?.kind === "chooser" || s?.kind === "terminal") this.host.focus(d, s.kind === "terminal");
     this.host.changed();
   }
@@ -141,6 +142,7 @@ export class Surfaces<T extends PaneTerm> {
   }
 
   toggleMax(d: Dock): void {
+    if (this.showing(d)?.kind === "devices") return;
     this.max = this.max === d ? null : d;
     this.host.changed();
   }

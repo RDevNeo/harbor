@@ -1,10 +1,11 @@
+import { deviceWorkspace } from "./logic/devices.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
 import { type Chat, dataDir, hot, type Item, limits, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
-import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
+import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
@@ -302,6 +303,7 @@ export class Shell {
     this.refreshMe();
     if (this.win.pop_id === "model") this.refreshPicker();
     this.refreshComposer();
+    if (this.devicesShown()) this.refreshDevices();
   }
 
   /** You in the sidebar's bottom bar (it opens Settings): your account photo, round, else your initial; signed out, the
@@ -1042,7 +1044,11 @@ export class Shell {
     const tab = tabFromSlug(name === "settings" ? arg || "general" : name);
     const id = Number(arg || last);
     let shown: Promise<void> = Promise.resolve();
-    if (name === "chat" && this.data.chat(id)) this.openChat(id);
+    if (name === "devpane") {
+      this.surfaces.openDevices("right");
+      this.refreshPanes();
+      this.refreshDevices();
+    } else if (name === "chat" && this.data.chat(id)) this.openChat(id);
     else if (tab !== null) shown = this.pages.openSettings(tab);
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
@@ -3970,16 +3976,22 @@ export class Shell {
   }
 
   private refreshDevices(): void {
-    const { list, served } = this.hub.devices();
+    const { list } = this.hub.devices();
     this.paired = list;
     const others = list.filter((d) => !d.here);
     const online = others.filter((d) => d.online).length;
     const w = this.win;
     w.devices_summary = others.length === 0 ? "Nothing else paired yet" : `${online} of ${others.length} online`;
+    const directory = this.hub.account?.directory();
+    const mine = this.workspaces().mine;
     sync(
       this.deviceRows,
-      list.map((d) => ({ key: d.key, name: d.name, phone: isPhoneDevice(d), online: d.online, details: deviceDetails(d, served), can_send: deviceCanSend(d), here: d.here })),
-      sameJson,
+      list.map((d) => {
+        const owner = deviceWorkspace(d, directory?.workspaces ?? [], mine);
+        const photo = this.photoPixels(owner.photo);
+        return { key: d.key, name: d.name, phone: isPhoneDevice(d), online: d.online, can_send: deviceCanSend(d), here: d.here, workspace: owner.name, photo: photo ?? noPixels, has_photo: photo !== null };
+      }),
+      (a, b) => a.key === b.key && a.name === b.name && a.phone === b.phone && a.online === b.online && a.can_send === b.can_send && a.here === b.here && a.workspace === b.workspace && a.photo === b.photo && a.has_photo === b.has_photo,
     );
     sync(
       this.transferRows,
@@ -4635,7 +4647,7 @@ export interface ShellAccount {
   subscribe(f: () => void): () => void;
   /** Who is signed in (null: nobody): their initial and photo in the sidebar's bottom bar. */
   account(): { id: string; email: string; name: string; image: string } | null;
-  directory(): { workspaces: readonly { members: readonly { id: string; image?: string }[] }[] };
+  directory(): { workspaces: readonly import("./logic/devices.ts").DeviceWorkspace[] };
 }
 
 /** Move to workspace… as the window asks it: a menu (null: no such chat or project) and the move, answered as the phone API answers it. */
