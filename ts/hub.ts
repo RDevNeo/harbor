@@ -1186,7 +1186,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   engineTick();
   let providerPopup: (text: string) => void = () => {};
   // Provider CLIs (Claude Code, Codex) stay on their latest version by themselves, between turns; what changed is told once.
-  const providerUpdater = provupdate.configureUpdates(() => { rediscover(); hub.touch(null, true); }, () => live.turns.size === 0, (done) => {
+  const providerUpdater = provupdate.configureUpdates(() => { rediscover(); hub.touch(null, true); }, (tool) => live.idleFor(tool), (done) => {
     const text = provupdate.updatedText(done, hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name);
     // Kept for phones; the window (when there is one) pops it up here.
     notifier.post("pc", `providers:${hub.mesh.me.id}`, text, "", "", false);

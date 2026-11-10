@@ -315,6 +315,21 @@ export class Engine {
     return this.host.accounts().find((a) => a.id === id);
   }
 
+  /** The provider CLI a chat's turns run (null: not one Harbor updates, or not known: then every update counts). */
+  cliOf(id: number): "claude" | "codex" | null {
+    const kind = this.account(this.chat(id)?.account ?? "")?.kind;
+    return kind === "Claude" ? "claude" : kind === "Codex" ? "codex" : null;
+  }
+
+  /** No turn on this PC runs `cli` (a turn whose CLI isn't known counts for both). */
+  idleFor(cli: "claude" | "codex"): boolean {
+    for (const id of this.turns.keys()) {
+      const c = this.cliOf(id);
+      if (c === cli || (c === null && this.account(this.chat(id)?.account ?? "")?.kind !== "OpenCode")) return false;
+    }
+    return true;
+  }
+
   /** The Claude accounts' usage windows for the read-out, the usage monitor's file read now: until then an
    *  account's `usage` is as old as the last read. */
   usageReadings(): usageCtl.Reading[] {
@@ -485,7 +500,8 @@ export class Engine {
     /** Starts one agent turn for a chat (user message, report, wake-up, webhook…). */
   startTurn(id: number, prompt: string, files: string[] = []): void {
     if (this.foreign(id) || this.chat(id)?.retired) return;
-    const updating = providerUpdates.pending();
+    // The chat's CLI being updated: the turn starts on the new one.
+    const updating = providerUpdates.pending(this.cliOf(id));
     if (updating) {
       void updating.then(() => this.startTurn(id, prompt, files));
       return;

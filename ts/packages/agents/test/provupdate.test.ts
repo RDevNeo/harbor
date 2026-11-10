@@ -145,3 +145,23 @@ test("Codex's standalone installer updates itself", async () => {
   };
   expect(command(await detect("codex", io), "0.167.0")).toEqual(["/home/user/.local/bin/codex", "update"]);
 });
+test("a running Claude turn doesn't hold Codex's update back", async () => {
+  let codex = "0.1.0";
+  const io: Io = {
+    which: (n) => `/home/user/.local/share/mise/shims/${n}`,
+    real: (p) => p,
+    latest: async (t) => t === "claude" ? "2.1.9" : "0.2.0",
+    run: async (a) => {
+      if (a.includes("--version")) return a[0]!.endsWith("claude") ? "2.1.1 (Claude Code)" : `codex-cli ${codex}`;
+      if (a[1] === "which") return `/home/user/.local/share/mise/installs/${a[2]}/x/bin/${a[2]}`;
+      if (a[1] === "install" && a[2]!.startsWith("codex@")) codex = "0.2.0";
+      return "";
+    },
+  };
+  const u = new ProviderUpdates(io, () => {}, (t) => t !== "claude");
+  await Promise.all([u.check("claude"), u.check("codex")]);
+  u.tick();
+  expect(u.pending("claude")).toBeNull();
+  await u.pending("codex");
+  expect(u.list().map((s) => s.current)).toEqual(["2.1.1", "0.2.0"]);
+});

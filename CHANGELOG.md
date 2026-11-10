@@ -5,6 +5,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- A CLI's update waits only for that CLI's turns: Codex updates while Claude turns run, and the
+  other way round.
+
 ### Added
 - Every PC keeps its Claude Code and Codex CLIs on the latest version by itself, with no setting:
   Harbor finds what installed each one (mise, Claude's or Codex's own installer, global npm or

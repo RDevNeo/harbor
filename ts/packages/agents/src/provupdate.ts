@@ -99,8 +99,12 @@ export class ProviderUpdates {
   private jobs = new Map<Tool, Promise<void>>();
   /** Updates done since the last report: told together once nothing else is going to update. */
   private done: Done[] = [];
-  constructor(private readonly io: Io, private readonly changed: () => void = () => {}, private readonly idle: () => boolean = () => true, private readonly updated: (done: Done[]) => void = () => {}) {}
-  pending(): Promise<void> | null { return this.jobs.size ? Promise.all([...this.jobs.values()]).then(() => {}) : null; }
+  constructor(private readonly io: Io, private readonly changed: () => void = () => {}, private readonly idle: (tool: Tool) => boolean = () => true, private readonly updated: (done: Done[]) => void = () => {}) {}
+  /** The update of `tool` going on (any update for null), for a turn to wait for. */
+  pending(tool: Tool | null = null): Promise<void> | null {
+    const jobs = tool === null ? [...this.jobs.values()] : this.jobs.has(tool) ? [this.jobs.get(tool)!] : [];
+    return jobs.length ? Promise.all(jobs).then(() => {}) : null;
+  }
   list(): Status[] { return (Object.keys(TOOLS) as Tool[]).map((tool) => this.states.get(tool) ?? { tool, current: "", latest: "", method: "missing", status: "Not checked", available: false, busy: false }); }
   private put(tool: Tool, s: Partial<Status>) {
     this.states.set(tool, { ...this.list().find((x) => x.tool === tool)!, ...s });
@@ -126,9 +130,9 @@ export class ProviderUpdates {
     finally { this.put(tool, { busy: false }); }
   }
   tick(): void {
-    if (!this.idle() || this.jobs.size) return;
+    if (this.jobs.size) return;
     for (const s of this.list()) {
-      if (s.busy || (!this.requested.has(s.tool) && !(s.available && s.method !== "other"))) continue;
+      if (s.busy || !this.idle(s.tool) || (!this.requested.has(s.tool) && !(s.available && s.method !== "other"))) continue;
       if (Date.now() - (this.lastAttempt.get(s.tool) ?? 0) < 6 * 3600_000) continue;
       void this.update(s.tool);
       return;
@@ -143,8 +147,8 @@ export class ProviderUpdates {
   }
   private async install(tool: Tool) {
     await this.checks.get(tool);
-    // Package managers can remove files that a running CLI loads later. Don't touch them during a turn.
-    if (!this.idle()) { this.requested.add(tool); this.put(tool, { status: "Update queued until running turns finish on this PC." }); return; }
+    // Package managers can remove files that a running CLI loads later. Don't touch one during its turns.
+    if (!this.idle(tool)) { this.requested.add(tool); this.put(tool, { status: "Update queued until this CLI's turns finish on this PC." }); return; }
     this.requested.delete(tool);
     this.lastAttempt.set(tool, Date.now());
     this.put(tool, { busy: true, status: "Updating…" });
@@ -173,7 +177,7 @@ export class ProviderUpdates {
 }
 
 export let providerUpdates = new ProviderUpdates(io);
-export function configureUpdates(changed: () => void, idle: () => boolean, updated: (done: Done[]) => void): ProviderUpdates {
+export function configureUpdates(changed: () => void, idle: (tool: Tool) => boolean, updated: (done: Done[]) => void): ProviderUpdates {
   providerUpdates = new ProviderUpdates(io, changed, idle, updated);
   return providerUpdates;
 }
