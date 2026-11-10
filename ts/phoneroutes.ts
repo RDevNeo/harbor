@@ -23,6 +23,9 @@ import { discord, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import { qrRows } from "./packages/ui/src/qr.ts";
 import { googleDesktopClient, googlePhoneCode, googlePhoneFinish, googlePhoneStart, googleWebClientId } from "./packages/mcp/src/signin.ts";
 import * as limits from "./packages/store/src/limits.ts";
+import { dictate } from "./packages/media/src/index.ts";
+import { fit, known } from "./packages/ui/src/logic/phoneui.ts";
+import { phoneSettings, phoneSettingsDo } from "./packages/ui/src/logic/settings-phone.ts";
 
 export interface RouteHost {
   store: Store;
@@ -638,6 +641,19 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       } else if (m !== "GET") return null;
       const pr = wtclean.prefsOf(h.store);
       return ok({ delete_merged: pr.worktree, delete_branch: pr.branch, delete_remote: pr.remote });
+    }
+    if (p[1] === "ui" && m === "POST" && (p.length === 3 || (p.length === 4 && p[3] === "do"))) {
+      // Screens the phone draws from the PC (phoneui.ts): the screen fitted to what it can draw, after an act when it's /do.
+      if (p[2] !== "settings") return err(404, "no such screen");
+      const b = body(call);
+      let say: string | undefined;
+      if (p.length === 4) {
+        const r = phoneSettingsDo(h.store, typeof b.act === "string" ? b.act : "", b);
+        if (r === null) return err(400, "Unknown setting: update Harbor on this PC");
+        if (r !== "") say = r;
+      }
+      const screen = fit(phoneSettings(h.store, { dictionary: dictate.dictionary().map((e) => e.term) }), known(b.prims));
+      return ok(plain(say === undefined ? screen : { ...screen, say }));
     }
     if (p.length !== 2) return null;
     if (m === "GET" && p[1] === "workspace") return workspaceInfo(call);

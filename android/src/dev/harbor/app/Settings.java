@@ -33,6 +33,11 @@ public class Settings extends Base {
     private LinearLayout wtCard;
     private View discordGap;
     private View updateBtn;
+    /** The sections the PC draws (Voice, Worktrees); `older` once it turned out to be a PC without them. */
+    private Prims.Screen pcScreen;
+    private boolean older;
+    /** After a dictionary change from the PC's Voice row: its screen again. */
+    private Runnable wordsChanged;
     private long available;
     private boolean installing;
     /** Android's "Install unknown apps" was opened from Update: install once it's allowed. */
@@ -150,35 +155,28 @@ public class Settings extends Base {
             WhatsApp.show(this, hub, hub.via());
         }
 
+        // Voice and Worktrees as the PC draws them (POST /v1/ui/settings, Prims): what changes
+        // there comes with the PC's release, no new app. The dictionary keeps its own editor.
+        LinearLayout fromPc = Ui.col(this);
+        col.addView(fromPc, Ui.fill());
+        pcScreen = new Prims.Screen(this, hub, "settings", fromPc, new String[] { "dictionary" }, (screen, done) -> {
+            if (screen.equals("dictionary")) editDictionary(done);
+        });
+
+        // A PC without screens (before 0.172): the app's own Voice and Worktrees rows.
         // Dictation in the composer (Voice): the PC's dictionary (GET /v1/voice, PUT
         // /v1/voice/settings; the section stays hidden on hubs without one).
         voiceHead = section(col, "Voice");
         voiceHead.setVisibility(View.GONE);
         voiceCard = card(col);
         voiceCard.setVisibility(View.GONE);
-        Ui.pool.execute(() -> {
-            try {
-                org.json.JSONObject v = hub.call("GET", "/v1/voice", null, 8000);
-                runOnUiThread(() -> {
-                    // Hubs before 0.76 have no dictionary: the section stays hidden.
-                    words = v.has("dictionary") ? v.optJSONArray("dictionary") : null;
-                    voiceRows();
-                });
-            } catch (Exception e) { /* an older hub: no such call */ }
-        });
-
         // Merged worktrees (GET/PUT /v1/worktrees/settings, the desktop's General › Worktrees; the
         // section stays hidden on hubs without it): account settings, the same on every PC.
         wtHead = section(col, "Worktrees");
         wtHead.setVisibility(View.GONE);
         wtCard = card(col);
         wtCard.setVisibility(View.GONE);
-        Ui.pool.execute(() -> {
-            try {
-                JSONObject v = hub.call("GET", "/v1/worktrees/settings", null, 8000);
-                runOnUiThread(() -> worktreeRows(v));
-            } catch (Exception e) { /* an older hub: no such call */ }
-        });
+        pcScreen.load(this::olderSections);
 
         // Notifications (Notes): what the PCs tell this phone about, and when.
         section(col, "Notifications");
@@ -204,10 +202,39 @@ public class Settings extends Base {
 
     /** A section's title over its cards. */
     private TextView section(LinearLayout col, String title) {
-        TextView t = Ui.bold(this, title, 14, Ui.G700);
-        t.setPadding(Ui.dp(18), Ui.dp(10), Ui.dp(18), Ui.dp(8));
-        col.addView(t, Ui.fill());
-        return t;
+        return Prims.section(this, col, title);
+    }
+
+    /** Voice and Worktrees on a PC without screens (Prims): the app's own rows, from its older routes. */
+    private void olderSections() {
+        older = true;
+        Ui.pool.execute(() -> {
+            try {
+                org.json.JSONObject v = hub.call("GET", "/v1/voice", null, 8000);
+                runOnUiThread(() -> {
+                    // Hubs before 0.76 have no dictionary: the section stays hidden.
+                    words = v.has("dictionary") ? v.optJSONArray("dictionary") : null;
+                    voiceRows();
+                });
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject v = hub.call("GET", "/v1/worktrees/settings", null, 8000);
+                runOnUiThread(() -> worktreeRows(v));
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+    }
+
+    /** The dictionary's editor, opened from the PC's Voice row: its words first, then `done`
+     *  after each change so the PC's row says the new count. */
+    private void editDictionary(Runnable done) {
+        wordsChanged = done;
+        Ui.bg(this, () -> hub.call("GET", "/v1/voice", null, 8000), v -> {
+            words = v.optJSONArray("dictionary");
+            if (words == null) words = new org.json.JSONArray();
+            dictionary();
+        });
     }
 
     /** Someone's round photo (`image`, a URL) the size of a card row's icon disc, their initials
@@ -263,11 +290,7 @@ public class Settings extends Base {
 
     /** A trailing tag on a row ("Owner"). */
     private TextView tag(String s) {
-        TextView t = Ui.text(this, s, 13, Ui.G700);
-        t.setPadding(Ui.dp(10), Ui.dp(3), Ui.dp(10), Ui.dp(3));
-        t.setBackground(Ui.round(Ui.G100, 0, 12));
-        t.setLayoutParams(Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-        return t;
+        return Prims.tag(this, s);
     }
 
     private LinearLayout wsBox;
@@ -689,9 +712,7 @@ public class Settings extends Base {
     }
 
     private LinearLayout card(LinearLayout col) {
-        LinearLayout c = Ui.card(this);
-        col.addView(c, Ui.margins(Ui.fill(), 0, 0, 0, 14));
-        return c;
+        return Prims.card(this, col);
     }
 
     /** The hub's dictionary (GET /v1/voice `dictionary`, 0.76); null on older hubs. */
@@ -760,7 +781,8 @@ public class Settings extends Base {
                 org.json.JSONObject v = hub.call("PUT", "/v1/voice/settings", new org.json.JSONObject().put(key, value));
                 runOnUiThread(() -> {
                     if (v.has("dictionary")) words = v.optJSONArray("dictionary");
-                    voiceRows();
+                    if (!older && wordsChanged != null) wordsChanged.run();
+                    else voiceRows();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> Ui.toast(this, Hub.why(e)));

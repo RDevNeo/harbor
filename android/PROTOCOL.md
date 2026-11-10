@@ -1699,6 +1699,46 @@ PC's guess about a peer that says nothing itself) and `why` (the evidence, when 
 empty; typed values stay) and `{"op": "detect"}` (run again; poll `GET` for `detecting`). Older
 hubs ignore `op` and send none of these fields.
 
+### Screens from the PC: `POST /v1/ui/{screen}`, `POST /v1/ui/{screen}/do` (0.172)
+
+Parts of the app's screens are drawn from JSON the PC sends, with the app's own cards, so a new or
+reworded row is a PC release and not a new APK (ts `logic/phoneui.ts`, the app's `Prims.java`). It
+is a fixed set of primitives, not a UI framework: what needs Android itself (camera, QR scan, the
+update install, notifications, the composer, the chat) stays native.
+
+Request: `{"prims": ["section", "row", "multi", "pick", "do", "url", "native", "native:dictionary"]}`,
+the primitives the app draws and its own screens a row may open (`native:<name>`). The PC leaves out
+what the app didn't name: a row whose `kind` or tap it doesn't know is replaced by the row's `alt`
+when it has one, else dropped; a section left empty is dropped. So a PC can add a primitive and still
+serve older apps. An unknown `{screen}` is 404; an app that gets 404 (a PC before 0.172) or no answer
+draws its own older rows from the older routes (`/v1/voice`, `/v1/worktrees/settings`), which stay.
+
+Answer (and the answer to `/do`):
+
+```json
+{"v": 1, "say": "optional toast after an act",
+ "sections": [{"id": "worktrees", "title": "Worktrees", "rows": [
+   {"id": "worktrees", "kind": "row", "glyph": "\ue40a", "title": "Delete merged worktrees",
+    "sub": "Once a chat's PR is merged · their branches too", "lines": 2, "tone": "",
+    "chevron": true, "tag": "Owner",
+    "tap": {"kind": "multi", "act": "worktrees", "title": "Merged worktrees",
+            "items": [{"key": "wt_clean_merged", "label": "Delete merged worktrees", "on": true}]}}]}]}
+```
+
+- `glyph`: a Lucide character of the shared icon font (net's `GLYPHS`), "" none; the app leaves out
+  one its copy of the font lacks. `tone`: "" (normal), `muted`, `red`, `amber`, `blue`. `lines`: how
+  far `sub` wraps. `tag`: a small label at the end.
+- `tap` kinds: `multi` (a checklist; OK posts `{act, values: {key: on}}`), `pick` (`options` of
+  `{id, label, sub, enabled}`, `selected`, `note`; posts `{act, value: id}`), `do` (posts
+  `{act, value}`, after `confirm: {title, text, ok}` when given), `url` (opens it), `native`
+  (`screen`: one of the app's own; it asks for the screen again after a change).
+- `/do` takes `{prims, act, values | value}` and answers the screen again; an act the PC doesn't
+  have is 400.
+
+Screens: `settings` (from 0.172): Voice (Dictionary, `native:dictionary`) and Worktrees (Delete
+merged worktrees, the desktop's General › Worktrees toggles as a checklist), where the app's own
+sections were.
+
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
