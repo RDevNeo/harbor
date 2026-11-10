@@ -134,10 +134,10 @@ export function moveMenu(all: readonly Workspace[], own: string, base: string, p
   if (all.length === 1) return { why: "Your account has one workspace: add or join another in Settings › Account", items: [] };
   const now = own !== "" ? own : base;
   const store = (to: string) => (to === base ? "" : to);
-  const items: MoveItem[] = all.map((w) => ({ id: store(w.id), to: w.id, label: w.name, hint: w.id === pcWs ? `${pcName}'s workspace` : "", on: w.id === now, back: false }));
+  const items: MoveItem[] = all.map((w) => ({ id: store(w.id), to: w.id, label: w.name, hint: w.id === pcWs ? `${pcName}'s Workspace` : "", on: w.id === now, back: false }));
   if (pcWs !== "" && now !== pcWs) {
     const home = all.find((w) => w.id === pcWs);
-    items.push({ id: store(pcWs), to: pcWs, label: home ? `Back to ${home.name}` : `Back to ${pcName}'s workspace`, hint: "Where its PC is", on: false, back: true });
+    items.push({ id: store(pcWs), to: pcWs, label: home ? `Back to ${home.name}` : `Back to ${pcName}'s Workspace`, hint: "Where its PC is", on: false, back: true });
   }
   return { why: null, items };
 }

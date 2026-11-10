@@ -813,7 +813,7 @@ final class Sidebar {
         for (Map.Entry<String, String> w : workspaces.entrySet()) {
             String id = w.getKey();
             c.addView(Ui.gap(a));
-            String sub = id.equals(here) && !pc.isEmpty() ? pc + "'s workspace" : "";
+            String sub = id.equals(here) && !pc.isEmpty() ? pc + "'s Workspace" : "";
             c.addView(wsRow(c, w.getValue(), sub, shown.contains(id), WsFilter.toggled(wsChoice(), id, workspaces.keySet())), Ui.fill());
         }
     }

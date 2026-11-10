@@ -180,7 +180,7 @@ test("move_to_workspace_lists_the_accounts_workspaces_and_the_way_back", () => {
   const home = moveMenu(all, "", "a", "a", "desk");
   expect(home.why).toBeNull();
   expect(home.items).toEqual([
-    { id: "", to: "a", label: "Sam's workspace", hint: "desk's workspace", on: true, back: false },
+    { id: "", to: "a", label: "Sam's workspace", hint: "desk's Workspace", on: true, back: false },
     { id: "b", to: "b", label: "Team", hint: "", on: false, back: false },
   ]);
   // Moved: the way back clears its own.

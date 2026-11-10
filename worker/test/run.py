@@ -309,7 +309,7 @@ def main():
     sam_j = js
     ws0 = js["workspaces"]
     check("personal workspace: one, owner, personal, named after first name",
-          len(ws0) == 1 and ws0[0]["role"] == "owner" and ws0[0]["personal"] and ws0[0]["name"] == "Sam's workspace", ws0)
+          len(ws0) == 1 and ws0[0]["role"] == "owner" and ws0[0]["personal"] and ws0[0]["name"] == "Sam's Workspace", ws0)
     sam_ws = ws0[0]["id"]
     st, js2, _, _ = session(ct, phone)
     check("session (phone, DER sig) ok", st == 200 and js2["workspaces"][0]["id"] == sam_ws, js2)
@@ -405,7 +405,7 @@ def main():
     check("photo: a new one shows again", js["account"]["image"].startswith("https://img.example/up/"), js["account"])
     st, js, _, _ = session(ct, pc)
     check("session reports pc workspace for a registered fp",
-          js.get("pc") == {"ws": sam_ws, "ws_name": "Sam's workspace", "owner": "Sam Rig", "member": True}, js.get("pc"))
+          js.get("pc") == {"ws": sam_ws, "ws_name": "Sam's Workspace", "owner": "Sam Rig", "member": True}, js.get("pc"))
 
     # settings
     st, js, _, _ = http("GET", W + "/v1/settings", token=sam_pc)
@@ -585,7 +585,7 @@ def main():
     pj, _ = sess_ok("pat@example.com", pat_dev)
     check("invitee's first session joins nothing by itself, lists the invitation",
           pj["joined"] == [] and len(pj["workspaces"]) == 1 and [i["ws"] for i in pj["invites"]] == [sam_ws]
-          and pj["invites"][0]["ws_name"] == "Sam's workspace" and pj["invites"][0]["inviter_name"] == "Sam Rig", pj)
+          and pj["invites"][0]["ws_name"] == "Sam's Workspace" and pj["invites"][0]["inviter_name"] == "Sam Rig", pj)
     st, li, _, _ = http("GET", W + "/v1/invites", token=pj["token"])
     check("GET /v1/invites: the invitee's pending invitation", st == 200 and [i["ws"] for i in li["invites"]] == [sam_ws], li)
     st, js, _, _ = http("GET", W + "/v1/invites", token=alice_t)
@@ -623,7 +623,7 @@ def main():
     check("pat registers a PC in her own workspace", st == 200, js)
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     peers = {x["name"]: x for x in d.get("peers", [])}
-    check("peers: sam's desk sees pat's PC through the shared workspace", "pat-box" in peers and peers["pat-box"]["via"] == ["Sam's workspace"]
+    check("peers: sam's desk sees pat's PC through the shared workspace", "pat-box" in peers and peers["pat-box"]["via"] == ["Sam's Workspace"]
           and "desk" not in peers, d.get("peers"))
     _, d, _, _ = http("GET", W + "/v1/directory", token=pb_j["token"])
     peers = {x["name"]: x for x in d.get("peers", [])}
@@ -634,11 +634,11 @@ def main():
     eve_pc = eve_j["token"]
     eve_ws = eve_j["workspaces"][0]["id"]
     check("session: pc of another workspace reports it with member:false",
-          eve_j.get("pc") == {"ws": sam_ws, "ws_name": "Sam's workspace", "owner": "Sam Rig", "member": False}, eve_j.get("pc"))
+          eve_j.get("pc") == {"ws": sam_ws, "ws_name": "Sam's Workspace", "owner": "Sam Rig", "member": False}, eve_j.get("pc"))
     st, js, _, _ = http("POST", W + "/v1/pcs", {"ws": eve_ws, "name": "stolen", "addrs": []}, token=eve_pc)
     check("Option A: third account is refused with 403 and the workspace name",
-          st == 403 and js.get("ws") == sam_ws and js.get("ws_name") == "Sam's workspace" and js.get("owner") == "Sam Rig"
-          and "Sam's workspace" in js.get("error", ""), js)
+          st == 403 and js.get("ws") == sam_ws and js.get("ws_name") == "Sam's Workspace" and js.get("owner") == "Sam Rig"
+          and "Sam's Workspace" in js.get("error", ""), js)
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     check("Option A: refused PC stays where it was", d["workspaces"][0]["pcs"][0]["name"] == "desk")
     pat_pc_j, _ = sess_ok("pat@example.com", pc)

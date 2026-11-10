@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  wsLabel,
   cachedMeshPeers,
   AccountFail,
   AccountService,
@@ -467,7 +468,7 @@ describe("sign-in through Clerk", () => {
     expect(r.svc.workspace()).toBe("org_personal");
     expect(r.svc.ownerName()).toBe("Sam");
     expect(r.kv.get("account_ws")).toBe("org_personal");
-    expect(r.kv.get("account")).toBe('{"id":"user_1","email":"sam@example.com","name":"Sam","image":"","workspaces":[{"id":"org_personal","name":"Sam\'s workspace","role":"owner","personal":true}]}');
+    expect(r.kv.get("account")).toBe('{"id":"user_1","email":"sam@example.com","name":"Sam","image":"","workspaces":[{"id":"org_personal","name":"Sam\'s Workspace","role":"owner","personal":true}]}');
     expect(r.settings.signedIn).toBe(1);
     expect(r.svc.takeEnable()).toBe(true);
     expect(r.svc.takeEnable()).toBe(false);
@@ -665,9 +666,9 @@ describe("the account loop", () => {
     r.world.invites = [{ id: "inv_1", ws: "org_x", ws_name: "X", inviter_name: "Pat", email: "sam@example.com", at: 7 }];
     await r.svc.tick(true);
     expect(callPaths(r.calls)).toEqual(["POST /v1/pcs", "GET /v1/directory", "GET /v1/invites"]);
-    expect(r.kv.get("account_dir")).toBe(JSON.stringify(dir));
-    expect(r.svc.directory()).toEqual(dir);
-    expect(r.svc.myDir()?.name).toBe("Sam's workspace");
+    expect(r.kv.get("account_dir")).toBe(JSON.stringify(dir).replace("Sam's workspace", "Sam's Workspace"));
+    expect(r.svc.directory()).toEqual({ ...dir, workspaces: dir.workspaces.map((w) => ({ ...w, name: "Sam's Workspace" })) });
+    expect(r.svc.myDir()?.name).toBe("Sam's Workspace");
     expect(r.svc.status()).toMatchObject({ offlineSince: 0, expired: false });
     expect(r.svc.status().syncedAt).toBeGreaterThan(0);
     expect(r.svc.invites().map((i) => i.id)).toEqual(["inv_1"]);
@@ -697,8 +698,8 @@ describe("the account loop", () => {
     const STRANGER = "34".repeat(32);
     const pc = (fp: string, id: string, name: string, owner: string, via: string[]) => ({ fp, id, name, addrs: ["10.0.0.9:47930"], owner, owner_name: name, seen: 1, version: "9.9.9", via });
     const kimPc = pc(KIM, "ts:kim", "Kim's PC", "user_3", ["Kim's workspace"]);
-    // Pat is in Sam's workspace (Sam invited Pat): Pat's PC may use this one, but Sam isn't in Pat's workspace.
-    // Kim invited Sam into Kim's workspace: Sam uses Kim's PC. The stranger shares nothing with this PC's workspace.
+    // Pat is in Sam's Workspace (Sam invited Pat): Pat's PC may use this one, but Sam isn't in Pat's workspace.
+    // Kim invited Sam into Kim's Workspace: Sam uses Kim's PC. The stranger shares nothing with this PC's workspace.
     r.world.directory = {
       at: Date.now(),
       workspaces: [
@@ -727,10 +728,10 @@ describe("the account loop", () => {
     expect(scopeHasDevice(s, "ssh:1")).toBe(true);
     expect(scopeHasDevice(s, "ssh:2", true)).toBe(false);
     expect(usablePcs(r.svc.directory(), r.fp).map((p) => [p.name, p.via])).toEqual([
-      ["Kim's PC", ["Kim's workspace"]],
-      ["Laptop", ["Sam's workspace"]],
+      ["Kim's PC", ["Kim's Workspace"]],
+      ["Laptop", ["Sam's Workspace"]],
     ]);
-    // Leaving Kim's workspace: Kim's PC isn't used, nor trusted (Kim isn't in Sam's).
+    // Leaving Kim's Workspace: Kim's PC isn't used, nor trusted (Kim isn't in Sam's).
     r.world.directory = { at: Date.now() + 1000, workspaces: [workspaceDir(r)], peers: [] };
     await r.svc.tick(true);
     expect(r.svc.meshPeers().map((a) => a.id)).toEqual(["ts:laptop"]);
@@ -1160,7 +1161,7 @@ describe("actions from Settings", () => {
     expect(heard).toBeGreaterThan(0);
     await p;
     // The workspace filter and Move to workspace… have it.
-    expect(r.svc.workspaces().map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+    expect(r.svc.workspaces().map((w) => w.name)).toEqual(["Sam's Workspace", "Team"]);
     // The service still lists it for a moment (or a fetch begun before the accept answers late): it stays gone.
     await r.svc.tick(true);
     expect(r.svc.invites()).toEqual([]);
@@ -1182,11 +1183,11 @@ describe("actions from Settings", () => {
     r.world.accept = { ok: true, workspaces: [...r.world.session.workspaces, team], joined: team };
     r.world.directory = { at: Date.now() + 1, workspaces: [workspaceDir(r), { ...team, members: [], pcs: [], devices: [], invites: [] }] };
     await r.svc.acceptInvite("inv_1");
-    expect(r.svc.directory().workspaces.map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+    expect(r.svc.directory().workspaces.map((w) => w.name)).toEqual(["Sam's Workspace", "Team"]);
     release();
     await slow;
-    expect(r.svc.directory().workspaces.map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
-    expect(r.svc.workspaces().map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+    expect(r.svc.directory().workspaces.map((w) => w.name)).toEqual(["Sam's Workspace", "Team"]);
+    expect(r.svc.workspaces().map((w) => w.name)).toEqual(["Sam's Workspace", "Team"]);
   });
 
   test("a refused accept brings the invitation back and says why", async () => {
@@ -1257,7 +1258,7 @@ describe("cache and command line", () => {
     expect(out).toEqual([
       `service:   ${r.service.url}`,
       "account:   Sam <sam@example.com> (user_1)",
-      "workspace: Sam's workspace (org_personal)",
+      "workspace: Sam's Workspace (org_personal)",
       "members:   Sam <sam@example.com> owner",
       `pc:        Desk ${r.fp.slice(0, 4)} ${r.fp.slice(4, 8)} ${r.fp.slice(8, 12)} ${r.fp.slice(12, 16)} 10.0.0.1:47930`,
       `pc:        Laptop ${OTHER_FP.slice(0, 4)} ${OTHER_FP.slice(4, 8)} ${OTHER_FP.slice(8, 12)} ${OTHER_FP.slice(12, 16)} 10.0.0.2:47930`,
@@ -1296,4 +1297,10 @@ describe("cache and command line", () => {
     expect(AccountFail.refused("No.").text()).toBe("No.");
     expect(AccountFail.offline("HTTP 503").text()).toBe("The account service didn't answer (HTTP 503).");
   });
+});
+
+test("a workspace's default name reads \"Sam's Workspace\"; a name someone chose stays as it is", () => {
+  expect(wsLabel("Sam's workspace")).toBe("Sam's Workspace");
+  expect(wsLabel("Sam's Workspace")).toBe("Sam's Workspace");
+  for (const n of ["Team", "Ops workspace", "Sam's workspace crew", ""]) expect(wsLabel(n)).toBe(n);
 });

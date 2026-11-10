@@ -565,7 +565,7 @@ async function ensurePersonal(env, sub, first) {
   if (have) return have;
   const org = must(
     await clerk(env, 'POST', '/organizations', {
-      name: `${first}'s workspace`.slice(0, 80),
+      name: `${first}'s Workspace`.slice(0, 80),
       created_by: sub,
       public_metadata: { harbor_personal: sub },
       max_allowed_memberships: 20,

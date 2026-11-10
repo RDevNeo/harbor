@@ -62,7 +62,7 @@ test("a_chat_of_this_pc_moves_here_and_its_peers_hear_of_it", async () => {
 test("a_copys_move_goes_to_its_home_pc_first_then_shows_here", async () => {
   const { store, moves, sent } = rig();
   const c = store.createChat(blankChat({ title: "copy", role: "lead", home: "pc:other", homeId: 41 }));
-  expect(moves.chatMenu(c).items.map((i) => [i.label, i.on, i.hint])).toEqual([["Sam's workspace", false, ""], ["Team workspace", true, "other's workspace"]]);
+  expect(moves.chatMenu(c).items.map((i) => [i.label, i.on, i.hint])).toEqual([["Sam's workspace", false, ""], ["Team workspace", true, "other's Workspace"]]);
   const r = await moves.moveChat(c, "org_a");
   expect(r.status).toBe(200);
   expect(sent).toEqual([{ peer: "pc:other", method: "POST", path: ["v1", "chats", "41", "workspace"], body: { workspace: "org_a" } }]);

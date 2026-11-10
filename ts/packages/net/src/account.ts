@@ -253,9 +253,15 @@ function strs(o: Obj, k: string): string[] {
   });
 }
 
+/** A workspace's default name as the service made it ("Sam's workspace", worker ensurePersonal before 0.169.5),
+ *  shown as "Sam's Workspace". Harbor has no way to name a workspace; any other name stays as it is. */
+export function wsLabel(name: string): string {
+  return name.replace(/'s workspace$/, "'s Workspace");
+}
+
 function parseWorkspace(v: unknown): AccountWorkspace {
   const o = need(v);
-  return { id: str(o, "id", true), name: str(o, "name"), role: roleOf(str(o, "role")), personal: bool(o, "personal") };
+  return { id: str(o, "id", true), name: wsLabel(str(o, "name")), role: roleOf(str(o, "role")), personal: bool(o, "personal") };
 }
 
 function parseMember(v: unknown): AccountMember {
@@ -299,7 +305,7 @@ function parsePending(v: unknown): AccountPendingInvite {
   return {
     id: str(o, "id", true),
     ws: str(o, "ws", true),
-    ws_name: str(o, "ws_name"),
+    ws_name: wsLabel(str(o, "ws_name")),
     inviter_name: str(o, "inviter_name"),
     email: str(o, "email"),
     at: int(o, "at"),
@@ -308,7 +314,7 @@ function parsePending(v: unknown): AccountPendingInvite {
 
 function parsePeer(v: unknown): AccountPc {
   const o = need(v);
-  return { ...parsePc(o), via: strs(o, "via") };
+  return { ...parsePc(o), via: strs(o, "via").map(wsLabel) };
 }
 
 function parseDir(v: unknown): AccountDir {
@@ -1580,7 +1586,7 @@ export class AccountService {
         });
         this.o.kv.set("account", JSON.stringify(a));
       }
-      const name = textOf(pluck(v, "joined"), "name");
+      const name = wsLabel(textOf(pluck(v, "joined"), "name"));
       if (name !== "") {
         const note = `You joined ${name}. Its PCs and chats reach you on your phone; to move this PC there, use Settings › Account.`;
         this.setStatus((s) => (s.notice = note));

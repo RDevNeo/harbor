@@ -136,7 +136,23 @@ final class Account {
     /** The directory as last fetched: {"at", "workspaces": [...]}. */
     static JSONObject directory(Context c) {
         JSONObject d = state(c).optJSONObject("dir");
-        return d == null ? new JSONObject() : d;
+        return d == null ? new JSONObject() : labeled(d);
+    }
+
+    /** A workspace's default name as the service made it ("Sam's workspace"), shown as "Sam's Workspace"
+     *  (account.ts wsLabel). Harbor has no way to name a workspace; any other name stays as it is. */
+    static String wsLabel(String name) {
+        return name.endsWith("'s workspace") ? name.substring(0, name.length() - "workspace".length()) + "Workspace" : name;
+    }
+
+    /** The directory with its workspaces' names as wsLabel shows them (in place: it's idempotent). */
+    static JSONObject labeled(JSONObject dir) {
+        JSONArray a = dir.optJSONArray("workspaces");
+        for (int i = 0; a != null && i < a.length(); i++) {
+            JSONObject w = a.optJSONObject(i);
+            if (w != null) try { w.put("name", wsLabel(w.optString("name"))); } catch (JSONException e) { /* a string always goes in */ }
+        }
+        return dir;
     }
 
     static JSONObject workspace(Context c, String ws) {
@@ -467,6 +483,10 @@ final class Account {
     /** Invitations to workspaces waiting for this account: [{id, ws, ws_name, inviter_name, email, at}]. */
     static JSONArray invites(Context c) {
         JSONArray a = state(c).optJSONArray("invites");
+        for (int i = 0; a != null && i < a.length(); i++) {
+            JSONObject x = a.optJSONObject(i);
+            if (x != null) try { x.put("ws_name", wsLabel(x.optString("ws_name"))); } catch (JSONException e) { /* a string always goes in */ }
+        }
         return a == null ? new JSONArray() : a;
     }
 
@@ -481,14 +501,14 @@ final class Account {
         });
         JSONObject joined = r.optJSONObject("joined");
         if (accept) renew(c, true); // a token naming the new workspace, and its PCs
-        return joined == null ? null : joined.optString("name");
+        return joined == null ? null : wsLabel(joined.optString("name"));
     }
 
     /** Each workspace with PCs is a hub: its first PC (the one used last, else the newest)
      *  answers, the others are its endpoints. Pairings from before accounts go. */
     static synchronized void hubs(Context c, JSONObject dir) {
         List<Hub> old = Hub.all(c), out = new ArrayList<>();
-        JSONArray ws = dir.optJSONArray("workspaces");
+        JSONArray ws = labeled(dir).optJSONArray("workspaces");
         String token = state(c).optString("token");
         if (ws != null) for (int i = 0; i < ws.length(); i++) {
             JSONObject w = ws.optJSONObject(i);
