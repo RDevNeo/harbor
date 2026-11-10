@@ -5,10 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.170.1] - 2026-11-10
+
 ### Fixed
 - Devices removes superseded phone registrations and phones inactive for seven days from stored
   records, preserving recent outages and activity reported by other PCs. Phone workspace labels
   and photos now follow the account signed in on each phone.
+- New TLS identities always get a certificate serial in minimal DER form: about 1 in 128 used to
+  be refused (INVALID_INTEGER) and could not be used.
+
+### Changed
+- A workspace's default name reads "Sam's Workspace" on the desktop and the phone (Devices,
+  Workspace page, menus, invitations); new workspaces are created with it. Other names are shown
+  as they are.
 
 ## [0.170.0] - 2026-11-10
 
