@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.171.2] - 2026-11-10
+
+### Changed
+- The sidebar looks like T3 Code's, on the desktop and the phone: projects fold under a chevron, and
+  chats hang off a guide line with their status first, how long ago they were active on the right, and
+  the owner of someone else's chat.
+- Every chat in the sidebar names its branch: its worktree's, else its project checkout's, also for
+  copies of chats from other PCs.
+- New worktrees get short task-like names from Sonnet, asked on any Claude account under 90% of its
+  quota; the fallback name drops filler words.
+
+### Fixed
+- Stopping Harbor no longer lets a turn that was still starting, or a runner's late output, write to the
+  closed database: no turn starts once Harbor stops, one still starting is left to its runner for the
+  next Harbor to pick up, and running turns stop being followed. This was behind "Cannot use a closed
+  database" failures in the test suite.
+- Tests that start real turn processes (engine, chat state, `harbor mesh status`, offline mode) wait for
+  what they check instead of failing on budgets that only a quick machine met.
+
 ## [0.171.1] - 2026-11-10
 
 ### Fixed
