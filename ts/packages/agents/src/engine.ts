@@ -16,7 +16,7 @@ export const sessionKindKey = (chat: number): string => `session_kind_${chat}`;
 import { home, newUuid, now } from "./paths.ts";
 import { alive as aliveNow } from "./procfs.ts";
 import * as procs from "./procs.ts";
-import { access as accessLevels, type Account, accountEnv, applyUsage, binStr, installed, type Kind, kindOf, knownAccount, short, staticModels } from "./providers.ts";
+import { access as accessLevels, type Account, accountEnv, applyUsage, binStr, efforts as effortLevels, installed, type Kind, kindOf, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as toolsModule from "./tools.ts";
 import { fromJson as waitFromJson, type Waiting, waitingOf } from "./waiting.ts";
@@ -188,6 +188,9 @@ export class Engine {
   webhooks: Webhook[] = [];
   /** Turns stopped to restart them (a Codex steer): their exit is dropped. */
   private readonly swallow = new Set<Running>();
+  /** Account switches asked for while the chat's turn ran (`switchAccount`): made when that turn ends, or when the
+   *  chat's next turn starts, whichever comes first. */
+  readonly wantAccount = new Map<number, { to: string; model: string | undefined; effort: string | undefined; why: string }>();
   /** Fast mode for every turn (Claude's fastMode, Codex's priority tier): kv `fast_mode`, as the composer sets it. */
   get fast(): boolean {
     return this.store.get("fast_mode") === "1";
@@ -236,6 +239,13 @@ export class Engine {
         }
       },
       sessionFile: (configDir, sid) => sessionCopies(configDir, sid)[0] ?? null,
+      teamNote: (id, text, detail, wake) => {
+        const c = this.chat(id);
+        if (!c || c.role !== "sub" || c.parent === null || c.retired) return;
+        this.notice(c.parent, "clock", `${c.name} ${text}`, detail);
+        this.changed(c.parent);
+        if (wake) this.trigger(c.parent, `[agent ${c.name}] ${text}.\n\n${detail}`, true);
+      },
     });
     this.recaps = new Recaps({
       store: host.store,
@@ -483,6 +493,13 @@ export class Engine {
       this.persist(id);
       return;
     }
+    // A switch asked for while the last turn ran: this turn already runs on the new account.
+    const want = this.wantAccount.get(id);
+    if (want) {
+      this.wantAccount.delete(id);
+      const resume = this.moveAccount(id, want.to, want.model, want.effort, want.why);
+      if (resume === true) prompt = `${limits.MOVED}\n\n---\n\n${prompt}`;
+    }
     if (this.limits.limitGuard(id, prompt, files)) return;
     prompt = this.takeNote(id, prompt) + prompt;
     const chat = this.chat(id);
@@ -611,6 +628,12 @@ export class Engine {
     this.applyEvent(id, ev);
     if (exited !== null) {
       this.queueExited(id, exited);
+      // A switch asked for meanwhile beats an automatic one (limitExited's).
+      if (this.wantAccount.has(id) && !this.turns.has(id)) {
+        const w = this.wantAccount.get(id);
+        this.wantAccount.delete(id);
+        if (w) this.goOnMoved(id, this.moveAccount(id, w.to, w.model, w.effort, w.why));
+      }
       this.limits.limitExited(id);
       this.host.turnEnded?.(id, exited);
       this.restartExited(id);
@@ -1664,6 +1687,109 @@ export class Engine {
     if (other !== undefined) return other;
     if (name === "retire_agent") return tools.now.retireCall(this, me, args);
     return tools.now.teamTool(this, me, name, args);
+  }
+
+  /** Moves a chat (a lead's subagent, from switch_agent_account or the Agents panel) to another account, keeping its
+   *  conversation: on the same provider its Claude session goes along (Limits.bringSession) and resumes there; on
+   *  another one its next turn starts a new session with the conversation so far (`handOver`). A running turn ends on
+   *  the old account first. A chat waiting at a usage limit, or with messages waiting, goes on at once. `model` and
+   *  `effort` (undefined: kept, or the new provider's defaults) change with it. What happened, for the lead. Throws
+   *  when it can't move. */
+  switchAccount(id: number, to: string, opts: { model?: string | undefined; effort?: string | undefined; why?: string } = {}): string {
+    const c = this.chat(id);
+    if (!c) throw new Error("no such chat");
+    if (c.retired) throw new Error(`${c.name || "that chat"} was retired`);
+    if (c.home !== "") throw new Error("it runs on another PC: switch it there");
+    const acc = this.account(to);
+    if (!acc) throw new Error(`unknown account '${to}'. Use list_models.`);
+    if (acc.off === true) throw new Error(`account '${to}' is turned off on this PC (Settings › Providers)`);
+    if (acc.bin === null) throw new Error(`${acc.kind} is not installed`);
+    if (acc.loggedIn === false) throw new Error(`account '${to}' is signed out`);
+    const old = this.account(c.account);
+    const kind = acc.kind;
+    if (kind !== "Claude" && c.device !== "") throw new Error("it runs on another device, where only Claude runs: pick a Claude account");
+    const model = opts.model === undefined || opts.model === "" ? undefined : opts.model;
+    const models = staticModels(kind);
+    if (model !== undefined && models.length > 0 && !models.some((m) => m.id === model)) throw new Error(`${kind} has no model '${model}'. Use list_models.`);
+    const effort = opts.effort === undefined || opts.effort === "" ? undefined : opts.effort;
+    if (effort !== undefined && !effortLevels(kind).some((e) => e[0] === effort)) throw new Error(`${kind} has no effort '${effort}'`);
+    if (c.role === "sub") {
+      const lead = c.parent === null ? undefined : this.chat(c.parent);
+      if (team.subAccess(lead?.access ?? c.access, kind) === null) throw new Error(`${kind} has no access level like its lead's; pick another account`);
+    }
+    const name = c.role === "sub" ? c.name : "the chat";
+    const label = `${short(acc)} (account '${to}')`;
+    if (to === c.account && model === undefined && effort === undefined) return `${name} is already on ${label}.`;
+    const other = old !== undefined && old.kind !== kind ? ` It continues on ${kind} in a new session that starts with its conversation so far.` : "";
+    const why = opts.why ?? "switched by the lead";
+    if (this.turns.has(id) || this.adoptRunner(id)) {
+      this.wantAccount.set(id, { to, model, effort, why });
+      this.notice(id, "clock", `Moves to ${short(acc)} when this turn ends (${why})`);
+      return `${name} is running a turn on ${old ? short(old) : c.account}: it moves to ${label} as soon as that turn ends, and anything waiting for it runs there.${other}`;
+    }
+    this.wantAccount.delete(id);
+    const resume = this.moveAccount(id, to, model, effort, why);
+    if (resume === null && this.chat(id)?.account !== to) throw new Error(`couldn't move ${name}: its session didn't come along (see its chat)`);
+    const went = this.goOnMoved(id, resume);
+    const m = this.modelLabel(kind, this.chat(id)?.model ?? "");
+    const after = went ? " It continues where it stopped, there, now." : " It's idle: its next message runs there.";
+    return `Moved ${name} to ${label} / ${m}.${after}${other}`;
+  }
+
+  /** `switchAccount`'s move: session, account, model, effort and access, with a notice in the chat. The chat's limit
+   *  pause ends (true when its turn was cut off and goes on with MOVED, false when it only waited); null when it
+   *  wasn't paused, or the move failed (a notice says why). */
+  private moveAccount(id: number, to: string, model: string | undefined, effort: string | undefined, why: string): boolean | null {
+    const c = this.chat(id);
+    const acc = this.account(to);
+    if (!c || !acc) return null;
+    const old = this.account(c.account);
+    if (to !== c.account) {
+      const was = this.sessionKind(c) ?? old?.kind;
+      if (c.started && c.sessionId !== "") {
+        if (was === acc.kind) {
+          const err = this.limits.bringSession(id, to);
+          if (err !== null) {
+            this.notice(id, "alert", `Couldn't move to ${short(acc)}: ${err}`);
+            this.changed(id);
+            return null;
+          }
+        } else if (was !== undefined) {
+          // The next turn sees the provider changed and hands the conversation over (handOver).
+          this.store.set(sessionKindKey(id), was);
+        }
+      }
+      c.account = to;
+    }
+    const kind = acc.kind;
+    const changedKind = old !== undefined && old.kind !== kind;
+    if (model !== undefined) c.model = model;
+    else if (changedKind) c.model = kind === "Claude" ? "" : ((staticModels(kind).find((m) => !m.more) ?? staticModels(kind)[0])?.id ?? "");
+    if (effort !== undefined) c.effort = effort;
+    else if (changedKind) c.effort = "";
+    if (c.role === "sub") {
+      const lead = c.parent === null ? undefined : this.chat(c.parent);
+      const level = team.subAccess(lead?.access ?? c.access, kind);
+      if (level !== null) c.access = level as Chat["access"];
+    } else if (!accessLevels(kind).some((a) => a[0] === c.access)) c.access = (accessLevels(kind)[0]?.[0] ?? "full") as Chat["access"];
+    this.store.saveChat(c);
+    const from = old ? short(old) : "";
+    this.notice(id, "clock", `Switched to ${short(acc)}${from !== "" && old?.id !== to ? ` from ${from}` : ""} (${why})`);
+    this.changed(id);
+    return this.limits.takePause(id);
+  }
+
+  /** After a move: a chat cut off at a limit goes on (MOVED), with what waited for it. True when a turn started or waits for a slot. */
+  private goOnMoved(id: number, resume: boolean | null): boolean {
+    const parts: string[] = [];
+    if (resume === true) parts.push(limits.MOVED);
+    parts.push(...(this.pending.get(id) ?? []));
+    this.pending.delete(id);
+    if (parts.length === 0) return false;
+    const prompt = parts.join("\n\n---\n\n");
+    if (this.subsBusy(id)) this.pushPending(id, prompt);
+    else this.startTurn(id, prompt);
+    return true;
   }
 
   /** Takes one of this PC's subagents off its team for good, its transcript kept to read. */

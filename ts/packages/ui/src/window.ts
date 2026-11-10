@@ -492,6 +492,7 @@ export interface AppWindow extends slint.ComponentHandle {
   open_agent: (id: number) => void;
   settle_agent: (id: number, on: boolean) => void;
   stop_agent: (id: number) => void;
+  agent_account: (id: number, x: number, y: number) => void;
   cancel_wakeup: (id: number) => void;
   wake_now: (id: number) => void;
   copy_hook: (url: string) => void;

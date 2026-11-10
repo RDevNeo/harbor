@@ -41,11 +41,14 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       return subs
         .map((c) => {
           const w = e.turns.has(c.id) ? null : e.waiting(c.id, asks);
-          const status = e.turns.has(c.id) ? "running" : (e.pending.get(c.id)?.length ?? 0) > 0 ? "queued" : w !== null ? waitWords(w, now(), utcOffset()) : `idle (${team.ago(c.updated)} ago)`;
+          const limit = e.turns.has(c.id) ? null : e.limits.limitText(c.id);
+          const status = e.turns.has(c.id) ? "running" : limit !== null ? `paused: ${limit[0]}` : (e.pending.get(c.id)?.length ?? 0) > 0 ? "queued" : w !== null ? waitWords(w, now(), utcOffset()) : `idle (${team.ago(c.updated)} ago)`;
           const acc = e.account(c.account);
           const who = acc ? short(acc) : c.account;
           const model = acc ? e.modelLabel(acc.kind, c.model) : c.model;
-          return `- ${c.name} [${status}] ${who} / ${model}\n  link: ${e.chatLink(c)}\n  task: ${c.title}\n  last: ${team.clip(e.lastReply(c.id), 400)}${isLead ? queuedLine(e, me, c) : ""}`;
+          const moving = e.wantAccount.get(c.id);
+          const next = moving ? ` (moves to account '${moving.to}' when this turn ends)` : "";
+          return `- ${c.name} [${status}] account '${c.account}' (${who}) / ${model}${next}\n  link: ${e.chatLink(c)}\n  task: ${c.title}\n  last: ${team.clip(e.lastReply(c.id), 400)}${isLead ? queuedLine(e, me, c) : ""}`;
         })
         .join("\n");
     }
@@ -193,6 +196,16 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       if (!e.turns.has(target.id)) return `${target.name} was not running.${dropped}`;
       e.stop(target.id);
       return `Stopped ${target.name}.${dropped}`;
+    }
+    case "switch_agent_account": {
+      const name = arg(a, "agent");
+      const target = e.resolve(me, name);
+      if (!target || target.role !== "sub") throw new Error(target ? "only subagents switch accounts here; the user switches this chat's account in its composer" : team.noAgent(e.chats, leadId, name));
+      const account = arg(a, "account");
+      if (account === "") throw new Error("account is required: an account id from list_models");
+      const r = e.switchAccount(target.id, account, { model: arg(a, "model"), effort: arg(a, "effort"), why: "switched by the lead" });
+      e.changed(leadId);
+      return r;
     }
     case "list_models": {
       const out: string[] = [];

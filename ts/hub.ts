@@ -1158,6 +1158,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mainChat: (repo) => live.mainChat(repo),
     forksOf: (id) => live.forksOf(id),
     wait: (id) => waitJson(live, id, Date.now(), asksNow()),
+    switchAccount: (id, to, opts) => live.switchAccount(id, to, opts),
+    chat: (id) => live.chat(id),
   };
   live.reattachTurns();
   // Processes the agents started before a restart: their exits still wake them (and they wait on them

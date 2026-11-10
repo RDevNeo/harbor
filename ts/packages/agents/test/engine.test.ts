@@ -513,6 +513,105 @@ describe("usage limits", () => {
   });
 });
 
+describe("switching a subagent's account", () => {
+  /** Lead on claude3 (the race CLI, which never hits a limit), sub `worker` on claude (the limit-hitting fake), each
+   *  account with its own config folder; codex is never run. */
+  function team(subOver: Partial<Chat> = {}) {
+    process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
+    const store = Store.openTemp();
+    const dirA = mkdtempSync(join(base, "cfg-a-"));
+    const dirB = mkdtempSync(join(base, "cfg-b-"));
+    const accounts: Account[] = [
+      { ...account, configDir: dirA },
+      { ...account, id: "claude3", badge: "FS", configDir: dirB, bin: race },
+      { ...account, id: "codex", kind: "Codex", name: "Codex", badge: "", bin: "/nonexistent/codex" },
+    ];
+    const e = new Engine({ store, accounts: () => accounts, changed: () => {} });
+    const lead = newChat(store, { role: "lead", name: "lead", account: "claude3", started: true });
+    const sub = newChat(store, { role: "sub", parent: lead.id, name: "worker", account: "claude", ...subOver });
+    e.reload();
+    return { e, store, lead, sub, dirA, dirB };
+  }
+
+  test("a sub paused at a limit: the lead is told, and switch_agent_account moves it with its session and it goes on there", async () => {
+    const { e, store, lead, sub, dirA, dirB } = team();
+    e.trigger(sub.id, "hit the limit", false);
+    await until("the limited turn's end", () => !e.running(sub.id) && e.limits.paused.has(sub.id));
+    expect(e.chat(sub.id)?.started).toBe(true);
+    // Its session so far, in the old account's folder (the fake CLI writes none).
+    mkdirSync(join(dirA, "projects", "-some-project"), { recursive: true });
+    writeFileSync(join(dirA, "projects", "-some-project", `${sub.sessionId}.jsonl`), '{"type":"user"}\n');
+    // The lead hears it once, with the accounts that could take it and the tool that moves it.
+    await until("the lead's turn about it", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent worker] hit the 5-hour limit on Claude (account 'claude')")));
+    const told = e.transcript(lead.id).items.find((i) => i.kind === "notice" && i.text.startsWith("worker hit the 5-hour limit"));
+    expect(told?.kind === "notice" && told.detail).toContain("Automatic account switching is off on this PC");
+    expect(told?.kind === "notice" && told.detail).toContain(`'claude3' (Claude)`);
+    expect(told?.kind === "notice" && told.detail).toContain('switch_agent_account(agent: "worker", account: <id>)');
+    await until("the lead's turn's end", () => !e.running(lead.id));
+    expect(await teamTool(e, lead, "list_agents", {})).toContain("- worker [paused: Usage limit");
+    expect(await teamTool(e, lead, "list_agents", {})).toContain("account 'claude' (Claude · CL)");
+    // Wrong names and accounts are refused before anything changes.
+    expect(teamTool(e, lead, "switch_agent_account", { agent: "nobody", account: "claude3" })).rejects.toThrow("no agent named 'nobody'");
+    expect(teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude9" })).rejects.toThrow("unknown account 'claude9'");
+    expect(teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude3", model: "gpt-9" })).rejects.toThrow("Claude has no model 'gpt-9'");
+    const said = await teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude3" });
+    expect(said).toStartWith("Moved worker to Claude · FS (account 'claude3')");
+    expect(said).toContain("It continues where it stopped, there, now.");
+    expect(e.chat(sub.id)?.account).toBe("claude3");
+    expect(store.chat(sub.id)?.account).toBe("claude3");
+    expect(e.limits.paused.has(sub.id)).toBe(false);
+    // The session came along: resumable under the new account.
+    expect(existsSync(join(dirB, "projects", "-some-project", `${sub.sessionId}.jsonl`))).toBe(true);
+    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [harbor] You're on another account now.")));
+    expect(e.transcript(sub.id).items.some((i) => i.kind === "notice" && i.text === "Switched to Claude · FS from Claude · CL (switched by the lead)")).toBe(true);
+    await until("its end", () => !e.running(sub.id));
+    // Its report wakes the lead: that turn ends before the store closes.
+    await until("the lead's report turn", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent worker] finished its turn")) && !e.running(lead.id));
+    expect(await teamTool(e, lead, "list_agents", {})).toContain("account 'claude3' (Claude · FS)");
+    expect(await teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude3" })).toBe("worker is already on Claude · FS (account 'claude3').");
+    store.close();
+  }, 30_000);
+
+  test("with automatic switching on and an account on its list, a limited sub moves by itself and the lead only gets a notice", async () => {
+    const { e, store, lead, sub, dirA } = team();
+    mkdirSync(join(dirA, "projects", "-some-project"), { recursive: true });
+    writeFileSync(join(dirA, "projects", "-some-project", `${sub.sessionId}.jsonl`), '{"type":"user"}\n');
+    store.set("limit_switch", "1");
+    store.set("limit_switch_accounts", JSON.stringify(["claude3"]));
+    e.trigger(sub.id, "hit the limit", false);
+    await until("the move", () => e.chat(sub.id)?.account === "claude3", 10_000);
+    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [harbor] You're on another account now.")));
+    expect(e.transcript(lead.id).items.some((i) => i.kind === "notice" && i.text === "worker hit the 5-hour limit on Claude · moving to Claude (automatic switch)")).toBe(true);
+    // No lead turn for it.
+    expect(texts(e.transcript(lead.id).items).some((t) => t.includes("[agent worker]"))).toBe(false);
+    await until("its end", () => !e.running(sub.id));
+    // Its report wakes the lead: that turn ends before the store closes.
+    await until("the lead's report turn", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent worker] finished its turn")) && !e.running(lead.id));
+    store.close();
+  }, 30_000);
+
+  test("a running sub moves when its turn ends; to another provider its next turn hands the conversation over", async () => {
+    const { e, store, lead, sub } = team();
+    e.trigger(sub.id, "slow work", false);
+    await until("the runner", () => e.running(sub.id));
+    const said = await teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "codex" });
+    expect(said).toStartWith("worker is running a turn on Claude · CL: it moves to Codex (account 'codex') as soon as that turn ends");
+    expect(said).toContain("It continues on Codex in a new session that starts with its conversation so far.");
+    expect(await teamTool(e, lead, "list_agents", {})).toContain("(moves to account 'codex' when this turn ends)");
+    expect(e.chat(sub.id)?.account).toBe("claude");
+    await until("the turn's end and the move", () => !e.running(sub.id) && e.chat(sub.id)?.account === "codex");
+    // Its report wakes the lead: that turn ends before the store closes.
+    await until("the lead's report turn", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent worker] finished its turn")) && !e.running(lead.id));
+    const c = e.chat(sub.id) as Chat;
+    expect(c.started).toBe(true);
+    // The session's provider is kept, so the next turn hands the conversation over.
+    expect(e.sessionKind(c)).toBe("Claude");
+    expect(e.handOver(sub.id)).toBe(true);
+    expect(e.takeForkPreamble(sub.id)).toContain("This conversation started on Claude and continues with you (Codex)");
+    store.close();
+  }, 30_000);
+});
+
 describe("fix and merge threads", () => {
   test("Fix with Claude starts a thread in the project that runs the fix prompt, once per issue", async () => {
     const { e, store } = setup();
@@ -577,7 +676,7 @@ describe("teams", () => {
     await until("the lead's turn on the report", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent tests] finished its turn")), 10_000);
     expect(e.transcript(lead.id).items.find((i) => i.kind === "notice")).toMatchObject({ icon: "report", text: "tests finished: echo: write the tests" });
     await until("quiet", () => !e.running(lead.id) && !e.running(sub.id));
-    expect(await e.tool(lead.id, "list_agents", {})).toContain("- tests [idle (now ago)] Claude · CL / Default");
+    expect(await e.tool(lead.id, "list_agents", {})).toContain("- tests [idle (now ago)] account 'claude' (Claude · CL) / Default");
     expect(await e.tool(sub.id, "send_message", { to: "lead", text: "done" })).toStartWith("Delivered to lead");
     await until("quiet again", () => !e.running(lead.id));
     await expect(e.tool(sub.id, "spawn_agent", { task: "x" })).rejects.toThrow("'spawn_agent' is only available to the lead");

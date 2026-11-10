@@ -91,10 +91,17 @@ component AgentCard inherits TouchArea {
     callback open();
     callback settle(bool);
     callback stop();
+    // The account menu (switch it to another account), at a window point: a right click, or a click on the account line.
+    callback account(length, length);
     height: 74px;
     mouse-cursor: pointer;
     clicked => {
         root.open();
+    }
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+            root.account(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
     }
     Rectangle {
         background: root.has-hover ? Theme.gray-100 : Theme.bg100;
@@ -139,15 +146,29 @@ component AgentCard inherits TouchArea {
         color: root.agent.status-color;
         overflow: elide;
     }
-    Text {
-        x: 36px;
-        y: 29px;
-        width: parent.width - 46px;
-        text: root.agent.model;
-        font-family: "Geist Mono";
-        font-size: 12px;
-        color: Theme.subtle;
-        overflow: elide;
+    acct := TipArea {
+        x: 32px;
+        y: 27px;
+        width: min(line.preferred-width + 8px, parent.width - 42px);
+        height: 18px;
+        tip: "Switch account…";
+        clicked => {
+            root.account(self.absolute-position.x, self.absolute-position.y + self.height + 2px);
+        }
+        Rectangle {
+            background: acct.has-hover ? Theme.gray-200 : transparent;
+            border-radius: 4px;
+        }
+        line := Text {
+            x: 4px;
+            width: parent.width - 8px;
+            text: root.agent.model;
+            font-family: "Geist Mono";
+            font-size: 12px;
+            color: acct.has-hover ? Theme.fg : Theme.subtle;
+            vertical-alignment: center;
+            overflow: elide;
+        }
     }
     Text {
         x: 10px;
@@ -197,6 +218,7 @@ export component TeamPanel inherits Rectangle {
     callback open-agent(int);
     callback settle-agent(int, bool);
     callback stop-agent(int);
+    callback agent-account(int, length, length);
     callback cancel-wakeup(int);
     callback wake-now(int);
     callback copy-hook(string);
@@ -236,6 +258,9 @@ export component TeamPanel inherits Rectangle {
                 }
                 stop => {
                     root.stop-agent(a.id);
+                }
+                account(x, y) => {
+                    root.agent-account(a.id, x, y);
                 }
             }
             if root.procs.length > 0: Rectangle {
@@ -573,6 +598,9 @@ export component TeamPanel inherits Rectangle {
                     }
                     stop => {
                         root.stop-agent(a.id);
+                    }
+                    account(x, y) => {
+                        root.agent-account(a.id, x, y);
                     }
                 }
             }

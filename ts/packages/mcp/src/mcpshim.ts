@@ -33,7 +33,7 @@ export function tools(role: string): JsonObject[] {
       },
       ["name", "command"],
     ),
-    tool("list_agents", "List the project's agents: name, provider/model, status (running/idle), current task and last report; for the lead, also the messages it queued for each (with their ids, for unqueue_message).", {}, []),
+    tool("list_agents", "List the project's agents: name, account id and provider/model, status (running, queued, paused at a usage limit, idle), current task and last report; for the lead, also the messages it queued for each (with their ids, for unqueue_message).", {}, []),
     tool(
       "find_chats",
       "Find Harbor chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (harbor://chat/…) to put in a reply so the user can open it.",
@@ -147,6 +147,17 @@ export function tools(role: string): JsonObject[] {
         "Retire a subagent whose job is done: stops its turn if one is running, drops the messages waiting for it, and takes it off the team and the user's Agents panel for good, so it can't be messaged or woken again. Its chat stays readable (its link, find_chats, read_agent). Processes it started keep running and report to you.",
         { agent: prop("string", "Agent name") },
         ["agent"],
+      ),
+      tool(
+        "switch_agent_account",
+        "Move a subagent to another account (e.g. one stuck at a usage limit), keeping its conversation: on the same provider it resumes its session there; on another provider (Claude <-> Codex) it starts a new session that begins with its conversation so far. If it waits at a limit or has messages waiting, it continues on the new account at once; if a turn is running, it moves when that turn ends. Only use accounts the user allows.",
+        {
+          agent: prop("string", "Agent name"),
+          account: prop("string", "Account id from list_models, e.g. 'claude3' or 'codex'"),
+          model: prop("string", "Model id from list_models (default: its model on the same provider, the provider's default on another)"),
+          effort: prop("string", "Reasoning effort (default: kept on the same provider)"),
+        },
+        ["agent", "account"],
       ),
       tool("list_models", "Providers, accounts and models you can give to subagents, with each account's current usage.", {}, []),
       tool(

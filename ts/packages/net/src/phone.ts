@@ -74,6 +74,9 @@ export interface PhoneEngine {
   forksOf(id: number): [number, number][];
   /** PROTOCOL.md `wait`: what wakes the chat once its own turn is done, null for nothing (hubs from 0.149). */
   wait?(id: number): Json;
+  /** Moves a chat to another account with its conversation (agents' Engine.switchAccount); throws why not. */
+  switchAccount?(id: number, to: string, opts: { model?: string | undefined; effort?: string | undefined; why?: string }): string;
+  chat?(id: number): Chat | undefined;
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -943,6 +946,18 @@ export class PhoneRoutes {
           throw e;
         }
       } else if (["account", "model", "effort", "access", "device", "fast"].some((k) => body[k] !== undefined && body[k] !== null)) return err(503, "run settings can't change in this build");
+      // A started subagent moves with its session (and goes on if it waited at a limit), as the desktop's Agents panel;
+      // while its turn runs it moves when that turn ends.
+      const eng = this.d.engine;
+      if (eng?.switchAccount && c.role === "sub" && c.started && c.home === "" && n.account !== c.account) {
+        try {
+          eng.switchAccount(c.id, n.account, { model: n.model, effort: n.effort, why: "switched on the phone" });
+        } catch (e) {
+          return err(409, e instanceof Error ? e.message : String(e));
+        }
+        const m = eng.chat?.(c.id);
+        if (m) n = { ...n, account: m.account, model: m.model, effort: m.effort, access: m.access, started: m.started, sessionId: m.sessionId };
+      }
       if (title !== null) n = { ...n, title: [...title].slice(0, 200).join("") };
       if (typeof body.settled === "boolean") {
         n = { ...n, settled: body.settled };

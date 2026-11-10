@@ -467,6 +467,7 @@ export component AppWindow inherits Window {
     callback open-agent(int);
     callback settle-agent(int, bool);
     callback stop-agent(int);
+    callback agent-account(int, length, length);
     callback cancel-wakeup(int);
     callback wake-now(int);
     callback copy-hook(string);
@@ -970,6 +971,9 @@ export component AppWindow inherits Window {
                             }
                             stop-agent(id) => {
                                 root.stop-agent(id);
+                            }
+                            agent-account(id, x, y) => {
+                                root.agent-account(id, x, y);
                             }
                             cancel-wakeup(id) => {
                                 root.cancel-wakeup(id);

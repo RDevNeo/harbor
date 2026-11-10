@@ -5,6 +5,23 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- A lead's subagent can move to another provider account with its conversation: the lead's new
+  `switch_agent_account(agent, account, model?, effort?)` tool, the account line (or a right click) on
+  an agent card in the Agents panel, and the subagent's own account picker (desktop and phone). On the
+  same provider its Claude session goes along to the new account's folder and resumes there; Claude ↔
+  Codex starts a new session that begins with the conversation so far. A subagent waiting at a usage
+  limit, or with messages waiting, goes on at once on the new account; one running a turn moves when
+  that turn ends.
+- A subagent that hits a usage limit tells its lead: a notice when it switches by itself (the automatic
+  switch chats already have, with the same opted-in accounts), and otherwise a message with why it
+  didn't move and which accounts could take it. `list_agents` names each agent's account id and says
+  when one is paused at a limit.
+
+### Fixed
+- An agent card in the Agents panel never said "paused · usage limit" (it looked at the wrong pause):
+  it does now, with the continue time when there is one.
+
 ## [0.168.0] - 2026-11-08
 
 ### Changed

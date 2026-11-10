@@ -3,7 +3,7 @@ import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
-import { type Chat, dataDir, hot, type Item, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
+import { type Chat, dataDir, hot, type Item, limits, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
 import { AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
@@ -730,6 +730,7 @@ export class Shell {
       this.data.store.set("agent_settle", saveMarks(marks));
       this.refreshTeam();
     };
+    w.agent_account = (id, x, y) => this.agentAccountMenu(id, x, y);
     w.stop_agent = (id) => {
       if (this.meshChat.stop(this.data.chat(id))) return;
       this.engine.pending.delete(id);
@@ -1207,13 +1208,15 @@ export class Shell {
     const { active, settled } = teamAgents(subs, (id) => this.engine.live(id), (c) => agentSettled(busy(c.id), marks, c, t));
     const row = (c: (typeof subs)[number], isSettled: boolean): AgentRow => {
       const since = this.engine.liveSince(c.id);
-      const card = agentCard({ running: since === null ? null : Math.floor((Date.now() - since) / 1000), queued: this.engine.pending.get(c.id)?.length ?? 0, paused: this.engine.paused.has(c.id) ? { at: null } : null, updated: c.updated }, isSettled, false, t, off);
+      const limit = this.engine.limits.paused.get(c.id);
+      const card = agentCard({ running: since === null ? null : Math.floor((Date.now() - since) / 1000), queued: this.engine.pending.get(c.id)?.length ?? 0, paused: limit ? { at: limit.at } : null, updated: c.updated }, isSettled, false, t, off);
       const acc = this.account(c.account);
       const kind = acc?.kind ?? kindOfAccount(c.account);
       return {
         id: c.id,
         name: c.name,
-        model: this.modelLabel(kind, c.model),
+        // Its account, then its model: the account line opens the account menu.
+        model: `${acc ? providers.short(acc) : c.account} · ${this.modelLabel(kind, c.model)}`,
         task: c.title,
         status: card.status.text,
         status_icon: card.status.icon === null ? "" : ICONS[card.status.icon],
@@ -3530,6 +3533,35 @@ export class Shell {
     this.popup("device", x, y, items, 300, true);
   }
 
+  /** An agent card's account menu: every account that's on, signed in and installed; a pick moves the agent there with
+   *  its conversation (Engine.switchAccount), now or when its running turn ends. */
+  private agentAccountMenu(id: number, x: number, y: number): void {
+    const c = this.data.chat(id);
+    if (!c) return;
+    if (c.home !== "") {
+      this.toast("This agent runs on another PC: switch its account there");
+      return;
+    }
+    const wanted = this.engine.wantAccount.get(id)?.to;
+    const pick = (to: string) => () => {
+      this.closePopup();
+      try {
+        this.toast(this.engine.switchAccount(id, to, { why: "switched by hand" }));
+      } catch (e) {
+        this.toast(`Couldn't switch ${c.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      this.refreshTeam();
+    };
+    const items: (PopItem & { act?: () => void })[] = [{ ...this.label(`${c.name}'s account`), kind: "caption" }];
+    for (const a of this.data.accounts) {
+      if (a.bin === null || a.off === true || a.loggedIn === false) continue;
+      const block = this.engine.limits.blocked(a.id);
+      const desc = a.id === wanted ? "Moves here when this turn ends" : block ? `At its ${block.cap !== null ? "cap" : "limit"} · resets ${limits.when(block.until)}` : a.kind !== (this.account(c.account)?.kind ?? a.kind) ? "New session, conversation kept" : "";
+      items.push(this.item(providers.short(a), pick(a.id), { desc, checked: a.id === c.account }));
+    }
+    this.popup("agent-account", x, y, items, 280);
+  }
+
   private setSel(patch: Partial<Sel>): void {
     if (this.view === "chat") {
       const c = this.data.chat(this.chatId);
@@ -3537,6 +3569,16 @@ export class Shell {
       if (this.meshChat.foreign(c) && patch.device === undefined) {
         const n = { account: c.account, model: c.model, effort: c.effort, access: c.access, ...patch };
         this.meshChat.patch(c, { account: n.account, model: n.model, effort: n.effort, access: n.access });
+        return;
+      }
+      // A started subagent moves with its session, and goes on if it waited at a limit (as the Agents panel's menu).
+      if (c.role === "sub" && c.started && patch.account !== undefined && patch.account !== c.account) {
+        try {
+          this.toast(this.engine.switchAccount(c.id, patch.account, { model: patch.model, effort: patch.effort, why: "switched by hand" }));
+        } catch (e) {
+          this.toast(`Couldn't switch ${c.name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        this.refreshComposer();
         return;
       }
       if (patch.account !== undefined) c.account = patch.account;

@@ -10,6 +10,8 @@ import type { Chat, Store } from "./store.ts";
 import { UsageCtl } from "./usage_ctl.ts";
 
 export const RESUME = "[harbor] Your usage limit reset. Continue the task from where you stopped.";
+/** A chat moved to another account mid-task (a switch by hand or an automatic one). */
+export const MOVED = RESUME.replace("Your usage limit reset", "You're on another account now");
 /** Hits with the same reset time before Harbor stops trying and asks. */
 const MAX_TRIES = 3;
 /** Sub-agents running at once under one lead. */
@@ -96,6 +98,8 @@ export interface LimitsHost {
   persist(chatId: number): void;
   /** Moves the chat to another account: in memory and in the store. */
   setAccount(chatId: number, account: string): void;
+  /** A sub-agent's limit news for its lead: a notice in the lead's chat, and with `wake` a message that starts a lead turn. */
+  teamNote?(chatId: number, text: string, detail: string, wake: boolean): void;
   /** The session file of a Claude session under an account's config folder. */
   sessionFile(configDir: string | null, sessionId: string): string | null;
   now?(): number;
@@ -250,6 +254,8 @@ export class Limits {
   readonly hit = new Set<number>();
   /** Chats to move to another account once their limited turn has exited. */
   readonly switch = new Map<number, string>();
+  /** Limit hits already told to a sub-agent's lead (chat:account:until), so a retry doesn't tell again. */
+  private readonly told = new Set<string>();
   readonly ctl: UsageCtl;
 
   constructor(readonly host: LimitsHost) {
@@ -461,6 +467,8 @@ export class Limits {
       this.host.notice(chatId, "clock", `Hit the ${label} limit · moving to ${a ? accountName(a) : to}`, said);
       this.switch.set(chatId, to);
       this.save();
+      const from = this.host.account(chat.account);
+      this.host.teamNote?.(chatId, `hit the ${label} limit on ${from ? accountName(from) : chat.account} · moving to ${a ? accountName(a) : to} (automatic switch)`, said, false);
       return;
     }
     this.pause(chatId, true);
@@ -477,6 +485,7 @@ export class Limits {
     const target = first2 === undefined ? undefined : this.host.account(first2);
     const note = first2 === undefined ? text : `${text} · Continue on ${target ? accountName(target) : first2} available`;
     this.host.noteLimit(chatId, chat.account, waits, note);
+    if (chat.role === "sub") this.tellLead(chatId, chat.account, block, pausedAt, said);
     // Other chats already waiting on this account move to the new time.
     const others = [...this.paused].filter(([id, p]) => id !== chatId && p.account === chat.account);
     for (const [id, p] of others) this.pause(id, p.resume);
@@ -735,7 +744,7 @@ export class Limits {
     this.paused.delete(chatId);
     if (p && p.timer !== null) this.host.store.deleteTimer(p.timer);
     const parts: string[] = [];
-    if (!p || p.resume) parts.push(RESUME.replace("Your usage limit reset", "You're on another account now"));
+    if (!p || p.resume) parts.push(MOVED);
     parts.push(...(this.host.pending.get(chatId) ?? []));
     this.host.pending.delete(chatId);
     this.syncPending();
@@ -766,7 +775,45 @@ export class Limits {
     return true;
   }
 
-    autoTarget(chatId: number): string | undefined {
+  /** A sub-agent that waits at a limit: its lead hears it once per block, with why it didn't move on its own and
+   *  which accounts could take it (switch_agent_account). */
+  private tellLead(chatId: number, account: string, block: Block, pausedAt: number | null, said: string): void {
+    const chat = this.host.chat(chatId);
+    if (!chat || !this.host.teamNote) return;
+    const key = `${chatId}:${account}:${block.until}`;
+    if (this.told.has(key)) return;
+    this.told.add(key);
+    const at = this.now();
+    const from = this.host.account(account);
+    const label = windowLabel(block.kind);
+    const then = pausedAt !== null ? `it continues there at ${when(pausedAt, at)}` : `it waits (resets ${when(block.until, at)}; it doesn't continue by itself)`;
+    const text = `hit the ${label} limit on ${from ? accountName(from) : account} (account '${account}') · ${then}`;
+    const { on } = this.switchSettings();
+    const why = on ? "No account on the automatic-switch list has quota left, so it didn't move by itself." : "Automatic account switching is off on this PC, so it didn't move by itself.";
+    const others = this.switchTargets(chatId, false).map((id) => {
+      const a = this.host.account(id);
+      return `'${id}'${a ? ` (${accountName(a)})` : ""}`;
+    });
+    const how =
+      others.length > 0
+        ? `Accounts that could take it now: ${others.join(", ")}. To move it there, with its conversation: switch_agent_account(agent: ${JSON.stringify(chat.name)}, account: <id>). Only use an account the user allows.`
+        : "No other account of this provider can take it now.";
+    this.host.teamNote(chatId, text, `${why} ${how}${said.trim() === "" ? "" : `\n\nIt said: ${said.trim()}`}`, true);
+  }
+
+  /** The chat moved to another account: it no longer waits for the old one's reset. The pause's resume flag (its turn
+   *  was cut off and goes on with `MOVED`), or null when it wasn't paused. */
+  takePause(chatId: number): boolean | null {
+    this.switch.delete(chatId);
+    const p = this.paused.get(chatId);
+    if (!p) return null;
+    this.paused.delete(chatId);
+    if (p.timer !== null) this.host.store.deleteTimer(p.timer);
+    this.syncPending();
+    return p.resume;
+  }
+
+  autoTarget(chatId: number): string | undefined {
     return this.switchSettings().on ? this.switchTargets(chatId, true)[0] : undefined;
   }
 }
