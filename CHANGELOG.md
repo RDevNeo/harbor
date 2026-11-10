@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Jobs started with `start_process` keep running through a Harbor restart or follow-main update, in
+  their own systemd scope as turns do. Harbor finds them again with their logs and original owner;
+  jobs that finish during the restart still report their real exit status to the chat that started
+  them. Stop ends the whole job, including children in other process groups.
+
 ## [0.169.2] - 2026-11-10
 
 ### Fixed

@@ -83,7 +83,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       e.procs = e.procs.filter((x) => !(x.lead === leadId && x.name === name));
       e.dropEnded(leadId, name);
       e.procs.push(p);
-      return `Started '${name}' (pid ${p.pid}). It keeps running after your turn ends. You'll get a [process ${name}] message when it prints a local URL or exits; use process_logs to check on it.`;
+      return `Started '${name}' (pid ${p.pid}). It keeps running after your turn ends and across Harbor restarts. You'll get a [process ${name}] message when it prints a local URL or exits; use process_logs to check on it.`;
     }
     case "process_logs": {
       const name = arg(a, "name");

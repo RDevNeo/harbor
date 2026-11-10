@@ -1,12 +1,14 @@
 // An agent's CLI kills its own background shells when its turn ends, so long-running work runs
-// here: its own process group, outliving Harbor, found again by pid and start time.
-import { closeSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeSync } from "node:fs";
-import { join } from "node:path";
+// here: a durable runner in its own systemd scope, found again by pid and start time.
+// Its exit file survives a reload too: even work completed while Harbor was away reports to its owner.
+import { closeSync, existsSync, ftruncateSync, openSync, readFileSync, readSync, rmSync, statSync, writeSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { ProcRow, Store } from "@harbor/store";
-import { agentEnv } from "./detach.ts";
-import { newUuid, stateDir } from "./paths.ts";
+import * as detach from "./detach.ts";
+import { stateDir } from "./paths.ts";
 import { pids, procStart } from "./procfs.ts";
 import { childPath } from "./providers.ts";
+import * as turnscope from "./turnscope.ts";
 
 export type ProcEvent = { type: "url"; id: number; url: string } | { type: "exited"; id: number; code: number | null };
 export type ProcSink = (ev: ProcEvent) => void;
@@ -37,15 +39,19 @@ export class Proc {
     return tailFile(this.log, n);
   }
 
-  /** Stops the whole process group (npm → node → vite…): TERM, and KILL for whatever is still in it a few seconds later. */
+  /** Stops the scope (or process group without systemd): TERM, then KILL after a grace period. */
   stop(): void {
     const pid = this.pid;
-    signalGroup("SIGTERM", pid);
+    const dir = runnerDir(this.log);
+    const scope = dir === null ? undefined : turnscope.scopeOf(pid, dir);
+    if (scope !== undefined) turnscope.terminate(scope);
+    else signalGroup("SIGTERM", pid);
     const t = Date.now();
     const timer = setInterval(() => {
-      if (group(pid).length === 0) clearInterval(timer);
+      if (scope !== undefined ? !existsSync(scope) : group(pid).length === 0) clearInterval(timer);
       else if (Date.now() - t > STOP_GRACE_MS) {
-        signalGroup("SIGKILL", pid);
+        if (scope !== undefined) turnscope.kill(scope);
+        else signalGroup("SIGKILL", pid);
         clearInterval(timer);
       }
     }, 200);
@@ -254,13 +260,45 @@ function readRange(path: string, from: number, to: number): string {
   }
 }
 
-/** For processes adopted after a restart (not our children): polls the pid. */
-function watchExit(id: number, pid: number, ticks: number, sink: ProcSink): void {
-  const timer = setInterval(() => {
-    if (alive(pid, ticks)) return;
-    clearInterval(timer);
-    sink({ type: "exited", id, code: null });
-  }, 2000);
+/** New processes use the existing detached runner; old installations recorded a single .log. */
+function runnerDir(log: string): string | null {
+  return basename(log) === "out" ? dirname(log) : null;
+}
+
+/** A runner's durable completion status; null while it runs (or an old process without a runner). */
+function exitCode(log: string): number | null {
+  const dir = runnerDir(log);
+  if (dir === null) return null;
+  try {
+    const text = readFileSync(join(dir, "exit"), "utf8").trim();
+    return /^-?\d+$/.test(text) ? Number(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remove a completed process's private runner files together; legacy processes had only a log. */
+export function cleanup(log: string): void {
+  const dir = runnerDir(log);
+  rmSync(dir ?? log, { recursive: dir !== null, force: true });
+}
+
+/** Watches our durable runner as well as adopted processes, which are not Harbor's children. */
+function watchExit(id: number, pid: number, ticks: number, log: string, sink: ProcSink): void {
+  const check = (): boolean => {
+    const code = exitCode(log);
+    if (code === null && alive(pid, ticks)) return false;
+    sink({ type: "exited", id, code });
+    return true;
+  };
+  // The caller installs the Proc in its engine before even an already-finished runner reports.
+  setTimeout(() => {
+    if (check()) return;
+    const timer = setInterval(() => {
+      if (check()) clearInterval(timer);
+    }, 400);
+    timer.unref();
+  }, 0);
 }
 
 export interface SpawnOpts {
@@ -273,50 +311,42 @@ export interface SpawnOpts {
 }
 
 export async function spawn(store: Store, o: SpawnOpts, sink: ProcSink): Promise<Proc> {
-  const dir = logDir();
-  mkdirSync(dir, { recursive: true });
-  const log = join(dir, `${newUuid()}.log`);
-  // Owner-only: dev servers print secrets (database URLs, tokens) too.
-  const env: Record<string, string | undefined> = { ...process.env };
-  // Agents start these: same credentials as the agent itself.
-  for (const [k, v] of await agentEnv(true)) {
-    if (v === null || v === undefined) delete env[k];
-    else env[k] = v;
-  }
-  env.PATH = childPath();
-  env.FORCE_COLOR = "0";
-  // Python and others buffer stdout when it is not a terminal; URLs would arrive late.
-  env.PYTHONUNBUFFERED = "1";
-  const fd = openSync(log, "a", 0o600);
-  let child;
-  try {
-    // detached: its own session and process group, so stop() reaches every child and it outlives Harbor.
-    child = Bun.spawn(["bash", "-lc", o.cmd], { cwd: o.cwd, env, stdin: "ignore", stdout: fd, stderr: fd, detached: true });
-  } finally {
-    closeSync(fd);
-  }
-  const pid = child.pid;
-  const id = store.addProc({ lead: o.lead, repoId: o.repoId, owner: o.owner, name: o.name, cmd: o.cmd, cwd: o.cwd, pid, startTicks: startTicks(pid) ?? 0, log, url: null });
-  void child.exited.then(() => sink({ type: "exited", id, code: child.exitCode }));
-  child.unref();
+  const cmd = detach.command("bash");
+  cmd.args = ["-lc", o.cmd];
+  cmd.cwd = o.cwd;
+  cmd.mergeOutput = true;
+  cmd.env.set("PATH", childPath());
+  cmd.env.set("FORCE_COLOR", "0");
+  // Python and others buffer stdout without a terminal; URLs should arrive immediately.
+  cmd.env.set("PYTHONUNBUFFERED", "1");
+  const started = Date.now();
+  // The runner loads app credentials itself: never serialize their values to cmd.json.
+  // It lives outside Harbor's cgroup (as turns do), and writes its exit status before going away.
+  const [dir, meta] = await detach.spawn(cmd, null, false, true, { chat_id: o.owner, kind: "Process", started: Math.floor(started / 1000), base: 0, pid: 0, pid_start: 0 }, join(logDir(), "runners"));
+  const log = join(dir, "out");
+  const id = store.addProc({ lead: o.lead, repoId: o.repoId, owner: o.owner, name: o.name, cmd: o.cmd, cwd: o.cwd, pid: meta.pid, startTicks: meta.pid_start, log, url: null });
+  watchExit(id, meta.pid, meta.pid_start, log, sink);
   watchUrl(id, log, sink);
   capLog(log);
-  return new Proc(id, o.name, o.lead, o.owner, o.cmd, pid, log, null);
+  return new Proc(id, o.name, o.lead, o.owner, o.cmd, meta.pid, log, null, started);
 }
 
-/** Processes from a previous Harbor run that are still alive; the rest are dropped. */
+/** Recover running jobs and completed jobs alike: their owner still needs the completion report. */
 export function adopt(store: Store, sink: ProcSink): Proc[] {
-  const out: Proc[] = [];
-  for (const r of store.procs() as ProcRow[]) {
-    if (!alive(r.pid, r.startTicks)) {
-      store.deleteProc(r.id);
-      rmSync(r.log, { force: true });
-      continue;
-    }
-    watchExit(r.id, r.pid, r.startTicks, sink);
+  return store.procs().map((r: ProcRow) => {
+    watchExit(r.id, r.pid, r.startTicks, r.log, sink);
     capLog(r.log);
     if (r.url === null) watchUrl(r.id, r.log, sink);
-    out.push(new Proc(r.id, r.name, r.lead, r.owner, r.cmd, r.pid, r.log, r.url));
-  }
-  return out;
+    const dir = runnerDir(r.log);
+    let started: number | undefined;
+    if (dir !== null) {
+      try {
+        const meta = detach.readMeta(readFileSync(join(dir, "meta.json"), "utf8"));
+        if (meta) started = meta.started * 1000;
+      } catch {
+        // Older processes did not keep a start timestamp.
+      }
+    }
+    return new Proc(r.id, r.name, r.lead, r.owner, r.cmd, r.pid, r.log, r.url, started);
+  });
 }

@@ -145,6 +145,11 @@ function signal(list: readonly number[], sig: NodeJS.Signals): void {
   }
 }
 
+/** Asks every process in a managed scope to stop, including children in other process groups. */
+export function terminate(scope: string): void {
+  signal(procs(scope), "SIGTERM");
+}
+
 /** Kills everything in the scope at once (also processes forking meanwhile). */
 export function kill(scope: string): void {
   try {

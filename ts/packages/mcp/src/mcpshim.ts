@@ -25,7 +25,7 @@ export function tools(role: string): JsonObject[] {
     tool("stop_process", "Stop a process (and everything it started).", { name: prop("string", "Process name") }, ["name"]),
     tool(
       "start_process",
-      "Run a long-running or slow command (dev server, watcher, data pull, long build) owned by Harbor, so it survives your turn. Returns at once; you get a [process name] message when it prints a local URL or exits.",
+      "Run a long-running or slow command (dev server, watcher, data pull, long build) owned by Harbor, so it survives your turn and Harbor restarts. Returns at once; you get a [process name] message when it prints a local URL or exits.",
       {
         name: prop("string", "Short name, e.g. 'dev', 'convex', 'db-pull'"),
         command: prop("string", "Shell command, e.g. 'npm run dev'"),

@@ -1930,7 +1930,7 @@ export class Engine {
     const kept = p.tail(400);
     this.procs.splice(i, 1);
     this.store.deleteProc(p.id);
-    rmSync(p.log, { force: true });
+    procs.cleanup(p.log);
     const how = e.code === 0 ? "finished" : e.code !== null ? `exited with code ${e.code}` : "was stopped";
     this.notice(p.lead, "process", `${p.name} ${how}`, tail);
     this.dropEnded(p.lead, p.name);

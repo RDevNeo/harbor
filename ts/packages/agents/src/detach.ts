@@ -146,6 +146,8 @@ export interface Cmd {
   env: Map<string, string | null>;
   /** A Claude session file the runner compacts first when it has grown long (compaction.ts). */
   compact?: string;
+  /** A managed process keeps stdout and stderr together in its durable log. */
+  mergeOutput?: boolean;
 }
 
 export function command(program: string): Cmd {
@@ -159,7 +161,7 @@ export function sortedEnv(c: Cmd): [string, string | null][] {
 /** `cmd.json`, byte for byte what the Rust app writes (serde_json's maps keep keys sorted). */
 export function cmdJson(c: Cmd, input: boolean, agentEnv: boolean): string {
   const json = { program: c.program, args: c.args, cwd: c.cwd, env: sortedEnv(c), input, agent_env: agentEnv };
-  return compact(c.compact === undefined ? json : { ...json, compact: c.compact });
+  return compact({ ...json, ...(c.compact === undefined ? {} : { compact: c.compact }), ...(c.mergeOutput ? { merge_output: true } : {}) });
 }
 
 let lastStamp = 0n;
@@ -666,7 +668,7 @@ export async function run(args: readonly string[]): Promise<void> {
     try {
       // Owner-only: the agent's whole stream (prompts, files it read, command output).
       outFd = openSync(join(dir, "out"), "a", 0o600);
-      errFd = openSync(join(dir, "err"), "a", 0o600);
+      errFd = openSync(join(dir, at(spec, "merge_output") === true ? "out" : "err"), "a", 0o600);
     } catch {
       return;
     }

@@ -5,9 +5,13 @@ import { join } from "node:path";
 import { Store } from "@harbor/store";
 import * as git from "../src/git.ts";
 import * as procs from "../src/procs.ts";
+import { reap } from "./reap.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-gitprocs-"));
-afterAll(() => rmSync(base, { recursive: true, force: true }));
+afterAll(() => {
+  reap(base);
+  rmSync(base, { recursive: true, force: true });
+});
 
 test("ssh_remotes_have_web_urls", () => {
   for (const u of ["git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "ssh://git@github.com:22/o/r", "https://github.com/o/r.git"]) expect(git.webUrl(u)).toBe("https://github.com/o/r");
@@ -73,13 +77,18 @@ test("a started process is recorded, finds its URL, outlives a restart and is st
     // The next Harbor finds it again.
     const again = procs.adopt(store, () => {});
     expect(again.map((x) => x.pid)).toEqual([p.pid]);
-    expect(procs.group(p.pid).length).toBe(2);
+    expect(procs.group(p.pid).length).toBeGreaterThanOrEqual(2);
     p.stop();
     for (let i = 0; i < 50 && procs.group(p.pid).length > 0; i++) await Bun.sleep(100);
     expect(procs.group(p.pid)).toEqual([]);
-    // Gone: forgotten at the next start.
-    expect(procs.adopt(store, () => {})).toEqual([]);
-    expect(store.procs()).toEqual([]);
+    // Stopped while Harbor was away: keep its log until the completion is delivered.
+    const ended: procs.ProcEvent[] = [];
+    expect(procs.adopt(store, (e) => ended.push(e)).map((x) => x.pid)).toEqual([p.pid]);
+    for (let i = 0; i < 50 && !ended.some((e) => e.type === "exited"); i++) await Bun.sleep(20);
+    expect(ended).toContainEqual({ type: "exited", id: p.id, code: null });
+    expect(existsSync(p.log)).toBe(true);
+    store.deleteProc(p.id);
+    procs.cleanup(p.log);
     expect(existsSync(p.log)).toBe(false);
   } finally {
     store.close();
