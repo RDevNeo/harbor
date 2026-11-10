@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.171.0] - 2026-11-10
+
+### Changed
+- A new chat's project picker is a compact dropdown under the project's name ("No project" under
+  "What should we work on?"), on the desktop and the phone: a search field, then each project with
+  its icon or tinted initials and where it is, "No project" first and "Add project" last. Typing
+  filters; arrow keys and Enter pick, Esc or a click outside closes.
+
 ## [0.170.1] - 2026-11-10
 
 ### Fixed
