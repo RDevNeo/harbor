@@ -4,7 +4,7 @@
 # boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes. Two exceptions:
 # a bundle-only release (plan's where=runner) builds on the runner itself (.github/runner/build.sh,
 # jobs quick and quick-aarch64) and publishes from package: seconds of `bun build` don't wait a
-# minute and more for a sandbox. And the phone app always builds on the runner
+# minute and more for a sandbox. And the phone app always builds and is signed on the runner
 # (.github/runner/android.sh, job android): on a sandbox it mostly waited for the lazy disk.
 #
 # Harbor is TypeScript on Bun (ts/); build.sh compiles it into one executable per architecture.
@@ -98,9 +98,10 @@ jobs:
           # The phone app is rebuilt only when android/ or browser/ (its Servo engine is inside the
           # APK) changed since the latest release, or a new runtime goes out: otherwise that
           # release's signed APK is attached again and the manifest keeps naming it, so phones
-          # aren't asked to update to the same app.
+          # aren't asked to update to the same app. A run by hand always builds it: the dry run
+          # tries the job, and its download cache saved on main is the one tags can restore.
           apk=build apkcode=()
-          if [ "$lane" = bundle ] && git diff --quiet "$tag" HEAD -- android/ browser/; then
+          if [ "$lane" = bundle ] && [[ "$GITHUB_REF" == refs/tags/v* ]] && git diff --quiet "$tag" HEAD -- android/ browser/; then
             apk=keep
           else
             IFS=.- read -r ma mi pa _ <<< "$ver"
@@ -283,17 +284,18 @@ jobs:
           name: harbor-aarch64
           path: out/harbor-aarch64/
 
-  # The unsigned phone app, when plan says it changed, on the runner beside the desktop builds
-  # (.github/runner/android.sh); package adds the browser engine and signs it.
+  # The phone app, when plan says it changed, on the runner beside the desktop builds
+  # (.github/runner/android.sh): with the browser engine (browser.yml's harbor-servo-android) and
+  # signed here, so package only attaches it. The engine's job ends about when plan does.
   android:
-    needs: plan
+    needs: [plan, browser]
     if: needs.plan.outputs.apk == 'build'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      # android/build.sh's downloads, keyed by the SHA-256s it pins them by. Saved by every run;
-      # a tag finds the ones a run on main saved (the dry run), or the same tag's.
+      # android/build.sh's downloads, keyed by the SHA-256s it pins them by. A tag can only restore
+      # what a run on main saved (the dry run), or the same tag's.
       - name: Download key
         id: deps
         run: echo "key=harbor-android-deps-$(grep -oE '\b[0-9a-f]{64}\b' android/build.sh | sort | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
@@ -301,14 +303,53 @@ jobs:
         with:
           path: ~/.cache/harbor-android-deps
           key: ${{ steps.deps.outputs.key }}
-      - name: Build the unsigned APK (on this runner)
+      - uses: actions/download-artifact@v8
+        if: needs.browser.outputs.found-android == 'true'
+        with:
+          name: harbor-servo-android
+          path: servo
+      # A release needs the engine for both ABIs (each ABI's folder must hold every library the app
+      # loads on it: Android installs one); a run by hand goes without when there is none.
+      - name: Build the APK (on this runner)
         env:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
-        run: .github/runner/android.sh out/harbor-android/harbor-android-unsigned.apk
+          SERVO_LIBS: ${{ github.workspace }}/servo
+          SERVO_REQUIRED: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '' }}
+        run: |
+          [ -f servo/arm64-v8a/libharborservo.so ] || echo "::warning::no Android browser engine in this APK"
+          .github/runner/android.sh out/harbor-android-unsigned.apk
+      # Runs by hand without the signing secrets sign with a throwaway key, only to prove it signs.
+      - name: Sign the APK
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -eu
+          umask 077
+          ks="$RUNNER_TEMP/android.jks"
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$ks"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::ANDROID_KEYSTORE is not set"; exit 1
+          else
+            keytool -genkeypair -keystore "$ks" -storepass throwaway -alias harbor \
+              -keyalg RSA -keysize 2048 -validity 1 -dname "CN=throwaway" >/dev/null 2>&1
+            ANDROID_KEYSTORE_PASS=throwaway ANDROID_KEY_ALIAS=harbor
+          fi
+          export ANDROID_KEYSTORE_PASS
+          bt="$ANDROID_HOME/build-tools/34.0.0"
+          mkdir -p out/harbor-android
+          "$bt/apksigner" sign --ks "$ks" --ks-pass env:ANDROID_KEYSTORE_PASS --ks-key-alias "${ANDROID_KEY_ALIAS:-harbor}" \
+            --out out/harbor-android/harbor-android.apk out/harbor-android-unsigned.apk
+          rm -f "$ks" out/harbor-android/harbor-android.apk.idsig
+          "$bt/apksigner" verify --print-certs out/harbor-android/harbor-android.apk | head -2
+          "$bt/aapt2" dump badging out/harbor-android/harbor-android.apk | head -3
       - uses: actions/upload-artifact@v7
         with:
-          name: harbor-android-unsigned
-          path: out/harbor-android/harbor-android-unsigned.apk
+          name: harbor-android
+          path: out/harbor-android/harbor-android.apk
+          compression-level: 0
 
   # Saves the snapshot and deletes the build's sandbox, beside the packaging: a release doesn't wait
   # for it, and it never fails one. Runs also when the build failed: then it only deletes.
@@ -358,8 +399,8 @@ jobs:
     with:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
-  # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
-  # archives and their checksum lists, and the attestations.
+  # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the archives and
+  # their checksum lists, and the attestations (job android signs the APK).
   package:
     needs: [plan, build, build-aarch64, quick, quick-aarch64, android, browser, video, slint]
     # One pair of desktop builds runs (plan's where), the other is skipped; android only with a new APK.
@@ -367,9 +408,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
+      # All but the phone's browser engine: job android already put it into the APK.
       - uses: actions/download-artifact@v8
         with:
           path: art
+          pattern: '!harbor-servo-android'
       # The phone app didn't change since the latest release (plan): that release's signed APK again.
       - name: The latest release's APK
         if: needs.plan.outputs.apk == 'keep'
@@ -393,50 +436,6 @@ jobs:
           # An absolute path: the runtime resolves a relative one inside its own embedded files.
           said=$(/tmp/rt/harbor-runtime-x86_64 smoke-bundle "$PWD/art/harbor-x86_64/harbor-app.js")
           [ "$said" = "harbor ${{ needs.plan.outputs.version }}" ] || { echo "::error::the bundle on runtime $rt says: $said"; exit 1; }
-      # Runs by hand without the signing secrets sign with a throwaway key, only to prove it signs.
-      - name: Sign the APK
-        if: needs.plan.outputs.apk == 'build'
-        env:
-          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
-          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        run: |
-          set -eu
-          umask 077
-          ks="$RUNNER_TEMP/android.jks"
-          if [ -n "$ANDROID_KEYSTORE" ]; then
-            printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$ks"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "::error::ANDROID_KEYSTORE is not set"; exit 1
-          else
-            keytool -genkeypair -keystore "$ks" -storepass throwaway -alias harbor \
-              -keyalg RSA -keysize 2048 -validity 1 -dname "CN=throwaway" >/dev/null 2>&1
-            ANDROID_KEYSTORE_PASS=throwaway ANDROID_KEY_ALIAS=harbor
-          fi
-          export ANDROID_KEYSTORE_PASS
-          bt="$ANDROID_HOME/build-tools/34.0.0"
-          [ -x "$bt/apksigner" ] || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" >/dev/null
-          mkdir -p art/harbor-android
-          # The built-in browser's engine (browser.yml engine-android) goes in before signing,
-          # with its id (assets/servo.id: the next release reuses it from this APK).
-          # Each ABI's folder must hold every library the app loads on it: Android installs one
-          # folder (the phone's primary ABI) and nothing from the others.
-          if [ "${{ needs.browser.outputs.found-android }}" = "true" ] && [ -f art/harbor-servo-android/arm64-v8a/libharborservo.so ] \
-             && [ -f art/harbor-servo-android/armeabi-v7a/libharborservo.so ]; then
-            (cd art/harbor-servo-android && mkdir -p lib assets && cp -r arm64-v8a armeabi-v7a lib/ && cp servo.id assets/servo.id \
-              && zip -q -r ../harbor-android-unsigned/harbor-android-unsigned.apk lib/*/libharborservo.so lib/*/libc++_shared.so assets/servo.id)
-            "$bt/zipalign" -f 4 art/harbor-android-unsigned/harbor-android-unsigned.apk /tmp/aligned.apk
-            mv /tmp/aligned.apk art/harbor-android-unsigned/harbor-android-unsigned.apk
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "::error::a release needs the Android browser engine"; exit 1
-          else
-            echo "::warning::no Android browser engine in this APK"
-          fi
-          "$bt/apksigner" sign --ks "$ks" --ks-pass env:ANDROID_KEYSTORE_PASS --ks-key-alias "${ANDROID_KEY_ALIAS:-harbor}" \
-            --out art/harbor-android/harbor-android.apk art/harbor-android-unsigned/harbor-android-unsigned.apk
-          rm -f "$ks" art/harbor-android/harbor-android.apk.idsig
-          "$bt/apksigner" verify --print-certs art/harbor-android/harbor-android.apk | head -2
-          "$bt/aapt2" dump badging art/harbor-android/harbor-android.apk | head -3
       - name: Assemble
         run: |
           set -eu

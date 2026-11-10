@@ -48,7 +48,7 @@ else KSPASS="file:${KEY%.jks}.pass"; fi
 
 OUT=${OUT:-$HERE/build/harbor-android.apk}
 mkdir -p "$(dirname "$OUT")"
-W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+W=$(mktemp -d); trap 'kill $(jobs -p) 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$W"' EXIT
 
 # Harbor's own fonts (Geist, Geist Mono, the Lucide icon subset), shared with the desktop.
 mkdir -p "$W/assets/fonts"
@@ -77,15 +77,25 @@ fetch() { # url sha256 file
   echo "$2  $3.part" | sha256sum -c --quiet >/dev/null 2>&1 || { echo "checksum mismatch: $1" >&2; rm -f "$3.part"; exit 1; }
   mv "$3.part" "$3"
 }
-fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$SHERPA/sherpa-onnx-v$SHERPA-android-static-link-onnxruntime.tar.bz2" \
-  "$SHERPA_SHA" "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2"
 fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" "$VAD_SHA" "$DEPS/silero_vad.onnx"
 cp "$DEPS/silero_vad.onnx" "$W/assets/"
-# Asr.ABIS lists these: on any other ABI the app doesn't load the library (#97).
-for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
-  mkdir -p "$W/lib/$abi"
-  tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$W/lib/$abi" --strip-components=3 "./jniLibs/$abi/libsherpa-onnx-jni.so"
-done
+# Asr.ABIS lists these: on any other ABI the app doesn't load the library (#97). The libraries are
+# kept unpacked in $DEPS (the archive is 35 MB of bzip2: a pass over it takes seconds), all the
+# missing ABIs from one pass.
+ABIS=${ANDROID_ABIS:-arm64-v8a armeabi-v7a}
+sherpa_libs() {
+  local d="$DEPS/sherpa-onnx-$SHERPA-jni" want=() abi
+  for abi in $ABIS; do [ -f "$d/$abi/libsherpa-onnx-jni.so" ] || want+=("./jniLibs/$abi/libsherpa-onnx-jni.so"); done
+  if [ ${#want[@]} != 0 ]; then
+    fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$SHERPA/sherpa-onnx-v$SHERPA-android-static-link-onnxruntime.tar.bz2" \
+      "$SHERPA_SHA" "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2"
+    rm -rf "$d.part" && mkdir -p "$d.part" "$d"
+    tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$d.part" --strip-components=2 "${want[@]}"
+    for abi in "$d.part"/*; do rm -rf "$d/${abi##*/}" && mv "$abi" "$d/"; done
+    rm -rf "$d.part"
+  fi
+  for abi in $ABIS; do mkdir -p "$W/lib/$abi" && cp "$d/$abi/libsherpa-onnx-jni.so" "$W/lib/$abi/"; done
+}
 
 # Gmail's native consent (Gmail.java): Google's AuthorizationClient only ships in Play services'
 # client libraries, and it needs only these (Kotlin, AndroidX fragments and the rest of
@@ -112,15 +122,19 @@ LIBCP=$(IFS=:; echo "${LIBS[*]}")
 # the NDK (android/servo/build.sh, or CI's cached build): $SERVO_LIBS/<abi>/libharborservo.so
 # with its libc++_shared.so,
 # default android/servo/out. Packaged for each of ANDROID_ABIS it exists for (arm64-v8a and
-# armeabi-v7a in releases; each ABI folder must hold every library: Android installs one). SERVO_REQUIRED=1 (releases) fails without the arm64 one.
+# armeabi-v7a in releases; each ABI folder must hold every library: Android installs one).
+# SERVO_REQUIRED=1 (releases) fails without one of them. Its id ($SERVO_LIBS/servo.id, browser.yml)
+# goes in as assets/servo.id: the next release reuses the engine from this APK.
 SERVO_LIBS=${SERVO_LIBS:-$HERE/servo/out}
-for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
+SERVO_ABIS=()
+for abi in $ABIS; do
   if [ -f "$SERVO_LIBS/$abi/libharborservo.so" ]; then
-    cp "$SERVO_LIBS/$abi/libharborservo.so" "$SERVO_LIBS/$abi/libc++_shared.so" "$W/lib/$abi/"
-  elif [ "$abi" = arm64-v8a ] && [ -n "${SERVO_REQUIRED:-}" ]; then
+    SERVO_ABIS+=("$abi")
+  elif [ -n "${SERVO_REQUIRED:-}" ]; then
     echo "no browser engine at $SERVO_LIBS/$abi/libharborservo.so" >&2; exit 1
   fi
 done
+[ ${#SERVO_ABIS[@]} = 0 ] || [ ! -f "$SERVO_LIBS/servo.id" ] || cp "$SERVO_LIBS/servo.id" "$W/assets/servo.id"
 
 # Where the app signs in (Config.java): RDevNeo's Clerk app and account service by default.
 CLERK_URL=${HARBOR_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
@@ -169,53 +183,45 @@ esac
 "$BT/aapt2" link -I "$JAR" --manifest "$HERE/AndroidManifest.xml" -o "$W/base.apk" "$W/res.zip" \
   -A "$W/assets" --java "$W/gen" --min-sdk-version 26 --target-sdk-version 34 \
   --version-code "$CODE" --version-name "$VER"
+# The native libraries (sherpa-onnx's, the browser engine's: 230 MB to deflate) go into the APK
+# in the background, beside compiling, the tests and dexing.
+(
+  sherpa_libs
+  for abi in "${SERVO_ABIS[@]}"; do cp "$SERVO_LIBS/$abi/libharborservo.so" "$SERVO_LIBS/$abi/libc++_shared.so" "$W/lib/$abi/"; done
+  cd "$W" && zip -qr base.apk lib
+) & libs=$!
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR:$LIBCP" -d "$W/classes" \
   $(find "$HERE/src" "$HERE/third_party/sherpa-onnx/src" "$W/gen" -name '*.java')
-# Net's connection rules are plain Java: check them on this JVM before packaging.
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.AddrTest
-# And the slash menu's matching (the desktop's rules, src/slash.rs).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/SlashTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.SlashTest
-# And the composer's @ and # tags (src/tags.rs).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/TagTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.TagTest
-# And when an automatic update may install (Quiet).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/UpdateTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.UpdateTest
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/MinisignTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.MinisignTest
-# And the chat list's workspace filter (src/sidebar.rs).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/WsFilterTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.WsFilterTest
-# And which PC the calls go to on a flaky network (Route).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/RouteTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.RouteTest
-# And messages shown the moment they're sent (Echo), a PC's addresses tried staggered (Race).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/EchoTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.EchoTest
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/RaceTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.RaceTest
-# And when text in the composer is a message copied with its images (ClipMatch).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/ClipMatchTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.ClipMatchTest
-# And the model badges' names and the agent strip's stops (Labels).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/LabelsTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.LabelsTest
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/LookTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.LookTest
-# And what a video knows while it arrives (Stream, Video).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/BlocksTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.BlocksTest
-# And the player's double-tap seek: 5 s each way, adding up, held at the start and the end (Jump).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/JumpTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.JumpTest
-# And the Discord screens' QR pixels, captcha taps and lines (DiscordKit).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/DiscordKitTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.DiscordKitTest
+echo "[${SECONDS}s] compiled"
+# The unit tests (test/*Test.java: plain Java, each a main that exits non-zero on a failure) on this
+# JVM before packaging: compiled together, run one after another in one JVM, beside dexing.
+TESTS=()
+for t in "$HERE"/test/*Test.java; do TESTS+=("$(basename "$t" .java)"); done
+cat > "$W/RunTests.java" <<'JAVA'
+public final class RunTests {
+    public static void main(String[] names) throws Throwable {
+        for (String n : names) {
+            try {
+                Class.forName("dev.harbor.app." + n).getMethod("main", String[].class).invoke(null, (Object) new String[0]);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                System.err.println(n + " threw:");
+                e.getCause().printStackTrace();
+                System.exit(1);
+            }
+        }
+        System.exit(0);
+    }
+}
+JAVA
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" \
+  "$W/RunTests.java" "$HERE"/test/*Test.java
+java -cp "$W/classes:$W/test" RunTests "${TESTS[@]}" & tests=$!
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class') "${LIBS[@]}"
+echo "[${SECONDS}s] dexed"
+wait $tests || { echo "an Android unit test failed" >&2; exit 1; }
+wait $libs || { echo "packaging the native libraries failed" >&2; exit 1; }
+echo "[${SECONDS}s] tested, libraries in"
 (cd "$W" && zip -qj base.apk classes*.dex)
-(cd "$W" && zip -qr base.apk lib)
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
 if [ -n "${UNSIGNED:-}" ]; then
   cp "$W/aligned.apk" "$OUT"
