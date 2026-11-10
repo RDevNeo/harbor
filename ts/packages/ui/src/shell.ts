@@ -59,7 +59,7 @@ import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
 import { ChatCaptcha, FRAME_W, hereCaptcha, noChatCaptcha } from "./chatcaptcha.ts";
 import { fakeCaptcha } from "./fakecaptcha.ts";
-import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, railStep, railTip, type Row } from "./picker.ts";
+import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, railStep, railTip, type Row, workspaceLine } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
@@ -3381,7 +3381,7 @@ export class Shell {
     this.railIds = accounts.map((a) => a.id);
     this.win.picker_rail_reveal = this.picker.rail === null ? -1 : this.railIds.indexOf(this.picker.rail);
     const look: PickerLook = {
-      label: (a) => mesh.get(a.id)?.label ?? providers.short(a),
+      label: (a) => workspaceLine(mesh.get(a.id)) ?? mesh.get(a.id)?.label ?? providers.short(a),
       models: (a) => {
         const m = mesh.get(a.id)?.models ?? [];
         return m.length > 0 && isSharedId(a.id) ? m.map(([id, label]) => ({ id, label, more: false })) : providers.staticModels(a.kind);

@@ -40,6 +40,13 @@ export interface PickerLook {
 
 export const plainLook: PickerLook = { label: (a) => providers.short(a), models: (a) => providers.staticModels(a.kind), ok: () => true };
 
+/** A model row's second line: whose workspace the account is ("Dana's Workspace"); null when nobody is known. The
+ *  provider shows as the row's icon. */
+export function workspaceLine(s: { shown: string; person: string } | undefined): string | null {
+  const who = s === undefined ? "" : s.shown !== "" ? s.shown : s.person;
+  return who === "" ? null : `${who}'s Workspace`;
+}
+
 /** The rows the picker shows, and the "More models" row's label and count when there is one. */
 export function pickerRows(s: PickerState, accounts: readonly Account[], favorites: readonly [string, string][], locked: Kind | null, look: PickerLook = plainLook): { rows: Row[]; more: [string, number] | null } {
   const row = (a: Account, m: providers.Model): Row => ({ account: a.id, kind: a.kind, model: m.id, label: m.label, sub: look.label(a), enabled: (locked === null || locked === a.kind) && providers.installed(a) && look.ok(a) });

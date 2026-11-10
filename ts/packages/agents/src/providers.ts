@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
 import { dataDir, home, writePrivate } from "./paths.ts";
@@ -349,13 +349,213 @@ export function applyUsage(accounts: readonly Account[]): void {
   }
 }
 
-export function claudeModels(): Model[] {
-  return [
-    m("claude-fable-5-1", "Fable 5.1", false),
-    m("claude-opus-5-5", "Opus 5.5", false),
-    m("claude-sonnet-5-5", "Sonnet 5.5", false),
-    m("claude-haiku-5-5", "Haiku 5.5", true),
-  ];
+/** A model the Claude CLI knows: its id, family ("opus") and name ("Opus 5.5"). */
+export interface ClaudeKnown {
+  id: string;
+  family: string;
+  label: string;
+}
+
+/** The families the picker lists, in Claude Code's /model order (Ctrl+1… follow it). */
+const CLAUDE_FAMILIES = ["opus", "fable", "sonnet", "haiku"];
+
+/** Used when the CLI can't be read: the list as of Claude Code 2.1.322. */
+const CLAUDE_FALLBACK: ClaudeKnown[] = [
+  { id: "claude-opus-5-5", family: "opus", label: "Opus 5.5" },
+  { id: "claude-fable-5-2", family: "fable", label: "Fable 5.2" },
+  { id: "claude-fable-5-1", family: "fable", label: "Fable 5.1" },
+  { id: "claude-sonnet-5-5", family: "sonnet", label: "Sonnet 5.5" },
+  { id: "claude-haiku-5-5", family: "haiku", label: "Haiku 5.5" },
+];
+
+/** The model table inside Claude Code's bundle: `{id:"claude-fable-5-2",family:"fable",display_name:"Fable 5.2",…}`. */
+const CLAUDE_ENTRY = /^\{id:"(claude-[a-z0-9-]{1,40})",family:"([a-z]{1,20})",display_name:"([^"\\]{1,40})"/;
+const CLAUDE_MARK = '{id:"claude-';
+
+/** The models in a piece of the CLI's bundle (each once). */
+export function parseClaudeModels(text: string): ClaudeKnown[] {
+  const out: ClaudeKnown[] = [];
+  for (let i = text.indexOf(CLAUDE_MARK); i >= 0; i = text.indexOf(CLAUDE_MARK, i + 1)) {
+    const hit = CLAUDE_ENTRY.exec(text.slice(i, i + 160));
+    if (hit === null || out.some((x) => x.id === hit[1])) continue;
+    out.push({ id: hit[1] ?? "", family: hit[2] ?? "", label: hit[3] ?? "" });
+  }
+  return out;
+}
+
+/** [generation, minor] from an id: "claude-opus-5-5" → [5, 5], "claude-opus-4-0" / "claude-opus-5" → [4, 0] / [5, 0]. */
+function claudeVersion(id: string): [number, number] {
+  const n = (id.match(/\d+/g) ?? []).map(Number).filter((x) => x < 1000);
+  return [n[0] ?? 0, n[1] ?? 0];
+}
+
+/** Without Claude Code's served menu: the newest of each family from the newest generation up front (opus, fable, sonnet, haiku), then
+ *  under "More models" the newest generation's older ones and the generation before's newest of each family. */
+export function claudeModelList(known: readonly ClaudeKnown[]): Model[] {
+  const ours = known.filter((k) => CLAUDE_FAMILIES.includes(k.family));
+  if (ours.length === 0) return claudeModelList(CLAUDE_FALLBACK);
+  const ver = (k: ClaudeKnown): number => claudeVersion(k.id)[0] * 1000 + claudeVersion(k.id)[1];
+  const top = Math.max(...ours.map((k) => claudeVersion(k.id)[0]));
+  const newest = (gen: number): ClaudeKnown[] =>
+    CLAUDE_FAMILIES.flatMap((f) => {
+      const of = ours.filter((k) => k.family === f && claudeVersion(k.id)[0] === gen).sort((a, b) => ver(b) - ver(a));
+      return of.length > 0 ? [of[0] as ClaudeKnown] : [];
+    });
+  const main = newest(top);
+  const order = (a: ClaudeKnown, b: ClaudeKnown): number => ver(b) - ver(a) || CLAUDE_FAMILIES.indexOf(a.family) - CLAUDE_FAMILIES.indexOf(b.family);
+  const older = ours.filter((k) => claudeVersion(k.id)[0] === top && !main.includes(k)).sort(order);
+  const before = newest(Math.max(...ours.map((k) => claudeVersion(k.id)[0]).filter((g) => g < top), -1)).sort(order);
+  return [...main.map((k) => m(k.id, k.label, false)), ...[...older, ...before].map((k) => m(k.id, k.label, true))];
+}
+
+/** The Claude CLI's models, kept per CLI version (its resolved path, size and time) in Harbor's data folder. */
+export function claudeCachePath(): string {
+  return join(dataDir(), "claude-models.json");
+}
+
+let clKnown: ClaudeKnown[] | null = null;
+let clKey = "";
+let clCheckedAt = 0;
+let clScanning: Promise<void> | null = null;
+
+/** Which CLI is installed now, as a cache key ("" when there is none). */
+function claudeCliKey(binPath: string | null): string {
+  if (binPath === null) return "";
+  try {
+    const real = realpathSync(binPath);
+    const st = statSync(real);
+    return `${real}|${st.size}|${Math.floor(st.mtimeMs)}`;
+  } catch {
+    return "";
+  }
+}
+
+/** Reads the CLI's bundle in pieces (it is hundreds of MB: never whole) for its model table; keeps what it finds. */
+export function scanClaudeModels(binPath: string | null = which("claude")): Promise<void> {
+  if (clScanning !== null) return clScanning;
+  const key = claudeCliKey(binPath);
+  clScanning = (async () => {
+    try {
+      if (binPath === null || key === "") return;
+      const real = key.split("|")[0] ?? "";
+      const found: ClaudeKnown[] = [];
+      // Searched as bytes, and only the few hits decoded: a piece of the next chunk is kept so none is cut.
+      const mark = Buffer.from(CLAUDE_MARK, "latin1");
+      let carry = Buffer.alloc(0);
+      for await (const chunk of Bun.file(real).stream()) {
+        const buf = carry.length > 0 ? Buffer.concat([carry, chunk]) : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        let i = buf.indexOf(mark);
+        let keep = Math.max(0, buf.length - 160);
+        for (; i >= 0; i = buf.indexOf(mark, i + 1)) {
+          if (i + 160 > buf.length) {
+            keep = Math.min(keep, i);
+            break;
+          }
+          for (const k of parseClaudeModels(buf.toString("latin1", i, i + 160))) if (!found.some((x) => x.id === k.id)) found.push(k);
+        }
+        carry = Buffer.from(buf.subarray(keep));
+      }
+      if (found.length === 0) return;
+      clKnown = found;
+      clKey = key;
+      try {
+        mkdirSync(dataDir(), { recursive: true });
+        writeFileSync(claudeCachePath(), `${JSON.stringify({ key, models: found })}\n`);
+      } catch {
+        // no data folder: the list stays in memory
+      }
+    } catch {
+      // unreadable CLI: the last list (or the built-in one) stays
+    } finally {
+      clCheckedAt = Date.now();
+      clScanning = null;
+    }
+  })();
+  return clScanning;
+}
+
+/** Claude Code's own /model menu, as it keeps it per account (`<config>/cache/model-catalog/<org>-cc.json`, fetched
+ *  by the CLI): its models in its order, "main" up front and the rest (its "More models") after. Null: none readable. */
+export function parseClaudeCatalog(doc: unknown): Model[] | null {
+  const list = arr(at(at(at(doc, "catalog"), "config"), "models"));
+  const out: Model[] = [];
+  for (const x of list) {
+    const id = str(at(x, "id"));
+    const label = str(at(x, "name"));
+    if (!/^claude-[a-z0-9-]+$/.test(id) || label === "" || out.some((o) => o.id === id)) continue;
+    out.push(m(id, label, str(at(x, "section")) !== "main"));
+  }
+  return out.some((o) => !o.more) ? [...out.filter((o) => !o.more), ...out.filter((o) => o.more)] : null;
+}
+
+/** Every Claude config folder's catalog files (~/.claude, ~/.claudeN), newest fetch first. */
+function claudeCatalogs(): { path: string; at: number }[] {
+  const h = home();
+  const dirs = [join(h, ".claude")];
+  try {
+    for (const n of readdirSync(h)) if (/^\.claude\+?\d+$/.test(n)) dirs.push(join(h, n));
+  } catch {
+    // no home folder
+  }
+  const out: { path: string; at: number }[] = [];
+  for (const d of dirs) {
+    const dir = join(d, "cache/model-catalog");
+    let names: string[] = [];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      if (!n.endsWith("-cc.json")) continue;
+      try {
+        out.push({ path: join(dir, n), at: statSync(join(dir, n)).mtimeMs });
+      } catch {
+        // gone since the listing
+      }
+    }
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+let clMenu: Model[] | null = null;
+let clMenuKey = "";
+
+/** The newest readable /model menu any account's CLI fetched (read again only when the files change). */
+export function claudeMenu(): Model[] | null {
+  const files = claudeCatalogs();
+  const key = files.map((f) => `${f.path}|${f.at}`).join(";");
+  if (key === clMenuKey) return clMenu;
+  clMenuKey = key;
+  clMenu = null;
+  let best = -1;
+  for (const f of files) {
+    const doc = readJson(f.path);
+    const fetched = f64(at(doc, "fetchedAt")) ?? f.at;
+    const list = fetched > best ? parseClaudeCatalog(doc) : null;
+    if (list !== null) [clMenu, best] = [list, fetched];
+  }
+  return clMenu;
+}
+
+/** Claude's models as Claude Code shows them in /model: its served menu when it has fetched one, else the models its
+ *  bundle knows (read again in the background when the CLI changes), else a built-in list. Checked once a minute. */
+export function claudeModels(refresh = process.env.NODE_ENV !== "test"): Model[] {
+  if (refresh && Date.now() - clCheckedAt > 60_000 && clScanning === null) {
+    clCheckedAt = Date.now();
+    claudeMenu();
+    const bin = which("claude");
+    const key = claudeCliKey(bin);
+    if (key !== "" && key !== clKey) {
+      const c = readJson(claudeCachePath());
+      const list = at(c, "models");
+      if (str(at(c, "key")) === key && Array.isArray(list)) {
+        clKnown = list.map((x) => ({ id: str(at(x, "id")), family: str(at(x, "family")), label: str(at(x, "label")) })).filter((x) => x.id !== "" && x.label !== "");
+        clKey = key;
+      } else void scanClaudeModels(bin);
+    }
+  }
+  return (refresh ? clMenu : null) ?? claudeModelList(clKnown ?? CLAUDE_FALLBACK);
 }
 
 /** Codex: the newest model of each family from the newest generation is listed; the rest is legacy. */

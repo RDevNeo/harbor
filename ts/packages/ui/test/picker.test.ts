@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Account } from "@harbor/agents";
 import { tipParts } from "../src/logic/tips.ts";
-import { emptyText, favoritesValue, parseFavorites, pickerRows, railStep, railTip } from "../src/picker.ts";
+import { emptyText, favoritesValue, parseFavorites, pickerRows, railStep, railTip, workspaceLine } from "../src/picker.ts";
 
 const acc = (id: string, kind: Account["kind"], bin: string | null): Account => ({ id, kind, name: id, email: "", badge: "", plan: "", configDir: null, bin, loggedIn: true, usage: [] });
 const claude = acc("claude", "Claude", "/usr/bin/claude");
@@ -59,4 +59,11 @@ test("Tab and Shift+Tab step the rail: the favourites, then each account, round"
   // One no longer on the rail starts from the favourites.
   expect(railStep(ids, "gone", 1)).toBe("claude");
   expect(railStep([], null, 1)).toBeNull();
+});
+
+test("a model row's second line is its owner's workspace, without the provider", () => {
+  expect(workspaceLine({ shown: "Fizz", person: "Dana Reyes" })).toBe("Fizz's Workspace");
+  expect(workspaceLine({ shown: "", person: "Dana Reyes" })).toBe("Dana Reyes's Workspace");
+  expect(workspaceLine({ shown: "", person: "" })).toBeNull();
+  expect(workspaceLine(undefined)).toBeNull();
 });

@@ -263,3 +263,79 @@ test("Codex's sign-in email comes from its saved ID token", () => {
   expect(p.codexEmail({ OPENAI_API_KEY: "k" })).toBe("");
   expect(p.codexEmail(null)).toBe("");
 });
+
+test("Claude's models: the newest of each family from the newest generation up front, older ones under More models", () => {
+  const text = [
+    `x{id:"claude-opus-5-5",family:"opus",display_name:"Opus 5.5",knowledge_cutoff:"June 2026"}`,
+    `{id:"claude-fable-5-1",family:"fable",display_name:"Fable 5.1"},{id:"claude-fable-5-2",family:"fable",display_name:"Fable 5.2"}`,
+    `{id:"claude-haiku-4-5",family:"haiku",display_name:"Haiku 4.5"}{id:"claude-haiku-5-5",family:"haiku",display_name:"Haiku 5.5"}`,
+    `{id:"claude-sonnet-5-5",family:"sonnet",display_name:"Sonnet 5.5"}{id:"claude-sonnet-4-6",family:"sonnet",display_name:"Sonnet 4.6"}`,
+    `{id:"claude-opus-4-8",family:"opus",display_name:"Opus 4.8"}{id:"claude-opus-4-1",family:"opus",display_name:"Opus 4.1"}`,
+    `{id:"claude-mythos-5-2",family:"mythos",display_name:"Mythos 5.2"}{id:"claude-3-5-sonnet",family:"sonnet",display_name:"Sonnet 3.5"}`,
+    `{id:"claude-opus-5-5",family:"opus",display_name:"Opus 5.5"} {id:"claude-broken`,
+  ].join(";");
+  const list = p.claudeModelList(p.parseClaudeModels(text));
+  expect(list.filter((x) => !x.more).map((x) => x.label)).toEqual(["Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5"]);
+  // A chat already on Fable 5.1 still finds it; only the generation before's newest of each family; no Mythos.
+  expect(list.filter((x) => x.more).map((x) => x.id)).toEqual(["claude-fable-5-1", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]);
+  // Nothing readable: the built-in list.
+  const fallback = p.claudeModelList([]);
+  expect(fallback.filter((x) => !x.more).map((x) => x.id)).toEqual(["claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5"]);
+  expect(fallback.some((x) => x.id === "claude-fable-5-1")).toBe(true);
+  expect(p.claudeModels(false)[1]?.id).toBe("claude-fable-5-2");
+});
+
+test("Claude's models are read from the CLI's bundle in pieces, entries across piece boundaries included", async () => {
+  const entries = ["fable-5-2:fable:Fable 5.2", "opus-5-5:opus:Opus 5.5", "sonnet-5-5:sonnet:Sonnet 5.5", "haiku-5-5:haiku:Haiku 5.5", "fable-5-1:fable:Fable 5.1"].map((e) => {
+    const [id, family, label] = e.split(":");
+    return Buffer.from(`{id:"claude-${id}",family:"${family}",display_name:"${label}",x:1}`, "latin1");
+  });
+  const buf = Buffer.alloc(3 << 20, 0x61);
+  // Each straddles a power-of-two boundary, wherever the reader's pieces end.
+  [1 << 16, 1 << 17, 1 << 18, 1 << 20, 2 << 20].forEach((at, i) => entries[i]?.copy(buf, at - 20));
+  const fake = join(base, "claude-cli");
+  writeFileSync(fake, buf);
+  await p.scanClaudeModels(fake);
+  const saved = JSON.parse(readFileSync(p.claudeCachePath(), "utf8")) as { key: string; models: { id: string }[] };
+  expect(saved.key.startsWith(fake)).toBe(true);
+  expect(saved.models.map((x) => x.id).sort()).toEqual(["claude-fable-5-1", "claude-fable-5-2", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]);
+  expect(p.claudeModels(false).map((x) => [x.label, x.more])).toEqual([
+    ["Opus 5.5", false],
+    ["Fable 5.2", false],
+    ["Sonnet 5.5", false],
+    ["Haiku 5.5", false],
+    ["Fable 5.1", true],
+  ]);
+});
+
+test("Claude's models follow Claude Code's own /model menu: the newest fetched catalog of any account, in its order", () => {
+  const h = join(base, "catalog-home");
+  const cat = (dir: string, fetchedAt: number, models: [string, string, string][]) => {
+    mkdirSync(join(h, dir, "cache/model-catalog"), { recursive: true });
+    const doc = { version: 2, fetchedAt, catalog: { surface: "cc", config: { id: "cc", models: models.map(([id, name, section]) => ({ id, name, section, description: "x" })) } } };
+    writeFileSync(join(h, dir, "cache/model-catalog", `org-${fetchedAt}-cc.json`), JSON.stringify(doc));
+  };
+  cat(".claude", 1000, [
+    ["claude-opus-5-5", "Opus 5.5", "main"],
+    ["claude-fable-5-1", "Fable 5.1", "main"],
+  ]);
+  cat(".claude3", 2000, [
+    ["claude-fable-5-1", "Fable 5.1", "overflow"],
+    ["claude-opus-5-5", "Opus 5.5", "main"],
+    ["claude-fable-5-2", "Fable 5.2", "main"],
+    ["claude-sonnet-5-5", "Sonnet 5.5", "main"],
+    ["claude-haiku-5-5", "Haiku 5.5", "main"],
+    ["claude-haiku-4-5-20251001", "Haiku 4.5", "overflow"],
+    ["not a model", "Bad", "main"],
+  ]);
+  writeFileSync(join(h, ".claude/cache/model-catalog/broken-cc.json"), "{");
+  const was = process.env.HOME;
+  process.env.HOME = h;
+  try {
+    expect(p.claudeMenu()?.map((x) => `${x.more ? "more " : ""}${x.label}`)).toEqual(["Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5", "more Fable 5.1", "more Haiku 4.5"]);
+  } finally {
+    process.env.HOME = was;
+  }
+  expect(p.parseClaudeCatalog({ catalog: { config: { models: [] } } })).toBeNull();
+  expect(p.parseClaudeCatalog(undefined)).toBeNull();
+});
