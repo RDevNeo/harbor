@@ -102,12 +102,12 @@ export function railStep(ids: readonly string[], cur: string | null, dir: 1 | -1
 
 /** `Favorites.migrate`'s list, or null when nothing changes. */
 export function migrateFavorites(list: readonly [string, string][], shared: readonly { id: string; kind: string; copies?: { pc: string; account: string }[] }[]): [string, string][] | null {
+  // OpenCode is one entry on the whole mesh (meshaccounts.ts OPENCODE_IDENT): every id it had moves to that one's.
+  const oc = shared.find((s) => s.kind === "opencode")?.id;
   let changed = false;
   const out: [string, string][] = [];
   for (const [a, m] of list) {
-    const old = /^opencode@(.+)\/([^/]+)$/.exec(a);
-    const to = old === null ? undefined : shared.find((s) => s.kind === "opencode" && s.id !== a && (s.copies ?? []).some((c) => c.pc === old[1] && c.account === old[2]))?.id;
-    const id = to ?? a;
+    const id = oc !== undefined && (a === "opencode" || /^opencode[@:]/.test(a)) ? oc : a;
     if (id !== a) changed = true;
     if (!out.some(([x, y]) => x === id && y === m)) out.push([id, m]);
     else changed = true;
@@ -126,8 +126,8 @@ export class Favorites {
     return this.list.some(([x, y]) => x === a && y === m);
   }
 
-  /** Favorites starred on another PC's OpenCode before it was known by its owner ("opencode@<pc>/<id>", 0.171.3): moved to
-   *  the entry that PC's copy is in now. Only ids a shared entry claims change; the rest stays. */
+  /** Favorites starred on an OpenCode of a PC ("opencode@<pc>/<id>", "opencode:<owner hash>" of 0.171.3, this PC's
+   *  "opencode"): moved to the mesh's one OpenCode entry. The rest stays. */
   migrate(shared: readonly { id: string; kind: string; copies?: { pc: string; account: string }[] }[]): void {
     const next = migrateFavorites(this.list, shared);
     if (next === null) return;

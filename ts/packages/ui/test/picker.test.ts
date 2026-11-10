@@ -68,23 +68,28 @@ test("a model row's second line is its owner's workspace, without the provider",
   expect(workspaceLine(undefined)).toBeNull();
 });
 
-test("a favorite on another PC's OpenCode by its old id moves to the entry that PC's copy is in now", () => {
+test("favorites on any PC's OpenCode, by every id it had, move to the mesh's one OpenCode entry", () => {
   const shared = [
-    { id: "opencode", kind: "opencode", copies: [{ pc: "", account: "opencode" }, { pc: "ts:laptop", account: "opencode" }] },
-    { id: "opencode:abc", kind: "opencode", copies: [{ pc: "ts:desk", account: "opencode" }] },
+    { id: "claude", kind: "claude", copies: [{ pc: "", account: "claude" }] },
+    { id: "opencode:any", kind: "opencode", copies: [{ pc: "ts:laptop", account: "opencode" }, { pc: "ts:desk", account: "opencode" }] },
   ];
   const list: [string, string][] = [
     ["opencode@ts:laptop/opencode", "nvidia/glm"],
-    ["opencode@ts:desk/opencode", "x/y"],
+    ["opencode:8c4711dc5ea5f09937b5308c", "x/y"],
     ["opencode", "nvidia/glm"],
     ["opencode@ts:gone/opencode", "a/b"],
     ["claude", "claude-opus-5-5"],
   ];
   expect(migrateFavorites(list, shared)).toEqual([
-    ["opencode", "nvidia/glm"],
-    ["opencode:abc", "x/y"],
-    ["opencode@ts:gone/opencode", "a/b"],
+    ["opencode:any", "nvidia/glm"],
+    ["opencode:any", "x/y"],
+    ["opencode:any", "a/b"],
     ["claude", "claude-opus-5-5"],
   ]);
-  expect(migrateFavorites([["claude", "m"]], shared)).toBeNull();
+  // This PC has OpenCode: its own id is the entry's.
+  const here = [{ id: "opencode", kind: "opencode", copies: [{ pc: "", account: "opencode" }] }];
+  expect(migrateFavorites([["opencode:any", "m"], ["opencode", "m"]], here)).toEqual([["opencode", "m"]]);
+  expect(migrateFavorites([["claude", "m"], ["opencode:any", "m"]], shared)).toBeNull();
+  // No OpenCode on the mesh: nothing to move to.
+  expect(migrateFavorites([["opencode@ts:desk/opencode", "m"]], [])).toBeNull();
 });

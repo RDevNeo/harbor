@@ -108,20 +108,20 @@ describe("the mesh's accounts, each once", () => {
       ["Claude · ML", "", "claude", "Mara Lind"],
       ["Claude · DR", "", "claude2", "Dana Reyes"],
       ["Claude · DaR", "", "claude3", "Dario Reis"],
-      ["OpenCode · ML", "", "opencode", "Mara Lind"],
-      ["OpenCode · DR", "ts:laptop", "opencode", "Dana Reyes"],
+      // OpenCode is nobody's: one entry, this PC's, the laptop's a copy of it.
+      ["OpenCode", "", "opencode", ""],
       ["Codex · DaR", "ts:tower", "codex", "Dario Reis"],
     ]);
     const dana = v[1]!;
     expect(dana.also).toEqual(["laptop"]);
     expect(dana.id).toBe("claude2");
-    // Another PC's: picked by key, runs there, its own models.
-    const oc = v[4]!;
-    expect(isSharedId(oc.id)).toBe(true);
-    expect(oc.models).toEqual([["opencode/big", "Big"]]);
-    expect(sharedTarget(v, oc.id)).toEqual({ pc: "ts:laptop", account: "opencode", kind: "opencode", label: "OpenCode · DR", why: "" });
+    expect(v[3]!.also).toEqual(["laptop"]);
+    // Another PC's: picked by key, runs there.
+    const codex = v[4]!;
+    expect(isSharedId(codex.id)).toBe(true);
+    expect(sharedTarget(v, codex.id)).toEqual({ pc: "ts:tower", account: "codex", kind: "codex", label: "Codex · DaR", why: "tower is offline" });
     // An off PC's shows, with why it can't be picked.
-    expect(v[5]!.why).toBe("tower is offline");
+    expect(v[4]!.why).toBe("tower is offline");
     expect(sharedTarget(v, "claude2")).toMatchObject({ pc: "", account: "claude2", why: "" });
     expect(sharedTarget(v, "nope")).toBeNull();
   });
@@ -132,8 +132,7 @@ describe("the mesh's accounts, each once", () => {
       ["claude", "", false, "ML"],
       ["claude2", "", true, "DR"],
       ["claude3", "", true, "DaR"],
-      ["opencode", "", false, "ML"],
-      ["opencode", "ts:laptop", true, "DR"],
+      ["opencode", "", false, ""],
       ["codex", "ts:tower", true, "DaR"],
     ]);
     expect(chatOwner(v, { home: "", account: "claude" })).toBeNull();
@@ -164,20 +163,46 @@ describe("the mesh's accounts, each once", () => {
     expect(here.filter((s) => s.kind === "codex").length).toBe(2);
   });
 
-  test("one person's OpenCode on two PCs is one entry (it has no sign-in: its PC's owner says whose); another person's stays apart", () => {
+  test("OpenCode is one entry on the whole mesh, whoever's PCs have it: it has no sign-in", () => {
     const deskTwo = peer("ts:desk2", "desk2", "Mara Lind", true, [told("opencode", "opencode", "")]);
     const v = sharedAccounts({ me, local: mine, peers: [laptopPc, deskTwo], provs: new Map([laptopPc, deskTwo].map((p) => [p.id, p.provs])) });
-    // Mara's (this PC and desk2) is one, run here; Dana's (laptop) is her own.
-    expect(v.filter((s) => s.kind === "opencode").map((s) => [s.pc, s.also])).toEqual([
-      ["", ["desk2"]],
-      ["ts:laptop", []],
-    ]);
-    // A PC whose owner isn't known keeps its OpenCode apart.
+    // This PC has it: it runs here, the others are copies.
+    expect(v.filter((s) => s.kind === "opencode").map((s) => [s.id, s.pc, s.label, s.photo, s.also])).toEqual([["opencode", "", "OpenCode", "", ["desk2", "laptop"]]]);
+    // A PC whose owner isn't known is the same OpenCode.
     const nobody = peer("ts:box", "box", "", true, [told("opencode", "opencode", "")]);
     const w = sharedAccounts({ me, local: mine, peers: [nobody], provs: new Map([[nobody.id, nobody.provs]]) });
-    expect(w.filter((s) => s.kind === "opencode").length).toBe(2);
-    expect(sharedIdent({ kind: "opencode", ident: "" }, " Mara Lind ")).toBe(sharedIdent({ kind: "opencode", ident: "" }, "mara lind"));
-    expect(sharedIdent({ kind: "codex", ident: "" }, "Mara Lind")).toBe("");
+    expect(w.filter((s) => s.kind === "opencode").length).toBe(1);
+    expect(sharedIdent({ kind: "opencode", ident: "" })).toBe(sharedIdent({ kind: "opencode", ident: "x" }));
+    expect(sharedIdent({ kind: "codex", ident: "" })).toBe("");
+  });
+
+  test("without OpenCode here, the one entry runs on Auto's pick: the PC that is on with the most free memory", () => {
+    const pc = (id: string, online: boolean, ram: number | null) => ({ ...peer(`ts:${id}`, id, `${id} owner`, online, [told("opencode", "opencode", "", { photo: "https://img.example/p.png" })]), ram });
+    const run = (peers: ReturnType<typeof pc>[]) => {
+      const v = sharedAccounts({ me, local: mine.filter((a) => a.kind !== "OpenCode"), peers, provs: new Map(peers.map((p) => [p.id, p.provs])) }).filter((s) => s.kind === "opencode");
+      expect(v.length).toBe(1);
+      return v[0]!;
+    };
+    const oc = run([pc("a", true, 2000), pc("b", true, 9000), pc("c", false, 50000)]);
+    expect([oc.id, oc.pc, oc.label, oc.badge, oc.photo, oc.person, oc.others, oc.why]).toEqual(["opencode:any", "ts:b", "OpenCode", "", "", "", false, ""]);
+    expect(oc.copies?.map((c) => c.pc)).toEqual(["ts:a", "ts:b", "ts:c"]);
+    expect(sharedTarget([oc], "opencode:any")).toMatchObject({ pc: "ts:b", account: "opencode" });
+    // No PC says its memory (older Harbor): the first that is on; none on: the first, greyed.
+    expect(run([pc("a", false, null), pc("b", true, null)]).pc).toBe("ts:b");
+    expect(run([pc("a", false, null), pc("b", false, null)]).why).toBe("a is offline");
+  });
+
+  test("the real shape of 0.171.3's bug: three PCs of three owners, each with OpenCode and none told a sign-in, are one entry", () => {
+    // This PC (Mara's) has OpenCode; the laptop (Dana's) tells one with her photo; a third PC's (Dario's) Claude is
+    // Mara's sign-in (her photo), the photo that made 0.171.3's second OpenCode look like Mara's.
+    const tower = peer("ts:tower", "tower", "Dario Reis", true, [told("claude2", "claude", MARA, { photo: "https://img.example/mara.png" }), told("opencode", "opencode", "")]);
+    const laptop = peer("ts:laptop", "laptop", "Dana Reyes", true, [told("claude", "claude", DANA), told("opencode", "opencode", "", { main: true, photo: "https://img.example/dana.png" })]);
+    for (const local_ of [mine, mine.filter((a) => a.kind !== "OpenCode")]) {
+      const v = sharedAccounts({ me, local: local_, peers: [laptop, tower], provs: new Map([laptop, tower].map((p) => [p.id, p.provs])) });
+      const oc = v.filter((s) => s.kind === "opencode");
+      expect(oc.map((s) => [s.label, s.photo, s.badge])).toEqual([["OpenCode", "", ""]]);
+      expect(oc[0]!.copies?.length).toBe(local_ === mine ? 3 : 2);
+    }
   });
 
   test("the same on another PC: its own first, then this one's, one entry per sign-in", () => {
@@ -186,10 +211,9 @@ describe("the mesh's accounts, each once", () => {
     const v = sharedAccounts({ me: meLaptop, local: [local("claude", "Claude", DANA, "DR"), local("opencode", "OpenCode", "", "")], peers: [deskPc, towerPc], provs: new Map([deskPc, towerPc].map((p) => [p.id, p.provs])) });
     expect(v.map((s) => [s.label, s.pc])).toEqual([
       ["Claude · DR", ""],
-      ["OpenCode · DR", ""],
+      ["OpenCode", ""],
       ["Claude · ML", "ts:desk"],
       ["Claude · DaR", "ts:desk"],
-      ["OpenCode · ML", "ts:desk"],
       ["Codex · DaR", "ts:tower"],
     ]);
     // Dario's login is on the desk (on) and the tower (off): the desk runs it.
@@ -247,8 +271,8 @@ describe("the mesh's accounts, each once", () => {
       elsewhere: new Map(),
     });
     expect(pcs[0]!.phones).toEqual(["Pixel 9", "Dana's Galaxy"]);
-    expect(pcs[0]!.accounts).toEqual(["Claude · ML (Mara Lind)", "Claude · DR (Dana Reyes)", "Claude · DaR (Dario Reis)", "OpenCode · ML (Mara Lind)"]);
-    expect(pcs[1]!.accounts).toEqual(["OpenCode · DR (Dana Reyes)"]);
+    expect(pcs[0]!.accounts).toEqual(["Claude · ML (Mara Lind)", "Claude · DR (Dana Reyes)", "Claude · DaR (Dario Reis)", "OpenCode"]);
+    expect(pcs[1]!.accounts).toEqual([]);
     const note = peopleNote(pcs);
     expect(note.match(/Pixel 9/g)?.length).toBe(1);
     expect(note.match(/Claude · DR \(Dana Reyes\)/g)?.length).toBe(1);
@@ -319,12 +343,14 @@ describe("owners' photos", () => {
   });
 
   test("with a photo the badge is the photo and the label names them; without one, initials, and the tip says so", () => {
-    const laptop = peer("ts:laptop", "laptop", "Dana Reyes", true, [told("opencode", "opencode", "")]);
+    const laptop = peer("ts:laptop", "laptop", "Dana Reyes", true, [told("codex", "codex", ""), told("opencode", "opencode", "", { photo: DANA_PHOTO })]);
     const tower = peer("ts:tower", "tower", "Dario Reis", true, [told("codex", "codex", "", { photo: DARIO_TOLD }), told("claude", "claude", DARIO)]);
     const v = sharedAccounts({ me, local: [local("claude", "Claude", MARA, "MX")], peers: [laptop, tower], provs: new Map([laptop, tower].map((p) => [p.id, p.provs])), photos });
     expect(v.map((s) => [s.label, s.badge, s.photo, s.noPhoto])).toEqual([
       ["Claude · Mara Lind", "ML", MARA_PHOTO, false],
-      ["OpenCode · Dana Reyes", "DR", DANA_PHOTO, false],
+      ["Codex · Dana Reyes", "DR", DANA_PHOTO, false],
+      // OpenCode is nobody's: no badge, no photo, even one its PC told.
+      ["OpenCode", "", "", false],
       // Not in this PC's directory: the photo its PC told.
       ["Codex · Dario Reis", "DaR", DARIO_TOLD, false],
       ["Claude · Dario Reis", "DaR", DARIO_TOLD, false],
@@ -341,7 +367,7 @@ describe("owners' photos", () => {
       ["Claude · Mara Lind 2", "ML2"],
     ]);
     // The who is who names them once.
-    expect(accountsByPc(v).get("ts:laptop")).toEqual(["OpenCode · Dana Reyes"]);
+    expect(accountsByPc(v).get("ts:laptop")).toEqual(["Codex · Dana Reyes", "OpenCode"]);
   });
 
   test("alone, only a sign-in names a photo: own badges, none by name", () => {

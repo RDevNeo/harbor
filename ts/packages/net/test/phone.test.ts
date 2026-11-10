@@ -852,19 +852,19 @@ describe("phone: the mesh's shared accounts", () => {
     const s = routes.state("", true) as { accounts: Record<string, Json>[] };
     expect(s.accounts.map((a) => [a.id, a.label, a.pc, a.can_start])).toEqual([
       ["claude", "Claude · AL", "", true],
-      ["opencode:8c4711dc5ea5f09937b5308c", "OpenCode · SL", "ts:laptop", true],
+      ["opencode:any", "OpenCode", "ts:laptop", true],
       ["codex@ts:off/codex", "Codex · KR", "ts:off", false],
     ]);
-    expect(s.accounts[1]).toMatchObject({ name: "Sam Lee on laptop", owner: "Sam Lee", pc_name: "laptop", models: [{ id: "nvidia/glm", label: "GLM", more: false }] });
+    expect(s.accounts[1]).toMatchObject({ name: "OpenCode on laptop", owner: "", pc_name: "laptop", models: [{ id: "nvidia/glm", label: "GLM", more: false }] });
     expect(s.accounts[2]?.why).toBe("tower is offline");
     // No photo known: no `photo`, the initials stay.
     expect(s.accounts.some((a) => "photo" in a)).toBe(false);
-    // With the owners' workspace photos: each account carries its owner's, and its label names them.
+    // With the owners' workspace photos: each account carries its owner's, and its label names them; OpenCode is nobody's.
     catalog.shared = () => sharedAccounts({ ...shared.input, photos: photoBook([{ name: "Sam Lee", image: "https://img.example/sam.png" }, { name: "Ana Lu", image: "https://img.example/ana.png" }]) });
     const p = routes.state("", true) as { accounts: Record<string, Json>[] };
     expect(p.accounts.map((a) => [a.label, a.photo ?? null])).toEqual([
       ["Claude · Ana Lu", "https://img.example/ana.png"],
-      ["OpenCode · Sam Lee", "https://img.example/sam.png"],
+      ["OpenCode", null],
       ["Codex · KR", null],
     ]);
     // The workspace knows the account's email as "Nana": that member's photo and name, on the phone too.
@@ -874,7 +874,7 @@ describe("phone: the mesh's shared accounts", () => {
     catalog.shared = shared;
     const call = (body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body, token: "", device: "Pixel", global: true });
     // Picked: the chat starts on the laptop, on the laptop's own OpenCode; this PC's device pick doesn't matter.
-    const r = await call({ account: "opencode:8c4711dc5ea5f09937b5308c", model: "nvidia/glm", device: "", text: "hi" });
+    const r = await call({ account: "opencode:any", model: "nvidia/glm", device: "", text: "hi" });
     expect(r.status).toBe(200);
     expect(forwarded[0]?.[0]).toBe("10.0.0.2:1");
     expect(forwarded[0]?.[1]).toMatchObject({ account: "opencode", model: "nvidia/glm", device: "", shared_account: true, text: "hi" });
@@ -936,18 +936,18 @@ describe("phone: a started chat switched to another PC's account", () => {
     const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog, move, runSettings: { accounts: () => [], modelsFor: () => [], devices: () => [], setFast: () => {} } as never });
     const lead = store.createChat(blankChat({ title: "l", role: "lead", account: "claude", started: true, sessionId: "s" }));
     const sub = store.createChat(blankChat({ title: "s", role: "sub", account: "claude", started: true, parent: lead.id }));
-    // OpenCode tells no sign-in: it is known by its PC owner's hash (meshaccounts.ts sharedIdent).
-    const id = "opencode:8c4711dc5ea5f09937b5308c";
+    // OpenCode tells no sign-in: it's one entry on the whole mesh (meshaccounts.ts OPENCODE_IDENT).
+    const id = "opencode:any";
     expect(routes.allowedAccounts(lead)).toEqual(["claude", id]);
     // A sub-agent moves with its lead.
     expect(routes.allowedAccounts(sub)).toEqual(["claude"]);
     const patch = (body: Record<string, unknown>) => routes.route({ method: "PATCH", path: ["v1", "chats", String(lead.id)], query: [], body, token: "", device: "Pixel", global: false });
-    expect(await patch({ account: id, model: "nvidia/glm" })).toMatchObject({ status: 202, body: { ok: true, moving: true, to: "laptop", account: "OpenCode · SL" } });
+    expect(await patch({ account: id, model: "nvidia/glm" })).toMatchObject({ status: 202, body: { ok: true, moving: true, to: "laptop", account: "OpenCode" } });
     expect(moves).toEqual([[lead.id, "ts:laptop", { account: "opencode", kind: "opencode", model: "nvidia/glm" }]]);
     // Its account here didn't change: the chat goes on there.
     expect(store.chat(lead.id)?.account).toBe("claude");
     refuse = "laptop has no project named x";
-    expect(await patch({ account: id })).toMatchObject({ status: 409, body: { error: "can't switch to OpenCode · SL: laptop has no project named x" } });
+    expect(await patch({ account: id })).toMatchObject({ status: 409, body: { error: "can't switch to OpenCode: laptop has no project named x" } });
     store.close();
   });
 });

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { pickAuto } from "./ram.ts";
 import type { Peer } from "./shared.ts";
 
 /** One of a PC's agent accounts as it tells the mesh (`accounts` in hello, kv `mesh_peers`). Older PCs say only `id`,
@@ -76,12 +77,13 @@ export function identOf(kind: string, email: string): string {
   return createHash("sha256").update(`${kind.toLowerCase()}:${e}`).digest("hex").slice(0, 24);
 }
 
-/** Who a told account is when its PC sent no sign-in: OpenCode has none (its providers' keys are its own), so one
- *  person's OpenCode on several PCs is one, by its PC's owner; others stay the CLI on its PC. */
-export function sharedIdent(acc: Pick<MeshAccount, "kind" | "ident">, owner: string): string {
-  if (acc.ident !== "") return acc.ident;
-  const who = owner.trim().toLowerCase();
-  return acc.kind === "opencode" && who !== "" ? identOf("opencode", `owner:${who}`) : "";
+/** OpenCode's one entry: it has no sign-in (no account, nobody's), so it's the same tool on every PC. */
+export const OPENCODE_IDENT = "any";
+
+/** Who a told account is as the mesh groups it: its sign-in; OpenCode is one everywhere (`OPENCODE_IDENT`); a CLI that
+ *  told none ("") stays the CLI on its PC. */
+export function sharedIdent(acc: Pick<MeshAccount, "kind" | "ident">): string {
+  return acc.kind === "opencode" ? OPENCODE_IDENT : acc.ident;
 }
 
 /** Where an account is the same as another: its sign-in, else the CLI on its PC. */
@@ -296,7 +298,7 @@ export interface SharedInput {
   me: { id: string; name: string; owner: string; github: string };
   local: readonly LocalAccount[];
   /** The mesh's PCs (none while the mesh is off). */
-  peers: readonly Pick<Peer, "id" | "name" | "online" | "owner" | "github" | "accounts">[];
+  peers: readonly (Pick<Peer, "id" | "name" | "online" | "owner" | "github" | "accounts"> & { ram?: number | null })[];
   /** Each peer's accounts as it told them (`Peer.provs`); a peer missing here is read from its `accounts`. */
   provs: ReadonlyMap<string, readonly MeshAccount[]>;
   /** This PC's workspace directory's photos (`photoBook`): by sign-in first, by name last; else the one their PC told. */
@@ -308,6 +310,8 @@ interface Holder {
   pcName: string;
   online: boolean;
   owner: string;
+  /** Its PC's free memory (MB, `Peer.ram`); null not known. */
+  ram: number | null;
   acc: MeshAccount;
   local: LocalAccount | null;
 }
@@ -327,7 +331,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   const groups = new Map<string, Holder[]>();
   const order: string[] = [];
   const add = (h: Holder) => {
-    const key = accountKey(h.acc.kind, sharedIdent(h.acc, h.owner), h.pc, h.acc.id);
+    const key = accountKey(h.acc.kind, sharedIdent(h.acc), h.pc, h.acc.id);
     const g = groups.get(key);
     if (g) g.push(h);
     else {
@@ -336,18 +340,18 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
     }
   };
   const mine = helloAccounts(i.local, people);
-  for (const acc of mine) add({ pc: "", pcName: i.me.name, online: true, owner: i.me.owner, acc, local: i.local.find((a) => a.id === acc.id) ?? null });
+  for (const acc of mine) add({ pc: "", pcName: i.me.name, online: true, owner: i.me.owner, ram: null, acc, local: i.local.find((a) => a.id === acc.id) ?? null });
   const peers = [...i.peers].sort((a, b) => byStr(a.id, b.id));
   for (const p of peers) {
     if (p.id === i.me.id) continue;
     const told: readonly MeshAccount[] = i.provs.get(p.id) ?? p.accounts.map(([id, short, kind]): MeshAccount => ({ id, short, kind: kind.toLowerCase(), ident: "", person: "", main: false, models: [] }));
     const seen = new Set<string>();
     for (const acc of told) {
-      const key = accountKey(acc.kind, sharedIdent(acc, p.owner), p.id, acc.id);
+      const key = accountKey(acc.kind, sharedIdent(acc), p.id, acc.id);
       // One its PC doesn't let this PC use isn't offered (it still counts for Runs on, which asks that PC itself).
       if (acc.id === "" || acc.shared === false || seen.has(key)) continue;
       seen.add(key);
-      add({ pc: p.id, pcName: p.name === "" ? p.id : p.name, online: p.online, owner: p.owner, acc, local: null });
+      add({ pc: p.id, pcName: p.name === "" ? p.id : p.name, online: p.online, owner: p.owner, ram: p.ram ?? null, acc, local: null });
     }
   }
   // The workspace member each one signs in as: this PC's own by its email, another PC's by the hash it told.
@@ -355,6 +359,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   const faces = new Map<string, WorkspaceFace>();
   for (const key of order) {
     for (const h of groups.get(key) ?? []) {
+      if (h.acc.kind === "opencode") break;
       const f = h.local !== null ? book.byEmail(h.local.email) : book.byIdent(h.acc.kind, h.acc.ident);
       if (f) {
         faces.set(key, f);
@@ -367,6 +372,11 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   const owners = new Map<string, string>();
   for (const key of order) {
     const hs = groups.get(key) ?? [];
+    // OpenCode is nobody's: no badge, no photo, just "OpenCode".
+    if (hs[0]?.acc.kind === "opencode") {
+      owners.set(key, "");
+      continue;
+    }
     const claimed = hs.find((h) => h.acc.person !== "")?.acc.person;
     const main = hs.find((h) => h.acc.main && h.owner !== "");
     const face = faces.get(key)?.name;
@@ -385,7 +395,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   const out: SharedAccount[] = [];
   for (const key of order) {
     const hs = groups.get(key) ?? [];
-    const run = hs.find((h) => h.pc === "") ?? hs.find((h) => h.online) ?? hs[0];
+    const run = hs.find((h) => h.pc === "") ?? (hs[0]?.acc.kind === "opencode" ? autoHolder(hs) : undefined) ?? hs.find((h) => h.online) ?? hs[0];
     if (!run) continue;
     const person = owners.get(key) ?? "";
     const own = run.acc.kind === "claude" ? (run.local?.badge ?? "") : "";
@@ -429,6 +439,13 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
     }
   }
   return out;
+}
+
+/** Where OpenCode runs when this PC has none: Auto's pick (`pickAuto`, the most free memory) of the PCs that are on. */
+function autoHolder(hs: readonly Holder[]): Holder | undefined {
+  const on = hs.filter((h) => h.online);
+  const best = pickAuto(on.map((h) => ({ id: h.pc, name: h.pcName, ram: h.ram })));
+  return best === null ? undefined : on.find((h) => h.pc === best.id);
 }
 
 /** Where a picked account runs: this PC's own id, or another PC's account (null: no such account, or why it can't now). */
