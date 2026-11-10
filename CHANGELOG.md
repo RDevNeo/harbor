@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.169.0] - 2026-11-09
+
 ### Added
 - A lead's subagent can move to another provider account with its conversation: the lead's new
   `switch_agent_account(agent, account, model?, effort?)` tool, the account line (or a right click) on
