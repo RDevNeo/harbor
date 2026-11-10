@@ -852,7 +852,7 @@ describe("phone: the mesh's shared accounts", () => {
     const s = routes.state("", true) as { accounts: Record<string, Json>[] };
     expect(s.accounts.map((a) => [a.id, a.label, a.pc, a.can_start])).toEqual([
       ["claude", "Claude · AL", "", true],
-      ["opencode@ts:laptop/opencode", "OpenCode · SL", "ts:laptop", true],
+      ["opencode:8c4711dc5ea5f09937b5308c", "OpenCode · SL", "ts:laptop", true],
       ["codex@ts:off/codex", "Codex · KR", "ts:off", false],
     ]);
     expect(s.accounts[1]).toMatchObject({ name: "Sam Lee on laptop", owner: "Sam Lee", pc_name: "laptop", models: [{ id: "nvidia/glm", label: "GLM", more: false }] });
@@ -874,7 +874,7 @@ describe("phone: the mesh's shared accounts", () => {
     catalog.shared = shared;
     const call = (body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body, token: "", device: "Pixel", global: true });
     // Picked: the chat starts on the laptop, on the laptop's own OpenCode; this PC's device pick doesn't matter.
-    const r = await call({ account: "opencode@ts:laptop/opencode", model: "nvidia/glm", device: "", text: "hi" });
+    const r = await call({ account: "opencode:8c4711dc5ea5f09937b5308c", model: "nvidia/glm", device: "", text: "hi" });
     expect(r.status).toBe(200);
     expect(forwarded[0]?.[0]).toBe("10.0.0.2:1");
     expect(forwarded[0]?.[1]).toMatchObject({ account: "opencode", model: "nvidia/glm", device: "", shared_account: true, text: "hi" });
@@ -936,7 +936,8 @@ describe("phone: a started chat switched to another PC's account", () => {
     const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog, move, runSettings: { accounts: () => [], modelsFor: () => [], devices: () => [], setFast: () => {} } as never });
     const lead = store.createChat(blankChat({ title: "l", role: "lead", account: "claude", started: true, sessionId: "s" }));
     const sub = store.createChat(blankChat({ title: "s", role: "sub", account: "claude", started: true, parent: lead.id }));
-    const id = "opencode@ts:laptop/opencode";
+    // OpenCode tells no sign-in: it is known by its PC owner's hash (meshaccounts.ts sharedIdent).
+    const id = "opencode:8c4711dc5ea5f09937b5308c";
     expect(routes.allowedAccounts(lead)).toEqual(["claude", id]);
     // A sub-agent moves with its lead.
     expect(routes.allowedAccounts(sub)).toEqual(["claude"]);

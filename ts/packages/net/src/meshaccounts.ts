@@ -76,6 +76,14 @@ export function identOf(kind: string, email: string): string {
   return createHash("sha256").update(`${kind.toLowerCase()}:${e}`).digest("hex").slice(0, 24);
 }
 
+/** Who a told account is when its PC sent no sign-in: OpenCode has none (its providers' keys are its own), so one
+ *  person's OpenCode on several PCs is one, by its PC's owner; others stay the CLI on its PC. */
+export function sharedIdent(acc: Pick<MeshAccount, "kind" | "ident">, owner: string): string {
+  if (acc.ident !== "") return acc.ident;
+  const who = owner.trim().toLowerCase();
+  return acc.kind === "opencode" && who !== "" ? identOf("opencode", `owner:${who}`) : "";
+}
+
 /** Where an account is the same as another: its sign-in, else the CLI on its PC. */
 export function accountKey(kind: string, ident: string, pc: string, id: string): string {
   return ident !== "" ? `${kind}:${ident}` : `${kind}@${pc}/${id}`;
@@ -319,7 +327,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
   const groups = new Map<string, Holder[]>();
   const order: string[] = [];
   const add = (h: Holder) => {
-    const key = accountKey(h.acc.kind, h.acc.ident, h.pc, h.acc.id);
+    const key = accountKey(h.acc.kind, sharedIdent(h.acc, h.owner), h.pc, h.acc.id);
     const g = groups.get(key);
     if (g) g.push(h);
     else {
@@ -335,7 +343,7 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
     const told: readonly MeshAccount[] = i.provs.get(p.id) ?? p.accounts.map(([id, short, kind]): MeshAccount => ({ id, short, kind: kind.toLowerCase(), ident: "", person: "", main: false, models: [] }));
     const seen = new Set<string>();
     for (const acc of told) {
-      const key = accountKey(acc.kind, acc.ident, p.id, acc.id);
+      const key = accountKey(acc.kind, sharedIdent(acc, p.owner), p.id, acc.id);
       // One its PC doesn't let this PC use isn't offered (it still counts for Runs on, which asks that PC itself).
       if (acc.id === "" || acc.shared === false || seen.has(key)) continue;
       seen.add(key);

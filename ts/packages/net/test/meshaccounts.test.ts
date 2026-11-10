@@ -18,6 +18,7 @@ import {
   photosByName,
   sharedAccess,
   sharedAccounts,
+  sharedIdent,
   sharedTarget,
   sharedTip,
   sharedWith,
@@ -161,6 +162,22 @@ describe("the mesh's accounts, each once", () => {
     expect(both.filter((s) => s.kind === "codex").map((s) => [s.pc, s.also])).toEqual([["", ["tower"]]]);
     // The tower that told no sign-in (an older PC) stays apart.
     expect(here.filter((s) => s.kind === "codex").length).toBe(2);
+  });
+
+  test("one person's OpenCode on two PCs is one entry (it has no sign-in: its PC's owner says whose); another person's stays apart", () => {
+    const deskTwo = peer("ts:desk2", "desk2", "Mara Lind", true, [told("opencode", "opencode", "")]);
+    const v = sharedAccounts({ me, local: mine, peers: [laptopPc, deskTwo], provs: new Map([laptopPc, deskTwo].map((p) => [p.id, p.provs])) });
+    // Mara's (this PC and desk2) is one, run here; Dana's (laptop) is her own.
+    expect(v.filter((s) => s.kind === "opencode").map((s) => [s.pc, s.also])).toEqual([
+      ["", ["desk2"]],
+      ["ts:laptop", []],
+    ]);
+    // A PC whose owner isn't known keeps its OpenCode apart.
+    const nobody = peer("ts:box", "box", "", true, [told("opencode", "opencode", "")]);
+    const w = sharedAccounts({ me, local: mine, peers: [nobody], provs: new Map([[nobody.id, nobody.provs]]) });
+    expect(w.filter((s) => s.kind === "opencode").length).toBe(2);
+    expect(sharedIdent({ kind: "opencode", ident: "" }, " Mara Lind ")).toBe(sharedIdent({ kind: "opencode", ident: "" }, "mara lind"));
+    expect(sharedIdent({ kind: "codex", ident: "" }, "Mara Lind")).toBe("");
   });
 
   test("the same on another PC: its own first, then this one's, one entry per sign-in", () => {
