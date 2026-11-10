@@ -61,6 +61,16 @@ describe("identity", () => {
     expect(new Uint8Array(spki(x.raw) ?? [])).toEqual(want);
   });
 
+  test("every new certificate's serial is a minimal positive DER integer (1 in 128 used to be refused)", () => {
+    for (let i = 0; i < 300; i++) {
+      const der = new X509Certificate(generateIdentity().cert).raw;
+      // tbs > [0] version (5 bytes) > serial: tag 0x02, length 16, first byte 0x40..0x7f
+      const at = der.indexOf(0x02, der.indexOf(0xa0) + 5);
+      expect([der[at], der[at + 1]]).toEqual([0x02, 16]);
+      expect(der[at + 2]! & 0xc0).toBe(0x40);
+    }
+  });
+
   test("garbage has no fingerprint (tls.rs: truncated certificates are refused)", () => {
     const x = new X509Certificate(srv.cert);
     expect(certFp(new Uint8Array())).toBeNull();

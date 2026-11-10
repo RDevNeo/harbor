@@ -108,7 +108,7 @@ export function generateIdentity(): Identity {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const name = seq(der(0x31, seq(COMMON_NAME, der(0x0c, ascii("Harbor")))));
   const serial = randomBytes(16);
-  serial[0] = (serial[0] ?? 0) & 0x7f;
+  serial[0] = ((serial[0] ?? 0) & 0x7f) | 0x40; // positive and minimal DER: a leading 0x00 with a low next byte is refused (INVALID_INTEGER)
   const tbs = seq(
     der(0xa0, der(0x02, Uint8Array.of(2))),
     der(0x02, serial),
