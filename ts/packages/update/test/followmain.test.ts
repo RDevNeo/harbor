@@ -499,11 +499,14 @@ test("the push-to-running line", () => {
 
 test("a push from this PC's checkout tells the worker at once, with this PC's token, once per commit", async () => {
   const posts: { url: string; auth: string | null; body: string }[] = [];
+  let posted: () => void = () => undefined;
+  const whenPosted = new Promise<void>((resolve) => (posted = resolve));
   const fake = Object.assign(
     async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       if (url.includes("/v1/main/wait")) return new Promise<Response>((resolve) => init?.signal?.addEventListener("abort", () => resolve(new Response(null, { status: 204 })), { once: true }));
       posts.push({ url: url.replace(/^.*\/v1/, "/v1"), auth: new Headers(init?.headers).get("authorization"), body: String(init?.body) });
+      posted();
       return Response.json({ ok: true }, { status: 202 });
     },
     { preconnect: () => undefined },
@@ -529,20 +532,23 @@ test("a push from this PC's checkout tells the worker at once, with this PC's to
     run: defaultRunner,
     watchRefs: (_dir, on) => ((fire = on), () => undefined),
   });
-  fm.start();
-  // A push from the checkout: a new commit lands upstream and origin/main moves.
-  const c = commit(checkout, { "ts/app.ts": "2\n" }, "pushed from here");
-  sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
-  fire();
-  fire();
-  for (let i = 0; i < 40 && posts.length === 0; i++) await Bun.sleep(25);
-  expect(posts).toEqual([{ url: "/v1/main", auth: "Bearer pc-token", body: JSON.stringify({ sha: c }) }]);
-  // The same commit again (any other ref write): nothing more. Signed out: nothing.
-  expect(await fm.nudge(checkout)).toBe(false);
-  token = null;
-  sh(checkout, "git", "commit", "-q", "--allow-empty", "-m", "x");
-  sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
-  expect(await fm.nudge(checkout)).toBe(false);
-  expect(posts.length).toBe(1);
-  fm.stop();
-});
+  try {
+    fm.start();
+    // A push from the checkout: a new commit lands upstream and origin/main moves.
+    const c = commit(checkout, { "ts/app.ts": "2\n" }, "pushed from here");
+    sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
+    fire();
+    fire();
+    await whenPosted;
+    expect(posts).toEqual([{ url: "/v1/main", auth: "Bearer pc-token", body: JSON.stringify({ sha: c }) }]);
+    // The same commit again (any other ref write): nothing more. Signed out: nothing.
+    expect(await fm.nudge(checkout)).toBe(false);
+    token = null;
+    sh(checkout, "git", "commit", "-q", "--allow-empty", "-m", "x");
+    sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
+    expect(await fm.nudge(checkout)).toBe(false);
+    expect(posts.length).toBe(1);
+  } finally {
+    fm.stop();
+  }
+}, 10_000);
