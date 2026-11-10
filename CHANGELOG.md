@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.171.4] - 2026-11-10
+
+### Fixed
+- The model picker has one OpenCode entry, period: OpenCode has no account, so it's the same tool on
+  every PC, with no owner's badge or photo. It runs on this PC when this PC has OpenCode, otherwise on
+  the PC Auto would pick (on, most free memory). 0.171.3 still showed one per PC owner, and could show
+  another person's photo on one. Favorites starred on any OpenCode move to the one entry.
+
 ## [0.171.3] - 2026-11-10
 
 ### Fixed
