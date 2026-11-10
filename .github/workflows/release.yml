@@ -33,6 +33,12 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      apk:
+        description: "Phone app: build (always; saves its download cache for tags) or auto (as a tag: the latest release's APK again when nothing in it changed)"
+        type: choice
+        options: [build, auto]
+        default: build
 
 # One run per ref; a newer run waits instead of cancelling (cancelled runs save no cache).
 concurrency:
@@ -95,13 +101,18 @@ jobs:
           else
             lane=runtime
           fi
-          # The phone app is rebuilt only when android/ or browser/ (its Servo engine is inside the
-          # APK) changed since the latest release, or a new runtime goes out: otherwise that
-          # release's signed APK is attached again and the manifest keeps naming it, so phones
-          # aren't asked to update to the same app. A run by hand always builds it: the dry run
-          # tries the job, and its download cache saved on main is the one tags can restore.
+          # The phone app is rebuilt only when what goes into the APK changed since the latest
+          # release: android/, browser/ (its Servo engine) and the fonts and logos android/build.sh
+          # copies in. The desktop runtime isn't in it, so the lane doesn't matter. Otherwise that
+          # release's signed APK is attached again and the manifest keeps naming it (apk {code,
+          # release} carried over), so phones don't download and install the same app again. A run
+          # by hand builds it (input apk=build, the default: the dry run tries the job, and its
+          # download cache saved on main is the one tags can restore); apk=auto plans as a tag does.
           apk=build apkcode=()
-          if [ "$lane" = bundle ] && [[ "$GITHUB_REF" == refs/tags/v* ]] && git diff --quiet "$tag" HEAD -- android/ browser/; then
+          auto=false
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] || [ "${{ inputs.apk }}" = auto ]; then auto=true; fi
+          if [ "$auto" = true ] && [ -n "$prev" ] && jq -e '.apk.code' prev/harbor-app.json >/dev/null \
+            && git diff --quiet "$tag" HEAD -- android/ browser/ assets/fonts/ assets/logos/; then
             apk=keep
           else
             IFS=.- read -r ma mi pa _ <<< "$ver"
@@ -116,6 +127,7 @@ jobs:
           bun ts/scripts/release.ts manifest --version "$ver" --lane "$lane" --out manifest/harbor-app.json $prev \
             --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" "${apkcode[@]}"
           cat manifest/harbor-app.json
+          echo "phone app: $apk (latest release $tag)"
           { echo "version=$ver"; echo "lane=$lane"; echo "min=$(jq -r .minRuntime manifest/harbor-app.json)"
             echo "apk=$apk"; echo "previous=$tag"; echo "where=$where"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
@@ -422,6 +434,12 @@ jobs:
           set -eu
           mkdir -p art/harbor-android
           gh release download "${{ needs.plan.outputs.previous }}" -p harbor-android.apk -D art/harbor-android
+          # The manifest names this app (apk.code, carried over by plan): the file must be that one.
+          want=$(jq -r '.apk.code' art/harbor-manifest/harbor-app.json)
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          got=$("$aapt2" dump badging art/harbor-android/harbor-android.apk | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+          echo "attached again: versionCode $got, manifest apk $(jq -c .apk art/harbor-manifest/harbor-app.json)"
+          [ "$got" = "$want" ] || { echo "::error::the latest release's APK is versionCode $got, the manifest names $want"; exit 1; }
       # A bundle-only release: the runtime PCs have now must load the new bundle (the build already
       # checked it on the new runtime).
       - name: The bundle starts on the runtime PCs have now

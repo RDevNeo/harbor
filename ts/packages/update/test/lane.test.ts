@@ -65,6 +65,13 @@ test("a manifest for the bundle lane keeps the runtime and the extras of the rel
   expect(() => buildManifest({ version: "1.2.1", lane: "bundle", previous: null })).toThrow("previous release's manifest");
 });
 
+test("a runtime release whose phone app didn't change names the latest release's APK again", () => {
+  const previous = parseManifest(JSON.stringify({ version: "1.2.1", minRuntime: "1.2.0", runtime: "1.2.0", apk: { code: 1002000, release: "1.2.0" } }));
+  const m = buildManifest({ version: "1.3.0", lane: "runtime", previous });
+  expect(m).toEqual({ version: "1.3.0", minRuntime: "1.3.0", runtime: "1.3.0", apk: { code: 1002000, release: "1.2.0" } });
+  expect(buildManifest({ version: "1.3.0", lane: "runtime", previous, apk: { code: 1003000 } }).apk).toEqual({ code: 1003000, release: "1.3.0" });
+});
+
 test("the manifest is read strictly", () => {
   expect(() => parseManifest("junk")).toThrow("unreadable");
   expect(() => parseManifest("[]")).toThrow("unreadable");
