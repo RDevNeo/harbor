@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.173.1] - 2026-11-10
+
+### Fixed
+- On the phone, a sub-agent's chat opens again (from the Agents panel, a fork's "Open source
+  conversation", or right after the agent was spawned) instead of saying "This chat was deleted"
+  and closing. A retired agent's chat opens to read, as on the desktop.
+
 ## [0.173.0] - 2026-11-10
 
 ### Added
