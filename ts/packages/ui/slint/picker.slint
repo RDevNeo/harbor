@@ -348,3 +348,196 @@ export component ModelPicker inherits PopoverFrame {
         }
     }
 }
+
+// The new chat's project popover (logic/projectpop.ts): a search field over an accent rule, then one row per project
+// (its icon, else its initials on its tint), "No project" first and "Add project" pinned last.
+export struct ProjectPopRow {
+    kind: string,
+    label: string,
+    // After the name, muted: the PC that holds its folder, or for two of one name its folder (projectplace.ts `placeHint`).
+    hint: string,
+    initials: string,
+    tint: color,
+    logo: image,
+    has-logo: bool,
+    current: bool,
+}
+
+component ProjectPopItem inherits Rectangle {
+    in property <ProjectPopRow> it;
+    in property <bool> lit;
+    callback hovered();
+    callback clicked();
+    border-radius: Theme.radius-md;
+    background: root.lit ? Theme.accent : transparent;
+    Rectangle {
+        x: 8px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        border-radius: 5px;
+        clip: true;
+        background: root.it.kind == "project" && !root.it.has-logo ? root.it.tint.with-alpha(0.14) : transparent;
+        border-width: root.it.kind == "project" && !root.it.has-logo ? 1px : 0px;
+        border-color: root.it.tint.with-alpha(0.22);
+        if root.it.kind == "project" && root.it.has-logo: Image {
+            width: 20px;
+            height: 20px;
+            source: root.it.logo;
+            image-fit: contain;
+        }
+        if root.it.kind == "project" && !root.it.has-logo: Text {
+            text: root.it.initials;
+            font-size: 9.5px;
+            font-weight: 700;
+            color: root.it.tint;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        if root.it.kind == "none": Glyph {
+            icon: Icons.folder;
+            size: 16px;
+            color: Theme.subtle;
+        }
+        if root.it.kind == "add": Glyph {
+            icon: Icons.folder-plus;
+            size: 17px;
+            color: Theme.subtle;
+        }
+    }
+    property <length> room: self.width - 38px - (root.it.current ? 30px : 8px);
+    label := Text {
+        x: 38px;
+        width: min(self.preferred-width, root.room - (root.it.hint != "" ? min(hint.preferred-width, 110px) + 8px : 0px));
+        text: root.it.label;
+        font-size: 14px;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    hint := Text {
+        x: label.x + label.width + 8px;
+        width: max(0px, min(self.preferred-width, 38px + root.room - self.x));
+        visible: root.it.hint != "";
+        text: root.it.hint;
+        font-size: 12px;
+        color: Theme.subtle;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    if root.it.current: Glyph {
+        x: parent.width - 26px;
+        width: 16px;
+        icon: Icons.check;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ProjectPop inherits PopoverFrame {
+    in property <[ProjectPopRow]> rows;
+    in-out property <int> hover;
+    in-out property <string> search <=> field.text;
+    callback pick(int);
+    callback searched(string);
+    callback key(KeyEvent) -> bool;
+    public function focus-search() {
+        field.focus-field();
+    }
+    property <length> step: Theme.row-h + 2px;
+    // Every row but the last ("Add project") scrolls, nine at most in view; the last stays pinned under them.
+    property <int> listed: max(root.rows.length - 1, 0);
+    property <length> list-h: min(root.listed, 9) * root.step;
+    function reveal() {
+        if root.hover >= root.listed {
+            return;
+        }
+        if root.hover * root.step < -flick.viewport-y {
+            flick.viewport-y = -root.hover * root.step;
+        } else if (root.hover + 1) * root.step > -flick.viewport-y + flick.height {
+            flick.viewport-y = min(0px, flick.height - (root.hover + 1) * root.step);
+        }
+    }
+    changed hover => {
+        self.reveal();
+    }
+    width: 264px;
+    height: 48px + root.list-h + root.step + 5px;
+    TouchArea { }
+    FocusScope {
+        x: 12px;
+        y: 6px;
+        width: parent.width - 24px;
+        height: 34px;
+        capture-key-pressed(e) => {
+            if root.key(e) {
+                return accept;
+            }
+            reject
+        }
+        field := SearchField {
+            width: parent.width;
+            height: 34px;
+            hint: "Search projects...";
+            edited(t) => {
+                root.searched(t);
+            }
+        }
+    }
+    Rectangle {
+        x: 10px;
+        y: 41px;
+        width: parent.width - 20px;
+        height: 1px;
+        background: Theme.blue-900;
+    }
+    flick := Flickable {
+        x: 6px;
+        y: 48px;
+        width: parent.width - 12px;
+        height: root.list-h;
+        viewport-width: self.width;
+        viewport-height: root.listed * root.step;
+        for r[i] in root.rows: Rectangle {
+            x: 0;
+            y: i * root.step;
+            width: parent.width;
+            height: root.step - 2px;
+            if i < root.listed: ProjectPopItem {
+                it: r;
+                lit: i == root.hover;
+                hovered => {
+                    root.hover = i;
+                }
+                clicked => {
+                    root.pick(i);
+                }
+            }
+        }
+    }
+    if root.rows.length > 0: ProjectPopItem {
+        x: 6px;
+        y: flick.y + flick.height;
+        width: parent.width - 12px;
+        height: root.step - 2px;
+        it: root.rows[root.listed];
+        lit: root.hover == root.listed;
+        hovered => {
+            root.hover = root.listed;
+        }
+        clicked => {
+            root.pick(root.listed);
+        }
+    }
+}

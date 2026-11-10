@@ -395,6 +395,18 @@ export interface ModelRow {
   favorite: boolean;
 }
 
+/** A row of the new chat's project popover (picker.slint `ProjectPopRow`, logic/projectpop.ts). */
+export interface ProjectPopRow {
+  kind: string;
+  label: string;
+  hint: string;
+  initials: string;
+  tint: string;
+  logo: Pixels;
+  has_logo: boolean;
+  current: boolean;
+}
+
 export interface StripRow {
   id: number;
   name: string;
@@ -715,6 +727,12 @@ export interface AppWindow extends slint.ComponentHandle {
   picker_back: () => void;
   picker_searched: (t: string) => void;
   picker_key: (e: KeyEvent) => boolean;
+  proj_rows: slint.Model<ProjectPopRow>;
+  proj_hover: number;
+  proj_search: string;
+  proj_pick: (i: number) => void;
+  proj_searched: (t: string) => void;
+  proj_key: (e: KeyEvent) => boolean;
 
   dialog_id: string;
   dialog_title: string;

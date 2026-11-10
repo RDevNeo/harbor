@@ -248,18 +248,13 @@ public class NewChat extends Base {
         show();
     }
 
-    private static final String ADD = "\u0000add";
+    private android.widget.PopupWindow projectPop;
 
+    /** The project popover under the project's name (ProjectPop, the desktop's projectpop.ts). */
     private void pickProject() {
-        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        o.add(new Sheet.Option("", "No project", "runs in your home folder on the PC", true));
-        JSONArray p = st.optJSONArray("projects");
-        if (p != null) for (int i = 0; i < p.length(); i++) {
-            JSONObject j = p.optJSONObject(i);
-            if (j != null) o.add(new Sheet.Option(j.optString("id"), j.optString("name"), Place.line(j), true));
-        }
-        o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
-        Sheet.pick(this, "Project", null, o, run.project, id -> { if (ADD.equals(id)) NewProject.open(this, hub); else change("project", id); });
+        if (projectPop != null && projectPop.isShowing()) { projectPop.dismiss(); return; }
+        projectPop = ProjectPop.show(this, project, st, run.project,
+                id -> { if (ProjectPop.ADD.equals(id)) NewProject.open(this, hub); else change("project", id); });
     }
 
     private void start() {

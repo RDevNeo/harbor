@@ -16,6 +16,7 @@ import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
 import { DraftSync } from "./logic/shareddraft.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Invite, inviteCard } from "./logic/invitecard.ts";
+import { initials, popRows, popStart, popStep, type PopRow as ProjRow, tint } from "./logic/projectpop.ts";
 import { type Bar, type BarChip, branchClick, renameBranchNote, renameFolderNote, workBar, type WsInfo, type WsMarker, type WsPr, wsClick } from "./logic/workbar.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
@@ -62,7 +63,7 @@ import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, ra
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
 
 /** The transcript's cards, swapped by dev hot reload (hotdev.ts). */
 const transcript = hot.unit("cards", "packages/ui/src/cards.ts", cardsModule);
@@ -205,6 +206,9 @@ export class Shell {
   /** The rail's accounts as last drawn (Tab steps through them). */
   private railIds: string[] = [];
   private modelRows = new slint.ArrayModel<ModelRow>([]);
+  /** The new chat's project popover: its rows (logic/projectpop.ts) and what's typed in its search. */
+  private projRows = new slint.ArrayModel<ProjectPopRow>([]);
+  private projPop: { rows: ProjRow[]; search: string } = { rows: [], search: "" };
   private picker: PickerState = { rail: null, search: "", more: false, hover: 0 };
   private pickerRowsNow: Row[] = [];
   private sharedList: SharedAccount[] = [];
@@ -560,6 +564,7 @@ export class Shell {
     win.strip_rows = this.stripRows;
     win.mentions = this.mentionChips;
     win.picker_rows = this.modelRows;
+    win.proj_rows = this.projRows;
     this.favorites = new Favorites(data.store);
     this.keys = Keys.load(data.store);
     this.zoomer = new Zoom(
@@ -945,6 +950,12 @@ export class Shell {
       this.refreshPicker();
     };
     w.picker_key = (e) => this.pickerKey(e);
+    w.proj_pick = (i) => this.projPick(i);
+    w.proj_searched = (t) => {
+      this.projPop.search = t;
+      this.refreshProjPop(true);
+    };
+    w.proj_key = (e) => this.projKey(e);
     w.strip_open_agent = (id) => this.openChat(id);
     w.note_edited = (i, t) => {
       const m = this.messageMentions()[i];
@@ -1566,6 +1577,7 @@ export class Shell {
       .then((img) => {
         this.avatars.set(repo, img);
         this.refreshSidebar();
+        if (this.win.pop_id === "project") this.refreshProjPop(false);
       })
       .catch(() => {});
   }
@@ -3617,14 +3629,65 @@ export class Shell {
     this.refreshComposer();
   }
 
+  /** The new chat's project popover, under the project's name (logic/projectpop.ts): search, the projects, Add project. */
   private projectPicker(x: number, y: number): void {
-    const items: (PopItem & { act?: () => void })[] = [
-      { ...this.label("Project"), kind: "caption" },
-      this.item("No project", () => this.newDraft(null), { icon: ICONS.FOLDER, desc: "Runs in your home folder", checked: this.draftRepo === null }),
-    ];
-    for (const r of this.data.repos) items.push(this.item(r.name, () => this.newDraft(r.id), { icon: ICONS.FOLDER, desc: tilde(r.local ?? r.path, homedir()), checked: this.draftRepo === r.id }));
-    items.push(this.separator(), this.item("Add project…", () => this.addProject(), { icon: ICONS.FOLDER_PLUS }));
-    this.popup("project", x, y, items, 300);
+    if (this.win.pop_id === "project") return this.closePopup();
+    this.closeSub();
+    this.projPop = { rows: [], search: "" };
+    this.win.proj_search = "";
+    this.refreshProjPop(true);
+    this.win.pop_x = x;
+    this.win.pop_y = y;
+    this.win.pop_id = "project";
+  }
+
+  /** `reset`: the highlight goes back to the current project (or the first match). */
+  private refreshProjPop(reset: boolean): void {
+    const rows = popRows(this.data.repos.map((r) => ({ id: r.id, name: r.name })), this.projPop.search);
+    this.projPop.rows = rows;
+    // As the sidebar's project rows: the PC that holds its folder, or for two of one name its folder.
+    const clash = clashingNames(this.data.repos);
+    const hint = (id: number | null): string => {
+      const repo = id === null ? undefined : this.data.repo(id);
+      return repo && id !== null ? placeHint(this.placeOf(id), tilde(repo.local ?? repo.path, homedir()), clash.has(repo.name)) : "";
+    };
+    sync(
+      this.projRows,
+      rows.map((r) => {
+        const logo = r.kind === "project" && r.id !== null ? this.avatar(r.id) : null;
+        const current = r.kind === "project" ? r.id === this.draftRepo : r.kind === "none" && this.draftRepo === null;
+        return { kind: r.kind, label: r.label, hint: r.kind === "project" ? hint(r.id) : "", initials: initials(r.label), tint: tint(r.label), logo: logo ?? noPixels, has_logo: logo !== null, current };
+      }),
+    );
+    if (reset) this.win.proj_hover = popStart(rows, this.draftRepo, this.projPop.search);
+    else this.win.proj_hover = Math.min(this.win.proj_hover, rows.length - 1);
+  }
+
+  private projPick(i: number): void {
+    const r = this.projPop.rows[i];
+    if (!r) return;
+    this.closePopup();
+    if (r.kind === "add") return void this.addProject();
+    this.newDraft(r.kind === "project" ? r.id : null);
+  }
+
+  private projKey(e: KeyEvent): boolean {
+    const k = pressOf(e.text, e.modifiers);
+    const n = this.projPop.rows.length;
+    if ((k.key === "ArrowDown" || k.key === "ArrowUp") && !k.ctrl && !k.alt) {
+      this.win.proj_hover = popStep(this.win.proj_hover, n, k.key === "ArrowDown");
+      return true;
+    }
+    if (k.key === "Enter") {
+      this.projPick(this.win.proj_hover);
+      return true;
+    }
+    if (k.key === "Escape") {
+      this.closePopup();
+      this.win.focus_composer();
+      return true;
+    }
+    return false;
   }
 
   private chatMenu(id: number, x: number, y: number): void {

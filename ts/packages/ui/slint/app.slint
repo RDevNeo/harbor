@@ -20,7 +20,7 @@ import { Transcript, CardData } from "chat.slint";
 import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip, WorkBarData, PatchChip } from "composer.slint";
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
-import { ModelPicker, RailItem, ModelRow } from "picker.slint";
+import { ModelPicker, RailItem, ModelRow, ProjectPop, ProjectPopRow } from "picker.slint";
 import { SettingsBus, SettingsPage } from "settings.slint";
 import { PrsBus, PrsPage } from "prs.slint";
 import { IssuesBus, IssuesPage } from "issues.slint";
@@ -28,7 +28,7 @@ import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
 
-export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
+export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
 export struct PopItem {
     kind: string,
@@ -541,6 +541,13 @@ export component AppWindow inherits Window {
     callback strip-stop-all();
 
     in property <string> pop-id;
+    // The new chat's project popover (pop-id "project", logic/projectpop.ts): its rows, highlight and search.
+    in property <[ProjectPopRow]> proj-rows;
+    in-out property <int> proj-hover;
+    in-out property <string> proj-search;
+    callback proj-pick(int);
+    callback proj-searched(string);
+    callback proj-key(KeyEvent) -> bool;
     in property <[PopItem]> pop-items;
     in property <length> pop-x;
     in property <length> pop-y;
@@ -1556,7 +1563,32 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.pop-id != "" && root.pop-id != "model": TouchArea {
+        if root.pop-id == "project": TouchArea {
+            clicked => {
+                root.pop-close();
+            }
+            ProjectPop {
+                x: max(4px, min(root.pop-x - 12px, root.width - self.width - 4px));
+                y: min(root.pop-y + 6px, root.height - self.height - 4px);
+                rows: root.proj-rows;
+                hover <=> root.proj-hover;
+                search <=> root.proj-search;
+                init => {
+                    self.focus-search();
+                }
+                pick(i) => {
+                    root.proj-pick(i);
+                }
+                searched(t) => {
+                    root.proj-searched(t);
+                }
+                key(e) => {
+                    return root.proj-key(e);
+                }
+            }
+        }
+
+        if root.pop-id != "" && root.pop-id != "model" && root.pop-id != "project": TouchArea {
             clicked => {
                 root.pop-close();
             }
