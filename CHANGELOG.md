@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.169.3] - 2026-11-10
+
 ### Fixed
 - Jobs started with `start_process` keep running through a Harbor restart or follow-main update, in
   their own systemd scope as turns do. Harbor finds them again with their logs and original owner;
