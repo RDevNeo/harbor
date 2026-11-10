@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.171.3] - 2026-11-10
+
+### Fixed
+- The model picker lists one person's OpenCode once, however many of their PCs have it (it has no
+  sign-in to compare, so its PC's owner says whose); different people's stay apart. Favorites starred
+  on another PC's OpenCode move to the merged entry.
+
 ## [0.171.2] - 2026-11-10
 
 ### Changed
