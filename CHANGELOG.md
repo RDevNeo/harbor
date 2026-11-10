@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.172.0] - 2026-11-10
+
+### Added
+- Parts of the phone's screens are drawn from rows the PC sends, so new or reworded settings reach
+  the phone with a PC release, without a new app. First: Settings' Voice and Worktrees sections,
+  which look exactly as before. The phone says which kinds of rows it can draw and the PC fits the
+  screen to it; PCs before 0.172 keep showing the app's own rows.
+
 ### Changed
 - The phone app updates itself within seconds of a release, with no PC and no sign-in involved: it
   hears of new releases from Harbor's public release news (the same long poll PCs use, now with a
