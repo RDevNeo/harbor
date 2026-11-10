@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.169.4] - 2026-11-10
+
 ### Fixed
 - The test harness keeps spawned scripts on the same Bun executable as the test suite. Fake CLIs
   name their interpreter directly; child Bun commands use its directory first in PATH, avoiding
