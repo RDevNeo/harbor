@@ -49,6 +49,8 @@ final class Sidebar {
     private final Map<String, List<String>> projectShared = new HashMap<>();
     /** The PC a project's folder is on when it isn't the answering PC's ("": none known); absent: the answering PC's. */
     private final Map<String, String> projectPc = new HashMap<>();
+    /** Each project's icon, by its hash (`icon`, hubs from 0.172; "" or absent: its letter). */
+    private final Map<String, String> projectIcon = new HashMap<>();
     /** Snoozed projects, as last drawn: when each wakes ("": a hub before 0.161 doesn't say). */
     private final Map<String, String> snoozedProjects = new HashMap<>();
     /** The account's workspaces by id, as last drawn (for the shared mark's line). */
@@ -218,6 +220,7 @@ final class Sidebar {
         projectWs.clear();
         projectShared.clear();
         projectPc.clear();
+        projectIcon.clear();
         snoozedProjects.clear();
         JSONArray pa = st.optJSONArray("projects");
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
@@ -226,6 +229,7 @@ final class Sidebar {
                 projects.put(p.optString("id"), p.optString("name"));
                 projectWs.put(p.optString("id"), p.optString("workspace", ""));
                 projectShared.put(p.optString("id"), strings(p.optJSONArray("shared")));
+                projectIcon.put(p.optString("id"), p.optString("icon", ""));
                 // Where its folder is when it isn't the answering PC's (`here`, `pc`); a hub that doesn't say: the answering PC's.
                 if (!p.optBoolean("here", true)) projectPc.put(p.optString("id"), p.optString("pc", ""));
             }
@@ -617,6 +621,8 @@ final class Sidebar {
         letter.setIncludeFontPadding(false);
         letter.setBackground(Ui.round(Ui.dark ? Ui.G300 : Ui.G200, 0, 5));
         letter.setAlpha(asleep != null ? 0.45f : 1f);
+        // Its own icon or its website's, as the desktop's row shows it, once it's here.
+        ProjectIcons.into(letter, a.hub, key, projectIcon.get(key));
         h.addView(letter, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 10, 0));
         String where = Place.hint(st, key);
         int color = asleep != null ? Ui.G600 : Ui.FG;
@@ -799,10 +805,10 @@ final class Sidebar {
     }
 
     /** A chat's row, as the desktop's: its status before the title (the spinner while it works, amber while it waits or
-     *  is limited, blue while unread, red when its turn failed), the title and the branch it works on after it (its
-     *  worktree's, else its project's checkout's), small and dim (it gives way first when the title needs the room),
-     *  its PR's mark, someone else's initials or photo, then on the right Working, Waiting, Limited
-     *  or Failed, else when it was last active. A project's chats (`indented`) hang off its guide line; `last` ends it. */
+     *  is limited, blue while unread, red when its turn failed), the title, its PR's mark, someone else's initials or
+     *  photo, then on the right Working, Waiting, Limited or Failed, else when it was last active; under the title, the
+     *  branch it works on (its worktree's, else its project's checkout's), small and dim. A project's chats
+     *  (`indented`) hang off its guide line; `last` ends it. */
     private View chatRow(JSONObject c, String you, boolean indented, boolean last) {
         String id = c.optString("id");
         String title = c.optString("title");
@@ -813,19 +819,20 @@ final class Sidebar {
         String branch = c.optString("branch", "");
         if (branch.isEmpty() && wt != null) branch = wt.optString("name", "");
         boolean gone = wt != null && wt.optBoolean("gone");
+        // The title's line; with a branch, the row is that line and the branch's under it.
         LinearLayout r = Ui.row(a);
-        r.setMinimumHeight(Ui.dp(44));
-        r.setPadding(Ui.dp(indented ? 6 : 12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
-        r.setBackground(open ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
+        LinearLayout row = branch.isEmpty() ? r : Ui.col(a);
+        row.setMinimumHeight(Ui.dp(44));
+        row.setPadding(Ui.dp(indented ? 6 : 12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+        row.setBackground(open ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
         // Before the title: its status, or (a chat without a project) the chat glyph while it has none to show.
         View lead = leadMark(c, you);
+        int leadW = lead != null || indented ? 26 : 30;
         if (lead != null) r.addView(lead, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 10, 0));
         else if (indented) r.addView(new View(a), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 10, 0));
         else r.addView(Ui.icon(a, Ui.I_CHAT, 18, asleep ? Ui.G500 : Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 10, 0));
         int titleColor = asleep ? Ui.G600 : settled ? Ui.G700 : Ui.FG;
-        android.text.SpannableStringBuilder t = new android.text.SpannableStringBuilder(title.isEmpty() ? "New chat" : title);
-        if (!branch.isEmpty()) branchSpan(t, branch, gone);
-        TextView tv = Ui.subtitle(Ui.text(a, t, 15, titleColor));
+        TextView tv = Ui.subtitle(Ui.text(a, title.isEmpty() ? "New chat" : title, 15, titleColor));
         if (open || c.optBoolean("unread")) tv.setTypeface(Ui.semi);
         r.addView(tv, new LinearLayout.LayoutParams(0, -2, 1));
         // A worktree whose branch isn't known: the folder-git mark stands in.
@@ -851,9 +858,15 @@ final class Sidebar {
         JSONObject owner = c.optJSONObject("owner");
         if (owner != null) ownerMark(r, owner);
         rightStatus(r, c, you, asleep);
-        r.setOnClickListener(v -> open(id));
-        r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
-        if (!indented) return r;
+        if (row != r) {
+            row.addView(r, Ui.fill());
+            TextView b = Ui.subtitle(Ui.text(a, branchLine(branch), 12, gone ? Ui.RED : Ui.G600));
+            b.setContentDescription("Branch " + branch);
+            row.addView(b, Ui.margins(Ui.fill(), leadW, 1, 0, 0));
+        }
+        row.setOnClickListener(v -> open(id));
+        row.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
+        if (!indented) return row;
         // The guide line down the project's chats, under the header's chevron, through to the next chat unless it's the last.
         FrameLayout box = new FrameLayout(a);
         View line = new View(a);
@@ -864,21 +877,19 @@ final class Sidebar {
         if (last) box.setPadding(0, 0, 0, Ui.dp(2));
         FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(-1, -2);
         rp.leftMargin = Ui.dp(26);
-        box.addView(r, rp);
+        box.addView(row, rp);
         return box;
     }
 
-    /** " ⎇ branch" after a title: the branch glyph and the name in mono, small and dim (red when its worktree is gone). */
-    private static void branchSpan(android.text.SpannableStringBuilder t, String branch, boolean gone) {
-        int color = gone ? Ui.RED : Ui.G600;
-        t.append("  ");
+    /** "⎇ branch" under a title: the branch glyph and the name in mono (the row's colour says whether its worktree is gone). */
+    private static CharSequence branchLine(String branch) {
+        android.text.SpannableStringBuilder t = new android.text.SpannableStringBuilder(Ui.I_BRANCH);
+        t.setSpan(new Ui.Font(Ui.icons, 0), 0, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        t.append(" ");
         int s = t.length();
-        t.append(Ui.I_BRANCH);
-        t.setSpan(new Ui.Font(Ui.icons, 0), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        t.append(" ").append(branch);
-        t.setSpan(new Ui.Font(Ui.mono, 0), s + Ui.I_BRANCH.length() + 1, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        t.setSpan(new android.text.style.RelativeSizeSpan(0.8f), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        t.setSpan(new android.text.style.ForegroundColorSpan(color), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        t.append(branch);
+        t.setSpan(new Ui.Font(Ui.mono, 0), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return t;
     }
 
     /** The status before a chat's title, or null for none. */

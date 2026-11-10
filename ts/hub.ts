@@ -6,6 +6,7 @@ import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
 import { type ProjectPlace, ProjectClones } from "./projectclones.ts";
 import { ProjectsApi } from "./projectsapi.ts";
+import { ProjectIcons } from "./projecticons.ts";
 import { WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
@@ -430,6 +431,17 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       }
     },
   });
+  // Projects' icons for phones, at the size a phone draws them: the desktop's own lookup (its own, its website's).
+  const projectIcons = new ProjectIcons({
+    read: async (repo) => {
+      const r = store.repos().find((x) => x.id === repo);
+      const img = r ? await favicon.resolve(repo, repoDir(r), r.name, false, !offline, 64) : null;
+      return img === null ? null : favicon.png(img);
+    },
+    changed: () => hub.touch(null, true),
+  });
+  // Read at the start, so a phone's first look has them.
+  for (const r of store.repos()) void projectIcons.get(r.id);
   const projects = new ProjectsApi({
     moves,
     store,
@@ -448,6 +460,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return c ? { id: global ? c.gid : c.id, title: c.title } : null;
     },
     customIcon: (repo) => existsSync(favicon.customPath(repo)),
+    icon: (repo) => projectIcons.get(repo),
     setIcon: async (repo, how) => {
       if (how === "website") favicon.clearCustom(repo);
       else if (how !== "refresh") {
@@ -459,6 +472,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         const r = store.repos().find((x) => x.id === repo);
         if (r) await favicon.resolve(repo, repoDir(r), r.name, true).catch(() => null);
       }
+      // Phones see the new one too.
+      projectIcons.forget(repo);
+      void projectIcons.get(repo);
       return null;
     },
     remove: (repo) => {
@@ -849,6 +865,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     ctx: ctxFor,
     shareLevel: (peer) => machines.levelFor(store, peer),
     projectPlace: (repo) => projectClones.place(repo),
+    projectIcon: (repo) => projectIcons.hash(repo),
     store,
     hub,
     replica,

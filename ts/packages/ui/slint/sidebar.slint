@@ -30,7 +30,7 @@ export struct SideRow {
     fold: string,
     // A chat row's last activity ("13m ago"), on its right while nothing else is to say.
     ago: string,
-    // The branch it works on (its worktree's, else its project's checkout's; no "harbor/"), after the title.
+    // The branch it works on (its worktree's, else its project's checkout's; no "harbor/"), on a line under the title.
     branch: string,
     // The last chat under its project: the guide line ends with it.
     last: bool,
@@ -175,10 +175,11 @@ component ThreadRow {
     property <bool> indented: data.kind == "thread";
     // A loose chat (Threads, Settled) keeps its chat glyph until it has a status to show there.
     property <bool> lead-status: data.status.kind == "working" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
-    property <bool> inline-branch: data.branch != "";
+    // The branch it works on, on a second line under the title.
+    property <bool> two-lines: data.branch != "";
     // The worktree glyph stands in for a branch that isn't known.
     property <bool> wt-glyph: data.worktree != "" && data.branch == "";
-    height: Theme.row-h;
+    height: two-lines ? 46px : Theme.row-h;
     // The guide line down the project's chats: through the gap to the next one, unless this is the last.
     if root.indented: Rectangle {
         x: 9px;
@@ -203,36 +204,34 @@ component ThreadRow {
                 }
             }
         }
-        property <length> line-h: Theme.row-h;
+        // The title's line: the whole row, or its top with the branch under it.
+        property <length> line-y: root.two-lines ? 4px : 0px;
+        property <length> line-h: root.two-lines ? 22px : Theme.row-h;
         if root.indented || root.lead-status: LeadMark {
             x: root.indented ? 6px : 10px;
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
             status: root.data.status;
         }
         if !root.indented && !root.lead-status: Glyph {
             x: 8px;
-            y: 0;
+            y: parent.line-y;
             width: 16px;
             height: parent.line-h;
             icon: root.data.kind == "settled-project" ? Icons.folder : Icons.message;
             size: 14px;
             color: root.data.active ? Theme.fg : Theme.subtle;
         }
-        // The title, then its marks: the branch (it gives way first, down to 48px), the PR, the share mark. Hovered, the
-        // last mark keeps 30px (glyph to glyph) before the clock, as the clock does before Settle.
+        // The title, then its marks: the PR, the share mark. Hovered, the last mark keeps 30px (glyph to glyph) before
+        // the clock, as the clock does before Settle.
         property <length> right-w: (root.hovering ? actions.preferred-width + 11px : status.width + 16px) + (root.data.owner != "" ? 22px : 0px);
         property <length> marks-w: (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px) + (root.data.shared != "" ? 20px : 0px) + (root.data.place != "" ? place.width + 6px : 0px);
         property <length> room: self.width - title.x - self.right-w - self.marks-w;
-        // The title keeps what it needs, or at least 62% of the room; the branch gets the rest, and hides under 34px.
-        property <length> title-w: min(title.preferred-width, max(self.room - branch.preferred-width - 8px, self.room * 0.62));
-        property <length> branch-room: self.room - self.title-w - 8px;
-        property <length> branch-w: root.inline-branch && self.branch-room >= 34px ? min(branch.preferred-width, self.branch-room) : 0px;
         title := Text {
             x: root.indented ? 24px : 32px;
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
-            width: min(self.preferred-width, max(parent.room - (parent.branch-w > 0 ? parent.branch-w + 8px : 0px), 10px));
+            width: min(self.preferred-width, max(parent.room, 10px));
             text: root.data.title;
             font-size: 14px;
             font-weight: root.data.active || root.data.status.kind == "done" ? 500 : 400;
@@ -241,21 +240,21 @@ component ThreadRow {
             overflow: elide;
             vertical-alignment: center;
         }
-        branch := BranchLabel {
-            visible: parent.branch-w > 0;
-            x: title.x + title.width + 8px;
-            y: 0;
-            height: parent.line-h;
-            width: parent.branch-w;
+        // Under the title, from where it starts, as far as the row goes.
+        if root.two-lines: BranchLabel {
+            x: title.x;
+            y: parent.line-y + parent.line-h;
+            height: 16px;
+            width: parent.width - title.x - 10px;
             branch: root.data.branch;
             gone: root.data.worktree == "gone";
         }
-        property <length> marks-x: title.x + title.width + (self.branch-w > 0 ? self.branch-w + 8px : 0px) + 5px;
+        property <length> marks-x: title.x + title.width + 5px;
         // A settled project's PC, when its folder isn't here (the project row's hint).
         place := HorizontalLayout {
             visible: root.data.place != "";
             x: parent.marks-x + 1px;
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
             width: root.data.place != "" ? min(self.preferred-width, 106px) : 0px;
             spacing: 3px;
@@ -276,7 +275,7 @@ component ThreadRow {
         worktree := TipArea {
             visible: root.wt-glyph;
             x: parent.marks-x;
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
             width: 16px;
             tip: root.data.worktree-tip;
@@ -289,7 +288,7 @@ component ThreadRow {
         pr := TipArea {
             visible: root.data.pr != "";
             x: parent.marks-x + (root.wt-glyph ? 20px : 0px);
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
             width: 16px;
             tip: root.data.pr-tip;
@@ -302,7 +301,7 @@ component ThreadRow {
         shared := SharedMark {
             visible: root.data.shared != "";
             x: parent.marks-x + (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px);
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
             kind: root.data.shared;
             active: root.data.active;
@@ -311,7 +310,7 @@ component ThreadRow {
         owner := OwnerMark {
             visible: root.data.owner != "";
             x: parent.width - parent.right-w + 6px;
-            y: (parent.line-h - self.height) / 2;
+            y: parent.line-y + (parent.line-h - self.height) / 2;
             letters: root.data.owner;
             photo: root.data.owner-photo;
             has-photo: root.data.has-owner-photo;
@@ -320,7 +319,7 @@ component ThreadRow {
         status := RowStatus {
             visible: !root.hovering;
             x: parent.width - 8px - self.width;
-            y: 0;
+            y: parent.line-y;
             height: parent.line-h;
             status: root.data.status;
             ago: root.data.ago;
@@ -328,7 +327,7 @@ component ThreadRow {
         actions := HorizontalLayout {
             visible: root.hovering;
             x: parent.width - 2px - self.preferred-width;
-            y: (parent.line-h - 28px) / 2;
+            y: (parent.height - 28px) / 2;
             height: 28px;
             spacing: 0px;
             snooze-btn := Btn {
@@ -930,7 +929,7 @@ export component Sidebar inherits Rectangle {
             }
         }
         if root.settled-count > 0 && root.settled-open: settled-list := Flickable {
-            height: min(root.settled-count * 34px, 220px);
+            height: min(root.settled-count * 46px, 230px);
             VerticalLayout {
                 alignment: start;
                 spacing: 2px;

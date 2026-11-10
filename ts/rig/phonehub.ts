@@ -97,6 +97,17 @@ seed.set("account_dir", JSON.stringify({ at: t0 * 1000, workspaces: [{ id: "org_
 const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-web.git"));
 const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));
 const notes = seed.addRepo(project("field-notes", null));
+// Projects' own icons (favicon.ts finds public/favicon.svg), as the desktop's sidebar and the drawer show them: a red
+// flower for acme-web, a green clover for acme-api; field-notes has none (its letter).
+const petals = (fill: string, n: number, r: number, d: number) =>
+  Array.from({ length: n }, (_, i) => `<circle cx="${16 + d * Math.cos((i * 2 * Math.PI) / n - Math.PI / 2)}" cy="${16 + d * Math.sin((i * 2 * Math.PI) / n - Math.PI / 2)}" r="${r}" fill="${fill}"/>`).join("");
+for (const [name, svg] of [
+  ["acme-web", `${petals("#e5484d", 5, 7, 8)}<circle cx="16" cy="16" r="4" fill="#7a1418"/>`],
+  ["acme-api", `${petals("#3fb950", 4, 7.5, 7.5)}`],
+] as const) {
+  mkdirSync(join(home, "code", name, "public"), { recursive: true });
+  writeFileSync(join(home, "code", name, "public", "favicon.svg"), `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">${svg}</svg>`);
+}
 seed.setRepoWorkspace(notes, "org_team");
 // Share with workspace…: acme-api is owned by Sam's workspace and shared with Team (the rows' link mark).
 seed.setRepoShares(api, ["org_team"]);
@@ -186,6 +197,27 @@ seed.saveItems(lead.id, [
   user("Where are the agents' chats?", ago(1)),
   say(`The dashboard is in harbor://chat/${dash.gid}?pc=rig, and the CDN work is in [the images chat](harbor://chat/${linked.gid}?pc=rig). The old one, harbor://chat/0b5e1c2a-0000-4000-8000-000000000000?pc=rig, is gone.`, ago(1)),
 ]);
+// A second worktree chat (its branch under its title), finished while nobody looked (unread, set once the hub runs).
+const lazy = chat({ repoId: web, role: "lead", name: "lead", title: "Lazy-load the product images", updated: ago(12) }, [
+  user("Lazy-load the product images below the fold.", ago(20)),
+  say("Images below the fold now load as they scroll in; the first screen is unchanged.", ago(12)),
+  done(ago(12), 0.21),
+]);
+const lazyGit = join(home, "code", ".git-worktrees", "lazy-images");
+const lazyDir = join(home, "code", "acme-web-lazy-images");
+mkdirSync(lazyGit, { recursive: true });
+mkdirSync(lazyDir, { recursive: true });
+writeFileSync(join(lazyGit, "HEAD"), "ref: refs/heads/harbor/lazy-product-images\n");
+writeFileSync(join(lazyDir, ".git"), `gitdir: ${lazyGit}\n`);
+seed.set(`worktree:${lazy.id}`, lazyDir);
+// Someone else's chat: Dana's, run on the Laptop with her OpenCode (its row shows her photo).
+chat({ repoId: web, role: "lead", name: "lead", home: "pc:laptop", account: "opencode", title: "Fix the cart badge count", updated: ago(14) }, [user("The cart badge shows 0 after a reload.", ago(16))]);
+// A lead on acme-web's checkout (its branch: main).
+chat({ repoId: web, role: "lead", name: "lead", title: "Tune the search ranking", updated: ago(40) }, [
+  user("Rank exact title matches above description matches.", ago(45)),
+  say("Exact title matches now come first; the rest keep their order.", ago(40)),
+  done(ago(40), 0.11),
+]);
 chat({ repoId: web, title: "Fork: CDN cache headers", updated: ago(80) }, [
   notice("fork", "Forked", `harbor:chat/${linked.id}/1`),
   notice("chat", "Move images to the CDN", `harbor:gid/${linked.gid}`),
@@ -193,12 +225,12 @@ chat({ repoId: web, title: "Fork: CDN cache headers", updated: ago(80) }, [
   say("Hashed names now get `Cache-Control: max-age=604800, immutable`.", ago(80)),
   done(ago(80), 0.09),
 ]);
-chat({ repoId: notes, title: "Summarize the interview notes", updated: ago(60 * 26) }, [
+const notesChat = chat({ repoId: notes, role: "lead", name: "lead", title: "Summarize the interview notes", updated: ago(60 * 26) }, [
   user("Summarize the five interviews in notes/ by theme.", ago(60 * 27)),
   say("## Themes\n\n- **Onboarding** is the top complaint (4 of 5).\n- **Pricing** is clear to everyone.\n- **Export** is missing for two of them.", ago(60 * 26)),
   done(ago(60 * 26), 0.12),
 ]);
-const cat = chat({ repoId: null, title: "What's a good name for a cat?", updated: ago(60 * 50) }, [
+const cat = chat({ repoId: null, role: "lead", name: "lead", title: "What's a good name for a cat?", updated: ago(60 * 50) }, [
   user("What's a good name for a grey cat?", ago(60 * 50)),
   say("Ash, Pebble, Smoke or Earl Grey.", ago(60 * 50)),
   done(ago(60 * 50), 0.01),
@@ -256,6 +288,10 @@ seed.close();
 // This tree's version: the app compares it with its own.
 const version = (JSON.parse(await Bun.file(join(import.meta.dirname, "../package.json")).text()) as { version: string }).version;
 const h = await startHub({ version, hookPort: false });
+// The drawer's statuses: an unread chat (blue) and one paused at its account's usage limit (Limited).
+h.engine.unread.add(lazy.id);
+h.engine.limits.paused.set(notesChat.id, { account: "claude", resume: false, at: null, timer: null });
+h.hub.touch(null, true);
 
 // The captcha's picture: the challenge stage as hCaptcha shows it, at 2x the page (448 x 628 page
 // px; the captcha 24 px in from its edges). Made up here: a header with small text, 1 px stripes,

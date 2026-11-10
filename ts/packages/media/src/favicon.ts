@@ -79,18 +79,18 @@ export function clearCustom(repo: number): void {
   rmSync(customPath(repo), { force: true });
 }
 
-/** `online` false: the project's own icons only, the website's is not fetched. */
-export async function resolve(repo: number, root: string, name: string, refresh: boolean, online = true): Promise<Decoded | null> {
+/** `online` false: the project's own icons only, the website's is not fetched. `size`: its side in pixels. */
+export async function resolve(repo: number, root: string, name: string, refresh: boolean, online = true, size = SIZE): Promise<Decoded | null> {
   const custom = customPath(repo);
   if (isFile(custom)) {
-    const img = await decode(custom);
+    const img = await decode(custom, size);
     if (img) {
       watch(repo, custom);
       return img;
     }
   }
   for (const src of await localCandidates(root, name)) {
-    const img = await decode(src);
+    const img = await decode(src, size);
     if (img) {
       watch(repo, src);
       return img;
@@ -100,7 +100,14 @@ export async function resolve(repo: number, root: string, name: string, refresh:
   const domain = website(root);
   if (domain === null || !online) return null;
   const file = await fetchSiteIcon(domain, refresh);
-  return file === null ? null : decode(file);
+  return file === null ? null : decode(file, size);
+}
+
+/** An icon as a PNG file's bytes (what a phone is sent). */
+export async function png(img: Decoded): Promise<Uint8Array> {
+  const sharp = await sharpLib();
+  const out = await sharp(img.data, { raw: { width: img.width, height: img.height, channels: 4 } }).png().toBuffer();
+  return new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
 }
 
 export async function describeLocal(root: string, name: string): Promise<string> {
@@ -309,7 +316,7 @@ async function desktopIcons(r: string): Promise<string[]> {
   return bestOf(v);
 }
 
-export async function decode(p: string): Promise<Decoded | null> {
+export async function decode(p: string, size = SIZE): Promise<Decoded | null> {
   let bytes: Buffer;
   try {
     if (statSync(p).size > MAX_FILE) return null;
@@ -319,25 +326,25 @@ export async function decode(p: string): Promise<Decoded | null> {
   }
   const head = bytes.subarray(0, 512).toString("utf8").toLowerCase();
   const svg = p.toLowerCase().endsWith(".svg") || head.includes("<svg") || head.startsWith("<?xml");
-  if (!svg) return decodeIcon(bytes);
+  if (!svg) return decodeIcon(bytes, size);
   try {
     const sharp = await sharpLib();
-    const png = await sharp(bytes, { density: 384 }).resize(SIZE * 2, SIZE * 2, { fit: "inside" }).png().toBuffer();
-    return decodeIcon(png);
+    const png = await sharp(bytes, { density: 384 }).resize(size * 2, size * 2, { fit: "inside" }).png().toBuffer();
+    return decodeIcon(png, size);
   } catch {
     return null;
   }
 }
 
-export async function decodeIcon(bytes: Uint8Array): Promise<Decoded | null> {
+export async function decodeIcon(bytes: Uint8Array, size = SIZE): Promise<Decoded | null> {
   try {
     const sharp = await sharpLib();
-    const { image } = await decodeBytes(bytes, SIZE * 4, { maxSide: MAX_SIDE, maxAlloc: MAX_ALLOC });
+    const { image } = await decodeBytes(bytes, size * 4, { maxSide: MAX_SIDE, maxAlloc: MAX_ALLOC });
     const s = Math.max(image.width, image.height);
     let pipe = sharp(image.data, { raw: { width: image.width, height: image.height, channels: 4 } }).resize({ width: s, height: s, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } });
-    if (s !== SIZE) pipe = pipe.resize(SIZE, SIZE, { kernel: "lanczos3" });
+    if (s !== size) pipe = pipe.resize(size, size, { kernel: "lanczos3" });
     const out = await pipe.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    return { width: SIZE, height: SIZE, data: new Uint8Array(out.data.buffer, out.data.byteOffset, out.data.byteLength) };
+    return { width: size, height: size, data: new Uint8Array(out.data.buffer, out.data.byteOffset, out.data.byteLength) };
   } catch {
     return null;
   }

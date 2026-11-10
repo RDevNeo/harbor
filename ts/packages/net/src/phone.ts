@@ -170,6 +170,8 @@ export interface PhoneDeps {
   shareLevel?: (peer: string) => string;
   /** Where a project's folder is when it isn't on this PC (null: it's here); its `pc` is a mesh PC's id ("": none known). */
   projectPlace?: (repo: number) => { pc: string; name: string; online: boolean } | null;
+  /** The hash of a project's icon, as the desktop's sidebar shows it ("" none: its letter); `/v1/projects/icon` has the picture. */
+  projectIcon?: (repo: number) => string;
   /** A started chat moved between this PC, its devices and other PCs (relocate.rs). */
   relocate?: { why(chatId: number, to: string): string | null; relocate(chatId: number, to: string): Promise<string> };
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
@@ -782,7 +784,7 @@ export class PhoneRoutes {
         const at = this.placeJson(r.id);
         // Where it was moved: here, or (its folder on another PC) as that PC says it in its chats' copies; "": its PC's.
         const moved = place.repos.get(r.id) ?? (at.here === true ? "" : (carried.get(r.id) ?? ""));
-        return { id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: moved, shared: [...(place.shared?.repos.get(r.id) ?? [])], ...at };
+        return { id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: moved, shared: [...(place.shared?.repos.get(r.id) ?? [])], icon: this.d.projectIcon?.(r.id) ?? "", ...at };
       }),
       chats: chats.map((c) => this.chatJson(c, global, place)),
       tree,

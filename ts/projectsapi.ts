@@ -42,6 +42,8 @@ export interface ProjectsHost {
   customIcon?: (repo: number) => boolean;
   /** The project's icon: looked up again, the website's again, or the image at `file`; an error to show, or null. */
   setIcon?: (repo: number, how: "refresh" | "website" | { file: string }) => Promise<string | null>;
+  /** The project's icon for a phone (null: none, its letter shows). */
+  icon?: (repo: number) => Promise<{ hash: string; png: string } | null>;
   /** Removes the project from Harbor, as the window's Remove from Harbor. */
   remove?: (repo: number) => void;
   /** The window hears project `repo` was settled or unsettled here. */
@@ -136,7 +138,7 @@ export class ProjectsApi {
     const p = call.path;
     if (p[0] !== "v1" || p[1] !== "projects" || call.method !== "POST" || p.length > 3) return null;
     const sub = p[2] ?? "";
-    if (!["", "rows", "job", "menu", "do", "move"].includes(sub)) return null;
+    if (!["", "rows", "job", "menu", "do", "move", "icon"].includes(sub)) return null;
     const b = obj(call.body);
     const pc = str(b.pc);
     if (pc !== "" && pc !== this.h.me().id) return this.onPeer(pc, sub, b, call);
@@ -147,6 +149,13 @@ export class ProjectsApi {
       if (r === null) return err(404, "that project isn't on this PC any more");
       if (!this.h.move) return err(409, "projects can't move from here");
       return this.h.move(r.id, b, this.h.sender(call));
+    }
+    if (sub === "icon") {
+      // Its picture as the sidebar shows it, the PNG in base64: `/v1/state` names it by `hash`.
+      const r = this.repoOf(b.project);
+      if (r === null) return err(404, "that project isn't on this PC any more");
+      const icon = (await this.h.icon?.(r.id)) ?? null;
+      return icon === null ? err(404, "that project has no icon") : ok({ hash: icon.hash, png: icon.png });
     }
     if (sub === "menu" || sub === "do") {
       const r = this.repoOf(b.project);
