@@ -34,7 +34,13 @@ export function devicesHost(store: Store, refresh: () => void, myFp: () => strin
     },
     copy,
     // Phones signed in with an account (the ones from before accounts can only update their app).
-    phones: () => (runtime?.hub.tokens ?? loadTokens(store)).filter((t) => t.account !== "").map((t) => ({ fp: t.fp, name: t.name, account: t.account, accountName: t.account_name })),
+    // Each by the device name the Devices panel shows (what the phone last said, here or on another PC), else its token's.
+    phones: () => {
+      const seen = runtime?.hub.pairedPhones() ?? [];
+      return (runtime?.hub.tokens ?? loadTokens(store))
+        .filter((t) => t.account !== "")
+        .map((t) => ({ fp: t.fp, name: seen.find((p) => p.group === t.group && p.name.trim() !== "")?.name.trim() || t.name.trim(), account: t.account, accountName: t.account_name }));
+    },
     signOutPhone(fp) {
       if (!runtime) return;
       void runtime.account.removeDevice(fp).then(() => {

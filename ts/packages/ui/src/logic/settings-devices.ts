@@ -1,4 +1,4 @@
-import { agoShort, hostLabel, short as keyShort } from "@harbor/net";
+import { agoShort, hostLabel, runningVersion, short as keyShort } from "@harbor/net";
 import type { AccountPc, Me, Peer, PeerDevice, RemoteHost } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, field, form, list, row, title, type Block, type BlockRow } from "./settings-blocks.ts";
@@ -6,6 +6,7 @@ import { badge, btn, field, form, list, row, title, type Block, type BlockRow } 
 /** A phone signed in to this PC: whose it is (the account) and its key. */
 export interface PhoneEntry {
   fp: string;
+  /** Its device name as the Devices panel shows it ("Sam's Pixel 9"); "" when none is known. */
   name: string;
   /** The account id that signed it in. */
   account: string;
@@ -61,7 +62,8 @@ export function pcRow(h: DevicesHost, pc: AccountPc, owner = false): BlockRow {
   const seen = Math.max(peer?.seen ?? 0, pc.seen);
   const ago = agoShort(seen, h.now());
   const status = online ? "" : seen > 0 ? (ago === "now" ? "seen just now" : `last seen ${ago} ago`) : "offline";
-  const version = peer?.version || pc.version;
+  // The Harbor it really runs (its update info's build, as the Devices panel shows), not the version it advertises to old peers.
+  const version = (peer ? runningVersion(peer) : "") || pc.version;
   const bits = [owner ? ownersWorkspace(pc.owner_name) : "", version !== "" ? `Harbor ${version}` : "", status].filter((b) => b !== "");
   return row(pc.name || peer?.name || "PC", {
     icon: ICONS.MONITOR,
@@ -73,7 +75,7 @@ export function pcRow(h: DevicesHost, pc: AccountPc, owner = false): BlockRow {
 export function phoneRow(p: PhoneEntry, canSignOut: boolean): BlockRow {
   return row(p.name || "Phone", {
     icon: ICONS.SMARTPHONE,
-    line: `Phone · key ${keyShort(p.fp)}`,
+    line: "Phone",
     buttons: canSignOut ? [btn(`phone_signout:${p.fp}`, "Sign out", { variant: "destructive" })] : [],
   });
 }

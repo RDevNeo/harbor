@@ -264,14 +264,14 @@ describe("one Workspace page: each person with their PCs and phones", () => {
       versionLabel: () => "0.132.0",
       peers: () => [pc(OTHER, "laptop", "u2", "Leo", ["Home"]), pc("c".repeat(64), "render", "u9", "Kai", ["Studio"], NOW - 5)],
       meshPeers: () => [
-        newPeer({ id: "pc:laptop", fp: OTHER, online: true, version: "0.132.0", devices: [{ id: "ssh:1", name: "Mac", os: "macOS" }, { id: "ssh:2", name: "render", os: "linux" }] }),
+        newPeer({ id: "pc:laptop", fp: OTHER, online: true, version: "0.109.0.ts", update: { build: "0.171.4+0d56ad0" }, devices: [{ id: "ssh:1", name: "Mac", os: "macOS" }, { id: "ssh:2", name: "render", os: "linux" }] }),
         newPeer({ id: "pc:render", fp: "c".repeat(64), devices: [{ id: "ssh:4", name: "nas", os: "linux" }] }),
       ],
       rename: (n) => calls.push(`rename ${n}`),
       copy: (t) => calls.push(`copy ${t.slice(0, 4)}`),
       phones: () => [
         { fp: "d".repeat(64), name: "Pixel", account: "u1", accountName: "Ana" },
-        { fp: "e".repeat(64), name: "Galaxy", account: "u2", accountName: "Leo" },
+        { fp: "e".repeat(64), name: "", account: "u2", accountName: "Leo" },
       ],
       signOutPhone: (fp) => calls.push(`signout ${fp.slice(0, 4)}`),
       ssh: { devices: () => [[newHost({ id: "ssh:1", name: "Build PC", host: "10.0.0.3" }), false]], remove: (id) => calls.push(`ssh ${id}`) },
@@ -287,14 +287,16 @@ describe("one Workspace page: each person with their PCs and phones", () => {
         ["Ana (you)", [], "ana@example.com"],
         ["desk", ["This PC"], "Harbor 0.132.0 · key aaaa aaaa aaaa aaaa"],
         ["Build PC", [], "SSH · offline"],
-        ["Pixel", [], "Phone · key dddd dddd dddd dddd"],
+        // A phone reads by its device name, else just "Phone"; no key.
+        ["Pixel", [], "Phone"],
       ],
       [
         ["leo@example.com", [], "leo@example.com"],
-        ["laptop", ["Online"], "Harbor 0.132.0"],
+        // The Harbor it really runs (its update info's build), not the compat version it advertises.
+        ["laptop", ["Online"], "Harbor 0.171.4+0d56ad0"],
         // A device that is itself one of the PCs ("render") isn't listed twice.
         ["Mac", [], "SSH"],
-        ["Galaxy", [], "Phone · key eeee eeee eeee eeee"],
+        ["Phone", [], "Phone"],
       ],
     ]);
     const icons = peopleCards(b).flatMap((c) => c.rows.filter((r) => r.line.startsWith("SSH")).map((r) => r.icon));
