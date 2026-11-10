@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.171.1] - 2026-11-10
+
+### Fixed
+- Claude's models are the ones Claude Code itself offers in /model, in its order: Opus 5.5, Fable 5.2,
+  Sonnet 5.5 and Haiku 5.5 up front (Ctrl+1..4), its "More models" (Fable 5.1, Haiku 4.5, Opus 4.8, …)
+  behind More models. Read from the CLI, so a new model shows without a Harbor release; chats on
+  Fable 5.1 keep it.
+
+### Changed
+- A model's second line in the picker is whose workspace the account is ("Sam's Workspace"), without
+  the provider's name (its icon stays).
+
 ## [0.171.0] - 2026-11-10
 
 ### Changed
