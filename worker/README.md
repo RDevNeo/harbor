@@ -21,7 +21,7 @@ Wire format: see "Accounts" in `android/PROTOCOL.md`.
 - `GET /v1/invites`, `POST /v1/invites/{id}/accept|decline`: the signed-in account's pending invitations
 - `GET /invite`: a landing page (unused while invitations aren't emailed)
 - `POST /v1/release`: the release workflow's ping. The body is ignored; the worker re-reads GitHub's latest release itself (`src/release.js`)
-- `GET /v1/release/wait?have=<version>`: held until a release newer than `have` exists (answers `{version}` at once if one already does, `204` after about 50 s so the PC reconnects)
+- `GET /v1/release/wait?have=<version>[&wait=<seconds>]`: held until a release newer than `have` exists (answers `{version}` at once if one already does, `204` after about 50 s so the PC reconnects). No sign-in: phones use it too (`Update.java`), with `wait` (0 to 240): how long to hold instead, 0 = answer at once (`204` when nothing is newer)
 - `POST /v1/github`: GitHub's push webhook on the repository (content type JSON, secret `GITHUB_WEBHOOK_SECRET`, checked against `X-Hub-Signature-256`); a push to `main` is told to the PCs below
 - `POST /v1/main` (a PC's Harbor token): the PC just pushed main, `{sha}`. Never believed: the Worker reads main from GitHub (`info/refs`, once a second at most, a few tries while GitHub shows another commit) and tells the PCs what GitHub says
 - `GET /v1/main/wait?have=<commit>`: held until main's newest commit (as the webhook told it) isn't `have`; answers `{sha, at}`, or `204` after about 50 s. PCs following main (followmain.ts) only take it as a reason to look

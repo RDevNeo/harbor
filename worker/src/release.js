@@ -2,6 +2,8 @@ const DEFAULT_REPO = 'RDevNeo/harbor';
 const DEFAULT_ORIGIN = 'https://github.com';
 const MANIFEST = 'harbor-app.json.minisig';
 const WAIT_MS = 50_000;
+// A phone may ask to be held longer (`wait`, seconds): its radio wakes once per answer, so fewer is less battery.
+const MAX_HOLD_MS = 240_000;
 const MIN_GAP_MS = 5_000;
 const RECHECK_MS = 10 * 60 * 1000;
 const MISSING_ASSET_MS = 5_000;
@@ -146,10 +148,12 @@ export class ReleaseHub {
     if (at === null || at <= Date.now()) await this.state.storage.setAlarm(Date.now() + RECHECK_MS);
   }
 
-  async wait(have, signal) {
+  /** `hold`: how long to keep the request when there's no news (ms); 0 answers at once (a phone's quick look). */
+  async wait(have, signal, hold) {
     let version = await this.load();
     if (!version) version = await this.refresh(true);
     if (version && newer(version, have)) return this.answer();
+    if (hold === 0) return new Response(null, { status: 204 });
     if (this.waiters.size >= MAX_WAITERS) return json({ error: 'Too many waiting PCs.' }, 503, { 'retry-after': '30' });
     if (this.waiters.size === 0 && !(await this.state.storage.getAlarm())) await this.state.storage.setAlarm(Date.now() + RECHECK_MS);
     if (this.version && newer(this.version, have)) return this.answer();
@@ -162,7 +166,7 @@ export class ReleaseHub {
           resolve(res);
         },
       };
-      const timer = setTimeout(() => waiter.finish(new Response(null, { status: 204 })), Number(this.env.RELEASE_WAIT_MS) || WAIT_MS);
+      const timer = setTimeout(() => waiter.finish(new Response(null, { status: 204 })), hold > 0 ? hold : Number(this.env.RELEASE_WAIT_MS) || WAIT_MS);
       this.waiters.add(waiter);
       signal?.addEventListener('abort', () => waiter.finish(new Response(null, { status: 204 })), { once: true });
     });
@@ -254,7 +258,11 @@ export class ReleaseHub {
       const version = await this.refresh(true, hint);
       return json({ ok: true, version });
     }
-    if (request.method === 'GET' && url.pathname === '/wait') return this.wait(url.searchParams.get('have'), request.signal);
+    if (request.method === 'GET' && url.pathname === '/wait') {
+      const w = url.searchParams.get('wait');
+      const hold = w === null || w === '' ? undefined : Math.min(Math.max(Number(w) || 0, 0), MAX_HOLD_MS / 1000) * 1000;
+      return this.wait(url.searchParams.get('have'), request.signal, hold);
+    }
     if (request.method === 'POST' && url.pathname === '/main') {
       const b = await request.json().catch(() => ({}));
       if (!SHA_RE.test(String(b?.sha || ''))) return json({ error: 'Send { sha }.' }, 400);
@@ -288,10 +296,17 @@ export async function releasePing(req, env) {
   return json({ ok: true, version: out.version || null }, 202);
 }
 
+/**
+ * GET /v1/release/wait?have=<version>[&wait=<seconds>]: PCs and phones (no sign-in: what's published is
+ * public). `wait` (0-240, phones) replaces the usual ~50 s hold; 0 answers at once, 204 when nothing's newer.
+ */
 export async function releaseWait(req, env) {
-  const have = new URL(req.url).searchParams.get('have') || '';
+  const q = new URL(req.url).searchParams;
+  const have = q.get('have') || '';
   if (!parseVersion(have)) return json({ error: 'Send ?have=<the version this PC runs>.' }, 400);
-  return hub(env).fetch(`https://release/wait?have=${encodeURIComponent(have)}`, { signal: req.signal });
+  const w = q.get('wait');
+  if (w !== null && !/^\d{1,6}$/.test(w)) return json({ error: 'Send ?wait=<seconds>, 0 to 240.' }, 400);
+  return hub(env).fetch(`https://release/wait?have=${encodeURIComponent(have)}${w === null ? '' : `&wait=${w}`}`, { signal: req.signal });
 }
 
 // ---- Main's news (follow-main) ----

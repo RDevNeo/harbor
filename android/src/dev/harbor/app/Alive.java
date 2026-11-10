@@ -14,8 +14,9 @@ import android.os.SystemClock;
  *  every 15 minutes, kept across reboots (Android runs it later in Doze or when the app is
  *  rarely used); and a burst right after the user leaves the app, long-polling for a few
  *  minutes, when an answer to what was just asked is most likely. Each ping carries the
- *  account's Harbor token, like every call (Account renews it here too). After the pings, an automatic
- *  update when one is due and nobody sees Harbor (Update.background). */
+ *  account's Harbor token, like every call (Account renews it here too). Runs with no PC too: a
+ *  look at the release news, and an automatic update when one is due and nobody sees Harbor
+ *  (Update.round). */
 public class Alive extends JobService {
     static final int JOB = 4711, BURST = 4712;
     static final long EVERY_MS = 15 * 60_000L;
@@ -68,6 +69,8 @@ public class Alive extends JobService {
             long until = SystemClock.elapsedRealtime() + (burst ? BURST_MS : 0);
             // A Harbor token due for renewal, and a newer directory, while the network is up.
             try { Account.renew(this, false); } catch (Exception ignored) { }
+            // A release out? Straight from the account service's public news (no PC, no sign-in).
+            if (!stop) Update.catchUp(this);
             do {
                 java.util.List<Hub> hubs = Hub.all(this);
                 for (int i = 0; i < hubs.size() && !stop; i++) {
@@ -75,8 +78,8 @@ public class Alive extends JobService {
                     int wait = burst && i == 0 ? (int) Math.min(60_000, Math.max(0, until - SystemClock.elapsedRealtime())) : 0;
                     try { hubs.get(i).alive(wait); } catch (Exception e) { if (burst) SystemClock.sleep(10_000); }
                 }
-                // Updating automatically: a new version installs while nobody sees Harbor.
-                if (!stop) Update.background(this);
+                // Updating automatically: a new version downloads, and installs while nobody sees Harbor.
+                if (!stop) Update.round(this);
             } while (burst && !stop && Base.resumed <= 0 && SystemClock.elapsedRealtime() < until);
             jobFinished(p, false);
         });

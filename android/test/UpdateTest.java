@@ -14,12 +14,37 @@ public class UpdateTest {
     }
 
     public static void main(String[] args) {
-        // Only while nobody sees Harbor: no screen of it in front, and the screen off or locked.
-        check(Quiet.now(0, false, false), "screen off");
-        check(Quiet.now(0, true, true), "lock screen up");
-        check(!Quiet.now(0, true, false), "another app in front: the user is on the phone");
-        check(!Quiet.now(1, true, false), "Harbor in front");
-        check(!Quiet.now(1, false, true), "a Harbor screen still resumed");
+        // Only while nobody sees Harbor: no screen of it on screen, and the screen off or locked,
+        // or Harbor out of sight for the grace (a quick look at another app comes back to it).
+        long g = Quiet.GRACE_MS;
+        check(Quiet.now(false, false, false, 0), "screen off: at once");
+        check(Quiet.now(false, true, true, 0), "lock screen up: at once");
+        check(!Quiet.now(false, true, false, 0), "just left Harbor for another app: not yet");
+        check(!Quiet.now(false, true, false, g - 1), "still within the grace");
+        check(Quiet.now(false, true, false, g), "out of sight for the grace: installs");
+        check(Quiet.now(false, true, false, Long.MAX_VALUE), "no Harbor screen in this process yet (a job, the service)");
+        check(!Quiet.now(true, true, false, Long.MAX_VALUE), "Harbor on screen");
+        check(!Quiet.now(true, false, true, Long.MAX_VALUE), "a Harbor screen still on screen (seen wins over screen off)");
+        check(10_000 >= g && g >= 3_000, "the grace is short: " + g);
+
+        // Release news: which release to ask about, and what counts as newer.
+        check(Quiet.newer("0.172.0", "0.171.3"), "minor");
+        check(Quiet.newer("v0.171.10", "0.171.9"), "numeric, with v");
+        check(Quiet.newer("1.0.0", "0.999.999"), "major");
+        check(!Quiet.newer("0.171.3", "0.171.3"), "same");
+        check(!Quiet.newer("0.171.2", "0.171.3"), "older");
+        check(Quiet.newer("0.171.3", ""), "anything is newer than nothing known");
+        check(Quiet.newer("0.171.3", "?"), "than an unreadable version");
+        check(!Quiet.newer("", "0.1.0"), "nothing isn't newer");
+        check(!Quiet.newer("0.172.0-rc1", "0.1.0"), "not a release version");
+        same(Quiet.have("0.171.0", "0.172.0", "0.171.3"), "0.172.0", "asks about the newest it knows of");
+        same(Quiet.have("", "", "0.171.3"), "0.171.3", "a fresh install asks about its own version");
+        same(Quiet.have("v0.170.0", null, "?"), "0.170.0", "the v goes");
+        same(Quiet.have("", null, "?"), "0.0.0", "nothing known: the first answer names the latest");
+        same(Quiet.backoff(0), 0, "no failure, no wait");
+        same(Quiet.backoff(1), 15000, "first failure");
+        same(Quiet.backoff(2), 30000, "doubles");
+        same(Quiet.backoff(50), 300000, "at most 5 minutes");
 
         // A newer version installs in the background...
         same(Quiet.plan(53000, 52000, 0, false, 0), Quiet.INSTALL, "newer, nothing failed");

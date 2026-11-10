@@ -30,6 +30,15 @@ abstract class Base extends Activity {
 
     /** Harbor screens in the foreground now. */
     static volatile int resumed;
+    /** Harbor screens on screen now (between onStart and onStop, paused ones too): an update
+     *  doesn't install while any is (Update.quiet). */
+    static volatile int started;
+    /** When the last of them went out of sight (elapsedRealtime), 0 while none has shown in this
+     *  process: an update installs a few seconds after (Quiet.GRACE_MS). */
+    static volatile long leftAt;
+    /** When Harbor sent the user to another app for an answer (a photo, a file, the camera;
+     *  elapsedRealtime), 0 once a screen is back: installing then would lose the answer. */
+    static volatile long outFor;
     /** This screen is in front (between onResume and onPause). */
     boolean front;
     private int gen;                 // bumped to stop the current poll loop
@@ -393,8 +402,32 @@ abstract class Base extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        // Back on screen from outside Harbor: is a release out? (Update, no PC involved)
+        if (started++ <= 0) Update.opened(getApplicationContext());
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (--started > 0) return;
+        started = 0;
+        // Out of sight: a waiting update installs in a few seconds, unless a screen comes back.
+        leftAt = android.os.SystemClock.elapsedRealtime();
+        Update.left(getApplicationContext());
+    }
+
+    @Override
+    public void startActivityForResult(Intent i, int req, Bundle options) {
+        outFor = android.os.SystemClock.elapsedRealtime();
+        super.startActivityForResult(i, req, options);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        outFor = 0;
         resumed++;
         front = true;
         Inbox.resumed(this);

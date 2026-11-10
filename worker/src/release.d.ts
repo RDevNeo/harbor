@@ -26,7 +26,7 @@ export class ReleaseHub {
   hint: string | null;
   refresh(force: boolean, hint?: string | null): Promise<string | null>;
   alarm(): Promise<void>;
-  wait(have: string | null, signal?: AbortSignal): Promise<Response>;
+  wait(have: string | null, signal?: AbortSignal, hold?: number): Promise<Response>;
   answer(): Response;
   main: { sha: string; at: number } | null | undefined;
   mainWaiters: Set<unknown>;

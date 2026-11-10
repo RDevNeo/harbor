@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- The phone app updates itself within seconds of a release, with no PC and no sign-in involved: it
+  hears of new releases from Harbor's public release news (the same long poll PCs use, now with a
+  longer hold for phones), downloads and checks the new app at once, and installs it as soon as
+  Harbor is out of sight for a few seconds (or the screen is off), back on the same chat. GitHub's
+  latest release every few minutes stays the fallback; a phone whose Play Protect blocks background
+  installs gets the "tap to install" notification as soon as the download is checked, and the tap
+  installs at once.
+
 ## [0.171.4] - 2026-11-10
 
 ### Fixed

@@ -18,10 +18,15 @@ import android.os.SystemClock;
  *  a silent, minimised notification while it runs. The cost: one open connection and a wake
  *  every few minutes, a little battery, and Doze may still pause it on some phones (exempt
  *  Harbor from battery optimisation for that). Should it not run, notifications come with the
- *  15-minute pings and the burst after leaving the app (Alive). */
+ *  15-minute pings and the burst after leaving the app (Alive). Its second thread holds the
+ *  release news (Update.hear), so a new version is downloaded within seconds of its release and
+ *  installs once nobody sees Harbor: that one never talks to a PC. */
 public class Listen extends Service {
     private static volatile boolean running;
-    private Thread loop;
+    /** Bumped by each start and stop: a thread from before ends (its blocking call may outlive
+     *  the service by a few minutes). */
+    private static volatile int gen;
+    private Thread loop, news;
 
     /** Starts the service (from the app, in front: Android lets it start then). */
     static void apply(Context c) {
@@ -44,26 +49,28 @@ public class Listen extends Service {
                 .setContentIntent(pi).setOngoing(true).build();
         if (Build.VERSION.SDK_INT >= 34) startForeground(9, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(9, n);
-        if (loop == null || !loop.isAlive()) {
+        if (loop == null || !loop.isAlive() || news == null || !news.isAlive()) {
             running = true;
-            loop = new Thread(this::run, "listen");
+            int my = ++gen;
+            loop = new Thread(() -> run(my), "listen");
             loop.start();
+            // Updates have a thread of their own: nothing about them goes through a PC.
+            news = new Thread(() -> news(my), "update-news");
+            news.start();
         }
         return START_STICKY;
     }
 
-    private void run() {
+    private void run(int my) {
         long backoff = 15_000;
-        while (running) {
+        while (running && my == gen) {
             java.util.List<Hub> hubs = Hub.all(this);
             boolean ok = false;
-            for (int i = 0; i < hubs.size() && running; i++) {
+            for (int i = 0; i < hubs.size() && running && my == gen; i++) {
                 // One pairing waits; others (rare) answer at once, each round.
                 try { hubs.get(i).alive(i == 0 ? 240_000 : 0); ok = true; } catch (Exception ignored) { }
             }
             if (hubs.isEmpty()) break;
-            // Updating automatically: a new version installs while nobody sees Harbor.
-            if (ok && running) Update.background(this);
             if (!ok) {
                 SystemClock.sleep(backoff);
                 backoff = Math.min(backoff * 2, 5 * 60_000L);
@@ -71,14 +78,38 @@ public class Listen extends Service {
                 backoff = 15_000;
             }
         }
+        if (my != gen) return;
         running = false;
         stopSelf();
+    }
+
+    /** Release news (Update.hear: the account service, public, no PC and no sign-in) held for a
+     *  few minutes at a time; between answers the usual round (GitHub's own releases/latest at
+     *  most every 5 minutes, the fallback). A release heard is downloaded and installs as soon as
+     *  nobody sees Harbor. */
+    private void news(int my) {
+        int fails = 0;
+        while (running && my == gen) {
+            String v = null;
+            try {
+                v = Update.hear(this, Update.HOLD_S);
+                fails = 0;
+            } catch (Exception e) {
+                fails++;
+            }
+            if (!running || my != gen) break;
+            if (v != null) Update.news(this, v);
+            else Update.round(this);
+            if (fails > 0) SystemClock.sleep(Quiet.backoff(fails));
+        }
     }
 
     @Override
     public void onDestroy() {
         running = false;
+        gen++;
         if (loop != null) loop.interrupt();
+        if (news != null) news.interrupt();
         super.onDestroy();
     }
 

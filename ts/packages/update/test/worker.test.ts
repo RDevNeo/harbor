@@ -286,6 +286,30 @@ test("POST /v1/release answers 202 and asks GitHub; GET /v1/release/wait checks 
   expect(current.status).toBe(204);
 });
 
+test("a phone's ?wait: 0 answers at once, a number holds that long instead of the usual wait", async () => {
+  const { hub: h } = hub(new Memory(), env({ RELEASE_WAIT_MS: "60000" }));
+  const e = routed(h);
+  const t0 = Date.now();
+  const now = await releaseWait(new Request("https://w/v1/release/wait?have=1.0.0&wait=0"), e);
+  expect(now.status).toBe(204);
+  expect(Date.now() - t0).toBeLessThan(1000);
+  expect(h.waiters.size).toBe(0);
+  const behind = await releaseWait(new Request("https://w/v1/release/wait?have=0.9.0&wait=0"), e);
+  expect((await body(behind)).version).toBe("1.0.0");
+  expect((await releaseWait(new Request("https://w/v1/release/wait?have=1.0.0&wait=soon"), e)).status).toBe(400);
+  // Held, then answered by a ping that finds a newer release, like a PC.
+  const held = releaseWait(new Request("https://w/v1/release/wait?have=1.0.0&wait=240"), e);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(h.waiters.size).toBe(1);
+  gh.latest = "1.1.0";
+  h.readAt = 0;
+  await ping(h, "1.1.0");
+  expect((await body(await held)).version).toBe("1.1.0");
+  // A short hold ends with 204 by itself.
+  const short = await h.fetch(new Request("https://release/wait?have=1.1.0&wait=0.05"));
+  expect(short.status).toBe(204);
+});
+
 test("the Durable Object only answers its two paths", async () => {
   const { hub: h } = hub();
   expect((await h.fetch(new Request("https://release/other"))).status).toBe(404);

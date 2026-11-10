@@ -1,6 +1,7 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -13,12 +14,17 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInstaller;
 import android.os.Build;
 import android.os.PowerManager;
+import android.os.SystemClock;
+import android.util.Log;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -26,6 +32,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 /** Updates this app from Harbor's GitHub releases (RDevNeo/harbor), never from a PC: the
@@ -38,9 +47,15 @@ import java.security.GeneralSecurityException;
  *  still ask to scan each new build (it hasn't seen it): that's the phone's setting, not
  *  something an app can skip. The same key must sign every build, or Android refuses it.
  *
- *  Updates are always automatic (no setting): the background jobs (Alive, Listen) install
- *  the newest release's app while nobody sees Harbor (Quiet), and the next start opens the
- *  chat the user had ({@link #resume}). Also gets MY_PACKAGE_REPLACED. */
+ *  Updates are always automatic (no setting), and nothing about them goes through a PC or the
+ *  workspace: the account service's public release news (GET /v1/release/wait, no sign-in; the
+ *  release workflow tells it the moment a release is published) says within seconds that a
+ *  release is out ({@link #hear}: Listen's own thread holds it, Alive's job and opening the app
+ *  ask once), and GitHub's releases/latest every few minutes is the fallback. The new app is
+ *  then downloaded and its signature checked at once ({@link #fetch}, into the app's storage),
+ *  so installing is a copy and a commit; it installs as soon as nobody sees Harbor (Quiet: the
+ *  screen off or locked, or Harbor out of sight for a few seconds), and the next start opens
+ *  the chat the user had ({@link #resume}). Also gets MY_PACKAGE_REPLACED. */
 public class Update extends BroadcastReceiver {
     static volatile boolean busy;
     /** Settings while it's open: shown again when an install's result comes (a failure). */
@@ -48,7 +63,11 @@ public class Update extends BroadcastReceiver {
 
     interface Progress { void at(long done, long total); }
 
+    static final String TAG = "harbor-update";
     static final String REPO = "https://github.com/RDevNeo/harbor";
+    /** How long the release news holds a question when nothing's new (seconds; the service
+     *  allows 240). Each answer wakes the radio: fewer is less battery. */
+    static final int HOLD_S = 240;
     static final String APK = "harbor-android.apk", MANIFEST = "harbor-app.json";
     /** Between two looks at GitHub (a HEAD of releases/latest, ~5 KB: the website, not the API
      *  with its 60 calls an hour), unless forced. */
@@ -67,7 +86,13 @@ public class Update extends BroadcastReceiver {
         return Rig.on() ? Rig.update(c, force) : look(c, force);
     }
 
+    private static final Object looking = new Object(), fetching = new Object();
+
     static long look(Context c, boolean force) throws IOException {
+        synchronized (looking) { return lookNow(c, force); }
+    }
+
+    private static long lookNow(Context c, boolean force) throws IOException {
         if (!force && System.currentTimeMillis() - checked < GAP) return known(c);
         checked = System.currentTimeMillis();
         SharedPreferences p = Ui.prefs(c);
@@ -166,6 +191,89 @@ public class Update extends BroadcastReceiver {
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
     }
 
+    // ---- release news (no PC, no sign-in) ----
+
+    /** Blocking: asks the account service's public release news (worker/src/release.js) whether
+     *  a release newer than the newest this phone knows of is out: held up to holdS seconds (0:
+     *  answers at once). The release it names (only a reason to look at GitHub: nothing it says
+     *  is believed), or null when nothing newer came within the hold. Throws when it can't be
+     *  reached. */
+    static String hear(Context c, int holdS) throws IOException {
+        SharedPreferences p = Ui.prefs(c);
+        String have = Quiet.have(p.getString("gh_tag", ""), p.getString("news_heard", ""), Settings.myName(c));
+        String service = Account.service();
+        if (service == null || service.isEmpty()) throw new IOException("no release news service");
+        HttpURLConnection h = (HttpURLConnection) new URL(service.replaceAll("/+$", "") + "/v1/release/wait?have=" + have + "&wait=" + holdS).openConnection();
+        try {
+            h.setConnectTimeout(15_000);
+            h.setReadTimeout(holdS * 1000 + 30_000);
+            h.setRequestProperty("User-Agent", "harbor-android");
+            int code = h.getResponseCode();
+            if (code == 204) return null;
+            if (code != 200) throw new IOException("release news: HTTP " + code);
+            String v;
+            try (InputStream in = h.getInputStream()) {
+                byte[] buf = new byte[4096];
+                int n = 0, r;
+                while (n < buf.length && (r = in.read(buf, n, buf.length - n)) > 0) n += r;
+                v = new JSONObject(new String(buf, 0, n, StandardCharsets.UTF_8)).optString("version", "");
+            } catch (org.json.JSONException e) {
+                throw new IOException("release news: " + e.getMessage());
+            }
+            if (!Quiet.newer(v, have)) return null;
+            // Asked about once: if GitHub doesn't show it yet, its own look (GAP) finds it later.
+            p.edit().putString("news_heard", v).apply();
+            return v;
+        } finally {
+            h.disconnect();
+        }
+    }
+
+    /** Release `v` is out (the news): GitHub's latest release is read now (a few tries while it
+     *  still names the one before), then the new app is downloaded and installed when it may be
+     *  (round). Blocking. */
+    static void news(Context c, String v) {
+        long t0 = SystemClock.elapsedRealtime();
+        Log.i(TAG, "release " + v + " is out (news)");
+        for (int i = 0; i < 12 && Quiet.newer(v, Ui.prefs(c).getString("gh_tag", "")); i++) {
+            if (i > 0) SystemClock.sleep(5_000);
+            try { check(c, true); } catch (IOException e) { Log.i(TAG, "GitHub: " + why(e)); }
+        }
+        Log.i(TAG, "GitHub names " + Ui.prefs(c).getString("gh_tag", "?") + ", app " + bestCode + " (" + (SystemClock.elapsedRealtime() - t0) + " ms)");
+        round(c);
+    }
+
+    /** Asks the news once, without waiting (Alive's job, opening the app). Blocking. */
+    static void catchUp(Context c) {
+        try {
+            String v = hear(c, 0);
+            if (v != null) news(c, v);
+        } catch (Exception ignored) { } // offline: Listen's thread or the next job
+    }
+
+    private static final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private static volatile long openedAt;
+
+    /** A Harbor screen came on screen with none before (Base.onStart): what's new, at once. */
+    static void opened(Context c) {
+        long now = SystemClock.elapsedRealtime();
+        if (Rig.on() || (openedAt != 0 && now - openedAt < 30_000)) return;
+        openedAt = now;
+        worker.execute(() -> catchUp(c));
+    }
+
+    /** The last Harbor screen went out of sight (Base.onStop): a round once the screen is off
+     *  and again after the grace, when the update waiting for that installs. */
+    static void left(Context c) {
+        Ui.main.postDelayed(() -> soon(c), 1_500);
+        Ui.main.postDelayed(() -> soon(c), Quiet.GRACE_MS + 500);
+    }
+
+    /** A {@link #round} off the caller's thread. */
+    static void soon(Context c) {
+        worker.execute(() -> round(c));
+    }
+
     /** A GET that follows GitHub's redirect to its file host (HTTPS to HTTPS). */
     private static HttpURLConnection open(String url) throws IOException {
         HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
@@ -190,7 +298,7 @@ public class Update extends BroadcastReceiver {
         // allow installs, so it shows the silent phones' line).
         String hint = !failure(a, offered).isEmpty() ? "It didn't install by itself."
                 : blocked(a) ? "Google Play Protect may ask to scan it first."
-                : silent(a, offered) || Rig.on() ? "Or it installs by itself next time the screen is off."
+                : silent(a, offered) || Rig.on() ? "Or it installs by itself once you leave Harbor."
                 : "";
         LinearLayout c = s.card();
         LinearLayout row = Ui.cardRow(a, Ui.I_DOWNLOAD, "Harbor",
@@ -215,7 +323,28 @@ public class Update extends BroadcastReceiver {
     static boolean quiet(Context c) {
         PowerManager pm = c.getSystemService(PowerManager.class);
         KeyguardManager km = c.getSystemService(KeyguardManager.class);
-        return Quiet.now(Base.resumed, pm == null || pm.isInteractive(), km != null && km.isKeyguardLocked());
+        long left = Base.leftAt;
+        long away = left == 0 ? Long.MAX_VALUE : SystemClock.elapsedRealtime() - left;
+        return Quiet.now(seen(c), pm == null || pm.isInteractive(), km != null && km.isKeyguardLocked(), away);
+    }
+
+    /** A Harbor screen is on screen: one of this process's (Base.started), the user is in another
+     *  app Harbor asked for an answer (a photo, a file: Base.outFor, given 10 minutes), or the
+     *  browser's own process (Browser) is in front. */
+    static boolean seen(Context c) {
+        if (Base.started > 0) return true;
+        long out = Base.outFor;
+        if (out != 0 && SystemClock.elapsedRealtime() - out < 10 * 60_000) return true;
+        try {
+            ActivityManager am = c.getSystemService(ActivityManager.class);
+            java.util.List<ActivityManager.RunningAppProcessInfo> ps = am == null ? null : am.getRunningAppProcesses();
+            if (ps != null) for (ActivityManager.RunningAppProcessInfo p : ps) {
+                if (p.pid == android.os.Process.myPid() || p.processName == null || !p.processName.startsWith(c.getPackageName())) continue;
+                if (p.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                        || p.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) return true;
+            }
+        } catch (Exception ignored) { }
+        return false;
     }
 
     /** Nothing stops the automatic install (the sidebar's "Update available" then
@@ -233,30 +362,60 @@ public class Update extends BroadcastReceiver {
 
     static void unblock(Context c) { Ui.prefs(c).edit().remove("auto_blocked").apply(); }
 
-    /** From the background jobs: installs the latest release's app when nobody
-     *  sees Harbor, or offers it in a notification when the background
-     *  can't (Quiet.plan). Blocking. Android ends the process when it replaces the app; the
-     *  next start opens where the user was. */
-    static void background(Context c) {
+    private static final AtomicBoolean rounding = new AtomicBoolean();
+    private static volatile boolean again;
+
+    /** The automatic update, from Listen's news thread, Alive's job and Harbor leaving the screen:
+     *  a newer app on offer (GitHub's latest release, looked at every GAP) is downloaded and
+     *  checked at once (fetch), then installed when nobody sees Harbor, or offered in a
+     *  notification when the background can't (Quiet.plan). Blocking; a call while one runs makes
+     *  that one go round again. Android ends the process when it replaces the app; the next start
+     *  opens where the user was. */
+    static void round(Context c) {
+        if (Rig.on()) return; // the rig's offer is made up, and its APK is signed with another key
+        if (!rounding.compareAndSet(false, true)) { again = true; return; }
+        try {
+            do { again = false; roundOnce(c); } while (again);
+        } finally {
+            rounding.set(false);
+        }
+    }
+
+    private static void roundOnce(Context c) {
+        long best = 0;
         try {
             if (busy || !c.getPackageManager().canRequestPackageInstalls()) return;
             SharedPreferences p = Ui.prefs(c);
             boolean blocked = blocked(c);
-            // Installing needs nobody looking; a notification only needs Harbor out of sight
-            // (in front, the sidebar and Settings say it).
-            if (blocked ? Base.resumed > 0 : !quiet(c)) return;
-            long best;
             try { best = check(c, false); } catch (IOException e) { return; } // GitHub away: the next round
-            switch (Quiet.plan(best, Settings.myCode(c), p.getLong("auto_fail_code", 0), blocked, p.getLong("offered_code", 0))) {
-                case Quiet.INSTALL: install(c, null, true); break;
-                case Quiet.OFFER: offer(c, best); break;
-                default: break;
+            long mine = Settings.myCode(c);
+            if (best <= mine) { drop(c, null); return; }
+            int plan = Quiet.plan(best, mine, p.getLong("auto_fail_code", 0), blocked, p.getLong("offered_code", 0));
+            if (plan == Quiet.NONE) return;
+            // Downloaded and checked now, not when it installs: the install is then a copy and a
+            // commit, and the notification's tap installs at once.
+            File apk;
+            try {
+                apk = fetch(c, null);
+            } catch (Bad e) {
+                throw e;
+            } catch (IOException e) {
+                Log.i(TAG, "download: " + why(e));
+                if (plan == Quiet.OFFER && !seen(c)) offer(c, best); // a tap downloads it in front
+                return; // the network: the next round
             }
+            // A notification only needs Harbor out of sight (in front, the sidebar and Settings say it).
+            if (plan == Quiet.OFFER) {
+                if (!seen(c)) offer(c, best);
+                return;
+            }
+            if (!quiet(c)) return; // installs when Harbor leaves the screen (left) or the next round
+            commit(c, apk, true);
         } catch (Away a) {
             // the next quiet moment
         } catch (Exception e) {
-            // It didn't get as far as Android (the download): offered at the next look.
-            failed(c, bestCode, why(e));
+            // The app downloaded isn't the release's, or Android couldn't take it: offered instead.
+            failed(c, best > 0 ? best : bestCode, why(e));
         }
     }
 
@@ -304,33 +463,62 @@ public class Update extends BroadcastReceiver {
         Away() { super("Harbor is on screen"); }
     }
 
-    /** Blocking: downloads the latest release's app from GitHub into a session, checks its
-     *  signature and commits it. Run off the UI thread. auto: the background's, which gives up
-     *  quietly if Harbor came back on screen meanwhile. */
-    static void install(Context c, Progress progress, boolean auto) throws Exception {
-        if (busy) throw new IOException("already updating");
-        long to = known(c);
-        String release = bestRelease;
-        if (to <= Settings.myCode(c) || release == null) throw new IOException("no newer version is known");
-        String base = REPO + "/releases/download/v" + release + "/" + APK;
-        byte[] sigBytes = get(base + ".minisig", 4096);
-        if (sigBytes == null) throw new IOException("the release has no signature for the app");
-        Minisign.Sig sig = Minisign.parse(new String(sigBytes, StandardCharsets.UTF_8));
-        Minisign.signedFor(sig, release, APK);
-        HttpURLConnection http = open(base);
-        try {
-            int code = http.getResponseCode();
-            if (code != 200) throw new IOException("GitHub has no app to send (HTTP " + code + ")");
-            long size = http.getContentLengthLong();
-            if (size <= 0) throw new IOException("GitHub sent no size for the app");
-            PackageInstaller pi = c.getPackageManager().getPackageInstaller();
-            PackageInstaller.SessionParams p = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-            p.setAppPackageName(c.getPackageName());
-            if (Build.VERSION.SDK_INT >= 31) p.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
-            int id = pi.createSession(p);
-            try (PackageInstaller.Session s = pi.openSession(id); InputStream in = http.getInputStream()) {
+    /** The download isn't what Harbor's release key signed (not a network failure). */
+    static final class Bad extends IOException {
+        Bad(String m) { super(m); }
+    }
+
+    /** Where downloaded updates wait (the app's own storage: nothing else can write there). */
+    private static File dir(Context c) { return new File(c.getNoBackupFilesDir(), "update"); }
+
+    /** Deletes downloaded updates other than `keep`. */
+    static void drop(Context c, File keep) {
+        File[] fs = dir(c).listFiles();
+        if (fs != null) for (File f : fs) if (keep == null || !f.equals(keep)) f.delete();
+    }
+
+    /** The versionCode a downloaded update holds ("harbor-7001.apk"). */
+    private static long codeOf(File apk) {
+        String n = apk.getName();
+        try { return Long.parseLong(n.substring(7, n.length() - 4)); } catch (Exception e) { return 0; }
+    }
+
+    /** Blocking: the newest app on offer, downloaded from its GitHub release into the app's
+     *  storage and checked against Harbor's release key (BLAKE2b while it streams, minisign
+     *  before it's kept); at once when it already is. Throws Bad when the download isn't the
+     *  release key's. */
+    static File fetch(Context c, Progress progress) throws IOException {
+        synchronized (fetching) {
+            long to = known(c);
+            String release = bestRelease;
+            if (to <= Settings.myCode(c) || release == null) throw new IOException("no newer version is known");
+            File d = dir(c), apk = new File(d, "harbor-" + to + ".apk"), part = new File(d, "harbor-" + to + ".part");
+            SharedPreferences p = Ui.prefs(c);
+            if (apk.isFile() && apk.length() == p.getLong("apk_size", -1) && (to + "@" + release).equals(p.getString("apk_ready", ""))) {
+                if (progress != null) progress.at(apk.length(), apk.length());
+                return apk;
+            }
+            drop(c, null);
+            if (!d.isDirectory() && !d.mkdirs()) throw new IOException("can't make " + d);
+            long t0 = SystemClock.elapsedRealtime();
+            String base = REPO + "/releases/download/v" + release + "/" + APK;
+            byte[] sigBytes = get(base + ".minisig", 4096);
+            if (sigBytes == null) throw new IOException("the release has no signature for the app");
+            Minisign.Sig sig;
+            try {
+                sig = Minisign.parse(new String(sigBytes, StandardCharsets.UTF_8));
+                Minisign.signedFor(sig, release, APK);
+            } catch (GeneralSecurityException e) {
+                throw new Bad("the app's signature: " + e.getMessage());
+            }
+            HttpURLConnection http = open(base);
+            try {
+                int code = http.getResponseCode();
+                if (code != 200) throw new IOException("GitHub has no app to send (HTTP " + code + ")");
+                long size = http.getContentLengthLong();
+                if (size <= 0) throw new IOException("GitHub sent no size for the app");
                 Minisign.Blake2b hash = new Minisign.Blake2b();
-                try (OutputStream out = s.openWrite("app.apk", 0, size)) {
+                try (InputStream in = http.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
                     byte[] buf = new byte[1 << 16];
                     long done = 0;
                     while (done < size) {
@@ -341,30 +529,64 @@ public class Update extends BroadcastReceiver {
                         done += n;
                         if (progress != null) progress.at(done, size);
                     }
-                    s.fsync(out);
+                    out.getFD().sync();
                 }
-                // Nothing goes to Android that Harbor's release key didn't sign.
+                // Nothing is kept (or goes to Android) that Harbor's release key didn't sign.
                 try {
                     Minisign.verify(Minisign.PUBKEY, hash.digest(), sig);
                 } catch (GeneralSecurityException e) {
-                    throw new IOException("the downloaded app isn't Harbor's (" + e.getMessage() + ")");
+                    throw new Bad("the downloaded app isn't Harbor's (" + e.getMessage() + ")");
                 }
-                // The download took a while: someone may be looking again. Next time, then.
-                if (auto && !quiet(c)) throw new Away();
-                busy = true;
-                // The next start opens the chat the user had (if the version changes by then).
-                Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", to).apply();
-                int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
-                // The result says whether it was the background's, and what to offer if it fails.
-                Intent status = new Intent(c, Update.class).setAction("status").putExtra("auto", auto).putExtra("to", to);
-                s.commit(PendingIntent.getBroadcast(c, id, status, flags).getIntentSender());
-            } catch (Exception e) {
-                busy = false;
-                pi.abandonSession(id);
-                throw e;
+                if (!part.renameTo(apk)) throw new IOException("can't keep the download");
+                p.edit().putString("apk_ready", to + "@" + release).putLong("apk_size", size).apply();
+                Log.i(TAG, "app " + to + " downloaded and checked (" + size + " bytes, " + (SystemClock.elapsedRealtime() - t0) + " ms)");
+                return apk;
+            } finally {
+                http.disconnect();
+                part.delete();
             }
-        } finally {
-            http.disconnect();
+        }
+    }
+
+    /** Blocking: the latest release's app, downloaded and checked (fetch: at once when the
+     *  background already did), into a session and committed. Run off the UI thread. auto: the
+     *  background's, which gives up quietly if Harbor came back on screen meanwhile. */
+    static void install(Context c, Progress progress, boolean auto) throws Exception {
+        if (busy) throw new IOException("already updating");
+        commit(c, fetch(c, progress), auto);
+    }
+
+    /** Hands a downloaded, checked app to Android: a copy into a session (about a second), and
+     *  the commit. */
+    private static void commit(Context c, File apk, boolean auto) throws Exception {
+        if (busy) throw new IOException("already updating");
+        long to = codeOf(apk), t0 = SystemClock.elapsedRealtime();
+        PackageInstaller pi = c.getPackageManager().getPackageInstaller();
+        PackageInstaller.SessionParams sp = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        sp.setAppPackageName(c.getPackageName());
+        if (Build.VERSION.SDK_INT >= 31) sp.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+        int id = pi.createSession(sp);
+        try (PackageInstaller.Session s = pi.openSession(id)) {
+            try (InputStream in = new FileInputStream(apk); OutputStream out = s.openWrite("app.apk", 0, apk.length())) {
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                s.fsync(out);
+            }
+            // Someone may have come back meanwhile. Next time, then.
+            if (auto && !quiet(c)) throw new Away();
+            busy = true;
+            // The next start opens the chat the user had (if the version changes by then).
+            Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", to).apply();
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+            // The result says whether it was the background's, and what to offer if it fails.
+            Intent status = new Intent(c, Update.class).setAction("status").putExtra("auto", auto).putExtra("to", to);
+            Log.i(TAG, "installing app " + to + (auto ? " by itself" : "") + " (copied in " + (SystemClock.elapsedRealtime() - t0) + " ms)");
+            s.commit(PendingIntent.getBroadcast(c, id, status, flags).getIntentSender());
+        } catch (Exception e) {
+            busy = false;
+            pi.abandonSession(id);
+            throw e;
         }
     }
 
@@ -377,6 +599,7 @@ public class Update extends BroadcastReceiver {
             // more (another refusal blocks it again, and offers it in a notification).
             Ui.prefs(c).edit().remove("auto_fail_code").remove("auto_fail_at").remove("auto_fail_why").remove("auto_blocked").apply();
             try { c.getSystemService(NotificationManager.class).cancel("update", 1); } catch (Exception ignored) { }
+            drop(c, null); // the download it came from
             Alive.schedule(c);
             Listen.apply(c);
             return;
