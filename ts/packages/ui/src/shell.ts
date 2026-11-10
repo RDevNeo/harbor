@@ -4,7 +4,7 @@ import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
-import { type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, runDir, secrets } from "@harbor/store";
+import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, runDir, secrets } from "@harbor/store";
 import { accountOn, chatOwner, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
@@ -394,7 +394,13 @@ export class Shell {
   private paired: PairedDevice[] = [];
   private readonly fileRows: Record<Dock, slint.ArrayModel<FileRow>> = { right: new slint.ArrayModel<FileRow>([]), bottom: new slint.ArrayModel<FileRow>([]) };
   private readonly fileTransfers: Record<Dock, slint.ArrayModel<TransferRow>> = { right: new slint.ArrayModel<TransferRow>([]), bottom: new slint.ArrayModel<TransferRow>([]) };
-  private readonly thumbs = new Map<string, Pixels | null>();
+  /** A device Files pane's image previews by their local copy (null: being decoded; false: it can't be). Least
+   * recently drawn go past 24 MiB of pixels (about 40 at THUMB_PX): once a map that kept every picture ever listed. */
+  private readonly thumbs = new ByteLru<string, Pixels | null | false>({
+    budget: 24 * 2 ** 20,
+    size: (p) => 64 + (p ? p.width * p.height * 4 : 0),
+    pinned: (_, p) => p === null,
+  });
   private readonly servers = new slint.ArrayModel<string>([]);
   private engines = 0;
   private browserQueued = false;
@@ -4174,7 +4180,7 @@ export class Shell {
 
   private thumbOf(local: string): Pixels | null {
     const got = this.thumbs.get(local);
-    if (got !== undefined) return got;
+    if (got !== undefined) return got || null;
     const media = this.media;
     if (!media) return null;
     this.thumbs.set(local, null);
@@ -4184,7 +4190,7 @@ export class Shell {
         this.thumbs.set(local, image);
         this.refreshPanes();
       })
-      .catch(() => {});
+      .catch(() => this.thumbs.set(local, false));
     return null;
   }
 

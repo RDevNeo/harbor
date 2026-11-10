@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { outputWithin } from "./git.ts";
+import { ByteLru, stringBytes } from "@harbor/store";
 
 /** A link target the desktop's markdown viewer hands back instead of opening. */
 export const SCHEME = "harbor-commit:";
@@ -319,7 +320,13 @@ export function githubBase(remote: string): string | null {
 }
 
 type Entry = { kind: "pending" } | { kind: "commit"; commit: Commit } | { kind: "miss"; at: number };
-const cache = new Map<string, Entry>();
+/** Tokens looked up, by folder and token: every hex-looking word of every reply shown, so a byte budget keeps
+ * the most recently asked (a lookup still running stays). */
+const cache = new ByteLru<string, Entry>({
+  budget: 2 * 2 ** 20,
+  size: (e, k) => stringBytes(k) + 48 + (e.kind === "commit" ? 2 * JSON.stringify(e.commit).length : 0),
+  pinned: (_, e) => e.kind === "pending",
+});
 
 const isDir = (p: string): boolean => {
   try {

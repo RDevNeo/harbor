@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import { ByteLru, stringBytes } from "@harbor/store";
 import { basename } from "node:path";
 import type { Metadata } from "sharp";
 import { decodeIco, isIco } from "./ico.ts";
@@ -14,8 +15,16 @@ const MAX_BYTES = 100 * 2 ** 20;
 export const MAX_SIDE = 16384;
 const MAX_ALLOC = 512 * 2 ** 20;
 const WORKERS = 2;
-const KEEP = 96;
-const IDLE_SECS = 30;
+/** Decoded previews (`thumb`) kept, by the bytes of their pixels (width × height × 4): about 55 thumbnails at
+ * THUMB_PX or 5 decodes at MID_PX. No per-entry cap: a decode is at most MID_PX on its long side (6.25 MiB). */
+export const THUMBS_BUDGET = 32 * 2 ** 20;
+/** File bytes fetched from another PC (or handed in), kept so the viewer's other sizes and Copy needn't fetch
+ * them again. The image in the viewer and those waiting to be decoded stay whatever the budget. */
+export const BYTES_BUDGET = 64 * 2 ** 20;
+/** Media found in texts (`mediaIn`), by the size of the text each is keyed by: a streaming reply makes a new
+ * text on every change. A text over FOUND_MAX is searched every time instead. */
+export const FOUND_BUDGET = 4 * 2 ** 20;
+export const FOUND_MAX = 2 ** 20;
 
 export function isImage(path: string): boolean {
   const e = path.split(".").at(-1)?.toLowerCase() ?? "";
@@ -134,8 +143,12 @@ export interface LightboxView {
   video: boolean;
 }
 
+const slotBytes = (s: Slot): number => 64 + (s.state === "ready" ? s.image.data.byteLength : s.state === "failed" ? stringBytes(s.error) : 0);
+const realKey = (key: string): string => (key.startsWith(MID) ? key.slice(MID.length) : key);
+
 export class Images {
-  private thumbs = new Map<string, { slot: Slot; used: number }>();
+  /** Least recently asked go first; one being decoded, or the viewer's, never does. */
+  private thumbs: ByteLru<string, Slot>;
   private full: { key: string; slot: Slot } | null = null;
   private opened: string | null = null;
   private gallery: string[] = [];
@@ -143,7 +156,7 @@ export class Images {
   private clicked: number | null = null;
   private held: Record<LightboxKey, boolean> = { prev: false, next: false, close: false };
   private escHeld = false;
-  private bytes = new Map<string, Uint8Array>();
+  private bytes: ByteLru<string, Uint8Array>;
   private queue: Job[] = [];
   private workers = 0;
   private source: Source | null = null;
@@ -152,6 +165,30 @@ export class Images {
   private video: VideoHooks | null = null;
   private listeners = new Set<() => void>();
   private idle: (() => void)[] = [];
+
+  /** `budgets`: smaller ones for tests. */
+  constructor(budgets: { thumbs?: number; bytes?: number } = {}) {
+    this.thumbs = new ByteLru({
+      budget: budgets.thumbs ?? THUMBS_BUDGET,
+      size: slotBytes,
+      pinned: (k, s) => s.state === "loading" || (this.opened !== null && realKey(k) === this.opened),
+    });
+    this.bytes = new ByteLru({
+      budget: budgets.bytes ?? BYTES_BUDGET,
+      maxEntry: MAX_BYTES,
+      size: (b) => b.byteLength + 64,
+      pinned: (k) => k === this.opened || this.queue.some((j) => j.key === k || realKey(j.key) === k),
+    });
+  }
+
+  /** What the caches hold now: decoded previews and fetched files, how many and their bytes. */
+  kept(): { thumbs: number; thumbBytes: number; files: number; fileBytes: number } {
+    return { thumbs: this.thumbs.size, thumbBytes: this.thumbs.bytes, files: this.bytes.size, fileBytes: this.bytes.bytes };
+  }
+
+  hasThumb(key: string): boolean {
+    return this.thumbs.has(key);
+  }
 
   onChange(f: () => void): () => void {
     this.listeners.add(f);
@@ -175,6 +212,7 @@ export class Images {
     this.full = null;
   }
 
+  /** Bytes handed in for `key` are kept like fetched ones: past the budget, when not in the viewer, they can go. */
   putBytes(key: string, bytes: Uint8Array): void {
     this.bytes.set(key, bytes);
     this.thumbs.delete(key);
@@ -192,7 +230,7 @@ export class Images {
   }
 
   private request(job: Job): void {
-    const real = job.key.startsWith(MID) ? job.key.slice(MID.length) : job.key;
+    const real = realKey(job.key);
     if (this.source && !this.bytes.has(real) && !this.remote.has(real)) this.remote.set(real, this.source.image);
     if (job.full) this.queue.unshift(job);
     else this.queue.push(job);
@@ -207,9 +245,9 @@ export class Images {
       const slot = await this.run(job);
       if (job.full) {
         if (this.full?.key === job.key) this.full = { key: job.key, slot };
-      } else {
-        const e = this.thumbs.get(job.key);
-        if (e) e.slot = slot;
+      } else if (this.thumbs.has(job.key)) {
+        // Measured again now that it holds pixels; past the budget, the least recently asked go.
+        this.thumbs.set(job.key, slot);
       }
       this.changed();
     }
@@ -219,7 +257,7 @@ export class Images {
 
   private async run(job: Job): Promise<Slot> {
     const mid = job.key.startsWith(MID);
-    const real = mid ? job.key.slice(MID.length) : job.key;
+    const real = realKey(job.key);
     const cap = mid ? MID_PX : job.full ? FULL_PX : THUMB_PX;
     try {
       let bytes = this.bytes.get(job.key) ?? this.bytes.get(real) ?? null;
@@ -247,14 +285,11 @@ export class Images {
     return bytes;
   }
 
-  thumb(key: string, now: number = performance.now() / 1000): Slot {
-    const e = this.thumbs.get(key);
-    if (e) {
-      e.used = now;
-      return e.slot;
-    }
+  thumb(key: string): Slot {
+    const had = this.thumbs.get(key);
+    if (had) return had;
     const slot: Slot = { state: "loading" };
-    this.thumbs.set(key, { slot, used: now });
+    this.thumbs.set(key, slot);
     this.request({ key, full: false });
     return slot;
   }
@@ -296,12 +331,14 @@ export class Images {
     else this.video?.close();
     const local = !this.bytes.has(key);
     const now = local ? stamp(key) : null;
-    const small = this.thumbs.get(key)?.slot;
+    const small = this.thumbs.get(key);
     if (small?.state === "ready" && small.stamp !== null && now !== null && now !== small.stamp) {
-      const e = this.thumbs.get(key);
-      if (e) e.slot = { state: "loading" };
+      this.thumbs.set(key, { state: "loading" });
       this.request({ key, full: false });
     }
+    // The one shown before may have stayed past the budget only because it was shown.
+    this.thumbs.trim();
+    this.bytes.trim();
     const f = this.full;
     const fresh = f !== null && f.key === key && (f.slot.state === "loading" || (f.slot.state === "ready" && (!local || f.slot.stamp === now)));
     if (!fresh) {
@@ -328,6 +365,8 @@ export class Images {
     this.gallery = [];
     this.held = { prev: false, next: false, close: false };
     this.full = null;
+    this.thumbs.trim();
+    this.bytes.trim();
     this.video?.close();
     this.changed();
   }
@@ -369,16 +408,13 @@ export class Images {
     return Math.max(this.opened === null ? 0 : this.gallery.indexOf(this.opened), 0);
   }
 
-  view(now: number = performance.now() / 1000): LightboxView | null {
-    if (this.thumbs.size > KEEP) {
-      for (const [k, e] of this.thumbs) if (e.slot.state !== "loading" && now - e.used >= IDLE_SECS) this.thumbs.delete(k);
-    }
+  view(): LightboxView | null {
     const key = this.opened;
     if (key === null) return null;
     return {
       key,
       full: this.full?.key === key ? this.full.slot : null,
-      small: this.thumbs.get(key)?.slot ?? null,
+      small: this.thumbs.peek(key) ?? null,
       gallery: [...this.gallery],
       index: this.index(),
       video: isVideo(key),
@@ -451,7 +487,11 @@ export function inlineSize(width: number): [number, number] {
   return [Math.min(width, 480), 300];
 }
 
-const found = new Map<string, Media[]>();
+const found = new ByteLru<string, Media[]>({
+  budget: FOUND_BUDGET,
+  maxEntry: FOUND_MAX,
+  size: (v, k) => stringBytes(k) + v.reduce((n, m) => n + stringBytes(m.path) + stringBytes(m.caption ?? "") + 64, 64),
+});
 const checks = new Map<string, { at: number; result: ReturnType<typeof check> }>();
 
 export function mediaIn(text: string, cwd: string): Media[] {
@@ -459,7 +499,6 @@ export function mediaIn(text: string, cwd: string): Media[] {
   let v = found.get(k);
   if (!v) {
     v = find(text, cwd === "" ? null : cwd);
-    if (found.size > 256) found.clear();
     found.set(k, v);
   }
   return v;

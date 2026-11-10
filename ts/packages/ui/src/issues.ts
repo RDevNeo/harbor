@@ -1,4 +1,4 @@
-import { mdBlocks } from "./cards.ts";
+import { PageBlocks } from "./cards.ts";
 import { detailAct, detailActOf, type DetailView, detailView } from "./logic/issuesdetail.ts";
 import { issueGaps, type IssuesHost, IssuesPage, type ListItem, type MenuEntry, type MenuView, NO_PIXELS, type Pixels } from "./logic/issues.ts";
 import type { Keys } from "./logic/keys.ts";
@@ -137,15 +137,8 @@ export function tabAct(k: SlintTabAct, i: number): TabAct {
  * `keys` are the user's bindings (the list shortcuts). Returns the page for the shell.
  */
 export function attachIssues(view: IssuesView, host: IssuesHost, hooks: { close(): void; keys: Keys; github: Pixels; schedule?: (f: () => void) => void }): IssuesPage {
-  const md = new Map<string, MdBlockData[]>();
-  const blocks = (text: string): MdBlockData[] => {
-    let b = md.get(text);
-    if (b === undefined) {
-      b = issueGaps(mdBlocks(text));
-      md.set(text, b);
-    }
-    return b;
-  };
+  const md = new PageBlocks(issueGaps);
+  const blocks = (text: string): MdBlockData[] => md.get(text);
   let queued = false;
   const page: IssuesPage = new IssuesPage(host, () => {
     if (queued) return;
@@ -189,6 +182,7 @@ export function attachIssues(view: IssuesView, host: IssuesHost, hooks: { close(
       const d = detailView(page, url);
       view.agents = d.agents;
       view.detail = { ...d, body: blocks(d.body), comments: d.comments.map((c) => ({ ...c, blocks: blocks(c.body) })) };
+      md.drawn();
     }
   }
 

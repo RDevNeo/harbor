@@ -1,6 +1,7 @@
 // The phone's markdown blocks (@harbor/net), flattened into Slint elements; each run of text goes
 // back to inline markdown for Slint's StyledText, which renders inline markup only.
 import { blocks as netBlocks, type Block as NetBlock, type Span } from "@harbor/net";
+import { ByteLru, stringBytes } from "@harbor/store";
 
 /** `item`: inside a list item, after its first line (egui_commonmark starts no line for it). */
 /** A link in a block's plain text, by UTF-8 byte offsets (what Slint's TextInput reports). */
@@ -172,21 +173,84 @@ export function place(bs: readonly Block[]): Placed[] {
   return out;
 }
 
-/** Blocks by the key their selectable text reports with: a click ("at:KEY:OFFSET") or a selection ("sel:KEY:FROM:TO"). */
-const blockTable = new Map<string, { links: Link[]; plain: string; seq: number }>();
-let nextKey = 0;
+/** A block's text by the key its selectable text reports with: a click ("at:KEY:OFFSET") or a selection
+ * ("sel:KEY:FROM:TO"). A transcript card's blocks have an owner (its chat's `Opened` and the card's seq) and a
+ * key from their place in the card ("OWNER.INDEX"): building the card again puts the same keys back, and the
+ * card leaving the transcript (`releaseBlocks`) takes them out. Other pages' blocks (PRs, issues) get a number.
+ * Whatever a missed release leaves behind, the byte budget (an LRU) bounds: before it, every rebuild of a
+ * streaming reply added its whole text again, for the life of the process. */
+interface Entry {
+  links: Link[];
+  plain: string;
+  seq: number;
+  owner: string | null;
+}
 
-/** A key for a block with links, or one in transcript item `seq` (its text can be mentioned); "" for neither. */
-export function registerBlock(plain: string, links: Link[], seq: number): string {
+/** All blocks' text together: a shown chat's cards hold far less, so only a missed release gets evicted. */
+export const BLOCKS_BUDGET = 16 * 2 ** 20;
+/** One block larger than this isn't clickable or selectable (it still draws). */
+export const BLOCK_MAX = 2 ** 20;
+
+const entryBytes = (e: Entry, key: string): number => stringBytes(e.plain) + stringBytes(key) + e.links.reduce((n, l) => n + stringBytes(l.url) + 48, 64);
+/** Each owner's keys, so a card's blocks go together. */
+const owners = new Map<string, Set<string>>();
+const blockTable = new ByteLru<string, Entry>({
+  budget: BLOCKS_BUDGET,
+  maxEntry: BLOCK_MAX,
+  size: entryBytes,
+  evicted: (k, e) => unown(k, e.owner),
+});
+let nextKey = 0;
+let scopes = 0;
+
+/** A fresh owner prefix for a chat's or a page's blocks. Counted here, not in cards.ts: this file is shared
+ * across hot reloads (hotdev.ts `pin`), so a reloaded cards.ts never hands out a prefix still in use. */
+export function blockScope(prefix = ""): string {
+  return `${prefix}${++scopes}`;
+}
+
+function unown(key: string, owner: string | null): void {
+  if (owner === null) return;
+  const keys = owners.get(owner);
+  keys?.delete(key);
+  if (keys?.size === 0) owners.delete(owner);
+}
+
+/** A key for a block with links, or one in transcript item `seq` (its text can be mentioned); "" for neither.
+ *  `owner`: the card it's in (`releaseBlocks`), `index` its place there. */
+export function registerBlock(plain: string, links: Link[], seq: number, owner: string | null = null, index = 0): string {
   if (links.length === 0 && seq < 0) return "";
-  const key = String(++nextKey);
-  blockTable.set(key, { links, plain, seq });
+  const key = owner === null ? String(++nextKey) : `${owner}.${index}`;
+  const had = blockTable.peek(key);
+  if (had) unown(key, had.owner);
+  if (!blockTable.set(key, { links, plain, seq, owner })) return "";
+  if (owner !== null) {
+    let keys = owners.get(owner);
+    if (!keys) owners.set(owner, (keys = new Set()));
+    keys.add(key);
+  }
   return key;
 }
 
+/** The blocks of a card built again or no longer shown: their keys report nothing any more. */
+export function releaseBlocks(owner: string): void {
+  const keys = owners.get(owner);
+  if (!keys) return;
+  owners.delete(owner);
+  for (const k of keys) blockTable.delete(k);
+}
+
+/** How many blocks are kept and the bytes they hold (for tests and measurements). */
+export function blockStats(): { blocks: number; bytes: number; owners: number } {
+  return { blocks: blockTable.size, bytes: blockTable.bytes, owners: owners.size };
+}
+
+const SEL = /^sel:([\w.]+):(\d+):(\d+):(-?[\d.]+):(-?[\d.]+)$/;
+const AT = /^at:([\w.]+):(\d+)$/;
+
 /** A selection reported as "sel:KEY:FROM:TO:X:Y" (byte offsets in either order; where its button goes): its item and the text it covers; null when it isn't one. */
 export function selectionAt(report: string): { seq: number; text: string; x: number; y: number } | null {
-  const m = /^sel:(\d+):(\d+):(\d+):(-?[\d.]+):(-?[\d.]+)$/.exec(report);
+  const m = SEL.exec(report);
   const b = blockTable.get(m?.[1] ?? "");
   if (!m || !b || b.seq < 0) return null;
   const [from, to] = [Number(m[2]), Number(m[3])].sort((x, y) => x - y);
@@ -195,7 +259,7 @@ export function selectionAt(report: string): { seq: number; text: string; x: num
 
 /** The URL under a click reported as "at:KEY:OFFSET", or null (not one, or not on a link). */
 export function linkAt(report: string): string | null {
-  const m = /^at:(\d+):(\d+)$/.exec(report);
+  const m = AT.exec(report);
   if (!m) return null;
   const at = Number(m[2]);
   return blockTable.get(m[1] ?? "")?.links.find((l) => at >= l.from && at < l.to)?.url ?? null;

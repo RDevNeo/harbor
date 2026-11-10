@@ -1,5 +1,5 @@
 import { type ghapi, prdetail as prdetailApi } from "@harbor/mcp";
-import { mdBlocks } from "./cards.ts";
+import { PageBlocks } from "./cards.ts";
 import { escLeaves, type Key, Memo, Split, type TabAct } from "./logic/listdetail.ts";
 import {
   centered, emptyFor, filtersMenu, FILTER_ROWS, listRows, type MenuCtx, type MenuRowData, type MenuView, OpenMenu, pickSub, providerMenu, reviewPrompt, rowActions,
@@ -185,7 +185,7 @@ export function attachPrs(view: PrsView, ports: PrsPorts, host: PrsHost, opts: {
   const menu = new OpenMenu();
   const memo = new Memo<ghapi.Group<Pr>[]>();
   const details = new Map<string, DetailState>();
-  const blocksCache = new Map<string, MdBlockData[]>();
+  const blocksCache = new PageBlocks();
   let data: { ok: PrFetched } | { err: string } | null = null;
   let fetched: PrFilters["state"] | null = null;
   let generation = 0;
@@ -206,14 +206,7 @@ export function attachPrs(view: PrsView, ports: PrsPorts, host: PrsHost, opts: {
     return p;
   };
 
-  const blocks = (md: string): MdBlockData[] => {
-    let b = blocksCache.get(md);
-    if (b === undefined) {
-      b = mdBlocks(md);
-      blocksCache.set(md, b);
-    }
-    return b;
-  };
+  const blocks = (md: string): MdBlockData[] => blocksCache.get(md);
   const slintNote = (n: NoteData): SlintNote => ({ who: n.who, letter: n.letter, what: n.what, blocks: blocks(n.body) });
 
   const projects = (): Project[] => host.projects();
@@ -494,6 +487,8 @@ export function attachPrs(view: PrsView, ports: PrsPorts, host: PrsHost, opts: {
     const s = summary(d, d.full, now);
     view.summary = { ...s, body: blocks(s.body), comments: s.comments.map(slintNote) };
     view.events = timeline(d.full, now).map((e: TimelineItem): SlintEvent => (e.kind === "note" ? { kind: "note", icon: "", tone: "", text: "", mono: false, age: "", note: slintNote(e.note) } : { kind: "event", ...e.event, note: { who: "", letter: "", what: "", blocks: [] } }));
+    // The summary and timeline are all a PR's markdown: what they no longer show goes.
+    blocksCache.drawn();
     if (d.tab === "code" && d.diff === null && d.diffError === null && !d.diffLoading) loadDiff(url);
     const c = codeState(d);
     view.code_state = c.kind;

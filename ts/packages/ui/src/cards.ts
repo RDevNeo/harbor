@@ -5,11 +5,13 @@ import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
 import { chipHead, chipSnippet, chipTip, isChat, mentionFromJson } from "./logic/mentions.ts";
 import { type Part, parts } from "./logic/usertext.ts";
-import { type Block, blocks, escape, type Placed, place, registerBlock } from "./markdown.ts";
+import { type Block, blockScope, blocks, escape, type Placed, place, registerBlock, releaseBlocks } from "./markdown.ts";
 import type { CardData, CiteData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
 export interface Opened {
+  /** Names its cards' markdown blocks (`blockOwner`): their keys go when the card is built again or leaves. */
+  id: string;
   /** How many of the latest cards are built: scrolling up (or "Show earlier messages") raises it by PAGE,
    * and `trim` puts it back once the reader is at the end again. */
   limit: number;
@@ -34,7 +36,10 @@ interface Joins {
 export const PAGE = 15;
 export const EARLIER = -5;
 
-export const newOpened = (): Opened => ({ limit: PAGE, grew: 0, memo: new Map(), groups: new Set(), cards: new Set() });
+export const newOpened = (): Opened => ({ id: blockScope(), limit: PAGE, grew: 0, memo: new Map(), groups: new Set(), cards: new Set() });
+
+/** The owner of card `seq`'s markdown blocks in a chat's transcript (markdown.ts `registerBlock`). */
+export const blockOwner = (open: Opened, seq: number): string => `${open.id}.${seq}`;
 
 /** One more page of earlier cards. */
 export function earlier(open: Opened, at = Date.now()): void {
@@ -52,6 +57,7 @@ export function trim(open: Opened): boolean {
 /** A chat no longer shown keeps none of its built cards. */
 export function forget(open: Opened): void {
   open.limit = PAGE;
+  for (const seq of open.memo.keys()) releaseBlocks(blockOwner(open, seq));
   open.memo.clear();
 }
 
@@ -71,7 +77,7 @@ function styled(md: string): slint.StyledText {
   }
 }
 
-function blockData(b: Block, at: Placed, seq: number): MdBlockData {
+function blockData(b: Block, at: Placed, seq: number, owner: string | null, index: number): MdBlockData {
   const base: MdBlockData = {
     kind: b.kind,
     text: slint.StyledText.fromPlainText(""),
@@ -92,11 +98,11 @@ function blockData(b: Block, at: Placed, seq: number): MdBlockData {
   };
   switch (b.kind) {
     case "p":
-      return { ...base, text: styled(b.text), plain: b.plain, key: registerBlock(b.plain, b.links, seq) };
+      return { ...base, text: styled(b.text), plain: b.plain, key: registerBlock(b.plain, b.links, seq, owner, index) };
     case "h":
-      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, key: registerBlock(b.plain, b.links, seq) };
+      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, key: registerBlock(b.plain, b.links, seq, owner, index) };
     case "li":
-      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, key: registerBlock(b.plain, b.links, seq) };
+      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, key: registerBlock(b.plain, b.links, seq, owner, index) };
     case "code":
       return { ...base, code: b.text };
     case "hr":
@@ -111,12 +117,13 @@ function blockData(b: Block, at: Placed, seq: number): MdBlockData {
 
 const sources = new WeakMap<MdBlockData, string>();
 
-/** `seq`: the transcript item the text is in, so a selection of it can be mentioned (-1: none). */
-export function mdBlocks(md: string, seq = -1): MdBlockData[] {
+/** `seq`: the transcript item the text is in, so a selection of it can be mentioned (-1: none). `owner`: the card
+ * whose blocks these are (`blockOwner`), so their keys are its own and go with it; null: numbered ones (other pages). */
+export function mdBlocks(md: string, seq = -1, owner: string | null = null): MdBlockData[] {
   const bs = blocks(md);
   const at = place(bs);
   const out = bs.map((b, i) => {
-    const d = blockData(b, at[i] as Placed, seq);
+    const d = blockData(b, at[i] as Placed, seq, owner, i);
     sources.set(d, JSON.stringify([b, at[i], seq]));
     return d;
   });
@@ -125,11 +132,45 @@ export function mdBlocks(md: string, seq = -1): MdBlockData[] {
   return out;
 }
 
-/** Two parses of the same markdown block: the older one can stay on screen, its key still points at the same text. */
+/**
+ * A page's parsed markdown (PR and issue bodies, comments) by its text: the same text gives the same blocks, so
+ * the window's rows stay as they are. What the last render (`drawn`) didn't draw goes, its blocks' keys with it:
+ * kept by the page for the life of the process, it once held every body and comment ever opened.
+ */
+export class PageBlocks {
+  private now = new Map<string, { blocks: MdBlockData[]; owner: string }>();
+  private before = new Map<string, { blocks: MdBlockData[]; owner: string }>();
+
+  constructor(private shape: (b: MdBlockData[]) => MdBlockData[] = (b) => b) {}
+
+  get(md: string): MdBlockData[] {
+    let e = this.now.get(md) ?? this.before.get(md);
+    if (e === undefined) {
+      const owner = blockScope("p");
+      e = { blocks: this.shape(mdBlocks(md, -1, owner)), owner };
+    }
+    this.before.delete(md);
+    this.now.set(md, e);
+    return e.blocks;
+  }
+
+  /** After a render that drew everything shown: what it didn't ask for goes. */
+  drawn(): void {
+    for (const e of this.before.values()) releaseBlocks(e.owner);
+    this.before = this.now;
+    this.now = new Map();
+  }
+
+  get size(): number {
+    return this.now.size + this.before.size;
+  }
+}
+
+/** Two parses of the same markdown block: the older one can stay on screen, its key (the same one) still points at the same text. */
 export function sameBlock(a: MdBlockData, b: MdBlockData): boolean {
   if (a === b) return true;
   const s = sources.get(a);
-  return s !== undefined && s === sources.get(b) && a.trim === b.trim;
+  return s !== undefined && s === sources.get(b) && a.trim === b.trim && a.key === b.key;
 }
 
 export function userText(ps: readonly Part[]): slint.StyledText {
@@ -236,7 +277,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     }
     case "text": {
       const md = labelLinks(stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path)), linkTitle);
-      return { ...d, kind: "text", blocks: mdBlocks(md, seq), text: c.text };
+      return { ...d, kind: "text", blocks: mdBlocks(md, seq, blockOwner(open, seq)), text: c.text };
     }
     case "thinking":
       return { ...d, kind: "thinking", text: c.text, open: open.cards.has(seq) };
@@ -259,7 +300,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
         icon: l.glyph,
         text: l.text,
         detail: l.markdown ? "" : clip(c.detail, DETAIL_MAX),
-        blocks: opened && l.markdown ? mdBlocks(c.detail) : [],
+        blocks: opened && l.markdown ? mdBlocks(c.detail, -1, blockOwner(open, seq)) : [],
         expandable: l.expandable,
         open: opened,
         url: l.url ?? "",
@@ -308,6 +349,8 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") + (item.kind === "user" ? `:${who}` : "") + (s.card.kind === "text" ? linkSig(s.card.text, linkTitle) : "") : "";
     const hit = open.memo.get(s.seq);
     const same = hit !== undefined && hit.item === item && hit.sig === sig;
+    // Built again: its old blocks' keys go first (the new ones are the same where the blocks are).
+    if (!same) releaseBlocks(blockOwner(open, s.seq));
     const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media, cap, gone, linkTitle);
     if (item) {
       open.memo.set(s.seq, same && hit.joins ? { item, sig, data: c, joins: hit.joins } : { item, sig, data: c });
@@ -316,7 +359,11 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     if (c) out.push(c);
     for (const f of s.forksAfter) fork(s.seq, f);
   }
-  for (const k of open.memo.keys()) if (!built.has(k)) open.memo.delete(k);
+  for (const k of open.memo.keys()) {
+    if (built.has(k)) continue;
+    open.memo.delete(k);
+    releaseBlocks(blockOwner(open, k));
+  }
   joinRuns(out, open);
   // "Working… 12s", or (tone "waiting") what wakes the chat once its turn is done: "Waiting · 2 processes".
   if (typeof status !== "string") out.push({ ...blank(-2), kind: "status", text: status.text, tone: status.tone });

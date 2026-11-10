@@ -157,3 +157,40 @@ test("sizes and crops", () => {
   expect(cover([200, 100], [100, 100])).toEqual([0.25, 0, 0.75, 1]);
   expect(cover([100, 200], [100, 100])).toEqual([0, 0.25, 1, 0.75]);
 });
+
+test("decoded previews are kept by a byte budget, least recently asked first; the viewer's and its file stay", async () => {
+  const one = 64 * 64 * 4 + 64;
+  const imgs = new Images({ thumbs: 3 * one, bytes: 1 });
+  const pngs = await png(64, 64);
+  const asked: string[] = [];
+  imgs.setSource({
+    image: async (p) => {
+      asked.push(p);
+      return new Uint8Array(pngs);
+    },
+    video: async () => null,
+  });
+  const k = (s: string) => `/other-pc/${s}.png`;
+  for (const s of ["a", "b", "c"]) expect((await imgs.ready(k(s))).state).toBe("ready");
+  expect(imgs.kept().thumbBytes).toBe(3 * one);
+  await imgs.ready(k("a"));
+  await imgs.ready(k("d"));
+  // b was asked least recently: it went, a stayed.
+  expect(["a", "b", "c", "d"].map((s) => imgs.hasThumb(k(s)))).toEqual([true, false, true, true]);
+  expect(imgs.kept().thumbBytes).toBeLessThanOrEqual(3 * one);
+  // Over a 1-byte budget no fetched file stays, but the one in the viewer does (Copy needs it).
+  expect(imgs.kept().files).toBe(0);
+  imgs.open(k("c"));
+  await imgs.settled();
+  expect(imgs.bytesOf(k("c"))?.byteLength).toBe(pngs.byteLength);
+  for (const s of ["e", "f", "g", "h"]) await imgs.ready(k(s));
+  expect(imgs.hasThumb(k("c"))).toBe(true);
+  expect(imgs.view()?.small?.state).toBe("ready");
+  // Closed, it's an ordinary entry again: within the budget it stays, and is the next to go.
+  imgs.close();
+  expect(imgs.bytesOf(k("c"))).toBeUndefined();
+  expect(imgs.kept().thumbBytes).toBeLessThanOrEqual(3 * one);
+  await imgs.ready(k("i"));
+  expect(imgs.hasThumb(k("c"))).toBe(false);
+  expect(imgs.kept().thumbs).toBe(3);
+});
