@@ -653,3 +653,39 @@ describe("the listener (api.rs)", () => {
     expect(loadTokens(kv)[0]?.account).toBe("user_1");
   });
 });
+
+describe("retiring phone registrations", () => {
+  const at = 2_000_000_000, day = 86400;
+  const phone = (id: string, account: string, name = "Pixel") => ({ ...tok(id, id, name), account });
+  test("removes superseded and expired records from disk, preserving owners and brief outages", () => {
+    const h = new Hub([phone("old", "sam"), phone("new", "sam"), phone("other", "dana"), phone("expired", "dana", "Old phone"), phone("brief", "sam", "Spare")], 0);
+    for (const [id, age] of [["old", 3 * day], ["new", 10], ["other", 2 * day], ["expired", 11 * day], ["brief", 3600]] as const)
+      h.seen.set(id, [h.tokens.find(t => t.token === id)!.name, at - age]);
+    const kv = new MemKv();
+    h.rememberPhones(kv);
+    h.prunePhones(kv, at);
+    expect(h.tokens.map(t => t.token)).toEqual(["new", "other", "brief"]);
+    expect(Object.keys(JSON.parse(kv.get("phones_seen")!)).sort()).toEqual(["brief", "new", "other"]);
+    const next = new Hub(loadTokens(kv), 0);
+    next.loadRemembered(kv);
+    expect(next.pairedPhones().map(p => p.group).sort()).toEqual(["brief", "new", "other"]);
+  });
+  test("peer heartbeats prevent expiry, and recent same-model phones coexist", () => {
+    const h = new Hub([phone("away", "sam"), phone("second", "sam")], 0);
+    h.seen.set("away", ["Pixel", at - 10 * day]);
+    h.seen.set("second", ["Pixel", at - 300]);
+    h.elsewhere.set("peer", ["Desk", [{ group: "away", name: "Pixel", seen: at - 10 * day, alive: at - 30, app: 100000, platform: "android" }]]);
+    const kv = new MemKv();
+    h.prunePhones(kv, at);
+    h.rememberPhones(kv);
+    expect(h.tokens).toHaveLength(2);
+    expect(JSON.parse(kv.get("phones_seen")!).away.alive).toBe(at - 30);
+  });
+  test("legacy unknown-owner duplicates require one unambiguous signed-in successor", () => {
+    const h = new Hub([phone("legacy", ""), phone("current", "sam")], 0);
+    h.seen.set("legacy", ["Pixel", at - 3 * day]);
+    h.seen.set("current", ["Pixel", at - 10]);
+    h.prunePhones(new MemKv(), at);
+    expect(h.tokens.map(t => t.token)).toEqual(["current"]);
+  });
+});

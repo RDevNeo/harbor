@@ -113,6 +113,7 @@ export interface PairedDevice {
   app: number;
   /** Phones: the account signed in on it. */
   owner: string;
+  account: string;
   /** PCs that don't answer: why. */
   down: Down | "";
   /** Phones: Harbor is open on it right now (online is also true while it only pings). */
@@ -124,7 +125,7 @@ export interface PairedDevice {
 }
 
 export function newPairedDevice(d: Partial<PairedDevice> = {}): PairedDevice {
-  return { key: "", name: "", kind: "", online: false, ip: "", seen: 0, via: "", app: 0, owner: "", down: "", open: false, harbor: "", here: false, ...d };
+  return { key: "", name: "", kind: "", online: false, ip: "", seen: 0, via: "", app: 0, owner: "", account: "", down: "", open: false, harbor: "", here: false, ...d };
 }
 
 export function isPhoneDevice(d: Pick<PairedDevice, "kind">): boolean {
@@ -144,14 +145,14 @@ export function deviceCanSend(d: Pick<PairedDevice, "kind" | "online"> & { here?
 
 /** For hot reload: what a device tab needs to come back. */
 export function deviceJson(d: PairedDevice): Json {
-  return { key: d.key, name: d.name, kind: d.kind, online: d.online, ip: d.ip, seen: d.seen, via: d.via, app: d.app, owner: d.owner, down: d.down, open: d.open, harbor: d.harbor, here: d.here };
+  return { key: d.key, name: d.name, kind: d.kind, online: d.online, ip: d.ip, seen: d.seen, via: d.via, app: d.app, owner: d.owner, account: d.account, down: d.down, open: d.open, harbor: d.harbor, here: d.here };
 }
 
 export function deviceFrom(v: unknown): PairedDevice {
   const o: Record<string, unknown> = typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   const s = (k: string): string => (typeof o[k] === "string" ? (o[k] as string) : "");
   const i = (k: string): number => (typeof o[k] === "number" && Number.isInteger(o[k]) ? (o[k] as number) : 0);
-  return newPairedDevice({ key: s("key"), name: s("name"), kind: kindOf(s("kind")), online: o.online === true, ip: s("ip"), seen: i("seen"), via: s("via"), app: i("app"), owner: s("owner"), down: downOfText(s("down")), open: o.open === true, harbor: s("harbor"), here: o.here === true });
+  return newPairedDevice({ key: s("key"), name: s("name"), kind: kindOf(s("kind")), online: o.online === true, ip: s("ip"), seen: i("seen"), via: s("via"), app: i("app"), owner: s("owner"), account: s("account"), down: downOfText(s("down")), open: o.open === true, harbor: s("harbor"), here: o.here === true });
 }
 
 /** What a phone's app is, for Devices and Settings > Phones: "app 0.18.1", or how it's behind the app this PC serves (`served`: its versionCode, 0 when none). Null while the phone hasn't been seen. Second: it needs an update. */
@@ -185,7 +186,7 @@ export function pairedDevices(hub: Hub, versions: readonly PcVersion[], at: numb
     for (const p of hub.pairedPhones()) {
       const open = p.seen > 0 && at - p.seen < PHONE_OPEN_SECS;
       const online = open || (p.alive > 0 && at - p.alive < PHONE_ALIVE_SECS);
-      v.push(newPairedDevice({ key: `phone:${p.group}`, name: p.name === "" ? "Phone" : p.name, kind: "android", online, open, ip: p.ip, seen: Math.max(p.seen, p.alive), via: p.via, app: p.app, owner: p.owner }));
+      v.push(newPairedDevice({ key: `phone:${p.group}`, name: p.name === "" ? "Phone" : p.name, kind: "android", online, open, ip: p.ip, seen: Math.max(p.seen, p.alive), via: p.via, app: p.app, owner: p.owner, account: hub.tokens.find((t) => t.group === p.group)?.account ?? "" }));
     }
   }
   return v;

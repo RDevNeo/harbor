@@ -296,6 +296,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   hub.mesh.me = me;
   hub.enabled = true;
   hub.loadRemembered(store);
+  hub.prunePhones(store);
   // Whoever settles or unsettles a chat or a project (the window, a phone, the project menu's
   // API, new activity waking a settled project), other PCs and phones hear of each chat at once.
   const stopSettled = store.onSettled((chat) => hub.touch(chat, true));
@@ -1283,6 +1284,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       hub.touch(null, true);
       disc?.announceNow();
     }
+    hub.prunePhones(store);
     if (hub.tokensDirty) {
       hub.tokensDirty = false;
       saveTokens(store, hub.tokens);

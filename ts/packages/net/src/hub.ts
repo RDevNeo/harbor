@@ -566,6 +566,44 @@ export class Hub {
     return out;
   }
 
+  /** Retire registrations after a week, or a day after being superseded.
+   * Peer sightings count too: a phone may be connected through another PC. */
+  prunePhones(kv: Kv, at = now()): void {
+    const phones = this.pairedPhones();
+    const last = (p: PairedPhone): number => Math.max(p.seen, p.alive,
+      ...this.tokens.filter((t) => t.group === p.group).map((t) => t.created));
+    const identity = (p: PairedPhone) => this.tokens.find((t) => t.group === p.group);
+    const name = (p: PairedPhone) => p.name.trim().toLowerCase();
+    const removed = new Set<string>();
+    for (const p of phones) {
+      const t = identity(p);
+      const age = at - last(p);
+      if (last(p) > 0 && age > 7 * 86400) { removed.add(p.group); continue; }
+      if (!t || age < 86400) continue;
+      const newer = phones.filter((q) => q.group !== p.group && last(q) > last(p));
+      const same = newer.some((q) => {
+        const u = identity(q);
+        return u && t.account === u.account && ((t.fp !== "" && t.fp === u.fp) ||
+          (t.account !== "" && name(p) !== "" && name(p) === name(q)));
+      });
+      // Pre-account pairings can migrate only to one unambiguous, newer signed-in
+      // phone with the same name; current registrations always require the owner ID.
+      const matches = phones.filter((q) => q.group !== p.group && name(p) !== "" && name(q) === name(p));
+      const legacy = t.account === "" && p.app === 0 && matches.length === 1 &&
+        identity(matches[0]!)?.account && last(matches[0]!) > last(p);
+      if (same || legacy) removed.add(p.group);
+    }
+    if (!removed.size) return;
+    for (const t of this.tokens.filter((t) => removed.has(t.group))) {
+      this.seen.delete(t.token); this.alive.delete(t.token); this.apps.delete(t.token);
+      this.ips.delete(t.token); this.platforms.delete(t.token);
+    }
+    this.tokens = this.tokens.filter((t) => !removed.has(t.group));
+    saveTokens(kv, this.tokens);
+    this.rememberPhones(kv);
+    this.touch(null, true);
+  }
+
   loadRemembered(kv: Kv): void {
     const v = kvJson<unknown>(kv, PHONES_SEEN, null);
     if (typeof v !== "object" || v === null) return;
@@ -580,7 +618,7 @@ export class Hub {
   /** Keeps the phones' last-seen times and app versions for the next run (kv `phones_seen`). */
   rememberPhones(kv: Kv): void {
     const cur = new Map<string, Sighting>();
-    for (const p of this.localPhones()) {
+    for (const p of this.pairedPhones()) {
       if (p.seen > 0 || p.alive > 0 || p.app > 0) cur.set(p.group, { group: p.group, name: p.name, seen: p.seen, app: p.app, alive: p.alive, platform: p.platform });
     }
     const kept = this.remembered;

@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Devices removes superseded phone registrations and phones inactive for seven days from stored
+  records, preserving recent outages and activity reported by other PCs. Phone workspace labels
+  and photos now follow the account signed in on each phone.
+
 ## [0.170.0] - 2026-11-10
 
 ### Added
