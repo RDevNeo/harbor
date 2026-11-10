@@ -584,8 +584,31 @@ test("a chat that something will wake shows Waiting, after working, a limit, oth
   const f = { working: null, paused: null, typing: false, viewed: false, failed: false, waiting: "Waiting", unread: true };
   expect(ownStatus(f, idle, 0, 0)).toEqual({ kind: "waiting", text: "Waiting" });
   expect(ownStatus({ ...f, working: 12 }, idle, 0, 0)).toEqual({ kind: "working", secs: 12 });
-  expect(ownStatus({ ...f, paused: { at: null } }, idle, 0, 0).kind).toBe("text");
+  expect(ownStatus({ ...f, paused: { at: null } }, idle, 0, 0)).toEqual({ kind: "limited", text: "" });
   expect(ownStatus({ ...f, failed: true }, idle, 0, 0)).toEqual({ kind: "failed" });
   expect(ownStatus({ ...f, waiting: null }, idle, 0, 0)).toEqual({ kind: "done" });
   expect(ownStatus({ ...f, waiting: null, unread: false }, idle, 0, 0)).toBe(idle);
+});
+
+test("rows say how long ago, and folded projects are kept as ids", async () => {
+  const { agoLabel, foldedOf, foldToggled } = await import("../src/logic/sidebar.ts");
+  expect(agoLabel(1000, 1030)).toBe("now");
+  expect(agoLabel(1000, 1000 + 13 * 60)).toBe("13m ago");
+  expect(agoLabel(0, 2 * 86400)).toBe("2d ago");
+  expect([...foldedOf("3,x,7,,-1")]).toEqual([3, 7]);
+  expect(foldToggled("", 5)).toBe("5");
+  expect(foldToggled("5,2", 9)).toBe("2,5,9");
+  expect(foldToggled("2,5", 5)).toBe("2");
+  expect(foldToggled(null, 1)).toBe("1");
+});
+
+test("a folded project sums up its hidden chats unless its main chat has something to say", async () => {
+  const { foldedStatus } = await import("../src/logic/sidebar.ts");
+  const idle: Status = { kind: "text", icon: null, text: "2", color: "gray-800" };
+  const quiet: Status = { kind: "text", icon: null, text: "3m", color: "gray-800" };
+  expect(foldedStatus(null, [quiet, quiet], idle)).toBe(idle);
+  expect(foldedStatus(quiet, [{ kind: "done" }], idle)).toEqual({ kind: "done" });
+  expect(foldedStatus(null, [{ kind: "done" }, { kind: "limited", text: "" }], idle)).toEqual({ kind: "waiting", text: "" });
+  expect(foldedStatus(null, [{ kind: "waiting", text: "Waiting" }, { kind: "working", secs: 4 }], idle)).toEqual({ kind: "busy" });
+  expect(foldedStatus({ kind: "working", secs: 1 }, [{ kind: "done" }], idle)).toEqual({ kind: "working", secs: 1 });
 });

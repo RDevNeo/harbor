@@ -390,6 +390,7 @@ export component AppWindow inherits Window {
     in property <bool> side-drag;
     callback open-chat(int);
     callback open-project(int);
+    callback fold-project(int);
     callback new-chat(int);
     callback new-thread();
     callback add-project();
@@ -829,6 +830,9 @@ export component AppWindow inherits Window {
                     }
                     open-project(id) => {
                         root.open-project(id);
+                    }
+                    fold-project(id) => {
+                        root.fold-project(id);
                     }
                     new-chat(id) => {
                         root.new-chat(id);

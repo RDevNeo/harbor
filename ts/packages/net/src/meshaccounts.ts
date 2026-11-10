@@ -175,6 +175,14 @@ function words(name: string): string[] {
   return name.split(/\s+/).map((w) => w.replace(/[^\p{L}\p{N}]/gu, "")).filter((w) => w !== "");
 }
 
+/** Whether two names are one person's: the same name, or one is the other's first name (a workspace nickname). */
+export function samePerson(a: string, b: string): boolean {
+  const [x, y] = [words(a).map((w) => w.toLowerCase()), words(b).map((w) => w.toLowerCase())];
+  if (x.length === 0 || y.length === 0) return false;
+  if (x.join(" ") === y.join(" ")) return true;
+  return (x.length === 1 || y.length === 1) && x[0] === y[0];
+}
+
 /** A person's badge: the initials of their first and last name ("Dana Reyes" is FS), a single name's first two letters. */
 export function initials(name: string): string {
   const w = words(name);
@@ -263,6 +271,10 @@ export interface SharedAccount {
   noPhoto: boolean;
   /** "Claude · DR", "OpenCode · ML"; with a photo, their name (`shown`): "Claude · Dana Reyes". */
   label: string;
+  /** It's someone else's: its person is known and isn't this PC's owner (the sidebar marks their chats). */
+  others?: boolean;
+  /** Their initials as the sidebar's mark shows them: `badge` while the mesh has other PCs, else from `person`. */
+  mark?: string;
   models: [string, string][];
   /** Why it can't be picked now ("" it can). */
   why: string;
@@ -390,6 +402,8 @@ export function sharedAccounts(i: SharedInput): SharedAccount[] {
       photo,
       noPhoto: !alone && photo === "" && badge !== "",
       label,
+      others: person !== "" && i.me.owner !== "" && !samePerson(person, i.me.owner),
+      mark: alone || badge === "" ? initials(person) : badge,
       models: run.acc.models,
       why: run.online ? "" : `${run.pcName} is offline`,
       copies: hs.map((h) => ({ pc: h.pc, account: h.acc.id, online: h.online })),
@@ -468,4 +482,11 @@ export function sharedAccess(level: string, asked: string, choices: readonly str
   const want = (RANK[asked] ?? 2) <= (RANK[cap] ?? 2) ? asked : cap;
   if (choices.includes(want)) return { access: want };
   return { why: `${who.me} lets this PC's chats only ${level === "read" ? "read" : "edit files"} there, and ${kindLabel(who.kind)} runs with full access only` };
+}
+
+/** The account chat `c` runs on (another PC's copy runs on that PC's, `home`), when it's someone else's (`others`): the
+ *  sidebar marks the chat with their photo or initials. Null for yours, or an account not known. */
+export function chatOwner(list: readonly SharedAccount[], c: { home: string; account: string }): SharedAccount | null {
+  const a = list.find((x) => (c.home === "" ? x.pc === "" && (x.id === c.account || x.account === c.account) : x.pc === c.home && x.account === c.account));
+  return a && a.others === true ? a : null;
 }

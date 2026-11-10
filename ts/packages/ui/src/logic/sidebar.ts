@@ -351,7 +351,11 @@ export type Status =
   | { kind: "failed" }
   | { kind: "done" }
   /** Its own turn is done but something will wake it (agents waiting.ts): "Waiting", amber. */
-  | { kind: "waiting"; text: string };
+  | { kind: "waiting"; text: string }
+  /** Waiting out a usage limit: "Limited", amber; `text` is when it lifts ("" not known), for its tip. */
+  | { kind: "limited"; text: string }
+  /** A folded project with a chat at work: its spinner alone. */
+  | { kind: "busy" };
 
 /** What a chat's own status is made of (it and its subagents'). */
 export interface StatusFacts {
@@ -372,12 +376,47 @@ export interface StatusFacts {
 /** A chat's own status: working, waiting on a limit, written in or open elsewhere, failed, waiting on what wakes it, done until opened, else `idle`. */
 export function ownStatus(f: StatusFacts, idle: Status, now: number, off: number): Status {
   if (f.working !== null) return { kind: "working", secs: f.working };
-  if (f.paused) return { kind: "text", icon: "CLOCK", text: f.paused.at === null ? "limit" : when(f.paused.at, now, off), color: "amber-900" };
+  if (f.paused) return { kind: "limited", text: f.paused.at === null ? "" : when(f.paused.at, now, off) };
   if (f.typing) return { kind: "text", icon: "PEN_LINE", text: "", color: "blue-900" };
   if (f.viewed) return { kind: "text", icon: null, text: "●", color: "blue-900" };
   if (f.failed) return { kind: "failed" };
   if (f.waiting != null) return { kind: "waiting", text: f.waiting };
   if (f.unread) return { kind: "done" };
+  return idle;
+}
+
+/** A chat row's last activity on its right: "13m ago", or "now". */
+export function agoLabel(updated: number, now: number): string {
+  const a = ago(updated, now);
+  return a === "now" ? a : `${a} ago`;
+}
+
+/** kv: the projects folded in the sidebar (their ids, comma-separated), on this PC. */
+export const FOLDED_KEY = "sidebar_folded";
+
+/** The folded projects a stored `sidebar_folded` names. */
+export function foldedOf(stored: string | null | undefined): Set<number> {
+  return new Set((stored ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0));
+}
+
+/** `sidebar_folded` with project `id` folded or unfolded. */
+export function foldToggled(stored: string | null | undefined, id: number): string {
+  const f = foldedOf(stored);
+  if (!f.delete(id)) f.add(id);
+  return [...f].sort((a, b) => a - b).join(",");
+}
+
+/**
+ * A folded project row's status: its main chat's own when there's one to say, else what its hidden chats come to (a
+ * spinner while one works, amber while one waits or is limited, blue while one is unread), else `idle`.
+ */
+export function foldedStatus(main: Status | null, hidden: readonly Status[], idle: Status): Status {
+  const quiet = (s: Status) => s.kind === "text" && s.icon === null && s.color === "gray-800";
+  if (main !== null && !quiet(main)) return main;
+  if (hidden.some((s) => s.kind === "working" || s.kind === "busy")) return { kind: "busy" };
+  if (hidden.some((s) => s.kind === "waiting" || s.kind === "limited")) return { kind: "waiting", text: "" };
+  if (hidden.some((s) => s.kind === "failed")) return { kind: "failed" };
+  if (hidden.some((s) => s.kind === "done")) return { kind: "done" };
   return idle;
 }
 

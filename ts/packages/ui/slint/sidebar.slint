@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, Glyph, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
+import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
 import { MemGauge } from "memory.slint";
 
 export struct SideRow {
@@ -26,6 +26,127 @@ export struct SideRow {
     // Share with workspace…: "" not shared, "shared", "here" (shown only because it's shared with a picked workspace).
     shared: string,
     shared-tip: string,
+    // A project row's fold: "" no chats under it, "open", "folded".
+    fold: string,
+    // A chat row's last activity ("13m ago"), on its right while nothing else is to say.
+    ago: string,
+    // The branch it works on (no "harbor/"): after the title for a chat in its own worktree, under it for the open chat.
+    branch: string,
+    branch-line: bool,
+    // The last chat under its project: the guide line ends with it.
+    last: bool,
+    // Someone else's chat: their initials ("" yours), name and photo.
+    owner: string,
+    owner-tip: string,
+    owner-photo: image,
+    has-owner-photo: bool,
+}
+
+// A chat's status before its title: the spinner while it works, amber while it waits or is limited, blue while unread,
+// red when its turn failed.
+component LeadMark {
+    in property <StatusData> status;
+    width: 12px;
+    if root.status.kind == "working": Spinner {
+        radius: 5px;
+        color: Theme.blue-900;
+    }
+    if root.status.kind == "waiting" || root.status.kind == "limited": Rectangle {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: Theme.amber-700;
+    }
+    if root.status.kind == "done": Rectangle {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: Theme.blue-700;
+    }
+    if root.status.kind == "failed": Glyph {
+        icon: Icons.circle-x;
+        size: 12px;
+        color: Theme.red-900;
+    }
+}
+
+// What a chat row says on its right: Working, Waiting, Limited or Failed in their colours; a snooze's clock or another
+// mark as the status says it; else when it was last active ("13m ago").
+component RowStatus {
+    in property <StatusData> status;
+    in property <string> ago;
+    property <bool> word: status.kind == "working" || status.kind == "waiting" || status.kind == "limited" || status.kind == "failed";
+    property <bool> mark: status.kind == "text" && (status.icon != "" || status.text == "●");
+    width: self.preferred-width;
+    HorizontalLayout {
+        alignment: end;
+        if root.word: Text {
+            text: root.status.kind == "working" ? "Working" : root.status.kind == "waiting" ? (root.status.text == "" ? "Waiting" : root.status.text) : root.status.kind == "limited" ? "Limited" : "Failed";
+            font-size: 12.5px;
+            color: root.status.kind == "working" ? Theme.blue-900 : root.status.kind == "failed" ? Theme.red-900 : Theme.amber-900;
+            vertical-alignment: center;
+        }
+        if root.mark: StatusView {
+            status: root.status;
+        }
+        if !root.word && !root.mark: Text {
+            text: root.ago;
+            font-size: 12.5px;
+            color: Theme.gray-800;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// The branch a chat works on: the branch glyph and its name, small and dim (red when its worktree is gone).
+component BranchLabel inherits HorizontalLayout {
+    in property <string> branch;
+    in property <bool> gone;
+    spacing: 3px;
+    Glyph {
+        width: 11px;
+        icon: Icons.branch;
+        size: 11px;
+        color: root.gone ? Theme.red-900 : Theme.gray-800;
+    }
+    Text {
+        text: root.branch;
+        font-family: "Geist Mono";
+        font-size: 11.5px;
+        color: root.gone ? Theme.red-900 : Theme.gray-800;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+}
+
+// Someone else's chat: their round photo, else their initials.
+component OwnerMark inherits TipArea {
+    in property <string> letters;
+    in property <image> photo;
+    in property <bool> has-photo;
+    width: 16px;
+    height: 16px;
+    Rectangle {
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: Theme.gray-400;
+        clip: true;
+        if root.has-photo: Image {
+            width: 16px;
+            height: 16px;
+            source: root.photo;
+            image-fit: cover;
+        }
+        if !root.has-photo: Text {
+            text: root.letters;
+            font-size: 7.5px;
+            font-weight: 600;
+            color: Theme.fg;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
 }
 
 // Share with workspace…'s mark: a link glyph, blue when the filter shows the row only because it's shared.
@@ -51,11 +172,24 @@ component ThreadRow {
     // The marks after the title count too: they sit over `area`, and without them pointing at one
     // drops the hover, the title widens, the mark slides off the pointer, the hover comes back and
     // the title narrows under it again, over and over.
-    property <bool> hovering: area.has-hover || worktree.has-hover || pr.has-hover || shared.has-hover || settle-btn.hovered || snooze-btn.hovered;
+    property <bool> hovering: area.has-hover || worktree.has-hover || pr.has-hover || shared.has-hover || owner.has-hover || settle-btn.hovered || snooze-btn.hovered;
     property <bool> indented: data.kind == "thread";
-    height: Theme.row-h;
+    // A loose chat (Threads, Settled) keeps its chat glyph until it has a status to show there.
+    property <bool> lead-status: data.status.kind == "working" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
+    property <bool> inline-branch: data.branch != "" && !data.branch-line;
+    // The worktree glyph stands in for a branch that isn't known.
+    property <bool> wt-glyph: data.worktree != "" && data.branch == "";
+    height: data.branch-line ? Theme.row-h + 14px : Theme.row-h;
+    // The guide line down the project's chats: through the gap to the next one, unless this is the last.
+    if root.indented: Rectangle {
+        x: 9px;
+        y: 0;
+        width: 1px;
+        height: root.data.last ? root.height : root.height + 2px;
+        background: Theme.gray-300;
+    }
     Rectangle {
-        x: root.indented ? 14px : 0px;
+        x: root.indented ? 18px : 0px;
         width: parent.width - self.x;
         background: root.data.active || root.hovering ? Theme.accent : transparent;
         border-radius: Theme.radius-md;
@@ -70,30 +204,69 @@ component ThreadRow {
                 }
             }
         }
-        if !root.indented: Glyph {
+        property <length> line-h: Theme.row-h;
+        if root.indented || root.lead-status: LeadMark {
+            x: root.indented ? 6px : 10px;
+            y: 0;
+            height: parent.line-h;
+            status: root.data.status;
+        }
+        if !root.indented && !root.lead-status: Glyph {
             x: 8px;
+            y: 0;
             width: 16px;
+            height: parent.line-h;
             icon: root.data.kind == "settled-project" ? Icons.folder : Icons.message;
             size: 14px;
             color: root.data.active ? Theme.fg : Theme.subtle;
         }
-        // Hovered, the last mark keeps 30px (glyph to glyph) before the clock, as the clock does before Settle.
+        // The title, then its marks: the branch (it gives way first, down to 48px), the PR, the share mark. Hovered, the
+        // last mark keeps 30px (glyph to glyph) before the clock, as the clock does before Settle.
+        property <length> right-w: (root.hovering ? actions.preferred-width + 11px : status.width + 16px) + (root.data.owner != "" ? 22px : 0px);
+        property <length> marks-w: (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px) + (root.data.shared != "" ? 20px : 0px) + (root.data.place != "" ? place.width + 6px : 0px);
+        property <length> room: self.width - title.x - self.right-w - self.marks-w;
+        // The title keeps what it needs, or at least 62% of the room; the branch gets the rest, and hides under 34px.
+        property <length> title-w: min(title.preferred-width, max(self.room - branch.preferred-width - 8px, self.room * 0.62));
+        property <length> branch-room: self.room - self.title-w - 8px;
+        property <length> branch-w: root.inline-branch && self.branch-room >= 34px ? min(branch.preferred-width, self.branch-room) : 0px;
         title := Text {
-            x: root.indented ? 8px : 32px;
-            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 11px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px) - (root.data.shared != "" ? 20px : 0px) - (root.data.place != "" ? place.width + 6px : 0px);
-            width: min(self.preferred-width, max(self.room, 10px));
+            x: root.indented ? 24px : 32px;
+            y: 0;
+            height: parent.line-h;
+            width: min(self.preferred-width, max(parent.room - (parent.branch-w > 0 ? parent.branch-w + 8px : 0px), 10px));
             text: root.data.title;
             font-size: 14px;
-            font-weight: root.data.active ? 500 : 400;
+            font-weight: root.data.active || root.data.status.kind == "done" ? 500 : 400;
             // Snoozed: it stays in its place, muted, its status saying when it wakes.
             color: root.data.snoozed ? Theme.gray-800 : Theme.fg;
             overflow: elide;
             vertical-alignment: center;
         }
+        branch := BranchLabel {
+            visible: parent.branch-w > 0;
+            x: title.x + title.width + 8px;
+            y: 0;
+            height: parent.line-h;
+            width: parent.branch-w;
+            branch: root.data.branch;
+            gone: root.data.worktree == "gone";
+        }
+        // The open chat: its branch on a line of its own under the title.
+        if root.data.branch-line: BranchLabel {
+            x: title.x;
+            y: parent.line-h - 9px;
+            height: 16px;
+            width: min(self.preferred-width, parent.width - title.x - 10px);
+            branch: root.data.branch;
+            gone: root.data.worktree == "gone";
+        }
+        property <length> marks-x: title.x + title.width + (self.branch-w > 0 ? self.branch-w + 8px : 0px) + 5px;
         // A settled project's PC, when its folder isn't here (the project row's hint).
         place := HorizontalLayout {
             visible: root.data.place != "";
-            x: title.x + title.width + 6px;
+            x: parent.marks-x + 1px;
+            y: 0;
+            height: parent.line-h;
             width: root.data.place != "" ? min(self.preferred-width, 106px) : 0px;
             spacing: 3px;
             Glyph {
@@ -111,8 +284,10 @@ component ThreadRow {
             }
         }
         worktree := TipArea {
-            visible: root.data.worktree != "";
-            x: title.x + title.width + 5px;
+            visible: root.wt-glyph;
+            x: parent.marks-x;
+            y: 0;
+            height: parent.line-h;
             width: 16px;
             tip: root.data.worktree-tip;
             Glyph {
@@ -123,7 +298,9 @@ component ThreadRow {
         }
         pr := TipArea {
             visible: root.data.pr != "";
-            x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px);
+            x: parent.marks-x + (root.wt-glyph ? 20px : 0px);
+            y: 0;
+            height: parent.line-h;
             width: 16px;
             tip: root.data.pr-tip;
             Glyph {
@@ -134,21 +311,34 @@ component ThreadRow {
         }
         shared := SharedMark {
             visible: root.data.shared != "";
-            x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px);
+            x: parent.marks-x + (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px);
+            y: 0;
+            height: parent.line-h;
             kind: root.data.shared;
             active: root.data.active;
             tip: root.data.shared-tip;
         }
-        status := StatusView {
+        owner := OwnerMark {
+            visible: root.data.owner != "";
+            x: parent.width - parent.right-w + 6px;
+            y: (parent.line-h - self.height) / 2;
+            letters: root.data.owner;
+            photo: root.data.owner-photo;
+            has-photo: root.data.has-owner-photo;
+            tip: root.data.owner-tip;
+        }
+        status := RowStatus {
             visible: !root.hovering;
             x: parent.width - 8px - self.width;
-            width: self.preferred-width;
+            y: 0;
+            height: parent.line-h;
             status: root.data.status;
+            ago: root.data.ago;
         }
         actions := HorizontalLayout {
             visible: root.hovering;
             x: parent.width - 2px - self.preferred-width;
-            y: (parent.height - 28px) / 2;
+            y: (parent.line-h - 28px) / 2;
             height: 28px;
             spacing: 0px;
             snooze-btn := Btn {
@@ -179,6 +369,8 @@ component ThreadRow {
 component ProjectRow {
     in property <SideRow> data;
     callback open();
+    // The chevron: fold or unfold its chats.
+    callback fold();
     callback new-chat();
     callback snooze(length, length);
     callback menu(length, length);
@@ -194,7 +386,10 @@ component ProjectRow {
     property <bool> dragging: drag-id == data.id;
     property <bool> far;
     // While a drag runs the pressed handle keeps the hover, so the pointer's row shows it instead.
-    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || shared.has-hover || plus.hovered || snooze.hovered;
+    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || chevron.has-hover || shared.has-hover || plus.hovered || snooze.hovered;
+    // Its icon, after the fold's chevron; its name after that.
+    property <length> icon-x: 22px;
+    property <length> name-x: 46px;
     height: Theme.row-h + 2px;
     Rectangle {
         background: root.data.active || root.hovering ? Theme.accent : transparent;
@@ -218,8 +413,8 @@ component ProjectRow {
         }
     }
     handle := TouchArea {
-        x: 0;
-        width: 30px;
+        x: root.icon-x - 4px;
+        width: 24px;
         enabled: root.grip;
         mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
         pointer-event(e) => {
@@ -243,22 +438,39 @@ component ProjectRow {
             }
         }
     }
+    // The fold: down while its chats show, right while they're folded away.
+    chevron := TouchArea {
+        x: 0;
+        width: root.icon-x - 2px;
+        enabled: root.data.fold != "";
+        mouse-cursor: pointer;
+        clicked => {
+            root.fold();
+        }
+        if root.data.fold != "": Glyph {
+            x: 5px;
+            width: 14px;
+            icon: root.data.fold == "folded" ? Icons.right : Icons.down;
+            size: 12px;
+            color: chevron.has-hover ? Theme.fg : Theme.gray-800;
+        }
+    }
     if root.grip && (root.hovering || root.dragging): Glyph {
-        x: 8px;
+        x: root.icon-x;
         width: 16px;
         icon: Icons.grip;
         size: 16px;
         color: root.data.active ? Theme.fg : Theme.subtle;
     }
     if root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Image {
-        x: 8px;
+        x: root.icon-x;
         width: 16px;
         height: 16px;
         source: root.data.avatar;
         opacity: root.data.snoozed ? 0.45 : 1;
     }
     if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Rectangle {
-        x: 8px;
+        x: root.icon-x;
         width: 16px;
         height: 16px;
         border-radius: 4px;
@@ -273,13 +485,13 @@ component ProjectRow {
     }
     // The name, then its marks right after it (as on a chat row): the room left of the status,
     // or of the hover buttons, is what the name and its place hint share.
-    property <length> room: self.width - 32px - (root.hovering ? actions.preferred-width + 9px : status.preferred-width + 16px) - (root.data.shared != "" ? 22px : 0px);
+    property <length> room: self.width - root.name-x - (root.hovering ? actions.preferred-width + 9px : status.preferred-width + 16px) - (root.data.shared != "" ? 22px : 0px);
     title := Text {
-        x: 32px;
+        x: root.name-x;
         width: min(self.preferred-width, max(root.room - (root.data.place != "" ? place.width + 6px : 0px), 10px));
         text: root.data.title;
         font-size: 14px;
-        font-weight: root.data.active ? 500 : 400;
+        font-weight: root.data.active ? 600 : 500;
         // Snoozed: it stays in its place, muted (its icon too), its status saying when it wakes.
         color: root.data.snoozed ? Theme.gray-800 : Theme.fg;
         overflow: elide;
@@ -441,6 +653,7 @@ export component Sidebar inherits Rectangle {
     in property <string> reveal;
     callback open-chat(int);
     callback open-project(int);
+    callback fold-project(int);
     callback new-chat(int);
     callback new-thread();
     callback add-project();
@@ -647,6 +860,9 @@ export component Sidebar inherits Rectangle {
                             open => {
                                 root.open-project(r.id);
                             }
+                            fold => {
+                                root.fold-project(r.id);
+                            }
                             new-chat => {
                                 root.new-chat(r.id);
                             }
@@ -673,13 +889,19 @@ export component Sidebar inherits Rectangle {
                             root.chat-menu(r.id, x, y);
                         }
                     }
+                    // "PROJECTS", "THREADS": a section's small head.
                     if r.kind == "label": VerticalLayout {
-                        padding-top: 6px;
+                        padding-top: r.id == 1 ? 2px : 10px;
+                        padding-bottom: 2px;
                         Text {
-                            height: 16px;
-                            text: "  Threads";
-                            font-size: 12px;
-                            color: Theme.subtle;
+                            x: 6px;
+                            height: 18px;
+                            text: r.title;
+                            font-size: 11px;
+                            font-weight: 500;
+                            letter-spacing: 0.6px;
+                            color: Theme.gray-800;
+                            vertical-alignment: center;
                         }
                     }
                 }

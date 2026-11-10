@@ -4,8 +4,8 @@ import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
-import { type Chat, dataDir, hot, type Item, limits, malloc, now, parseAccess, runDir, secrets } from "@harbor/store";
-import { accountOn, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
+import { type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, runDir, secrets } from "@harbor/store";
+import { accountOn, chatOwner, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
@@ -49,7 +49,7 @@ import { ModalOpacity } from "./modalopacity.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
-import { carriedProjects, chatIdle, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { agoLabel, carriedProjects, chatIdle, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -119,7 +119,9 @@ function sync<T>(model: slint.ArrayModel<T>, next: readonly T[], same: (a: T, b:
 
 const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringify(b);
 const sameJsonRow = (a: AgentRow, b: AgentRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
-const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar && JSON.stringify({ ...a, avatar: 0 }) === JSON.stringify({ ...b, avatar: 0 });
+const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar && a.owner_photo === b.owner_photo && JSON.stringify({ ...a, avatar: 0, owner_photo: 0 }) === JSON.stringify({ ...b, avatar: 0, owner_photo: 0 });
+/** A row's variant A fields when it has none of them: no fold, branch, owner. */
+const ROW_PLAIN = { fold: "", ago: "", branch: "", branch_line: false, last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false } as const;
 
 function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
@@ -639,6 +641,10 @@ export class Shell {
     const w = this.win;
     w.open_chat = (id) => this.openChat(id);
     w.open_project = (id) => this.openProject(id);
+    w.fold_project = (id) => {
+      this.data.store.set(FOLDED_KEY, foldToggled(this.data.store.get(FOLDED_KEY), id));
+      this.refreshSidebar();
+    };
     w.new_chat = (repo) => this.newDraft(repo);
     w.new_thread = () => this.newDraft(null);
     w.add_project = () => this.addProject();
@@ -1394,9 +1400,19 @@ export class Shell {
         return { kind: "failed", text: "", icon: "", color: token("red-900", this.dark) };
       case "waiting":
         return { kind: "waiting", text: s.text, icon: "", color: token("amber-900", this.dark) };
+      case "limited":
+        return { kind: "limited", text: s.text, icon: "", color: token("amber-900", this.dark) };
+      case "busy":
+        return { kind: "busy", text: "", icon: "", color: token("blue-900", this.dark) };
       case "text":
         return { kind: "text", text: s.text, icon: glyph(s.icon), color: token(s.color, this.dark) };
     }
+  }
+
+  /** Waiting out a usage limit: when it lifts (null: not known); null when it isn't. */
+  private limitOf(id: number): { at: number | null } | null {
+    const l = this.engine.limits.paused.get(id);
+    return l ? { at: l.at ?? null } : null;
   }
 
   /** A row's status. Working is its own turn; a lead whose subagents still run once its turn is done waits on them. */
@@ -1405,7 +1421,7 @@ export class Shell {
     const t = now();
     const w = since === null ? this.engine.waiting(c.id, asks) : null;
     return ownStatus(
-      { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.engine.paused.has(c.id) ? { at: null } : null, typing: false, viewed: false, failed: this.engine.failed.has(c.id), waiting: w === null ? null : "Waiting", unread: this.engine.unread.has(c.id) },
+      { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.limitOf(c.id), typing: false, viewed: false, failed: this.engine.failed.has(c.id), waiting: w === null ? null : "Waiting", unread: this.engine.unread.has(c.id) },
       idle,
       t,
       utcOffset(),
@@ -1449,27 +1465,54 @@ export class Shell {
     };
     const rows: SideRow[] = [];
     const asks = secrets.loadAsks(d.store);
-    const chatRow = (c: Chat, kind: "thread" | "loose"): SideRow => {
+    const shared = this.shared();
+    // The branch a chat works on: its own worktree's, else (for the open chat's second line) its project's checkout's.
+    const branchOf = (c: Chat, dir: string | null, open: boolean): string => {
+      if (dir !== null) return githead.branchLabel(githead.branchOf(dir)) || githead.branchLabel(basename(dir));
+      const repo = open && c.home === "" && c.repoId !== null ? d.repo(c.repoId) : undefined;
+      return repo ? githead.branchLabel(githead.branchOf(repoDir(repo))) : "";
+    };
+    const chatRow = (c: Chat, kind: "thread" | "loose", last = false): SideRow => {
       const until = snoozed.get(`c${c.id}`) ?? null;
       const idle = chatIdle(snoozedLabel(until !== null && until > t ? until : null, t, utcOffset()), c.updated, t);
+      const active = this.view === "chat" && this.chatId === c.id;
+      const marks = this.marks(c);
+      const dir = marks.worktree === "" ? null : this.engine.worktreeOf(c);
+      const branch = branchOf(c, dir, active);
+      // Someone else's chat: their photo, else their initials.
+      const o = chatOwner(shared, c);
+      const photo = o === null ? null : this.photoPixels(o.photo);
       return {
         kind,
         id: c.id,
         title: c.title,
-        active: this.view === "chat" && this.chatId === c.id,
+        active,
         status: this.statusData(this.chatStatus(c, idle, asks)),
         letter: "",
         avatar: noPixels,
         has_avatar: false,
         settled: c.settled,
         snoozed: until !== null && until > t,
-        ...this.marks(c),
+        ...marks,
         ...chatShared(c, kind),
         tip: "",
         place: "",
         place_pc: false,
+        fold: "",
+        ago: agoLabel(c.updated, t),
+        branch: active || dir !== null ? branch : "",
+        branch_line: active && branch !== "",
+        last,
+        owner: o === null ? "" : (o.mark ?? o.badge),
+        owner_tip: o === null ? "" : `${o.shown === "" ? o.person : o.shown}'s chat`,
+        owner_photo: photo ?? noPixels,
+        has_owner_photo: photo !== null,
       };
     };
+    // Folded projects show only their row (and the open chat, so you see where you are); a search unfolds them all.
+    const folded = this.query.trim() === "" ? foldedOf(d.store.get(FOLDED_KEY)) : new Set<number>();
+    const label = (id: number, title: string): SideRow => ({ kind: "label", id, title, active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "", place: "", place_pc: false, shared: "", shared_tip: "", ...ROW_PLAIN });
+    if (list.projects.length > 0) rows.push(label(1, "PROJECTS"));
     for (const p of list.projects) {
       const main = d.mainChat(p.repo.id);
       const mainChat = main === null ? undefined : d.chat(main);
@@ -1479,12 +1522,18 @@ export class Shell {
       const asleep = until !== null && until > t;
       const idle = projectIdle(wakeUps, asleep ? snoozedLabel(until, t, utcOffset()) : null);
       const selected = (main !== null && this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftMain && this.draftRepo === p.repo.id);
+      const fold = p.chats.length === 0 ? "" : folded.has(p.repo.id) ? "folded" : "open";
+      const shownChats = fold === "folded" ? p.chats.filter((c) => this.view === "chat" && this.chatId === c.id) : p.chats;
+      const mainStatus = mainChat ? this.chatStatus(mainChat, idle, asks) : idle;
+      const hidden = p.chats.filter((c) => !shownChats.includes(c));
+      // Folded and quiet, it says how many chats it holds.
+      const status = fold === "folded" && !asleep ? foldedStatus(mainChat ? mainStatus : null, hidden.map((c) => this.chatStatus(c, idle, asks)), idle.kind === "text" && idle.icon === null ? { kind: "text", icon: null, text: String(hidden.length), color: "gray-800" } : idle) : mainStatus;
       rows.push({
         kind: "project",
         id: p.repo.id,
         title: p.repo.name,
         active: selected,
-        status: this.statusData(mainChat ? this.chatStatus(mainChat, idle, asks) : idle),
+        status: this.statusData(status),
         letter: projectInitial(p.repo.name),
         avatar: this.avatar(p.repo.id) ?? noPixels,
         has_avatar: this.avatar(p.repo.id) !== null,
@@ -1496,11 +1545,13 @@ export class Shell {
         pr_tip: "",
         ...where(p.repo.id, p.repo.name),
         ...projectShared(p.repo.id),
+        ...ROW_PLAIN,
+        fold,
       });
-      for (const c of p.chats) rows.push(chatRow(c, "thread"));
+      shownChats.forEach((c, i) => rows.push(chatRow(c, "thread", i === shownChats.length - 1)));
     }
     if (list.loose.length > 0) {
-      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "", place: "", place_pc: false, shared: "", shared_tip: "" });
+      rows.push(label(0, "THREADS"));
       for (const c of list.loose) rows.push(chatRow(c, "loose"));
     }
     sync(this.rows, rows, sameSideRow);
@@ -1522,6 +1573,7 @@ export class Shell {
         pr_tip: "",
         ...where(r.id, r.name),
         ...projectShared(r.id),
+        ...ROW_PLAIN,
       };
     };
     const settledRows = [...list.settledProjects.map(projectRow), ...list.settled.map((c) => chatRow(c, "loose"))];

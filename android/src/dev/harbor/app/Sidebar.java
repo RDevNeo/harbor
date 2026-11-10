@@ -346,6 +346,7 @@ final class Sidebar {
             }
         }
         boolean first = true;
+        boolean headed = false;
         for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
             JSONObject main = mains.get(g.getKey());
             // A project without chats yet shows too (hubs from 0.88: its header starts the main
@@ -353,14 +354,16 @@ final class Sidebar {
             boolean bare = g.getValue().isEmpty() && main == null;
             if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), ""), projectPc.get(g.getKey()), projectShared.get(g.getKey())) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
                     && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
-            if (!first) divider();
+            // The desktop's small section heads: PROJECTS over the projects, THREADS over the chats without one.
+            if (!headed) list.addView(section("PROJECTS", first), Ui.fill());
+            headed = true;
             first = false;
             group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty(), main, withMains.contains(g.getKey()));
         }
         if (!loose.isEmpty()) {
-            if (!first) divider();
+            list.addView(section("THREADS", first), Ui.fill());
             first = false;
-            group("", "Threads", loose, you, q.isEmpty(), null, false);
+            for (JSONObject c : loose) list.addView(chatRow(c, you), Ui.inset());
         }
         // Settled projects (hubs from 0.113), above the settled chats as on the desktop: a tap opens
         // the project, a long press its sheet (Unsettle project).
@@ -564,50 +567,74 @@ final class Sidebar {
     /** Projects folded on this phone, per PC ("" is Threads). */
     private Set<String> folded() { return new HashSet<>(Ui.prefs(a).getStringSet("folded-" + a.hub.id, new HashSet<>())); }
 
-    /** A project's header (folder, name, count, chevron) and its chats. A tap folds it; a folded
-     *  project with a chat at work keeps a dot on its header. Searching shows every match.
-     *  With main chats (`mains`, hubs from 0.88) the header is the project's main chat, as the
-     *  desktop's project row: a tap opens it (none yet: New chat starts it), it shows the main
-     *  chat's status, a long press its menu, and the count and chevron fold. */
+    /** A section's small head ("PROJECTS", "THREADS"), as the desktop sidebar's. */
+    private TextView section(String text, boolean top) {
+        TextView t = Ui.text(a, text, 11.5f, Ui.G600);
+        t.setTypeface(Ui.semi);
+        t.setLetterSpacing(0.06f);
+        t.setPadding(Ui.dp(20), Ui.dp(top ? 6 : 16), Ui.dp(20), Ui.dp(4));
+        return t;
+    }
+
+    /** A project's first letter or digit, upper case (the desktop row's icon without one of its own). */
+    private static String initial(String name) {
+        if (name != null) for (int i = 0; i < name.length(); i++) if (Character.isLetterOrDigit(name.charAt(i))) return name.substring(i, i + 1).toUpperCase();
+        return "";
+    }
+
+    /** A project's header and its chats, as the desktop's: the fold's chevron, its letter, its name, then its main chat's
+     *  status (folded: what its chats come to, else how many it holds). A tap on the chevron folds it (on this phone);
+     *  with main chats (hubs from 0.88) a tap on the rest opens the main chat (none yet: New chat starts it), a long
+     *  press or the ⋯ its menu. Folded, the open chat still shows; a search shows every match. The chats hang off a
+     *  guide line under the chevron. */
     private void group(String key, String name, List<JSONObject> cs, String you, boolean foldable, JSONObject main, boolean mains) {
         Set<String> f = folded();
-        boolean fold = foldable && f.contains(key);
+        boolean canFold = foldable && !cs.isEmpty();
+        boolean fold = canFold && f.contains(key);
         LinearLayout h = Ui.row(a);
-        h.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(6));
+        h.setMinimumHeight(Ui.dp(44));
+        h.setPadding(Ui.dp(2), Ui.dp(4), Ui.dp(8), Ui.dp(4));
         String mainId = main == null ? null : main.optString("id");
         h.setBackground(mainId != null && mainId.equals(current) ? Ui.press(Ui.G100, 0, 10) : Ui.press(0, 0, 10));
-        // Snoozed (the desktop's muted project row): its place kept, its name and icon muted, and
-        // when it wakes before its status.
-        String asleep = key.isEmpty() ? null : snoozedProjects.get(key);
-        h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, asleep != null ? Ui.G500 : Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
-        String where = key.isEmpty() ? "" : Place.hint(st, key);
-        int color = asleep != null ? Ui.G600 : mains ? Ui.FG : Ui.G700;
-        if (where.isEmpty()) h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, color)), new LinearLayout.LayoutParams(0, -2, 1));
-        else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), color), new LinearLayout.LayoutParams(0, -2, 1));
-        if (!key.isEmpty()) sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, ""), projectPc.get(key)), projectShared.getOrDefault(key, new ArrayList<>()));
-        if (asleep != null) snoozeMark(h, asleep);
-        if (main != null) status(h, main, you);
-        boolean busy = false;
-        for (JSONObject c : cs) busy |= working(c) || waiting(c) || Hub.queued(c) > 0;
-        if (fold && busy) h.addView(Ui.dot(a, Ui.BLUE, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 8, 0, 0, 0));
-        // The fold toggle: the whole header, or with main chats only the count and chevron.
-        LinearLayout toggle = mains ? Ui.row(a) : h;
-        if (cs.isEmpty() && mains) toggle = null; // nothing to fold
-        else {
-            toggle.addView(Ui.text(a, String.valueOf(cs.size()), 12, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-            toggle.addView(Ui.icon(a, fold ? Ui.I_RIGHT : Ui.I_DOWN, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 6, 0, 0, 0));
-            if (toggle != h) {
-                toggle.setPadding(Ui.dp(4), Ui.dp(4), 0, Ui.dp(4));
-                toggle.setBackground(Ui.press(0, 0, 10));
-                toggle.setContentDescription(cs.size() + (fold ? " more chats, folded" : " more chats"));
-                h.addView(toggle, Ui.wrap());
-            }
-            if (foldable) toggle.setOnClickListener(v -> {
+        // The chevron, in a box of its own so a tap there folds instead of opening.
+        TextView chev = Ui.icon(a, fold ? Ui.I_CHEV_RIGHT : Ui.I_DOWN, 14, Ui.G600);
+        chev.setVisibility(canFold ? View.VISIBLE : View.INVISIBLE);
+        if (canFold) {
+            chev.setBackground(Ui.press(0, 0, 14));
+            chev.setContentDescription(fold ? "Unfold " + cs.size() + " chats" : "Fold its chats");
+            chev.setOnClickListener(v -> {
                 if (!f.remove(key)) f.add(key);
                 Ui.prefs(a).edit().putStringSet("folded-" + a.hub.id, f).apply();
                 render(st);
             });
         }
+        h.addView(chev, new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(36)));
+        // Snoozed (the desktop's muted project row): its place kept, its name and icon muted, and
+        // when it wakes before its status.
+        String asleep = snoozedProjects.get(key);
+        TextView letter = Ui.bold(a, initial(name), 11.5f, Ui.FG);
+        letter.setGravity(Gravity.CENTER);
+        letter.setIncludeFontPadding(false);
+        letter.setBackground(Ui.round(Ui.dark ? Ui.G300 : Ui.G200, 0, 5));
+        letter.setAlpha(asleep != null ? 0.45f : 1f);
+        h.addView(letter, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 10, 0));
+        String where = Place.hint(st, key);
+        int color = asleep != null ? Ui.G600 : Ui.FG;
+        TextView nameView;
+        if (where.isEmpty()) {
+            nameView = Ui.subtitle(Ui.bold(a, name == null || name.isEmpty() ? "Project" : name, 15, color));
+            h.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1));
+        } else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), color), new LinearLayout.LayoutParams(0, -2, 1));
+        sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, ""), projectPc.get(key)), projectShared.getOrDefault(key, new ArrayList<>()));
+        // Folded, the open chat stays under it; the others are what its status sums up.
+        List<JSONObject> shown = new ArrayList<>();
+        if (!fold) shown.addAll(cs);
+        else for (JSONObject c : cs) if (c.optString("id").equals(current)) shown.add(c);
+        List<JSONObject> hidden = new ArrayList<>(cs);
+        hidden.removeAll(shown);
+        if (asleep != null) snoozeMark(h, asleep);
+        else if (fold && (main == null || quiet(main, you))) foldedMark(h, hidden);
+        else if (main != null) status(h, main, you);
         if (mains) {
             h.setContentDescription((name == null ? "Project" : name) + (where.isEmpty() ? "" : ", on " + where) + (main != null ? ", main chat" : ", start its main chat"));
             h.setOnClickListener(v -> { if (main != null) open(mainId); else newChat(key, true); });
@@ -618,13 +645,35 @@ final class Sidebar {
             more.setBackground(Ui.press(0, 0, 14));
             more.setOnClickListener(v -> projectMenu(key, name, main));
             more.setContentDescription("Project options");
-            h.addView(more, toggle == h || toggle == null ? h.getChildCount() : h.indexOfChild(toggle),
-                    Ui.margins(new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(28)), 4, 0, 0, 0));
+            h.addView(more, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(28)), 4, 0, 0, 0));
         } else {
             h.setContentDescription((name == null ? "Project" : name) + ", " + cs.size() + (fold ? " chats, folded" : " chats"));
+            if (canFold) h.setOnClickListener(v -> chev.performClick());
         }
         list.addView(h, Ui.inset());
-        if (!fold) for (JSONObject c : cs) list.addView(chatRow(c, you), Ui.inset());
+        for (int i = 0; i < shown.size(); i++) list.addView(chatRow(shown.get(i), you, true, i == shown.size() - 1), Ui.inset());
+    }
+
+    /** Nothing to say on its right but when it was last active. */
+    private boolean quiet(JSONObject c, String you) {
+        return typing(c, you) == null && !working(c) && Hub.queued(c) == 0 && !c.optBoolean("failed") && !waiting(c) && !c.optBoolean("limited") && !c.optBoolean("unread");
+    }
+
+    /** A folded project's status: a spinner while one of its chats works, amber while one waits or is limited, red when
+     *  one failed, blue while one is unread, else how many chats it holds. */
+    private void foldedMark(LinearLayout h, List<JSONObject> hidden) {
+        boolean work = false, wait = false, fail = false, unread = false;
+        for (JSONObject c : hidden) {
+            work |= working(c);
+            wait |= waiting(c) || c.optBoolean("limited") || Hub.queued(c) > 0;
+            fail |= c.optBoolean("failed");
+            unread |= c.optBoolean("unread");
+        }
+        if (work) h.addView(Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        else if (wait) h.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
+        else if (fail) h.addView(Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        else if (unread) h.addView(Ui.dot(a, Ui.BLUE, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 10, 0, 2, 0));
+        else h.addView(Ui.text(a, String.valueOf(hidden.size()), 13, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
     }
 
     /** Project `key`'s sheet (ProjectMenu): the desktop project row's options (an older hub
@@ -650,7 +699,7 @@ final class Sidebar {
      *  folder's parent of one of two projects with a name (Place.hint). */
     private LinearLayout titleWithPlace(String name, String where, boolean pc, int color) {
         LinearLayout t = Ui.row(a);
-        t.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, color)), new LinearLayout.LayoutParams(-2, -2, 0));
+        t.addView(Ui.subtitle(Ui.bold(a, name == null || name.isEmpty() ? "Project" : name, 15, color)), new LinearLayout.LayoutParams(-2, -2, 0));
         t.addView(Ui.icon(a, pc ? Ui.I_MONITOR : Ui.I_FOLDER, 11, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(13), Ui.dp(13)), 6, 0, 3, 0));
         TextView w = Ui.text(a, where, 11, Ui.G600);
         w.setSingleLine(true);
@@ -738,17 +787,59 @@ final class Sidebar {
         return b.length() == 0 ? null : b.toString();
     }
 
-    private View chatRow(JSONObject c, String you) {
+    private View chatRow(JSONObject c, String you) { return chatRow(c, you, false, false); }
+
+    /** "now", "13m ago", "2h ago", "3d ago": when it was last active, as the desktop row says it. */
+    static String ago(long ms) {
+        long d = Math.max(0, (System.currentTimeMillis() - ms) / 1000);
+        if (d < 60) return "now";
+        if (d < 3600) return (d / 60) + "m ago";
+        if (d < 86400) return (d / 3600) + "h ago";
+        return (d / 86400) + "d ago";
+    }
+
+    /** A chat's row, as the desktop's: its status before the title (the spinner while it works, amber while it waits or
+     *  is limited, blue while unread, red when its turn failed), the title and, for a chat in its own worktree, its
+     *  branch after it, small and dim (it gives way first when the title needs the room; the open chat has it on a
+     *  line of its own), its PR's mark, someone else's initials or photo, then on the right Working, Waiting, Limited
+     *  or Failed, else when it was last active. A project's chats (`indented`) hang off its guide line; `last` ends it. */
+    private View chatRow(JSONObject c, String you, boolean indented, boolean last) {
         String id = c.optString("id");
         String title = c.optString("title");
         boolean settled = c.optBoolean("settled");
+        boolean open = id.equals(current);
         boolean asleep = c.has("snoozed_until_ms") && !c.isNull("snoozed_until_ms");
-        LinearLayout r = Ui.listRow(a, Ui.I_CHAT, asleep ? Ui.G500 : Ui.G700, title.isEmpty() ? "New chat" : title, asleep ? Ui.G600 : settled ? Ui.G700 : Ui.FG);
-        r.setBackground(id.equals(current) ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
-        // Runs in a worktree of its own (the desktop row's folder-git mark).
         JSONObject wt = c.optJSONObject("worktree");
-        if (wt != null) {
-            TextView m = Ui.icon(a, Ui.I_FOLDER_GIT, 14, wt.optBoolean("gone") ? Ui.RED : Ui.G700);
+        String branch = c.optString("branch", "");
+        if (branch.isEmpty() && wt != null) branch = wt.optString("name", "");
+        boolean gone = wt != null && wt.optBoolean("gone");
+        LinearLayout r = Ui.row(a);
+        r.setMinimumHeight(Ui.dp(44));
+        r.setPadding(Ui.dp(indented ? 6 : 12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+        r.setBackground(open ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
+        // Before the title: its status, or (a chat without a project) the chat glyph while it has none to show.
+        View lead = leadMark(c, you);
+        if (lead != null) r.addView(lead, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 10, 0));
+        else if (indented) r.addView(new View(a), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 10, 0));
+        else r.addView(Ui.icon(a, Ui.I_CHAT, 18, asleep ? Ui.G500 : Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 10, 0));
+        int titleColor = asleep ? Ui.G600 : settled ? Ui.G700 : Ui.FG;
+        android.text.SpannableStringBuilder t = new android.text.SpannableStringBuilder(title.isEmpty() ? "New chat" : title);
+        boolean inline = !branch.isEmpty() && !open && wt != null;
+        if (inline) branchSpan(t, branch, gone);
+        TextView tv = Ui.subtitle(Ui.text(a, t, 15, titleColor));
+        if (open || c.optBoolean("unread")) tv.setTypeface(Ui.semi);
+        if (open && !branch.isEmpty()) {
+            LinearLayout col = new LinearLayout(a);
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.addView(tv, Ui.fill());
+            android.text.SpannableStringBuilder b = new android.text.SpannableStringBuilder();
+            branchSpan(b, branch, gone);
+            col.addView(Ui.subtitle(Ui.text(a, b.subSequence(2, b.length()), 12, gone ? Ui.RED : Ui.G600)), Ui.fill());
+            r.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
+        } else r.addView(tv, new LinearLayout.LayoutParams(0, -2, 1));
+        // A worktree whose branch isn't known: the folder-git mark stands in.
+        if (wt != null && branch.isEmpty()) {
+            TextView m = Ui.icon(a, Ui.I_FOLDER_GIT, 14, gone ? Ui.RED : Ui.G700);
             m.setContentDescription("Worktree " + wt.optString("name"));
             r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
         }
@@ -760,18 +851,89 @@ final class Sidebar {
             m.setContentDescription(pr.optString("label"));
             r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
         }
-        // Snoozed: in its place, muted, with when it wakes, as the desktop row says it.
-        if (asleep) snoozeMark(r, c.optString("snoozed_label"));
         // Shared (Share with workspace…): a chat under its project's header shows it only for shares of its own.
         List<String> shared = strings(c.optJSONArray("shared"));
         String pid = c.isNull("project_id") ? "" : c.optString("project_id");
         List<String> own = new ArrayList<>(shared);
         own.removeAll(projectShared.getOrDefault(pid, new ArrayList<>()));
         if (pid.isEmpty() || settled || !own.isEmpty()) sharedMark(r, -1, scope.owner(c.optString("home"), c.optString("workspace", "")), shared);
-        status(r, c, you);
+        JSONObject owner = c.optJSONObject("owner");
+        if (owner != null) ownerMark(r, owner);
+        rightStatus(r, c, you, asleep);
         r.setOnClickListener(v -> open(id));
         r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
-        return r;
+        if (!indented) return r;
+        // The guide line down the project's chats, under the header's chevron, through to the next chat unless it's the last.
+        FrameLayout box = new FrameLayout(a);
+        View line = new View(a);
+        line.setBackgroundColor(Ui.dark ? Ui.G300 : Ui.G200);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.max(1, Ui.dp(1)), -1);
+        lp.leftMargin = Ui.dp(10);
+        box.addView(line, lp);
+        if (last) box.setPadding(0, 0, 0, Ui.dp(2));
+        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(-1, -2);
+        rp.leftMargin = Ui.dp(26);
+        box.addView(r, rp);
+        return box;
+    }
+
+    /** " ⎇ branch" after a title: the branch glyph and the name in mono, small and dim (red when its worktree is gone). */
+    private static void branchSpan(android.text.SpannableStringBuilder t, String branch, boolean gone) {
+        int color = gone ? Ui.RED : Ui.G600;
+        t.append("  ");
+        int s = t.length();
+        t.append(Ui.I_BRANCH);
+        t.setSpan(new Ui.Font(Ui.icons, 0), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        t.append(" ").append(branch);
+        t.setSpan(new Ui.Font(Ui.mono, 0), s + Ui.I_BRANCH.length() + 1, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        t.setSpan(new android.text.style.RelativeSizeSpan(0.8f), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        t.setSpan(new android.text.style.ForegroundColorSpan(color), s, t.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
+
+    /** The status before a chat's title, or null for none. */
+    private View leadMark(JSONObject c, String you) {
+        if (working(c)) return Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE);
+        if (c.optBoolean("failed")) return Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED);
+        if (waiting(c) || c.optBoolean("limited") || Hub.queued(c) > 0) return centred(Ui.dot(a, Ui.AMBER, 7));
+        if (c.optBoolean("unread")) return centred(Ui.dot(a, Ui.BLUE, 7));
+        return null;
+    }
+
+    private View centred(View dot) {
+        FrameLayout f = new FrameLayout(a);
+        f.addView(dot, new FrameLayout.LayoutParams(dot.getLayoutParams().width, dot.getLayoutParams().height, Gravity.CENTER));
+        return f;
+    }
+
+    /** Someone else's chat: their round photo, else their initials. */
+    private void ownerMark(LinearLayout r, JSONObject o) {
+        TextView m = Ui.bold(a, o.optString("mark"), 8.5f, Ui.FG);
+        m.setGravity(Gravity.CENTER);
+        m.setIncludeFontPadding(false);
+        m.setBackground(Ui.round(Ui.dark ? Ui.G400 : Ui.G300, 0, 10));
+        m.setContentDescription(o.optString("name") + "'s chat");
+        r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 8, 0, 0, 0));
+        Avatars.into(m, m, o.optString("photo"));
+    }
+
+    /** What a chat row says on its right, as the desktop's: who's typing, Working, Limited, Failed, Waiting (or queued),
+     *  a snooze's clock, else when it was last active. */
+    private void rightStatus(LinearLayout r, JSONObject c, String you, boolean asleep) {
+        String typing = typing(c, you);
+        String word = null;
+        int color = Ui.G600;
+        if (typing != null) { word = "typing…"; color = Ui.BLUE; }
+        else if (working(c)) { word = "Working"; color = Ui.BLUE; }
+        else if (c.optBoolean("limited")) { word = "Limited"; color = Ui.AMBER; }
+        else if (c.optBoolean("failed")) { word = "Failed"; color = Ui.RED; }
+        else if (waiting(c)) { word = c.optJSONObject("wait").optString("label", "Waiting"); color = Ui.AMBER; }
+        else if (Hub.queued(c) > 0) { word = "Queued"; color = Ui.AMBER; }
+        if (word == null && asleep) { snoozeMark(r, c.optString("snoozed_label")); return; }
+        if (word == null) word = c.has("updated_ms") ? ago(c.optLong("updated_ms")) : "";
+        if (word.isEmpty()) return;
+        TextView w = Ui.text(a, word, 13, color);
+        if (waiting(c)) w.setContentDescription(c.optJSONObject("wait").optString("text", "Waiting"));
+        r.addView(w, Ui.margins(Ui.wrap(), 10, 0, 0, 0));
     }
 
     /** A snoozed row's mark: the clock glyph and when it wakes ("Tomorrow, 9:00"; "": unknown). */

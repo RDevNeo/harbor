@@ -1,6 +1,6 @@
 import { allowedAccounts, checkRun, isRunError, lockLeads } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
-import { blankChat, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
+import { blankChat, githead, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftEmpty, draftJson, resolveUpload, type Hub } from "./hub.ts";
@@ -15,7 +15,7 @@ import { basename } from "node:path";
 import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.ts";
 import { dest, type Peer } from "./shared.ts";
 import { AUTO_DEVICE, ramText } from "./ram.ts";
-import { accountOn, isSharedId, kindLabel, sharedAccess, sharedTarget, type SharedAccount } from "./meshaccounts.ts";
+import { accountOn, chatOwner, isSharedId, kindLabel, sharedAccess, sharedTarget, type SharedAccount } from "./meshaccounts.ts";
 import type { MoveWant } from "./movepc.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, groups, project, type Media, type Shown } from "./view.ts";
@@ -70,6 +70,8 @@ export interface PhoneEngine {
   subsQueued(lead: number): number;
   /** The folder of the git worktree the chat works in, when it has one. */
   worktreeOf?(id: number): string | null;
+  /** Its account hit a usage limit: it waits for it to lift (the sidebar's amber "Limited"). */
+  limited?(id: number): boolean;
   mainChat(repo: number): number | null;
   forksOf(id: number): [number, number][];
   /** PROTOCOL.md `wait`: what wakes the chat once its own turn is done, null for nothing (hubs from 0.149). */
@@ -550,6 +552,11 @@ export class PhoneRoutes {
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),
       ...this.runSettings(c),
       worktree: this.worktree(c),
+      // The branch it works on as the sidebar names it (its worktree's, else its project's checkout's); "" none known.
+      branch: this.branch(c, project),
+      limited: this.d.engine?.limited?.(c.id) ?? false,
+      // Someone else's chat (its account is theirs): their initials and photo on its row; null for yours.
+      owner: this.owner(c),
       pr: this.d.pr?.(c) ?? null,
       snoozed_until_ms: this.snoozeUntil(`c${c.id}`) === null ? null : (this.snoozeUntil(`c${c.id}`) ?? 0) * 1000,
       snoozed_label: sidebartree.snoozedLabel(this.snoozeUntil(`c${c.id}`), now(), utcOffset(now())),
@@ -573,6 +580,17 @@ export class PhoneRoutes {
   private isMain(c: Chat): boolean {
     if (c.repoId === null) return false;
     return this.d.store.mainChats().get(c.repoId) === c.id && sidebartree.isMainOf(c, c.repoId);
+  }
+
+  private branch(c: Chat, project: Parameters<typeof repoDir>[0] | null): string {
+    if (c.home !== "") return githead.branchLabel(this.d.replica.remote.get(c.id)?.worktree ?? "");
+    const dir = this.d.engine?.worktreeOf?.(c.id) ?? (project === null ? null : repoDir(project));
+    return dir === null ? "" : githead.branchLabel(githead.branchOf(dir));
+  }
+
+  private owner(c: Chat): Json {
+    const o = chatOwner(this.d.catalog?.shared?.() ?? [], c);
+    return o === null ? null : { mark: o.mark ?? o.badge, name: o.shown === "" ? o.person : o.shown, photo: o.photo };
   }
 
   private worktree(c: Chat): Json {

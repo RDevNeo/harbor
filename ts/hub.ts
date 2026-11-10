@@ -1156,6 +1156,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     recap: (id) => live.recaps.shownFor(id),
     unread: (id) => live.unread.has(id),
     failed: (id) => live.failed.has(id),
+    limited: (id) => live.limits.paused.has(id),
     opened: (id) => live.opened(id),
     subsQueued: (lead) => live.subsQueued(lead),
     queuedCount: (id) => live.queuedCount(id),

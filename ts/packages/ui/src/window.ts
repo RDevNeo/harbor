@@ -13,7 +13,7 @@ import { busOf } from "./pages/bus.ts";
 import type { Pixels } from "./logos.ts";
 
 export interface StatusData {
-  kind: "working" | "done" | "failed" | "waiting" | "text";
+  kind: "working" | "done" | "failed" | "waiting" | "limited" | "busy" | "text";
   text: string;
   icon: string;
   color: string;
@@ -43,6 +43,22 @@ export interface SideRow {
   shared: "" | "shared" | "here";
   /** "Owned by X · shared with Y". */
   shared_tip: string;
+  /** A project row's fold: "" no chats under it, "open", "folded" (the chevron before its icon). */
+  fold: "" | "open" | "folded";
+  /** A chat row's last activity, "13m ago" ("now"): on its right while nothing else is to say. */
+  ago: string;
+  /** The branch it works on, without Harbor's "harbor/" ("" none): after the title for a chat in its own worktree, on a
+   *  second line for the open chat. */
+  branch: string;
+  /** The open chat: its branch on a second line under the title. */
+  branch_line: boolean;
+  /** The last chat under its project: the guide line ends with it. */
+  last: boolean;
+  /** Someone else's chat: their initials ("" for yours), photo and name. */
+  owner: string;
+  owner_tip: string;
+  owner_photo: Pixels;
+  has_owner_photo: boolean;
 }
 
 export interface MdBlockData {
@@ -453,6 +469,7 @@ export interface AppWindow extends slint.ComponentHandle {
   side_drag: boolean;
   open_chat: (id: number) => void;
   open_project: (id: number) => void;
+  fold_project: (id: number) => void;
   new_chat: (repo: number) => void;
   new_thread: () => void;
   add_project: () => void;

@@ -171,6 +171,15 @@ const linked = chat({ repoId: web, title: "Move images to the CDN", updated: ago
   say("Done: images now load from the CDN with a 1-day cache.", ago(90)),
   done(ago(90), 0.31),
 ]);
+// The lead runs in a worktree of its own: the sidebar names its branch after the title, without "harbor/" (githead.ts reads
+// the worktree's HEAD file, so no git runs here).
+const wtGit = join(home, "code", ".git-worktrees", "rate-limits");
+const wtDir = join(home, "code", "acme-api-rate-limits");
+mkdirSync(wtGit, { recursive: true });
+mkdirSync(wtDir, { recursive: true });
+writeFileSync(join(wtGit, "HEAD"), "ref: refs/heads/harbor/rate-limits\n");
+writeFileSync(join(wtDir, ".git"), `gitdir: ${wtGit}\n`);
+seed.set(`worktree:${lead.id}`, wtDir);
 // Chat links in a reply (chatlink.ts): a sub-agent's, a markdown link, and one this hub doesn't have.
 seed.saveItems(lead.id, [
   ...seed.items(lead.id),

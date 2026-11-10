@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   accountOn,
+  chatOwner,
+  samePerson,
   accountsByPc,
   helloAccounts,
   identOf,
@@ -121,6 +123,26 @@ describe("the mesh's accounts, each once", () => {
     expect(v[5]!.why).toBe("tower is offline");
     expect(sharedTarget(v, "claude2")).toMatchObject({ pc: "", account: "claude2", why: "" });
     expect(sharedTarget(v, "nope")).toBeNull();
+  });
+
+  test("someone else's account marks their chats: on this PC by its id, another PC's copy by that PC's", () => {
+    const v = list();
+    expect(v.map((s) => [s.account, s.pc, s.others, s.mark])).toEqual([
+      ["claude", "", false, "ML"],
+      ["claude2", "", true, "DR"],
+      ["claude3", "", true, "DaR"],
+      ["opencode", "", false, "ML"],
+      ["opencode", "ts:laptop", true, "DR"],
+      ["codex", "ts:tower", true, "DaR"],
+    ]);
+    expect(chatOwner(v, { home: "", account: "claude" })).toBeNull();
+    expect(chatOwner(v, { home: "", account: "claude2" })?.person).toBe("Dana Reyes");
+    expect(chatOwner(v, { home: "ts:tower", account: "codex" })?.mark).toBe("DaR");
+    expect(chatOwner(v, { home: "ts:tower", account: "claude9" })).toBeNull();
+    expect(samePerson("Mara Lind", "mara  lind")).toBe(true);
+    expect(samePerson("Mara", "Mara Lind")).toBe(true);
+    expect(samePerson("Dana Reyes", "Dario Reyes")).toBe(false);
+    expect(samePerson("", "Mara Lind")).toBe(false);
   });
 
   test("run on another PC, this PC's account is that PC's id for the same sign-in", () => {
