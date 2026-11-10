@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.172.2] - 2026-11-10
+
+### Fixed
+- The model picker no longer shows someone's photo on another person's account. A PC can hold
+  someone else's sign-in; its photo was filed under that PC's owner and could appear on the owner's
+  other entries, and an account nobody is known to own was told with its PC owner's photo. A photo
+  now comes only from the account's own sign-in (or the person its email names); otherwise initials.
+
 ## [0.172.1] - 2026-11-10
 
 ### Changed
