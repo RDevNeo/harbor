@@ -583,7 +583,10 @@ export class PhoneRoutes {
   }
 
   private branch(c: Chat, project: Parameters<typeof repoDir>[0] | null): string {
-    if (c.home !== "") return githead.branchLabel(this.d.replica.remote.get(c.id)?.worktree ?? "");
+    if (c.home !== "") {
+      const r = this.d.replica.remote.get(c.id);
+      return r?.branch || githead.branchLabel(r?.worktree ?? "");
+    }
     const dir = this.d.engine?.worktreeOf?.(c.id) ?? (project === null ? null : repoDir(project));
     return dir === null ? "" : githead.branchLabel(githead.branchOf(dir));
   }

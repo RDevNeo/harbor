@@ -121,7 +121,7 @@ const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringif
 const sameJsonRow = (a: AgentRow, b: AgentRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
 const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar && a.owner_photo === b.owner_photo && JSON.stringify({ ...a, avatar: 0, owner_photo: 0 }) === JSON.stringify({ ...b, avatar: 0, owner_photo: 0 });
 /** A row's variant A fields when it has none of them: no fold, branch, owner. */
-const ROW_PLAIN = { fold: "", ago: "", branch: "", branch_line: false, last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false } as const;
+const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false } as const;
 
 function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
@@ -1466,10 +1466,12 @@ export class Shell {
     const rows: SideRow[] = [];
     const asks = secrets.loadAsks(d.store);
     const shared = this.shared();
-    // The branch a chat works on: its own worktree's, else (for the open chat's second line) its project's checkout's.
-    const branchOf = (c: Chat, dir: string | null, open: boolean): string => {
+    // The branch a chat works on: its own worktree's, else its project's checkout's.
+    const branchOf = (c: Chat, dir: string | null): string => {
       if (dir !== null) return githead.branchLabel(githead.branchOf(dir)) || githead.branchLabel(basename(dir));
-      const repo = open && c.home === "" && c.repoId !== null ? d.repo(c.repoId) : undefined;
+      // Another PC's copy: the branch that PC says it works on.
+      if (c.home !== "") return this.shellMesh.remote(c.id)?.branch ?? "";
+      const repo = c.repoId !== null ? d.repo(c.repoId) : undefined;
       return repo ? githead.branchLabel(githead.branchOf(repoDir(repo))) : "";
     };
     const chatRow = (c: Chat, kind: "thread" | "loose", last = false): SideRow => {
@@ -1478,7 +1480,7 @@ export class Shell {
       const active = this.view === "chat" && this.chatId === c.id;
       const marks = this.marks(c);
       const dir = marks.worktree === "" ? null : this.engine.worktreeOf(c);
-      const branch = branchOf(c, dir, active);
+      const branch = branchOf(c, dir);
       // Someone else's chat: their photo, else their initials.
       const o = chatOwner(shared, c);
       const photo = o === null ? null : this.photoPixels(o.photo);
@@ -1500,8 +1502,7 @@ export class Shell {
         place_pc: false,
         fold: "",
         ago: agoLabel(c.updated, t),
-        branch: active || dir !== null ? branch : "",
-        branch_line: active && branch !== "",
+        branch,
         last,
         owner: o === null ? "" : (o.mark ?? o.badge),
         owner_tip: o === null ? "" : `${o.shown === "" ? o.person : o.shown}'s chat`,

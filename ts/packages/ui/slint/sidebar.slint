@@ -30,9 +30,8 @@ export struct SideRow {
     fold: string,
     // A chat row's last activity ("13m ago"), on its right while nothing else is to say.
     ago: string,
-    // The branch it works on (no "harbor/"): after the title for a chat in its own worktree, under it for the open chat.
+    // The branch it works on (its worktree's, else its project's checkout's; no "harbor/"), after the title.
     branch: string,
-    branch-line: bool,
     // The last chat under its project: the guide line ends with it.
     last: bool,
     // Someone else's chat: their initials ("" yours), name and photo.
@@ -176,10 +175,10 @@ component ThreadRow {
     property <bool> indented: data.kind == "thread";
     // A loose chat (Threads, Settled) keeps its chat glyph until it has a status to show there.
     property <bool> lead-status: data.status.kind == "working" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
-    property <bool> inline-branch: data.branch != "" && !data.branch-line;
+    property <bool> inline-branch: data.branch != "";
     // The worktree glyph stands in for a branch that isn't known.
     property <bool> wt-glyph: data.worktree != "" && data.branch == "";
-    height: data.branch-line ? Theme.row-h + 14px : Theme.row-h;
+    height: Theme.row-h;
     // The guide line down the project's chats: through the gap to the next one, unless this is the last.
     if root.indented: Rectangle {
         x: 9px;
@@ -248,15 +247,6 @@ component ThreadRow {
             y: 0;
             height: parent.line-h;
             width: parent.branch-w;
-            branch: root.data.branch;
-            gone: root.data.worktree == "gone";
-        }
-        // The open chat: its branch on a line of its own under the title.
-        if root.data.branch-line: BranchLabel {
-            x: title.x;
-            y: parent.line-h - 9px;
-            height: 16px;
-            width: min(self.preferred-width, parent.width - title.x - 10px);
             branch: root.data.branch;
             gone: root.data.worktree == "gone";
         }

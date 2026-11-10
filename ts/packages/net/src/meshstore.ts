@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { blankChat, digest, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
+import { blankChat, digest, githead, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, type Reply } from "./http.ts";
 import { draftFromJson, draftJson, previewTail, type Hub, type SharedDraft } from "./hub.ts";
@@ -37,6 +37,8 @@ export interface RemoteState {
   viewing: { device: string; kind: string; label: string }[];
   draft: SharedDraft | null;
   worktree: string | null;
+  /** The branch it works on there, as the sidebar names it ("" none known; older PCs don't say). */
+  branch?: string;
   pr: Json;
   cwd: string | null;
 }
@@ -216,6 +218,8 @@ export class StoreReplica implements MeshApp {
       draft: draft ? draftJson(draft) : null,
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),
       worktree: this.o.worktree?.(c) ?? null,
+      // Its folder's branch (its worktree's, else its project's checkout's): the sidebars of the other PCs show it.
+      branch: githead.branchLabel(githead.branchOf(this.cwd(c))),
       pr: this.o.pr?.(c) ?? null,
       cwd: this.cwd(c),
     };
@@ -412,6 +416,7 @@ export class StoreReplica implements MeshApp {
       viewing: leases("viewing").map(({ device, kind, label }) => ({ device, kind, label })),
       draft: draftFromJson(m.draft),
       worktree: wt === "" ? null : wt,
+      branch: s(m, "branch"),
       pr: (m.pr ?? null) as Json,
       cwd: cwd.startsWith("/") ? cwd : null,
     });

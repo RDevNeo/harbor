@@ -799,9 +799,9 @@ final class Sidebar {
     }
 
     /** A chat's row, as the desktop's: its status before the title (the spinner while it works, amber while it waits or
-     *  is limited, blue while unread, red when its turn failed), the title and, for a chat in its own worktree, its
-     *  branch after it, small and dim (it gives way first when the title needs the room; the open chat has it on a
-     *  line of its own), its PR's mark, someone else's initials or photo, then on the right Working, Waiting, Limited
+     *  is limited, blue while unread, red when its turn failed), the title and the branch it works on after it (its
+     *  worktree's, else its project's checkout's), small and dim (it gives way first when the title needs the room),
+     *  its PR's mark, someone else's initials or photo, then on the right Working, Waiting, Limited
      *  or Failed, else when it was last active. A project's chats (`indented`) hang off its guide line; `last` ends it. */
     private View chatRow(JSONObject c, String you, boolean indented, boolean last) {
         String id = c.optString("id");
@@ -824,19 +824,10 @@ final class Sidebar {
         else r.addView(Ui.icon(a, Ui.I_CHAT, 18, asleep ? Ui.G500 : Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 10, 0));
         int titleColor = asleep ? Ui.G600 : settled ? Ui.G700 : Ui.FG;
         android.text.SpannableStringBuilder t = new android.text.SpannableStringBuilder(title.isEmpty() ? "New chat" : title);
-        boolean inline = !branch.isEmpty() && !open && wt != null;
-        if (inline) branchSpan(t, branch, gone);
+        if (!branch.isEmpty()) branchSpan(t, branch, gone);
         TextView tv = Ui.subtitle(Ui.text(a, t, 15, titleColor));
         if (open || c.optBoolean("unread")) tv.setTypeface(Ui.semi);
-        if (open && !branch.isEmpty()) {
-            LinearLayout col = new LinearLayout(a);
-            col.setOrientation(LinearLayout.VERTICAL);
-            col.addView(tv, Ui.fill());
-            android.text.SpannableStringBuilder b = new android.text.SpannableStringBuilder();
-            branchSpan(b, branch, gone);
-            col.addView(Ui.subtitle(Ui.text(a, b.subSequence(2, b.length()), 12, gone ? Ui.RED : Ui.G600)), Ui.fill());
-            r.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
-        } else r.addView(tv, new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(tv, new LinearLayout.LayoutParams(0, -2, 1));
         // A worktree whose branch isn't known: the folder-git mark stands in.
         if (wt != null && branch.isEmpty()) {
             TextView m = Ui.icon(a, Ui.I_FOLDER_GIT, 14, gone ? Ui.RED : Ui.G700);

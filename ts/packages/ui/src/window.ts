@@ -47,11 +47,9 @@ export interface SideRow {
   fold: "" | "open" | "folded";
   /** A chat row's last activity, "13m ago" ("now"): on its right while nothing else is to say. */
   ago: string;
-  /** The branch it works on, without Harbor's "harbor/" ("" none): after the title for a chat in its own worktree, on a
-   *  second line for the open chat. */
+  /** The branch it works on (its worktree's, else its project's checkout's), without Harbor's "harbor/" ("" none):
+   *  after its title. */
   branch: string;
-  /** The open chat: its branch on a second line under the title. */
-  branch_line: boolean;
   /** The last chat under its project: the guide line ends with it. */
   last: boolean;
   /** Someone else's chat: their initials ("" for yours), photo and name. */
