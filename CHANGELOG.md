@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.172.1] - 2026-11-10
+
+### Changed
+- Settings › Workspace: each phone reads by its device name, the one the Devices panel shows (just
+  "Phone" when none is known), with "Phone" below it instead of its key. PCs there show the Harbor
+  they really run, as the Devices panel does, not the version they advertise to old PCs.
+
 ## [0.172.0] - 2026-11-10
 
 ### Added
