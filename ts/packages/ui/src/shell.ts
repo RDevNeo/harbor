@@ -2342,24 +2342,49 @@ export class Shell {
     const key = q === null ? "" : new URLSearchParams(q).toString();
     if (key !== this.wsKey) {
       this.wsKey = key;
-      // A chat a split pane showed: its last answer, so the footer doesn't blink as it takes the keyboard.
-      this.wsInfo = this.view === "chat" ? (this.paneWs.get(this.chatId)?.info ?? null) : null;
+      // A chat shown before (or in a split pane): its last answer, so the footer and the title bar's branch don't blink
+      // as it comes on screen; else what its folder says until the PC answers.
+      this.wsInfo = this.view === "chat" ? (this.paneWs.get(this.chatId)?.info ?? this.wsGuess(this.data.chat(this.chatId))) : null;
       force = true;
     }
     if (q !== null && this.hub.call && (force || Date.now() - this.wsAt > 10_000)) {
       this.wsAt = Date.now();
       const my = ++this.wsGen;
+      const chat = this.view === "chat" ? this.chatId : null;
       void this.hub.call("GET", "v1/workspace", q).then(
         (r) => {
+          const info = r.status < 300 && typeof r.body === "object" && r.body !== null ? (r.body as WsInfo) : null;
+          // Kept for the chat even when it was left meanwhile: opened again, its branch and footer show at once.
+          if (chat !== null) {
+            this.paneWs.delete(chat);
+            this.paneWs.set(chat, { info, at: Date.now() });
+            for (const k of this.paneWs.keys()) if (this.paneWs.size > 64 && !this.split.holds(k)) this.paneWs.delete(k);
+          }
           if (my !== this.wsGen || key !== this.wsKey) return;
-          this.wsInfo = r.status < 300 && typeof r.body === "object" && r.body !== null ? (r.body as WsInfo) : null;
-          if (this.view === "chat") this.paneWs.set(this.chatId, { info: this.wsInfo, at: Date.now() });
+          this.wsInfo = info;
           this.drawWorkBar();
         },
         () => {},
       );
     }
     this.drawWorkBar();
+  }
+
+  /** Before the PC's first answer about chat `c`: its workspace as its folder says (a local chat's worktree or its
+   * project's checkout, and the branch there), so the footer and the title bar show it at once. Null: not known here. */
+  private wsGuess(c: Chat | undefined): WsInfo | null {
+    if (!c || c.home !== "" || c.device !== "") return null;
+    const wt = this.engine.worktreeOf(c);
+    if (wt !== null) {
+      if (!existsSync(wt)) return null;
+      const branch = githead.branchOf(wt);
+      return branch === "" ? null : { git: true, mode: "worktree", name: basename(wt), path: wt, branch };
+    }
+    const repo = c.repoId !== null ? this.data.repo(c.repoId) : undefined;
+    if (!repo) return null;
+    const dir = repoDir(repo);
+    const branch = githead.branchOf(dir);
+    return branch === "" ? null : { git: true, mode: "checkout", path: dir, branch };
   }
 
   /** The footer for chat `c` (undefined: the draft) from the PC's answer `info` (null: not yet). */

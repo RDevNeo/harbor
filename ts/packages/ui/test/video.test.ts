@@ -78,11 +78,14 @@ test("an image keeps its place at its size while it's decoded; one no build show
   rows.sweep();
   await settle(4);
   expect(loads).toBe(4);
-  // `d` starts decoding, then two builds pass without it: its result is dropped and nobody is told.
+  // `d` starts decoding, then two builds pass without it (its chat was left): nobody is told when it's there, and
+  // it rests, so it's drawn at once when its card comes back.
   rows.rows(card(d), dir, 760);
   rows.sweep();
   rows.sweep();
   await Bun.sleep(300);
+  expect(loads).toBe(4);
+  expect(drawn(d)).toBe(true);
   expect(loads).toBe(4);
   // A file that's missing has no place to keep: nothing until it's there.
   expect(rows.rows(card(join(dir, "rest-missing.png")), dir, 760)).toHaveLength(0);

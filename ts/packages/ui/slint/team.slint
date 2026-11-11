@@ -289,13 +289,7 @@ export component TeamPanel inherits Rectangle {
             background: Theme.border;
         }
     }
-    if root.split: Rectangle {
-        x: 0;
-        y: 0;
-        width: 1phx;
-        height: parent.height;
-        background: Theme.border;
-    }
+    // Beside split panes, the line on its left is the window's (app.slint draws it over the panes).
     Flickable {
         x: 12px;
         y: root.split ? root.head-h + 10px : 12px;

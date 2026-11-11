@@ -5,8 +5,9 @@ import { noPixels, type MediaRow } from "./window.ts";
 type MediaPkg = typeof import("@harbor/media");
 
 const THUMB: [number, number] = [132, 96];
-/** Decoded images no card of the last build shows, kept for when their chat is shown again. */
-export const REST_BYTES = 32 * 2 ** 20;
+/** Decoded images no card of the last build shows, kept for when their chat is shown again: the few chats left last
+ * (shell.ts WarmChats) come back with their images drawn, not decoded again behind gray boxes. */
+export const REST_BYTES = 64 * 2 ** 20;
 /** File sizes read ahead (`sizeAhead`), by path: a few numbers each. */
 const AHEAD_MAX = 4096;
 /** A large image is drawn at most `inlineSize` (480×300 px, narrower in a narrow column): it's decoded to that width
@@ -41,6 +42,8 @@ export class MediaRows {
   private got = new Map<string, Got | null>();
   private failed = new Set<string>();
   private used = new Set<string>();
+  /** What the build before the last sweep asked for: a decode that comes in for one of them is drawn. */
+  private last = new Set<string>();
   /** The last key decoded for a path's large image or video poster (`l:` or `v:` and the path). */
   private shown = new Map<string, string>();
 
@@ -179,8 +182,11 @@ export class MediaRows {
           if (this.got.get(key) !== null) return;
           this.tries.delete(key);
           this.ahead.set(path, dims);
-          this.got.set(key, { image: this.native(image), dims });
+          const got = { image: this.native(image), dims };
+          this.got.set(key, got);
           if (slot !== null) this.shown.set(slot, key);
+          // Its chat was left while it decoded: it rests, ready for when that chat is shown again.
+          if (!this.wanted(key)) return this.toRest(key, got);
           this.loaded();
         })
         .catch(() => {
@@ -189,7 +195,7 @@ export class MediaRows {
           if (!this.pkg.media.isVideo(path)) this.later(key);
           // Its place (kept while it was decoded) goes.
           this.failed.add(key);
-          this.loaded();
+          if (this.wanted(key)) this.loaded();
         });
     }
     if (!old || prev === undefined || slot === null) return null;
@@ -202,6 +208,29 @@ export class MediaRows {
     this.used.add(prev);
     this.rested(prev);
     return old;
+  }
+
+  /** The last build, or the one being made, asked for `key`. */
+  private wanted(key: string): boolean {
+    return this.used.has(key) || this.last.has(key);
+  }
+
+  /** `key` rests: the least recently shown go past `restBytes`. */
+  private toRest(key: string, v: Got): void {
+    if (this.rest.has(key)) return;
+    const n = v.image.width * v.image.height * 4;
+    this.rest.set(key, n);
+    this.restTotal += n;
+    this.trimRest();
+  }
+
+  private trimRest(): void {
+    for (const [k, n] of this.rest) {
+      if (this.restTotal <= this.restBytes) break;
+      this.rest.delete(k);
+      this.restTotal -= n;
+      this.got.delete(k);
+    }
   }
 
   /** A resting image is shown again. */
@@ -224,27 +253,20 @@ export class MediaRows {
   }
 
   /** After a build: images no card asked for since the last sweep rest (up to `restBytes`, the least recently shown
-   * going first); the others are let go (decoded again if shown again). One still decoding goes too. */
+   * going first); the others are let go (decoded again if shown again). One still decoding goes on: it rests when
+   * it's there (switching through chats quickly keeps what each one decoded). */
   sweep(): void {
     for (const [k, v] of this.got) {
-      if (this.used.has(k) || this.rest.has(k)) continue;
-      if (v === null) {
-        this.got.delete(k);
-        continue;
-      }
+      if (v === null || this.used.has(k) || this.rest.has(k)) continue;
       const n = v.image.width * v.image.height * 4;
       this.rest.set(k, n);
       this.restTotal += n;
     }
-    for (const [k, n] of this.rest) {
-      if (this.restTotal <= this.restBytes) break;
-      this.rest.delete(k);
-      this.restTotal -= n;
-      this.got.delete(k);
-    }
+    this.trimRest();
     for (const k of this.failed) if (!this.used.has(k)) this.failed.delete(k);
     for (const [slot, k] of this.shown) if (!this.got.has(k)) this.shown.delete(slot);
     for (const k of this.tries.keys()) if (!this.used.has(k)) this.tries.delete(k);
-    this.used.clear();
+    this.last = this.used;
+    this.used = new Set();
   }
 }

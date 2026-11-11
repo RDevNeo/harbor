@@ -1081,7 +1081,7 @@ export component AppWindow inherits Window {
                         // chat.rs: (h/2 - 170 - growth), clamped at 24px; fitted to the Rust app at 853 and 553px.
                         property <length> hero-top: fy + top + max((fh - top) * 0.5 - 375px, 24px) + 7px;
                         if body.team-docked: TeamPanel {
-                            x: body.area-w;
+                            x: floor(body.area-w / 1phx) * 1phx;
                             y: body.split ? 0px : 9px;
                             width: parent.width - self.x;
                             height: parent.height - self.y;
@@ -1383,19 +1383,30 @@ export component AppWindow inherits Window {
                                 }
                             }
                             // 1px dividers: brighter and wider, with the resize cursor, under the pointer; dragged, they resize.
+                            // The panes' right edge beside the docked Agents column: the same line, on top of the panes so
+                            // nothing they redraw covers it, the whole height, on a whole physical pixel.
+                            if body.team-docked: Rectangle {
+                                x: floor(body.area-w / 1phx) * 1phx;
+                                y: 0;
+                                width: 1phx;
+                                height: body.height;
+                                background: Theme.border;
+                            }
+                            // Each divider's grab area is whole physical pixels around its line, so the line lands on one.
                             for d in root.split-divs: TouchArea {
                                 property <length> at: d.dir == "h" ? floor(d.at * body.area-w / 1phx) * 1phx : floor(d.at * body.height / 1phx) * 1phx;
-                                x: d.dir == "h" ? self.at - 3px : floor(d.ax * body.area-w / 1phx) * 1phx;
-                                y: d.dir == "v" ? self.at - 3px : floor(d.ay * body.height / 1phx) * 1phx;
-                                width: d.dir == "h" ? 7px : floor((d.ax + d.aw) * body.area-w / 1phx) * 1phx - self.x;
-                                height: d.dir == "v" ? 7px : floor((d.ay + d.ah) * body.height / 1phx) * 1phx - self.y;
+                                property <length> pad: round(3px / 1phx) * 1phx;
+                                x: d.dir == "h" ? self.at - self.pad : floor(d.ax * body.area-w / 1phx) * 1phx;
+                                y: d.dir == "v" ? self.at - self.pad : floor(d.ay * body.height / 1phx) * 1phx;
+                                width: d.dir == "h" ? 2 * self.pad + 1phx : floor((d.ax + d.aw) * body.area-w / 1phx) * 1phx - self.x;
+                                height: d.dir == "v" ? 2 * self.pad + 1phx : floor((d.ay + d.ah) * body.height / 1phx) * 1phx - self.y;
                                 mouse-cursor: d.dir == "h" ? MouseCursor.col-resize : MouseCursor.row-resize;
                                 Rectangle {
-                                    x: d.dir == "h" ? (self.has-hover-or-pressed ? 2px : 3px) : 0px;
-                                    y: d.dir == "v" ? (self.has-hover-or-pressed ? 2px : 3px) : 0px;
+                                    x: d.dir == "h" ? (self.has-hover-or-pressed ? parent.pad - 1phx : parent.pad) : 0px;
+                                    y: d.dir == "v" ? (self.has-hover-or-pressed ? parent.pad - 1phx : parent.pad) : 0px;
                                     property <bool> has-hover-or-pressed: parent.has-hover || parent.pressed;
-                                    width: d.dir == "h" ? (self.has-hover-or-pressed ? 3px : 1phx) : parent.width;
-                                    height: d.dir == "v" ? (self.has-hover-or-pressed ? 3px : 1phx) : parent.height;
+                                    width: d.dir == "h" ? (self.has-hover-or-pressed ? 3phx : 1phx) : parent.width;
+                                    height: d.dir == "v" ? (self.has-hover-or-pressed ? 3phx : 1phx) : parent.height;
                                     background: self.has-hover-or-pressed ? Theme.gray-700 : Theme.border;
                                 }
                                 moved => {
