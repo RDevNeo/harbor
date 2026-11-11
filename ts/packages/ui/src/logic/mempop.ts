@@ -13,6 +13,18 @@ export interface MemPart {
   label: string;
   bytes: number;
   idle?: boolean;
+  /** Runs on this SSH device, not on the PC. */
+  on?: string;
+  /** Said instead of its bytes. */
+  note?: string;
+}
+
+/** The SSH device a chat runs on (Runs on), and its RAM. */
+export interface MemDevice {
+  name: string;
+  ram: Ram | null;
+  /** Its RAM is being read. */
+  asking: boolean;
 }
 
 export interface Mem {
@@ -22,6 +34,8 @@ export interface Mem {
   top: { title: string; bytes: number }[];
   /** The chat's parts when one was asked for. */
   parts: MemPart[] | null;
+  /** The chat runs on an SSH device: the popover's RAM is that device's. */
+  device?: MemDevice | null;
 }
 
 /** A popover row, as the window's `PopItem`. */
@@ -43,12 +57,27 @@ const rec = (v: unknown): Record<string, unknown> | null => (typeof v === "objec
 export function parseMem(v: unknown): Mem | null {
   const o = rec(v);
   if (!o || !("ram" in o)) return null;
-  const r = rec(o.ram);
-  const ram = r && num(r.total) > 0 ? { total: num(r.total), used: num(r.used), swapTotal: num(r.swap_total), swapUsed: num(r.swap_used) } : null;
+  const ram = ramOf(o.ram);
   const top = Array.isArray(o.top) ? o.top.flatMap((t) => (rec(t) ? [{ title: String(rec(t)?.title ?? ""), bytes: num(rec(t)?.bytes) }] : [])) : [];
   const c = rec(o.chat);
-  const parts = c && Array.isArray(c.parts) ? c.parts.flatMap((p) => (rec(p) ? [{ kind: String(rec(p)?.kind ?? ""), label: String(rec(p)?.label ?? ""), bytes: num(rec(p)?.bytes), ...(rec(p)?.idle === true ? { idle: true } : {}) }] : [])) : null;
-  return { ram, running: num(o.running), top, parts };
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  const parts = c && Array.isArray(c.parts)
+    ? c.parts.flatMap((v) => {
+        const p = rec(v);
+        if (!p) return [];
+        const on = str(p.on);
+        const note = str(p.note);
+        return [{ kind: String(p.kind ?? ""), label: String(p.label ?? ""), bytes: num(p.bytes), ...(p.idle === true ? { idle: true } : {}), ...(on !== "" ? { on } : {}), ...(note !== "" ? { note } : {}) }];
+      })
+    : null;
+  const d = rec(c?.device);
+  const device = d && str(d.name) !== "" ? { name: str(d.name), ram: ramOf(d.ram), asking: d.asking === true } : null;
+  return { ram, running: num(o.running), top, parts, ...(device ? { device } : {}) };
+}
+
+function ramOf(v: unknown): Ram | null {
+  const r = rec(v);
+  return r && num(r.total) > 0 ? { total: num(r.total), used: num(r.used), swapTotal: num(r.swap_total), swapUsed: num(r.swap_used) } : null;
 }
 
 const GB = 1024 ** 3;
@@ -91,17 +120,28 @@ const row = (kind: MemRow["kind"], label = "", extra: Partial<MemRow> = {}): Mem
 
 export const partsTotal = (parts: readonly MemPart[]): number => parts.reduce((a, p) => a + p.bytes, 0);
 
-/** The pill's popover: the chat's total and where it runs, each process, then that PC's RAM. */
+/**
+ * The pill's popover: the chat's total and where it runs, each process, then that PC's RAM. A chat whose Runs on is an
+ * SSH device runs "on <device>": its agent's row is what it holds there, the PC's end of it is the SSH link's
+ * row, and the RAM is the device's.
+ */
 export function chatRows(mem: Mem, pc: string): MemRow[] {
   const parts = mem.parts ?? [];
   const total = partsTotal(parts);
-  const out = [row("usage-account", "This chat", { badge: bytesText(total), desc: pc === "" ? "" : `on ${pc}` })];
+  const dev = mem.device ?? null;
+  // The PC it's started from shows on the SSH link's row: the header has room for one name.
+  const where = dev ? `on ${dev.name}` : pc === "" ? "" : `on ${pc}`;
+  const out = [row("usage-account", "This chat", { badge: bytesText(total), desc: where })];
   if (parts.length === 0) out.push(row("usage-note", "Nothing of this chat is running now."));
   for (const p of parts) {
-    const icon = p.kind === "proc" ? ICONS.TERMINAL : ICONS.BOT;
-    out.push(row("mem-row", p.label, { icon, badge: p.kind === "sub" ? "subagent" : p.kind === "proc" ? "process" : "", desc: p.idle ? "Idle" : bytesText(p.bytes), value: total > 0 ? p.bytes / total : 0 }));
+    const icon = p.kind === "proc" ? ICONS.TERMINAL : p.kind === "link" ? ICONS.LINK : ICONS.BOT;
+    const label = p.kind === "link" && pc !== "" ? `${p.label} on ${pc}` : p.label;
+    const desc = p.idle ? "Idle" : p.note !== undefined && p.note !== "" ? p.note : bytesText(p.bytes);
+    out.push(row("mem-row", label, { icon, badge: p.kind === "sub" ? "subagent" : p.kind === "proc" ? "process" : "", desc, value: total > 0 ? p.bytes / total : 0 }));
   }
-  if (mem.ram) {
+  if (dev) {
+    out.push(row("separator"), ...(dev.ram ? ramRows(dev.ram, dev.name) : [row("usage-note", dev.asking ? `Asking ${dev.name} for its memory…` : `No memory figures from ${dev.name} now.`)]));
+  } else if (mem.ram) {
     out.push(row("separator"), ...ramRows(mem.ram, pc === "" ? "This PC" : pc));
   }
   return out;

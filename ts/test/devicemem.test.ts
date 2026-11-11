@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DeviceMemory, sshDevices } from "../devicemem.ts";
+import { DeviceMemory, deviceMemSh, sshDevices } from "../devicemem.ts";
 import { newHost } from "../packages/net/src/index.ts";
 
 const mac = newHost({ id: "ssh:1", name: "Work MacBook", host: "mac", os: "macOS" });
@@ -22,7 +22,7 @@ describe("Runs on devices in the PCs popover", () => {
       devices: () => [[mac, null]],
       harbors: () => harbors,
       read: async () => (reads++, MACOUT),
-      running: (id) => (id === "ssh:1" ? 2 : 0),
+      turns: (id) => (id === "ssh:1" ? [{ mark: "a.1", title: "one" }, { mark: "a.2", title: "two" }] : []),
       now: () => now,
     });
     expect(d.list()).toEqual([{ name: "Work MacBook", online: true, mem: null, asking: true, note: "", ssh: true }]);
@@ -39,15 +39,50 @@ describe("Runs on devices in the PCs popover", () => {
 
   test("off: not asked; no answer over SSH: said; Windows: said", async () => {
     let reads = 0;
-    const d = new DeviceMemory({ devices: () => [[mac, false], [win, true]], harbors: () => harbors, read: async () => (reads++, null), running: () => 0 });
+    const d = new DeviceMemory({ devices: () => [[mac, false], [win, true]], harbors: () => harbors, read: async () => (reads++, null), turns: () => [] });
     expect(d.list().map((x) => [x.name, x.online, x.note])).toEqual([
       ["Work MacBook", false, ""],
       ["Gaming", true, "No numbers from Windows yet."],
     ]);
     expect(reads).toBe(0);
-    const e = new DeviceMemory({ devices: () => [[mac, true]], harbors: () => harbors, read: async () => null, running: () => 0 });
+    const e = new DeviceMemory({ devices: () => [[mac, true]], harbors: () => harbors, read: async () => null, turns: () => [] });
     e.list();
     await Bun.sleep(1);
     expect(e.list()[0]?.note).toBe("No numbers: it didn't answer over SSH.");
+  });
+
+  test("a chat running there: its turn's bytes from the same read, asked sooner for a new turn", async () => {
+    let now = 0;
+    const cmds: string[] = [];
+    let turns = [{ mark: "pc.7", title: "Fix the pill" }];
+    const d = new DeviceMemory({
+      devices: () => [[mac, true], [win, true]],
+      harbors: () => harbors,
+      read: async (_h, c) => (cmds.push(c), `${MACOUT}harbor-mem pc.7 409600\n`),
+      turns: () => turns,
+      now: () => now,
+    });
+    expect(d.chat("ssh:1", "pc.7", true)).toEqual({ name: mac.name, ram: null, bytes: null, asking: true });
+    await Bun.sleep(1);
+    expect(cmds).toEqual([deviceMemSh(["pc.7"])]);
+    expect(d.chat("ssh:1", "pc.7", true)).toEqual({ name: mac.name, ram: { total: 17179869184, used: 500000 * 16384, swapTotal: 0, swapUsed: 0 }, bytes: 400 * 1024 * 1024, asking: false });
+    // The device's card lists it too.
+    expect(d.list()[0]?.mem?.top).toEqual([{ title: "Fix the pill", bytes: 400 * 1024 * 1024 }]);
+    // A turn the last read didn't ask about: read again after a short while, not at once.
+    turns = [...turns, { mark: "pc.8", title: "Other" }];
+    expect(d.chat("ssh:1", "pc.8", true)?.bytes).toBeNull();
+    expect(cmds).toHaveLength(1);
+    now = 4_000;
+    d.chat("ssh:1", "pc.8", true);
+    await Bun.sleep(1);
+    expect(cmds).toHaveLength(2);
+    expect(cmds[1]).toContain("m='pc.7 pc.8'");
+    // pc.8's processes weren't found (an older turn without the mark): no number, not 0 MB.
+    expect(d.chat("ssh:1", "pc.8", true)).toMatchObject({ bytes: null, asking: false });
+    // Between turns: RAM only; a Windows device: nothing; an unknown one: null.
+    expect(d.chat("ssh:1", "pc.7", false)?.bytes).toBeNull();
+    expect(d.chat("ssh:4", "pc.9", true)).toEqual({ name: "Gaming", ram: null, bytes: null, asking: false });
+    expect(d.chat("ssh:9", "pc.9", true)).toBeNull();
+    expect(deviceMemSh([])).not.toContain("harbor-mem");
   });
 });

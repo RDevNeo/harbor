@@ -514,7 +514,7 @@ export class Shell {
     this.memWatch = new MemWatch({
       ram: () => memory.ram(),
       local: (chat) => {
-        const v = memory.snapshot(memory.engineSource(this.engine), chat);
+        const v = memory.snapshot(memory.engineSource(this.engine, mesh.deviceMemory ? (c, running) => mesh.deviceMemory?.(c, running) ?? null : undefined), chat);
         return fakeMem ? fakeMem.local(v, chat !== null) : v;
       },
       chat: () => (this.view === "chat" && this.page === null ? this.data.chat(this.chatId) : undefined),

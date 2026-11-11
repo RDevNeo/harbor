@@ -1,4 +1,5 @@
-/** HARBOR_FAKE_MEMORY=1 (scripts/shot --env): the rig has no agents and no network, so make some up; this PC's RAM stays real. */
+/** HARBOR_FAKE_MEMORY=1 (scripts/shot --env): the rig has no agents and no network, so make some up; this PC's RAM stays real.
+ *  HARBOR_FAKE_MEMORY=ssh: the open chat runs on an SSH device. */
 const MB = 1024 ** 2;
 const GB = 1024 ** 3;
 
@@ -9,11 +10,19 @@ export interface FakeMemory {
 
 export function fakeMemory(env: Record<string, string | undefined> = process.env): FakeMemory | null {
   if (!env.HARBOR_FAKE_MEMORY) return null;
-  const parts = [
-    { kind: "agent", label: "Lead · Claude", bytes: 248 * MB },
-    { kind: "sub", label: "tests", bytes: 96 * MB },
-    { kind: "proc", label: "dev server", bytes: 68 * MB },
-  ];
+  const ssh = env.HARBOR_FAKE_MEMORY === "ssh";
+  const parts = ssh
+    ? [
+        { kind: "agent", label: "Lead · Claude", bytes: 412 * MB, on: "build-box" },
+        { kind: "link", label: "SSH link", bytes: 64 * MB },
+        { kind: "proc", label: "dev server", bytes: 68 * MB },
+      ]
+    : [
+        { kind: "agent", label: "Lead · Claude", bytes: 248 * MB },
+        { kind: "sub", label: "tests", bytes: 96 * MB },
+        { kind: "proc", label: "dev server", bytes: 68 * MB },
+      ];
+  const device = ssh ? { name: "build-box", ram: { total: 16 * GB, used: 9.1 * GB, swap_total: 2 * GB, swap_used: 0 }, asking: false } : null;
   const top = [
     { title: "This chat", bytes: 412 * MB },
     { title: "Release checks", bytes: 1.1 * GB },
@@ -22,7 +31,7 @@ export function fakeMemory(env: Record<string, string | undefined> = process.env
   return {
     local(real, chat) {
       const r = typeof real === "object" && real !== null ? (real as Record<string, unknown>) : {};
-      return { ...r, running: top.length, top, ...(chat ? { chat: { parts } } : {}) };
+      return { ...r, running: top.length, top, ...(chat ? { chat: { parts, ...(device ? { device } : {}) } } : {}) };
     },
     /** A PC with room, a low one deep in swap, a Runs on device over SSH and one that's off. */
     async peers(names) {

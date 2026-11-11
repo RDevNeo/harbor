@@ -790,7 +790,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     apkCode: () => apkInfo()?.code ?? 0,
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "Harbor is starting")),
     notes: { last: () => notes.last(), ownSince: (s) => { const [n, l] = notes.ownSince(s); return [n.map(noteJson), l]; } },
-    memory: (chat) => memory.snapshot(engine ? memory.engineSource(engine) : { chats: [], runner: () => null, procs: [] }, chat) as Json,
+    memory: (chat) => memory.snapshot(engine ? memory.engineSource(engine, (c, running) => deviceMemory.chat(c.device, memory.turnMark(hub.mesh.me.id, c.id), running)) : { chats: [], runner: () => null, procs: [] }, chat) as Json,
     // Settings that are one value for the whole workspace ("Clean up dictation"): the newest change on any PC wins.
     shared: {
       snapshot: () => wssettings.snapshot(store),
@@ -866,7 +866,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       name: hostLabel(h),
       family: shellFamily(h.os),
       dir,
-      setup: guest ? [{ kind: "guest", rel: deviceProfile(hub.mesh.me.id) }] : profileSetup(home(), account.configDir),
+      // The mark lets the chat's memory pill find this turn's processes there (devicemem.ts).
+      setup: [{ kind: "sh", line: `: ${memory.TURN_MARK}${memory.turnMark(hub.mesh.me.id, chat.id)}` }, ...(guest ? [{ kind: "guest" as const, rel: deviceProfile(hub.mesh.me.id) }] : profileSetup(home(), account.configDir))],
       bridge: h.bridge,
       commands,
       workspace: !h.device_files,
@@ -963,8 +964,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return deviceList().filter(([h]) => ids.has(h.id));
     },
     harbors: () => ({ ids: [hub.mesh.me.id, ...hub.mesh.peers.keys()], names: [hub.mesh.me.name, hostname(), ...[...hub.mesh.peers.values()].map((p) => p.name)] }),
-    read: (h) => sshOutput([...remotes.sshOpts(loadRemote(store), h), h.host, memory.DEVICE_RAM_SH]),
-    running: (device) => (engine ? [...engine.turns.keys()].filter((id) => engine?.chat(id)?.device === device).length : 0),
+    read: (h, command) => sshOutput([...remotes.sshOpts(loadRemote(store), h), h.host, command]),
+    turns: (device) =>
+      engine
+        ? [...engine.turns.keys()].flatMap((id) => {
+            const c = engine?.chat(id);
+            return c?.device === device ? [{ mark: memory.turnMark(hub.mesh.me.id, id), title: c.title }] : [];
+          })
+        : [],
   });
   const windowMesh = new WindowMesh({
     hub,

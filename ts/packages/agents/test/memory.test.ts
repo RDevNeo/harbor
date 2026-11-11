@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chatParts, engineSource, type MemSource, parseDeviceRam, parseMeminfo, parseStat, type ProcTable, ram, snapshot, topChats, treeBytes } from "../src/memory.ts";
+import { chatParts, deviceProcsSh, engineSource, type MemSource, parseDeviceProcs, parseDeviceRam, parseMeminfo, parseStat, type ProcTable, ram, snapshot, topChats, treeBytes } from "../src/memory.ts";
 
 const MB = 1024 * 1024;
 
@@ -90,6 +90,71 @@ describe("memory", () => {
       account: (id) => (id === "claude2" ? { kind: "Claude" } : id === "codex" ? { kind: "Codex" } : undefined),
     });
     expect([src.runner(1), src.runner(2), src.kind?.(1), src.kind?.(9)]).toEqual([null, { pid: 42, kind: "Codex" }, "Claude", ""]);
+  });
+
+  test("a chat on an SSH device: the agent's row is what it holds there, this PC's runner and ssh a link row", () => {
+    const t = table({ 100: [1, 100, 60], 101: [100, 100, 8], 200: [1, 200, 50], 300: [1, 300, 10] });
+    const dev = { name: "Mac", ram: null, bytes: 400 * MB, asking: false };
+    const src: MemSource = {
+      chats: [chat(1, { role: "lead" }), chat(2, { role: "sub", parent: 1, name: "tests" })],
+      runner: (id) => ({ 1: { pid: 100, kind: "Claude" }, 2: { pid: 200, kind: "Claude" } })[id] ?? null,
+      procs: [{ name: "vite", lead: 1, owner: 1, pid: 300 }],
+      device: (id) => (id === 1 ? dev : id === 2 ? { ...dev, bytes: 100 * MB } : null),
+    };
+    expect(chatParts(src, 1, t)).toEqual([
+      { kind: "agent", label: "Lead · Claude", bytes: 400 * MB, on: "Mac" },
+      { kind: "sub", label: "tests", bytes: 150 * MB, on: "Mac" },
+      { kind: "link", label: "SSH link", bytes: 68 * MB },
+      { kind: "proc", label: "vite", bytes: 10 * MB },
+    ]);
+    // This PC's top chats leave out what runs on the device.
+    expect(topChats(src, t)).toEqual([{ id: 1, title: "chat 1", bytes: 78 * MB }]);
+    // Not read yet: no bytes, a word, still running.
+    const asking: MemSource = { ...src, device: () => ({ ...dev, bytes: null, asking: true }), procs: [], chats: [chat(1)] };
+    expect(chatParts(asking, 1, t)).toEqual([
+      { kind: "link", label: "SSH link", bytes: 68 * MB },
+      { kind: "agent", label: "Agent · Claude", bytes: 0, on: "Mac", note: "Asking Mac…" },
+    ]);
+    // Between turns: idle as on this PC, and the snapshot says where it runs.
+    const idle: MemSource = { ...asking, runner: () => null, device: () => ({ name: "Mac", ram: { total: 16 * MB, used: 8 * MB, swapTotal: 0, swapUsed: 0 }, bytes: null, asking: false }) };
+    expect(chatParts(idle, 1, t)).toEqual([{ kind: "agent", label: "Agent", bytes: 0, idle: true }]);
+    expect((snapshot(idle, 1).chat as { device: unknown }).device).toEqual({ name: "Mac", ram: { total: 16 * MB, used: 8 * MB, swap_total: 0, swap_used: 0 }, asking: false });
+  });
+
+  test("the engine's view asks about a chat's device only for one that runs on a device", () => {
+    const asked: [number, string, boolean][] = [];
+    const src = engineSource(
+      {
+        chats: [{ ...chat(1), account: "a", device: "ssh:1" }, { ...chat(2), account: "a", device: "" }],
+        turns: new Map([[1, { turn: { meta: { pid: 42, kind: "Claude" } } }]]),
+        procs: [],
+        account: () => ({ kind: "Claude" }),
+      },
+      (c, running) => (asked.push([c.id, c.device, running]), { name: "Mac", ram: null, bytes: 1, asking: false }),
+    );
+    expect(src.device?.(1, true)?.name).toBe("Mac");
+    expect(src.device?.(2, false)).toBeNull();
+    expect(asked).toEqual([[1, "ssh:1", true]]);
+  });
+
+  test("a turn's processes on a device: ps and awk find each marked shell's tree", () => {
+    const sh = deviceProcsSh(["pc_a.5", "pc_a.6", "bad mark;"]);
+    // The prefix and the marks go apart: the awk reading them isn't taken for a turn.
+    expect(sh).not.toContain("harbor-turn=pc_a.5");
+    expect(sh).toContain("m='pc_a.5 pc_a.6'");
+    expect(parseDeviceProcs("MemTotal: 1 kB\nharbor-mem pc_a.5 2048\nharbor-mem pc_a.6 -\n")).toEqual(new Map([["pc_a.5", 2 * MB]]));
+    if (process.platform !== "linux" && process.platform !== "darwin") return;
+    // A real run: a marked shell with a child, and a mark nothing carries.
+    const kid = Bun.spawn(["sh", "-c", ": harbor-turn=pc_a.5\nsleep 5 & wait"], { stdout: "ignore", stderr: "ignore" });
+    try {
+      Bun.sleepSync(300);
+      const out = Bun.spawnSync(["sh", "-c", sh]).stdout.toString();
+      const got = parseDeviceProcs(out);
+      expect(got.get("pc_a.5") ?? 0).toBeGreaterThan(0);
+      expect(got.has("pc_a.6")).toBe(false);
+    } finally {
+      kid.kill();
+    }
   });
 
   test("a device's RAM over SSH: Linux's meminfo, or macOS's sysctl and vm_stat", () => {

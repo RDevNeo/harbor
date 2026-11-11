@@ -1,3 +1,4 @@
+import type { memory } from "@harbor/agents";
 import type { Viewer } from "@harbor/net";
 import type { Chat } from "@harbor/store";
 import type { Mention } from "./mentions.ts";
@@ -28,6 +29,8 @@ export interface ShellMesh {
   failover?(c: Chat): { text: string; warn: boolean } | null;
   /** The other PCs and their memory (windowmesh.ts `memory`). */
   memory?(): Promise<{ name: string; online: boolean; mem: Record<string, unknown> | null }[]>;
+  /** The SSH device one of this PC's chats runs on, with its RAM and the turn's processes there (windowmesh.ts `deviceMemory`). */
+  deviceMemory?(c: { id: number; device: string }, running: boolean): memory.DeviceInfo | null;
   /** A copy's memory at its home PC (windowmesh.ts `chatMemory`). */
   chatMemory?(c: Chat): Promise<Record<string, unknown> | null>;
   /** Calls back with the chats whose state moved, for as long as the window lives. */

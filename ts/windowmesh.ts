@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { dest, draftEmpty, draftFileOf, err, POLL, resolveUpload, safeName, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
 import type { Chat } from "./packages/store/src/index.ts";
 import type { DeviceMem, DeviceMemory } from "./devicemem.ts";
+import { memory } from "./packages/agents/src/index.ts";
 
 export interface WindowMeshDeps {
   hub: Hub;
@@ -147,6 +148,11 @@ export class WindowMesh {
     const m = this.d.hub.mesh;
     const pcs = await Promise.all([...m.peers.values()].map(async (p) => ({ name: p.name, online: p.online && m.on, mem: await this.d.mesh.memoryOf(p.id, null) })));
     return [...pcs, ...(this.d.devices?.list() ?? [])];
+  }
+
+  /** What's known of the SSH device one of this PC's chats runs on (devicemem.ts `chat`), for its memory pill. */
+  deviceMemory(c: { id: number; device: string }, running: boolean): memory.DeviceInfo | null {
+    return this.d.devices?.chat(c.device, memory.turnMark(this.d.hub.mesh.me.id, c.id), running) ?? null;
   }
 
   /** A copy's memory at its home PC, with the chat's parts there. */

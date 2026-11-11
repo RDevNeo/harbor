@@ -52,6 +52,46 @@ describe("memory popovers", () => {
     ]);
   });
 
+  test("a chat on an SSH device: runs there from this PC, the agent's bytes there, the link apart, the device's RAM", () => {
+    const m = parseMem({
+      ram: ram(4, 16),
+      running: 1,
+      top: [],
+      chat: {
+        parts: [{ kind: "agent", label: "Lead · Claude", bytes: 420 * MB, on: "Mac" }, { kind: "link", label: "SSH link", bytes: 60 * MB }],
+        device: { name: "Mac", ram: ram(12, 16), asking: false },
+      },
+    });
+    if (!m) throw new Error("no numbers");
+    expect(m.device).toEqual({ name: "Mac", ram: { total: 16 * GB, used: 12 * GB, swapTotal: 4 * GB, swapUsed: 0 }, asking: false });
+    expect(chatRows(m, "desk").map((r) => [r.kind, r.label, r.badge || r.desc])).toEqual([
+      ["usage-account", "This chat", "480 MB"],
+      ["mem-row", "Lead · Claude", "420 MB"],
+      ["mem-row", "SSH link on desk", "60 MB"],
+      ["separator", "", ""],
+      ["mem-ram", "Mac", "12 of 16 GB  ·  75%"],
+    ]);
+    expect(chatRows(m, "desk")[0]?.desc).toBe("on Mac");
+    // Not read yet: a word instead of bytes, and instead of the RAM bar.
+    const asking = parseMem({ ram: ram(4, 16), running: 1, top: [], chat: { parts: [{ kind: "agent", label: "Lead · Claude", bytes: 0, on: "Mac", note: "Asking Mac…" }], device: { name: "Mac", ram: null, asking: true } } });
+    if (!asking) throw new Error("no numbers");
+    expect(chatRows(asking, "desk").map((r) => [r.kind, r.label, r.desc])).toEqual([
+      ["usage-account", "This chat", "on Mac"],
+      ["mem-row", "Lead · Claude", "Asking Mac…"],
+      ["separator", "", ""],
+      ["usage-note", "Asking Mac for its memory…", ""],
+    ]);
+    // Between turns it still says where it runs.
+    const idle = parseMem({ ram: ram(4, 16), running: 0, top: [], chat: { parts: [{ kind: "agent", label: "Lead · Claude", bytes: 0, idle: true }], device: { name: "Mac", ram: null } } });
+    if (!idle) throw new Error("no numbers");
+    expect(chatRows(idle, "desk").map((r) => [r.label, r.badge || r.desc])).toEqual([
+      ["This chat", "0 MB"],
+      ["Lead · Claude", "Idle"],
+      ["", ""],
+      ["No memory figures from Mac now.", ""],
+    ]);
+  });
+
   const card = (r: MemRow) => [r.kind, r.label, r.badge, r.desc, r.icon, r.checked, r.enabled];
   const subOf = (c: PcCard | null | undefined) => (c ?? { sub: [] }).sub.map((r) => [r.kind, r.label, r.desc || (r.checked ? "checked" : "")]);
 
