@@ -1,3 +1,4 @@
+import * as switchTrace from "./switchtrace.ts";
 import { deviceWorkspace } from "./logic/devices.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
@@ -8,6 +9,8 @@ import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, n
 import { accountOn, chatOwner, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
+import { WarmChats } from "./logic/warmchats.ts";
+import { syncRows } from "./modelsync.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, resumeKind, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionFromJson, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
@@ -82,6 +85,26 @@ function collectSoon(): void {
   }, 200);
 }
 
+/** How many chats left last stay ready to show again, and how many transcript items they may hold in all
+ * (~2.5 KB each in memory; the one left last stays whatever its size). */
+const WARM_CHATS = 3;
+/** A chat's first frame builds the latest cards that fill this many views (by a rough guess of their height, kept
+ * generous); the rest of its page comes REST_MS later. */
+const FILL_VIEWS = 2.5;
+const REST_MS = 150;
+const WARM_ITEMS = 5000;
+
+let collecting: ReturnType<typeof setTimeout> | null = null;
+/** collectSoon, once things have been still for a moment: a full collection blocks the window for tens of ms, which
+ * mustn't land while chats are being switched through. */
+function collectLater(): void {
+  if (collecting !== null) clearTimeout(collecting);
+  collecting = setTimeout(() => {
+    collecting = null;
+    collectSoon();
+  }, 2000);
+}
+
 /** What the send button's Resume sends in a chat with nothing queued. */
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
@@ -107,21 +130,14 @@ interface Sel {
   device: string;
 }
 
-/** Keeps a model's rows equal to `next`, touching only the rows that changed. */
 const workChip = (x: BarChip | null): WorkChip => (x === null ? { shown: false, icon: "", text: "", tone: "", tip: "" } : { shown: true, ...x });
 const barData = (bar: Bar): WorkBarData => ({ shown: bar.shown, live: bar.live, ws: workChip(bar.ws), branch: workChip(bar.branch), pr: workChip(bar.pr) });
 
 const sameStripRow = (a: StripRow, b: StripRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
 
+/** Keeps a model's rows equal to `next`, touching only the rows that changed (modelsync.ts). */
 function sync<T>(model: slint.ArrayModel<T>, next: readonly T[], same: (a: T, b: T) => boolean = (a, b) => a === b): void {
-  const n = Math.min(model.length, next.length);
-  for (let i = 0; i < n; i++) {
-    const v = next[i];
-    const old = model.rowData(i);
-    if (v !== undefined && (old === undefined || !same(old, v))) model.setRowData(i, v);
-  }
-  if (model.length > next.length) model.remove(next.length, model.length - next.length);
-  else if (next.length > n) model.push(...next.slice(n));
+  syncRows(model, next, same);
 }
 
 const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -184,6 +200,14 @@ export class Shell {
   private draftPicked = new Map<number, string>();
   private sel: Sel;
   private opened = new Map<number, Opened>();
+  /** The chats left last, ready to show again (logic/warmchats.ts): what a chat that leaves them held goes. */
+  private warm = new WarmChats(WARM_CHATS, WARM_ITEMS, (id) => this.engine.liveItems(id)?.length ?? 0, (id) => {
+    if ((this.view === "chat" && id === this.chatId) || this.split.holds(id)) return;
+    this.engine.release(id);
+    const o = this.opened.get(id);
+    if (o) forget(o);
+    collectLater();
+  });
   private drafts = new Map<number, string>();
   /** Each composer's cursor (UTF-8 bytes) when it was last left: it's where it comes back. */
   private cursors = new Map<number, number>();
@@ -1363,6 +1387,10 @@ export class Shell {
   /** `fromEnd`: the transcript's place to keep (a restart's), px from the view's top to the end; else it shows the end. */
   openChat(id: number, fromEnd: number | null = null): void {
     if (!this.data.chat(id)) return;
+    switchTrace.begin(`open ${id}`);
+    // The transcript sticks to the end before the new cards come in, so the chat's first frame shows its end, not
+    // the place the last one was read at.
+    if (fromEnd === null) this.win.scroll_to_end();
     this.leaveComposer();
     this.page = null;
     this.refreshInvite();
@@ -1378,15 +1406,33 @@ export class Shell {
     this.syncDraft(id);
     this.draftSync.shown(id, { text: this.win.draft, mentions: this.mentions.get(id) ?? [], files: this.attached.get(id) ?? [] });
     this.closePopup();
-    this.refreshAll();
-    // A long chat's first layout takes a few frames: its end (or the place kept) is sought until then.
-    if (fromEnd === null) for (const ms of [30, 120, 400, 900]) setTimeout(() => this.win.scroll_to_end(), ms);
+    switchTrace.mark("composer");
+    // The sidebar marks the chat now; the rest of it (statuses, marks) follows once the chat is on the screen.
+    if (this.markActive()) this.sidebarSoon();
+    else this.refreshSidebar();
+    switchTrace.mark("sidebar");
+    // A chat that comes on screen draws first only its latest cards that fill the view; the rest of its page
+    // comes in above them right after, out of sight (the view stays at the end).
+    const o = this.openedOf(id);
+    const fresh = fromEnd === null && this.cardsOf !== id;
+    o.fill = fresh ? this.win.transcript_view * FILL_VIEWS : undefined;
+    this.refreshView();
+    switchTrace.mark("view");
+    if (fresh) this.restSoon(id);
+    this.syncFiles();
+    // Laid out now, at its end: the first frame shows it there. A long chat's first layout can still take a few
+    // frames, so its end is sought until then, unless the reader scrolled up meanwhile.
+    if (fromEnd === null) {
+      this.win.scroll_to_end();
+      for (const ms of [30, 120, 400, 900]) setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_follow && this.win.scroll_to_end(), ms);
+    }
     else {
       for (const ms of [0, 30, 120, 400, 900, 1600]) setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_keep(fromEnd), ms);
       // Its images have come in by then: the view goes back to its usual anchoring.
       setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_anchor_off(), 4000);
     }
     this.composerChanged();
+    switchTrace.end();
   }
 
   /** The shown composer is left: its text and cursor stay with its key. */
@@ -1403,6 +1449,67 @@ export class Shell {
     const at = this.cursors.get(key);
     if (at !== undefined) this.win.set_cursor(Math.min(at, Buffer.byteLength(text)));
   }
+
+  /** The open chat's sidebar row (or its project's, for a main chat) becomes the marked one, the one marked before
+   * no longer is: without building the sidebar again. False when the open chat has no row as it stands (a folded
+   * project draws its open chat's row only while it's open): the sidebar has to be built again. */
+  private markActive(): boolean {
+    const chat = this.view === "chat" ? this.chatId : null;
+    const main = chat === null ? undefined : this.data.chat(chat)?.repoId;
+    const want = (r: SideRow): boolean => {
+      if (r.kind === "thread" || r.kind === "loose") return r.id === chat;
+      if (r.kind === "project") return (chat !== null && main !== null && main !== undefined && r.id === main && this.data.mainChat(main) === chat) || (this.view === "draft" && this.draftMain && this.draftRepo === r.id);
+      return false;
+    };
+    let found = chat === null;
+    for (const m of [this.rows, this.settledRows]) {
+      for (let i = 0; i < m.length; i++) {
+        const r = m.rowData(i);
+        if (!r) continue;
+        const a = want(r);
+        found ||= a && (r.kind === "thread" || r.kind === "loose" || r.kind === "project");
+        if (r.active !== a) m.setRowData(i, { ...r, active: a });
+      }
+    }
+    return found;
+  }
+
+  /** The whole sidebar, built again a moment from now (after the frame that's coming): switching through chats
+   * quickly builds it once. */
+  private sidebarSoon(): void {
+    if (this.sidebarTimer !== null) clearTimeout(this.sidebarTimer);
+    this.sidebarTimer = setTimeout(() => {
+      this.sidebarTimer = null;
+      this.refreshSidebar();
+    }, 60);
+  }
+
+  private sidebarTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** The rest of the open chat's page, built a moment after its first frame (`Opened.fill`): switching through
+   * chats quickly builds only what each one shows. */
+  private restSoon(id: number): void {
+    if (this.restTimer !== null) clearTimeout(this.restTimer);
+    // The chat before it, left before its page was whole: whatever shows it next (a split pane) builds it all.
+    const before = this.restChat === id ? undefined : this.opened.get(this.restChat);
+    if (before) before.fill = undefined;
+    this.restChat = id;
+    this.restTimer = setTimeout(() => {
+      this.restTimer = null;
+      const o = this.opened.get(id);
+      if (!o || o.fill === undefined) return;
+      o.fill = undefined;
+      if (this.view !== "chat" || this.chatId !== id) return;
+      const end = this.win.at_end;
+      const above = this.win.transcript_height;
+      this.refreshCards();
+      if (end) this.win.scroll_to_end();
+      else this.keepAbove(above);
+    }, REST_MS);
+  }
+
+  private restTimer: ReturnType<typeof setTimeout> | null = null;
+  private restChat = -1;
 
   private openProject(repo: number): void {
     const main = this.data.mainChat(repo);
@@ -1437,10 +1544,7 @@ export class Shell {
       media: (changed) => (this.mediaPkg ? new MediaRows(this.mediaPkg, changed, (p) => this.nativeImage(p)) : null),
       release: (id) => {
         if (this.view === "chat" && id === this.chatId) return;
-        this.engine.release(id);
-        const o = this.opened.get(id);
-        if (o) forget(o);
-        collectSoon();
+        this.warm.leave(id);
       },
       toggle: (id, seq) => transcript.now.toggle(this.openedOf(id), seq),
       openChat: (id, fromEnd) => this.openChat(id, fromEnd),
@@ -1721,9 +1825,16 @@ export class Shell {
     const o = this.openedOf(this.chatId);
     if (Date.now() - o.grew < 250) return;
     const above = this.win.transcript_height;
-    earlier(o);
+    // Still its first cards alone: the rest of the page first.
+    if (o.fill !== undefined) o.fill = undefined;
+    else earlier(o);
     this.atEndSince = null;
     this.refreshCards();
+    this.keepAbove(above);
+  }
+
+  /** Cards went in above what's shown (the content was `above` px tall before): the view stays on what it showed. */
+  private keepAbove(above: number): void {
     this.win.transcript_grew_above(above);
     // The page's images come in over the next moments; then the view goes back to its usual anchoring.
     if (this.anchorOff !== null) clearTimeout(this.anchorOff);
@@ -1755,13 +1866,13 @@ export class Shell {
   private refreshCards(): void {
     this.split.flush();
     const shown = this.view === "chat" ? this.chatId : null;
-    // A chat that went into another split pane keeps its transcript: that pane shows it now.
+    // A chat that went into another split pane keeps its transcript: that pane shows it now. One left stays warm a while.
     if (this.cardsOf !== null && this.cardsOf !== shown && !this.split.holds(this.cardsOf)) {
-      this.engine.release(this.cardsOf);
-      const o = this.opened.get(this.cardsOf);
-      if (o && o.memo.size > PAGE) collectSoon();
-      if (o) forget(o);
+      this.warm.leave(this.cardsOf);
+      // What the switch let go (cards, images past the rest budget) goes back once switching stops.
+      collectLater();
     }
+    if (shown !== null) this.warm.take(shown);
     this.cardsOf = shown;
     if (this.view !== "chat") {
       sync(this.cards, []);
@@ -5315,6 +5426,8 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   shell.shown();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
+  switchTrace.probeWith(() => `end=${win.at_end ? 1 : 0} h=${Math.round(win.transcript_height)} fe=${Math.round(win.transcript_from_end)}`);
+  switchTrace.drive((id) => shell.openChat(id));
   hooks.shown?.(win.window);
   const tick = setInterval(() => shell.tick(), 1000);
   const unhot = followHot(shell);

@@ -860,6 +860,8 @@ export interface AppWindow extends slint.ComponentHandle {
   readonly at_end: boolean;
   /** The transcript's content height (px), for `transcript_grew_above`. */
   readonly transcript_height: number;
+  readonly transcript_view: number;
+  readonly transcript_follow: boolean;
   /** Physical pixels per logical pixel. */
   readonly scale_factor: number;
   /** Browser-style zoom: the level (1 = 100%). */

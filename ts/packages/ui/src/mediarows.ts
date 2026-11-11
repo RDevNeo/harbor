@@ -5,6 +5,10 @@ import { noPixels, type MediaRow } from "./window.ts";
 type MediaPkg = typeof import("@harbor/media");
 
 const THUMB: [number, number] = [132, 96];
+/** Decoded images no card of the last build shows, kept for when their chat is shown again. */
+export const REST_BYTES = 32 * 2 ** 20;
+/** File sizes read ahead (`sizeAhead`), by path: a few numbers each. */
+const AHEAD_MAX = 4096;
 /** A large image is drawn at most `inlineSize` (480×300 px, narrower in a narrow column): it's decoded to that width
  * in the screen's own pixels (`scale`; 2 when unknown), never above `mid`, so it stays sharp and holds no more memory
  * than drawing it needs. */
@@ -25,8 +29,10 @@ interface Got {
   dims: [number, number];
 }
 
-/** Decoded images by path and size class; a card shows an image once it's decoded. Only the images of the
- * cards last built are kept (`sweep`): a large one is a few MB, and a long chat has many.
+/** Decoded images by path and size class. Until one is decoded its card keeps its place at its size (read from the
+ * file's head), so nothing moves when it comes in. The images of the cards last built are kept, and those of cards
+ * built before (another chat that was just open) up to REST_BYTES, the least recently shown going first (`sweep`):
+ * a large one is a few MB, and a long chat has many.
  *
  * A large image's size class follows the screen's scale (zoom, another display), so a new scale asks for a new
  * decode. Until it's there the card keeps the image it has (`shown`): an image on the screen never goes blank or
@@ -43,7 +49,24 @@ export class MediaRows {
     private loaded: () => void,
     /** The decoded pixels as an image the window holds, so the models share it and JS lets its copy go. */
     private native: (p: Pixels) => Pixels = (p) => p,
+    private restBytes = REST_BYTES,
   ) {}
+
+  /** Decoded images no card of the last build asked for, least recently shown first, and their bytes. */
+  private rest = new Map<string, number>();
+  private restTotal = 0;
+  /** Images' sizes before they're decoded (null: not known), by path. */
+  private ahead = new Map<string, [number, number] | null>();
+
+  private sizeAhead(path: string): [number, number] | null {
+    let v = this.ahead.get(path);
+    if (v === undefined) {
+      if (this.ahead.size >= AHEAD_MAX) this.ahead.clear();
+      v = this.pkg.images.sizeAhead(path);
+      this.ahead.set(path, v);
+    }
+    return v;
+  }
 
   /** Images asked for from their chat's PC: when each may be asked again (never once it came). */
   private asked = new Map<string, number>();
@@ -64,10 +87,13 @@ export class MediaRows {
         continue;
       }
       const large = m.shown;
-      const got = large ? this.take(`l:${m.path}`, `l${cap}:${m.path}`, m.path, cap) : this.take(null, `t:${m.path}`, m.path, this.pkg.images.THUMB_PX);
-      if (!got) continue;
-      const [w, h] = large ? fitIn(got.dims[0], got.dims[1], this.pkg.images.inlineSize(column)) : THUMB;
-      out.push({ image: got.image, caption: m.caption, large, w, h, path: m.path, video: false, name: "", slot: -1, thumbs: 0 });
+      const key = large ? `l${cap}:${m.path}` : `t:${m.path}`;
+      const got = large ? this.take(`l:${m.path}`, key, m.path, cap) : this.take(null, key, m.path, this.pkg.images.THUMB_PX);
+      // Not decoded yet: its place, at its size, when its file says it (a missing or broken one has none).
+      const dims = got?.dims ?? (this.failed.has(key) ? null : this.sizeAhead(m.path));
+      if (!dims) continue;
+      const [w, h] = large ? fitIn(dims[0], dims[1], this.pkg.images.inlineSize(column)) : THUMB;
+      out.push({ image: got?.image ?? noPixels, caption: m.caption, large, w, h, path: m.path, video: false, name: "", slot: -1, thumbs: 0 });
     }
     // The thumbnails' places in their grid (chat.slint `ThumbGrid`): the large ones and videos show on their own.
     const thumbs = out.filter((m) => !m.large);
@@ -133,7 +159,10 @@ export class MediaRows {
   private take(slot: string | null, key: string, path: string, cap: number): Got | null {
     this.used.add(key);
     const img = this.got.get(key);
-    if (img) return img;
+    if (img) {
+      this.rested(key);
+      return img;
+    }
     const prev = slot === null ? undefined : this.shown.get(slot);
     const old = prev !== undefined && prev !== key ? this.got.get(prev) : undefined;
     // The file is no larger than either size: the new decode would be the same pixels.
@@ -149,6 +178,7 @@ export class MediaRows {
         .then(({ image, dims }) => {
           if (this.got.get(key) !== null) return;
           this.tries.delete(key);
+          this.ahead.set(path, dims);
           this.got.set(key, { image: this.native(image), dims });
           if (slot !== null) this.shown.set(slot, key);
           this.loaded();
@@ -157,7 +187,7 @@ export class MediaRows {
           if (this.fromHome(path, key)) return;
           // A video without a poster (no ffmpeg) keeps its dark card: nothing to try again.
           if (!this.pkg.media.isVideo(path)) this.later(key);
-          if (slot === null) return;
+          // Its place (kept while it was decoded) goes.
           this.failed.add(key);
           this.loaded();
         });
@@ -170,7 +200,16 @@ export class MediaRows {
       return old;
     }
     this.used.add(prev);
+    this.rested(prev);
     return old;
+  }
+
+  /** A resting image is shown again. */
+  private rested(key: string): void {
+    const n = this.rest.get(key);
+    if (n === undefined) return;
+    this.rest.delete(key);
+    this.restTotal -= n;
   }
 
   /** images.rs `video`: its poster (a dark card until then, or without ffmpeg) under a play button. */
@@ -184,11 +223,27 @@ export class MediaRows {
     return { image: got?.image ?? noPixels, caption: "", large: true, w: Math.max(w, 160), h: Math.max(h, 90), path, video: true, name, slot: -1, thumbs: 0 };
   }
 
-  /** After a build: images no card asked for since the last sweep are let go (decoded again if shown again). */
+  /** After a build: images no card asked for since the last sweep rest (up to `restBytes`, the least recently shown
+   * going first); the others are let go (decoded again if shown again). One still decoding goes too. */
   sweep(): void {
-    for (const k of this.got.keys()) if (!this.used.has(k)) this.got.delete(k);
+    for (const [k, v] of this.got) {
+      if (this.used.has(k) || this.rest.has(k)) continue;
+      if (v === null) {
+        this.got.delete(k);
+        continue;
+      }
+      const n = v.image.width * v.image.height * 4;
+      this.rest.set(k, n);
+      this.restTotal += n;
+    }
+    for (const [k, n] of this.rest) {
+      if (this.restTotal <= this.restBytes) break;
+      this.rest.delete(k);
+      this.restTotal -= n;
+      this.got.delete(k);
+    }
     for (const k of this.failed) if (!this.used.has(k)) this.failed.delete(k);
-    for (const [slot, k] of this.shown) if (!this.used.has(k)) this.shown.delete(slot);
+    for (const [slot, k] of this.shown) if (!this.got.has(k)) this.shown.delete(slot);
     for (const k of this.tries.keys()) if (!this.used.has(k)) this.tries.delete(k);
     this.used.clear();
   }

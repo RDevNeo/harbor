@@ -65,13 +65,15 @@ export class Failover {
 
   /** The PCs that are on, this one first, as candidates for project `repo` (null: a chat without one). */
   candidates(repo: number | null, skip: string): FailoverPc[] {
-    const r = repo === null ? undefined : this.h.store.repos().find((x) => x.id === repo);
+    // The engine's own lists (in memory): this runs on every redraw of such a chat's composer.
+    const e = this.h.engine();
+    const r = repo === null ? undefined : (e?.repo(repo) ?? this.h.store.repos().find((x) => x.id === repo));
     const remote = (r?.remote ?? "") !== "";
     const claude = this.h.accounts().some((a) => a.kind === "Claude" && a.off !== true);
     const hereHas = r === undefined || existsSync(repoDir(r));
     const out: FailoverPc[] = [{ id: "", name: this.here(), ram: this.h.ram(), hasProject: hereHas, canClone: remote, claude }];
     if (!this.mesh.on) return out;
-    const chats = this.h.store.chats();
+    const chats = e?.chats ?? this.h.store.chats();
     for (const p of this.mesh.peers.values()) {
       if (!p.online || p.id === skip || this.h.scope?.(p.id) === false) continue;
       // It runs chats of the project: it has its folder.

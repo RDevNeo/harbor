@@ -1,8 +1,10 @@
 import { readFileSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { ByteLru, stringBytes } from "@harbor/store";
 import { basename } from "node:path";
 import type { Metadata } from "sharp";
 import { decodeIco, isIco } from "./ico.ts";
+import { fileSize } from "./imagesize.ts";
 import { sharpLib } from "./sharplib.ts";
 import { check, find, generation, isSvg, isVideo, located, type Media, poster, svgPng } from "./media.ts";
 
@@ -86,6 +88,13 @@ export async function decodeBytes(bytes: Uint8Array, cap: number, limits: Limits
   return { image: { width: out.info.width, height: out.info.height, data: new Uint8Array(out.data.buffer, out.data.byteOffset, out.data.byteLength) }, dims };
 }
 
+/** An image's size as it's drawn, from its file's head (imagesize.ts), before it's decoded; null: not known (a video, an
+ * SVG, a file that isn't here). */
+export function sizeAhead(key: string): [number, number] | null {
+  if (isVideo(key) || isSvg(key)) return null;
+  return fileSize(located(key));
+}
+
 export async function decode(key: string, bytes: Uint8Array | null, cap: number): Promise<{ image: Decoded; dims: [number, number] }> {
   let data = bytes;
   if (data === null && isVideo(key)) {
@@ -109,7 +118,8 @@ export async function decode(key: string, bytes: Uint8Array | null, cap: number)
       }
     })();
     if (len > MAX_BYTES) throw new Error(`too large (${Math.floor(len / 2 ** 20)} MB)`);
-    data = readFileSync(file);
+    // Not on the window's thread: a large file's read would hold up the frame that's being built.
+    data = await readFile(file);
   }
   return decodeBytes(data, cap);
 }

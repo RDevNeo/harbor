@@ -169,6 +169,7 @@ component ThumbGrid {
         border-width: 1px;
         border-color: Theme.border;
         clip: true;
+        background: m.image.width <= 1 ? Theme.gray-100 : transparent;
         Image {
             width: parent.width;
             height: parent.height;
@@ -745,7 +746,8 @@ export component CardView inherits TouchArea {
                         height: floor(m.h * k / 1px) * 1px;
                         border-radius: m.video ? Theme.radius-md : Theme.radius-lg;
                         clip: true;
-                        background: m.video ? #181818 : transparent;
+                        // Still being decoded (mediarows.ts keeps its place at its size): a quiet box.
+                        background: m.video ? #181818 : m.image.width <= 1 ? Theme.gray-100 : transparent;
                         Image {
                             width: parent.width;
                             height: parent.height;

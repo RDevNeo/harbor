@@ -776,6 +776,10 @@ export component AppWindow inherits Window {
     }
     out property <bool> at-end: transcript.at-end;
     out property <length> transcript-height: transcript.content-height;
+    // The transcript's own height on the screen (what a chat's first frame has to fill).
+    out property <length> transcript-view: transcript.height;
+    // Still stuck to the end (not scrolled up since).
+    out property <bool> transcript-follow: transcript.follow;
     // The screen's pixels per logical pixel (1.25 on a 125% display): images are decoded to the size drawn.
     out property <float> scale-factor: 1px / 1phx;
     // Browser-style zoom: the level (1 = 100%),

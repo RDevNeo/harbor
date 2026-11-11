@@ -1,5 +1,5 @@
 import * as slint from "slint-ui";
-import { actions, type Card, CHAT_SCHEME, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer } from "@harbor/net";
+import { actions, type Card, CHAT_SCHEME, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
@@ -20,6 +20,9 @@ export interface Opened {
   /** The cards built for the cards shown, by seq: streaming changes one item at a time, so the others keep
    * their card and their markdown isn't parsed again. Cards that leave the window leave this too. */
   memo: Map<number, { item: Item; sig: string; data: CardData | null; joins?: Joins }>;
+  /** Set while a chat's first frame is built (px): only the latest cards that fill that much are built (by
+   * `guessHeight`), the others of the page keep their memo for the build that follows. */
+  fill?: number | undefined;
   /** Tool runs opened (by the seq of their first card). */
   groups: Set<number>;
   /** Tool calls, notices and thinking expanded. */
@@ -320,6 +323,14 @@ function signature(it: Item, open: Opened, seq: number, media: string): string {
   return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
 }
 
+/** The images a card shows, for its signature: which ones, where and how large (not their pixels). */
+const mediaSig = (media: readonly MediaRow[]): string => media.map((m) => `${m.path}|${m.large}|${m.w}x${m.h}`).join(",");
+
+/** The same images, the same pixels: a decode that came in is a new image. */
+function samePixels(a: readonly MediaRow[], b: readonly MediaRow[]): boolean {
+  return a.length === b.length && a.every((m, i) => m.image === b[i]?.image);
+}
+
 export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string | { text: string; tone: "waiting" }, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false, viewer: Viewer | null = null, linkTitle: LinkTitle | null = null): CardData[] {
   // A copy of another PC's chat: the sender rows are this PC's view of it (senders.ts Viewer).
   const all = project(items, lead, forks, viewer);
@@ -327,11 +338,14 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
   const captchas = captchaRoles(items);
   const runs = groups(all);
   const visible = all.filter((s) => s.card.kind !== "hidden" && (s.group === null || s.group === s.seq));
-  const from = visible.length > open.limit ? (visible[visible.length - open.limit]?.seq ?? 0) : 0;
+  const limit = open.fill === undefined ? open.limit : Math.min(open.limit, filling(visible, open, open.fill));
+  const from = visible.length > limit ? (visible[visible.length - limit]?.seq ?? 0) : 0;
+  // The page's own first card: memos from there on stay while only the latest cards are built.
+  const page = visible.length > open.limit ? (visible[visible.length - open.limit]?.seq ?? 0) : 0;
   const shown = all.filter((s) => s.seq >= from && (s.group === null || s.group >= from));
   const out: CardData[] = [{ ...blank(-1), kind: "space" }];
   const built = new Set<number>();
-  if (from > 0) out.push({ ...blank(EARLIER), kind: "earlier", label: `Show earlier messages (${visible.length - open.limit})` });
+  if (from > 0) out.push({ ...blank(EARLIER), kind: "earlier", label: `Show earlier messages (${visible.length - limit})` });
   const fork = (seq: number, f: number) => out.push({ ...blank(seq), kind: "divider", icon: FORK_DIVIDER.glyph, text: FORK_DIVIDER.text, label: FORK_DIVIDER.link, url: `harbor:chat-id/${f}/0` });
   for (const s of shown) {
     if (s.group !== null) {
@@ -346,21 +360,23 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     const item = items[s.seq];
     const media = mediaOf(s.card);
     const cap = captchas.get(s.seq);
-    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") + (item.kind === "user" ? `:${who}` : "") + (s.card.kind === "text" ? linkSig(s.card.text, linkTitle) : "") : "";
+    const sig = item ? signature(item, open, s.seq, mediaSig(media)) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") + (item.kind === "user" ? `:${who}` : "") + (s.card.kind === "text" ? linkSig(s.card.text, linkTitle) : "") : "";
     const hit = open.memo.get(s.seq);
     const same = hit !== undefined && hit.item === item && hit.sig === sig;
     // Built again: its old blocks' keys go first (the new ones are the same where the blocks are).
     if (!same) releaseBlocks(blockOwner(open, s.seq));
-    const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media, cap, gone, linkTitle);
+    // Only an image's pixels came in (it kept its place meanwhile): the card is the same, its text isn't parsed again.
+    const pixels = same && hit.data !== null && !samePixels(hit.data.media, media);
+    const c = same ? (pixels && hit.data ? { ...hit.data, media } : hit.data) : cardData(s.card, s.seq, open, off, () => media, cap, gone, linkTitle);
     if (item) {
-      open.memo.set(s.seq, same && hit.joins ? { item, sig, data: c, joins: hit.joins } : { item, sig, data: c });
+      open.memo.set(s.seq, same && !pixels && hit.joins ? { item, sig, data: c, joins: hit.joins } : { item, sig, data: c });
       built.add(s.seq);
     }
     if (c) out.push(c);
     for (const f of s.forksAfter) fork(s.seq, f);
   }
   for (const k of open.memo.keys()) {
-    if (built.has(k)) continue;
+    if (built.has(k) || (k >= page && open.fill !== undefined)) continue;
     open.memo.delete(k);
     releaseBlocks(blockOwner(open, k));
   }
@@ -370,6 +386,36 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
   else if (status !== "") out.push({ ...blank(-2), kind: "status", text: status });
   out.push({ ...blank(-3), kind: "space" });
   return out;
+}
+
+/** How many of the latest cards (`visible`, a run of tool calls being one) fill `px`, at least FILL_MIN. */
+function filling(visible: readonly Shown[], open: Opened, px: number): number {
+  let h = 0;
+  let n = 0;
+  for (let i = visible.length - 1; i >= 0 && (h < px || n < FILL_MIN); i--) {
+    const s = visible[i] as Shown;
+    h += s.group !== null && !open.groups.has(s.group) ? 36 : guessHeight(s.card);
+    n++;
+  }
+  return n;
+}
+
+const FILL_MIN = 3;
+
+/** A card's height, roughly (px in the usual 760 px column; a little short rather than tall): enough to choose
+ * how many of the latest cards fill the view. */
+export function guessHeight(c: Card): number {
+  const lines = (t: string) => t.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 100)), 0);
+  switch (c.kind) {
+    case "hidden":
+      return 0;
+    case "user":
+      return 32 + 22 * lines(c.text) + (c.images.length > 0 ? 104 : 0);
+    case "text":
+      return 16 + 22 * lines(c.text) + 240 * (c.text.split("![").length - 1);
+    default:
+      return 36;
+  }
 }
 
 /** Joined user cards (WhatsApp-style runs): one joins only a user card drawn right above it (not

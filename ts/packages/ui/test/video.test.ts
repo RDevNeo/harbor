@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as media from "@harbor/media";
 import { inlineCap, MediaRows } from "../src/mediarows.ts";
+import { noPixels } from "../src/window.ts";
 import { pressOf } from "../src/composer.ts";
 import { VIDEO_KEYS } from "../src/videopane.ts";
 
@@ -40,35 +41,51 @@ test("the viewer's keys are video.rs `take_keys`: Space, the arrows, M, F, Esc, 
   expect(VIDEO_KEYS.q).toBeUndefined();
 });
 
-test("only the images of the cards last built stay decoded; one let go while decoding isn't kept", async () => {
-  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
-  const [a, b, c] = ["a.png", "b.png", "c.png"].map((n) => join(dir, n)) as [string, string, string];
-  for (const f of [a, b, c]) writeFileSync(f, png);
+test("an image keeps its place at its size while it's decoded; one no build shows rests a while, the least recently shown going first", async () => {
+  const sharp = (await import("sharp")).default;
+  const two = await sharp({ create: { width: 4, height: 2, channels: 4, background: "#3a6" } }).png().toBuffer();
+  const [a, b, c, d] = ["a.png", "b.png", "c.png", "d.png"].map((n) => join(dir, `rest-${n}`)) as [string, string, string, string];
+  for (const f of [a, b, c, d]) writeFileSync(f, two);
   let loads = 0;
-  const rows = new MediaRows(media, () => void loads++);
+  // Room for one resting image (4×2×4 bytes each).
+  const rows = new MediaRows(media, () => void loads++, (p) => p, 40);
   const card = (f: string) => ({ kind: "text" as const, text: `![shot](${f})`, at: 1, forkable: false });
   const settle = async (n: number) => {
     for (let i = 0; i < 100 && loads < n; i++) await Bun.sleep(20);
   };
-  expect(rows.rows(card(a), dir, 760)).toHaveLength(0);
+  const drawn = (f: string) => rows.rows(card(f), dir, 760)[0]?.image.width === 4;
+  // Before its decode: its place, at the size the file says, with no pixels yet.
+  const first = rows.rows(card(a), dir, 760);
+  expect(first).toMatchObject([{ path: a, large: true, w: 4, h: 2 }]);
+  expect(first[0]?.image).toBe(noPixels);
   rows.sweep();
   await settle(1);
-  expect(rows.rows(card(a), dir, 760)).toHaveLength(1);
+  expect(drawn(a)).toBe(true);
   rows.sweep();
-  // A build without `a`'s card lets it go: shown again, it's decoded again.
+  // A build without `a`'s card: it rests, and is drawn at once when its card comes back.
   rows.rows(card(b), dir, 760);
   rows.sweep();
   await settle(2);
-  expect(rows.rows(card(a), dir, 760)).toHaveLength(0);
+  expect(drawn(a)).toBe(true);
+  rows.sweep();
+  expect(loads).toBe(2);
+  // `c` shown alone: `a` rests too, and `b`, which rested first, goes (one fits).
+  rows.rows(card(c), dir, 760);
   rows.sweep();
   await settle(3);
-  expect(loads).toBe(3);
-  // `c` starts decoding, then two builds pass without it: its result is dropped and nobody is told.
-  rows.rows(card(c), dir, 760);
+  expect(drawn(a)).toBe(true);
+  expect(drawn(b)).toBe(false);
+  rows.sweep();
+  await settle(4);
+  expect(loads).toBe(4);
+  // `d` starts decoding, then two builds pass without it: its result is dropped and nobody is told.
+  rows.rows(card(d), dir, 760);
   rows.sweep();
   rows.sweep();
   await Bun.sleep(300);
-  expect(loads).toBe(3);
+  expect(loads).toBe(4);
+  // A file that's missing has no place to keep: nothing until it's there.
+  expect(rows.rows(card(join(dir, "rest-missing.png")), dir, 760)).toHaveLength(0);
 });
 
 test("a large image is decoded to the width it's drawn at, in the screen's pixels", () => {
@@ -110,7 +127,7 @@ test("a zoom or a new display scale never blanks a shown image: the old decode s
     }
     expect(shown(scale)).toEqual(widths);
   };
-  for (let i = 0; i < 300 && build(1).length < 2; i++) await Bun.sleep(10);
+  for (let i = 0; i < 300 && build(1).some((m) => m.image.width <= 1); i++) await Bun.sleep(10);
   expect(shown(1)).toEqual([480, 200]);
   // Zoom keys in a row, each build while the sharper decodes run: the 480 px decode stays on the screen.
   for (const scale of [1.25, 1.5, 2]) expect(shown(scale)).toEqual([480, 200]);
