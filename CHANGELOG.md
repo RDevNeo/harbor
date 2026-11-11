@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- A chat with no project that someone else starts on your PC (from their phone, or from their PC)
+  now goes in their workspace, so the sidebar's workspace filter shows it under theirs, not under
+  yours; desktop and phone alike. Chats started that way before are placed once, on the update.
+  Move to workspace… still puts one wherever you want.
+
 ## [0.174.0] - 2026-11-11
 
 ### Added

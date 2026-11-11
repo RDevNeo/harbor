@@ -58,6 +58,8 @@ export interface CallFrom {
   via: SentVia | null;
   /** The device it was written on ("phone:<pairing>", "pc:<id>"; PCs from 0.119.2, else ""). */
   dev: string;
+  /** The account of the person who wrote it, as the forwarding PC knows it ("" from older PCs, or not known there). */
+  acct?: string;
 }
 
 /** Who is on the other end of a connection. */

@@ -194,6 +194,27 @@ export function directoryMates(d: AccountDirectory, me: string, self: string): S
   return out;
 }
 
+/**
+ * The workspace a chat person `person` (an account id) starts here goes in when it has no project: the workspace of
+ * their PCs (this PC's `mine` when one of them is in it), else one they own; "" when it's this PC's own or none is known
+ * here (the directory lists only the workspaces this PC's owner is a member of): the chat then stays in this PC's.
+ */
+export function personWorkspace(d: AccountDirectory, person: string, mine: string): string {
+  if (person === "") return "";
+  const theirs = d.workspaces.filter((w) => w.pcs.some((p) => p.owner === person)).map((w) => w.id);
+  const owned = d.workspaces.filter((w) => w.members.some((m) => m.id === person && m.role === "owner")).map((w) => w.id);
+  const ws = theirs.length > 0 ? theirs : owned;
+  if (ws.length === 0 || ws.includes(mine)) return "";
+  return ws[0] ?? "";
+}
+
+/** The account that owns PC `id` (mesh id) as the directory lists it, "" when not known. */
+export function directoryPcOwner(d: AccountDirectory, id: string): string {
+  if (id === "") return "";
+  for (const p of [...d.workspaces.flatMap((w) => w.pcs), ...d.peers]) if (p.id === id && p.owner !== "") return p.owner;
+  return "";
+}
+
 export function workspaceOwner(w: AccountWorkspace): boolean {
   return w.role === "owner";
 }

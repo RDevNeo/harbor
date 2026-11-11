@@ -31,9 +31,12 @@ interface Who {
   who: string;
   via: SentVia | null;
   dev: string;
+  /** Their account id ("" not known), and the PC they wrote on when it's a PC's desktop (its owner is them). */
+  account: string;
+  pc: string;
 }
 
-const NOBODY: Who = { who: "", via: null, dev: "" };
+const NOBODY: Who = { who: "", via: null, dev: "", account: "", pc: "" };
 const now = (): number => Math.floor(Date.now() / 1000);
 const utcOffset = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -146,6 +149,8 @@ export interface PhoneDeps {
   refs?: MediaRefs;
   /** Whether chats homed on PC `home` show (account.ts `scopeHas`); absent: all do. */
   scope?: (home: string) => boolean;
+  /** The workspace a chat with no project that `who` starts here goes in ("": this PC's, as before); absent: none. */
+  placeNew?: (who: { account: string; pc: string }) => string;
   /** The commits a reply of `chat` names; their pills come once git has answered (then `chat` is touched). */
   commits?: (chat: Chat) => CommitLookup | null;
   /** What a PATCH of a chat's account, model, effort, access, device or fast mode is checked against. */
@@ -906,7 +911,9 @@ export class PhoneRoutes {
     const sender = call.from ? call.from.sender || call.from.name : this.d.hub.callerLabel(call.token, call.device);
     const device = call.from?.device ?? "";
     // Who wrote it and on what: a phone here, else as the forwarding PC says (older PCs: unknown).
-    const who: Who = call.from ? { who: call.from.who, via: call.from.via, dev: call.from.dev } : { who: this.d.hub.callerWho(call.token), via: "phone", dev: phoneDev(this.d.hub.groupOf(call.token)) };
+    const who: Who = call.from
+      ? { who: call.from.who, via: call.from.via, dev: call.from.dev, account: call.from.acct ?? "", pc: call.from.via === "pc" ? call.from.peer : "" }
+      : { who: this.d.hub.callerWho(call.token), via: "phone", dev: phoneDev(this.d.hub.groupOf(call.token)), account: this.d.hub.callerAccount(call.token), pc: "" };
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
@@ -1151,7 +1158,7 @@ export class PhoneRoutes {
     const repo = typeof pref === "string" ? repos.find((r) => r.path === pref) : typeof pref === "number" ? repos.find((r) => r.id === pref) : undefined;
     const { project_id: _p, files: ids, ...rest } = body;
     const ctx = this.d.ctx?.(repo?.id ?? null) ?? null;
-    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev], ctx);
+    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev, who.account], ctx);
     return this.mapNew(peer.id, r, global);
   }
 
@@ -1305,6 +1312,9 @@ export class PhoneRoutes {
     const title = typeof body.title === "string" ? [...body.title.trim()].slice(0, 80).join("") : "";
     if (title !== "") c = { ...c, title };
     this.d.store.saveChat(c);
+    // Someone else's chat with no project goes in their workspace, not this PC's (the sidebar's workspace filter).
+    const ws = repo === null ? (this.d.placeNew?.({ account: who.account, pc: who.pc }) ?? "") : "";
+    if (ws !== "") this.d.store.setChatWorkspace(c.id, ws);
     e?.reload();
     const opened = obj(body.opened_from);
     if (typeof opened.gid === "string" && typeof opened.title === "string") this.d.openedFrom?.(c.id, opened.gid, opened.title);
@@ -1345,7 +1355,7 @@ export class PhoneRoutes {
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
     const { files: ids, ...rest } = body;
     const ctx = startsTurn(method, p.slice(3)) ? (this.d.ctx?.(c.repoId) ?? null) : null;
-    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev], ctx);
+    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev, who.account], ctx);
     if (p[3] === "fork") r = await this.mapNew(c.home, r, global);
     const rb = obj(r.body);
     const ch = typeof rb.chat === "object" && rb.chat !== null && !Array.isArray(rb.chat) ? (rb.chat as Record<string, Json>) : null;

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok, type Reply } from "../packages/net/src/index.ts";
-import { blankChat, Store } from "../packages/store/src/index.ts";
-import { WorkspaceMoves } from "../workspacemoves.ts";
+import { blankChat, type Item, Store } from "../packages/store/src/index.ts";
+import { placeOlderStarts, WorkspaceMoves } from "../workspacemoves.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-wsmove-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -205,3 +205,36 @@ test("a_project_whose_folder_is_another_pcs_is_in_that_pcs_workspace", () => {
   const here = store.addRepo(tmp);
   expect(moves.projectIn(store.repos().find((x) => x.id === here)!)).toBe("org_a");
 }, SLOW);
+
+test(
+  "chats with no project others started here before are placed in their workspace once",
+  () => {
+    const store = Store.openAt(join(tmp, `${Math.random()}.db`));
+    const said = (dev: string | undefined): Item => ({ kind: "user", text: "hi", files: [], at: 1, mentions: [], sender: dev ? "Pixel (Sam)" : "", intent: "", ...(dev ? { dev } : {}) });
+    const chat = (title: string, first: Item | null, more: Partial<Parameters<typeof blankChat>[0]> = {}) => {
+      const c = store.createChat(blankChat({ title, role: "lead", ...more }));
+      if (first) store.saveItems(c.id, [first]);
+      return c.id;
+    };
+    const sams = chat("sam's phone", said("phone:g-sam"));
+    const pc = chat("sam's pc", said("pc:ts:sam-pc"));
+    const mine = chat("typed here", said(undefined));
+    const empty = chat("nothing yet", null);
+    const kept = chat("moved already", said("phone:g-sam"));
+    store.setChatWorkspace(kept, "org_a");
+    const repo = store.addRepo(tmp);
+    const inProject = chat("in a project", said("phone:g-sam"), { repoId: repo });
+    const copy = chat("a copy", said("phone:g-sam"), { home: "pc:other", homeId: 3 });
+    const devs: string[] = [];
+    const n = placeOlderStarts(store, (dev) => {
+      devs.push(dev);
+      return dev === "phone:g-sam" || dev === "pc:ts:sam-pc" ? "org_b" : "";
+    });
+    expect(n).toBe(2);
+    const place = store.placement().chats;
+    expect([sams, pc, mine, empty, kept, inProject, copy].map((id) => place.get(id) ?? "")).toEqual(["org_b", "org_b", "", "", "org_a", "", ""]);
+    expect(devs).toEqual(["phone:g-sam", "pc:ts:sam-pc"]);
+    store.close();
+  },
+  SLOW,
+);

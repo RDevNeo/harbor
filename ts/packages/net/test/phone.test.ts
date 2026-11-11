@@ -910,6 +910,57 @@ describe("phone: the mesh's shared accounts", () => {
   });
 });
 
+describe("phone: a chat with no project someone else starts here", () => {
+  test("goes in their workspace (placeNew), a project's chat and the owner's own stay", async () => {
+    const store = Store.openAt(join(tmp, "started-by.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.me = { id: "ts:desk", name: "desk" };
+    hub.tokens.push({ token: "sam-phone", name: "Pixel", created: 0, group: "g-sam", fp: "g-sam", account: "u_sam", account_name: "Sam" });
+    hub.tokens.push({ token: "my-phone", name: "Pixel", created: 0, group: "g-me", fp: "g-me", account: "u_me", account_name: "Me" });
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const acct = (id: string, kind: string): CatalogAccount => ({ id, kind, name: id, badge: "SL", bin: "/bin/true", loggedIn: true, usage: [] });
+    const catalog = catalogOf(providers, () => [acct("claude", "Claude")], store);
+    const asked: { account: string; pc: string }[] = [];
+    const owners = new Map([["u_sam", "ws_sam"]]);
+    const pcs = new Map([["ts:sam-pc", "u_sam"]]);
+    const placeNew = (who: { account: string; pc: string }) => {
+      asked.push(who);
+      return owners.get(who.account !== "" ? who.account : (pcs.get(who.pc) ?? "")) ?? "";
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog, placeNew });
+    const folder = join(tmp, "started-by-project");
+    mkdirSync(folder, { recursive: true });
+    const repo = store.addRepo(folder);
+    const make = async (token: string, body: Record<string, unknown>, from?: { peer: string; via: "pc" | "phone"; acct?: string }) => {
+      const r = await routes.route({
+        method: "POST",
+        path: ["v1", "chats"],
+        query: [],
+        body: { account: "claude", text: "", ...body },
+        token,
+        device: "Pixel",
+        global: true,
+        ...(from ? { from: { peer: from.peer, name: "x", ctx: null, sender: "", device: "", who: "", dev: "", via: from.via, ...(from.acct !== undefined ? { acct: from.acct } : {}) } } : {}),
+      });
+      expect(r.status).toBe(200);
+      const c = store.chats().find((x) => x.gid === (r.body as { gid: string }).gid);
+      if (!c) throw new Error("no chat");
+      return store.placement().chats.get(c.id) ?? "";
+    };
+    // Sam's phone, signed in here: Sam's workspace; the owner's phone: none of its own (this PC's).
+    expect(await make("sam-phone", {})).toBe("ws_sam");
+    expect(await make("my-phone", {})).toBe("");
+    // In a project: the project's placement applies, nothing of its own.
+    expect(await make("sam-phone", { project_id: repo })).toBe("");
+    // Forwarded by another PC: the account it names, else (a PC's own desktop, older PCs) that PC's owner.
+    expect(await make("", {}, { peer: "ts:other", via: "phone", acct: "u_sam" })).toBe("ws_sam");
+    expect(await make("", {}, { peer: "ts:sam-pc", via: "pc" })).toBe("ws_sam");
+    expect(await make("", {}, { peer: "ts:sam-pc", via: "phone" })).toBe("");
+    expect(asked.at(-1)).toEqual({ account: "", pc: "" });
+    store.close();
+  });
+});
+
 describe("phone: a started chat switched to another PC's account", () => {
   test("it's offered to a lead here, and picking it moves the chat there with that account", async () => {
     const store = Store.openAt(join(tmp, "shared-switch.db"));

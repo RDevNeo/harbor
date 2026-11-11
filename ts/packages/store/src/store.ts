@@ -762,6 +762,12 @@ export class Store {
     return out;
   }
 
+  /** A chat's first saved item (null: none yet). */
+  firstItem(chatId: number): Item | null {
+    const r = this.db.query("SELECT body FROM items WHERE chat_id=?1 ORDER BY seq LIMIT 1").get(chatId) as Row | null;
+    return r ? parseItem(text(r.body)) : null;
+  }
+
   /** A saved transcript's length and digest (item.ts `digest`), read once and kept until it's written again. */
   summary(chatId: number): { count: number; digest: bigint } {
     let v = this.sums.get(chatId);

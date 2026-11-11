@@ -17,7 +17,7 @@ import { PROJECT_MOVES_VERSION } from "./projectmove.ts";
 import { ramOf } from "./ram.ts";
 
 /** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, the person and device kind when known, and the stable device id (`Item` user's `dev`). */
-export type Sender = [label: string, device: string, who?: string, via?: SentVia | "", dev?: string];
+export type Sender = [label: string, device: string, who?: string, via?: SentVia | "", dev?: string, acct?: string];
 
 const POLL = 20_000;
 const CALL_WAIT = 60_000;
@@ -782,6 +782,7 @@ export class Mesh {
     if (sender[2]) call.who = sender[2];
     if (sender[3]) call.via = sender[3];
     if (sender[4]) call.dev = sender[4];
+    if (sender[5]) call.acct = sender[5];
     if (ctx !== null) call.ctx = ctx;
     try {
       const [status, v] = await http(d, "POST", "/mesh/v1/call", jsonBody(call), CALL_WAIT);

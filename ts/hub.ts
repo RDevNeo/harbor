@@ -8,7 +8,7 @@ import { Failover } from "./failover.ts";
 import { type ProjectPlace, ProjectClones } from "./projectclones.ts";
 import { ProjectsApi } from "./projectsapi.ts";
 import { ProjectIcons } from "./projecticons.ts";
-import { WorkspaceMoves } from "./workspacemoves.ts";
+import { placeOlderStarts, STARTS_PLACED, WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
 import { WorktreeCleaner } from "./worktreeclean.ts";
@@ -42,7 +42,9 @@ import {
   directoryMates,
   foldProjects,
   takesMainFrom,
+  directoryPcOwner,
   directoryPcWorkspaces,
+  personWorkspace,
   scopeHas,
   scopeHasDevice,
   isFound,
@@ -398,6 +400,23 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (matesAt === null || matesAt[0] !== d || matesAt[1] !== me || matesAt[2] !== self) matesAt = [d, me, self, directoryMates(d, me, self)];
     return matesAt[3];
   };
+  // A chat with no project someone else starts here (their phone, their PC) goes in their workspace, not this PC's.
+  const startedIn = (person: string, pc: string): string => {
+    const d = account.directory();
+    const who = person !== "" ? person : directoryPcOwner(d, pc);
+    if (who === "" || who === (account.account()?.id ?? "")) return "";
+    return personWorkspace(d, who, account.workspace());
+  };
+  // Chats started that way before this rule: placed once, when the directory is known.
+  if (store.get(STARTS_PLACED) !== "1" && account.directory().workspaces.length > 0) {
+    placeOlderStarts(store, (dev) => {
+      if (dev.startsWith("phone:")) return startedIn(hub.tokens.find((t) => t.group !== "" && t.group === dev.slice(6))?.account ?? "", "");
+      // A PC's desktop says "pc:<mesh id>", or "pc:<host name>" (mesh ids are "ts:<host name>").
+      if (dev.startsWith("pc:")) return startedIn("", dev.slice(3)) || startedIn("", `ts:${dev.slice(3)}`);
+      return "";
+    });
+    store.set(STARTS_PLACED, "1");
+  }
   // Messages saved before 0.115 have only their sender's label: the bubbles match it with these.
   knowDevices({
     pcs: () => [[hub.mesh.me.name, account.ownerName() ?? ""], ...[...hub.mesh.peers.values()].map((p) => [p.name, p.owner] as const)],
@@ -904,6 +923,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     devices: () => remotes.devices(loadRemote(store), remotes.tailnet()).filter(([h]) => scopeHasDevice(account.scope(), h.id)),
     scope: (home) => scopeHas(account.scope(), home),
+    placeNew: (who) => startedIn(who.account, who.pc),
     pr: prOf,
     dropChat: (c) => worktrees.drop(c),
     worktrees: newWorktree,

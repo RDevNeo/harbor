@@ -12,6 +12,8 @@ import {
   b64urlDecode,
   b64urlEncode,
   directoryMates,
+  directoryPcOwner,
+  personWorkspace,
   directoryPcWorkspaces,
   emptyDirectory,
   pcScope,
@@ -85,6 +87,30 @@ describe("account.rs tests", () => {
     const got = directoryPcWorkspaces(d);
     expect(got.size).toBe(2);
     expect([got.get("ts:desk"), got.get("ts:other")]).toEqual(["a", "b"]);
+  });
+
+  test("a_chat_someone_else_starts_here_goes_in_their_pcs_workspace", () => {
+    const pc = (id: string, owner: string) => ({ fp: "", id, name: "", addrs: [], owner, owner_name: "", seen: 0, version: "" });
+    const member = (id: string, role: "owner" | "member") => ({ id, name: id, email: "", role });
+    const dir = (id: string, members: ReturnType<typeof member>[], pcs: ReturnType<typeof pc>[]): AccountDir => ({ ...ws(id), members, pcs, devices: [], invites: [] });
+    // Mine has me and Sam (a member); Sam's PC is in Sam's; Kim owns a workspace but has no PC; Lee is only in mine.
+    const d: AccountDirectory = {
+      at: 0,
+      peers: [pc("ts:sam-pc", "u_sam"), pc("ts:far", "u_far")],
+      workspaces: [
+        dir("mine", [member("u_me", "owner"), member("u_sam", "member"), member("u_kim", "member"), member("u_lee", "member")], [pc("ts:desk", "u_me")]),
+        dir("sams", [member("u_sam", "owner"), member("u_me", "member")], [pc("ts:sam-pc", "u_sam")]),
+        dir("kims", [member("u_kim", "owner"), member("u_me", "member")], []),
+      ],
+    };
+    expect(personWorkspace(d, "u_sam", "mine")).toBe("sams");
+    expect(personWorkspace(d, "u_kim", "mine")).toBe("kims");
+    // Their PC is in this PC's workspace, or nothing is known of them: it stays in this PC's.
+    expect(personWorkspace(d, "u_me", "mine")).toBe("");
+    expect(personWorkspace(d, "u_lee", "mine")).toBe("");
+    expect(personWorkspace(d, "u_far", "mine")).toBe("");
+    expect(personWorkspace(d, "", "mine")).toBe("");
+    expect([directoryPcOwner(d, "ts:sam-pc"), directoryPcOwner(d, "ts:far"), directoryPcOwner(d, "ts:nope"), directoryPcOwner(d, "")]).toEqual(["u_sam", "u_far", "", ""]);
   });
 
   test("the_directory_says_which_other_pcs_are_this_owners", () => {

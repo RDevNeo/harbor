@@ -249,3 +249,26 @@ export function choiceJson(m: MoveChoice): Json {
 export function shareJson(m: ShareChoice): Json {
   return { why: m.why, line: m.line, items: m.items.map((i) => ({ id: i.id, label: i.label, hint: i.hint, on: i.on, owner: i.owner, locked: i.locked })) };
 }
+
+/** kv: chats with no project that others started here before they were placed at start are placed (once). */
+export const STARTS_PLACED = "starts_placed";
+
+/**
+ * Once, for chats started before this rule: a chat of this PC with no project and no workspace of its own, started by
+ * someone else, goes in their workspace as a new one does (phone.ts `placeNew`). `whose(dev)` is the workspace for the
+ * device its first message was written on ("phone:<pairing>", "pc:<id>"; "" leaves it). Returns how many moved.
+ */
+export function placeOlderStarts(store: Store, whose: (dev: string) => string): number {
+  const place = store.placement();
+  let n = 0;
+  for (const c of store.chats()) {
+    if (c.home !== "" || c.repoId !== null || c.role === "sub" || (place.chats.get(c.id) ?? "") !== "") continue;
+    const first = store.firstItem(c.id);
+    const dev = first?.kind === "user" ? (first.dev ?? "") : "";
+    const ws = dev === "" ? "" : whose(dev);
+    if (ws === "") continue;
+    store.setChatWorkspace(c.id, ws);
+    n++;
+  }
+  return n;
+}

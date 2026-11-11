@@ -104,7 +104,7 @@ describe("a phone on a copy of another PC's chat", () => {
     expect((await pc.phone("POST", ["send"], { text: "look at [Image 1]", files: [id] })).status).toBe(200);
     expect(forwarded.length).toBe(1);
     expect(forwarded[0]?.files.map((f) => [f.name, Buffer.from(f.data).toString()])).toEqual([["1-shot.png", "png!"]]);
-    expect(forwarded[0]?.sender).toEqual(["Pixel 8 (Sam Rig)", "", "Sam Rig", "phone", `phone:${PHONE_KEY}`]);
+    expect(forwarded[0]?.sender).toEqual(["Pixel 8 (Sam Rig)", "", "Sam Rig", "phone", `phone:${PHONE_KEY}`, "user_1"]);
     expect("files" in (forwarded[0]?.body ?? {})).toBe(false);
 
     // At the home PC: the call with the upload's id there gives the agent the file and the phone's device id.
