@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.174.2] - 2026-11-11
+
+### Fixed
+- The memory pill of a chat that runs on a device reached over SSH (Runs on) now speaks of the
+  device: its popover says "on <device>", the agent's row is what it holds there (read over SSH,
+  Linux and macOS), this PC's end shows apart as "SSH link on <PC>", and the RAM bar is the device's.
+  The device's card in the PCs popover lists those chats too. Turns started before the update say
+  "No numbers" for the device part until their next turn.
+
 ## [0.174.1] - 2026-11-11
 
 ### Fixed
