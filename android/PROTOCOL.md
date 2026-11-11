@@ -417,7 +417,16 @@ refetch everything.
 - `gid`: the chat's global id, the same on every PC of the mesh (see [Every PC is a hub](#every-pc-is-a-hub)).
   Every `{id}` in a path may be the `gid` instead; keep it to find the chat again on another hub.
 - `home` / `home_name`: the PC the chat runs on (its peer id, its name). `writable`: false while
-  that PC is off: show the chat read-only with "<home_name> is off" (writes answer `409`).
+  that PC is off and the hub can't carry the chat on elsewhere (older hubs): show the chat read-only
+  with "<home_name> is off" (writes answer `409`).
+- `failover` (0.174, null or missing: the chat's PC is on): its PC is off, so this line goes over the
+  composer as given, the same as the desktop's: "Tower is off. Next message runs on Desk." (a send
+  makes that PC take the chat over, in a new session with the conversation so far, and the chat
+  gets a notice), or with `failover_warn` true, drawn amber with the alert glyph: "Tower is off and
+  no PC can run this. Messages wait until one is back." (a send answers `202 {held: true}`; the
+  message goes out when a PC is back, and the line ends with "N waiting.").
+  `/v1/state` projects whose PC is off carry the same kind of line as `failover`: the new-chat line
+  (a new chat starts on the PC it names, or `409` with that line when none can run it).
 - `worktree` (optional, 0.66; null or missing: it runs in the project's checkout, or an older
   hub): the chat runs in a git worktree of its own (sub-agents: their lead's), `{"name":
   "app-a1b2c3", "path": "/home/sam/.local/share/harbor/worktrees/app-a1b2c3" | null, "gone":

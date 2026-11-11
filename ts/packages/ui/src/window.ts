@@ -269,6 +269,8 @@ export interface ComposerState {
   hint: string;
   typing: string;
   notice: string;
+  /** "warn" amber with the alert glyph, "pc" the PC glyph, "" plain (composer.slint). */
+  notice_tone: string;
   place: string;
   error: string;
 }

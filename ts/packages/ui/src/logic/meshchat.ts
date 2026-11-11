@@ -24,6 +24,8 @@ export interface ShellMesh {
   draft?(id: number): DraftIn | null;
   /** A message went out of the window's composer: the chat's draft empties everywhere. */
   sent?(id: number): void;
+  /** A chat whose PC is off: the line saying where the next message goes or that it waits (failover.ts); null: its PC is on. */
+  failover?(c: Chat): { text: string; warn: boolean } | null;
   /** The other PCs and their memory (windowmesh.ts `memory`). */
   memory?(): Promise<{ name: string; online: boolean; mem: Record<string, unknown> | null }[]>;
   /** A copy's memory at its home PC (windowmesh.ts `chatMemory`). */
@@ -66,7 +68,14 @@ export class MeshChat {
   }
 
   writable(c: Chat): boolean {
-    return !c.retired && (c.home === "" || this.m.home(c)?.online === true);
+    return !c.retired && (c.home === "" || this.m.home(c)?.online === true || this.m.failover !== undefined);
+  }
+
+  /** The line over the composer of a chat whose PC is off (failover.ts); null: it's on, or this PC's chat. */
+  failoverLine(c: Chat | undefined): { text: string; tone: "warn" | "pc" } | null {
+    const l = this.foreign(c) && !c.retired && this.m.home(c)?.online !== true ? (this.m.failover?.(c) ?? null) : null;
+    // No PC can run it: the amber warning; else the PC glyph (it goes on on another PC).
+    return l === null ? null : { text: l.text, tone: l.warn ? "warn" : "pc" };
   }
 
   /** The composer's place while the chat's home PC is off (null: it can be written). */
@@ -113,7 +122,9 @@ export class MeshChat {
   call(c: Chat | undefined, what: string, method: string, tail: string[], body: Record<string, unknown>, files: readonly string[] = [], restore: { text: string; mentions: Mention[] } | null = null): boolean {
     if (!this.foreign(c)) return false;
     const home = this.m.home(c);
-    if (home?.online !== true) {
+    // A message to a chat whose PC is off goes on on another PC, or waits (windowmesh.ts → failover.ts).
+    const failover = what === "send" && this.m.failover !== undefined;
+    if (home?.online !== true && !failover) {
       this.fail(c.id, `Couldn't ${what}: ${home?.name ?? c.home} is off, so this chat is read-only until it's back`);
       if (restore) this.h.restore(c.id, restore.text, restore.mentions, true);
       return true;

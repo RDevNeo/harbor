@@ -71,6 +71,10 @@ export interface StoreReplicaOptions {
   worktree?: (chat: Chat) => string | null;
   /** Copies were written: a copy's items (its id), or the list and settings (null). */
   copied?: (chat: number | null) => void;
+  /** A chat this PC took over while its PC was off (failover.ts): from which PC, at how many messages. */
+  took?: (gid: string) => { from: string; count: number } | null;
+  /** That PC, back, settles with it: its own chat `own` becomes a copy of `peer`'s (true) or stays (false). */
+  release?: (own: Chat, peer: string, hid: number, count: number) => boolean;
   /** Where a chat's agent works (its worktree, else its project); null: the project's folder. */
   cwd?: (chat: Chat) => string | null;
   /** Whether project `repo`'s row here opens the main chat `peer` names for it (projectfold.ts `takesMainFrom`); absent: never. */
@@ -222,7 +226,13 @@ export class StoreReplica implements MeshApp {
       branch: githead.branchLabel(githead.branchOf(this.cwd(c))),
       pr: this.o.pr?.(c) ?? null,
       cwd: this.cwd(c),
+      ...this.tookJson(c.gid),
     };
+  }
+
+  private tookJson(gid: string): Record<string, Json> {
+    const t = this.o.took?.(gid) ?? null;
+    return t === null ? {} : { failover_from: t.from, failover_count: t.count };
   }
 
   async chats(since: number, full: boolean): Promise<{ chats: Json[]; update: Json }> {
@@ -326,7 +336,11 @@ export class StoreReplica implements MeshApp {
     const mesh = this.o.hub.mesh;
     const existingId = mesh.localId(peer, hid) ?? this.list.find((c) => gid !== "" && c.gid === gid)?.id ?? null;
     const existing = existingId === null ? null : (this.list.find((c) => c.id === existingId) ?? null);
-    if (existing && existing.home === "") return null;
+    // This PC's own chat: unless `peer` took it over while this PC was off and nothing happened here since (failover.ts).
+    if (existing && existing.home === "") {
+      const count = int(m.failover_count);
+      if (s(m, "failover_from") !== mesh.me.id || count === null || !(this.o.release?.(existing, peer, hid, count) ?? false)) return null;
+    }
     const repo = m.project === null || m.project === undefined ? null : this.repoFor(obj(m.project));
     if (repo !== null) this.rememberPc(repo, peer, s(obj(m.project), "path"));
     const parentHid = int(m.parent);

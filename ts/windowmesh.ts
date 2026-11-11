@@ -18,6 +18,11 @@ export interface WindowMeshDeps {
   /** The hub's uploads folder: the window's attached files go there (hard-linked) so the chat's other devices get them. */
   uploadsDir?: string;
   devices?: DeviceMemory;
+  /** A chat whose PC is off goes on on another PC (failover.ts). */
+  failover?: {
+    line(c: Chat): { text: string; warn: boolean } | null;
+    send(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }): Promise<Reply>;
+  };
 }
 
 /** A chat's shared composer draft as the window takes it (`files`: paths here; null: keep the window's own). */
@@ -167,6 +172,11 @@ export class WindowMesh {
     return all.filter((t) => t.device !== this.me());
   }
 
+  /** A chat whose PC is off: where the next message goes, or that it waits (failover.ts). */
+  failover(c: Chat): { text: string; warn: boolean } | null {
+    return this.d.failover?.line(c) ?? null;
+  }
+
   /** This window looking at a copy: its own messages carry this PC's device id (or, from before, its label). */
   viewer(c: Chat): Viewer | null {
     if (c.home === "") return null;
@@ -188,6 +198,11 @@ export class WindowMesh {
   async forward(c: Chat, method: string, tail: string[], body: Record<string, unknown>, files: readonly string[] = []): Promise<Reply> {
     const peer = this.d.hub.mesh.peer(c.home);
     const name = this.d.hub.mesh.nameOf(c.home);
+    // Its PC is off: the message goes on on another PC, or waits here.
+    if (!peer?.online && method === "POST" && tail.length === 1 && tail[0] === "send" && this.d.failover) {
+      const b = body as { text?: unknown; mentions?: unknown };
+      return this.d.failover.send(c, { text: typeof b.text === "string" ? b.text : "", files: [...files], mentions: Array.isArray(b.mentions) ? b.mentions : [] });
+    }
     if (!peer?.online || !this.d.hub.mesh.on) return err(409, `${name} is off, so this chat is read-only until it's back`);
     let attached: { name: string; data: Uint8Array }[];
     try {

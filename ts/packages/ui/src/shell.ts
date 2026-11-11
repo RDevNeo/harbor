@@ -2006,6 +2006,8 @@ export class Shell {
     const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
     const p = this.draftPlace();
     if (!repo || p === null) return "";
+    const fo = !p.online ? this.draftFailover() : null;
+    if (fo !== null) return fo.line;
     return draftPlaceLine(repo.name, p, this.draftTarget() ?? (this.sel.device === "" ? null : this.sel.device)) ?? "";
   }
 
@@ -2031,6 +2033,8 @@ export class Shell {
     // Another PC's chat runs on that PC's accounts.
     const at = copy && open ? open.home : "";
     const mine = this.shared().find((x) => (x.pc === at && x.account === sel.account) || (at === "" && x.id === sel.account));
+    // Its PC is off: where the next message goes, or that it waits (failover.ts).
+    const failover = this.view === "chat" ? this.meshChat.failoverLine(this.data.chat(this.chatId)) : null;
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
       // With their photo the label already names them: "Claude · Dana Reyes's, runs on laptop".
@@ -2060,7 +2064,8 @@ export class Shell {
                     : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: this.view === "chat" ? this.meshChat.typing(this.chatId) : "",
-      notice: "",
+      notice: failover?.text ?? "",
+      notice_tone: failover?.tone ?? "",
       place: this.view === "chat" ? "" : this.draftLine(),
       error: this.meshChat.error(this.key()),
     };
@@ -2792,6 +2797,9 @@ export class Shell {
       const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
       const body: Record<string, unknown> = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: there, model: sel.model, effort: sel.effort, access: sel.access, text };
       if (auto) body.auto_placed = true;
+      // Its project's PC is off: the chat's first notice says so there.
+      const fo = this.draftFailover();
+      if (fo !== null && fo.to === startOn) body.failover_off = fo.off;
       // That PC holds what it lets this PC's chats do with its accounts (phone.ts `sharedAccess`).
       if (shared) body.shared_account = true;
       // The project's main chat, started on its PC: that PC's main chat for it (this row opens it once its copy is here).
@@ -2847,9 +2855,12 @@ export class Shell {
     if (id === DRAFT) {
       const joins = joinsMain;
       if (joins === null) {
+        const fo = this.draftFailover();
         const made = this.engine.newThread(this.draftRepo, text, sel);
         if (auto) this.hub.auto?.mark(made.gid, sel.device);
         id = made.id;
+        // Started here because its project's PC is off: it says so.
+        if (fo !== null && fo.to === "") this.hub.failover?.startedNotice(made.id, fo.off);
       } else id = joins;
       if (this.draftMain && this.draftRepo !== null && joins === null) this.data.store.setMainChat(this.draftRepo, id);
       this.view = "chat";
@@ -3829,9 +3840,18 @@ export class Shell {
    * (the last one picked anywhere, or Auto) doesn't count: the folder isn't on it, so the chat would
    * only fail with "isn't on this PC".
    */
+  /** A draft in a project whose folder's PC is off: where it starts instead (failover.ts), null when that isn't so. */
+  private draftFailover(): { to: string | null; line: string; off: string } | null {
+    if (this.view === "chat" || this.draftRepo === null || this.draftHere.has(this.draftRepo)) return null;
+    if (this.sel.device !== "" && this.draftPicked.get(this.draftRepo) === this.sel.device) return null;
+    return this.hub.failover?.draft(this.draftRepo) ?? null;
+  }
+
   private draftTarget(): string | null {
     const p = this.draftPlace();
     const repo = this.draftRepo ?? -1;
+    const fo = p !== null && !p.online ? this.draftFailover() : null;
+    if (fo !== null) return fo.to === "" ? null : fo.to;
     if (p === null || p.pc === "" || !p.online || this.draftHere.has(repo)) return null;
     if (this.sel.device !== "" && this.draftPicked.get(repo) === this.sel.device) return null;
     return p.pc;
@@ -5012,6 +5032,11 @@ export interface ShellHub extends PageHub {
   sharedAccounts?: () => SharedAccount[];
   relocate: (chatId: number, to: string) => Promise<string>;
   /** The composer's "Auto" pick of where a new chat runs (runon.ts): resolved at the first message, remembered, shown as "Auto → <PC>". */
+  /** A chat or new chat whose PC is off goes on on another PC (failover.ts). */
+  failover?: {
+    draft(repo: number): { to: string | null; line: string; off: string } | null;
+    startedNotice(chat: number, off: string): void;
+  };
   auto?: {
     pick: (kind: string) => { id: string; name: string; ram: number | null } | null;
     resolve: (device: string, kind: string) => { device: string; auto: boolean };

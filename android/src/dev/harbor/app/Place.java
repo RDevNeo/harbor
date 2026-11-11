@@ -73,6 +73,8 @@ final class Place {
         String name = p.optString("name"), pc = p.optString("pc_name");
         if (!device.isEmpty()) return "";
         if (pc.isEmpty()) return name + "’s folder isn’t on this PC: pick the PC that has it under Device";
+        // Its PC is off: the hub says where the chat starts instead (another PC that has the project), or that it can't now.
+        if (!p.optBoolean("pc_online") && !p.optString("failover").isEmpty()) return p.optString("failover");
         if (!p.optBoolean("pc_online")) return name + "’s folder is on " + pc + ", which is off: the chat can start there once it’s back";
         return name + "’s folder is on " + pc + ", not on this PC: pick " + pc + " under Device to start there";
     }

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
+import { Failover } from "./failover.ts";
 import { type ProjectPlace, ProjectClones } from "./projectclones.ts";
 import { ProjectsApi } from "./projectsapi.ts";
 import { ProjectIcons } from "./projecticons.ts";
@@ -192,6 +193,7 @@ export interface RunningHub {
   move: MovePc;
   projectMove: ProjectMove;
   runOn: RunOn;
+  failover: Failover;
   /** This PC's and the mesh's agent accounts, each sign-in once (meshaccounts.ts); another PC's run there. */
   sharedAccounts: () => SharedAccount[];
   windowMesh: WindowMesh;
@@ -644,6 +646,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     update: updateInfo,
     accounts: (peer) => helloAccountsFor(peer),
     copied: (chat) => engine?.storeChanged(chat),
+    took: (gid) => failover.took(gid),
+    release: (own, peer, hid, count) => failover.release(own, peer, hid, count),
     cwd: (c) => engine?.chatCwd(c) ?? null,
     // A project's main chat is its owner's: another PC's project, or one shared or moved here by that PC (projectfold.ts).
     mainFrom: (repo, peer) => {
@@ -720,6 +724,19 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   // Free memory, sampled here and told to peers (the composer's Auto pick of where a chat runs).
   const ramMeter = new RamMeter();
+  // A chat or project whose PC is off goes on on another PC of the mesh (failover.ts).
+  const failover = new Failover({
+    store,
+    engine: () => engine,
+    hub,
+    mesh: () => mesh,
+    accounts: () => accounts,
+    ram: () => ramMeter.mb(),
+    forgetCopy: (id) => replica.remote.delete(id),
+    place: (repo) => projectClones.place(repo),
+    touch: (chat) => hub.touch(chat, true),
+    scope: (pc) => scopeHas(account.scope(), pc),
+  });
   ramMeter.start();
   const mesh = new Mesh({
     hub,
@@ -894,7 +911,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, moves, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
     profileCheck: profileCheckNow,
-    bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),
+    bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName, online: (pc) => hub.mesh.online(pc) }, chat, nowMs),
     engine: null,
     uploadsDir,
     updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null }),
@@ -940,6 +957,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     ownerName: () => account.ownerName(),
     ctx: ctxFor,
     uploadsDir,
+    failover: { line: (c) => failover.line(c), send: (c, msg) => failover.send(c, msg) },
   });
   // The hooks below run once the engine exists.
   const eng = (): Engine => {
@@ -997,6 +1015,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, ...host, ...own });
   const live = engine;
+  failover.start();
   // The secret cards waiting for the user, read at most once a second (a chat list asks for each chat's `wait`).
   let asks: { at: number; list: secrets.Ask[] } = { at: 0, list: [] };
   const asksNow = (): secrets.Ask[] => {
@@ -1159,6 +1178,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   mover.relocate = (chat, pc, auto) => runOn.relocate(chat, pc, auto);
   phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };
   phone.d.auto = { pick: (kind) => runOn.autoPick(kind), resolve: (device, kind) => runOn.resolve(device, kind), mark: (gid, place) => runOn.markAuto(gid, place), label: (c, here) => runOn.autoLabel(c, here), relocate: (chatId, kind) => runOn.relocateAuto(chatId, kind), why: (chatId, kind) => runOn.autoWhy(chatId, kind) };
+  phone.d.failover = { line: (c) => failover.line(c), send: (c, msg, to, sendHere) => failover.send(c, msg, to, sendHere), draft: (repo) => failover.draft(repo), startedNotice: (chat, off) => failover.startedNotice(chat, off) };
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc, want) => mover.movePc(chat, pc, false, want ?? null) };
   phone.d.engine = {
     running: (id) => live.running(id),
@@ -1340,6 +1360,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     move: mover,
     projectMove: pm,
     runOn,
+    failover,
     sharedAccounts: sharedNow,
     windowMesh,
     setBusyIn: (f) => {

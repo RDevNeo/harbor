@@ -1381,10 +1381,11 @@ export class Engine {
   /** A started chat switched to another provider can't resume its session there: it starts a fresh one, with the
    *  conversation so far as its first message's preamble (as a fork's). True when it did. `moved`: the chat came from
    *  another PC on one of this PC's accounts without a session it can go on with ("Codex on desk"): always. */
-  handOver(id: number, moved?: string): boolean {
+  handOver(id: number, moved?: string, notice?: { icon: string; text: string; detail: string }): boolean {
     const c = this.chat(id);
     const to = c ? this.account(c.account)?.kind : undefined;
-    if (!c || to === undefined || !c.started || c.sessionId === "") return false;
+    // A copy taken over from a PC that is off has no session here at all (failover.ts).
+    if (!c || to === undefined || !c.started || (c.sessionId === "" && moved === undefined)) return false;
     const from = moved ?? this.sessionKind(c);
     if (from === undefined || (moved === undefined && from === to)) return false;
     const items = this.transcript(id).items.filter((i) => i.kind !== "thinking" && i.kind !== "result" && i.kind !== "notice");
@@ -1394,7 +1395,7 @@ export class Engine {
     c.sessionId = to === "Claude" ? newUuid() : "";
     this.store.set(sessionKindKey(id), to);
     this.store.saveChat(c);
-    this.transcript(id).items.push({ kind: "notice", icon: "restart", text: `Continues on ${to}: a new session, with the conversation so far`, detail: "" });
+    this.transcript(id).items.push({ kind: "notice", ...(notice ?? { icon: "restart", text: `Continues on ${to}: a new session, with the conversation so far`, detail: "" }) });
     this.persist(id);
     return true;
   }

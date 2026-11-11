@@ -23,6 +23,7 @@ export * from "./movepc.ts";
 export * from "./movepcrun.ts";
 export * from "./relocate.ts";
 export * from "./ram.ts";
+export * from "./failover.ts";
 export * from "./clone.ts";
 export * from "./devices.ts";
 export * from "./relay.ts";

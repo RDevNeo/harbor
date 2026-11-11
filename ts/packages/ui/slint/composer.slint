@@ -381,6 +381,8 @@ export struct ComposerState {
     hint: string,
     typing: string,
     notice: string,
+    // "warn": an amber box with the alert glyph (no PC can run the chat); "pc": the PC glyph (it runs on another PC); "": plain.
+    notice-tone: string,
     place: string,
     error: string,
 }
@@ -613,19 +615,29 @@ export component Composer {
             }
         }
         if root.state.notice != "": Rectangle {
-            background: Theme.bg200;
+            background: root.state.notice-tone == "warn" ? Theme.amber-100 : Theme.bg200;
             border-width: 1px;
-            border-color: Theme.border;
+            border-color: root.state.notice-tone == "warn" ? Theme.amber-500 : Theme.border;
             border-radius: 12px;
             HorizontalLayout {
                 padding-left: 14px;
                 padding-right: 14px;
                 padding-top: 10px;
                 padding-bottom: 10px;
+                spacing: 10px;
+                if root.state.notice-tone != "": Glyph {
+                    y: 1px;
+                    width: 15px;
+                    icon: root.state.notice-tone == "warn" ? Icons.alert : Icons.monitor;
+                    size: 15px;
+                    vertical-alignment: top;
+                    color: root.state.notice-tone == "warn" ? Theme.amber-900 : Theme.subtle;
+                }
                 Text {
+                    horizontal-stretch: 1;
                     text: root.state.notice;
                     font-size: 13px;
-                    color: Theme.subtle;
+                    color: root.state.notice-tone == "warn" ? Theme.amber-1000 : Theme.subtle;
                     wrap: word-wrap;
                 }
             }

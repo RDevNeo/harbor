@@ -214,6 +214,10 @@ export async function runApp(o: RunOptions): Promise<number> {
       runOnRows: (chatId: number | null, current: string, kind: string) => run.runOn.rows(chatId, current, kind),
       sharedAccounts: () => run.sharedAccounts(),
       relocate: (chatId: number, to: string) => run.runOn.relocate(chatId, to),
+      failover: {
+        draft: (repo: number) => run.failover.draft(repo),
+        startedNotice: (chat: number, off: string) => run.failover.startedNotice(chat, off),
+      },
       auto: {
         pick: (kind: string) => run.runOn.autoPick(kind),
         resolve: (device: string, kind: string) => run.runOn.resolve(device, kind),

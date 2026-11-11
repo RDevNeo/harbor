@@ -83,6 +83,9 @@ public class Chat extends Base implements Images.Gallery {
     private boolean loading, again, loaded, gone; // gone: deleted, keep no draft
     private long loadingAt; // when the load in flight started
     private TextView offNote;
+    /** Its PC is off: where the next message goes (another PC takes the chat over) or that it waits; over the composer. */
+    private TextView foNote, foIcon;
+    private LinearLayout foBox;
     /** In front (resumed): a captcha card asks for frames only then. */
     private boolean front;
     /** Opened from a captcha's notification: the first load scrolls to its card. */
@@ -182,6 +185,16 @@ public class Chat extends Base implements Images.Gallery {
         below.addView(links.view, Ui.margins(Ui.fill(), 8, 4, 8, 2));
         // Clear of the agents strip above and the composer below; its pills start under the strip's edge.
         below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 4, 8, 4));
+        // As the desktop's composer notice (composer.slint): the PC glyph, or amber with the alert glyph when no PC can run it.
+        foBox = new LinearLayout(this);
+        foBox.setOrientation(LinearLayout.HORIZONTAL);
+        foBox.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));
+        foIcon = Ui.icon(this, "\ue11d", 15, Ui.G700);
+        foBox.addView(foIcon, Ui.margins(Ui.wrap(), 0, 1, 10, 0));
+        foNote = Ui.text(this, "", 13, Ui.G700);
+        foBox.addView(foNote, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        foBox.setVisibility(View.GONE);
+        below.addView(foBox, Ui.margins(Ui.fill(), 0, 0, 0, 6));
         below.addView(comp.view, Ui.fill());
         // The tray: narrower than the card, its sides under the card's rounded corners.
         below.addView(work.view, Ui.margins(Ui.fill(), 22, 0, 22, 0));
@@ -307,6 +320,14 @@ public class Chat extends Base implements Images.Gallery {
         offNote.setText(c.optBoolean("retired") ? "This agent was retired, so it takes no more messages. Its chat stays here to read."
                 : home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
+        String fo = c.isNull("failover") ? "" : c.optString("failover", "");
+        boolean warn = c.optBoolean("failover_warn");
+        foNote.setText(fo);
+        foNote.setTextColor(warn ? (Ui.dark ? 0xfffef3dd : 0xff541c00) : Ui.G700);
+        foIcon.setText(warn ? "\ue077" : "\ue11d");
+        foIcon.setTextColor(warn ? (Ui.dark ? 0xfff2a20d : 0xffa64f00) : Ui.G700);
+        foBox.setBackground(warn ? Ui.round(Ui.dark ? 0xff291800 : 0xfffff6e1, Ui.dark ? 0xff6b4105 : 0xffffc85e, 12) : Ui.round(Ui.CARD, Ui.LINE, 12));
+        foBox.setVisibility(!ro && !fo.isEmpty() ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));

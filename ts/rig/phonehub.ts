@@ -35,7 +35,8 @@ Object.assign(process.env, {
   HARBOR_FAKE_WHATSAPP: "rig",
   // The workspace's other PCs' accounts in the account pickers (meshaccounts.ts): the Laptop on, with its owner's
   // OpenCode; a Tower that is off, with Codex.
-  HARBOR_FAKE_PEERS: "pc:laptop=Laptop:9000@Dana_Reyes+opencode,pc:tower=Tower:4000@Dario_Reis+codex!off",
+  // The Desk, on with Claude, takes over a chat of the Tower while that is off (failover.ts).
+  HARBOR_FAKE_PEERS: "pc:laptop=Laptop:9000@Dana_Reyes+opencode,pc:tower=Tower:4000@Dario_Reis+codex!off,pc:desk=Desk:12000@Dana_Reyes",
 });
 for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
 // OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.
@@ -92,7 +93,7 @@ const team = [
 ];
 seed.set("account", JSON.stringify({ id: "user_rig", email: "sam@example.com", name: "Sam Rivera", workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true }, { id: "org_team", name: "Team workspace", role: "member" }] }));
 seed.set("account_ws", "org_sam");
-seed.set("account_dir", JSON.stringify({ at: t0 * 1000, workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true, pcs: pcs("pc:rig-pc") }, { id: "org_team", name: "Team workspace", role: "member", members: team, pcs: [{ fp: "fp-laptop", id: "pc:laptop", name: "Laptop" }, { fp: "fp-tower", id: "pc:tower", name: "Tower" }] }] }));
+seed.set("account_dir", JSON.stringify({ at: t0 * 1000, workspaces: [{ id: "org_sam", name: "Sam's workspace", role: "owner", personal: true, pcs: pcs("pc:rig-pc") }, { id: "org_team", name: "Team workspace", role: "member", members: team, pcs: [{ fp: "fp-laptop", id: "pc:laptop", name: "Laptop" }, { fp: "fp-tower", id: "pc:tower", name: "Tower" }, { fp: "fp-desk", id: "pc:desk", name: "Desk" }] }] }));
 
 const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-web.git"));
 const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));
@@ -268,6 +269,38 @@ const waiting = chat({ gid: WAITING_GID, repoId: api, role: "lead", name: "lead"
   say("The staging deploy is running. I'll report when it finishes, and look at the error rate again in 45 minutes.", ago(2)),
   done(ago(2), 0.18),
 ]);
+// Chats of the Tower, which is off (failover.ts): the Desk has acme-mobile (a chat of it runs there), so it takes the
+// first over; tower-notes is only on the Tower, with no Git remote, so no PC can run the second and its messages wait.
+const mobile = seed.addRepo("/home/dario/code/acme-mobile");
+seed.setRepoRemote(mobile, "https://github.com/example/acme-mobile.git");
+seed.setProjectPc(mobile, "pc:tower");
+const towerOnly = seed.addRepo("/home/dario/scratch/tower-notes");
+seed.setProjectPc(towerOnly, "pc:tower");
+const SWITCH_GID = "c4e7a1b2-0000-4000-8000-0000000f0a01";
+const NONE_GID = "c4e7a1b2-0000-4000-8000-0000000f0a02";
+const copyOf = (pc: string, hid: number, over: Partial<import("../packages/store/src/index.ts").Chat>, items: Item[]) => {
+  const c = chat({ ...over, sessionId: "" }, items);
+  seed.setHome(c.id, pc, hid);
+  return c;
+};
+copyOf("pc:desk", 901, { repoId: mobile, role: "lead", title: "Release notes for 2.4", updated: ago(600) }, [user("Draft the release notes for 2.4.", ago(620)), say("Here's a first draft of the 2.4 notes.", ago(600))]);
+copyOf("pc:tower", 902, { gid: SWITCH_GID, repoId: mobile, role: "lead", title: "Fix the login crash on Android", updated: ago(6) }, [
+  user("The app crashes on login on Android 14. Can you find why?", ago(30)),
+  say("It's the biometric prompt: it's shown before the activity is resumed. I moved it to `onResume` and the crash is gone in the emulator. Want me to add a test for it?", ago(6)),
+]);
+copyOf("pc:tower", 903, { gid: NONE_GID, repoId: towerOnly, role: "lead", title: "Sort the field recordings", updated: ago(8) }, [
+  user("Sort last week's recordings by place and date.", ago(40)),
+  say("Done: 38 files in 6 folders, by place, then date. Two had no date in their tags; they're in `undated/`.", ago(8)),
+]);
+// One this PC already took over from the Tower: its notice says so (failover.ts `switchedNotice`).
+const TAKEN_GID = "c4e7a1b2-0000-4000-8000-0000000f0a03";
+const tookN = (await import("../packages/net/src/failover.ts")).switchedNotice("Tower", "rig-pc", true);
+chat({ gid: TAKEN_GID, repoId: mobile, role: "lead", title: "Speed up the app's cold start", updated: ago(1) }, [
+  user("Cold start takes 3 s on a Pixel 6. Where does the time go?", ago(50)),
+  say("Most of it is the font cache built on the main thread (1.9 s). I can move it to a background thread.", ago(45)),
+  notice("monitor", tookN.text, tookN.detail),
+  user("Yes, do it.", ago(2)),
+]);
 const deploy = Bun.spawn(["sleep", "86400"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 const { procStart } = await import("../packages/agents/src/procfs.ts");
 const deployLog = join(dir, "state", "deploy.log");
@@ -357,7 +390,7 @@ const front = Bun.serve({
   },
 });
 console.log(`phonehub ready ${port}`);
-console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID, waiting: WAITING_GID }));
+console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID, waiting: WAITING_GID, switch: SWITCH_GID, none: NONE_GID, taken: TAKEN_GID }));
 const stop = async () => {
   front.stop(true);
   deploy.kill();

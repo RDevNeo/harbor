@@ -19,6 +19,8 @@ export interface BarsHost {
   engine: Engine;
   clones: CloneState;
   homeName(c: Chat): string;
+  /** Whether a PC of the mesh is on: Run on <owner> isn't offered while the owner is off. */
+  online?(pc: string): boolean;
 }
 
 export function stripRows(h: BarsHost, lead: number): Row[] {
@@ -49,11 +51,12 @@ function folder(h: BarsHost, c: Chat): Json {
   const r = repo ? { id: repo.id, name: repo.name, path: repo.path, dir: repoDir(repo), remote: repo.remote } : null;
   const wt = h.engine.worktreeOf(c);
   const chats = h.engine.chats.map((x) => ({ repoId: x.repoId, foreign: x.home !== "", home: x.home, homeName: h.homeName(x) }));
+  const owner = r ? cloneProjectOwner(r.id, chats) : null;
   const line = h.clones.folderLine({
     chat: { foreign: c.home !== "", device: c.device },
     repo: r,
     worktreeLost: wt !== null && !isDir(wt),
-    owner: r ? cloneProjectOwner(r.id, chats) : null,
+    owner: owner !== null && h.online?.(owner[0]) !== false ? owner : null,
     home: homedir(),
   });
   return cloneFolderJson(line);

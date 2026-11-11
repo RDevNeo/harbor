@@ -174,6 +174,14 @@ export interface PhoneDeps {
   projectIcon?: (repo: number) => string;
   /** A started chat moved between this PC, its devices and other PCs (relocate.rs). */
   relocate?: { why(chatId: number, to: string): string | null; relocate(chatId: number, to: string): Promise<string> };
+  /** A chat whose PC is off goes on on another PC (failover.ts): the line saying where, and its messages. */
+  failover?: {
+    line(c: Chat): { text: string; warn: boolean } | null;
+    send(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }, to: string | null, sendHere: (own: Chat) => Promise<Reply>): Promise<Reply>;
+    /** A new chat in a project whose folder's PC is off: where it starts ("" here, null nowhere now). */
+    draft(repo: number): { to: string | null; line: string; off: string } | null;
+    startedNotice(chat: number, off: string): void;
+  };
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
   worktrees?: {
     make(repo: number | null, base: string, about: string): Promise<unknown>;
@@ -426,7 +434,7 @@ export class PhoneRoutes {
   }
 
   private writable(c: Chat): boolean {
-    return !c.retired && (c.home === "" || this.d.hub.mesh.online(c.home));
+    return !c.retired && (c.home === "" || this.d.hub.mesh.online(c.home) || this.d.failover !== undefined);
   }
 
   since(id: number): number | null {
@@ -544,6 +552,9 @@ export class PhoneRoutes {
       home: c.home !== "" ? c.home : hub.mesh.me.id,
       home_name: c.home !== "" ? hub.mesh.nameOf(c.home) : hub.mesh.me.name,
       writable: this.writable(c),
+      // Its PC is off: where the next message goes (another PC takes the chat over), or that it waits.
+      failover: this.d.failover?.line(c)?.text ?? null,
+      failover_warn: this.d.failover?.line(c)?.warn === true,
       role: c.role,
       parent: parent === null ? null : this.idOf(parent, global),
       main: this.isMain(c),
@@ -811,7 +822,10 @@ export class PhoneRoutes {
    */
   private placeJson(repo: number): Record<string, Json> {
     const p = this.d.projectPlace?.(repo) ?? null;
-    return p === null ? { here: true, pc: "", pc_name: "", pc_online: false } : { here: false, pc: p.pc, pc_name: p.name, pc_online: p.online };
+    if (p === null) return { here: true, pc: "", pc_name: "", pc_online: false };
+    // Its PC is off: `failover` says where a new chat starts instead (failover.ts); the phone shows it as the draft's line.
+    const fo = p.online ? null : (this.d.failover?.draft(repo) ?? null);
+    return { here: false, pc: p.pc, pc_name: p.name, pc_online: p.online, ...(fo !== null ? { failover: fo.line } : {}) };
   }
 
   viewer(c: Chat, token: string, device: string): Viewer {
@@ -1212,6 +1226,11 @@ export class PhoneRoutes {
     // (Not for a chat another PC asked for: it picked this one.)
     const there = repo === null || from !== null ? null : this.folderPeer(repo, typeof body.device === "string" ? body.device : "");
     if (there !== null) return this.createOnPeer(there, { ...body, project_id: repo, device: "" }, sender, global, who);
+    // Its folder's PC is off: the chat starts on a PC that has the project or can clone it (failover.ts), or not now.
+    const fo = repo === null || from !== null || (typeof body.device === "string" && body.device !== "") ? null : (this.d.failover?.draft(repo) ?? null);
+    if (fo !== null && fo.to === null) return err(409, fo.line);
+    const foPeer = fo !== null && fo.to !== null && fo.to !== "" ? this.d.hub.mesh.peer(fo.to) : null;
+    if (foPeer !== null) return this.createOnPeer(foPeer, { ...body, project_id: repo, device: "", failover_off: fo?.off ?? "" }, sender, global, who);
     let made: unknown = null;
     if (body.worktree === true && (typeof body.device !== "string" || body.device === "") && this.d.worktrees) {
       const about = [body.title, body.text].find((t) => typeof t === "string" && t.trim() !== "");
@@ -1223,6 +1242,13 @@ export class PhoneRoutes {
     }
     const r = await this.createHere(body, sender, global, repo, made, from, who);
     if (made !== null && r.status >= 300) this.d.worktrees?.discard(repo, made);
+    // Started here because its project's PC is off (here, or asked by the PC the user is on): it says so.
+    const off = fo !== null ? fo.off : typeof body.failover_off === "string" ? body.failover_off : "";
+    const made2 = obj(r.body).id;
+    if (r.status < 300 && off !== "") {
+      const id = typeof made2 === "number" ? made2 : typeof made2 === "string" ? this.d.hub.mesh.byGid(made2) : null;
+      if (id !== null) this.d.failover?.startedNotice(id, off);
+    }
     return r;
   }
 
@@ -1306,6 +1332,13 @@ export class PhoneRoutes {
   /** mesh.rs `mesh_proxy`: a call about a copy, made at its home PC and answered with this PC's ids. */
   private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string, global: boolean, who: Who): Promise<Reply> {
     const peer = this.d.hub.mesh.peer(c.home);
+    // Its PC is off: a message goes on on another PC (failover.ts), or waits here.
+    if (!peer?.online && method === "POST" && p.length === 4 && p[3] === "send" && this.d.failover) {
+      const files = (Array.isArray(body.files) ? body.files : []).map((f) => (this.d.uploadsDir && typeof f === "string" ? resolveUpload(this.d.uploadsDir, f) : null)).filter((x): x is string => x !== null);
+      const to = typeof body.failover_to === "string" ? body.failover_to : null;
+      const { failover_to: _, ...rest } = body;
+      return this.d.failover.send(c, { text: typeof body.text === "string" ? body.text : "", files, mentions: Array.isArray(body.mentions) ? body.mentions : [] }, to, (own) => this.send(own, rest, sender, "", null, who));
+    }
     if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off: the chat is read-only until it's back`);
     // Moving is its home's to do; a home before it would only say "unknown call".
     if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Harbor that can't move chats: update it first`);

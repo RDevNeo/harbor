@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- When the PC a chat runs on is off, Harbor carries on on another PC of the mesh by itself, on the
+  desktop and the phone alike. Over the composer: "Tower is off. Next message runs on Desk." The
+  next message moves the chat to that PC: a new session with the conversation so far (the old
+  session and any unpushed work stay on the PC that is off), and the chat says "Tower is off: moved
+  to Desk". The PC picked is one that is on, has a Claude account and has the project (or can clone
+  it from its Git remote), the one with its folder first, then the most free memory. A new chat in
+  a project whose PC is off starts on such a PC. When none can run it, an amber line says so and
+  messages wait until a PC is back, then go out by themselves. A PC that comes back hands the chat
+  to the PC that took it over, unless it went on there too.
+
 ## [0.173.1] - 2026-11-10
 
 ### Fixed
