@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.175.0] - 2026-11-11
+
+### Added
+- Split chat panes: drag a chat from the sidebar into the center to see it beside the open one, up
+  to 4 at once. With one pane the drop goes to the left or right half; with more, to an edge of the
+  pane under the pointer, and its middle replaces that pane. Layouts 1, 2, 1+2 and 2x2 from the top
+  bar (which then shows "N of 4" in place of the breadcrumb), dividers you can drag, and a header per
+  pane with its status, maximize and close (the chat keeps running). Click a pane, press Ctrl+1..4
+  or click a sidebar chat to type there; Ctrl+W closes the focused pane. Sidebar rows show their pane
+  number, short panes get a one-line composer, and the layout survives restarts.
+
 ## [0.174.2] - 2026-11-11
 
 ### Fixed
