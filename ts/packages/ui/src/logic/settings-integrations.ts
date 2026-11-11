@@ -196,7 +196,12 @@ export function realView(): AppsView {
     googleAccounts: mcp.googleAccounts,
     discordLine: (about) => discord.card(about),
     whatsappLine: (about) => whatsapp.card(about),
-    locals: () => mcp.locals().map((l) => ({ id: l.local.id, label: l.local.label, found: l.def !== undefined })),
+    // A local server that Harbor has its own app for (Discord) isn't a chip: the app's card is it.
+    locals: () =>
+      mcp
+        .locals()
+        .filter((l) => mcp.app(l.local.id) === undefined)
+        .map((l) => ({ id: l.local.id, label: l.local.label, found: l.def !== undefined })),
     isOff: mcp.isOff,
   };
 }
