@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.176.0] - 2026-11-11
+
+### Changed
+- Split chat panes take any layout of up to 4: each split side by side or stacked, nested (3
+  columns, 2 + a full-width row, 1 + 2 stacked, 4 rows, 2x2, ...). Drop a chat on any side of a
+  pane, or near the very edge of the center for a full-width row or full-height column; dividers
+  resize at every level. Drag a pane by its header onto another pane to swap them, or onto a side
+  or the outer edge to move it there. Every split pane has a slim one-line composer (model, mic,
+  attach, send) with where the agent works and its branch under it. Headers show only the chat's
+  name and status; no pane numbers or blue focus border (the focused pane's name is just
+  brighter), and the sidebar marks open chats with a small two-column glyph. Layout buttons:
+  columns, rows, one + stack, 2x2.
+
 ## [0.175.0] - 2026-11-11
 
 ### Added
