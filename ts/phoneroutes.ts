@@ -452,7 +452,12 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     if (isReply(target)) return target;
     if (target.t === "chat") h.wantPr(target.id);
     const info = h.worktrees.info(target);
-    if (!info) return ok({ git: false });
+    if (!info) {
+      // Not Git (or no project): the folder its agent runs in, which the footer shows in place of a branch.
+      const c = target.t === "chat" ? h.engine().chat(target.id) : undefined;
+      const path = c && c.home === "" && c.device === "" ? h.engine().chatCwd(c) : "";
+      return ok(path === "" ? { git: false } : { git: false, path });
+    }
     const newWorktree = target.t === "draft" && query(call, "worktree") === "1";
     const base = query(call, "base") ?? "";
     const c = target.t === "chat" ? h.engine().chat(target.id) : undefined;

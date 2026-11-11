@@ -27,7 +27,7 @@ import { IssuesBus, IssuesPage } from "issues.slint";
 import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
-import { PaneHead, PaneBody, PaneDiv, PaneDrop, PanePreset, PaneMetrics, SidePane, PaneHeader, LayoutBar, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
+import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, SidePane, PaneHeader, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
 
 export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
@@ -115,14 +115,13 @@ component TopBar {
     in property <string> mem;
     in property <bool> mem-open;
     callback mem-clicked(length, length);
-    // Split panes (panes.slint): the layout buttons and "N of 4" in place of the breadcrumb; at four, while a chat is
-    // dragged, the notice that only a replace is left.
+    // Split panes (panes.slint): no breadcrumb (each pane's header names its chat; layout is by dragging); at four, while
+    // a chat is dragged, the notice that only a replace is left.
     in property <bool> split;
-    in property <[PanePreset]> presets;
-    in property <int> split-count;
     in property <bool> cap;
-    callback preset(string);
-    height: 46px;
+    // Whole physical pixels, so the 1px line under it is one crisp row at any scale (zoom 90% on a 1.25 display
+    // put it at 51.75: drawn on two half-lit rows that partial redraws left uneven, as a flickering stroke).
+    height: round(46px / 1phx) * 1phx;
     HorizontalLayout {
         padding-left: 18px;
         padding-right: 10px;
@@ -139,18 +138,8 @@ component TopBar {
                 root.show-sidebar();
             }
         }
-        if root.split: HorizontalLayout {
+        if root.split: Rectangle {
             horizontal-stretch: 1;
-            LayoutBar {
-                presets: root.presets;
-                count: root.split-count;
-                pick(id) => {
-                    root.preset(id);
-                }
-            }
-            Rectangle {
-                horizontal-stretch: 1;
-            }
         }
         if !root.split: HorizontalLayout {
             horizontal-stretch: 1;
@@ -506,7 +495,7 @@ export component AppWindow inherits Window {
 
     in property <Crumbs> crumbs;
     // Split panes (logic/splitpanes.ts): how many, each one's header and place, the others' transcripts, the dividers,
-    // the focused one's place (shares of the centre), the layout buttons, and where a dragged chat would land.
+    // the focused one's place (shares of the centre) and where a dragged chat would land.
     in property <int> split-count: 1;
     in property <[PaneHead]> split-heads;
     in property <[PaneBody]> split-bodies;
@@ -515,13 +504,11 @@ export component AppWindow inherits Window {
     in property <float> split-fy: 0;
     in property <float> split-fw: 1;
     in property <float> split-fh: 1;
-    in property <[PanePreset]> split-presets;
     in property <PaneDrop> split-drop;
     // Pane i takes the keyboard (with its composer focused or not; its transcript's distance from its end, following).
     callback split-focus(int, bool, length, bool);
     callback split-close(int);
     callback split-solo(int);
-    callback split-preset(string);
     callback split-resize(string, float);
     // A chat dragged from the sidebar over (shares of the centre; then the outer edges' band, shares too) and dropped
     // there; a pane dragged by its header, the same; the drag called off (Esc).
@@ -554,6 +541,8 @@ export component AppWindow inherits Window {
     callback proc-toggle(int);
     callback proc-open(string);
     in property <bool> team-has-project;
+    // Beside split panes, the team panel names the focused pane's chat.
+    in property <string> team-chat-title;
     in-out property <bool> team-settled-open;
     callback team();
     callback open-agent(int);
@@ -1059,12 +1048,7 @@ export component AppWindow inherits Window {
                         }
                         mem: root.view == "chat" ? root.chat-mem : "";
                         split: body.split;
-                        presets: root.split-presets;
-                        split-count: root.split-count;
                         cap: root.drag-chat >= 0 && root.split-drop.cap;
-                        preset(id) => {
-                            root.split-preset(id);
-                        }
                         mem-open: root.pop-id == "mem-chat";
                         mem-clicked(x, y) => {
                             root.mem-pop("mem-chat", x, y);
@@ -1079,11 +1063,11 @@ export component AppWindow inherits Window {
                         property <bool> team-docked: root.view == "chat" && root.team-enabled && root.team-on && self.width - 300px >= 440px;
                         // The panes' area: the centre left of the docked panel.
                         property <length> area-w: self.width - (team-docked ? 300px : 0px);
-                        property <length> fx: split ? floor(root.split-fx * area-w / 1px) * 1px : 0px;
-                        property <length> fy: split ? floor(root.split-fy * self.height / 1px) * 1px : 0px;
-                        property <length> fw: split ? floor((root.split-fx + root.split-fw) * area-w / 1px) * 1px - fx : area-w;
-                        property <length> fh: split ? floor((root.split-fy + root.split-fh) * self.height / 1px) * 1px - fy : self.height;
-                        property <length> top: split ? PaneMetrics.head : 0px;
+                        property <length> fx: split ? floor(root.split-fx * area-w / 1phx) * 1phx : 0px;
+                        property <length> fy: split ? floor(root.split-fy * self.height / 1phx) * 1phx : 0px;
+                        property <length> fw: split ? floor((root.split-fx + root.split-fw) * area-w / 1phx) * 1phx - fx : area-w;
+                        property <length> fh: split ? floor((root.split-fy + root.split-fh) * self.height / 1phx) * 1phx - fy : self.height;
+                        property <length> top: split ? round(PaneMetrics.head / 1phx) * 1phx : 0px;
                         // Split, every pane's composer is the one-line one (single, the usual one).
                         property <bool> compact: split;
                         property <length> room: fw;
@@ -1094,9 +1078,12 @@ export component AppWindow inherits Window {
                         property <length> hero-top: fy + top + max((fh - top) * 0.5 - 375px, 24px) + 7px;
                         if body.team-docked: TeamPanel {
                             x: body.area-w;
-                            y: 9px;
-                            width: 300px;
-                            height: parent.height - 9px;
+                            y: body.split ? 0px : 9px;
+                            width: parent.width - self.x;
+                            height: parent.height - self.y;
+                            split: body.split;
+                            head-h: body.top;
+                            chat-title: root.team-chat-title;
                             agents: root.team-agents;
                             settled: root.team-settled;
                             wakeups: root.team-wakeups;
@@ -1205,7 +1192,7 @@ export component AppWindow inherits Window {
                         }
                         composer-box := VerticalLayout {
                             x: body.fx + body.side;
-                            y: body.centred ? floor((body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px)) / 1px) * 1px : body.fy + body.fh - self.height;
+                            y: body.centred ? floor((body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px)) / 1phx) * 1phx : body.fy + body.fh - self.height;
                             width: body.column;
                             height: self.preferred-height;
                             padding-top: body.centred ? 0px : 8px;
@@ -1340,10 +1327,10 @@ export component AppWindow inherits Window {
                             height: body.height;
                             for h[i] in root.split-heads: SidePane {
                                 visible: h.shown;
-                                x: floor(h.x * body.area-w / 1px) * 1px;
-                                y: floor(h.y * body.height / 1px) * 1px;
-                                width: floor((h.x + h.w) * body.area-w / 1px) * 1px - self.x;
-                                height: h.focused ? PaneMetrics.head : floor((h.y + h.h) * body.height / 1px) * 1px - self.y;
+                                x: floor(h.x * body.area-w / 1phx) * 1phx;
+                                y: floor(h.y * body.height / 1phx) * 1phx;
+                                width: floor((h.x + h.w) * body.area-w / 1phx) * 1phx - self.x;
+                                height: h.focused ? round(PaneMetrics.head / 1phx) * 1phx : floor((h.y + h.h) * body.height / 1phx) * 1phx - self.y;
                                 head: h;
                                 body: root.split-bodies[i];
                                 content-w: root.content-w;
@@ -1393,18 +1380,18 @@ export component AppWindow inherits Window {
                             }
                             // 1px dividers: brighter and wider, with the resize cursor, under the pointer; dragged, they resize.
                             for d in root.split-divs: TouchArea {
-                                property <length> at: d.dir == "h" ? floor(d.at * body.area-w / 1px) * 1px : floor(d.at * body.height / 1px) * 1px;
-                                x: d.dir == "h" ? self.at - 3px : floor(d.ax * body.area-w / 1px) * 1px;
-                                y: d.dir == "v" ? self.at - 3px : floor(d.ay * body.height / 1px) * 1px;
-                                width: d.dir == "h" ? 7px : floor((d.ax + d.aw) * body.area-w / 1px) * 1px - self.x;
-                                height: d.dir == "v" ? 7px : floor((d.ay + d.ah) * body.height / 1px) * 1px - self.y;
+                                property <length> at: d.dir == "h" ? floor(d.at * body.area-w / 1phx) * 1phx : floor(d.at * body.height / 1phx) * 1phx;
+                                x: d.dir == "h" ? self.at - 3px : floor(d.ax * body.area-w / 1phx) * 1phx;
+                                y: d.dir == "v" ? self.at - 3px : floor(d.ay * body.height / 1phx) * 1phx;
+                                width: d.dir == "h" ? 7px : floor((d.ax + d.aw) * body.area-w / 1phx) * 1phx - self.x;
+                                height: d.dir == "v" ? 7px : floor((d.ay + d.ah) * body.height / 1phx) * 1phx - self.y;
                                 mouse-cursor: d.dir == "h" ? MouseCursor.col-resize : MouseCursor.row-resize;
                                 Rectangle {
                                     x: d.dir == "h" ? (self.has-hover-or-pressed ? 2px : 3px) : 0px;
                                     y: d.dir == "v" ? (self.has-hover-or-pressed ? 2px : 3px) : 0px;
                                     property <bool> has-hover-or-pressed: parent.has-hover || parent.pressed;
-                                    width: d.dir == "h" ? (self.has-hover-or-pressed ? 3px : 1px) : parent.width;
-                                    height: d.dir == "v" ? (self.has-hover-or-pressed ? 3px : 1px) : parent.height;
+                                    width: d.dir == "h" ? (self.has-hover-or-pressed ? 3px : 1phx) : parent.width;
+                                    height: d.dir == "v" ? (self.has-hover-or-pressed ? 3px : 1phx) : parent.height;
                                     background: self.has-hover-or-pressed ? Theme.gray-700 : Theme.border;
                                 }
                                 moved => {

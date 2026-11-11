@@ -65,7 +65,7 @@ import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, ra
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type BrowserData, type WorkChip, type WorkBarData } from "./window.ts";
 
 /** The transcript's cards, swapped by dev hot reload (hotdev.ts). */
 const transcript = hot.unit("cards", "packages/ui/src/cards.ts", cardsModule);
@@ -108,6 +108,11 @@ interface Sel {
 }
 
 /** Keeps a model's rows equal to `next`, touching only the rows that changed. */
+const workChip = (x: BarChip | null): WorkChip => (x === null ? { shown: false, icon: "", text: "", tone: "", tip: "" } : { shown: true, ...x });
+const barData = (bar: Bar): WorkBarData => ({ shown: bar.shown, live: bar.live, ws: workChip(bar.ws), branch: workChip(bar.branch), pr: workChip(bar.pr) });
+
+const sameStripRow = (a: StripRow, b: StripRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
+
 function sync<T>(model: slint.ArrayModel<T>, next: readonly T[], same: (a: T, b: T) => boolean = (a, b) => a === b): void {
   const n = Math.min(model.length, next.length);
   for (let i = 0; i < n; i++) {
@@ -443,6 +448,8 @@ export class Shell {
   private wsAt = 0;
   private wsGen = 0;
   /** What git does now for the footer ("Switching to main…"), until the call answers. */
+  /** Split panes' footers: each chat's last answer from the PC, asked again after 10 s. */
+  private paneWs = new Map<number, { info: WsInfo | null; at: number }>();
   private wsPending: { branch: boolean; what: string } | null = null;
   private bar: Bar = { shown: false, ws: null, branch: null, pr: null, live: false };
   /** A new chat's picks: in a new worktree (from `base`, "" for the checkout's branch) or in the checkout. */
@@ -1451,22 +1458,44 @@ export class Shell {
 
   private paneInfo(id: number): PaneInfo {
     const c = this.data.chat(id);
-    if (!c) return { title: "", ws: "", branch: "", status: null, running: false, draft: "", model: "" };
-    const row = [...this.rows].find((r) => r.id === id && (r.kind === "thread" || r.kind === "loose")) ?? [...this.settledRows].find((r) => r.id === id && r.kind === "loose");
-    const kind = this.account(c.account)?.kind ?? kindOfAccount(c.account);
-    const branch = row?.branch ?? "";
-    // Where its agent works, as the usual view's footer says it: its own worktree, else the project's checkout.
-    const dir = c.home !== "" ? null : this.engine.worktreeOf(c);
-    const wt = c.home !== "" ? (this.shellMesh.remote(c.id)?.worktree ?? "") : dir === null ? "" : basename(dir);
+    const row = c ? ([...this.rows].find((r) => r.id === id && (r.kind === "thread" || r.kind === "loose")) ?? [...this.settledRows].find((r) => r.id === id && r.kind === "loose")) : undefined;
+    // The focused pane's composer is the usual one (its draft is the window's).
+    const draft = (id === this.chatId && this.view === "chat" ? this.win.draft : this.drafts.get(id)) ?? "";
+    const sel = c ? { account: c.account, model: c.model, effort: c.effort, access: c.access, device: c.device } : this.newSel();
+    const { state, mine } = this.composerStateOf(c, sel, draft, false);
+    const strip = this.stripOf(c);
     return {
-      title: c.role === "sub" ? c.name : c.title,
-      ws: wt !== "" ? `Worktree · ${wt}` : branch !== "" ? "Current checkout" : "",
-      branch,
+      title: c ? (c.role === "sub" ? c.name : c.title) : "",
       status: row?.status ?? null,
       running: this.running(id),
-      draft: this.drafts.get(id) ?? "",
-      model: this.modelLabel(kind, c.model),
+      draft,
+      composer: state,
+      logo: this.logoOf(kindOfAccount(sel.account)),
+      photo: this.photoPixels(mine?.photo ?? ""),
+      bar: barData(this.chatBar(c, c ? this.paneWsInfo(c) : null, null)),
+      strip: strip.rows,
+      stripView: strip.view,
     };
+  }
+
+  /** A split pane's footer: its chat's last answer from the PC, asked again (once at a time) after 10 s. */
+  private paneWsInfo(c: Chat): WsInfo | null {
+    if (this.view === "chat" && c.id === this.chatId && this.wsKey === new URLSearchParams({ chat: String(c.id) }).toString()) return this.wsInfo;
+    const e = this.paneWs.get(c.id);
+    if (e !== undefined && Date.now() - e.at <= 10_000) return e.info;
+    const next = { info: e?.info ?? null, at: Date.now() };
+    this.paneWs.set(c.id, next);
+    if (this.paneWs.size > 32) for (const k of this.paneWs.keys()) if (this.paneWs.size > 32 && !this.split.holds(k)) this.paneWs.delete(k);
+    const call = this.hub.call;
+    if (call)
+      void call("GET", "v1/workspace", { chat: String(c.id) }).then(
+        (r) => {
+          next.info = r.status < 300 && typeof r.body === "object" && r.body !== null ? (r.body as WsInfo) : null;
+          this.split.refreshHeads();
+        },
+        () => {},
+      );
+    return next.info;
   }
 
   /** A split pane's transcript, built as the usual view builds the open chat's (no queued message being edited). */
@@ -1552,24 +1581,27 @@ export class Shell {
   /** The running subagents over a lead's composer (agentstrip.rs `agent_strip`). */
   private refreshStrip(): void {
     const lead = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const { rows, view } = this.stripOf(lead);
+    sync(this.stripRows, rows, sameStripRow);
+    const w = this.win;
+    w.strip_title = view.title;
+    w.strip_names = view.names;
+    w.strip_header = view.header;
+    w.strip_folded = view.folded;
+    w.strip_open = view.open;
+  }
+
+  /** Chat `lead`'s strip: its running subagents, and how the strip shows them. */
+  private stripOf(lead: Chat | undefined): { rows: StripRow[]; view: { title: string; names: string; header: boolean; folded: boolean; open: boolean } } {
     const subs = lead?.role === "lead" ? this.engine.liveSubs(lead.id) : [];
     const queued = lead ? this.engine.subsOf(lead.id).reduce((n, c) => n + (this.engine.pending.get(c.id)?.length ?? 0), 0) : 0;
     const v = stripView(subs.length, queued, lead ? (this.stripFold.get(lead.id) ?? null) : null);
-    sync(
-      this.stripRows,
-      subs.map(([c, secs]) => {
-        const acc = this.account(c.account);
-        const kind = acc?.kind ?? kindOfAccount(c.account);
-        return { id: c.id, name: c.name, logo: this.logoOf(kind), badge: this.badgeOf(c.account, acc), tip: richTip({ title: c.name, sub: this.modelLabel(kind, c.model), rows: [["Task", c.title], ["Working", stripElapsed(secs)]] }) };
-      }),
-      (a, b) => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 }),
-    );
-    const w = this.win;
-    w.strip_title = v.title;
-    w.strip_names = subs.map(([c]) => c.name).join(", ");
-    w.strip_header = v.header;
-    w.strip_folded = v.folded;
-    w.strip_open = v.open;
+    const rows = subs.map(([c, secs]) => {
+      const acc = this.account(c.account);
+      const kind = acc?.kind ?? kindOfAccount(c.account);
+      return { id: c.id, name: c.name, logo: this.logoOf(kind), badge: this.badgeOf(c.account, acc), tip: richTip({ title: c.name, sub: this.modelLabel(kind, c.model), rows: [["Task", c.title], ["Working", stripElapsed(secs)]] }) };
+    });
+    return { rows, view: { title: v.title, names: subs.map(([c]) => c.name).join(", "), header: v.header, folded: v.folded, open: v.open } };
   }
 
   /** The team panel beside a lead chat (teamui.rs `team_panel`). */
@@ -1634,6 +1666,7 @@ export class Shell {
       sameJson,
     );
     this.win.team_has_project = lead.repoId !== null;
+    if (this.win.team_chat_title !== lead.title) this.win.team_chat_title = lead.title;
     sync(
       this.hookRows,
       this.engine.webhooks
@@ -2099,30 +2132,24 @@ export class Shell {
     return draftPlaceLine(repo.name, p, this.draftTarget() ?? (this.sel.device === "" ? null : this.sel.device)) ?? "";
   }
 
-  private refreshComposer(): void {
-    this.composerChanged();
-    this.shareDraft();
-    this.refreshMentions();
-    const repo = this.currentRepo();
-    this.win.untrusted = repo !== undefined && !this.engine.trusted(repo.id);
-    this.patchBar.refresh();
-    const sel = this.chatSel();
+  /** The composer's state for chat `open` (undefined: the draft) with `draft` typed: the usual view's, and each
+   * split pane's (panes.slint draws the same Composer). */
+  private composerStateOf(open: Chat | undefined, sel: Sel, draft: string, editing: boolean): { state: ComposerState; mine: SharedAccount | undefined } {
     const kind = this.kind(sel);
     const acc = this.account(sel.account);
-    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const id = open?.id ?? DRAFT;
     const copy = this.meshChat.foreign(open);
-    const running = this.view === "chat" && this.running(this.chatId);
-    const steer = running && (copy || this.engine.steering(this.chatId) !== "no") && this.engine.followDefault() === "steer";
-    const draftEmpty = this.win.draft.trim() === "";
-    const editing = this.queueEdit !== null && this.queueEdit.chat === this.key();
-    const resume = this.view === "chat" ? this.resumeOf(this.chatId) : null;
-    const device = this.deviceLabel(kind);
+    const running = open !== undefined && this.running(id);
+    const steer = running && (copy || this.engine.steering(id) !== "no") && this.engine.followDefault() === "steer";
+    const draftEmpty = draft.trim() === "";
+    const resume = open !== undefined ? this.resumeOf(id, draft) : null;
+    const device = this.deviceLabel(kind, open);
     // The account as the mesh names it: its owner's badge, and another PC's where it runs (meshaccounts.ts).
     // Another PC's chat runs on that PC's accounts.
     const at = copy && open ? open.home : "";
     const mine = this.shared().find((x) => (x.pc === at && x.account === sel.account) || (at === "" && x.id === sel.account));
     // Its PC is off: where the next message goes, or that it waits (failover.ts).
-    const failover = this.view === "chat" ? this.meshChat.failoverLine(this.data.chat(this.chatId)) : null;
+    const failover = open !== undefined ? this.meshChat.failoverLine(open) : null;
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
       // With their photo the label already names them: "Claude · Dana Reyes's, runs on laptop".
@@ -2147,16 +2174,29 @@ export class Shell {
                 ? "Resume queue: the next queued message starts"
                 : resume === "reply"
                   ? "Resume (Enter): ask the agent to go on"
-                  : this.view === "chat"
-                    ? this.meshChat.sendTip(this.chatId)
+                  : open !== undefined
+                    ? this.meshChat.sendTip(id)
                     : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
-      typing: this.view === "chat" ? this.meshChat.typing(this.chatId) : "",
+      typing: open !== undefined ? this.meshChat.typing(id) : "",
       notice: failover?.text ?? "",
       notice_tone: failover?.tone ?? "",
-      place: this.view === "chat" ? "" : this.draftLine(),
-      error: this.meshChat.error(this.key()),
+      place: open !== undefined ? "" : this.draftLine(),
+      error: this.meshChat.error(id),
     };
+    return { state, mine };
+  }
+
+  private refreshComposer(): void {
+    this.composerChanged();
+    this.shareDraft();
+    this.refreshMentions();
+    const repo = this.currentRepo();
+    this.win.untrusted = repo !== undefined && !this.engine.trusted(repo.id);
+    this.patchBar.refresh();
+    const sel = this.chatSel();
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const { state, mine } = this.composerStateOf(open, sel, this.win.draft, this.queueEdit !== null && this.queueEdit.chat === this.key());
     this.win.composer = state;
     // Its owner's photo in place of the badge's initials, once it's loaded.
     const photo = this.photoPixels(mine?.photo ?? "");
@@ -2191,7 +2231,8 @@ export class Shell {
     const key = q === null ? "" : new URLSearchParams(q).toString();
     if (key !== this.wsKey) {
       this.wsKey = key;
-      this.wsInfo = null;
+      // A chat a split pane showed: its last answer, so the footer doesn't blink as it takes the keyboard.
+      this.wsInfo = this.view === "chat" ? (this.paneWs.get(this.chatId)?.info ?? null) : null;
       force = true;
     }
     if (q !== null && this.hub.call && (force || Date.now() - this.wsAt > 10_000)) {
@@ -2201,6 +2242,7 @@ export class Shell {
         (r) => {
           if (my !== this.wsGen || key !== this.wsKey) return;
           this.wsInfo = r.status < 300 && typeof r.body === "object" && r.body !== null ? (r.body as WsInfo) : null;
+          if (this.view === "chat") this.paneWs.set(this.chatId, { info: this.wsInfo, at: Date.now() });
           this.drawWorkBar();
         },
         () => {},
@@ -2209,8 +2251,8 @@ export class Shell {
     this.drawWorkBar();
   }
 
-  private drawWorkBar(): void {
-    const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+  /** The footer for chat `c` (undefined: the draft) from the PC's answer `info` (null: not yet). */
+  private chatBar(c: Chat | undefined, info: WsInfo | null, pending: { branch: boolean; what: string } | null): Bar {
     let marker: WsMarker | null = null;
     let pr: WsPr | null = null;
     let home = "";
@@ -2229,14 +2271,20 @@ export class Shell {
         if (c.device !== "") home = this.hub.auto?.name?.(c.device) ?? c.device;
       }
     }
-    const bar = workBar(this.view === "chat" || this.draftRepo !== null ? this.wsInfo : null, { draft: this.view !== "chat", marker, pr, home, pending: this.wsPending });
-    const chip = (x: BarChip | null): WorkChip => (x === null ? { shown: false, icon: "", text: "", tone: "", tip: "" } : { shown: true, ...x });
+    // Until the PC says (and outside Git): the folder the chat runs in, so the row is always there.
+    const folder = c ? this.data.cwd(c) : "";
+    return workBar(info, { draft: c === undefined, marker, pr, home, pending, folder });
+  }
+
+  private drawWorkBar(): void {
+    const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const bar = this.chatBar(c, this.view === "chat" || this.draftRepo !== null ? this.wsInfo : null, this.wsPending);
     this.bar = bar;
     // The title bar names the branch the agent is on: a worktree's own, not the checkout's.
     const crumbs = this.win.crumbs;
     const head = this.headBranch(crumbs.branch);
     if (head !== crumbs.branch) this.win.crumbs = { ...crumbs, branch: head };
-    this.win.work_bar = { shown: bar.shown, live: bar.live, ws: chip(bar.ws), branch: chip(bar.branch), pr: chip(bar.pr) };
+    this.win.work_bar = barData(bar);
   }
 
   /** The open chat's branch when it works in its own worktree (the footer's answer), else `checkout`'s. */
@@ -2987,10 +3035,10 @@ export class Shell {
 
   /** What the send button's Resume does in chat `id`'s composer as it stands (`id` is the open one; DRAFT: nothing).
    * Stopped with messages still queued, they wait for it (or the next message). */
-  private resumeOf(id: number): "queue" | "reply" | null {
+  private resumeOf(id: number, draft = this.win.draft): "queue" | "reply" | null {
     if (id === DRAFT) return null;
     return resumeKind({
-      empty: this.win.draft.trim() === "" && (this.attached.get(id)?.length ?? 0) === 0 && this.messageMentions().length === 0,
+      empty: draft.trim() === "" && (this.attached.get(id)?.length ?? 0) === 0 && (this.mentions.get(id) ?? []).filter((m) => !isChat(m)).length === 0,
       running: this.running(id),
       editing: this.queueEdit?.chat === id,
       held: this.engine.queue.held.has(id) && this.engine.queued(id).length > 0,
@@ -3726,6 +3774,7 @@ export class Shell {
     void providerLogo(kind, token("fg", this.dark)).then((p) => {
       this.logos.set(key, p);
       if (this.win.pop_id === "model") this.refreshPicker();
+      this.split.refreshHeads();
     });
     return { width: 1, height: 1, data: new Uint8Array(4) };
   }
@@ -3949,8 +3998,8 @@ export class Shell {
     return p.pc;
   }
 
-  private deviceLabel(kind: string): string {
-    const [chat, current] = this.deviceOf();
+  private deviceLabel(kind: string, of?: Chat): string {
+    const [chat, current] = of ? [of.id, of.device] : this.deviceOf();
     // Another PC's chat: its device is that PC's ("" is that PC itself, not this one).
     const open = chat === null ? undefined : this.data.chat(chat);
     const placed = open === undefined ? null : (this.hub.auto?.label(open) ?? null);

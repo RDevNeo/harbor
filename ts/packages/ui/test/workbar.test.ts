@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ICONS } from "../src/icons.ts";
 import { tipParts } from "../src/logic/tips.ts";
-import { branchClick, prChip, renameBranchNote, renameFolderNote, workBar, type WsInfo, wsClick } from "../src/logic/workbar.ts";
+import { branchClick, folderChip, prChip, renameBranchNote, renameFolderNote, workBar, type WsInfo, wsClick } from "../src/logic/workbar.ts";
 
 const checkout: WsInfo = { git: true, mode: "checkout", name: null, path: "/src/app", branch: "main", dirty: 0, base: "", can_move: true, can_rename: false, can_rename_folder: false, pending: null };
 const own: WsInfo = { ...checkout, mode: "worktree", name: "app-fix-login", path: "/data/worktrees/app-fix-login", branch: "harbor/fix-login", can_rename: true, can_rename_folder: true, pushed: "origin" };
@@ -16,6 +16,19 @@ test("a chat in the checkout, one in its own worktree, a new chat's picks", () =
   expect([c.ws?.text, c.branch?.text]).toEqual(["New worktree", "from main"]);
   expect(workBar({ git: false }, o).shown).toBe(false);
   expect(workBar(null, o).shown).toBe(false);
+});
+
+test("outside Git, with no project, or before the PC says: the folder it runs in", () => {
+  const plain = workBar({ git: false, path: "/src/notes" }, o);
+  expect([plain.shown, plain.ws?.text, plain.ws?.icon, plain.ws?.tip, plain.branch, plain.live]).toEqual([true, "Folder · notes", ICONS.FOLDER, "/src/notes", null, false]);
+  // Not answered yet: the folder the shell knows, so the row is there from the start.
+  const early = workBar(null, { ...o, folder: "/src/app/" });
+  expect([early.shown, early.ws?.text]).toEqual([true, "Folder · app"]);
+  const device = workBar({ git: false }, { ...o, folder: "/Users/sam/app", home: "laptop" });
+  expect([device.ws?.text, device.ws?.tip]).toEqual(["Folder · app", "/Users/sam/app\non laptop"]);
+  expect(folderChip("/home/sam", "", "/home/sam").text).toBe("Folder · ~");
+  // Git's answer wins over the folder.
+  expect(workBar(checkout, { ...o, folder: "/src/app" }).ws?.text).toBe("Current checkout");
 });
 
 test("gone, another PC's worktree, another PC's checkout with a PR", () => {

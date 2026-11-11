@@ -548,8 +548,25 @@ export component Composer {
     // A split pane's one-line composer: the text on one line (up to four as it grows), the model, the mic, attach and
     // send beside it; the tray's chips in one small muted row under it, none of the chips row.
     in property <bool> compact;
-    property <length> text-h: root.compact ? min(max(field.preferred-height, line), 4 * line) : min(max(field.preferred-height, 3 * line + 2px), root.max-h);
+    // Four of the text's own lines, so none shows cut in half at the bottom.
+    property <length> text-h: root.compact ? min(max(field.preferred-height, line), max(line, 4 * one-line.preferred-height)) : min(max(field.preferred-height, 3 * line + 2px), root.max-h);
+    // Compact: the text and its buttons on one line while it fits beside them; longer (or a second line), the text takes
+    // the whole width and the buttons go to a row under it, so it's never squeezed into a narrow column.
     property <length> tail-w: root.compact ? tail.preferred-width + 8px : 0px;
+    property <bool> wrapped: root.compact && (probe.preferred-width > text-box.width - root.who-w - root.tail-w || probe.preferred-height > root.line * 1.5);
+    property <length> beside: root.wrapped ? 0px : root.tail-w;
+    // Keeps the caret in view once the text is taller than its box (it scrolls inside, not past the card).
+    // The caret's last place in the text, kept so a layout that grows the text after it moved still shows it.
+    property <Point> caret;
+    function show-caret(p: Point) {
+        root.caret = p;
+        if p.y < -scroller.viewport-y {
+            scroller.viewport-y = -p.y;
+        } else if p.y + root.line > -scroller.viewport-y + scroller.height {
+            scroller.viewport-y = -(p.y + root.line - scroller.height);
+        }
+        scroller.viewport-y = max(min(0px, scroller.height - scroller.viewport-height), min(0px, scroller.viewport-y));
+    }
     VerticalLayout {
         spacing: 8px;
         if root.strip-rows.length > 0: AgentStrip {
@@ -820,35 +837,78 @@ export component Composer {
                         }
                     }
                     text-box := Rectangle {
-                        height: root.text-h;
+                        height: root.text-h + (root.wrapped ? 36px : 0px);
+                        probe := Text {
+                            visible: false;
+                            text: field.text;
+                            font-size: 14px;
+                            wrap: no-wrap;
+                        }
+                        one-line := Text {
+                            visible: false;
+                            text: "Ag";
+                            font-size: 14px;
+                        }
                         if field.text == "": Text {
                             x: 0;
                             y: 0;
-                            width: parent.width - root.who-w - root.tail-w;
+                            width: parent.width - root.who-w - root.beside;
                             text: root.compact ? "Message…" : root.state.hint;
                             font-size: 14px;
                             color: Theme.gray-900;
                             wrap: root.compact ? no-wrap : word-wrap;
                             overflow: elide;
                         }
-                        FocusScope {
+                        scroller := Flickable {
                             x: 0;
-                            width: parent.width - root.who-w - root.tail-w;
-                            capture-key-pressed(e) => {
-                                if root.key(e) {
-                                    return accept;
+                            y: 0;
+                            width: parent.width - root.who-w - root.beside;
+                            height: root.text-h;
+                            viewport-width: self.width;
+                            viewport-height: max(field.preferred-height, self.height);
+                            interactive: false;
+                            // Without the keyboard (a draft brought back, another pane's), it shows the text's end.
+                            changed viewport-height => {
+                                if field.has-focus {
+                                    root.show-caret(root.caret);
+                                } else {
+                                    self.viewport-y = min(0px, self.height - self.viewport-height);
                                 }
-                                reject
                             }
-                            field := TextInput {
-                                font-size: 14px;
-                                color: Theme.fg;
-                                single-line: false;
-                                wrap: word-wrap;
-                                selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
-                                selection-foreground-color: Theme.fg;
-                                edited => {
-                                    root.edited(self.text);
+                            changed height => {
+                                if field.has-focus {
+                                    root.show-caret(root.caret);
+                                } else {
+                                    self.viewport-y = min(0px, self.height - self.viewport-height);
+                                }
+                            }
+                            init => {
+                                self.viewport-y = min(0px, self.height - self.viewport-height);
+                            }
+                            FocusScope {
+                                x: 0;
+                                y: 0;
+                                width: scroller.width;
+                                height: scroller.viewport-height;
+                                capture-key-pressed(e) => {
+                                    if root.key(e) {
+                                        return accept;
+                                    }
+                                    reject
+                                }
+                                field := TextInput {
+                                    font-size: 14px;
+                                    color: Theme.fg;
+                                    single-line: false;
+                                    wrap: word-wrap;
+                                    selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+                                    selection-foreground-color: Theme.fg;
+                                    edited => {
+                                        root.edited(self.text);
+                                    }
+                                    cursor-position-changed(p) => {
+                                        root.show-caret(p);
+                                    }
                                 }
                             }
                         }
@@ -856,7 +916,7 @@ export component Composer {
                         tail := HorizontalLayout {
                             visible: root.compact;
                             x: parent.width - self.width;
-                            y: (root.line - 32px) / 2;
+                            y: root.wrapped ? root.text-h + 4px : (root.line - 32px) / 2;
                             height: 32px;
                             width: root.compact ? self.preferred-width : 0px;
                             spacing: 4px;

@@ -1,20 +1,18 @@
 // Split chat panes (logic/splitpanes.ts): up to four chats side by side in the centre. The focused pane is the usual
 // chat view (app.slint moves it into its place under its header); the others are drawn here, each with its own
-// transcript and a one-line composer that hands the keyboard to it with a click.
+// transcript and the same Composer as the focused one, which hands the keyboard to it with a click.
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Glyph, Spinner, Btn, TipArea, StatusData, StatusView } from "widgets.slint";
 import { Transcript, CardData } from "chat.slint";
 import { MdBlock } from "markdown.slint";
 import { SideRow } from "sidebar.slint";
+import { Composer, ComposerState, WorkBarData, StripRow } from "composer.slint";
 
 /** A pane's header and place: x, y, w, h are shares of the centre. */
 export struct PaneHead {
     chat: int,
     title: string,
-    // Under its composer, small and muted: where the agent works ("Worktree · name"), its branch.
-    ws: string,
-    branch: string,
     // The status pill: "" none; tone "blue" (with a spinner), "amber", "green", "red", "gray".
     pill: string,
     tone: string,
@@ -27,15 +25,26 @@ export struct PaneHead {
     h: float,
     running: bool,
     live-seq: int,
-    // The one-line composer of a pane without the keyboard: its draft, its model.
+    // Its composer, the same as the focused pane's (composer.slint), with this chat's draft, model, footer and agents.
     draft: string,
-    model: string,
+    composer: ComposerState,
+    logo: image,
+    badge-photo: image,
+    has-badge-photo: bool,
+    bar: WorkBarData,
+    strip-title: string,
+    strip-names: string,
+    strip-header: bool,
+    strip-folded: bool,
+    strip-open: bool,
 }
 
-/** A pane's transcript (empty for the focused one: the usual view shows it). Set once per pane, filled in place. */
+/** A pane's transcript and its agents strip (empty for the focused one: the usual view shows it). Set once per pane,
+ * filled in place. */
 export struct PaneBody {
     cards: [CardData],
     live: [MdBlock],
+    strip: [StripRow],
 }
 
 /** A divider between the two sides of a split: at (share of the centre) on x ("h") or y ("v"), over its split's area. */
@@ -62,20 +71,9 @@ export struct PaneDrop {
     cap: bool,
 }
 
-export struct PanePreset {
-    id: string,
-    on: bool,
-    enabled: bool,
-    tip: string,
-}
-
 // The header's height; a split pane's composer: its one-line card, the footer under it, and the room both take.
 export global PaneMetrics {
     out property <length> head: 34px;
-    out property <length> card: 44px;
-    out property <length> foot: 24px;
-    // The composer box's room under the transcript: 8px over the card, the footer (or 10px) under it.
-    out property <length> box: 8px + card + foot + 2px;
     // Near the centre's outer edge (px), a drop goes beside the whole layout.
     out property <length> band: 28px;
 }
@@ -122,7 +120,7 @@ export component PaneHeader inherits Rectangle {
     callback drag(length, length);
     callback dropped(length, length);
     property <bool> far;
-    height: PaneMetrics.head;
+    height: round(PaneMetrics.head / 1phx) * 1phx;
     background: Theme.bg100;
     grip := TouchArea {
         mouse-cursor: root.far ? MouseCursor.grabbing : MouseCursor.default;
@@ -147,8 +145,8 @@ export component PaneHeader inherits Rectangle {
         }
     }
     Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
+        y: parent.height - 1phx;
+        height: 1phx;
         background: Theme.border;
     }
     HorizontalLayout {
@@ -211,58 +209,6 @@ export component PaneHeader inherits Rectangle {
     }
 }
 
-// Under a split pane's composer: where its agent works on the left, its branch on the right; small and muted.
-export component PaneFoot {
-    in property <string> ws;
-    in property <string> branch;
-    height: PaneMetrics.foot;
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 12px;
-        if root.ws != "": HorizontalLayout {
-            spacing: 5px;
-            horizontal-stretch: 0;
-            min-width: min(self.preferred-width, 60px);
-            Glyph {
-                width: 12px;
-                icon: Icons.folder-git;
-                size: 11px;
-                color: Theme.gray-700;
-            }
-            Text {
-                text: root.ws;
-                font-size: 11.5px;
-                color: Theme.gray-700;
-                overflow: elide;
-                vertical-alignment: center;
-            }
-        }
-        Rectangle {
-            horizontal-stretch: 1;
-        }
-        if root.branch != "": HorizontalLayout {
-            spacing: 4px;
-            horizontal-stretch: 0;
-            min-width: min(self.preferred-width, 60px);
-            Glyph {
-                width: 12px;
-                icon: Icons.branch;
-                size: 11px;
-                color: Theme.gray-700;
-            }
-            Text {
-                text: root.branch;
-                font-family: "Geist Mono";
-                font-size: 11px;
-                color: Theme.gray-700;
-                overflow: elide;
-                vertical-alignment: center;
-            }
-        }
-    }
-}
-
 // A pane without the keyboard: its header, its transcript, and a one-line composer (as the focused pane's, compact)
 // that gives it the keyboard.
 export component SidePane inherits Rectangle {
@@ -283,8 +229,8 @@ export component SidePane inherits Rectangle {
     callback copy-text(string);
     clip: true;
     background: Theme.bg100;
-    property <bool> foot: root.head.ws != "" || root.head.branch != "";
-    property <length> box: PaneMetrics.box;
+    property <length> box: cbox.height;
+    property <length> head-h: round(PaneMetrics.head / 1phx) * 1phx;
     // Behind everything: a click on the pane where nothing else takes it gives it the keyboard.
     TouchArea {
         clicked => {
@@ -316,9 +262,9 @@ export component SidePane inherits Rectangle {
     tr := Transcript {
         visible: !root.head.focused;
         x: 0;
-        y: PaneMetrics.head;
+        y: root.head-h;
         width: root.width;
-        height: max(0px, root.height - PaneMetrics.head - root.box);
+        height: max(0px, root.height - root.head-h - root.box);
         cards: root.body.cards;
         live-blocks: root.body.live;
         live-seq: root.head.live-seq;
@@ -348,98 +294,55 @@ export component SidePane inherits Rectangle {
     TouchArea {
         visible: !root.head.focused;
         x: 0;
-        y: PaneMetrics.head;
+        y: root.head-h;
         width: root.width;
-        height: max(0px, root.height - PaneMetrics.head - root.box);
+        height: max(0px, root.height - root.head-h - root.box);
         pointer-event(e) => {
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
                 root.take(false, tr.from-end-now, tr.at-end);
             }
         }
     }
-    // The one-line composer: what's typed in it waits there; a click hands it the keyboard. Drawn as the focused
-    // pane's compact Composer is (composer.slint), so focusing a pane moves nothing.
-    Rectangle {
+    // Its composer: the focused pane's own Composer, fed with this chat's state, so a pane looks the same with or
+    // without the keyboard. What's typed waits there; a click anywhere on it hands the pane the keyboard.
+    cbox := VerticalLayout {
         visible: !root.head.focused;
         x: root.side;
-        y: root.height - root.box + 8px;
+        y: root.height - self.height;
         width: max(0px, root.width - 2 * root.side);
-        height: PaneMetrics.card;
-        border-radius: 12px;
-        border-width: 1px;
-        border-color: field-area.has-hover ? Theme.gray-600 : Theme.border;
-        background: Theme.dark ? Theme.bg200 : Theme.bg100;
-        field-area := TouchArea {
-            mouse-cursor: text;
-            clicked => {
-                root.take(true, tr.from-end-now, tr.at-end);
-            }
-        }
-        HorizontalLayout {
-            padding-left: 14px;
-            padding-right: 6px;
-            spacing: 4px;
-            Text {
-                horizontal-stretch: 1;
-                text: root.head.draft != "" ? root.head.draft : "Message…";
-                font-size: 14px;
-                color: root.head.draft != "" ? Theme.fg : Theme.gray-900;
-                overflow: elide;
-                vertical-alignment: center;
-            }
-            if root.head.model != "" && root.width - 2 * root.side - 20px > 420px: HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 6px;
-                spacing: 4px;
-                Text {
-                    max-width: 120px;
-                    text: root.head.model;
-                    font-size: 12.5px;
-                    color: Theme.subtle;
-                    overflow: elide;
-                    vertical-alignment: center;
-                }
-                Glyph {
-                    width: 11px;
-                    icon: Icons.down;
-                    size: 11px;
-                    color: Theme.subtle;
-                }
-            }
-            for g in [Icons.mic, Icons.clip]: Rectangle {
-                width: 30px;
-                Glyph {
-                    icon: g;
-                    size: 15px;
-                    color: Theme.subtle;
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 28px;
-                    height: 28px;
-                    border-radius: 14px;
-                    background: Theme.gray-200;
-                    Glyph {
-                        icon: Icons.arrow-up;
-                        size: 14px;
-                        color: Theme.subtle;
-                    }
-                }
-            }
+        height: self.preferred-height;
+        padding-top: 8px;
+        padding-bottom: 2px;
+        Composer {
+            compact: true;
+            text: root.head.draft;
+            state: root.head.composer;
+            logo: root.head.logo;
+            badge-photo: root.head.badge-photo;
+            has-badge-photo: root.head.has-badge-photo;
+            bar: root.head.bar;
+            strip-rows: root.body.strip;
+            strip-title: root.head.strip-title;
+            strip-names: root.head.strip-names;
+            strip-header: root.head.strip-header;
+            strip-folded: root.head.strip-folded;
+            strip-open: root.head.strip-open;
         }
     }
-    if !root.head.focused && root.foot: PaneFoot {
-        x: root.side;
-        y: root.height - PaneMetrics.foot - 2px;
-        width: max(0px, root.width - 2 * root.side);
-        ws: root.head.ws;
-        branch: root.head.branch;
+    TouchArea {
+        visible: !root.head.focused;
+        x: cbox.x;
+        y: cbox.y;
+        width: cbox.width;
+        height: cbox.height;
+        mouse-cursor: text;
+        clicked => {
+            root.take(true, tr.from-end-now, tr.at-end);
+        }
     }
 }
 
-// The top bar's layout buttons' glyphs: drawn, so no font glyph has to be added for them. "cols" three columns, "rows"
+// The layout glyphs (the "4 panes is the most" notice draws one): drawn, so no font glyph has to be added for them. "cols" three columns, "rows"
 // three rows, "main" one tall beside two stacked, "2x2" two by two.
 export component LayoutGlyph {
     in property <string> id;
@@ -481,52 +384,6 @@ export component LayoutGlyph {
     }
 }
 
-// The layout buttons and "N of 4", in place of the breadcrumb while the centre is split.
-export component LayoutBar {
-    in property <[PanePreset]> presets;
-    in property <int> count;
-    callback pick(string);
-    HorizontalLayout {
-        spacing: 10px;
-        Rectangle {
-            width: seg.preferred-width;
-            height: 28px;
-            border-radius: 7px;
-            border-width: 1px;
-            border-color: Theme.border;
-            background: Theme.bg200;
-            seg := HorizontalLayout {
-                padding: 2px;
-                spacing: 2px;
-                for p in root.presets: Rectangle {
-                    width: 28px;
-                    height: 22px;
-                    border-radius: 5px;
-                    background: p.on ? Theme.gray-300 : area.has-hover && p.enabled ? Theme.gray-200 : transparent;
-                    LayoutGlyph {
-                        id: p.id;
-                        ink: p.on ? Theme.fg : p.enabled ? Theme.gray-900 : Theme.gray-600;
-                    }
-                    area := TipArea {
-                        tip: p.tip;
-                        mouse-cursor: p.enabled ? pointer : default;
-                        clicked => {
-                            if p.enabled {
-                                root.pick(p.id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Text {
-            text: root.count + " of 4";
-            font-size: 13px;
-            color: Theme.subtle;
-            vertical-alignment: center;
-        }
-    }
-}
 
 // While a chat (or a pane, by its header) is dragged over the centre: a dim scrim, the zone it would land in, and (a
 // chat with four panes open) each pane's Replace target. `heads` give the panes' places; `from` is the dragged pane

@@ -67,20 +67,25 @@ export function prChip(pr: WsPr | null): BarChip | null {
 
 /**
  * The footer for `info` (null: not asked yet, or the PC didn't answer), as WorkBar.show: "Worktree gone" in red with no
- * branch; a read-only "Worktree · <name>" for a chat whose worktree isn't on this PC (another PC's, a device's); only the
- * PR for another PC's chat in its checkout; else "Current checkout" / "New worktree" / "Worktree · <name>" and the branch
+ * branch; a read-only "Worktree · <name>" for a chat whose worktree isn't on this PC (another PC's, a device's); outside
+ * Git (a plain folder, no project, a device) or before the PC said, "Folder · <name>" (and a PR it knows of); else "Current checkout" / "New worktree" / "Worktree · <name>" and the branch
  * ("from <base>" for a new chat's new worktree), or what git is doing ("Creating worktree…").
  */
-export function workBar(info: WsInfo | null, o: { draft: boolean; marker: WsMarker | null; pr: WsPr | null; home: string; pending: { branch: boolean; what: string } | null }): Bar {
+export function workBar(info: WsInfo | null, o: { draft: boolean; marker: WsMarker | null; pr: WsPr | null; home: string; pending: { branch: boolean; what: string } | null; folder?: string }): Bar {
   const pr = prChip(o.pr);
+  // Not Git (a plain folder, no project, an SSH device), or the PC hasn't said yet: the folder it runs in, so the row is
+  // always there and says where the agent works.
+  const plain = (): Bar => {
+    const path = (info?.git === false ? (info.path ?? "") : "") || (o.folder ?? "");
+    return path === "" && pr === null ? none : { shown: true, ws: path === "" ? null : folderChip(path, o.home), branch: null, pr, live: false };
+  };
   const git = info?.git === true;
   if (git && !o.draft && o.marker?.gone === true) return { shown: true, ws: { icon: ICONS.FOLDER_GIT, text: "Worktree gone", tone: "red", tip: `Its worktree, ${o.marker.name}, isn't there anymore` }, branch: null, pr, live: true };
   if (!git && !o.draft && o.marker !== null) {
     const on = o.home === "" ? "the PC it runs on" : o.home;
     return { shown: true, ws: { icon: ICONS.FOLDER_GIT, text: `Worktree · ${o.marker.name}`, tone: "", tip: `Runs in its own worktree on ${on}, ${o.marker.name}` }, branch: null, pr, live: false };
   }
-  if (!git && !o.draft && pr !== null) return { shown: true, ws: null, branch: null, pr, live: false };
-  if (!git || info === null) return none;
+  if (!git || info === null) return plain();
   const wt = info.mode === "worktree";
   const name = info.name ?? "";
   const ws: BarChip = { icon: wt ? ICONS.FOLDER_GIT : ICONS.FOLDER, text: name !== "" ? `Worktree · ${name}` : wt ? "New worktree" : "Current checkout", tone: "", tip: info.path ?? "" };
@@ -94,6 +99,13 @@ export function workBar(info: WsInfo | null, o: { draft: boolean; marker: WsMark
     return { shown: true, ws: busy, branch, pr, live: true };
   }
   return { shown: true, ws, branch, pr, live: true };
+}
+
+/** A folder outside Git: its name, its path (and the PC it's on) in the tip. */
+export function folderChip(path: string, home: string, homeDir = process.env.HOME ?? ""): BarChip {
+  const trimmed = path.replace(/\/+$/, "");
+  const name = homeDir !== "" && trimmed === homeDir.replace(/\/+$/, "") ? "~" : trimmed.slice(trimmed.lastIndexOf("/") + 1) || trimmed || "/";
+  return { icon: ICONS.FOLDER, text: `Folder · ${name}`, tone: "", tip: home === "" ? path : `${path}\non ${home}` };
 }
 
 /** What a click on the workspace chip opens (WorkBar.tapWorkspace): the chat's own worktree goes straight to renaming it. */

@@ -66,9 +66,6 @@ export interface SideRow {
 export interface PaneHead {
   chat: number;
   title: string;
-  /** Under its composer: where the agent works ("Worktree · name", "Current checkout"), its branch. */
-  ws: string;
-  branch: string;
   pill: string;
   tone: "" | "blue" | "amber" | "green" | "red" | "gray";
   focused: boolean;
@@ -80,14 +77,25 @@ export interface PaneHead {
   h: number;
   running: boolean;
   live_seq: number;
+  /** Its composer, drawn as the focused pane's is (the same Composer, fed with this chat's state). */
   draft: string;
-  model: string;
+  composer: ComposerState;
+  logo: Pixels;
+  badge_photo: Pixels;
+  has_badge_photo: boolean;
+  bar: WorkBarData;
+  strip_title: string;
+  strip_names: string;
+  strip_header: boolean;
+  strip_folded: boolean;
+  strip_open: boolean;
 }
 
-/** A pane's transcript, set once per pane and filled in place. */
+/** A pane's transcript and its agents strip, set once per pane and filled in place. */
 export interface PaneBody {
   cards: slint.Model<CardData>;
   live: slint.Model<MdBlockData>;
+  strip: slint.Model<StripRow>;
 }
 
 export interface PaneDiv {
@@ -112,12 +120,6 @@ export interface PaneDrop {
   cap: boolean;
 }
 
-export interface PanePreset {
-  id: string;
-  on: boolean;
-  enabled: boolean;
-  tip: string;
-}
 
 export interface MdBlockData {
   kind: string;
@@ -575,12 +577,10 @@ export interface AppWindow extends slint.ComponentHandle {
   split_fy: number;
   split_fw: number;
   split_fh: number;
-  split_presets: slint.Model<PanePreset>;
   split_drop: PaneDrop;
   split_focus: (i: number, composer: boolean, fromEnd: number, follow: boolean) => void;
   split_close: (i: number) => void;
   split_solo: (i: number) => void;
-  split_preset: (id: string) => void;
   split_resize: (path: string, at: number) => void;
   split_drag: (chat: number, u: number, v: number, bu: number, bv: number) => void;
   split_dropped: (chat: number, u: number, v: number, bu: number, bv: number) => void;
@@ -603,6 +603,7 @@ export interface AppWindow extends slint.ComponentHandle {
   proc_toggle: (id: number) => void;
   proc_open: (url: string) => void;
   team_has_project: boolean;
+  team_chat_title: string;
   team_settled_open: boolean;
   team: () => void;
   open_agent: (id: number) => void;

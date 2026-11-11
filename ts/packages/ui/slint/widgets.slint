@@ -492,7 +492,8 @@ export component Dot {
 }
 
 export component Separator inherits Rectangle {
-    height: 1px;
+    // One physical row: crisp at fractional scales (a 1px line there lands across two rows).
+    height: 1phx;
     background: Theme.border;
 }
 

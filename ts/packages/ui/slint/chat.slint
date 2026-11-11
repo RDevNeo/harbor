@@ -737,8 +737,12 @@ export component CardView inherits TouchArea {
                 HorizontalLayout {
                     alignment: root.card.kind == "user" ? LayoutAlignment.end : LayoutAlignment.start;
                     Rectangle {
-                        width: m.w;
-                        height: m.h;
+                        // mediarows.ts sizes it for a full column: a narrower one (a split pane, a small window)
+                        // draws it smaller, same shape, from the same decode (no new one while a divider moves).
+                        property <length> room: max(root.avail - (root.card.kind == "tool" ? 30px : 0px), 40px);
+                        property <float> k: m.w > room ? room / m.w : 1;
+                        width: floor(m.w * k / 1px) * 1px;
+                        height: floor(m.h * k / 1px) * 1px;
                         border-radius: m.video ? Theme.radius-md : Theme.radius-lg;
                         clip: true;
                         background: m.video ? #181818 : transparent;

@@ -227,20 +227,86 @@ export component TeamPanel inherits Rectangle {
     callback proc-stop(int);
     callback proc-toggle(int);
     callback proc-open(string);
-    background: Theme.bg200;
-    border-width: 1px;
+    // Beside split panes: one more column of their grid, its head in their header row (`head-h`, the same line under
+    // it), a 1px divider on its left, and it names the focused pane's chat whose agents it lists.
+    in property <bool> split;
+    in property <string> chat-title;
+    in property <length> head-h: 34px;
+    background: root.split ? Theme.bg100 : Theme.bg200;
+    border-width: root.split ? 0px : 1px;
     border-color: Theme.border;
+    if root.split: Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.head-h;
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 12px;
+            spacing: 6px;
+            Glyph {
+                width: 14px;
+                icon: Icons.users;
+                size: 13px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: "Agents";
+                font-size: 13px;
+                font-weight: 500;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+            if root.agents.length > 0: Text {
+                text: root.agents.length;
+                font-family: "Geist Mono";
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.chat-title != "": Text {
+                text: "·";
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.chat-title != "": Text {
+                horizontal-stretch: 1;
+                min-width: 24px;
+                text: root.chat-title;
+                font-size: 13px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if root.chat-title == "": Rectangle {
+                horizontal-stretch: 1;
+            }
+        }
+        Rectangle {
+            y: parent.height - 1phx;
+            height: 1phx;
+            background: Theme.border;
+        }
+    }
+    if root.split: Rectangle {
+        x: 0;
+        y: 0;
+        width: 1phx;
+        height: parent.height;
+        background: Theme.border;
+    }
     Flickable {
         x: 12px;
-        y: 12px;
+        y: root.split ? root.head-h + 10px : 12px;
         width: parent.width - 24px;
-        height: parent.height - 24px;
+        height: parent.height - self.y - 12px;
         content-height: col.preferred-height;
         col := VerticalLayout {
             width: parent.width;
             alignment: start;
             spacing: 6px;
-            Header {
+            if !root.split: Header {
                 icon: Icons.users;
                 title: "Agents";
                 count: root.agents.length;

@@ -1,22 +1,26 @@
 // Split chat panes on screen (logic/splitpanes.ts has the layout). The focused pane is the shell's usual chat view;
 // this keeps the others: their headers, transcripts (built here, each in models of its own that stay with the pane),
-// the dividers, the layout buttons, and a chat dragged from the sidebar. A pane that isn't on screen (another page,
+// the dividers, and a chat dragged from the sidebar (layout is by dragging only). A pane that isn't on screen (another page,
 // a pane shown alone) holds no cards and its transcript is let go.
 import * as slint from "slint-ui";
-import { applyPreset, type Band, close, type Drop, dropAt, dropped, dividers, MAX_PANES, opened, order, paneDropAt, paneDropped, parse, PRESETS, presetEnabled, presetOf, presetTip, type Preset, prune, rects, resize, serialize, single, type Split, SPLIT_KEY, toggleMax } from "./logic/splitpanes.ts";
+import { type Band, close, type Drop, dropAt, dropped, dividers, MAX_PANES, opened, order, paneDropAt, paneDropped, parse, prune, rects, resize, serialize, single, type Split, SPLIT_KEY, toggleMax } from "./logic/splitpanes.ts";
 import type { MediaRows } from "./mediarows.ts";
-import type { AppWindow, CardData, MdBlockData, PaneBody, PaneDiv, PaneDrop, PaneHead, PanePreset, StatusData } from "./window.ts";
+import type { Pixels } from "./logos.ts";
+import type { AppWindow, CardData, ComposerState, MdBlockData, PaneBody, StripRow, WorkBarData, PaneDiv, PaneDrop, PaneHead, StatusData } from "./window.ts";
 
 /** What a pane says of its chat: its header (title, status), its composer and the footer under it (where the agent
  * works, its branch). */
 export interface PaneInfo {
   title: string;
-  ws: string;
-  branch: string;
   status: StatusData | null;
   running: boolean;
   draft: string;
-  model: string;
+  composer: ComposerState;
+  logo: Pixels;
+  photo: Pixels | null;
+  bar: WorkBarData;
+  strip: StripRow[];
+  stripView: { title: string; names: string; header: boolean; folded: boolean; open: boolean };
 }
 
 export interface SplitHost {
@@ -48,6 +52,7 @@ interface Slot {
   body: PaneBody;
   cards: slint.ArrayModel<CardData>;
   live: slint.ArrayModel<MdBlockData>;
+  strip: slint.ArrayModel<StripRow>;
   liveSeq: number;
   running: boolean;
   built: boolean;
@@ -70,6 +75,13 @@ function sync<T>(model: slint.ArrayModel<T>, next: readonly T[], same: (a: T, b:
 }
 
 const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+const NO_PIXELS: Pixels = { width: 1, height: 1, data: new Uint8Array(4) };
+
+/** Images by identity (a logo or photo is the same object while it's the same), the rest by value. */
+const withoutImages = (h: PaneHead): unknown => ({ ...h, logo: 0, badge_photo: 0 });
+const sameHead = (a: PaneHead, b: PaneHead): boolean => a.logo === b.logo && a.badge_photo === b.badge_photo && JSON.stringify(withoutImages(a)) === JSON.stringify(withoutImages(b));
+const sameStrip = (a: StripRow, b: StripRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
 
 /** The status pill: the sidebar's status, said in a word. */
 export function pillOf(s: StatusData | null): { pill: string; tone: PaneHead["tone"] } {
@@ -97,7 +109,6 @@ export class SplitPanes {
   private heads = new slint.ArrayModel<PaneHead>([]);
   private bodies = new slint.ArrayModel<PaneBody>([]);
   private divs = new slint.ArrayModel<PaneDiv>([]);
-  private presets = new slint.ArrayModel<PanePreset>([]);
   private bare = new WeakMap<CardData, CardData>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -107,14 +118,10 @@ export class SplitPanes {
     w.split_heads = this.heads;
     w.split_bodies = this.bodies;
     w.split_divs = this.divs;
-    w.split_presets = this.presets;
     w.split_drop = NO_DROP;
     w.split_focus = (i, composer, fromEnd, follow) => this.focus(i, composer, follow ? null : fromEnd);
     w.split_close = (i) => this.close(i);
     w.split_solo = (i) => this.change(toggleMax(this.now(), i));
-    w.split_preset = (id) => {
-      if ((PRESETS as readonly string[]).includes(id)) this.change(applyPreset(this.now(), id as Preset));
-    };
     w.split_resize = (path, at) => this.resize(path, at);
     w.split_drag = (chat, u, v, bu, bv) => this.drag(chat, u, v, { u: bu, v: bv });
     w.split_dropped = (chat, u, v, bu, bv) => this.drop(chat, u, v, { u: bu, v: bv });
@@ -230,12 +237,6 @@ export class SplitPanes {
       dividers(s).map((d) => ({ path: d.path, dir: d.dir, at: d.at, ax: d.area.x, ay: d.area.y, aw: d.area.w, ah: d.area.h })),
       sameJson,
     );
-    const preset = presetOf(s);
-    sync(
-      this.presets,
-      PRESETS.map((p) => ({ id: p, on: preset === p, enabled: presetEnabled(s, p), tip: presetTip(s, p) })),
-      sameJson,
-    );
     this.refreshHeads();
     // The panes on screen are built (once, then as their chats change); the hidden ones hold nothing.
     s.chats.forEach((_, i) => {
@@ -257,11 +258,11 @@ export class SplitPanes {
         const r = all[i];
         const info = this.host.info(chat);
         const slot = this.slots[i] as Slot;
+        // Its agents strip: a pane without the keyboard keeps it, as the focused one does.
+        sync(slot.strip, i === s.focus ? [] : info.strip, sameStrip);
         return {
           chat,
           title: info.title,
-          ws: info.ws,
-          branch: info.branch,
           ...pillOf(info.status),
           focused: i === s.focus,
           shown: r !== null,
@@ -272,11 +273,20 @@ export class SplitPanes {
           h: r?.h ?? 0,
           running: slot.running,
           live_seq: slot.liveSeq,
-          draft: info.draft.replace(/\s+/g, " ").trim(),
-          model: info.model,
+          draft: info.draft,
+          composer: info.composer,
+          logo: info.logo,
+          badge_photo: info.photo ?? NO_PIXELS,
+          has_badge_photo: info.photo !== null,
+          bar: info.bar,
+          strip_title: info.stripView.title,
+          strip_names: info.stripView.names,
+          strip_header: info.stripView.header,
+          strip_folded: info.stripView.folded,
+          strip_open: info.stripView.open,
         };
       }),
-      sameJson,
+      sameHead,
     );
   }
 
@@ -297,7 +307,8 @@ export class SplitPanes {
   private slot(chat: number): Slot {
     const cards = new slint.ArrayModel<CardData>([]);
     const live = new slint.ArrayModel<MdBlockData>([]);
-    const slot: Slot = { chat, body: { cards, live }, cards, live, liveSeq: -1, running: false, built: false, dirty: false, media: null };
+    const strip = new slint.ArrayModel<StripRow>([]);
+    const slot: Slot = { chat, body: { cards, live, strip }, cards, live, strip, liveSeq: -1, running: false, built: false, dirty: false, media: null };
     return slot;
   }
 
