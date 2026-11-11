@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.174.0] - 2026-11-11
+
 ### Added
 - When the PC a chat runs on is off, Harbor carries on on another PC of the mesh by itself, on the
   desktop and the phone alike. Over the composer: "Tower is off. Next message runs on Desk." The
