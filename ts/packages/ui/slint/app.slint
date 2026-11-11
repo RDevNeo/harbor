@@ -27,7 +27,7 @@ import { IssuesBus, IssuesPage } from "issues.slint";
 import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
-import { PaneHead, PaneBody, PaneDiv, PaneDrop, PanePreset, PaneMetrics, SidePane, PaneHeader, LayoutBar, LayoutGlyph, DropOverlay, DragGhost } from "panes.slint";
+import { PaneHead, PaneBody, PaneDiv, PaneDrop, PanePreset, PaneMetrics, SidePane, PaneHeader, LayoutBar, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
 
 export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
@@ -523,13 +523,19 @@ export component AppWindow inherits Window {
     callback split-solo(int);
     callback split-preset(string);
     callback split-resize(string, float);
-    // A chat dragged from the sidebar over (shares of the centre) and dropped there; the drag called off (Esc).
-    callback split-drag(int, float, float);
-    callback split-dropped(int, float, float);
+    // A chat dragged from the sidebar over (shares of the centre; then the outer edges' band, shares too) and dropped
+    // there; a pane dragged by its header, the same; the drag called off (Esc).
+    callback split-drag(int, float, float, float, float);
+    callback split-dropped(int, float, float, float, float);
+    callback split-move(int, float, float, float, float);
+    callback split-moved(int, float, float, float, float);
     callback split-drag-end();
     callback split-toggle(int, int);
     callback split-act(int, int, string);
     in-out property <int> drag-chat: -1;
+    // The pane dragged by its header (-1: none).
+    in-out property <int> drag-pane: -1;
+    property <PaneHead> drag-head;
     property <bool> drag-dead;
     property <SideRow> drag-row;
     property <length> drag-x;
@@ -864,8 +870,9 @@ export component AppWindow inherits Window {
         focus-on-click: false;
         focus-on-tab-navigation: false;
         capture-key-pressed(e) => {
-            if root.drag-chat >= 0 && e.text == Key.Escape {
+            if (root.drag-chat >= 0 || root.drag-pane >= 0) && e.text == Key.Escape {
                 root.drag-chat = -1;
+                root.drag-pane = -1;
                 root.drag-dead = true;
                 root.split-drag-end();
                 return accept;
@@ -1000,12 +1007,12 @@ export component AppWindow inherits Window {
                             root.drag-chat = r.id;
                             root.drag-x = x;
                             root.drag-y = y;
-                            root.split-drag(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height);
+                            root.split-drag(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
                         }
                     }
                     chat-drop(r, x, y) => {
                         if root.drag-chat >= 0 && !root.drag-dead {
-                            root.split-dropped(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height);
+                            root.split-dropped(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
                         }
                         root.drag-chat = -1;
                         root.drag-dead = false;
@@ -1077,8 +1084,8 @@ export component AppWindow inherits Window {
                         property <length> fw: split ? floor((root.split-fx + root.split-fw) * area-w / 1px) * 1px - fx : area-w;
                         property <length> fh: split ? floor((root.split-fy + root.split-fh) * self.height / 1px) * 1px - fy : self.height;
                         property <length> top: split ? PaneMetrics.head : 0px;
-                        // A short pane's composer is the one-line one.
-                        property <bool> compact: split && fh < PaneMetrics.compact-below;
+                        // Split, every pane's composer is the one-line one (single, the usual one).
+                        property <bool> compact: split;
                         property <length> room: fw;
                         property <length> side: max((room - root.content-w) / 2, room < 520px ? 12px : 24px);
                         property <length> column: max(0px, room - 2 * side);
@@ -1202,7 +1209,7 @@ export component AppWindow inherits Window {
                             width: body.column;
                             height: self.preferred-height;
                             padding-top: body.centred ? 0px : 8px;
-                            padding-bottom: body.centred ? 0px : body.compact ? 10px : 16px;
+                            padding-bottom: body.centred ? 0px : body.compact ? 2px : 16px;
                             visible: root.view == "draft" || root.view == "chat";
                             if root.read-only: Rectangle {
                                 background: Theme.bg200;
@@ -1343,6 +1350,22 @@ export component AppWindow inherits Window {
                                 take(composer, from-end, follow) => {
                                     root.split-focus(i, composer, from-end, follow);
                                 }
+                                drag(x, y) => {
+                                    if !root.drag-dead && !h.maxed {
+                                        root.drag-head = h;
+                                        root.drag-pane = i;
+                                        root.drag-x = x;
+                                        root.drag-y = y;
+                                        root.split-move(i, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
+                                    }
+                                }
+                                dropped(x, y) => {
+                                    if root.drag-pane >= 0 && !root.drag-dead {
+                                        root.split-moved(i, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
+                                    }
+                                    root.drag-pane = -1;
+                                    root.drag-dead = false;
+                                }
                                 close => {
                                     root.split-close(i);
                                 }
@@ -1368,16 +1391,7 @@ export component AppWindow inherits Window {
                                     root.copy-text(t);
                                 }
                             }
-                            // The focused pane's thin accent border.
-                            Rectangle {
-                                x: body.fx;
-                                y: body.fy;
-                                width: body.fw;
-                                height: body.fh;
-                                border-width: 1px;
-                                border-color: Theme.blue-700.with-alpha(0.75);
-                            }
-                            // 1px dividers: blue, with the resize cursor, under the pointer; dragged, they resize.
+                            // 1px dividers: brighter and wider, with the resize cursor, under the pointer; dragged, they resize.
                             for d in root.split-divs: TouchArea {
                                 property <length> at: d.dir == "h" ? floor(d.at * body.area-w / 1px) * 1px : floor(d.at * body.height / 1px) * 1px;
                                 x: d.dir == "h" ? self.at - 3px : floor(d.ax * body.area-w / 1px) * 1px;
@@ -1391,7 +1405,7 @@ export component AppWindow inherits Window {
                                     property <bool> has-hover-or-pressed: parent.has-hover || parent.pressed;
                                     width: d.dir == "h" ? (self.has-hover-or-pressed ? 3px : 1px) : parent.width;
                                     height: d.dir == "v" ? (self.has-hover-or-pressed ? 3px : 1px) : parent.height;
-                                    background: self.has-hover-or-pressed ? Theme.blue-700 : Theme.border;
+                                    background: self.has-hover-or-pressed ? Theme.gray-700 : Theme.border;
                                 }
                                 moved => {
                                     if self.pressed {
@@ -1400,14 +1414,15 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        // A chat dragged from the sidebar: where it would land.
-                        if root.drag-chat >= 0 && root.view == "chat": DropOverlay {
+                        // A chat dragged from the sidebar, or a pane by its header: where it would land.
+                        if (root.drag-chat >= 0 || root.drag-pane >= 0) && root.view == "chat": DropOverlay {
                             x: 0;
                             y: 0;
                             width: body.area-w;
                             height: body.height;
                             drop: root.split-drop;
                             heads: root.split-heads;
+                            from: root.drag-pane;
                         }
                     }
                 }
@@ -2686,6 +2701,12 @@ export component AppWindow inherits Window {
             x: min(root.drag-x + 14px, root.width - self.width - 8px);
             y: min(root.drag-y + 10px, root.height - self.height - 8px);
             chat: root.drag-row;
+        }
+        // Under the pointer's right, clear of the drop label centred on the zone.
+        if root.drag-pane >= 0 && root.view == "chat": PaneGhost {
+            x: min(root.drag-x + 16px, root.width - self.width - 8px);
+            y: min(root.drag-y + 26px, root.height - self.height - 8px);
+            head: root.drag-head;
         }
 
         TipLayer {

@@ -545,8 +545,8 @@ export component Composer {
     }
     property <length> line: 20px;
     property <length> who-w: root.state.typing == "" ? 0px : who.preferred-width + 12px;
-    // A short split pane's one-line composer: the text on one line (up to four as it grows), the model, the mic and
-    // send beside it, and none of the chips or the tray under it.
+    // A split pane's one-line composer: the text on one line (up to four as it grows), the model, the mic, attach and
+    // send beside it; the tray's chips in one small muted row under it, none of the chips row.
     in property <bool> compact;
     property <length> text-h: root.compact ? min(max(field.preferred-height, line), 4 * line) : min(max(field.preferred-height, 3 * line + 2px), root.max-h);
     property <length> tail-w: root.compact ? tail.preferred-width + 8px : 0px;
@@ -663,7 +663,7 @@ export component Composer {
                 background: Theme.dark ? Theme.bg200 : Theme.bg100;
                 border-width: 1px;
                 border-color: field.has-focus ? Theme.gray-600 : Theme.border;
-                border-radius: 16px;
+                border-radius: root.compact ? 12px : 16px;
                 VerticalLayout {
                     padding-left: root.compact ? 14px : 18px;
                     padding-right: root.compact ? 6px : 18px;
@@ -852,7 +852,7 @@ export component Composer {
                                 }
                             }
                         }
-                        // One line: the model, the mic and send at the line's end.
+                        // One line: the model, the mic, attach and send at the line's end.
                         tail := HorizontalLayout {
                             visible: root.compact;
                             x: parent.width - self.width;
@@ -897,6 +897,16 @@ export component Composer {
                                 tip: root.mic-tip;
                                 clicked => {
                                     root.mic();
+                                }
+                            }
+                            Btn {
+                                y: 1px;
+                                icon: Icons.clip;
+                                size: icon-sm;
+                                variant: ghost-muted;
+                                tip: "Attach files or images (or drop them here)";
+                                clicked => {
+                                    root.attach();
                                 }
                             }
                             if root.state.action == "stop": StopButton {
@@ -1143,6 +1153,41 @@ export component Composer {
                     text: root.state.typing;
                     font-size: 12px;
                     color: Theme.subtle;
+                }
+            }
+            // A split pane's one-line composer: the tray's chips under it, as one small muted row (no box), its room kept
+            // while the PC hasn't said yet, so every pane's composer sits at the same height.
+            if root.compact: HorizontalLayout {
+                height: 24px;
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 2px;
+                if root.bar.shown && root.bar.ws.shown: WorkBarChip {
+                    y: -1px;
+                    chip: root.bar.ws;
+                    chevron: root.bar.live && root.bar.ws.tone == "";
+                    max-text: 240px;
+                    clicked(x, y) => {
+                        root.popup("ws-bar", x, y);
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                if root.bar.shown && root.bar.pr.shown: WorkBarChip {
+                    y: -1px;
+                    chip: root.bar.pr;
+                    clicked(x, y) => {
+                        root.popup("pr-bar", x, y);
+                    }
+                }
+                if root.bar.shown && root.bar.branch.shown: WorkBarChip {
+                    y: -1px;
+                    chip: root.bar.branch;
+                    chevron: root.bar.live && root.bar.branch.tone == "";
+                    clicked(x, y) => {
+                        root.popup("branch-bar", x, y);
+                    }
                 }
             }
             // The tray under the card (as the reference composer's): tucked under its bottom edge, a little narrower,

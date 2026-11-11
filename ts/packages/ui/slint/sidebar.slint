@@ -39,8 +39,8 @@ export struct SideRow {
     owner-tip: string,
     owner-photo: image,
     has-owner-photo: bool,
-    // Open in a split pane: its number (0: none), and that pane has the keyboard.
-    pane: int,
+    // Open in a split pane, and that pane has the keyboard.
+    pane: bool,
     pane-focus: bool,
 }
 
@@ -248,7 +248,7 @@ component ThreadRow {
         // The title, then its marks: the PR, the share mark. Hovered, the last mark keeps 30px (glyph to glyph) before
         // the clock, as the clock does before Settle.
         // Hovered, nothing moves: the clock and Settle sit over the title's end, which fades out under them.
-        property <length> pane-w: root.data.pane > 0 ? 21px : 0px;
+        property <length> pane-w: root.data.pane ? 21px : 0px;
         property <length> right-w: status.width + 16px + (root.data.owner != "" ? 22px : 0px) + self.pane-w;
         property <length> marks-w: (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px) + (root.data.shared != "" ? 20px : 0px) + (root.data.place != "" ? place.width + 6px : 0px);
         property <length> room: self.width - title.x - self.right-w - self.marks-w;
@@ -332,21 +332,20 @@ component ThreadRow {
             active: root.data.active;
             tip: root.data.shared-tip;
         }
-        // Its split pane's number: blue while that pane has the keyboard.
-        if root.data.pane > 0 && !root.hovering: Rectangle {
+        // Open in a split pane: a small two-column mark, quiet; a little brighter while that pane has the keyboard.
+        if root.data.pane && !root.hovering: Rectangle {
+            property <color> ink: root.data.pane-focus ? Theme.fg.mix(Theme.subtle, 0.6) : Theme.gray-700;
             x: parent.width - parent.right-w + 6px;
             y: parent.line-y + (parent.line-h - self.height) / 2;
-            width: 15px;
-            height: 15px;
-            border-radius: 4px;
-            background: root.data.pane-focus ? Theme.blue-700 : Theme.gray-300;
-            Text {
-                text: root.data.pane;
-                font-size: 10px;
-                font-weight: 600;
-                color: root.data.pane-focus ? #ffffff : Theme.fg;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            width: 13px;
+            height: 11px;
+            border-radius: 2px;
+            border-width: 1.2px;
+            border-color: self.ink;
+            Rectangle {
+                x: (parent.width - 1.2px) / 2;
+                width: 1.2px;
+                background: parent.ink;
             }
         }
         owner := OwnerMark {

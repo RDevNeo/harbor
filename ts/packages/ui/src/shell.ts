@@ -123,7 +123,7 @@ const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringif
 const sameJsonRow = (a: AgentRow, b: AgentRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
 const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar && a.owner_photo === b.owner_photo && JSON.stringify({ ...a, avatar: 0, owner_photo: 0 }) === JSON.stringify({ ...b, avatar: 0, owner_photo: 0 });
 /** A row's variant A fields when it has none of them: no fold, branch, owner. */
-const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false, pane: 0, pane_focus: false } as const;
+const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false, pane: false, pane_focus: false } as const;
 
 function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
@@ -1451,14 +1451,17 @@ export class Shell {
 
   private paneInfo(id: number): PaneInfo {
     const c = this.data.chat(id);
-    if (!c) return { title: "", project: "", branch: "", status: null, running: false, draft: "", model: "" };
+    if (!c) return { title: "", ws: "", branch: "", status: null, running: false, draft: "", model: "" };
     const row = [...this.rows].find((r) => r.id === id && (r.kind === "thread" || r.kind === "loose")) ?? [...this.settledRows].find((r) => r.id === id && r.kind === "loose");
-    const repo = c.repoId === null ? undefined : this.data.repo(c.repoId);
     const kind = this.account(c.account)?.kind ?? kindOfAccount(c.account);
+    const branch = row?.branch ?? "";
+    // Where its agent works, as the usual view's footer says it: its own worktree, else the project's checkout.
+    const dir = c.home !== "" ? null : this.engine.worktreeOf(c);
+    const wt = c.home !== "" ? (this.shellMesh.remote(c.id)?.worktree ?? "") : dir === null ? "" : basename(dir);
     return {
       title: c.role === "sub" ? c.name : c.title,
-      project: repo?.name ?? "",
-      branch: row?.branch ?? "",
+      ws: wt !== "" ? `Worktree · ${wt}` : branch !== "" ? "Current checkout" : "",
+      branch,
       status: row?.status ?? null,
       running: this.running(id),
       draft: this.drafts.get(id) ?? "",
@@ -1881,8 +1884,8 @@ export class Shell {
         owner_tip: o === null ? "" : `${o.shown === "" ? o.person : o.shown}'s chat`,
         owner_photo: photo ?? noPixels,
         has_owner_photo: photo !== null,
-        pane: panes.get(c.id)?.[0] ?? 0,
-        pane_focus: panes.get(c.id)?.[1] ?? false,
+        pane: panes.has(c.id),
+        pane_focus: panes.get(c.id) ?? false,
       };
     };
     // Folded projects show only their row (and the open chat, so you see where you are); a search unfolds them all.

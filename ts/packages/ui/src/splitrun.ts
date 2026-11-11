@@ -3,14 +3,15 @@
 // the dividers, the layout buttons, and a chat dragged from the sidebar. A pane that isn't on screen (another page,
 // a pane shown alone) holds no cards and its transcript is let go.
 import * as slint from "slint-ui";
-import { applyPreset, close, type Drop, dropAt, dropped, dividers, focus as focusPane, MAX_PANES, opened, parse, PRESETS, presetEnabled, presetOf, presetTip, type Preset, prune, rects, resize, serialize, single, type Split, SPLIT_KEY, toggleMax } from "./logic/splitpanes.ts";
+import { applyPreset, type Band, close, type Drop, dropAt, dropped, dividers, MAX_PANES, opened, order, paneDropAt, paneDropped, parse, PRESETS, presetEnabled, presetOf, presetTip, type Preset, prune, rects, resize, serialize, single, type Split, SPLIT_KEY, toggleMax } from "./logic/splitpanes.ts";
 import type { MediaRows } from "./mediarows.ts";
 import type { AppWindow, CardData, MdBlockData, PaneBody, PaneDiv, PaneDrop, PaneHead, PanePreset, StatusData } from "./window.ts";
 
-/** What a pane's header says of its chat. */
+/** What a pane says of its chat: its header (title, status), its composer and the footer under it (where the agent
+ * works, its branch). */
 export interface PaneInfo {
   title: string;
-  project: string;
+  ws: string;
   branch: string;
   status: StatusData | null;
   running: boolean;
@@ -111,10 +112,14 @@ export class SplitPanes {
     w.split_focus = (i, composer, fromEnd, follow) => this.focus(i, composer, follow ? null : fromEnd);
     w.split_close = (i) => this.close(i);
     w.split_solo = (i) => this.change(toggleMax(this.now(), i));
-    w.split_preset = (id) => (PRESETS as readonly string[]).includes(id) && this.change(applyPreset(this.now(), id as Preset));
+    w.split_preset = (id) => {
+      if ((PRESETS as readonly string[]).includes(id)) this.change(applyPreset(this.now(), id as Preset));
+    };
     w.split_resize = (path, at) => this.resize(path, at);
-    w.split_drag = (chat, u, v) => this.drag(chat, u, v);
-    w.split_dropped = (chat, u, v) => this.drop(chat, u, v);
+    w.split_drag = (chat, u, v, bu, bv) => this.drag(chat, u, v, { u: bu, v: bv });
+    w.split_dropped = (chat, u, v, bu, bv) => this.drop(chat, u, v, { u: bu, v: bv });
+    w.split_move = (i, u, v, bu, bv) => this.paneDrag(i, u, v, { u: bu, v: bv });
+    w.split_moved = (i, u, v, bu, bv) => this.paneDrop(i, u, v, { u: bu, v: bv });
     w.split_drag_end = () => (w.split_drop = NO_DROP);
     w.split_toggle = (i, seq) => {
       const s = this.slots[i];
@@ -149,12 +154,12 @@ export class SplitPanes {
     return i >= 0 && i !== s.focus;
   }
 
-  /** The pane numbers the sidebar marks: chat → [number, focused]. */
-  marks(): Map<number, [number, boolean]> {
-    const out = new Map<number, [number, boolean]>();
+  /** The chats the sidebar marks as open in a pane: chat → that pane has the keyboard. */
+  marks(): Map<number, boolean> {
+    const out = new Map<number, boolean>();
     const s = this.state;
     if (s === null || s.chats.length < 2 || this.host.shown() === null) return out;
-    s.chats.forEach((c, i) => out.set(c, [i + 1, i === s.focus]));
+    s.chats.forEach((c, i) => out.set(c, i === s.focus));
     return out;
   }
 
@@ -228,7 +233,7 @@ export class SplitPanes {
     const preset = presetOf(s);
     sync(
       this.presets,
-      PRESETS.map((p) => ({ id: p, on: p === "1" ? s.max !== null : preset === p, enabled: presetEnabled(s, p), tip: presetTip(s, p) })),
+      PRESETS.map((p) => ({ id: p, on: preset === p, enabled: presetEnabled(s, p), tip: presetTip(s, p) })),
       sameJson,
     );
     this.refreshHeads();
@@ -253,10 +258,9 @@ export class SplitPanes {
         const info = this.host.info(chat);
         const slot = this.slots[i] as Slot;
         return {
-          n: i + 1,
           chat,
           title: info.title,
-          project: info.project,
+          ws: info.ws,
           branch: info.branch,
           ...pillOf(info.status),
           focused: i === s.focus,
@@ -384,33 +388,51 @@ export class SplitPanes {
     this.save(400);
   }
 
-  private dropAt(chat: number, u: number, v: number): Drop {
-    return dropAt(this.now(), chat, u, v, (c) => this.host.info(c).title);
+  private dropAt(chat: number, u: number, v: number, band: Band): Drop {
+    return dropAt(this.now(), chat, u, v, (c) => this.host.info(c).title, band);
   }
 
-  private drag(chat: number, u: number, v: number): void {
-    if (this.host.shown() === null) return;
-    const d = this.dropAt(chat, u, v);
-    const cap = this.count() >= MAX_PANES;
+  private show(d: Drop, cap: boolean): void {
     const next: PaneDrop = { kind: d.kind, pane: d.pane, x: d.zone.x, y: d.zone.y, w: d.zone.w, h: d.zone.h, label: d.label, sub: d.sub, cap };
     if (!sameJson(next, this.host.win.split_drop)) this.host.win.split_drop = next;
   }
 
-  private drop(chat: number, u: number, v: number): void {
+  private drag(chat: number, u: number, v: number, band: Band): void {
+    if (this.host.shown() === null) return;
+    this.show(this.dropAt(chat, u, v, band), this.count() >= MAX_PANES);
+  }
+
+  private drop(chat: number, u: number, v: number, band: Band): void {
     this.host.win.split_drop = NO_DROP;
     if (this.host.shown() === null) return;
-    const d = this.dropAt(chat, u, v);
+    const d = this.dropAt(chat, u, v, band);
     if (d.kind === "none") return;
     this.change(dropped(this.now(), chat, d));
   }
 
-  /** Ctrl+1…4: that pane takes the keyboard; Ctrl+W: the focused pane closes (its chat keeps running). */
+  /** Pane `i` dragged by its header over (u, v): where it would go (a swap, a side, an outer edge). */
+  private paneDrag(i: number, u: number, v: number, band: Band): void {
+    const s = this.state;
+    if (s === null || this.host.shown() === null) return;
+    this.show(paneDropAt(s, i, u, v, band), false);
+  }
+
+  private paneDrop(i: number, u: number, v: number, band: Band): void {
+    this.host.win.split_drop = NO_DROP;
+    const s = this.state;
+    if (s === null || this.host.shown() === null) return;
+    const d = paneDropAt(s, i, u, v, band);
+    if (d.kind === "none") return;
+    this.change(paneDropped(s, i, d));
+  }
+
+  /** Ctrl+1…4: the panes in reading order take the keyboard; Ctrl+W: the focused pane closes (its chat keeps running). */
   key(ctrl: boolean, alt: boolean, shift: boolean, key: string): boolean {
     const s = this.state;
     if (s === null || s.chats.length < 2 || this.host.shown() === null || !ctrl || alt || shift) return false;
     if (/^[1-4]$/.test(key)) {
-      const i = Number(key) - 1;
-      if (i >= s.chats.length) return false;
+      const i = order(s)[Number(key) - 1];
+      if (i === undefined) return false;
       this.focus(i, true, null);
       return true;
     }

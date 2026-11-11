@@ -57,17 +57,17 @@ export interface SideRow {
   owner_tip: string;
   owner_photo: Pixels;
   has_owner_photo: boolean;
-  /** Open in a split pane: its number (0: none); that pane has the keyboard. */
-  pane: number;
+  /** Open in a split pane; that pane has the keyboard. */
+  pane: boolean;
   pane_focus: boolean;
 }
 
 /** A split pane's header and place (panes.slint PaneHead): x, y, w, h are shares of the centre. */
 export interface PaneHead {
-  n: number;
   chat: number;
   title: string;
-  project: string;
+  /** Under its composer: where the agent works ("Worktree · name", "Current checkout"), its branch. */
+  ws: string;
   branch: string;
   pill: string;
   tone: "" | "blue" | "amber" | "green" | "red" | "gray";
@@ -101,7 +101,7 @@ export interface PaneDiv {
 }
 
 export interface PaneDrop {
-  kind: "" | "none" | "split" | "replace" | "here";
+  kind: "" | "none" | "split" | "replace" | "here" | "swap" | "move";
   pane: number;
   x: number;
   y: number;
@@ -582,8 +582,10 @@ export interface AppWindow extends slint.ComponentHandle {
   split_solo: (i: number) => void;
   split_preset: (id: string) => void;
   split_resize: (path: string, at: number) => void;
-  split_drag: (chat: number, u: number, v: number) => void;
-  split_dropped: (chat: number, u: number, v: number) => void;
+  split_drag: (chat: number, u: number, v: number, bu: number, bv: number) => void;
+  split_dropped: (chat: number, u: number, v: number, bu: number, bv: number) => void;
+  split_move: (pane: number, u: number, v: number, bu: number, bv: number) => void;
+  split_moved: (pane: number, u: number, v: number, bu: number, bv: number) => void;
   split_drag_end: () => void;
   split_toggle: (i: number, seq: number) => void;
   split_act: (i: number, seq: number, action: string) => void;
