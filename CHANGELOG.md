@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.176.1] - 2026-11-11
+
+### Fixed
+- Images, image cards and image grids in a narrow split pane scale down to the pane's width,
+  keeping their shape, instead of being cut off at the pane's edge.
+- Every split pane's composer is the real one, the same as the focused pane's: logo, border, send
+  button, footer row and agents strip.
+- A long message in a compact composer takes the full width, grows to 4 lines, then scrolls with
+  the caret kept in view.
+- The 1px lines at the top of the window and under pane headers no longer flicker or vanish at
+  fractional zoom: they sit on whole physical pixels.
+- The composer's footer row shows under every chat: a project without Git, an SSH device chat or a
+  chat with no project shows the folder it runs in.
+
+### Changed
+- The Agents panel in split mode is a column beside the panes, aligned with their headers, titled
+  "Agents · <focused chat>".
+- The layout buttons and the pane count are gone from the top bar: panes are arranged by dragging.
+
 ## [0.176.0] - 2026-11-11
 
 ### Changed
