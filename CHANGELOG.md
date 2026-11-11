@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.176.3] - 2026-11-11
+
+### Fixed
+- Switching back to a chat with images shows them in its first frame instead of gray boxes filling in again:
+  images still being decoded when a chat is left are kept (they were thrown away), and recently shown
+  chats keep up to 64 MB of decoded images (was 32 MB).
+- The title bar's branch and the composer's footer show a chat's worktree and branch in its first frame,
+  read from its folder until the PC answers, instead of the checkout's branch for a moment.
+- The line between split panes and the Agents column runs the full height and no longer flickers: it sits
+  on a whole physical pixel over the panes; the dividers between panes snap the same way at any zoom.
+
 ## [0.176.2] - 2026-11-11
 
 ### Fixed
