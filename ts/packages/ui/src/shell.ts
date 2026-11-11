@@ -55,6 +55,7 @@ import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from 
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
+import { type PaneInfo, SplitPanes } from "./splitrun.ts";
 import { AttachThumbs, sameFile } from "./attachthumbs.ts";
 import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
@@ -122,7 +123,7 @@ const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringif
 const sameJsonRow = (a: AgentRow, b: AgentRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
 const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar && a.owner_photo === b.owner_photo && JSON.stringify({ ...a, avatar: 0, owner_photo: 0 }) === JSON.stringify({ ...b, avatar: 0, owner_photo: 0 });
 /** A row's variant A fields when it has none of them: no fold, branch, owner. */
-const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false } as const;
+const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false, pane: 0, pane_focus: false } as const;
 
 function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
@@ -230,6 +231,9 @@ export class Shell {
   private stripRows = new slint.ArrayModel<StripRow>([]);
   private avatars = new Map<number, Pixels | null>();
   private mediaRows: MediaRows | null = null;
+  /** Split chat panes: the chats beside the open one (splitrun.ts). */
+  private split!: SplitPanes;
+  private mediaPkg: typeof import("@harbor/media") | null = null;
   private videoPane: VideoPane | null = null;
   private gitStatus = new Map<number, git.Status | null>();
   private gitRunning = new Set<number>();
@@ -263,6 +267,7 @@ export class Shell {
     this.voice.load();
     this.refreshVoice();
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId), (p) => this.nativeImage(p));
+    this.mediaPkg = pkg;
     this.syncFiles();
     // A Discord join that waits on a captcha comes up over the window for the person to solve.
     this.captcha = new CaptchaPane(this.win, async (b) => (await pkg.images.decodeBytes(b, 1280)).image);
@@ -585,6 +590,7 @@ export class Shell {
     win.proj_rows = this.projRows;
     this.favorites = new Favorites(data.store);
     this.keys = Keys.load(data.store);
+    this.split = this.splitPanes();
     this.zoomer = new Zoom(
       {
         scale: () => win.scale_factor,
@@ -1355,6 +1361,7 @@ export class Shell {
     this.refreshInvite();
     this.view = "chat";
     this.chatId = id;
+    this.split.opened(id);
     this.selection = null;
     this.win.sel_shown = false;
     this.engine.unread.delete(id);
@@ -1410,6 +1417,77 @@ export class Shell {
     this.composerChanged();
   }
 
+  /** The split panes' view of the shell: what a pane's header says, its cards, and opening one. */
+  private splitPanes(): SplitPanes {
+    return new SplitPanes({
+      win: this.win,
+      get: (k) => this.data.store.get(k),
+      set: (k, v) => this.data.store.set(k, v),
+      shown: () => (this.view === "chat" && this.page === null ? this.chatId : null),
+      exists: (id) => this.data.chat(id) !== undefined,
+      info: (id) => this.paneInfo(id),
+      cards: (id, media) => this.paneCards(id, media),
+      media: (changed) => (this.mediaPkg ? new MediaRows(this.mediaPkg, changed, (p) => this.nativeImage(p)) : null),
+      release: (id) => {
+        if (this.view === "chat" && id === this.chatId) return;
+        this.engine.release(id);
+        const o = this.opened.get(id);
+        if (o) forget(o);
+        collectSoon();
+      },
+      toggle: (id, seq) => transcript.now.toggle(this.openedOf(id), seq),
+      openChat: (id, fromEnd) => this.openChat(id, fromEnd),
+      focusComposer: () => this.win.focus_composer(),
+      cardAct: (seq, a) => this.win.card_act(seq, a),
+      sidebar: () => this.refreshSidebar(),
+      schedule: () => {
+        this.cardsDirty = true;
+        this.schedule(80);
+      },
+      sameCard,
+      sameBlock: (a, b) => transcript.now.sameBlock(a, b),
+    });
+  }
+
+  private paneInfo(id: number): PaneInfo {
+    const c = this.data.chat(id);
+    if (!c) return { title: "", project: "", branch: "", status: null, running: false, draft: "", model: "" };
+    const row = [...this.rows].find((r) => r.id === id && (r.kind === "thread" || r.kind === "loose")) ?? [...this.settledRows].find((r) => r.id === id && r.kind === "loose");
+    const repo = c.repoId === null ? undefined : this.data.repo(c.repoId);
+    const kind = this.account(c.account)?.kind ?? kindOfAccount(c.account);
+    return {
+      title: c.role === "sub" ? c.name : c.title,
+      project: repo?.name ?? "",
+      branch: row?.branch ?? "",
+      status: row?.status ?? null,
+      running: this.running(id),
+      draft: this.drafts.get(id) ?? "",
+      model: this.modelLabel(kind, c.model),
+    };
+  }
+
+  /** A split pane's transcript, built as the usual view builds the open chat's (no queued message being edited). */
+  private paneCards(id: number, rows: MediaRows | null): { cards: CardData[]; running: boolean } {
+    const chat = this.data.chat(id);
+    if (!chat) return { cards: [], running: false };
+    const since = this.engine.liveSince(chat.id);
+    const subs = chat.role === "lead" ? this.engine.liveSubs(chat.id).length : 0;
+    const waits = since === null ? this.engine.waiting(chat.id) : null;
+    const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}${transcript.now.subsRunning(subs)}` : waits !== null ? { text: waiting.waitText(waits, now(), utcOffset()), tone: "waiting" as const } : "";
+    const cwd = this.data.cwd(chat);
+    const homeImage = this.hub.homeImage;
+    const fetch = homeImage && this.meshChat.foreign(chat) ? (path: string) => homeImage(chat.id, path) : undefined;
+    const next = transcript.now.transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor, fetch) : undefined, (cid) => this.chatCap.gone(cid), this.meshChat.viewer(chat), this.linkTitle());
+    const running = this.engine.running(chat.id);
+    const held = this.engine.queue.held.has(chat.id);
+    const queue = transcript.now.queueCards(
+      this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing, mentions: m.mentions })),
+      { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: null, unfolded: this.unfolded.has(chat.id) },
+    );
+    rows?.sweep();
+    return { cards: transcript.now.withQueue(next, queue), running };
+  }
+
   refreshAll(): void {
     this.refreshSidebar();
     this.refreshView();
@@ -1463,6 +1541,7 @@ export class Shell {
     w.read_only_text = away ?? "This is an earlier chat, kept read-only. Start a new chat in the project to continue.";
     w.read_only_action = away === null && chat?.repoId !== null && chat?.repoId !== undefined ? "New chat" : "";
     w.chat_running = chat ? this.running(chat.id) : false;
+    this.split.render();
     this.refreshComposer();
     this.refreshCards();
   }
@@ -1638,8 +1717,10 @@ export class Shell {
   private anchorOff: ReturnType<typeof setTimeout> | null = null;
 
   private refreshCards(): void {
+    this.split.flush();
     const shown = this.view === "chat" ? this.chatId : null;
-    if (this.cardsOf !== null && this.cardsOf !== shown) {
+    // A chat that went into another split pane keeps its transcript: that pane shows it now.
+    if (this.cardsOf !== null && this.cardsOf !== shown && !this.split.holds(this.cardsOf)) {
       this.engine.release(this.cardsOf);
       const o = this.opened.get(this.cardsOf);
       if (o && o.memo.size > PAGE) collectSoon();
@@ -1756,6 +1837,7 @@ export class Shell {
     };
     const rows: SideRow[] = [];
     const asks = secrets.loadAsks(d.store);
+    const panes = this.split.marks();
     const shared = this.shared();
     // The branch a chat works on: its own worktree's, else its project's checkout's.
     const branchOf = (c: Chat, dir: string | null): string => {
@@ -1799,6 +1881,8 @@ export class Shell {
         owner_tip: o === null ? "" : `${o.shown === "" ? o.person : o.shown}'s chat`,
         owner_photo: photo ?? noPixels,
         has_owner_photo: photo !== null,
+        pane: panes.get(c.id)?.[0] ?? 0,
+        pane_focus: panes.get(c.id)?.[1] ?? false,
       };
     };
     // Folded projects show only their row (and the open chat, so you see where you are); a search unfolds them all.
@@ -1815,7 +1899,7 @@ export class Shell {
       const idle = projectIdle(wakeUps, asleep ? snoozedLabel(until, t, utcOffset()) : null);
       const selected = (main !== null && this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftMain && this.draftRepo === p.repo.id);
       const fold = p.chats.length === 0 ? "" : folded.has(p.repo.id) ? "folded" : "open";
-      const shownChats = fold === "folded" ? p.chats.filter((c) => this.view === "chat" && this.chatId === c.id) : p.chats;
+      const shownChats = fold === "folded" ? p.chats.filter((c) => (this.view === "chat" && this.chatId === c.id) || panes.has(c.id)) : p.chats;
       const mainStatus = mainChat ? this.chatStatus(mainChat, idle, asks) : idle;
       const hidden = p.chats.filter((c) => !shownChats.includes(c));
       // Folded and quiet, it says how many chats it holds.
@@ -1870,6 +1954,7 @@ export class Shell {
     };
     const settledRows = [...list.settledProjects.map(projectRow), ...list.settled.map((c) => chatRow(c, "loose"))];
     sync(this.settledRows, settledRows, sameSideRow);
+    this.split.refreshHeads();
     const w = this.win;
     w.settled_count = settledRows.length;
     const names = ws.all.filter((x) => shown.includes(x.id)).map((x) => x.name);
@@ -2506,6 +2591,8 @@ export class Shell {
   private navKey(e: KeyEvent, yieldQueued: boolean): boolean {
     if (this.keys.capture !== null || this.win.lb_open || this.win.vid_open || this.menu.length > 0) return false;
     const p = pressOf(e.text, e.modifiers);
+    // Split panes: Ctrl+1…4 and Ctrl+W, while no popup is open and nothing with keys of its own (a terminal) has them.
+    if (this.view === "chat" && this.page === null && this.win.pop_id === "" && this.win.keys_plain && this.split.key(p.ctrl, p.alt, p.shift, p.key)) return true;
     const dir = this.keys.matches("chat_prev", p) ? -1 : this.keys.matches("chat_next", p) ? 1 : 0;
     if (dir === 0) return false;
     if (yieldQueued && this.keys.matches("edit_queued", p) && this.view === "chat" && this.win.cursor === 0 && this.engine.queued(this.chatId).some((q) => !q.written && q.intent === "")) return false;
@@ -3082,6 +3169,7 @@ export class Shell {
    */
   changed(id: number | null): void {
     if (id === null || (this.view === "chat" && id === this.chatId)) this.cardsDirty = true;
+    if (this.split.changed(id)) this.cardsDirty = true;
     this.sidebarDirty = true;
     this.schedule(80);
   }
@@ -3172,6 +3260,7 @@ export class Shell {
   private refreshRunning(): void {
     if (this.engine.liveCount() === 0) return;
     if (this.view === "chat" && this.engine.live(this.chatId)) this.refreshCards();
+    this.split.running((id) => this.engine.live(id));
     this.refreshSidebar();
     this.refreshTeam();
     this.refreshStrip();

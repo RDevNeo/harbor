@@ -57,6 +57,66 @@ export interface SideRow {
   owner_tip: string;
   owner_photo: Pixels;
   has_owner_photo: boolean;
+  /** Open in a split pane: its number (0: none); that pane has the keyboard. */
+  pane: number;
+  pane_focus: boolean;
+}
+
+/** A split pane's header and place (panes.slint PaneHead): x, y, w, h are shares of the centre. */
+export interface PaneHead {
+  n: number;
+  chat: number;
+  title: string;
+  project: string;
+  branch: string;
+  pill: string;
+  tone: "" | "blue" | "amber" | "green" | "red" | "gray";
+  focused: boolean;
+  shown: boolean;
+  maxed: boolean;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  running: boolean;
+  live_seq: number;
+  draft: string;
+  model: string;
+}
+
+/** A pane's transcript, set once per pane and filled in place. */
+export interface PaneBody {
+  cards: slint.Model<CardData>;
+  live: slint.Model<MdBlockData>;
+}
+
+export interface PaneDiv {
+  path: string;
+  dir: "h" | "v";
+  at: number;
+  ax: number;
+  ay: number;
+  aw: number;
+  ah: number;
+}
+
+export interface PaneDrop {
+  kind: "" | "none" | "split" | "replace" | "here";
+  pane: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  sub: string;
+  cap: boolean;
+}
+
+export interface PanePreset {
+  id: string;
+  on: boolean;
+  enabled: boolean;
+  tip: string;
 }
 
 export interface MdBlockData {
@@ -507,6 +567,28 @@ export interface AppWindow extends slint.ComponentHandle {
   refresh: () => void;
 
   crumbs: Crumbs;
+  split_count: number;
+  split_heads: slint.Model<PaneHead>;
+  split_bodies: slint.Model<PaneBody>;
+  split_divs: slint.Model<PaneDiv>;
+  split_fx: number;
+  split_fy: number;
+  split_fw: number;
+  split_fh: number;
+  split_presets: slint.Model<PanePreset>;
+  split_drop: PaneDrop;
+  split_focus: (i: number, composer: boolean, fromEnd: number, follow: boolean) => void;
+  split_close: (i: number) => void;
+  split_solo: (i: number) => void;
+  split_preset: (id: string) => void;
+  split_resize: (path: string, at: number) => void;
+  split_drag: (chat: number, u: number, v: number) => void;
+  split_dropped: (chat: number, u: number, v: number) => void;
+  split_drag_end: () => void;
+  split_toggle: (i: number, seq: number) => void;
+  split_act: (i: number, seq: number, action: string) => void;
+  drag_chat: number;
+  readonly keys_plain: boolean;
   team_enabled: boolean;
   team_on: boolean;
   team_agents: slint.Model<AgentRow>;

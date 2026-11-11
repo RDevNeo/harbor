@@ -1,0 +1,662 @@
+// Split chat panes (logic/splitpanes.ts): up to four chats side by side in the centre. The focused pane is the usual
+// chat view (app.slint moves it into its place under its header); the others are drawn here, each with its own
+// transcript and a one-line composer that hands the keyboard to it with a click.
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Glyph, Spinner, Btn, TipArea, StatusData, StatusView } from "widgets.slint";
+import { Transcript, CardData } from "chat.slint";
+import { MdBlock } from "markdown.slint";
+import { SideRow } from "sidebar.slint";
+
+/** A pane's header and place: x, y, w, h are shares of the centre. */
+export struct PaneHead {
+    n: int,
+    chat: int,
+    title: string,
+    project: string,
+    branch: string,
+    // The status pill: "" none; tone "blue" (with a spinner), "amber", "green", "red", "gray".
+    pill: string,
+    tone: string,
+    focused: bool,
+    shown: bool,
+    maxed: bool,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    running: bool,
+    live-seq: int,
+    // The one-line composer of a pane without the keyboard: its draft, its model.
+    draft: string,
+    model: string,
+}
+
+/** A pane's transcript (empty for the focused one: the usual view shows it). Set once per pane, filled in place. */
+export struct PaneBody {
+    cards: [CardData],
+    live: [MdBlock],
+}
+
+/** A divider between the two sides of a split: at (share of the centre) on x ("h") or y ("v"), over its split's area. */
+export struct PaneDiv {
+    path: string,
+    dir: string,
+    at: float,
+    ax: float,
+    ay: float,
+    aw: float,
+    ah: float,
+}
+
+/** Where a chat dragged from the sidebar would land (splitpanes.ts Drop). */
+export struct PaneDrop {
+    kind: string,
+    pane: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    label: string,
+    sub: string,
+    cap: bool,
+}
+
+export struct PanePreset {
+    id: string,
+    on: bool,
+    enabled: bool,
+    tip: string,
+}
+
+// The header's height, and the share of a pane under which its composer is the one-line one.
+export global PaneMetrics {
+    out property <length> head: 38px;
+    out property <length> compact-below: 560px;
+}
+
+component PaneBadge inherits Rectangle {
+    in property <int> n;
+    in property <bool> on;
+    width: 17px;
+    height: 17px;
+    border-radius: 4px;
+    background: on ? Theme.blue-700 : Theme.gray-300;
+    Text {
+        text: root.n;
+        font-size: 10.5px;
+        font-weight: 600;
+        color: root.on ? #ffffff : Theme.fg;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component Pill inherits Rectangle {
+    in property <string> text;
+    in property <string> tone;
+    property <color> ink: tone == "blue" ? Theme.blue-900 : tone == "amber" ? Theme.amber-900 : tone == "green" ? Theme.green-900 : tone == "red" ? Theme.red-900 : Theme.subtle;
+    height: 19px;
+    width: row.preferred-width;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: tone == "blue" ? Theme.blue-500 : tone == "amber" ? Theme.amber-500 : tone == "green" ? Theme.green-500 : tone == "red" ? Theme.red-500 : Theme.gray-400;
+    background: tone == "blue" ? Theme.blue-100 : tone == "amber" ? Theme.amber-100 : tone == "green" ? Theme.green-100 : tone == "red" ? Theme.red-100 : Theme.gray-100;
+    row := HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 7px;
+        spacing: 5px;
+        if root.tone == "blue": Rectangle {
+            width: 11px;
+            Spinner {
+                radius: 5px;
+                color: root.ink;
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: root.ink;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// The pane's 38px head: number, title, project, branch, status; maximize and close on the right.
+export component PaneHeader inherits Rectangle {
+    in property <PaneHead> head;
+    in property <bool> many;
+    callback take();
+    callback close();
+    callback maximize();
+    height: PaneMetrics.head;
+    background: Theme.bg100;
+    TouchArea {
+        clicked => {
+            root.take();
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            PaneBadge {
+                n: root.head.n;
+                on: root.head.focused;
+            }
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 6px;
+            Text {
+                min-width: 24px;
+                max-width: self.preferred-width;
+                horizontal-stretch: 1;
+                text: root.head.title;
+                font-size: 13.5px;
+                font-weight: 500;
+                color: root.head.focused ? Theme.fg : Theme.fg.mix(Theme.subtle, 0.7);
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if root.head.project != "": Text {
+                min-width: min(self.preferred-width, 120px);
+                max-width: 160px;
+                horizontal-stretch: 0;
+                text: "· " + root.head.project;
+                font-size: 13px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if root.head.branch != "": HorizontalLayout {
+                spacing: 3px;
+                min-width: min(self.preferred-width, 110px);
+                max-width: 140px;
+                horizontal-stretch: 0;
+                Glyph {
+                    width: 12px;
+                    icon: Icons.branch;
+                    size: 12px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: root.head.branch;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+            if root.head.pill != "": VerticalLayout {
+                alignment: center;
+                Pill {
+                    text: root.head.pill;
+                    tone: root.head.tone;
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 0.001;
+            }
+        }
+        HorizontalLayout {
+            spacing: 2px;
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    icon: root.head.maxed ? Icons.minimize : Icons.maximize;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: root.head.maxed ? "Show every pane" : "Show this pane alone";
+                    clicked => {
+                        root.maximize();
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    icon: Icons.x;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Close pane · chat keeps running · Ctrl+W";
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A pane without the keyboard: its header, its transcript, and a one-line composer that gives it the keyboard.
+export component SidePane inherits Rectangle {
+    in property <PaneHead> head;
+    in property <PaneBody> body;
+    in property <length> content-w: 760px;
+    // To the shell: the transcript's distance from its end and whether it follows it, kept as the pane takes the keyboard.
+    callback take(bool, length, bool);
+    callback close();
+    callback maximize();
+    callback toggle(int);
+    callback act(int, string);
+    callback link(string);
+    callback open-url(string);
+    callback open-media(string);
+    callback copy-text(string);
+    clip: true;
+    background: Theme.bg100;
+    // Behind everything: a click on the pane where nothing else takes it gives it the keyboard.
+    TouchArea {
+        clicked => {
+            root.take(false, tr.from-end-now, tr.at-end);
+        }
+    }
+    PaneHeader {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        head: root.head;
+        take => {
+            root.take(false, tr.from-end-now, tr.at-end);
+        }
+        close => {
+            root.close();
+        }
+        maximize => {
+            root.maximize();
+        }
+    }
+    property <length> side: max((root.width - root.content-w) / 2, root.width < 520px ? 12px : 24px);
+    tr := Transcript {
+        visible: !root.head.focused;
+        x: 0;
+        y: PaneMetrics.head;
+        width: root.width;
+        height: max(0px, root.height - PaneMetrics.head - 62px);
+        cards: root.body.cards;
+        live-blocks: root.body.live;
+        live-seq: root.head.live-seq;
+        running: root.head.running;
+        content-w: root.content-w;
+        toggle(seq) => {
+            root.toggle(seq);
+        }
+        act(seq, a) => {
+            root.act(seq, a);
+        }
+        link(u) => {
+            root.link(u);
+        }
+        open-url(u) => {
+            root.open-url(u);
+        }
+        open-media(p) => {
+            root.open-media(p);
+        }
+        copy-text(t) => {
+            root.copy-text(t);
+        }
+    }
+    // Over the transcript: the first click on a pane without the keyboard gives it the keyboard (the wheel still
+    // scrolls it); a pane is acted on once it's the focused one, the usual view.
+    TouchArea {
+        visible: !root.head.focused;
+        x: 0;
+        y: PaneMetrics.head;
+        width: root.width;
+        height: max(0px, root.height - PaneMetrics.head - 62px);
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                root.take(false, tr.from-end-now, tr.at-end);
+            }
+        }
+    }
+    // The one-line composer: what's typed in it waits there; a click hands it the keyboard.
+    Rectangle {
+        visible: !root.head.focused;
+        x: root.side - 10px;
+        y: root.height - 54px;
+        width: max(0px, root.width - 2 * root.side + 20px);
+        height: 44px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: field-area.has-hover ? Theme.gray-600 : Theme.border;
+        background: Theme.dark ? Theme.bg200 : Theme.bg100;
+        field-area := TouchArea {
+            mouse-cursor: text;
+            clicked => {
+                root.take(true, tr.from-end-now, tr.at-end);
+            }
+        }
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 6px;
+            spacing: 10px;
+            Text {
+                horizontal-stretch: 1;
+                text: root.head.draft != "" ? root.head.draft : "Message…";
+                font-size: 13.5px;
+                color: root.head.draft != "" ? Theme.fg : Theme.gray-900;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if root.head.model != "" && root.width > 360px: HorizontalLayout {
+                spacing: 4px;
+                Text {
+                    max-width: 140px;
+                    text: root.head.model;
+                    font-size: 12.5px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                Glyph {
+                    width: 11px;
+                    icon: Icons.down;
+                    size: 11px;
+                    color: Theme.subtle;
+                }
+            }
+            Glyph {
+                width: 16px;
+                icon: Icons.mic;
+                size: 14px;
+                color: Theme.subtle;
+            }
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: Theme.gray-200;
+                    Glyph {
+                        icon: Icons.arrow-up;
+                        size: 14px;
+                        color: Theme.subtle;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The top bar's layout buttons' glyphs: drawn, so no font glyph has to be added for them.
+export component LayoutGlyph {
+    in property <string> id;
+    in property <color> ink;
+    width: 14px;
+    height: 12px;
+    Rectangle {
+        border-width: 1.3px;
+        border-color: root.ink;
+        border-radius: 2px;
+    }
+    if root.id == "2" || root.id == "1+2" || root.id == "2x2": Rectangle {
+        x: (parent.width - 1.3px) / 2;
+        width: 1.3px;
+        background: root.ink;
+    }
+    if root.id == "1+2": Rectangle {
+        x: parent.width / 2;
+        y: (parent.height - 1.3px) / 2;
+        width: parent.width / 2;
+        height: 1.3px;
+        background: root.ink;
+    }
+    if root.id == "2x2": Rectangle {
+        y: (parent.height - 1.3px) / 2;
+        height: 1.3px;
+        background: root.ink;
+    }
+}
+
+// The four layout buttons and "N of 4", in place of the breadcrumb while the centre is split.
+export component LayoutBar {
+    in property <[PanePreset]> presets;
+    in property <int> count;
+    callback pick(string);
+    HorizontalLayout {
+        spacing: 10px;
+        Rectangle {
+            width: seg.preferred-width;
+            height: 28px;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.bg200;
+            seg := HorizontalLayout {
+                padding: 2px;
+                spacing: 2px;
+                for p in root.presets: Rectangle {
+                    width: 28px;
+                    height: 22px;
+                    border-radius: 5px;
+                    background: p.on ? Theme.gray-300 : area.has-hover && p.enabled ? Theme.gray-200 : transparent;
+                    LayoutGlyph {
+                        id: p.id;
+                        ink: p.on ? Theme.fg : p.enabled ? Theme.gray-900 : Theme.gray-600;
+                    }
+                    area := TipArea {
+                        tip: p.tip;
+                        mouse-cursor: p.enabled ? pointer : default;
+                        clicked => {
+                            if p.enabled {
+                                root.pick(p.id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Text {
+            text: root.count + " of 4";
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// While a chat is dragged over the centre: a dim scrim, the zone it would land in, and (four panes open) each pane's
+// Replace target. `heads` give the panes' places; the zone and labels come from the shell.
+export component DropOverlay {
+    in property <PaneDrop> drop;
+    in property <[PaneHead]> heads;
+    property <bool> replace: drop.kind == "replace";
+    Rectangle {
+        background: #000000.with-alpha(Theme.dark ? 0.55 : 0.3);
+    }
+    // One pane: its two halves.
+    for k in root.heads.length == 0 ? 2 : 0: Rectangle {
+        x: k == 0 ? 12px : root.width / 2 + 6px;
+        y: 12px;
+        width: root.width / 2 - 18px;
+        height: root.height - 24px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.fg.with-alpha(0.14);
+    }
+    // Every pane's outline, so the places to drop show at a glance.
+    for h in root.heads: Rectangle {
+        visible: h.shown;
+        x: h.x * root.width + 12px;
+        y: h.y * root.height + 12px;
+        width: max(0px, h.w * root.width - 24px);
+        height: max(0px, h.h * root.height - 24px);
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.fg.with-alpha(0.14);
+        // Four open: each pane is a Replace target with what keeps running.
+        if root.drop.cap && !(root.drop.kind == "replace" && root.drop.pane == h.n - 1): Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: cap-col.preferred-width;
+            height: cap-col.preferred-height;
+            border-radius: 10px;
+            background: Theme.bg100.with-alpha(0.92);
+            border-width: 1px;
+            border-color: Theme.border;
+            cap-col := VerticalLayout {
+                padding: 14px;
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: cap-row.preferred-width;
+                        height: 32px;
+                        border-radius: 7px;
+                        border-width: 1px;
+                        border-color: Theme.gray-500;
+                        background: Theme.gray-100;
+                        cap-row := HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 8px;
+                            Glyph {
+                                width: 13px;
+                                icon: Icons.refresh;
+                                size: 13px;
+                                color: Theme.subtle;
+                            }
+                            Text {
+                                text: "Replace pane " + h.n;
+                                font-size: 13.5px;
+                                color: Theme.subtle;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                Text {
+                    max-width: 320px;
+                    text: h.title + " keeps running";
+                    font-size: 12.5px;
+                    color: Theme.subtle;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+    if root.drop.kind != "none" && root.drop.kind != "": Rectangle {
+        x: root.drop.x * root.width + 12px;
+        y: root.drop.y * root.height + 12px;
+        width: max(0px, root.drop.w * root.width - 24px);
+        height: max(0px, root.drop.h * root.height - 24px);
+        border-radius: 10px;
+        border-width: 1.5px;
+        border-color: Theme.blue-700;
+        background: Theme.blue-700.with-alpha(0.12);
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: label-col.preferred-width;
+            height: label-col.preferred-height;
+            border-radius: 10px;
+            background: root.replace ? Theme.bg100.with-alpha(0.92) : transparent;
+            border-width: root.replace ? 1px : 0px;
+            border-color: Theme.border;
+            label-col := VerticalLayout {
+                padding: root.replace ? 14px : 0px;
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: label-row.preferred-width;
+                        height: 32px;
+                        border-radius: 7px;
+                        border-width: 1px;
+                        border-color: root.replace ? Theme.blue-700 : Theme.blue-600;
+                        background: root.replace ? Theme.blue-700 : Theme.blue-200;
+                        label-row := HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 8px;
+                            Glyph {
+                                width: 13px;
+                                icon: root.replace ? Icons.refresh : root.drop.kind == "here" ? Icons.check : Icons.panel-right;
+                                size: 13px;
+                                color: root.replace ? #ffffff : Theme.blue-1000;
+                            }
+                            Text {
+                                text: root.drop.label;
+                                font-size: 13.5px;
+                                font-weight: 500;
+                                color: root.replace ? #ffffff : Theme.blue-1000;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                if root.drop.sub != "": Text {
+                    max-width: 320px;
+                    text: root.drop.sub;
+                    font-size: 12.5px;
+                    color: Theme.subtle;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}
+
+// The chat being dragged, following the pointer.
+export component DragGhost inherits Rectangle {
+    in property <SideRow> chat;
+    width: 290px;
+    height: 54px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.gray-500;
+    background: Theme.bg200;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000066;
+    drop-shadow-offset-y: 4px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
+        Glyph {
+            width: 16px;
+            icon: Icons.message;
+            size: 14px;
+            color: Theme.subtle;
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.chat.title;
+                    font-size: 13.5px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                }
+                StatusView {
+                    status: root.chat.status;
+                }
+            }
+            Text {
+                text: root.chat.branch != "" ? root.chat.branch : root.chat.kind == "thread" ? "Chat" : "Thread";
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+            }
+        }
+    }
+}

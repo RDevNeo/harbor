@@ -27,6 +27,7 @@ import listdetail from "../slint/listdetail.slint" with { type: "file" };
 import patchlist from "../slint/patchlist.slint" with { type: "file" };
 import markdown from "../slint/markdown.slint" with { type: "file" };
 import palette from "../slint/palette.slint" with { type: "file" };
+import panes from "../slint/panes.slint" with { type: "file" };
 import picker from "../slint/picker.slint" with { type: "file" };
 import prdetail from "../slint/prdetail.slint" with { type: "file" };
 import prs from "../slint/prs.slint" with { type: "file" };
@@ -62,6 +63,7 @@ export const FILES: Readonly<Record<string, string>> = {
   "patchlist.slint": patchlist,
   "markdown.slint": markdown,
   "palette.slint": palette,
+  "panes.slint": panes,
   "picker.slint": picker,
   "prdetail.slint": prdetail,
   "prs.slint": prs,

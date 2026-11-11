@@ -27,6 +27,7 @@ import { IssuesBus, IssuesPage } from "issues.slint";
 import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
+import { PaneHead, PaneBody, PaneDiv, PaneDrop, PanePreset, PaneMetrics, SidePane, PaneHeader, LayoutBar, LayoutGlyph, DropOverlay, DragGhost } from "panes.slint";
 
 export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
@@ -114,6 +115,13 @@ component TopBar {
     in property <string> mem;
     in property <bool> mem-open;
     callback mem-clicked(length, length);
+    // Split panes (panes.slint): the layout buttons and "N of 4" in place of the breadcrumb; at four, while a chat is
+    // dragged, the notice that only a replace is left.
+    in property <bool> split;
+    in property <[PanePreset]> presets;
+    in property <int> split-count;
+    in property <bool> cap;
+    callback preset(string);
     height: 46px;
     HorizontalLayout {
         padding-left: 18px;
@@ -131,7 +139,20 @@ component TopBar {
                 root.show-sidebar();
             }
         }
-        HorizontalLayout {
+        if root.split: HorizontalLayout {
+            horizontal-stretch: 1;
+            LayoutBar {
+                presets: root.presets;
+                count: root.split-count;
+                pick(id) => {
+                    root.preset(id);
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+        }
+        if !root.split: HorizontalLayout {
             horizontal-stretch: 1;
             spacing: 6px;
             Rectangle {
@@ -272,6 +293,39 @@ component TopBar {
                 clicked => {
                     root.close-window();
                 }
+            }
+        }
+    }
+    if root.cap: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        width: cap-row.preferred-width;
+        height: 30px;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: Theme.amber-500;
+        background: Theme.amber-100;
+        cap-row := HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 8px;
+            LayoutGlyph {
+                y: (parent.height - self.height) / 2;
+                id: "2x2";
+                ink: Theme.amber-900;
+            }
+            Text {
+                text: "4 panes is the most";
+                font-size: 13px;
+                font-weight: 500;
+                color: Theme.amber-900;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "· drop on a pane to replace it · Esc cancels";
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
             }
         }
     }
@@ -451,6 +505,37 @@ export component AppWindow inherits Window {
     callback refresh();
 
     in property <Crumbs> crumbs;
+    // Split panes (logic/splitpanes.ts): how many, each one's header and place, the others' transcripts, the dividers,
+    // the focused one's place (shares of the centre), the layout buttons, and where a dragged chat would land.
+    in property <int> split-count: 1;
+    in property <[PaneHead]> split-heads;
+    in property <[PaneBody]> split-bodies;
+    in property <[PaneDiv]> split-divs;
+    in property <float> split-fx: 0;
+    in property <float> split-fy: 0;
+    in property <float> split-fw: 1;
+    in property <float> split-fh: 1;
+    in property <[PanePreset]> split-presets;
+    in property <PaneDrop> split-drop;
+    // Pane i takes the keyboard (with its composer focused or not; its transcript's distance from its end, following).
+    callback split-focus(int, bool, length, bool);
+    callback split-close(int);
+    callback split-solo(int);
+    callback split-preset(string);
+    callback split-resize(string, float);
+    // A chat dragged from the sidebar over (shares of the centre) and dropped there; the drag called off (Esc).
+    callback split-drag(int, float, float);
+    callback split-dropped(int, float, float);
+    callback split-drag-end();
+    callback split-toggle(int, int);
+    callback split-act(int, int, string);
+    in-out property <int> drag-chat: -1;
+    property <bool> drag-dead;
+    property <SideRow> drag-row;
+    property <length> drag-x;
+    property <length> drag-y;
+    // Nothing that takes keys of its own has the keyboard (a terminal, a field): Ctrl+W and Ctrl+1…4 are the panes'.
+    out property <bool> keys-plain: keys.has-focus || composer-el.focused;
     in property <bool> team-enabled;
     in property <bool> team-on;
     in property <[AgentRow]> team-agents;
@@ -779,6 +864,12 @@ export component AppWindow inherits Window {
         focus-on-click: false;
         focus-on-tab-navigation: false;
         capture-key-pressed(e) => {
+            if root.drag-chat >= 0 && e.text == Key.Escape {
+                root.drag-chat = -1;
+                root.drag-dead = true;
+                root.split-drag-end();
+                return accept;
+            }
             if (e.modifiers.alt || e.modifiers.control) && root.nav-key(e) {
                 return accept;
             }
@@ -903,6 +994,22 @@ export component AppWindow inherits Window {
                     reorder(id, target, above) => {
                         root.reorder(id, target, above);
                     }
+                    chat-drag(r, x, y) => {
+                        if root.view == "chat" && !root.drag-dead {
+                            root.drag-row = r;
+                            root.drag-chat = r.id;
+                            root.drag-x = x;
+                            root.drag-y = y;
+                            root.split-drag(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height);
+                        }
+                    }
+                    chat-drop(r, x, y) => {
+                        if root.drag-chat >= 0 && !root.drag-dead {
+                            root.split-dropped(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height);
+                        }
+                        root.drag-chat = -1;
+                        root.drag-dead = false;
+                    }
                     settings => {
                         root.settings();
                     }
@@ -944,6 +1051,13 @@ export component AppWindow inherits Window {
                             root.parent-clicked();
                         }
                         mem: root.view == "chat" ? root.chat-mem : "";
+                        split: body.split;
+                        presets: root.split-presets;
+                        split-count: root.split-count;
+                        cap: root.drag-chat >= 0 && root.split-drop.cap;
+                        preset(id) => {
+                            root.split-preset(id);
+                        }
                         mem-open: root.pop-id == "mem-chat";
                         mem-clicked(x, y) => {
                             root.mem-pop("mem-chat", x, y);
@@ -952,16 +1066,27 @@ export component AppWindow inherits Window {
                     if root.view == "draft" || root.view == "chat": Separator { }
                     body := Rectangle {
                         vertical-stretch: 1;
+                        // Split panes: the focused one is this usual view, moved into its place under its header.
+                        property <bool> split: root.view == "chat" && root.split-count > 1;
                         // chat.rs: the panel docks while the chat keeps its 440px minimum.
                         property <bool> team-docked: root.view == "chat" && root.team-enabled && root.team-on && self.width - 300px >= 440px;
-                        property <length> room: self.width - (team-docked ? 300px : 0px);
+                        // The panes' area: the centre left of the docked panel.
+                        property <length> area-w: self.width - (team-docked ? 300px : 0px);
+                        property <length> fx: split ? floor(root.split-fx * area-w / 1px) * 1px : 0px;
+                        property <length> fy: split ? floor(root.split-fy * self.height / 1px) * 1px : 0px;
+                        property <length> fw: split ? floor((root.split-fx + root.split-fw) * area-w / 1px) * 1px - fx : area-w;
+                        property <length> fh: split ? floor((root.split-fy + root.split-fh) * self.height / 1px) * 1px - fy : self.height;
+                        property <length> top: split ? PaneMetrics.head : 0px;
+                        // A short pane's composer is the one-line one.
+                        property <bool> compact: split && fh < PaneMetrics.compact-below;
+                        property <length> room: fw;
                         property <length> side: max((room - root.content-w) / 2, room < 520px ? 12px : 24px);
                         property <length> column: max(0px, room - 2 * side);
                         property <bool> centred: root.view == "draft" || root.hero;
                         // chat.rs: (h/2 - 170 - growth), clamped at 24px; fitted to the Rust app at 853 and 553px.
-                        property <length> hero-top: max(self.height * 0.5 - 375px, 24px) + 7px;
+                        property <length> hero-top: fy + top + max((fh - top) * 0.5 - 375px, 24px) + 7px;
                         if body.team-docked: TeamPanel {
-                            x: body.room;
+                            x: body.area-w;
                             y: 9px;
                             width: 300px;
                             height: parent.height - 9px;
@@ -1015,10 +1140,10 @@ export component AppWindow inherits Window {
                         }
                         transcript := Transcript {
                             visible: root.view == "chat" && !root.hero;
-                            x: 0;
-                            y: 0;
+                            x: body.fx;
+                            y: body.fy + body.top;
                             width: body.room;
-                            height: parent.height - composer-box.height;
+                            height: body.fh - body.top - composer-box.height;
                             cards: root.cards;
                             live-blocks: root.live-blocks;
                             live-seq: root.live-seq;
@@ -1061,7 +1186,7 @@ export component AppWindow inherits Window {
                             }
                         }
                         if body.centred: Hero {
-                            x: body.side;
+                            x: body.fx + body.side;
                             y: body.hero-top;
                             width: body.column;
                             subtitle: root.hero-subtitle;
@@ -1072,12 +1197,12 @@ export component AppWindow inherits Window {
                             }
                         }
                         composer-box := VerticalLayout {
-                            x: body.side;
-                            y: body.centred ? floor((body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px)) / 1px) * 1px : parent.height - self.height;
+                            x: body.fx + body.side;
+                            y: body.centred ? floor((body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px)) / 1px) * 1px : body.fy + body.fh - self.height;
                             width: body.column;
                             height: self.preferred-height;
                             padding-top: body.centred ? 0px : 8px;
-                            padding-bottom: body.centred ? 0px : 16px;
+                            padding-bottom: body.centred ? 0px : body.compact ? 10px : 16px;
                             visible: root.view == "draft" || root.view == "chat";
                             if root.read-only: Rectangle {
                                 background: Theme.bg200;
@@ -1112,6 +1237,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             composer-el := Composer {
+                                compact: body.compact;
                                 visible: !root.read-only;
                                 height: root.read-only ? 0px : self.preferred-height;
                                 text <=> root.draft;
@@ -1198,6 +1324,90 @@ export component AppWindow inherits Window {
                                     root.strip-stop-all();
                                 }
                             }
+                        }
+                        // The panes: each one's header (the focused one's over the usual view), the others whole.
+                        if body.split: Rectangle {
+                            x: 0;
+                            y: 0;
+                            width: body.area-w;
+                            height: body.height;
+                            for h[i] in root.split-heads: SidePane {
+                                visible: h.shown;
+                                x: floor(h.x * body.area-w / 1px) * 1px;
+                                y: floor(h.y * body.height / 1px) * 1px;
+                                width: floor((h.x + h.w) * body.area-w / 1px) * 1px - self.x;
+                                height: h.focused ? PaneMetrics.head : floor((h.y + h.h) * body.height / 1px) * 1px - self.y;
+                                head: h;
+                                body: root.split-bodies[i];
+                                content-w: root.content-w;
+                                take(composer, from-end, follow) => {
+                                    root.split-focus(i, composer, from-end, follow);
+                                }
+                                close => {
+                                    root.split-close(i);
+                                }
+                                maximize => {
+                                    root.split-solo(i);
+                                }
+                                toggle(seq) => {
+                                    root.split-toggle(i, seq);
+                                }
+                                act(seq, a) => {
+                                    root.split-act(i, seq, a);
+                                }
+                                link(u) => {
+                                    root.link(u);
+                                }
+                                open-url(u) => {
+                                    root.open-url(u);
+                                }
+                                open-media(p) => {
+                                    root.open-media(p);
+                                }
+                                copy-text(t) => {
+                                    root.copy-text(t);
+                                }
+                            }
+                            // The focused pane's thin accent border.
+                            Rectangle {
+                                x: body.fx;
+                                y: body.fy;
+                                width: body.fw;
+                                height: body.fh;
+                                border-width: 1px;
+                                border-color: Theme.blue-700.with-alpha(0.75);
+                            }
+                            // 1px dividers: blue, with the resize cursor, under the pointer; dragged, they resize.
+                            for d in root.split-divs: TouchArea {
+                                property <length> at: d.dir == "h" ? floor(d.at * body.area-w / 1px) * 1px : floor(d.at * body.height / 1px) * 1px;
+                                x: d.dir == "h" ? self.at - 3px : floor(d.ax * body.area-w / 1px) * 1px;
+                                y: d.dir == "v" ? self.at - 3px : floor(d.ay * body.height / 1px) * 1px;
+                                width: d.dir == "h" ? 7px : floor((d.ax + d.aw) * body.area-w / 1px) * 1px - self.x;
+                                height: d.dir == "v" ? 7px : floor((d.ay + d.ah) * body.height / 1px) * 1px - self.y;
+                                mouse-cursor: d.dir == "h" ? MouseCursor.col-resize : MouseCursor.row-resize;
+                                Rectangle {
+                                    x: d.dir == "h" ? (self.has-hover-or-pressed ? 2px : 3px) : 0px;
+                                    y: d.dir == "v" ? (self.has-hover-or-pressed ? 2px : 3px) : 0px;
+                                    property <bool> has-hover-or-pressed: parent.has-hover || parent.pressed;
+                                    width: d.dir == "h" ? (self.has-hover-or-pressed ? 3px : 1px) : parent.width;
+                                    height: d.dir == "v" ? (self.has-hover-or-pressed ? 3px : 1px) : parent.height;
+                                    background: self.has-hover-or-pressed ? Theme.blue-700 : Theme.border;
+                                }
+                                moved => {
+                                    if self.pressed {
+                                        root.split-resize(d.path, d.dir == "h" ? (self.x + self.mouse-x) / body.area-w : (self.y + self.mouse-y) / body.height);
+                                    }
+                                }
+                            }
+                        }
+                        // A chat dragged from the sidebar: where it would land.
+                        if root.drag-chat >= 0 && root.view == "chat": DropOverlay {
+                            x: 0;
+                            y: 0;
+                            width: body.area-w;
+                            height: body.height;
+                            drop: root.split-drop;
+                            heads: root.split-heads;
                         }
                     }
                 }
@@ -2470,6 +2680,12 @@ export component AppWindow inherits Window {
             init => {
                 self.focus-field();
             }
+        }
+
+        if root.drag-chat >= 0 && root.view == "chat": DragGhost {
+            x: min(root.drag-x + 14px, root.width - self.width - 8px);
+            y: min(root.drag-y + 10px, root.height - self.height - 8px);
+            chat: root.drag-row;
         }
 
         TipLayer {

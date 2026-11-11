@@ -545,7 +545,11 @@ export component Composer {
     }
     property <length> line: 20px;
     property <length> who-w: root.state.typing == "" ? 0px : who.preferred-width + 12px;
-    property <length> text-h: min(max(field.preferred-height, 3 * line + 2px), root.max-h);
+    // A short split pane's one-line composer: the text on one line (up to four as it grows), the model, the mic and
+    // send beside it, and none of the chips or the tray under it.
+    in property <bool> compact;
+    property <length> text-h: root.compact ? min(max(field.preferred-height, line), 4 * line) : min(max(field.preferred-height, 3 * line + 2px), root.max-h);
+    property <length> tail-w: root.compact ? tail.preferred-width + 8px : 0px;
     VerticalLayout {
         spacing: 8px;
         if root.strip-rows.length > 0: AgentStrip {
@@ -661,10 +665,10 @@ export component Composer {
                 border-color: field.has-focus ? Theme.gray-600 : Theme.border;
                 border-radius: 16px;
                 VerticalLayout {
-                    padding-left: 18px;
-                    padding-right: 18px;
-                    padding-top: 17px;
-                    padding-bottom: 14px;
+                    padding-left: root.compact ? 14px : 18px;
+                    padding-right: root.compact ? 6px : 18px;
+                    padding-top: root.compact ? 12px : 17px;
+                    padding-bottom: root.compact ? 12px : 14px;
                     spacing: 0px;
                     if root.mentions.length > 0: VerticalLayout {
                         padding-bottom: 14px;
@@ -820,15 +824,16 @@ export component Composer {
                         if field.text == "": Text {
                             x: 0;
                             y: 0;
-                            width: parent.width - root.who-w;
-                            text: root.state.hint;
+                            width: parent.width - root.who-w - root.tail-w;
+                            text: root.compact ? "Message…" : root.state.hint;
                             font-size: 14px;
                             color: Theme.gray-900;
-                            wrap: word-wrap;
+                            wrap: root.compact ? no-wrap : word-wrap;
+                            overflow: elide;
                         }
                         FocusScope {
                             x: 0;
-                            width: parent.width - root.who-w;
+                            width: parent.width - root.who-w - root.tail-w;
                             capture-key-pressed(e) => {
                                 if root.key(e) {
                                     return accept;
@@ -847,11 +852,73 @@ export component Composer {
                                 }
                             }
                         }
+                        // One line: the model, the mic and send at the line's end.
+                        tail := HorizontalLayout {
+                            visible: root.compact;
+                            x: parent.width - self.width;
+                            y: (root.line - 32px) / 2;
+                            height: 32px;
+                            width: root.compact ? self.preferred-width : 0px;
+                            spacing: 4px;
+                            Trigger {
+                                y: 2px;
+                                has-logo: true;
+                                logo: root.logo;
+                                badge: root.state.badge;
+                                photo: root.badge-photo;
+                                has-photo: root.has-badge-photo;
+                                ground: Theme.dark ? Theme.bg200 : Theme.bg100;
+                                label: text-box.width > 420px ? root.state.model : "";
+                                label-max: 120px;
+                                tip: root.state.model + " · " + root.state.model-tip;
+                                open: root.open-popup == "model";
+                                clicked => {
+                                    root.popup("model", self.absolute-position.x, self.absolute-position.y);
+                                }
+                            }
+                            if root.voice == "rec": StopButton {
+                                tip: root.mic-tip;
+                                clicked => {
+                                    root.mic();
+                                }
+                            }
+                            if root.voice == "busy": Rectangle {
+                                width: 18px;
+                                Spinner {
+                                    radius: 6px;
+                                    color: Theme.subtle;
+                                }
+                            }
+                            if root.voice == "": Btn {
+                                y: 1px;
+                                icon: Icons.mic;
+                                size: icon-sm;
+                                variant: ghost-muted;
+                                tip: root.mic-tip;
+                                clicked => {
+                                    root.mic();
+                                }
+                            }
+                            if root.state.action == "stop": StopButton {
+                                tip: "Stop (Esc)";
+                                clicked => {
+                                    root.stop();
+                                }
+                            }
+                            if root.state.action != "stop": RoundButton {
+                                icon: root.state.action == "steer" ? Icons.corner-up-right : root.state.action == "queue" ? Icons.list-plus : root.state.action == "update" ? Icons.check : root.state.action == "resume" ? Icons.play : Icons.arrow-up;
+                                enabled: root.state.action != "send" || field.text != "" || root.files.length > 0;
+                                tip: root.state.action-tip;
+                                clicked => {
+                                    root.send();
+                                }
+                            }
+                        }
                     }
-                    Rectangle {
+                    if !root.compact: Rectangle {
                         height: 10px;
                     }
-                    HorizontalLayout {
+                    if !root.compact: HorizontalLayout {
                         height: 34px;
                         spacing: 8px;
                         // The chips take what the buttons on the right leave (never pushing them out of the frame):
@@ -1080,7 +1147,7 @@ export component Composer {
             }
             // The tray under the card (as the reference composer's): tucked under its bottom edge, a little narrower,
             // one quiet row: where the agent works on the left; its pull request and branch on the right.
-            if root.bar.shown: HorizontalLayout {
+            if root.bar.shown && !root.compact: HorizontalLayout {
                 padding-left: 18px;
                 padding-right: 18px;
                 Rectangle {

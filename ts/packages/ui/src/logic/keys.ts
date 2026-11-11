@@ -60,6 +60,8 @@ export const ACTIONS: readonly Action[] = [
   a("toggle_terminal", "Open or close the terminal", "Panels", "Ctrl+Backtick", ""),
   a("toggle_team", "Show or hide the team panel (agents, wake-ups, webhooks)", "Panels", "Ctrl+D", "leadChatOpen && !terminalFocus"),
   a("toggle_browser", "Open or close the browser", "Panels", "Ctrl+Shift+B", "!browserFocus"),
+  fixed("pane_focus", "Give split pane 1–4 the keyboard", "Panels", "Ctrl+1…4", "splitPanes && !terminalFocus && !popup"),
+  fixed("pane_close", "Close the focused split pane (its chat keeps running)", "Panels", "Ctrl+W", "splitPanes && !terminalFocus"),
   a("list_search", "Search the list", "Lists", "Ctrl+F", "listOpen"),
   a("list_toggle_panel", "Show or hide the side panel", "Lists", "Ctrl+Alt+B", "listOpen"),
   a("list_close_tab", "Close the panel's tab", "Lists", "Ctrl+W", "listPanelOpen"),
