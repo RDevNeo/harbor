@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.176.2] - 2026-11-11
+
+### Fixed
+- Switching chats (sidebar, Alt+Up/Down, split panes) goes from the old chat to the new one in one
+  frame: the last chats left stay ready (no reload or re-parse), the newest messages are drawn first
+  and the rest just after, and only the changed rows of the transcript are rebuilt.
+- A chat opens at its end even after scrolling up in the one before, with no jump; a reader who
+  scrolls up while it opens stays where they are.
+- Images keep their place at their final size (a gray box) while they load, so the messages
+  around them no longer move; images are read off the main thread and recently seen ones stay
+  decoded.
+- The sidebar's selection and the composer's footer update in place instead of blinking.
+
 ## [0.176.1] - 2026-11-11
 
 ### Fixed
