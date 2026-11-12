@@ -1,3 +1,5 @@
+import { paths as osPaths } from "@harbor/os";
+
 /** How long ago `ts` was, short: "now", "38m", "5h", "1d". */
 export function ago(ts: number, now: number): string {
   const d = Math.max(0, now - ts);
@@ -9,10 +11,7 @@ export function ago(ts: number, now: number): string {
 
 /** `path` with the home folder `home` written `~`. */
 export function tilde(path: string, home: string): string {
-  const h = home.replace(/\/+$/, "");
-  if (path === h || path === `${h}/`) return "~";
-  if (h !== "" && path.startsWith(`${h}/`)) return `~/${path.slice(h.length + 1).replace(/^\/+/, "")}`;
-  return path;
+  return osPaths.tilde(path, home);
 }
 
 const UTF8 = new TextEncoder();

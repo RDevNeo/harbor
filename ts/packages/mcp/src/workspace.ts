@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { closeSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -52,7 +53,7 @@ function memoryFiles(cwd: string): string[] {
   const h = home();
   const dirs: string[] = [];
   for (let d = cwd; ; d = dirname(d)) {
-    if (d === h || !(h === "/" || d === h || d.startsWith(`${h}/`))) break;
+    if (d === h || !(h === "/" || osPaths.under(d, h) !== null)) break;
     dirs.push(d);
     if (dirname(d) === d) break;
   }

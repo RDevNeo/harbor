@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+
 const EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 
 /** Whether `path`'s extension is an image's (any case). */

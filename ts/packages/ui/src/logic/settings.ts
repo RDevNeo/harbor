@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { join } from "node:path";
 import { home, projectsdir } from "@harbor/store";
 import { searchTabs, TAB_ORDER, TABS, type Tab } from "./pages.ts";
@@ -45,7 +46,7 @@ export interface GeneralEnv {
 /** The Projects folder row's buttons (pages/settings.ts opens the folder picker for `change`). */
 export const PROJECTS_DIR = { change: "projects_dir:change", reset: "projects_dir:reset" } as const;
 
-const tildeIn = (h: string, p: string): string => (p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p);
+const tildeIn = (h: string, p: string): string => osPaths.tilde(p, h);
 
 /** Projects: the folder new projects, clones, worktrees and chats without a project go in (projectsdir.ts). */
 export function projectsSection(kv: Kv, h: string): SettingSection {

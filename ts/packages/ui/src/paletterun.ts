@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as slint from "slint-ui";
@@ -13,7 +14,7 @@ interface PaletteWindow extends slint.ComponentHandle {
 }
 
 const store = Store.open(dataDir());
-const tilde = (p: string) => (p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p);
+const tilde = (p: string) => osPaths.tilde(p, homedir());
 const ui = slint.loadFile(join(await uiDir(), "palette.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "PaletteWindow");
 if (typeof ctor !== "function") throw new Error("palette.slint has no PaletteWindow");

@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -366,8 +367,9 @@ export class ProjectMove {
         if (h.branch === "") throw new Error(`“${title(x)}”'s worktree is on a detached commit: put it on a branch first`);
       }
     }
-    const home = this.d.home.replace(/\/+$/, "");
-    const rel = dir.startsWith(`${home}/`) ? dir.slice(home.length + 1) : basename(dir);
+    // "/" between its parts whatever this PC writes: the other PC reads it.
+    const inHome = osPaths.under(dir, this.d.home);
+    const rel = inHome ? inHome.replaceAll("\\", "/") : basename(dir);
     const check: Record<string, Json> = { name: r.name, folder: basename(dir), rel, path: dir, remote, git: clone, manifest, bytes: scan.bytes, from: this.d.mesh.me.name };
     const answer = await this.call(peer, "check", check);
     if (answer.ok !== true) throw new Error(`${peer.name} can't take it: ${s(answer.why) || "it didn't say why"}`);

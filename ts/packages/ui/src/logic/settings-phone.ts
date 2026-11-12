@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { ICONS } from "../icons.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ export interface PhoneSettingsFacts {
   projects?: { home: string; dirs: string[] };
 }
 
-const tildeIn = (h: string, p: string): string => (p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p);
+const tildeIn = (h: string, p: string): string => osPaths.tilde(p, h);
 
 /** Projects folder: one of a list (the phone can't browse the PC's disk): the default, the current one, then `dirs`. */
 function projectsRow(kv: Kv, p: { home: string; dirs: string[] }): Row {

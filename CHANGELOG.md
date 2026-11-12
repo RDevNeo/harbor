@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.6] - 2026-11-12
+
+### Fixed
+- Windows: folders under your profile read `~/…` in Add project, Settings, the palette and worktree notes, and
+  checks of "is this inside that folder" read Windows paths: a project folder moved on disk keeps its chats, a
+  terminal open in a project is seen, the phone's files of a chat open, a project moved to another PC keeps its
+  place under the home, and a remote turn from Windows finds your Claude profile.
+
 ## [0.180.5] - 2026-11-12
 
 ### Fixed

@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Mention } from "@harbor/store";
@@ -355,10 +356,7 @@ export interface MoveCode {
 export const NO_MOVE_CODE: MoveCode = { remote: "", branch: "", sha: "", worktree: false };
 
 export function tildeOf(home: string, p: string): string {
-  const h = home.replace(/\/+$/, "");
-  const a = p.replace(/\/+$/, "");
-  if (a === h) return "~";
-  return a.startsWith(`${h}/`) ? `~/${a.slice(h.length + 1)}` : p;
+  return osPaths.tilde(p, home, true);
 }
 
 export interface CodeEnv {

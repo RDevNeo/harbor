@@ -90,6 +90,9 @@ async function until(what: string, ok: () => boolean): Promise<void> {
   }
 }
 
+// The XDG entry: Linux and macOS (Windows writes its Run key, os win32.test.ts).
+const linuxLike = process.platform !== "win32";
+
 test("autostart_entry_quotes_paths", () => {
   expect(desktopEntry("/opt/harbor/harbor")).toContain("\nExec=/opt/harbor/harbor --background\n");
   expect(desktopEntry("/home/sam/My Apps/harbor")).toContain('\nExec="/home/sam/My Apps/harbor" --background\n');
@@ -117,7 +120,7 @@ test("the desktop entry has every line Harbor writes", () => {
   expect(desktopEntry('/x/a"b`c\\d\'e')).toContain('Exec="/x/a\\"b\\`c\\\\d\'e" --background');
 });
 
-test("autostart is written into XDG_CONFIG_HOME, read back, and removed", () => {
+test.if(linuxLike)("autostart is written into XDG_CONFIG_HOME, read back, and removed", () => {
   expect(autostartFile()).toBe(join(tmp, "config", "autostart/harbor.desktop"));
   expect(autostart()).toBe(false);
   setAutostart(false, { exe: null, managed: false });
@@ -134,7 +137,7 @@ test("autostart is written into XDG_CONFIG_HOME, read back, and removed", () => 
   expect(existsSync(join(tmp, "home"))).toBe(false);
 });
 
-test("autostart without a known executable says so, and a relative XDG_CONFIG_HOME falls back to HOME", () => {
+test.if(linuxLike)("autostart without a known executable says so, and a relative XDG_CONFIG_HOME falls back to HOME", () => {
   expect(() => setAutostart(true, { exe: null, managed: true })).toThrow("Harbor can't tell where its own file is");
   process.env.XDG_CONFIG_HOME = "relative/dir";
   expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/harbor.desktop"));
@@ -142,7 +145,7 @@ test("autostart without a known executable says so, and a relative XDG_CONFIG_HO
   expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/harbor.desktop"));
 });
 
-test("autostart runs the launcher only when it leads to this install", () => {
+test.if(linuxLike)("autostart runs the launcher only when it leads to this install", () => {
   const bin = join(tmp, "home", ".local/bin/harbor");
   const real = join(tmp, "install", "harbor");
   const other = join(tmp, "install", "other");
@@ -158,7 +161,7 @@ test("autostart runs the launcher only when it leads to this install", () => {
   expect(autostartLauncher({ exe: real, managed: true })).toBe(real);
 });
 
-test("autostart reports a path it cannot write", () => {
+test.if(linuxLike)("autostart reports a path it cannot write", () => {
   writeFileSync(join(tmp, "blocker"), "");
   process.env.XDG_CONFIG_HOME = join(tmp, "blocker");
   expect(() => setAutostart(true, { exe: "/opt/h", managed: false })).toThrow(join(tmp, "blocker", "autostart/harbor.desktop"));

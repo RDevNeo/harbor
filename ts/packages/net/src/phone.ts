@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { allowedAccounts, checkRun, isRunError, lockLeads } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
 import { blankChat, githead, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
@@ -1066,8 +1067,11 @@ export class PhoneRoutes {
 
   uploadId(path: string): string | null {
     const dir = this.d.uploadsDir;
-    if (!dir || !path.startsWith(`${dir}/`)) return null;
-    const rel = path.slice(dir.length + 1);
+    if (!dir) return null;
+    const inside = osPaths.under(path, dir);
+    if (inside === null || inside === "") return null;
+    // The phone's id has "/" between the chat and the file, whatever this PC writes.
+    const rel = inside.replaceAll("\\", "/");
     return resolveUpload(dir, rel) === null ? null : rel;
   }
 

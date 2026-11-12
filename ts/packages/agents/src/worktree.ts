@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { outputWithin } from "./git.ts";
@@ -526,10 +527,7 @@ export function moveDir(dir: string, to: string): void {
 
 /** "~/x" for a path under the home folder (app.rs). */
 export function tilde(p: string): string {
-  const h = home();
-  if (p === h) return "~";
-  if (p.startsWith(`${h}/`)) return `~/${p.slice(h.length + 1)}`;
-  return p;
+  return osPaths.tilde(p, home());
 }
 
 /** A worktree just made: its folder, branch, the branch it started from, and Claude's name when that's still on its way. */

@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { basename, dirname, join } from "node:path";
 import { ICONS } from "../icons.ts";
 
@@ -77,8 +78,7 @@ export class AddProject {
   }
 
   tilde(p: string): string {
-    const h = this.disk.home;
-    return p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p;
+    return osPaths.tilde(p, this.disk.home);
   }
 
   expand(p: string): string {

@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -708,12 +709,8 @@ export function isDevice(ctx: RemoteCtx, n: NearbyPc, devs: [RemoteHost, boolean
 export function remoteDir(home: string, h: RemoteHost, project: string | null): string {
   const dir = h.dir.trim().replace(/\/+$/, "");
   if (!h.device_files) return "~";
-  const under = (p: string): string | null => {
-    const a = p.replace(/\/+$/, "");
-    const b = home.replace(/\/+$/, "");
-    if (a === b) return "";
-    return a.startsWith(`${b}/`) ? a.slice(b.length + 1) : null;
-  };
+  // The device is Linux or macOS: what's under this PC's home goes there with "/".
+  const under = (p: string): string | null => osPaths.under(p.replace(/[\\/]+$/, ""), home.replace(/[\\/]+$/, ""))?.replaceAll("\\", "/") ?? null;
   if (project !== null && dir !== "") return `${dir}/${project.replace(/\/+$/, "").split("/").pop() ?? ""}`;
   if (project !== null) {
     const rel = under(project);
@@ -813,10 +810,9 @@ export function pathRequire(bin: string): string {
 /** The profile setup for an account whose Claude config lives in a profile folder under home (~/.claude2…); none for the default one. */
 export function profileSetup(home: string, configDir: string | null): RemoteSetup[] {
   if (configDir === null) return [];
-  const a = configDir.replace(/\/+$/, "");
-  const b = home.replace(/\/+$/, "");
-  if (!a.startsWith(`${b}/`) || a.length === b.length + 1) return [];
-  return [{ kind: "profile", rel: a.slice(b.length + 1) }];
+  const rel = osPaths.under(configDir.replace(/[\\/]+$/, ""), home.replace(/[\\/]+$/, ""));
+  if (rel === null || rel === "") return [];
+  return [{ kind: "profile", rel: rel.replaceAll("\\", "/") }];
 }
 
 

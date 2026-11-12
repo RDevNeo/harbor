@@ -1,3 +1,4 @@
+import { paths as osPaths } from "@harbor/os";
 import { basename } from "node:path";
 
 export type Dock = "right" | "bottom";
@@ -173,7 +174,7 @@ export class Surfaces<T extends PaneTerm> {
 
   terminalIn(dir: string): boolean {
     const root = dir.replace(/\/+$/, "");
-    return Object.values(this.panes).some((p) => p.surfaces.some((s) => s.kind === "terminal" && s.term.alive && (s.term.cwd === root || s.term.cwd.startsWith(`${root}/`))));
+    return Object.values(this.panes).some((p) => p.surfaces.some((s) => s.kind === "terminal" && s.term.alive && osPaths.under(s.term.cwd, root) !== null));
   }
 
   /** Every terminal ends with the window. */

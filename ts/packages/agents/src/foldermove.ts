@@ -40,12 +40,13 @@ const NAMES = 24;
 
 /** `p` with `from` (or a folder under it) moved to `to`; anything else as it is. */
 export function rewrite(p: string, from: string, to: string): string {
-  if (p === from) return to;
-  return p.startsWith(`${from}/`) ? to + p.slice(from.length) : p;
+  const rest = osPaths.under(p, from);
+  if (rest === "") return to;
+  return rest !== null ? to + p.slice(p.length - rest.length - 1) : p;
 }
 
 export function under(p: string, dir: string): boolean {
-  return p === dir || p.startsWith(`${dir}/`);
+  return osPaths.under(p, dir) !== null;
 }
 
 /** The admin folder a worktree's `.git` file points at (absolute), null when `dir/.git` isn't such a file. */

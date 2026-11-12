@@ -52,3 +52,36 @@ export function runtimeDir(env: Env = process.env): string | undefined {
 export function ramBase(): string {
   return platform() === "linux" ? "/dev/shm" : tmpdir();
 }
+
+/**
+ * `path` with the home folder `home` written `~`: "~" for the home itself, "~/x/y" under it, else `path` as it is.
+ * Windows: either separator and any case match, and what's under the home is written with "/" ("~/Projects/x",
+ * as Git Bash writes it; Harbor reads it back). `trimEnd`: a trailing "/" of `path` is dropped first.
+ */
+export function tilde(path: string, home: string, trimEnd = false): string {
+  const w = win();
+  const norm = (s: string): string => (w ? s.replaceAll("\\", "/") : s);
+  const h = norm(home).replace(/\/+$/, "");
+  if (h === "") return path;
+  let p = norm(path);
+  if (trimEnd) p = p.replace(/\/+$/, "");
+  const same = (a: string, b: string): boolean => (w ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (same(p, h) || same(p, `${h}/`)) return "~";
+  if (same(p.slice(0, h.length + 1), `${h}/`)) return `~/${p.slice(h.length + 1).replace(/^\/+/, "")}`;
+  return path;
+}
+
+/**
+ * Whether `path` is the folder `dir` or inside it: null when not, else what follows `dir` ("" for `dir` itself),
+ * `path`'s own text. Windows: either separator and any case match.
+ */
+export function under(path: string, dir: string): string | null {
+  const w = win();
+  const d = w ? dir.replace(/[\\/]+$/, "") : dir;
+  const same = (a: string, b: string): boolean => (w ? a.replaceAll("\\", "/").toLowerCase() === b.replaceAll("\\", "/").toLowerCase() : a === b);
+  if (same(path, d)) return "";
+  const head = path.slice(0, d.length);
+  const next = path[d.length];
+  if (!same(head, d) || !(next === "/" || (w && next === "\\"))) return null;
+  return path.slice(d.length + 1);
+}

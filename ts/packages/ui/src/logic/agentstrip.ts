@@ -1,4 +1,5 @@
 // The phone gets the same rows as the strip (`status.agents`).
+import { paths as osPaths } from "@harbor/os";
 import type { Item } from "./item.ts";
 import { charCount, takeChars, trim, trimEnd, trimEndChars, trimStartChars } from "./text.ts";
 
@@ -67,7 +68,7 @@ function clip(s: string, max: number): string {
 function shortPath(path: string, root: string): string {
   const p = trimEndChars(trimStartChars(trim(path), ['"', "'"]), ['"', "'"]);
   const r = trimEndChars(root, ["/"]);
-  const inside = r !== "" && p.startsWith(`${r}/`) ? p.slice(r.length + 1) : "";
+  const inside = r !== "" ? (osPaths.under(p, r) ?? "") : "";
   const rel = inside !== "" ? inside : trimEndChars(p, ["/"]).split("/").slice(-2).join("/");
   if (charCount(rel) > 36) return clip(`…/${rel.slice(rel.lastIndexOf("/") + 1)}`, 36);
   return rel;

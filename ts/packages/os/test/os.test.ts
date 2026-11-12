@@ -151,6 +151,34 @@ describe("paths", () => {
   });
 });
 
+describe("paths: ~ and folders", () => {
+  test("tilde and under, as Linux and macOS write paths", () => {
+    expect(paths.tilde("/h", "/h")).toBe("~");
+    expect(paths.tilde("/h/x/y", "/h/")).toBe("~/x/y");
+    expect(paths.tilde("/hx/y", "/h")).toBe("/hx/y");
+    expect(paths.tilde("/h/x/", "/h", true)).toBe("~/x");
+    expect(paths.under("/h/x/y", "/h")).toBe("x/y");
+    expect(paths.under("/h", "/h")).toBe("");
+    expect(paths.under("/hx", "/h")).toBeNull();
+    expect(paths.under("/H/x", "/h")).toBeNull();
+  });
+  test("on Windows: either separator, any case", () => {
+    const was = process.env.HARBOR_TEST_PLATFORM;
+    process.env.HARBOR_TEST_PLATFORM = "win32";
+    try {
+      expect(paths.tilde("C:\\Users\\Sam\\Projects\\x", "c:\\users\\sam")).toBe("~/Projects/x");
+      expect(paths.tilde("C:/Users/Sam", "C:\\Users\\Sam\\")).toBe("~");
+      expect(paths.tilde("D:\\x", "C:\\Users\\Sam")).toBe("D:\\x");
+      expect(paths.under("C:\\Users\\Sam\\a\\b.png", "c:/users/sam")).toBe("a\\b.png");
+      expect(paths.under("C:\\Users\\Samuel", "C:\\Users\\Sam")).toBeNull();
+      expect(paths.under("C:\\Users\\Sam", "C:\\Users\\Sam\\")).toBe("");
+    } finally {
+      if (was === undefined) delete process.env.HARBOR_TEST_PLATFORM;
+      else process.env.HARBOR_TEST_PLATFORM = was;
+    }
+  });
+});
+
 describe("desktop", () => {
   test("the opener per OS", () => {
     expect(desktop.opener("linux")).toEqual(["xdg-open"]);
