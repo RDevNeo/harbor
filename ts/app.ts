@@ -117,6 +117,23 @@ const commands: Record<string, Command> = {
     console.error("harbor: no running Harbor answered");
     return 1;
   },
+  // Quits the running Harbor as its tray's Quit does, and waits until it's gone (installers, before replacing it).
+  quit: async () => {
+    const { single } = await import("./packages/store/src/index.ts");
+    if (!(await single.quitRunning())) {
+      if (single.lockHeld() === true) return (console.error("harbor: the running Harbor didn't answer"), 1);
+      return (console.log("Harbor isn't running."), 0);
+    }
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      // Gone: its lock is free (or, with no lock to test, its control socket no longer answers).
+      const held = single.lockHeld();
+      if (held === false || (held === null && !(await single.socketListening()))) return (console.log("Harbor quit."), 0);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    console.error("harbor: Harbor is still quitting after 30 s");
+    return 1;
+  },
   "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
   turn: async (args) => {
     const { runTurn } = await import("./packages/agents/src/index.ts");

@@ -114,6 +114,8 @@ export async function runApp(o: RunOptions): Promise<number> {
 
   let snapshot: () => Snapshot = () => ({});
   let hidden = !o.window;
+  /** Quits as the tray's Quit does; set below once the window (or the background wait) is up. */
+  let quitApp = (): void => {};
   const reopen = (): void => {
     hidden = false;
     void reloader?.now();
@@ -138,6 +140,8 @@ export async function runApp(o: RunOptions): Promise<number> {
         if (!o.window) reopen();
       } else if (i.kind === "restart") {
         void reloader?.now();
+      } else if (i.kind === "quit") {
+        quitApp();
       } else if (i.kind === "previewBack") {
         void preview.back(cfg, i.off, () => void reloader?.now());
       }
@@ -202,6 +206,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     const tray = offline && !process.env.HARBOR_TRAY ? null : trayStart({ onOpen: reopen, onQuit: () => quit(), hidden: () => true });
     await new Promise<void>((resolve) => {
       quit = resolve;
+      quitApp = resolve;
       process.once("SIGTERM", resolve);
       process.once("SIGINT", resolve);
     });
@@ -216,6 +221,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       quitting = true;
       closeWindow();
     };
+    quitApp = quit;
     // Offline rigs have no tray (HARBOR_TRAY=1 shows it anyway: a test session of the tray itself).
     const tray = offline && !process.env.HARBOR_TRAY ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
     // The window shows only this PC's chats and copies from the PCs this account uses (account.ts `pcScope`).

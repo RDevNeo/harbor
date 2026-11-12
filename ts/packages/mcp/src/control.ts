@@ -33,7 +33,8 @@ export type Incoming<Api = never, MeshMsg = never, Offer = never> =
   | { kind: "mesh"; msg: MeshMsg }
   | { kind: "preview"; offer: Offer | undefined; here: boolean }
   | { kind: "previewBack"; off: boolean }
-  | { kind: "restart" };
+  | { kind: "restart" }
+  | { kind: "quit" };
 
 export const socketPath = single.socketPath;
 
@@ -79,6 +80,10 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
     }
     if (v.restart === true) {
       opts.send({ kind: "restart" });
+      return reply(socket, { ok: true });
+    }
+    if (v.quit === true) {
+      opts.send({ kind: "quit" });
       return reply(socket, { ok: true });
     }
     if (v.preview_back !== undefined) {

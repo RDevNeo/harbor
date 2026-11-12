@@ -80,7 +80,15 @@ refresh_menus() {
   command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$ICONS" 2>/dev/null || true
 }
 
+# Asks a running Harbor to quit cleanly (turns stop, data saved) before its files go.
+quit_harbor() {
+  for h in "$BIN/harbor" "$HOME/Applications/Harbor.app/Contents/MacOS/harbor" "$LIB/harbor"; do
+    if [ -x "$h" ]; then "$h" quit >/dev/null 2>&1 || true; return 0; fi
+  done
+}
+
 if [ "$UNINSTALL" = 1 ] && [ "$(uname -s)" = Darwin ]; then
+  quit_harbor
   if [ -L "$BIN/harbor" ] && [ "$(readlink "$BIN/harbor")" = "$HOME/Applications/Harbor.app/Contents/MacOS/harbor" ]; then rm -f "$BIN/harbor"; fi
   rm -rf "$HOME/Applications/Harbor.app"
   rm -f "$HOME/Library/LaunchAgents/dev.harbor.Harbor.plist"
@@ -89,6 +97,7 @@ if [ "$UNINSTALL" = 1 ] && [ "$(uname -s)" = Darwin ]; then
 fi
 
 if [ "$UNINSTALL" = 1 ]; then
+  quit_harbor
   if [ -L "$BIN/harbor" ] && [ "$(readlink "$BIN/harbor")" = "$LIB/harbor" ]; then rm -f "$BIN/harbor"; fi
   rm -rf "$LIB"
   rm -f "$APPS/harbor.desktop" "$ICONS/scalable/apps/harbor.svg" "$ICONS/256x256/apps/harbor.png"

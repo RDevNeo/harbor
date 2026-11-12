@@ -6,6 +6,7 @@ import { platform } from "./platform.ts";
 
 export const LOCK_EX = 2;
 export const LOCK_NB = 4;
+export const LOCK_UN = 8;
 
 const POSIX = {
   flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },

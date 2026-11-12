@@ -99,6 +99,39 @@ export function restartRunning(env: Record<string, string | undefined> = process
   return ask(socketPath(env), JSON.stringify({ restart: true }));
 }
 
+/** Asks the running Harbor to quit as its tray's Quit does (turns and agents stop, data saved); true when it answered. */
+export function quitRunning(env: Record<string, string | undefined> = process.env): Promise<boolean> {
+  return ask(socketPath(env), JSON.stringify({ quit: true }));
+}
+
+/** Whether something listens on the control socket (connects, says nothing). */
+export function socketListening(env: Record<string, string | undefined> = process.env): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = createConnection(socketPath(env));
+    s.setTimeout(2000, () => (s.destroy(), resolve(false)));
+    s.on("connect", () => (s.destroy(), resolve(true)));
+    s.on("error", () => resolve(false));
+  });
+}
+
+/** Whether a Harbor holds the instance lock now (without taking it). Null when that can't be told (no lock to test). */
+export function lockHeld(env: Record<string, string | undefined> = process.env): boolean | null {
+  let fd: number;
+  try {
+    fd = openSync(lockPath(env), "r");
+  } catch {
+    return false;
+  }
+  try {
+    const got = libc.flock(fd, libc.LOCK_EX | libc.LOCK_NB);
+    if (got === null) return null;
+    if (got === 0) libc.flock(fd, libc.LOCK_UN);
+    return got !== 0;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Raises this process's window through the compositor (Wayland clients can't raise themselves). False when there is no compositor IPC to ask. */
 export function raise(env: Record<string, string | undefined> = process.env): boolean {
   return desktop.raise(env);

@@ -61,8 +61,9 @@ test("the socket is private and relays a tool call, a focus request and a previe
   expect(JSON.parse(await askSocket(path, JSON.stringify({ preview: "bad" })))).toEqual({ ok: false, text: "refused" });
   expect(JSON.parse(await askSocket(path, JSON.stringify({ preview: {} })))).toEqual({ ok: true, restarting: true, text: "" });
   expect(JSON.parse(await askSocket(path, JSON.stringify({ preview_back: true, off: true })))).toEqual({ ok: true });
+  expect(JSON.parse(await askSocket(path, JSON.stringify({ quit: true })))).toEqual({ ok: true });
   expect(await askSocket(path, "not json")).toBe("");
-  expect(seen).toEqual(["tool", "tool", "focus", "preview", "previewBack"]);
+  expect(seen).toEqual(["tool", "tool", "focus", "preview", "previewBack", "quit"]);
   l?.stop();
 });
 
@@ -147,4 +148,22 @@ test("a chunked webhook body is read", async () => {
   const res = await serveHook(req, { tokens: new Set(["t"]), send: (h) => got.push(h) });
   expect(res.status).toBe(202);
   expect(got[0]?.body).toBe("abcd");
+});
+
+test("harbor quit: asks the running Harbor, then sees its lock and socket go", async () => {
+  const { quitRunning, lockHeld, socketListening, acquire, release } = await import("../../store/src/single.ts");
+  const env = { HARBOR_SOCK: join(root, "q.sock") };
+  expect(await quitRunning(env)).toBe(false);
+  expect(lockHeld(env)).toBe(false);
+  let quit = 0;
+  const l = startSocket({ path: env.HARBOR_SOCK, send: (i) => void (i.kind === "quit" && quit++) });
+  expect(await acquire(env)).toBe(true);
+  expect(lockHeld(env)).toBe(true);
+  expect(await socketListening(env)).toBe(true);
+  expect(await quitRunning(env)).toBe(true);
+  expect(quit).toBe(1);
+  l?.stop();
+  release();
+  expect(lockHeld(env)).toBe(false);
+  expect(await socketListening(env)).toBe(false);
 });
