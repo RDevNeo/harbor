@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.179.2] - 2026-11-12
+
+### Fixed
+- A turn that answered very fast could stay "Working" forever: its result came in before Harbor had the
+  turn in hand, so its input was never closed. Now the result always ends it.
+- A message sent just as a turn ended no longer waits on that turn's finishing runner: the turn's reply
+  stays in the chat and isn't followed by "The agent exited with an error".
+
 ## [0.179.1] - 2026-11-12
 
 ### Changed
