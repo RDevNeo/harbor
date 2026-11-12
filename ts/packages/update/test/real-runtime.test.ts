@@ -1,6 +1,9 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+
+// Windows checks a new program before its first start (seconds): the runtime built here gets time for it.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const here = import.meta.dir;
 const script = resolve(here, "..", "..", "..", "scripts", "build.ts");

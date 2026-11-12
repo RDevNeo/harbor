@@ -2,7 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PUBKEY, blake2b, blake2bFile, parsePublicKey, parseSignature, verifyAsset, verifyBytes } from "../src/minisign.ts";
-import { cleanup, makeKey, tmp } from "./support.ts";
+import { cleanup, makeKey, tmp, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

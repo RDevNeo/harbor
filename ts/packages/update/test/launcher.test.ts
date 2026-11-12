@@ -5,7 +5,9 @@ import { choose, installedConfig, isWindowLaunch, launch } from "../src/launcher
 import { rolledBack, skipped } from "../src/install.ts";
 import { readAttempt } from "../src/startup.ts";
 import { writeMeta, type Meta } from "../src/previewmeta.ts";
-import { cleanup, configFor, makeInstall, tmp, wait, type Install } from "./support.ts";
+import { cleanup, configFor, makeInstall, tmp, wait, type Install, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

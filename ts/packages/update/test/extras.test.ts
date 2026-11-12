@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { Updater } from "../src/delivery.ts";
 import { install } from "../src/install.ts";
 import { APK, APK_VERSION, VIDEO_LIB, apk, dropBrowser, pendingExtras, putApk, retryAfter, videoStale } from "../src/extras.ts";
-import { FakeHost, cleanup, configFor, makeInstall, makeKey, tmp } from "./support.ts";
+import { FakeHost, cleanup, configFor, makeInstall, makeKey, tmp, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

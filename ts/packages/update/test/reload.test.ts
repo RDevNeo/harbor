@@ -5,7 +5,9 @@ import { Store } from "@harbor/store";
 import { Updater } from "../src/delivery.ts";
 import { readMeta, writeMeta } from "../src/previewmeta.ts";
 import { HANDOVER, RELOADED_PID, Reloader, STATE_KEY, draftsFrom, draftsOf, handoverSay, takeSnapshot, watchFiles, type Kv } from "../src/reload.ts";
-import { FakeHost, cleanup, configFor, makeInstall, makeKey, tmp, wait } from "./support.ts";
+import { FakeHost, cleanup, configFor, makeInstall, makeKey, tmp, wait, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

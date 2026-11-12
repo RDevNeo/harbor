@@ -1,4 +1,4 @@
-import { afterAll, setDefaultTimeout } from "bun:test";
+import { afterAll } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -6,8 +6,6 @@ import { env as osEnv } from "../packages/os/src/index.ts";
 
 // Windows: PATH by that name and Git Bash's tools on it, as every Harbor process has them (app.ts main).
 osEnv.normalize();
-// Windows starts programs slowly (a new executable's first start takes seconds): more time per test there.
-if (process.platform === "win32") setDefaultTimeout(30_000);
 
 // Fake CLIs use env bun, and runners spawn bun by name. Keep them on this suite's interpreter:
 // after HOME/XDG are sandboxed, mise shims cannot find their real configuration or installations.

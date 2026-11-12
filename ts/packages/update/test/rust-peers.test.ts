@@ -6,7 +6,9 @@ import { Updater } from "../src/delivery.ts";
 import { install, NoBuild } from "../src/install.ts";
 import { launch, useEmbedded, type AppBundle } from "../src/launcher.ts";
 import { advertised, compare, RUST_PARITY } from "../src/version.ts";
-import { FakeHost, cleanup, configFor, makeInstall, makeKey } from "./support.ts";
+import { FakeHost, cleanup, configFor, makeInstall, makeKey, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

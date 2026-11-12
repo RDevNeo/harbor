@@ -6,7 +6,9 @@ import { rolledBack, skipped } from "../src/install.ts";
 import { readMeta, writeMeta, type Meta } from "../src/previewmeta.ts";
 import { FAILED_LOG, START_LOG, captureStart } from "../src/startlog.ts";
 import { ATTEMPT, START_LIMIT_MS, beginAttempt, confirmStart, failedStart, readAttempt, recoverUnconfirmed, watch } from "../src/startup.ts";
-import { cleanup, configFor, makeInstall, tmp, type Install } from "./support.ts";
+import { cleanup, configFor, makeInstall, tmp, type Install, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

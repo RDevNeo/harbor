@@ -3,7 +3,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Updater, backoffMs, installDue, news } from "../src/delivery.ts";
 import { retryAfter } from "../src/extras.ts";
-import { FakeHost, cleanup, configFor, makeInstall, makeKey, wait } from "./support.ts";
+import { FakeHost, cleanup, configFor, makeInstall, makeKey, wait, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

@@ -25,7 +25,9 @@ import {
   type Offer,
 } from "../src/preview.ts";
 import { readMeta, writeMeta, fail, type Meta } from "../src/previewmeta.ts";
-import { bundleSource, cleanup, configFor, makeInstall, tmp, wait } from "./support.ts";
+import { bundleSource, cleanup, configFor, makeInstall, tmp, wait, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

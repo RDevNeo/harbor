@@ -2,7 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { addonPath, extractNative, loadAddon, nativeBase } from "../src/native.ts";
-import { cleanup, tmp } from "./support.ts";
+import { cleanup, tmp, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

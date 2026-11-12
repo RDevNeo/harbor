@@ -8,7 +8,9 @@ import { rollback } from "../src/install.ts";
 import { useEmbedded, type AppBundle } from "../src/launcher.ts";
 import { nextVersion, pickRelease, releaseChangelog, setPackageVersion, ships, unreleased } from "../src/soak.ts";
 import { buildOf, compare, newer, parse } from "../src/version.ts";
-import { FakeHost, bundleSource, cleanup, configFor, makeInstall, makeKey, tmp } from "./support.ts";
+import { FakeHost, bundleSource, cleanup, configFor, makeInstall, makeKey, tmp, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

@@ -2,7 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hasPrevious, install, onDisk, rollback, rolledBack, runtimeOnDisk, skipped } from "../src/install.ts";
-import { FakeHost, RUNTIME, RUNTIME_ASSET, bundleSource, cleanup, configFor, fakeRuntimeScript, makeInstall, makeKey, runtimeText } from "./support.ts";
+import { FakeHost, RUNTIME, RUNTIME_ASSET, bundleSource, cleanup, configFor, fakeRuntimeScript, makeInstall, makeKey, runtimeText, windowsTime } from "./support.ts";
+
+windowsTime();
 
 afterEach(cleanup);
 

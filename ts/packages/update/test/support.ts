@@ -1,3 +1,4 @@
+import { setDefaultTimeout } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,8 +105,17 @@ function fakeExe(): string {
   compiled = out;
   return out;
 }
-// Built before any test (test/preload.ts gives Windows' tests more time: a downloaded runtime is a new copy).
+// Built before any test.
 if (WINDOWS) fakeExe();
+
+/**
+ * Windows starts programs slowly (a new executable's first start takes it seconds, Defender's check): there each
+ * test of the calling file gets 30 s. Call it at the top of a test file: Bun's default timeout is per file (one
+ * set in test/preload.ts reaches only the first file).
+ */
+export function windowsTime(): void {
+  if (WINDOWS) setDefaultTimeout(30_000);
+}
 
 /**
  * A fake Harbor runtime that says it is `runtime` and runs the launcher for the install at `exe` ("$0": its own
