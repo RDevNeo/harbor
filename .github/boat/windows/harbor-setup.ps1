@@ -6,7 +6,7 @@
 #  - OpenSSH server (Win32-OpenSSH's MSI from the disc) with the sandbox's key, for every command;
 #  - a scheduled task "harbor-gui" that runs C:\rig\gui.cmd in the logged-on desktop session: what
 #    SSH starts can't show a window (it runs in no desktop), what this task starts can;
-#  - Git for Windows, the Visual C++ runtime and Bun (the version ts/package.json pins), from the disc:
+#  - Git for Windows and Bun (the version ts/package.json pins, the Visual C++ runtime's DLLs beside it), from the disc:
 #    runs and tests from source;
 #  - no Windows Update, no sleep, no lock screen, no screen saver (a test VM that must stay the same
 #    between runs). Defender stays on: a script that turns it off is blocked as malware (AMSI), this one too.
@@ -34,13 +34,13 @@ Step 'Git for Windows'
 $git = Get-ChildItem $Disc -Filter 'Git-*-64-bit.exe' | Select-Object -First 1
 Start-Process $git.FullName -Wait -ArgumentList @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', '/SUPPRESSMSGBOXES')
 
-Step 'Visual C++ runtime'
-Start-Process (Join-Path $Disc 'VC_redist.x64.exe') -Wait -ArgumentList @('/install', '/quiet', '/norestart')
-
 Step 'Bun'
 New-Item -ItemType Directory -Force C:\Tools | Out-Null
 Expand-Archive (Join-Path $Disc 'bun-windows-x64.zip') C:\Tools -Force
 Move-Item C:\Tools\bun-windows-x64 C:\Tools\bun -Force
+# The Visual C++ runtime beside bun.exe (where Windows looks first): Slint's addon links it, for runs from source.
+# Harbor's own builds carry theirs; nothing installs it for the whole system, so a test can't lean on that.
+Copy-Item (Join-Path $Disc '*.dll') C:\Tools\bun\ -Force
 $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if ($path -notlike '*C:\Tools\bun*') { [Environment]::SetEnvironmentVariable('Path', "$path;C:\Tools\bun", 'Machine') }
 

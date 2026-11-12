@@ -107,12 +107,22 @@ make_base() {
   v=$(bun_version)
   vm bash -euo pipefail -c "cd $w/dl && curl -fsSL --retry 3 -o bun-windows-x64.zip https://github.com/oven-sh/bun/releases/download/bun-v$v/bun-windows-x64.zip &&
     curl -fsSL --retry 3 https://github.com/oven-sh/bun/releases/download/bun-v$v/SHASUMS256.txt | grep ' bun-windows-x64.zip\$' | sha256sum -c -"
+  # The Visual C++ runtime's three DLLs, out of Microsoft's redistributable (ts/scripts/vcruntime.ts, in the build
+  # image's Bun): beside bun.exe they serve runs from source. Its installer, run as SYSTEM in the first boot's
+  # SetupComplete, never came back (the install passed 90 minutes).
+  local core b
+  core=$(image harbor-builder .github/boat/Dockerfile)
+  b=$(bun_get "$core" x64)
+  rm -rf "$dl/vc"
+  run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -- \
+    bun /src/ts/scripts/vcruntime.ts "$w/dl/VC_redist.x64.exe" "$w/dl/vc"
+  ls "$dl/vc"/msvcp140.dll "$dl/vc"/vcruntime140.dll "$dl/vc"/vcruntime140_1.dll >/dev/null
   echo "<== downloads $((SECONDS - s))s"
   [ -f "$wh/id_ed25519" ] || vm ssh-keygen -q -t ed25519 -N '' -C harbor-test-vm -f "$w/id_ed25519"
   rm -rf "$cfg" && mkdir -p "$cfg"
   cp .github/boat/windows/autounattend.xml .github/boat/windows/harbor-setup.ps1 .github/boat/windows/SetupComplete.cmd .github/boat/windows/screen.ps1 "$cfg/"
   cp "$wh/id_ed25519.pub" "$cfg/authorized_keys"
-  cp "$dl/${SSH_MSI##*/}" "$dl/${GIT_EXE##*/}" "$dl/VC_redist.x64.exe" "$dl/bun-windows-x64.zip" "$cfg/"
+  cp "$dl/${SSH_MSI##*/}" "$dl/${GIT_EXE##*/}" "$dl/vc/"*.dll "$dl/bun-windows-x64.zip" "$cfg/"
   vm xorriso -as mkisofs -quiet -J -joliet-long -R -V HARBORCFG -o "$w/cfg.iso" "$w/cfg"
   rm -f "$wh/disk.qcow2"
   vm qemu-img create -q -f qcow2 "$w/disk.qcow2" 64G

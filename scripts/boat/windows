@@ -99,9 +99,13 @@ case "$cmd" in
       set -e
     fi
     mkdir -p "$dest"
-    "$boat" exec "$id" -- bash -c 'tar -czf out/shots.tgz -C out shots' >/dev/null 2>&1 &&
+    if "$boat" exec "$id" -- bash -c 'tar -czf out/shots.tgz -C out shots' >/dev/null 2>&1 &&
       "$boat" scp "$id:/home/user/out/shots.tgz" "$dest/shots.tgz" >/dev/null 2>&1 &&
-      tar -xzf "$dest/shots.tgz" -C "$dest" && rm "$dest/shots.tgz" && say "install screens: $dest/shots"
+      tar -xzf "$dest/shots.tgz" -C "$dest" && rm "$dest/shots.tgz"; then
+      say "install screens: $dest/shots"
+    else
+      say "no install screens came back ($dest)"
+    fi
     [ "$code" = 0 ] || exit "$code"
     remote -- bash .github/boat/windows.sh prep
     "$boat" exec "$id" -- bash -c 'rm -rf src out' >/dev/null
