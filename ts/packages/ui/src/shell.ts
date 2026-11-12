@@ -92,6 +92,11 @@ const WARM_CHATS = 3;
 const FILL_VIEWS = 2.5;
 const REST_MS = 150;
 const WARM_ITEMS = 5000;
+/** The longest a chat opened from the sidebar waits for the images of its first frame (`openChatReady`): past it, it
+ * shows with their places held and they come in as they're decoded. */
+const AHEAD_WAIT_MS = 150;
+/** How long after the last switch the sidebar neighbours' images are decoded ahead. */
+const AHEAD_IDLE_MS = 1200;
 
 let collecting: ReturnType<typeof setTimeout> | null = null;
 /** collectSoon, once things have been still for a moment: a full collection blocks the window for tens of ms, which
@@ -688,7 +693,7 @@ export class Shell {
 
   private wire(): void {
     const w = this.win;
-    w.open_chat = (id) => this.openChat(id);
+    w.open_chat = (id) => this.openChatReady(id);
     w.open_project = (id) => this.openProject(id);
     w.fold_project = (id) => {
       this.data.store.set(FOLDED_KEY, foldToggled(this.data.store.get(FOLDED_KEY), id));
@@ -1363,8 +1368,64 @@ export class Shell {
   }
 
   /** `fromEnd`: the transcript's place to keep (a restart's), px from the view's top to the end; else it shows the end. */
+  /** A chat opened from the sidebar: the images its first frame shows are decoded first (off the main thread), so it
+   * comes on screen with them drawn, not behind gray boxes; it waits at most AHEAD_WAIT_MS for them. */
+  openChatReady(id: number): void {
+    const ready = this.firstImages(id);
+    if (ready === null) return this.openChat(id);
+    const tok = ++this.openTok;
+    const t0 = performance.now();
+    let done = false;
+    const go = (capped: boolean): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(cap);
+      switchTrace.waited(performance.now() - t0, capped);
+      // Another chat was opened meanwhile: that one stays.
+      if (tok === this.openTok && this.data.chat(id)) this.openChat(id);
+    };
+    const cap = setTimeout(() => go(true), AHEAD_WAIT_MS);
+    void ready.then(() => go(false), () => go(false));
+  }
+
+  private openTok = 0;
+
+  /** The decodes the latest view's worth of chat `id`'s transcript still needs (null: none, or it's on screen
+   * already). */
+  private firstImages(id: number): Promise<void> | null {
+    const rows = this.mediaRows;
+    const chat = this.data.chat(id);
+    if (!rows || !chat || (this.view === "chat" && this.page === null && (this.chatId === id || this.split.holds(id)))) return null;
+    const cards = transcript.now.latestCards(this.items(id), chat.role === "lead", this.openedOf(id), Math.max(this.win.transcript_view, 400), this.meshChat.viewer(chat));
+    const homeImage = this.hub.homeImage;
+    const fetch = homeImage && this.meshChat.foreign(chat) ? (path: string) => homeImage(chat.id, path) : undefined;
+    return rows.ahead(cards, this.data.cwd(chat), 760, this.win.scale_factor, fetch);
+  }
+
+  /** Once switching stops: the images of the chats next to the open one in the sidebar are decoded ahead (they
+   * rest in the store, within its budget), so stepping to them, or clicking them, shows them at once. */
+  private aheadSoon(): void {
+    if (this.aheadTimer !== null) clearTimeout(this.aheadTimer);
+    this.aheadTimer = setTimeout(() => {
+      this.aheadTimer = null;
+      if (this.view !== "chat") return;
+      const rows = [...this.rows, ...(this.win.settled_open ? this.settledRows : [])];
+      const ids: number[] = [];
+      for (const dir of [1, -1] as const) {
+        const to = stepRow(rows, dir);
+        const id = to === null ? null : to.kind === "project" || to.kind === "settled-project" ? this.data.mainChat(to.id) : to.id;
+        if (id !== null && id !== undefined && !ids.includes(id)) ids.push(id);
+      }
+      // One after the other: the decoder's threads stay free for what the screen asks for.
+      void ids.reduce<Promise<void>>((p, id) => p.then(() => (this.view === "chat" ? (this.firstImages(id) ?? undefined) : undefined)), Promise.resolve());
+    }, AHEAD_IDLE_MS);
+  }
+
+  private aheadTimer: ReturnType<typeof setTimeout> | null = null;
+
   openChat(id: number, fromEnd: number | null = null): void {
     if (!this.data.chat(id)) return;
+    this.openTok++;
     switchTrace.begin(`open ${id}`);
     // A split pane on screen taking the keyboard: its transcript stays as it is, where it was read.
     const inPane = this.view === "chat" && this.page === null && this.split.holds(id);
@@ -1415,6 +1476,7 @@ export class Shell {
       setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_anchor_off(), 4000);
     }
     this.composerChanged();
+    this.aheadSoon();
     switchTrace.end();
   }
 
@@ -1496,7 +1558,7 @@ export class Shell {
 
   private openProject(repo: number): void {
     const main = this.data.mainChat(repo);
-    if (main !== null) this.openChat(main);
+    if (main !== null) this.openChatReady(main);
     else this.newDraft(repo, true);
   }
 
@@ -1524,7 +1586,8 @@ export class Shell {
       exists: (id) => this.data.chat(id) !== undefined,
       info: (id) => this.paneInfo(id),
       cards: (id, media) => this.paneCards(id, media),
-      media: (changed) => (this.mediaPkg ? new MediaRows(this.mediaPkg, changed, (p) => this.nativeImage(p)) : null),
+      // Every pane draws from the one store of decoded images: a chat that moves to another pane, or comes back, finds them.
+      media: (changed) => (this.mediaPkg && this.mediaRows ? new MediaRows(this.mediaPkg, changed, (p) => this.nativeImage(p), undefined, this.mediaRows.store) : null),
       release: (id) => {
         if (this.view === "chat" && id === this.chatId) return;
         this.warm.leave(id);
@@ -1604,6 +1667,10 @@ export class Shell {
       this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing, mentions: m.mentions })),
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: null, unfolded: this.unfolded.has(chat.id) },
     );
+    if (rows) {
+      switchTrace.gray(rows.waiting);
+      rows.waiting = 0;
+    }
     rows?.sweep();
     return { cards: transcript.now.withQueue(next, queue), running };
   }
@@ -1926,6 +1993,10 @@ export class Shell {
       this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing, mentions: m.mentions })),
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
     );
+    if (rows) {
+      switchTrace.gray(rows.waiting);
+      rows.waiting = 0;
+    }
     rows?.sweep();
     sync(t.cards, transcript.now.withQueue(this.live(next, running, t), queue), sameCard);
     this.chatCap.cards(chat.id, next.filter((c) => c.kind === "captcha").map((c) => c.detail));
@@ -5337,7 +5408,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
   switchTrace.probeWith(() => `end=${win.at_end ? 1 : 0} h=${Math.round(win.transcript_height)} fe=${Math.round(win.transcript_from_end)}`);
-  switchTrace.drive((id) => shell.openChat(id));
+  switchTrace.drive((id) => shell.openChatReady(id));
   switchTrace.stream((id) => data.engine.transcript(id).items as never, (id) => shell.changed(id));
   hooks.shown?.(win.window);
   const tick = setInterval(() => shell.tick(), 1000);

@@ -388,6 +388,16 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
   return out;
 }
 
+/** The cards whose images the latest `px` of a chat's transcript shows (folded runs of tool calls show none): their
+ * images are decoded before the chat comes on screen (shell.ts `openChatReady`). */
+export function latestCards(items: readonly Item[], lead: boolean, open: Opened, px: number, viewer: Viewer | null = null): Card[] {
+  const all = project(items, lead, [], viewer);
+  const visible = all.filter((s) => s.card.kind !== "hidden" && (s.group === null || s.group === s.seq));
+  const limit = Math.min(open.limit, filling(visible, open, px));
+  const from = visible.length > limit ? (visible[visible.length - limit]?.seq ?? 0) : 0;
+  return all.filter((s) => s.seq >= from && (s.group === null || (s.group >= from && open.groups.has(s.group)))).map((s) => s.card);
+}
+
 /** How many of the latest cards (`visible`, a run of tool calls being one) fill `px`, at least FILL_MIN. */
 function filling(visible: readonly Shown[], open: Opened, px: number): number {
   let h = 0;

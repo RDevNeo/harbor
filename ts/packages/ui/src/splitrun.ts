@@ -434,9 +434,8 @@ export class SplitPanes {
     s.byShell = false;
     if (s.cards.rowCount() > 0) sync(s.cards, [], this.host.sameCard);
     if (s.live.rowCount() > 0) sync(s.live, [], this.host.sameBlock);
-    // Two sweeps: the first forgets what was used, the second lets every decoded image go.
-    s.media?.sweep();
-    s.media?.sweep();
+    // Its images rest in the shared store (shell.ts `MediaRows`): the chat shown again, anywhere, has them.
+    s.media?.close();
     s.media = null;
     if (s.chat !== this.host.shown()) this.host.release(s.chat);
   }

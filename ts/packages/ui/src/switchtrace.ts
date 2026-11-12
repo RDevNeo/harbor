@@ -90,6 +90,17 @@ function flush(): void {
   start = 0;
 }
 
+/** A transcript build drew `n` image placeholders (images not decoded yet): logged, with the time since the switch. */
+export function gray(n: number): void {
+  if (!on || n === 0) return;
+  console.error(`gray ${n} at ${Date.now()}`);
+}
+
+/** A chat opened from the sidebar waited `ms` for its first frame's images (`capped`: it stopped waiting). */
+export function waited(ms: number, capped: boolean): void {
+  if (on) console.error(`ahead waited ${ms.toFixed(0)} ms${capped ? " (cap)" : ""}`);
+}
+
 /** HARBOR_SWITCH_CYCLE: opens each chat in turn. */
 export function drive(open: (id: number) => void): void {
   const ids = (process.env.HARBOR_SWITCH_CYCLE ?? "").split(",").map(Number).filter((x) => x > 0);

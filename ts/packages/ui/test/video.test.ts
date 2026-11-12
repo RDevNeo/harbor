@@ -234,3 +234,39 @@ test("an image that failed to show is tried again while it's on the screen: a fi
     else process.env.XDG_DATA_HOME = prevData;
   }
 });
+
+test("every view draws from one store: a chat moved to another pane, or decoded ahead, shows its images at once", async () => {
+  const sharp = (await import("sharp")).default;
+  const png = await sharp({ create: { width: 6, height: 3, channels: 4, background: "#36a" } }).png().toBuffer();
+  const [a, b, c] = ["a", "b", "c"].map((n) => join(dir, `shared-${n}.png`)) as [string, string, string];
+  for (const f of [a, b, c]) writeFileSync(f, png);
+  const card = (f: string) => ({ kind: "text" as const, text: `![shot](${f})`, at: 1, forkable: false });
+  let one = 0;
+  let two = 0;
+  const main = new MediaRows(media, () => void one++);
+  const pane = new MediaRows(media, () => void two++, undefined, undefined, main.store);
+  const drawn = (v: MediaRows, f: string) => v.rows(card(f), dir, 760)[0]?.image.width === 6;
+  // Shown in the usual view: decoded once, and that view is told.
+  expect(drawn(main, a)).toBe(false);
+  main.sweep();
+  for (let i = 0; i < 100 && one === 0; i++) await Bun.sleep(20);
+  expect([one, two]).toEqual([1, 0]);
+  // The chat goes to a pane: drawn there at once, nothing decoded again.
+  expect(drawn(pane, a)).toBe(true);
+  pane.sweep();
+  main.sweep();
+  main.sweep();
+  // The pane closes: its images rest, and come back drawn wherever the chat shows next.
+  pane.close();
+  expect(drawn(main, a)).toBe(true);
+  main.sweep();
+  // Decoded ahead (a chat about to be opened): nobody is told, and its first build draws them.
+  const ready = main.ahead([card(b), card(c)], dir, 760);
+  expect(ready).not.toBeNull();
+  await ready;
+  expect(one).toBe(1);
+  expect(drawn(main, b) && drawn(main, c)).toBe(true);
+  main.sweep();
+  // Nothing left to decode: no wait.
+  expect(main.ahead([card(a), card(b)], dir, 760)).toBeNull();
+});
