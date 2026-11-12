@@ -5,6 +5,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.20] - 2026-11-12
+
+0.180.19 was tagged but never published (its build failed fetching the new Bun): its changes come with this one.
+
 ### Fixed
 - Windows: renaming or moving the Projects folder (or a folder holding projects) works while Harbor runs: Harbor
   watched those folders, and Windows won't move a folder being watched; a moved worktree or chats folder is
@@ -12,6 +16,7 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 - Windows: a script on PATH without an extension (a `gh` or `claude` wrapper) runs, as in Git Bash.
 - Windows: "Clone here" takes a Windows folder, a process an agent starts in a folder of its own starts there,
   a chat's folder is told to other PCs, and a video file of this PC plays as a file.
+- Windows: stopping the Discord app's shell ends it and what it started.
 
 ## [0.180.19] - 2026-11-12
 

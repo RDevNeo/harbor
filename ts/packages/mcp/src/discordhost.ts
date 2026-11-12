@@ -9,7 +9,7 @@ import * as repair from "./discordrepair.ts";
 import { type Held, freeze as freezeTree, heldWord, killLeftOver, reclaim as reclaimMemory, thaw as thawHeld, type StopFlag } from "./discordfreeze.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
-import { env as osEnv, lock, proc, sys } from "@harbor/os";
+import { env as osEnv, lock, platform, proc, sys } from "@harbor/os";
 
 export { account, notice } from "./discordsetup.ts";
 export type { Account } from "./discordsetup.ts";
@@ -240,12 +240,16 @@ export class Electron implements Engine {
     c.stdin?.end();
     const until = Date.now() + 5000;
     while (Date.now() < until && !gone()) await sleep(50);
-    // The shell leads its own process group (`detached` above); whatever it left goes.
+    // The shell leads its own process group (`detached` above); whatever it left goes. Windows has no groups:
+    // its tree, by parents.
     if (c.pid !== undefined) {
-      try {
-        process.kill(-c.pid, "SIGKILL");
-      } catch {
-        // the group is already gone
+      if (platform() === "win32") proc.killTree(c.pid);
+      else {
+        try {
+          process.kill(-c.pid, "SIGKILL");
+        } catch {
+          // the group is already gone
+        }
       }
     }
     if (!gone()) await new Promise<void>((res) => c.once("exit", () => res()));
