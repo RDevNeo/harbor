@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.178.3] - 2026-11-11
+
+### Fixed
+- A desktop notification on a PC without `notify-send` no longer raises an unhandled error.
+- Offline runs (and `HARBOR_NO_PROVIDER_UPDATES`) never update Claude Code or Codex by themselves.
+
+### Changed
+- macOS groundwork, nothing changes on Linux: the window comes to the front when asked, the Discord app
+  runs Electron's macOS build without a Dock icon, and the window's loop costs ~1 % of a core when idle.
+
 ## [0.178.2] - 2026-11-11
 
 ### Changed
