@@ -8,7 +8,9 @@ import { sys } from "@harbor/os";
 export const RATE = 16_000;
 
 const DIR = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
-const HF = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main";
+// A fixed commit: the repository's main moved to other files (2026-11-07), which no longer match the sizes and
+// checksums below.
+const HF = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78";
 
 /** (file, URL, size, SHA-256 or "" where the repository gives none). */
 const FILES: readonly (readonly [string, string, number, string])[] = [

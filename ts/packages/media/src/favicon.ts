@@ -64,6 +64,23 @@ const cacheDir = (): string => join(dataDir(), "favicons");
 
 export const customPath = (repo: number): string => join(cacheDir(), "custom", String(repo));
 
+/** The icon of a project whose folder is on another PC, as that PC last sent it (a PNG). */
+export const remotePath = (repo: number): string => join(cacheDir(), "remote", `${repo}.png`);
+
+/** Keeps another PC's icon for project `repo`; false when it couldn't be written or is the one kept already. */
+export function keepRemote(repo: number, png: Uint8Array): boolean {
+  const dst = remotePath(repo);
+  try {
+    if (isFile(dst) && Buffer.compare(readFileSync(dst), Buffer.from(png)) === 0) return false;
+    mkdirSync(dirname(dst), { recursive: true });
+    writeFileSync(`${dst}.new`, png);
+    renameSync(`${dst}.new`, dst);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function setCustom(repo: number, file: string): boolean {
   const dst = customPath(repo);
   try {

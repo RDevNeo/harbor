@@ -449,6 +449,20 @@ function peersOf(d: AccountDirectory, mine: string, ws = ""): Allowed[] {
   return out;
 }
 
+/**
+ * The workspace a PC lands in at sign-in: the one it's registered in, else the one it was in, else the account's
+ * only one, else the account's own personal workspace (a new PC of someone also in others' workspaces goes where
+ * their other PCs usually are; Settings › Workspace moves it). "": none, the person picks.
+ */
+export function signInWorkspace(workspaces: readonly AccountWorkspace[], registered: string | null, current: string): string {
+  if (registered !== null) return registered;
+  if (workspaces.some((w) => w.id === current)) return current;
+  const only = workspaces.length === 1 ? workspaces[0] : undefined;
+  if (only) return only.id;
+  const own = workspaces.filter((w) => w.personal && w.role === "owner");
+  return own.length === 1 ? (own[0]?.id ?? "") : "";
+}
+
 /** Rigs and tests: a one-workspace directory in kv, as the account loop leaves it after a sign-in, listing these PCs
  * (this PC among them or not): they are the PCs this one trusts. */
 export function seedWorkspace(kv: Kv, pcs: { fp: string; addrs?: string[]; id?: string; name?: string }[], ws = "org_rig"): void {
@@ -1430,12 +1444,7 @@ export class AccountService {
     sec.token_exp = s.exp;
     sec.token_at = this.nowSec();
     this.saveSecrets(sec);
-    let ws: string;
-    const only = s.account.workspaces[0];
-    if (s.pc) ws = s.pc.ws;
-    else if (s.account.workspaces.some((w) => w.id === this.ws)) ws = this.ws;
-    else if (s.account.workspaces.length === 1 && only) ws = only.id;
-    else ws = "";
+    const ws = signInWorkspace(s.account.workspaces, s.pc?.ws ?? null, this.ws);
     const pick = ws === "" && s.account.workspaces.length > 1;
     // Everything before the account is published: a running Harbor takes over from there.
     this.o.settings?.signedIn();

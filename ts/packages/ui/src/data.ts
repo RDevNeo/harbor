@@ -11,6 +11,9 @@ import { expands, personalDir, slashPrompt } from "./logic/slash.ts";
 import { tagsPrompt } from "./logic/tags.ts";
 import { imagesPrompt } from "./logic/usertext.ts";
 
+/** How long the chat list trusts what it saw of a project's folder (`Data.folderHere`). */
+const FOLDER_MS = 30_000;
+
 export class Data {
   readonly store: Store;
   readonly engine: Engine;
@@ -77,7 +80,21 @@ export class Data {
   private scoped(): { chats: Chat[]; repos: Repo[] } {
     const has = this.scope;
     if (has === null) return { chats: this.engine.chats, repos: this.engine.repos };
-    return sidebartree.inScope(this.engine.chats, this.engine.repos, has, (r) => existsSync(repoDir(r)));
+    return sidebartree.inScope(this.engine.chats, this.engine.repos, has, (r) => this.folderHere(repoDir(r)));
+  }
+
+  /**
+   * Whether a project's folder is on this PC, known for 30 s: the chat list asks on every read, and another PC's
+   * project has that PC's path (/home/… on macOS is the automounter: each look took 6 ms, a busy loop of them).
+   */
+  private folders = new Map<string, { here: boolean; at: number }>();
+  private folderHere(path: string): boolean {
+    const t = Date.now();
+    const known = this.folders.get(path);
+    if (known !== undefined && t - known.at < FOLDER_MS) return known.here;
+    const here = existsSync(path);
+    this.folders.set(path, { here, at: t });
+    return here;
   }
 
   /** The chats the pages show: this PC's own and copies from the PCs this account uses. */

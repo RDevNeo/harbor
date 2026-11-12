@@ -182,6 +182,9 @@ export function marksOf(dir: string | null, gone: boolean, pr: chatpr.ChatPr | n
   };
 }
 
+/** How often the icon of a project on another PC is asked for again. */
+const REMOTE_ICON_MS = 10 * 60_000;
+
 export class Shell {
   readonly win: AppWindow;
   readonly data: Data;
@@ -2246,15 +2249,76 @@ export class Shell {
     return known ?? null;
   }
 
-  /** A project's icon (sidebar.rs `avatar`): its own or its website's, looked up once; null: the initial. */
+  /**
+   * A project's icon (sidebar.rs `avatar`): its own or its website's, looked up once; null: the initial. A project
+   * whose folder is on another PC shows that PC's icon, asked again every 10 minutes (`remoteIcon`).
+   */
   private avatar(repo: number): Pixels | null {
+    const pc = this.placeOf(repo)?.pc ?? "";
+    const asked = this.remoteAsked.get(repo);
+    if (pc !== "" && (asked === undefined || Date.now() - asked >= REMOTE_ICON_MS)) {
+      // First seen as another PC's (its place is known later than its row), or due again.
+      this.remoteAsked.set(repo, Date.now());
+      void this.remoteIcon(repo, pc, false);
+    }
     if (this.avatars.has(repo)) return this.avatars.get(repo) ?? null;
     this.loadIcon(repo, false);
     return null;
   }
 
+  private remoteAsked = new Map<number, number>();
+
+  /**
+   * The icon of project `repo` from PC `pc`, which holds its folder: as phones get it (`/v1/projects/icon`, its own,
+   * its website's or one picked there), kept here so it shows at once and while that PC is off. One picked on this
+   * PC wins. Shown when it came or changed.
+   */
+  private async remoteIcon(repo: number, pc: string, refresh: boolean): Promise<void> {
+    const r = this.data.repo(repo);
+    if (!r || !this.hub.call) return;
+    const { favicon } = await import("@harbor/media");
+    if (existsSync(favicon.customPath(repo))) return;
+    const kept = favicon.remotePath(repo);
+    if (!this.avatars.get(repo) && existsSync(kept)) {
+      const img = await favicon.decode(kept).catch(() => null);
+      if (img) this.showAvatar(repo, img);
+    }
+    if (this.data.offline) return;
+    const res = await this.hub.call("POST", "v1/projects/icon", undefined, { pc, project: r.path, ...(refresh ? { refresh: true } : {}) }).catch(() => null);
+    const png = res !== null && res.status < 300 && typeof res.body === "object" && res.body !== null ? (res.body as { png?: unknown }).png : undefined;
+    if (typeof png !== "string" || png === "") return;
+    const bytes = new Uint8Array(Buffer.from(png, "base64"));
+    if (!favicon.keepRemote(repo, bytes) && this.avatars.get(repo)) return;
+    const img = await favicon.decodeIcon(bytes).catch(() => null);
+    if (img) this.showAvatar(repo, img);
+  }
+
+  private showAvatar(repo: number, img: Pixels): void {
+    this.avatars.set(repo, img);
+    this.refreshSidebar();
+    if (this.win.pop_id === "project") this.refreshProjPop(false);
+  }
+
   /** sidebar.rs `load_icon`: `refresh` looks the website's icon up again. */
   private loadIcon(repo: number, refresh: boolean): void {
+    const pc = this.placeOf(repo)?.pc ?? "";
+    if (pc !== "") {
+      // Its folder is on another PC: that PC's icon (a custom one picked here goes through favicon.resolve).
+      void import("@harbor/media").then(({ favicon }) => {
+        if (!existsSync(favicon.customPath(repo))) {
+          if (!this.avatars.has(repo)) this.avatars.set(repo, null);
+          this.remoteAsked.set(repo, Date.now());
+          void this.remoteIcon(repo, pc, refresh);
+          return;
+        }
+        this.loadLocalIcon(repo, refresh);
+      });
+      return;
+    }
+    this.loadLocalIcon(repo, refresh);
+  }
+
+  private loadLocalIcon(repo: number, refresh: boolean): void {
     this.avatars.set(repo, null);
     const r = this.data.repo(repo);
     if (!r) return;

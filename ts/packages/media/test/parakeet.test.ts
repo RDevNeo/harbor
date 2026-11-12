@@ -16,7 +16,7 @@ describe("the model files", () => {
   test("are listed with their sources, sizes and checksums", () => {
     const parts = parakeet.parts();
     expect(parts.map((p) => basename(p.dst))).toEqual(["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt", "silero_vad.onnx"]);
-    expect(parts[0]?.url).toBe("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/encoder.int8.onnx");
+    expect(parts[0]?.url).toBe("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/encoder.int8.onnx");
     expect(parts[4]?.url).toBe("https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx");
     expect(parts.every((p) => p.dst.startsWith(parakeet.dir()))).toBe(true);
     expect(parts[3]?.sha256).toBe("");

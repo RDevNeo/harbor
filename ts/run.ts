@@ -226,6 +226,15 @@ export async function runApp(o: RunOptions): Promise<number> {
     const tray = offline && !process.env.HARBOR_TRAY ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
     // The window shows only this PC's chats and copies from the PCs this account uses (account.ts `pcScope`).
     data.scope = (home: string) => scopeHas(run.account.scope(), home);
+    // A new workspace or directory (a sign-in, Settings › Workspace): chats and projects read again from the
+    // database, as a restart would, so the copies from the PCs this account now uses show at once.
+    let seenScope = `${run.account.workspace()}\0${run.account.directory().at}`;
+    run.account.subscribe(() => {
+      const now = `${run.account.workspace()}\0${run.account.directory().at}`;
+      if (now === seenScope) return;
+      seenScope = now;
+      run.engine.storeChanged(null);
+    });
     const hub = {
       settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version },
       call: (method: string, path: string, query?: Record<string, string>, body?: unknown) => run.call(method, path, query, body),

@@ -29,6 +29,7 @@ import {
   type AccountResult,
   type AccountSettingsSync,
   type HarborClaims,
+  signInWorkspace,
 } from "../src/account.ts";
 import { Vault } from "../src/vault.ts";
 import * as vaultcrypto from "../src/vaultcrypto.ts";
@@ -582,10 +583,22 @@ describe("sign-in through Clerk", () => {
     expect(callPaths(r.calls)).toEqual(["POST /v1/session"]);
   });
 
-  test("several workspaces and none chosen: the user picks", async () => {
+  test("a new PC of someone also in others' workspaces lands in their own", async () => {
     const r = rig();
     r.world.session.workspaces = [
+      { id: "org_b", name: "B", role: "member", personal: false },
       { id: "org_a", name: "A", role: "owner", personal: true },
+    ];
+    await signedIn(r);
+    expect(r.svc.workspace()).toBe("org_a");
+    expect(r.svc.status().pick).toBe(false);
+    expect(r.kv.get("account_ws")).toBe("org_a");
+  });
+
+  test("several workspaces, none of them the account's own, none chosen: the user picks", async () => {
+    const r = rig();
+    r.world.session.workspaces = [
+      { id: "org_a", name: "A", role: "member", personal: false },
       { id: "org_b", name: "B", role: "member", personal: false },
     ];
     await signedIn(r);
@@ -1330,4 +1343,17 @@ test("a workspace's default name reads \"Sam's Workspace\"; a name someone chose
   expect(wsLabel("Sam's workspace")).toBe("Sam's Workspace");
   expect(wsLabel("Sam's Workspace")).toBe("Sam's Workspace");
   for (const n of ["Team", "Ops workspace", "Sam's workspace crew", ""]) expect(wsLabel(n)).toBe(n);
+});
+
+test("a PC signing in lands in its workspace, else the account's only or own personal one, else asks", () => {
+  const ws = (id: string, role: "owner" | "member", personal: boolean) => ({ id, name: id, role, personal });
+  const mine = ws("org_mine", "owner", true);
+  const igors = ws("org_igor", "member", false);
+  expect(signInWorkspace([igors, mine], "org_reg", "")).toBe("org_reg");
+  expect(signInWorkspace([igors, mine], null, "org_igor")).toBe("org_igor");
+  expect(signInWorkspace([igors], null, "")).toBe("org_igor");
+  // A new PC of someone in others' workspaces too: their own.
+  expect(signInWorkspace([igors, mine], null, "")).toBe("org_mine");
+  // Nothing of their own to go to: they pick.
+  expect(signInWorkspace([igors, ws("org_other", "member", false)], null, "")).toBe("");
 });
