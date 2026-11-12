@@ -333,3 +333,19 @@ test("introspection names the item and the menu", () => {
   expect(introspect("/other")).not.toContain("StatusNotifierItem");
   expect(introspect("/other")).toContain('<arg type="a{sv}" direction="out"/>');
 });
+
+test("the menu-bar icon: the anchor alone, black with alpha, as a PNG any decoder reads", async () => {
+  const { pngOf, templateIcon } = await import("../src/tray.ts");
+  const n = 36;
+  const px = templateIcon(n);
+  const alpha = (x: number, y: number) => px[(y * n + x) * 4 + 3] ?? 0;
+  // Corners are transparent; the anchor's shaft runs down the middle.
+  expect([alpha(0, 0), alpha(n - 1, n - 1)]).toEqual([0, 0]);
+  expect(alpha(n / 2, Math.round(n * 0.62))).toBeGreaterThan(200);
+  for (let i = 0; i < n * n; i++) expect(px[i * 4]! + px[i * 4 + 1]! + px[i * 4 + 2]!).toBe(0);
+  const sharp = (await import("sharp")).default;
+  const meta = await sharp(Buffer.from(pngOf(px, n, n))).metadata();
+  expect([meta.format, meta.width, meta.height, meta.channels]).toEqual(["png", n, n, 4]);
+  const back = await sharp(Buffer.from(pngOf(px, n, n))).raw().toBuffer();
+  expect([...new Uint8Array(back)]).toEqual([...px]);
+});

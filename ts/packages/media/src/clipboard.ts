@@ -6,6 +6,7 @@ import type { Offer, OwnerIn, OwnerOut } from "./clipowner.ts";
 import * as ownerText from "./clipowner.ts" with { type: "text" };
 import { type Decoded, decodeBytes } from "./images.ts";
 import { sharpLib } from "./sharplib.ts";
+import { clipboard as osClipboard } from "@harbor/os";
 
 const TEXT = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT"];
 const IMAGES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -73,11 +74,19 @@ const x11: Backend = {
   },
 };
 
+/** The system's own clipboard through @harbor/os (macOS's pasteboard), by MIME type. */
+const system: Backend = {
+  list: async () => osClipboard.types(),
+  get: async (type) => osClipboard.read(type),
+  set: async (type, data) => osClipboard.write([{ mime: type ?? "text/plain;charset=utf-8", data }]) !== null,
+};
+
 let chosen: Backend | null | undefined;
 
 async function backend(): Promise<Backend | null> {
   if (chosen !== undefined) return chosen;
-  if (process.env.WAYLAND_DISPLAY && (await exec(["wl-paste", "--version"]))?.ok) chosen = wayland;
+  if (osClipboard.available()) chosen = system;
+  else if (process.env.WAYLAND_DISPLAY && (await exec(["wl-paste", "--version"]))?.ok) chosen = wayland;
   else if (process.env.DISPLAY && (await exec(["xclip", "-version"]))?.ok !== undefined) chosen = x11;
   else chosen = null;
   return chosen;
@@ -207,18 +216,26 @@ function readOr(path: string): Uint8Array | null {
 }
 
 let ownerUrl: string | null = null;
-/** The Worker that holds this process's copy on the clipboard, and that copy; null once another copy took it. */
-let holder: { worker: Worker; copy: RichCopy } | null = null;
+/** What holds this process's copy on the clipboard (Wayland: a Worker; macOS: the pasteboard's change count), and
+ * that copy; null once another copy took it. */
+let holder: { worker: Worker | null; token: number | null; copy: RichCopy } | null = null;
 /** How long a Worker may take to own the clipboard. */
 const OWN_MS = 3000;
 
 /** The copy this process holds on the clipboard now, until another copy (any app's) replaces it. */
 export function owned(): RichCopy | null {
+  if (holder !== null && holder.token !== null && !osClipboard.stillOurs(holder.token)) holder = null;
   return holder?.copy ?? null;
 }
 
 /** Puts `offers` on the Wayland clipboard all at once (clipowner.ts); false when it can't (X11, a compositor without data-control). */
 export function own(offers: Offer[], copy: RichCopy): Promise<boolean> {
+  // macOS: the pasteboard takes every type at once, and keeps it after Harbor quits.
+  if (osClipboard.available()) {
+    const token = offers.length === 0 ? null : osClipboard.write(offers);
+    if (token !== null) holder = { worker: null, token, copy };
+    return Promise.resolve(token !== null);
+  }
   const display = process.env.WAYLAND_DISPLAY ?? "";
   const runtime = process.env.XDG_RUNTIME_DIR ?? "";
   if (display === "" || (!display.startsWith("/") && runtime === "") || offers.length === 0) return Promise.resolve(false);
@@ -253,7 +270,7 @@ export function own(offers: Offer[], copy: RichCopy): Promise<boolean> {
     };
     worker.onmessage = (e: MessageEvent<OwnerOut>) => {
       if (e.data.t === "owned") {
-        holder = { worker, copy };
+        holder = { worker, token: null, copy };
         settle(true);
       } else {
         settle(false);

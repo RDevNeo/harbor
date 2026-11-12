@@ -25,3 +25,10 @@ export function startDetached(argv: readonly string[]): void {
   if (p.pid === undefined) throw new Error(`couldn't start ${argv[0]}`);
   p.unref();
 }
+
+/** How to start this program again: the executable, and from source its entry script. */
+export function selfArgv(): string[] {
+  const exe = process.execPath.replace(/ \(deleted\)$/, "");
+  if (Bun.main.startsWith("/$bunfs/") || Bun.main.startsWith("B:/~BUN/")) return [exe];
+  return [exe, process.env.HARBOR_ENTRY ?? Bun.main];
+}

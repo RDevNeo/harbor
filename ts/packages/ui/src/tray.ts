@@ -1,4 +1,6 @@
 import { createConnection, type Socket } from "node:net";
+import { deflateSync } from "node:zlib";
+import { tray as osTray } from "@harbor/os";
 
 const WATCHER = "org.kde.StatusNotifierWatcher";
 const ITEM_PATH = "/StatusNotifierItem";
@@ -30,6 +32,7 @@ export interface TrayHandle {
 /** Starts the tray (HARBOR_NO_TRAY set: null). Never throws: no bus, no tray. */
 export function trayStart(hooks: TrayHooks): TrayHandle | null {
   if (process.env.HARBOR_NO_TRAY !== undefined) return null;
+  if (osTray.available()) return menuBar(hooks);
   let bus: Bus | null = null;
   let stopped = false;
   const done = (async () => {
@@ -53,6 +56,34 @@ export function trayStart(hooks: TrayHooks): TrayHandle | null {
       stopped = true;
       ACTIVE = false;
       bus?.close();
+    },
+  };
+}
+
+/** macOS: the same icon and menu in the menu bar (os.tray), drawn by the system in its own colour. */
+function menuBar(hooks: TrayHooks): TrayHandle | null {
+  let stop: (() => void) | null = null;
+  try {
+    stop = osTray.start({
+      iconPng: pngOf(templateIcon(36), 36, 36),
+      iconPoints: 18,
+      tooltip: "Harbor",
+      items: [{ label: "Open Harbor", onClick: () => hooks.onOpen() }, "separator", { label: "Quit Harbor completely", onClick: () => hooks.onQuit() }],
+    });
+  } catch (e) {
+    (hooks.onError ?? ((m: string) => console.error(m)))(`harbor: no menu bar icon: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (stop === null) return null;
+  ACTIVE = true;
+  let end: () => void = () => {};
+  const done = new Promise<void>((r) => (end = r));
+  return {
+    done,
+    stop() {
+      ACTIVE = false;
+      stop?.();
+      stop = null;
+      end();
     },
   };
 }
@@ -859,4 +890,61 @@ export class Bus {
       }
     });
   }
+}
+
+
+/** The anchor alone, black on transparent, `n` px square (RGBA): a menu-bar template of trayIcon's drawing. */
+export function templateIcon(n: number): Uint8Array {
+  // trayIcon's anchor spans 88..424 of its 512 units: drawn bigger and cut to that, it fills the icon.
+  const big = Math.round((n * 512) / 336);
+  const off = Math.round((big * 88) / 512);
+  const argb = trayIcon(big);
+  const out = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const i = (y + off) * big + (x + off);
+      // trayIcon draws the anchor light (0xed) on a dark square (0x11): its lightness is the anchor's coverage.
+      const bg = (argb[i * 4] ?? 0) / 255;
+      const c = argb[i * 4 + 1] ?? 0x11;
+      const fg = bg === 0 ? 0 : Math.max(0, Math.min(1, (c - 0x11) / (0xed - 0x11)));
+      out[(y * n + x) * 4 + 3] = Math.round(fg * 255);
+    }
+  }
+  return out;
+}
+
+const CRC = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(b: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const x of b) c = (CRC[(c ^ x) & 0xff] as number) ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** RGBA pixels as a PNG file. */
+export function pngOf(rgba: Uint8Array, w: number, h: number): Uint8Array {
+  const chunk = (type: string, data: Uint8Array): Buffer => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, "latin1");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])), 0);
+    return Buffer.concat([head, data, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const raw = Buffer.alloc(h * (w * 4 + 1));
+  for (let y = 0; y < h; y++) raw.set(rgba.subarray(y * w * 4, (y + 1) * w * 4), y * (w * 4 + 1) + 1);
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  return Buffer.concat([sig, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", new Uint8Array())]);
 }

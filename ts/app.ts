@@ -34,6 +34,11 @@ const commands: Record<string, Command> = {
     console.log(`slint: ${typeof slint.processEvents === "function" ? "ok" : "no event loop"}`);
     return typeof sherpa.OfflineRecognizer === "function" && typeof slint.processEvents === "function" ? 0 : 1;
   },
+  // Records the microphone to stdout for dictation, where Harbor records itself (macOS).
+  "record-mic": async () => {
+    const { audio } = await import("./packages/os/src/index.ts");
+    return audio.recordToStdout();
+  },
   "--version": () => {
     console.log(`harbor ${VERSION === DEV_VERSION ? `${pkg.version} (ts)` : versionLabel()}`);
     return 0;

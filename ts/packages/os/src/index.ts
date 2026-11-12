@@ -13,3 +13,7 @@ export * as env from "./env.ts";
 export * as codesign from "./codesign.ts";
 export { platform, type Platform } from "./platform.ts";
 export * as stall from "./stall.ts";
+export * as clipboard from "./clipboard.ts";
+export * as tray from "./tray.ts";
+export * as autostart from "./autostart.ts";
+export * as audio from "./audio.ts";

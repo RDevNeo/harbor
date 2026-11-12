@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join } from "node:path";
+import { autostart as osAutostart } from "@harbor/os";
 
 /** Closing the window leaves Harbor running, unless HARBOR_NO_BACKGROUND is set (a preview rig: closing it ends it). */
 export function keepsRunning(env: Record<string, string | undefined> = process.env): boolean {
@@ -189,10 +190,9 @@ export function stillRunning(kv: BackgroundKv, trayActive: boolean): [string, st
   return ["Harbor is still running", `Phones, other PCs and queued work keep reaching this PC. Run Harbor again to open it. ${how}, or turn this off there.`];
 }
 
+/** The system's start-at-login entry for Harbor (os.autostart: a .desktop file on Linux, a LaunchAgent on macOS). */
 export function autostartFile(): string {
-  const xdg = process.env.XDG_CONFIG_HOME;
-  const config = xdg !== undefined && isAbsolute(xdg) ? xdg : join(process.env.HOME ?? "", ".config");
-  return join(config, "autostart/harbor.desktop");
+  return osAutostart.entryPath();
 }
 
 /** What the running install is, from the update module: its own file, and whether it is the managed install. */
@@ -221,8 +221,7 @@ export function autostartLauncher(self: SelfInstall): string | null {
 /** The entry is Harbor's (written by `setAutostart`) and not hidden. */
 export function autostart(): boolean {
   try {
-    const s = readFileSync(autostartFile(), "utf8");
-    return s.includes(BACKGROUND_FLAG) && !s.split("\n").some((l) => l.trim() === "Hidden=true");
+    return osAutostart.isOn(readFileSync(autostartFile(), "utf8"), BACKGROUND_FLAG);
   } catch {
     return false;
   }
@@ -266,7 +265,7 @@ export function setAutostart(on: boolean, self: SelfInstall): void {
   if (exe === null) throw new Error("Harbor can't tell where its own file is");
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, desktopEntry(exe));
+    writeFileSync(path, osAutostart.entry(exe, BACKGROUND_FLAG));
   } catch (e) {
     throw new Error(`${path}: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -276,11 +275,4 @@ function isNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT";
 }
 
-export function desktopEntry(exe: string): string {
-  // Desktop Entry quoting: inside double quotes, \ " ` $ are escaped.
-  let quoted = exe;
-  if ([...exe].some((c) => /\s/u.test(c) || "\"'\\`$".includes(c))) {
-    quoted = `"${[...exe].map((c) => ("\"`$\\".includes(c) ? `\\${c}` : c)).join("")}"`;
-  }
-  return `[Desktop Entry]\nType=Application\nName=Harbor\nComment=Starts Harbor in the background, so phones and other PCs can reach this one\nExec=${quoted} ${BACKGROUND_FLAG}\nIcon=harbor\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`;
-}
+export const desktopEntry = (exe: string): string => osAutostart.desktopEntry(exe, BACKGROUND_FLAG);

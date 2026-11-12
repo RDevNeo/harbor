@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { desktop, env, keychain, libc, paths, platform, proc, spawn, sys } from "../src/index.ts";
+import { autostart, clipboard, desktop, env, keychain, libc, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
 
@@ -282,5 +282,50 @@ describe("tcp listeners", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+describe.if(process.platform === "darwin")("macOS clipboard (a private pasteboard, never the user's)", () => {
+  test("every type at once: text, HTML, an image and a file; read back by MIME type", () => {
+    const name = `harbor-test-${process.pid}`;
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 1, 2, 3]);
+    const enc = new TextEncoder();
+    const token = clipboard.write(
+      [
+        { mime: "text/plain;charset=utf-8", data: enc.encode("héllo 日本") },
+        { mime: "UTF8_STRING", data: enc.encode("ignored: text has one type there") },
+        { mime: "text/html", data: enc.encode("<p>héllo</p>") },
+        { mime: "image/png", data: png },
+        { mime: "text/uri-list", data: enc.encode("file:///tmp/a.png\r\nfile:///tmp/b.png\r\n") },
+      ],
+      name,
+    );
+    expect(token).not.toBeNull();
+    expect(clipboard.types(name)).toEqual(["text/plain;charset=utf-8", "text/html", "image/png", "text/uri-list"]);
+    expect(new TextDecoder().decode(clipboard.read("text/plain", name) ?? new Uint8Array())).toBe("héllo 日本");
+    expect(clipboard.read("image/png", name)).toEqual(png);
+    expect(new TextDecoder().decode(clipboard.read("text/uri-list", name) ?? new Uint8Array())).toBe("file:///tmp/a.png\r\n");
+    expect(clipboard.stillOurs(token as number, name)).toBe(true);
+    clipboard.write([{ mime: "text/plain", data: enc.encode("someone else's") }], name);
+    expect(clipboard.stillOurs(token as number, name)).toBe(false);
+  });
+});
+
+describe("autostart", () => {
+  test("Linux: an XDG autostart entry; macOS: a LaunchAgent in the user's session", () => {
+    const linux = { HARBOR_TEST_PLATFORM: "linux", HOME: "/h" };
+    const mac = { HARBOR_TEST_PLATFORM: "darwin", HOME: "/Users/sam" };
+    expect(autostart.entryPath(linux)).toBe("/h/.config/autostart/harbor.desktop");
+    expect(autostart.entryPath({ ...linux, XDG_CONFIG_HOME: "/c" })).toBe("/c/autostart/harbor.desktop");
+    expect(autostart.entryPath(mac)).toBe("/Users/sam/Library/LaunchAgents/dev.harbor.Harbor.plist");
+    const d = autostart.entry("/opt/my apps/harbor", "--background", linux);
+    expect(d).toContain('Exec="/opt/my apps/harbor" --background');
+    expect(autostart.isOn(d, "--background", linux)).toBe(true);
+    expect(autostart.isOn(`${d}Hidden=true\n`, "--background", linux)).toBe(false);
+    const p = autostart.entry("/Applications/Harbor & Co.app/Contents/MacOS/harbor", "--background", mac);
+    expect(p).toContain("<string>/Applications/Harbor &amp; Co.app/Contents/MacOS/harbor</string>");
+    expect(p).toContain("<key>RunAtLoad</key>\n  <true/>");
+    expect(autostart.isOn(p, "--background", mac)).toBe(true);
+    expect(autostart.isOn(p.replace("<key>RunAtLoad</key>", "<key>Disabled</key>\n  <true/>\n  <key>RunAtLoad</key>"), "--background", mac)).toBe(false);
   });
 });

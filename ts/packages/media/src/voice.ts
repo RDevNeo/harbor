@@ -5,6 +5,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { dataDir, newUuid } from "@harbor/store";
 import * as parakeet from "./parakeet.ts";
+import { audio as osAudio, spawn as osSpawn } from "@harbor/os";
 
 export const RATE = parakeet.RATE;
 const MAX_SECS = 600;
@@ -176,6 +177,8 @@ export async function inputDevices(): Promise<InputDevice[]> {
 }
 
 export function recorder(device = inputDevice): { bin: string; args: string[] } | null {
+  // macOS: Harbor records itself (CoreAudio, `harbor record-mic`), from the system's default input.
+  if (osAudio.available()) return osAudio.recorder(osSpawn.selfArgv());
   const pw = onPath(["pw-record"]);
   if (pw) return { bin: pw, args: [...(device ? ["--target", device] : []), "--raw", "--rate", "16000", "--channels", "1", "--format", "s16", "--media-category", "Capture", "--media-role", "Communication", "-"] };
   const pa = onPath(["parecord"]);
@@ -183,6 +186,7 @@ export function recorder(device = inputDevice): { bin: string; args: string[] } 
 }
 
 export function cantRecord(): string | null {
+  if (osAudio.available()) return null;
   return recorder() === null ? "Can't record: neither pw-record (PipeWire) nor parecord (PulseAudio) is on this PC." : null;
 }
 

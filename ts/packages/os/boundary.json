@@ -70,10 +70,6 @@
   "packages/ui/src/assets.ts": {
     "xdg": 1
   },
-  "packages/ui/src/background.ts": {
-    "linux-paths": 1,
-    "xdg": 1
-  },
   "packages/ui/src/fdwait.ts": {
     "ffi": 1,
     "libc": 1,
