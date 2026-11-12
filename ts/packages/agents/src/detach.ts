@@ -20,7 +20,7 @@ import { compactFirst } from "./compaction.ts";
 import { arr, at, compact, isNull, optStr, parse } from "./json.ts";
 import { lend, token, unlend } from "./oauth.ts";
 import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from "./paths.ts";
-import { env as osEnv, proc, spawn as osSpawn } from "@harbor/os";
+import { env as osEnv, paths as osPaths, proc, spawn as osSpawn } from "@harbor/os";
 import { alive, cmdline, myUid, ownerOf, parentOf, pids, procStart, startedAt } from "./procfs.ts";
 import { bin, KINDS, which } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
@@ -101,7 +101,8 @@ export function fnv1a(s: string): bigint {
 export function root(): string {
   const base = stateDir();
   const data = dataDir();
-  if (data === join(home(), ".local/share/harbor")) return join(base, "turns");
+  // The system's own data folder: ~/.local/share/harbor, on Windows %APPDATA%\harbor.
+  if (data === join(osPaths.systemDataHome({ ...process.env, HOME: home() }), "harbor")) return join(base, "turns");
   return join(base, `turns-${(fnv1a(data) & 0xffffffffffffn).toString(16).padStart(12, "0")}`);
 }
 

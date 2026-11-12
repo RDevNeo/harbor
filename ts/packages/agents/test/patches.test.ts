@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { blockedWhy, panelItems, patchDirs, Patches, PATCH_DOC, shape, writeDoc } from "../src/patches.ts";
 
 const kv = () => {
@@ -31,8 +31,10 @@ const PATCH = `export default {
 
 describe("patches", () => {
   test("folders: the chat's and each above it to home, the project's, then home's", () => {
-    expect(patchDirs("/h/p/wt/sub", "/h/p", "/h")).toEqual(["/h/p/wt/sub/.harbor/patches", "/h/p/wt/.harbor/patches", "/h/p/.harbor/patches", "/h/.harbor/patches"]);
-    expect(patchDirs("/h", null, "/h")).toEqual(["/h/.harbor/patches"]);
+    // Full paths of this system (on Windows "/h" is on the current drive).
+    const r = (ps: string[]): string[] => ps.map((p) => resolve(p));
+    expect(patchDirs("/h/p/wt/sub", "/h/p", "/h")).toEqual(r(["/h/p/wt/sub/.harbor/patches", "/h/p/wt/.harbor/patches", "/h/p/.harbor/patches", "/h/.harbor/patches"]));
+    expect(patchDirs("/h", null, "/h")).toEqual(r(["/h/.harbor/patches"]));
   });
 
   test("only node: and bun imports, and no import() by a name", () => {

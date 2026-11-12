@@ -22,6 +22,11 @@ export function dataHome(env: Env = process.env): string {
   return env.XDG_DATA_HOME || (win() ? appData(env) : join(home(env), ".local", "share"));
 }
 
+/** The system's own data folder, whatever XDG_DATA_HOME says: ~/.local/share, on Windows %APPDATA%. */
+export function systemDataHome(env: Env = process.env): string {
+  return dataHome({ ...env, XDG_DATA_HOME: undefined });
+}
+
 /** The desktop's Trash (freedesktop.org: `files/` and `info/*.trashinfo` under the data folder). */
 export function trashHome(env: Env = process.env): string {
   return join(dataHome(env), "Trash");

@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { spawn as osSpawn } from "@harbor/os";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,9 @@ import { compact } from "../src/json.ts";
 import { procStart } from "../src/procfs.ts";
 import { reap } from "./reap.ts";
 import { expectPerm } from "../../../test/perm.ts";
+
+// Windows starts processes several times slower: its tests get the time (setDefaultTimeout holds per file).
+if (process.platform === "win32") setDefaultTimeout(30_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-detach-"));
 const saved = { ...detach.timing };
@@ -62,7 +66,8 @@ test("ignores_other_processes_and_other_harbors", () => {
 
 /** ssh once the agent there exited (code `code`), with a forwarded connection still open. */
 function lingeringSsh(dir: string, code: number) {
-  const out = openSync(join(dir, "out"), "a");
+  // As the runner opens it: an append fd isn't one Git Bash's sh can write on Windows.
+  const out = osSpawn.outputFile(join(dir, "out"));
   const script = `printf '%s\\n' '{"type":"result","subtype":"success"}' '' '{"type":"${detach.REMOTE_EXIT}","code":${code}}'; exec sleep 300`;
   return Bun.spawn(["sh", "-c", script], { stdout: out, stderr: "ignore", stdin: "ignore" });
 }
@@ -208,7 +213,8 @@ test("a_guest_turns_commands_run_as_its_account", async () => {
   expect(out.startsWith("token=sk-ant-oat01-guest login=none\n")).toBe(true);
   const flat = out.replace(/\s/g, "");
   expect(flat).toContain('"accessToken":"sk-ant-oat01-guest"');
-  expect(out).toContain(" mode=600");
+  // Owner-only by its mode where there are modes (Windows' owner-only is its ACL, not this).
+  if (process.platform !== "win32") expect(out).toContain(" mode=600");
   // The refresh token stays with the account.
   expect(out).not.toContain("sk-ant-ort01");
   expect(readFileSync(join(root, "9-1/cmd.json"), "utf8")).not.toContain("sk-ant-oat01");
@@ -328,7 +334,7 @@ describe("the turn folder is the Rust app's", () => {
     expect(detach.fnv1a("a")).toBe(0xaf63dc4c8601ec8cn);
     expect(detach.fnv1a("")).toBe(0xcbf29ce484222325n);
     withEnv({ HOME: "/home/u", XDG_STATE_HOME: join(base, "st"), XDG_DATA_HOME: undefined }, () => expect(detach.root()).toBe(join(base, "st/harbor/turns")));
-    const h = (detach.fnv1a("/tmp/x/harbor") & 0xffffffffffffn).toString(16).padStart(12, "0");
+    const h = (detach.fnv1a(join("/tmp/x", "harbor")) & 0xffffffffffffn).toString(16).padStart(12, "0");
     withEnv({ HOME: "/home/u", XDG_STATE_HOME: join(base, "st"), XDG_DATA_HOME: "/tmp/x" }, () => expect(detach.root()).toBe(join(base, `st/harbor/turns-${h}`)));
   });
 });

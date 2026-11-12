@@ -142,7 +142,9 @@ test("npm_install_needs_node", () => {
   expect(s).toContain("Node.js");
   expect(s).toContain("npm i -g @openai/codex ||");
   // Runs as a script: without npm on PATH it explains instead of failing on npm.
-  const out = Bun.spawnSync(["/bin/sh", "-c", s], { env: { PATH: "/nonexistent" }, stdout: "pipe" });
+  // Windows: Git Bash's sh, found before PATH is emptied.
+  const sh = process.platform === "win32" ? (Bun.which("sh") ?? "sh") : "/bin/sh";
+  const out = Bun.spawnSync([sh, "-c", s], { env: { PATH: "/nonexistent" }, stdout: "pipe" });
   expect(out.success).toBe(false);
   expect(out.stdout.toString()).toContain("Codex installs with npm");
 });

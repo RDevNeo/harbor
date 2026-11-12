@@ -1,5 +1,18 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { command, detect, ProviderUpdates, updatedText, type Io } from "../src/provupdate.ts";
+// Automatic updates are what's under test: a PC or rig that turns them off (HARBOR_OFFLINE,
+// HARBOR_NO_PROVIDER_UPDATES) doesn't turn them off here.
+const OFF = ["HARBOR_OFFLINE", "HARBOR_NO_PROVIDER_UPDATES"] as const;
+const saved = new Map<string, string | undefined>();
+beforeAll(() => {
+  for (const k of OFF) {
+    saved.set(k, process.env[k]);
+    delete process.env[k];
+  }
+});
+afterAll(() => {
+  for (const [k, v] of saved) if (v !== undefined) process.env[k] = v;
+});
 function fake(path: string, real = path) {
   let installed = "2.1.1";
   const calls: string[][] = [];
@@ -171,4 +184,14 @@ test("an offline run or a test session never updates the CLIs by itself", async 
   expect(autoUpdates({})).toBe(true);
   expect(autoUpdates({ HARBOR_OFFLINE: "1" })).toBe(false);
   expect(autoUpdates({ HARBOR_NO_PROVIDER_UPDATES: "1" })).toBe(false);
+});
+test("on Windows: Claude's own claude.exe updates itself, an npm shim is npm's", async () => {
+  const native = fake("C:\\Users\\sam\\.local\\bin\\claude.exe");
+  expect(command(await detect("claude", native.io), "2.1.9")).toEqual(["C:\\Users\\sam\\.local\\bin\\claude.exe", "update"]);
+  const shim = "C:\\Users\\sam\\AppData\\Roaming\\npm\\claude.cmd";
+  const io: Io = { ...fake(shim).io, which: (n) => (n === "claude" ? shim : n === "npm" ? "C:\\Program Files\\nodejs\\npm.cmd" : null), run: async (a) => (a[1] === "root" ? "C:\\Users\\sam\\AppData\\Roaming\\npm\\node_modules" : "") };
+  expect(command(await detect("claude", io), "2.1.9")).toEqual(["C:\\Program Files\\nodejs\\npm.cmd", "install", "--global", "@anthropic-ai/claude-code@2.1.9"]);
+  // A shim of another npm prefix isn't this one's to update.
+  const other: Io = { ...io, run: async (a) => (a[1] === "root" ? "D:\\npm\\node_modules" : "") };
+  expect(command(await detect("claude", other), "2.1.9")).toBeNull();
 });

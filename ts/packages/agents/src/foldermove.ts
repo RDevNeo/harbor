@@ -141,7 +141,9 @@ export function matches(id: Ident, c: Cand, old: string, adminMoved: (gitdir: st
   if (id.mark !== undefined) return c.mark === id.mark;
   if (id.gitdir !== undefined) {
     if (c.gitdir === null) return false;
-    if (c.gitdir === id.gitdir || c.gitdir === adminMoved(id.gitdir)) return sameInode || c.back === join(old, ".git");
+    // As paths: git writes them with "/" on Windows too, Harbor's own with "\\" there.
+    const same = (a: string | null | undefined, b: string): boolean => a != null && osPaths.under(a, b) === "";
+    if (same(c.gitdir, id.gitdir) || same(c.gitdir, adminMoved(id.gitdir))) return sameInode || same(c.back, join(old, ".git"));
     return sameInode && basename(c.gitdir) === basename(id.gitdir);
   }
   if (!sameInode) return false;

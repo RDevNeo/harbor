@@ -1,9 +1,12 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Chat, Store } from "@harbor/store";
 import * as pr from "../src/chatpr.ts";
+
+// Windows runs git and starts processes several times slower: its tests get the time (setDefaultTimeout holds per file).
+if (process.platform === "win32") setDefaultTimeout(30_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-chatpr-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));

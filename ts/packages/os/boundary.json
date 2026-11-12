@@ -1,7 +1,4 @@
 {
-  "packages/agents/src/detach.ts": {
-    "linux-paths": 1
-  },
   "packages/agents/src/paths.ts": {
     "xdg": 1
   },

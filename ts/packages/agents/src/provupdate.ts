@@ -1,6 +1,5 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { childPath, which } from "./providers.ts";
 
 export const TOOLS = { claude: "@anthropic-ai/claude-code", codex: "@openai/codex" } as const;
@@ -55,31 +54,41 @@ export async function detect(tool: Tool, io: Io): Promise<Install> {
   const resolved = path ? io.real(path) : "";
   const base: Install = { tool, path, resolved, method: path ? "other" : "missing", manager: "", target: "" };
   if (!path) return base;
-  if (/\/mise\/(shims|installs)\//.test(path) || /\/mise\/installs\//.test(resolved)) {
+  // Read with "/" between the parts, Windows' paths too.
+  const p = slash(path);
+  const r = slash(resolved);
+  if (/\/mise\/(shims|installs)\//.test(p) || /\/mise\/installs\//.test(r)) {
     const manager = io.which("mise");
     if (!manager) return base;
     const active = await io.run([manager, "which", tool]);
-    if (!io.real(active).includes(`/mise/installs/${tool}/`)) return base;
+    if (!slash(io.real(active)).includes(`/mise/installs/${tool}/`)) return base;
     return { ...base, resolved: io.real(active), method: "mise", manager, target: tool };
   }
-  const brew = resolved.match(/^(.*?)\/(Cellar|Caskroom)\/([^/]+)\//);
+  const brew = r.match(/^(.*?)\/(Cellar|Caskroom)\/([^/]+)\//);
   if (brew && [tool, "claude-code"].includes(brew[3]!)) {
-    const manager = join(brew[1]!, "bin/brew");
+    const manager = `${brew[1]!}/bin/brew`;
     if (io.which("brew") && io.real(io.which("brew")!) === io.real(manager)) return { ...base, method: "brew", manager, target: brew[3]! };
     return base;
   }
   // Each one's own installer: releases side by side, a link swapped to the new one (`claude update`, `codex update`).
-  if (tool === "claude" && /\/.local\/share\/claude\/versions\//.test(resolved)) return { ...base, method: "native", manager: path, target: "" };
-  if (tool === "codex" && /\/.codex\/packages\/standalone\/releases\//.test(resolved)) return { ...base, method: "native", manager: path, target: "" };
-  if (resolved.includes(`/node_modules/${TOOLS[tool]}/`)) {
+  // On Windows Claude's installer puts claude.exe itself in ~\.local\bin, and `claude update` replaces it.
+  if (tool === "claude" && (/\/.local\/share\/claude\/versions\//.test(r) || /\/\.local\/bin\/claude\.exe$/i.test(p))) return { ...base, method: "native", manager: path, target: "" };
+  if (tool === "codex" && /\/.codex\/packages\/standalone\/releases\//.test(r)) return { ...base, method: "native", manager: path, target: "" };
+  // npm's: the package under its global root, or on Windows the .cmd shim npm put beside that root.
+  const shim = /\.cmd$/i.test(p);
+  if (r.includes(`/node_modules/${TOOLS[tool]}/`) || shim) {
     const manager = io.which("npm");
     if (manager) {
-      const root = await io.run([manager, "root", "-g"]);
-      if (resolved.startsWith(`${io.real(root)}/${TOOLS[tool]}/`)) return { ...base, method: "npm", manager, target: TOOLS[tool] };
+      const root = slash(io.real((await io.run([manager, "root", "-g"])).trim()));
+      const same = (a: string, b: string): boolean => (shim ? a.toLowerCase() === b.toLowerCase() : a === b);
+      if (r.startsWith(`${root}/${TOOLS[tool]}/`) || (shim && same(`${p.slice(0, p.lastIndexOf("/"))}/node_modules`, root))) return { ...base, method: "npm", manager, target: TOOLS[tool] };
     }
   }
   return base;
 }
+
+const slash = (p: string): string => p.replaceAll("\\", "/");
+
 export function command(i: Install, latest: string): string[] | null {
   if (!/^\d+\.\d+\.\d+$/.test(latest)) throw new Error("Invalid target version");
   switch (i.method) {

@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,9 @@ import { Store } from "@harbor/store";
 import * as git from "../src/git.ts";
 import * as procs from "../src/procs.ts";
 import { reap } from "./reap.ts";
+
+// Windows runs git and starts processes several times slower: its tests get the time (setDefaultTimeout holds per file).
+if (process.platform === "win32") setDefaultTimeout(30_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-gitprocs-"));
 afterAll(() => {

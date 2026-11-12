@@ -18,6 +18,7 @@ import * as slint from "slint-ui";
 import * as agents from "@harbor/agents";
 import * as mcp from "@harbor/mcp";
 import * as net from "@harbor/net";
+import * as os from "@harbor/os";
 import * as store from "@harbor/store";
 import { hot, privateDir, runDir, stateDir } from "@harbor/store";
 import * as markdown from "./markdown.ts";
@@ -53,6 +54,8 @@ export function shareHost(): void {
   hot.share("@harbor/net", net);
   hot.share("@harbor/agents", agents);
   hot.share("@harbor/mcp", mcp);
+  // The OS layer: its libraries are opened once, its caches kept (procs.ts, worktree.ts, patches.ts use it).
+  hot.share("@harbor/os", os);
   // The link table clicks and selections are looked up in.
   pin("packages/ui/src/markdown.ts", markdown);
   // Caches and the engine's own state.

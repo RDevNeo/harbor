@@ -1,8 +1,12 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import * as wt from "../src/worktree.ts";
+
+// Windows' git takes ten times as long per command: its tests get the time (setDefaultTimeout holds per file).
+const win = process.platform === "win32";
+if (win) setDefaultTimeout(30_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-wt-"));
 const saved = { ...wt.timing };
@@ -89,7 +93,7 @@ test("claude_names_new_worktrees", async () => {
   expect(m.late).toBeNull();
   expect(existsSync(join(root, `${proj}-remove-only-want-worktree`))).toBe(false);
   expect((await wt.head(m.dir))?.branch).toBe("harbor/worktree-menu-cleanup");
-  expect(await wt.git(d, ["worktree", "list", "--porcelain"])).toContain(`worktree ${m.dir}`);
+  expect(await wt.git(d, ["worktree", "list", "--porcelain"])).toContain(`worktree ${m.dir.replaceAll("\\", "/")}`);
   // Taken: a number, as for slugs.
   expect((await wt.makeIn(root, d, "", "Something else", say("worktree-menu-cleanup"))).branch).toBe("harbor/worktree-menu-cleanup-2");
   // No answer (offline, no account, nonsense): the slug.
@@ -99,7 +103,7 @@ test("claude_names_new_worktrees", async () => {
   const slow: wt.Namer = () => new Promise((r) => setTimeout(() => r("late-name"), wt.timing.nameWaitMs + 500));
   const t = Date.now();
   m = await wt.makeIn(root, d, "", "Sidebar chips", slow);
-  expect(Date.now() - t).toBeLessThan(wt.timing.nameWaitMs + 400);
+  expect(Date.now() - t).toBeLessThan(wt.timing.nameWaitMs + (win ? 1500 : 400));
   expect(m.branch).toBe("harbor/sidebar-chips");
   expect(await m.late).toBe("late-name");
 });
@@ -174,7 +178,8 @@ test("named_worktrees_are_unique_and_their_folder_follows_a_rename", async () =>
   wt.moveDir(a.dir, to);
   expect(existsSync(a.dir)).toBe(false);
   expect((await wt.head(to))?.branch).toBe("harbor/per-project-lead");
-  expect(await wt.git(d, ["worktree", "list", "--porcelain"])).toContain(`worktree ${to}`);
+  // git lists it with "/" on Windows too.
+  expect(await wt.git(d, ["worktree", "list", "--porcelain"])).toContain(`worktree ${to.replaceAll("\\", "/")}`);
   // Already named for it.
   expect(wt.folderFor(d, to, r.branch)).toBeNull();
   // A taken folder gets a number.

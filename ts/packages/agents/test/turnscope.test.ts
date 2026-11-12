@@ -25,7 +25,9 @@ describe("the waker", () => {
     setTimeout(() => appendFileSync(join(dir, "out"), "x\n"), 30);
     await w.wait();
     expect(Date.now() - t).toBeLessThan(detach.SLOW_MS - 100);
-    // Events of that write already seen: the next wait sleeps until the slow look.
+    // Events of that write already seen: the next wait sleeps until the slow look. (Windows tells one write in
+    // two events a moment apart: both are let in first.)
+    await Bun.sleep(100);
     await w.wait(0);
     t = Date.now();
     await w.wait();

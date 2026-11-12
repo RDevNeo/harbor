@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.17] - 2026-11-12
+
+### Fixed
+- Windows: Claude Code (Anthropic's installer, or npm) and Codex from npm are kept up to date, as on Linux and
+  macOS; Harbor couldn't tell how they were installed.
+- Windows: renaming a worktree's folder keeps git's link to it; a moved worktree is found again by its git folder.
+- Windows: a turn's tools reach Harbor only on a port this user's process listens on (Windows can say whose it is).
+
 ## [0.180.16] - 2026-11-12
 
 ### Fixed

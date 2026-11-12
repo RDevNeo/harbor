@@ -192,10 +192,14 @@ test("an account turned off on this PC is listed but not usable, and Remove move
   mkdirSync(join(h, ".claude4/sub"), { recursive: true });
   writeFileSync(join(h, ".claude2/.credentials.json"), "{}");
   writeFileSync(join(h, ".claude4/sub/x"), "kept");
-  const was = { HOME: process.env.HOME, PATH: process.env.PATH, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
+  const was = { HOME: process.env.HOME, PATH: process.env.PATH, XDG_DATA_HOME: process.env.XDG_DATA_HOME, APPDATA: process.env.APPDATA };
   process.env.HOME = h;
   process.env.PATH = "/nonexistent";
   delete process.env.XDG_DATA_HOME;
+  // The data folder's default under this home: ~/.local/share, on Windows %APPDATA%.
+  const win = process.platform === "win32";
+  if (win) process.env.APPDATA = join(h, "AppData", "Roaming");
+  const data = win ? join(h, "AppData", "Roaming") : join(h, ".local/share");
   try {
     expect(p.offIds()).toEqual([]);
     p.setOff("claude2", true);
@@ -215,7 +219,7 @@ test("an account turned off on this PC is listed but not usable, and Remove move
     expect(p.removable(four)).toBe(true);
     p.setOff("claude4", true);
     const to = p.removeAccount(four);
-    expect(to.startsWith(join(h, ".local/share/harbor/removed-accounts/claude4-"))).toBe(true);
+    expect(to.startsWith(join(data, "harbor", "removed-accounts", "claude4-"))).toBe(true);
     expect(readFileSync(join(to, "sub/x"), "utf8")).toBe("kept");
     expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude2", "codex", "opencode"]);
     expect(p.offIds()).toEqual([]);
@@ -223,6 +227,8 @@ test("an account turned off on this PC is listed but not usable, and Remove move
     process.env.HOME = was.HOME;
     process.env.PATH = was.PATH;
     if (was.XDG_DATA_HOME !== undefined) process.env.XDG_DATA_HOME = was.XDG_DATA_HOME;
+    if (was.APPDATA !== undefined) process.env.APPDATA = was.APPDATA;
+    else delete process.env.APPDATA;
   }
 });
 

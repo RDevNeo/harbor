@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { alive } from "./procfs.ts";
-import { sys } from "@harbor/os";
+import { proc, sys } from "@harbor/os";
 
 /**
  * A turn's way to Harbor's MCP bridge that outlives a Harbor restart. The turn's runner listens on a port of its own
@@ -60,7 +60,8 @@ export function writerAlive(o: PortOwner): boolean {
 
 /** Listeners on `port`: whether every one is this user's (null: there's nothing to ask, or no listener's owner is known). */
 export function listenerIsMine(port: number): boolean | null {
-  const uid = process.getuid?.();
+  // This user: the uid, on Windows the session (as os proc and sys.tcpListeners tell them).
+  const uid = proc.myUid();
   const all = sys.tcpListeners();
   if (all === null || uid === undefined) return null;
   const on = all.filter((l) => l.port === port);

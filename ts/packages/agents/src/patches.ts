@@ -7,6 +7,7 @@
  * (its SHA-256): an edit asks again. It can import nothing but Node's and Bun's own modules, so the
  * hash covers all of it.
  */
+import { paths as osPaths } from "@harbor/os";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -89,14 +90,14 @@ export function patchDirs(cwd: string, project: string | null, home: string): st
   const walk = (from: string) => {
     let d = resolve(from);
     const h = resolve(home);
-    while (d !== h && d !== dirname(d)) {
+    while (osPaths.under(d, h) !== "" && d !== dirname(d)) {
       add(d);
       d = dirname(d);
     }
   };
   if (cwd !== "") walk(cwd);
   if (project) walk(project);
-  add(home);
+  add(resolve(home));
   return out;
 }
 

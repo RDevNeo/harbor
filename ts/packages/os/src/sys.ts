@@ -137,6 +137,8 @@ export function parseNetstat(text: string, uidOf: (pid: number) => number | unde
 
 /** Every TCP socket listening on this PC, any user's; null where there's no way to ask. */
 export function tcpListeners(): Listener[] | null {
+  const w = win();
+  if (w) return w.sys.tcpListeners();
   if (mac()) {
     const r = spawnSync("netstat", ["-anv", "-p", "tcp"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
     if (r.status !== 0 || typeof r.stdout !== "string") return null;

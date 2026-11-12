@@ -1,6 +1,6 @@
 import { paths as osPaths } from "@harbor/os";
 import { existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync, mkdirSync } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { outputWithin } from "./git.ts";
 import { dataDir, home, newUuid } from "./paths.ts";
 import { projectsdir } from "@harbor/store";
@@ -518,7 +518,8 @@ export function moveDir(dir: string, to: string): void {
     throw new Error(`couldn't rename the folder: ${why(e)}`);
   }
   try {
-    writeFileSync(join(admin, "gitdir"), `${join(to, ".git")}\n`);
+    // As git writes it: "/" between the parts on Windows too (it doesn't know the worktree by a path with "\\").
+    writeFileSync(join(admin, "gitdir"), `${join(to, ".git").replaceAll(sep, "/")}\n`);
   } catch (e) {
     renameSync(to, dir);
     throw new Error(`couldn't update git's worktree list: ${why(e)}`);
