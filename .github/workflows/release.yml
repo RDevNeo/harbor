@@ -548,6 +548,17 @@ jobs:
           tar -C pkg -I "$z" -cf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
           tar -C pkg -I "$z" -cf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
           [ ! -d pkg-macos/Harbor.app ] || tar -C pkg-macos -I "$z" -cf dist/harbor-aarch64-macos.tar.gz Harbor.app
+          # macOS's disk image: Harbor.app beside a link to Applications, drag to install. An ISO 9660
+          # file system with Rock Ridge (modes and the link kept, as Bitcoin Core's images do), made a
+          # compressed disk image (UDZO) by .github/udzo.py.
+          if [ -d pkg-macos/Harbor.app ]; then
+            sudo apt-get install -y --no-install-recommends xorriso >/dev/null
+            mkdir -p dmg-root
+            cp -a pkg-macos/Harbor.app dmg-root/
+            ln -s /Applications dmg-root/Applications
+            xorrisofs -D -l -V Harbor -no-pad -r -dir-mode 0755 -o "$RUNNER_TEMP/harbor.iso" dmg-root
+            python3 .github/udzo.py "$RUNNER_TEMP/harbor.iso" dist/harbor-aarch64-macos.dmg
+          fi
           for arch in x86_64 aarch64; do
             [ ! -d pkg/harbor-video-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-video-$arch-linux.tar.gz harbor-video-$arch-linux
             [ ! -d pkg/harbor-slint-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-slint-$arch-linux.tar.gz harbor-slint-$arch-linux
@@ -565,7 +576,7 @@ jobs:
           set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for f in dist/*.tar.gz dist/install.sh dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
+          for f in dist/*.tar.gz dist/*.dmg dist/install.sh dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
             [ -f "$f" ] || continue
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
           done
@@ -577,6 +588,7 @@ jobs:
         with:
           subject-path: |
             dist/*.tar.gz
+            dist/*.dmg
             dist/install.sh
             dist/harbor-android.apk
             dist/harbor-app.js
@@ -593,6 +605,13 @@ jobs:
         with:
           name: dist
           path: dist/
+          compression-level: 0
+      # The disk image alone too, for checking a dry run's on a Mac without fetching every file.
+      - uses: actions/upload-artifact@v7
+        if: hashFiles('dist/harbor-aarch64-macos.dmg') != ''
+        with:
+          name: harbor-dmg
+          path: dist/harbor-aarch64-macos.dmg
           compression-level: 0
 
   # The install tests run when the runtime or the packaging changed (the runtime lane: packaging/
