@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.1] - 2026-11-11
+
+### Changed
+- Internal, nothing changes on screen: what Harbor asks of the operating system (processes, memory,
+  file locks, opening links, raising its window, its folders) now goes through one package,
+  `@harbor/os`, the first step towards Harbor on Windows and macOS. A test keeps new Linux-only
+  calls out of the rest of the code.
+
 ## [0.177.0] - 2026-11-11
 
 ### Removed
