@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Harbor: a native Linux chat client for coding agents</title>
-<meta name="description" content="Harbor is a fast, native Linux desktop app for Claude Code, Codex, Gemini and other coding agents, organised by repository.">
+<title>Harbor: coding agents across all your computers</title>
+<meta name="description" content="Harbor is a native desktop app for Claude Code, Codex and OpenCode agents, on Linux, Windows and macOS, with an Android app. Your PCs form one mesh: chats and projects follow your account everywhere.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0a0a">
 <meta name="google-site-verification" content="5hqGb2gX_vp0Fm9X_I9QR24UWnoTt1cSTdVOZgfQifg">
 <meta property="og:title" content="Harbor">
-<meta property="og:description" content="A native Linux chat client for coding agents, organised by repository.">
+<meta property="og:description" content="Coding agents across all your computers. Linux, Windows, macOS and Android.">
 <meta property="og:type" content="website">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/fonts/Geist-Regular.ttf" as="font" type="font/ttf" crossorigin>
@@ -17,11 +17,38 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<svg width="0" height="0" class="sprite" aria-hidden="true">
+  <defs>
+    <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></symbol>
+    <symbol id="i-linux" viewBox="0 0 24 24"><path d="M4 17V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3Z"/><path d="m8 9 3 3-3 3M13 15h3"/></symbol>
+    <symbol id="i-win" viewBox="0 0 24 24"><path d="M4 5.5 11 4.5v7H4zM13 4.2 20 3v8.5h-7zM4 12.5h7v7L4 18.5zM13 12.5h7V21l-7-1.2z"/></symbol>
+    <symbol id="i-mac" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+    <!-- integrations -->
+    <symbol id="i-github" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V10a3 3 0 0 0-3-3h-3m0 0 2.5-2.5M12 7l2.5 2.5"/></symbol>
+    <symbol id="i-vercel" viewBox="0 0 24 24"><path d="M12 4 21 19H3Z"/></symbol>
+    <symbol id="i-linear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m6 15 3 3M5 11l8 8M7 7l10 10"/></symbol>
+    <symbol id="i-sentry" viewBox="0 0 24 24"><path d="M12 4 3 19h5a6 6 0 0 0-3-5M12 4l9 15h-6a10 10 0 0 0-6-9"/></symbol>
+    <symbol id="i-supabase" viewBox="0 0 24 24"><path d="M13 3 4 14h8l-1 7 9-11h-8z"/></symbol>
+    <symbol id="i-context7" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h12v15H6a2 2 0 0 0-2 2zM4 20a2 2 0 0 0 2 1h12v-3"/><path d="M9 8h6M9 11h4"/></symbol>
+    <symbol id="i-convex" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+    <symbol id="i-gmail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></symbol>
+    <symbol id="i-discord" viewBox="0 0 24 24"><path d="M7 6.5C9.5 5.5 14.5 5.5 17 6.5c1.8 2.6 2.7 5.6 2.5 9-1.5 1.2-3 2-4.5 2.5l-1-2M7 6.5c-1.8 2.6-2.7 5.6-2.5 9 1.5 1.2 3 2 4.5 2.5l1-2M8 15c2.5 1.3 5.5 1.3 8 0"/><circle cx="9.5" cy="11.5" r="1"/><circle cx="14.5" cy="11.5" r="1"/></symbol>
+    <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M4 20l1.3-4A8.5 8.5 0 1 1 8.4 19z"/><path d="M9 8.5c0 3.5 3 6.5 6.5 6.5l1-1.5-2-1-1 .8a5 5 0 0 1-2.3-2.3l.8-1-1-2z"/></symbol>
+    <symbol id="i-playwright" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8.5h18M6 6.3h.01M8.5 6.3h.01"/><path d="m10 12 4.5 2.5L10 17z"/></symbol>
+    <symbol id="i-roblox" viewBox="0 0 24 24"><path d="m7.5 3 13.5 4.5L16.5 21 3 16.5z"/><path d="m11 10 3 1-1 3-3-1z"/></symbol>
+    <symbol id="i-blender" viewBox="0 0 24 24"><circle cx="14" cy="13" r="6.5"/><circle cx="14" cy="13" r="2.5"/><path d="M8 9.5 3 6M8.5 13H2.5"/></symbol>
+    <symbol id="i-omarchy" viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+  </defs>
+</svg>
+
 <header class="nav wrap">
   <a class="brand" href="/"><img src="/favicon.svg" alt="" width="24" height="24">Harbor</a>
   <nav>
-    <a href="#performance">Performance</a>
+    <a href="#mesh">Mesh</a>
     <a href="#features">Features</a>
+    <a href="#integrations">Integrations</a>
     <a href="#install">Install</a>
     <a href="https://github.com/RDevNeo/harbor">GitHub</a>
   </nav>
@@ -29,52 +56,18 @@
 
 <main>
   <section class="hero wrap">
-    <h1>Harbor</h1>
-    <p class="pitch">A native chat client for coding agents. Claude Code, Codex, Gemini and others, organised by repository. TypeScript on Bun with a native Slint window: no Electron, no WebView.</p>
-    <ul class="stats" aria-label="Harbor at a glance">
-      <li><b>~1%</b> CPU when idle</li>
-      <li><b>1</b> self-contained executable</li>
-      <li><b>x86_64 + arm64</b> Linux</li>
-    </ul>
-    <div class="install" id="install">
-      <div class="card rec">
-        <p class="label"><span class="tag">Recommended</span> One command, installs and updates itself</p>
-        <div class="cmd">
-          <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
-          <button type="button" id="copy" aria-label="Copy install command">Copy</button>
-        </div>
-        <p class="small">Installs into <code>~/.local</code> without sudo.</p>
-      </div>
-      <div class="card">
-        <p class="label">Manual install</p>
-        <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Download for Linux x86_64 (.tar.gz)
-        </a>
-        <p class="small">On ARM: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-linux.tar.gz">harbor-aarch64-linux.tar.gz</a></p>
-        <ol class="steps">
-          <li>Extract it: <code>tar xzf harbor-x86_64-linux.tar.gz</code> (or the aarch64 one)</li>
-          <li>Run <code>./install.sh</code> inside the folder (works offline; it checks the files against the signed checksums)</li>
-          <li>Open Harbor from your app menu</li>
-        </ol>
-      </div>
-      <div class="card wide" id="android">
-        <p class="label">Android companion app</p>
-        <p class="small">Read and drive your Harbor chats from your phone: start chats, send messages and photos, stop, fork. The agents keep running on your PC; the phone signs in with your Google account and finds your PCs.</p>
-        <a class="btn" href="/download/harbor.apk" download="harbor.apk" type="application/vnd.android.package-archive">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Download for Android (.apk)
-        </a>
-        <ol class="steps">
-          <li>Open the .apk on your phone and allow installing apps from your browser (asked once). If Android still refuses: on Samsung phones turn off Auto Blocker (Settings › Security and privacy), and if Play Protect warns, tap More details › Install anyway</li>
-          <li>Sign in with Google in desktop Harbor and in the app, with the same account (or one your workspace invited)</li>
-          <li>Your PCs show up in the app by themselves; it updates itself from them after that</li>
-        </ol>
-        <p class="small">Or get <a href="https://github.com/RDevNeo/harbor/releases/latest">harbor-android.apk from GitHub releases</a>.</p>
-      </div>
+    <p class="eyebrow"><span class="dot"></span>Linux · Windows · macOS · Android</p>
+    <h1>Your coding agents,<br>on every computer you own.</h1>
+    <p class="pitch">Harbor runs Claude Code, Codex and OpenCode in one native window. Every PC runs Harbor, they form one mesh under your account, and your phone drives it all.</p>
+    <div class="cta">
+      <a class="btn primary" href="#install"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Install Harbor</a>
+      <a class="btn" href="#integrations">See integrations</a>
     </div>
-    <p class="note">One build per architecture, Linux x86_64 and aarch64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. No .deb or distro packages.
-    Needs a coding-agent CLI such as <code>claude</code>, <code>codex</code> or <code>gemini</code>. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> (signed with minisign) · <a href="https://github.com/RDevNeo/harbor">View on GitHub</a></p>
+    <ul class="stats" aria-label="Harbor at a glance">
+      <li><b>No Electron</b> TypeScript on Bun, native Slint window</li>
+      <li><b>~1%</b> CPU when idle</li>
+      <li><b>Open source</b> MIT</li>
+    </ul>
   </section>
 
   <section class="shot wrap" aria-label="Harbor window (illustration)">
@@ -83,116 +76,186 @@
       <div class="app">
         <aside class="side">
           <div class="side-h">Projects</div>
-          <div class="proj open">web-app</div>
-          <div class="chat active">Fix the login redirect</div>
-          <div class="chat">Add dark mode toggle</div>
-          <div class="chat">Release notes v2.3</div>
+          <div class="proj open">web-app <i class="branch">main</i></div>
+          <div class="chat active"><i class="st run"></i>Fix the login redirect</div>
+          <div class="chat"><i class="st ok"></i>Dark mode toggle</div>
+          <div class="chat"><i class="st"></i>Release notes v2.3</div>
           <div class="proj">api-server</div>
           <div class="proj">docs</div>
           <div class="side-h">Settled</div>
           <div class="chat muted">Bump dependencies</div>
         </aside>
-        <div class="conv">
-          <div class="msg user">The login page redirects to /home even when the session expired. Fix it and add a test.</div>
-          <div class="msg agent">
-            <div class="who">Lead · delegated to 2 agents</div>
-            <div class="task"><i class="ok"></i>auth: session check moved before redirect</div>
-            <div class="task"><i class="run"></i>tests: writing login_redirect.spec.ts</div>
-            <p>Found it: the redirect ran before the session was validated. Patch is in <code>src/auth/guard.ts</code>; tests are still running.</p>
+        <div class="panes">
+          <div class="conv">
+            <div class="pane-h"><b>Fix the login redirect</b><span class="pill run">Working</span></div>
+            <div class="msg user"><span class="sender">Phone</span>The login page redirects to /home even when the session expired. Fix it and add a test.</div>
+            <div class="msg agent">
+              <div class="who">Lead · 2 agents</div>
+              <div class="task"><i class="ok"></i>auth: session check moved before redirect</div>
+              <div class="task"><i class="run"></i>tests: writing login_redirect.spec.ts</div>
+              <p>The redirect ran before the session was checked. Patch is in <code>src/auth/guard.ts</code>; tests are running.</p>
+            </div>
+            <div class="composer">
+              <span class="ph">Message the lead…</span>
+              <span class="chip">Opus · high</span>
+              <span class="chip">Runs on · Desk</span>
+              <span class="mic" aria-hidden="true"></span>
+            </div>
+            <div class="foot">wt/login-redirect · PR #42 · Open</div>
           </div>
-          <div class="composer">
-            <span class="ph">Message the lead…</span>
-            <span class="chip">Claude · high</span>
-            <span class="chip">Auto-edit</span>
+          <div class="conv side-pane">
+            <div class="pane-h"><b>Dark mode toggle</b><span class="pill ok">Done</span></div>
+            <div class="msg agent">
+              <p>Added a theme switch to Settings and kept the choice across reloads. Screenshot below.</p>
+              <div class="img"></div>
+            </div>
+            <div class="composer slim"><span class="ph">Message…</span><span class="mic" aria-hidden="true"></span></div>
           </div>
-        </div>
-        <div class="panel">
-          <div class="tabs"><span class="on">Terminal</span><span>Devices</span></div>
-          <pre><span class="g">$</span> npm test -- login
-<span class="g">✓</span> redirects to /login when expired
-<span class="g">✓</span> keeps valid sessions on /home
-<span class="d">2 passed (1.4s)</span></pre>
         </div>
       </div>
     </div>
-    <p class="caption">Illustration of the Harbor window. Screenshots coming soon.</p>
+    <p class="caption">Illustration of the Harbor window: two chats in split panes, one running on another PC.</p>
   </section>
 
-  <section class="perf wrap" id="performance">
-    <h2>Light by design</h2>
-    <p class="lede">Harbor is written in TypeScript and runs on Bun, compiled into one executable. Its window is drawn natively by Slint: there is no Electron, no WebView and no Chromium behind it.</p>
+  <section class="mesh wrap" id="mesh">
+    <h2>One account, all your machines</h2>
+    <p class="lede">Each PC runs Harbor itself. Sign in with Google and your PCs and phones find each other: chats and projects follow you, and an agent runs wherever the work is.</p>
     <div class="grid">
       <article>
-        <h3>About 1% CPU when idle</h3>
-        <p>The window wakes on input and redraws only what changed; a streaming reply redraws its own part of the transcript, a few times a second.</p>
+        <h3>Chats follow your account</h3>
+        <p>Start a chat on your laptop and continue it from your desktop or your phone. The draft you're typing follows too.</p>
       </article>
       <article>
-        <h3>Memory that lets go</h3>
-        <p>A long chat keeps only its last 15 messages loaded and pages in the rest as you scroll up, then lets them go again. Images are decoded once, at the size they're drawn. With the window closed, Harbor keeps running in the background in under 100 MB.</p>
+        <h3>Run it on any PC</h3>
+        <p>Pick the PC a chat runs on, or Auto: the one with the most free memory. Projects can move between PCs, worktrees and all.</p>
       </article>
       <article>
-        <h3>Agents run directly</h3>
-        <p>Each turn runs the agent's own CLI (Claude Code, Codex, Gemini…) headless and streams its output into Harbor. No terminal emulator or browser wrapper per chat, and the CLIs are not modified.</p>
+        <h3>Carries on when a PC is off</h3>
+        <p>If the PC a chat runs on goes off, the next message moves it to another PC with the project, and hands it back when that PC returns.</p>
       </article>
       <article>
-        <h3>Survives restarts and updates</h3>
-        <p>Turns run outside the window, so an agent keeps working if you close Harbor, restart it or update it, and the chat picks up where it is.</p>
+        <h3>Workspaces for teams</h3>
+        <p>Invite people by email to your workspace: they see and drive its PCs and chats from their own PCs and phones.</p>
       </article>
       <article>
-        <h3>Updates itself</h3>
-        <p>New versions are checked against their signatures and swapped in place. Most updates are only the app bundle, a few megabytes; running agents carry on.</p>
+        <h3>Direct and encrypted</h3>
+        <p>PCs talk to each other over your own network, every connection mutual TLS pinned to each device's key. No VPN to set up.</p>
+      </article>
+      <article>
+        <h3>The phone mirrors the desktop</h3>
+        <p>Harbor for Android shows chats exactly as the desktop does: start chats, send photos, dictate, stop, fork, and get notified when a turn ends.</p>
       </article>
     </div>
-    <p class="caption">CPU measured on x86_64 Linux with the window open and nothing running. Memory varies with your GPU driver and what you have open.</p>
   </section>
 
   <section class="features wrap" id="features">
-    <h2>Everything your agents need, in one native window</h2>
+    <h2>Built for agents doing real work</h2>
+    <p class="lede">Everything around the chat that keeps several agents moving at once.</p>
     <div class="grid">
       <article>
-        <h3>Every agent, one place</h3>
-        <p>Claude Code (with more than one account), Codex, Cursor, Gemini, Grok, OpenCode and more. Each runs as its own CLI, and nothing stays in memory between turns.</p>
-      </article>
-      <article>
-        <h3>Organised by repository</h3>
-        <p>Projects in the sidebar, with chats under each one. Search everything, and finished chats move to “Settled”.</p>
-      </article>
-      <article>
         <h3>A lead with a team</h3>
-        <p>A lead agent splits the work and hands it to sub-agents that message each other, while you follow every step.</p>
+        <p>A lead agent splits the work and hands it to sub-agents that message each other, run dev servers and wake on webhooks, while you follow every step.</p>
       </article>
       <article>
-        <h3>Terminal and devices</h3>
-        <p>A built-in panel with a real terminal and your paired PCs and phones, right next to the chat. Links open in your own browser.</p>
+        <h3>Split chat panes</h3>
+        <p>Drag chats side by side, up to four in any layout, each with its own composer. The layout survives restarts.</p>
+      </article>
+      <article>
+        <h3>Worktrees, handled</h3>
+        <p>Chats can work in their own git worktree with a readable branch name, show their pull request's status, and clean up once it's merged.</p>
+      </article>
+      <article>
+        <h3>Voice dictation</h3>
+        <p>Talk instead of typing, on the desktop and the phone. Transcribed locally by NVIDIA Parakeet, or by another of your PCs.</p>
       </article>
       <article>
         <h3>Usage limits handled</h3>
-        <p>See your plan limits at a glance. When a limit runs out, Harbor waits and continues the chat when it resets.</p>
+        <p>Plan limits at a glance and several Claude accounts side by side. When one runs out, Harbor switches account or waits and continues.</p>
       </article>
       <article>
-        <h3>Pull requests and integrations</h3>
-        <p>Review pull requests from <code>gh</code>, and add GitHub, Vercel, Linear, Sentry, Supabase or your own MCP servers from Settings.</p>
+        <h3>Survives restarts and updates</h3>
+        <p>Agents run outside the window. Signed updates arrive within seconds of a release and swap in place, back to the same chat, scroll and draft.</p>
       </article>
-      <article class="span">
-        <h3>Gmail for your agents</h3>
-        <p>Optional: sign in with your own Google account and your agents can search and read your mail, reply, keep drafts, and sort it with labels, archive and trash. They do it only when you ask. Harbor talks to Gmail directly from your computer and keeps the sign-in there; there is no Harbor server in between. See the <a href="/privacy#google">privacy policy</a>.</p>
+      <article>
+        <h3>Pull requests and issues</h3>
+        <p>Pages for your pull requests and issues from <code>gh</code>, across every PC of the workspace.</p>
+      </article>
+      <article>
+        <h3>Your own buttons and panels</h3>
+        <p>Patches: a small file in a project adds buttons that run commands and panels beside the chat. Agents can write them for you.</p>
+      </article>
+      <article>
+        <h3>Light by design</h3>
+        <p>No Electron, no WebView: a native Slint window that redraws only what changed. Long chats keep just their last messages loaded.</p>
       </article>
     </div>
+  </section>
+
+  <section class="integrations wrap" id="integrations">
+    <h2>Integrations</h2>
+    <p class="lede">Connect the services and apps your agents need from Settings › Integrations. Sign in once and every chat gets the tools, on Claude Code and Codex alike.</p>
+    <ul class="int-grid">
+      <li><svg class="ic" aria-hidden="true"><use href="#i-github"/></svg><b>GitHub</b><span>Repos, issues, PRs; <code>gh</code> and git push</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-gmail"/></svg><b>Gmail</b><span>Read, send and sort your mail, several accounts</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-whatsapp"/></svg><b>WhatsApp</b><span>Read and send messages as you</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-discord"/></svg><b>Discord</b><span>Read, search and send as you</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-vercel"/></svg><b>Vercel</b><span>Projects, deployments, logs, docs</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-linear"/></svg><b>Linear</b><span>Issues, projects, cycles</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-sentry"/></svg><b>Sentry</b><span>Errors, traces, releases</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-supabase"/></svg><b>Supabase</b><span>Database, auth, edge functions</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-convex"/></svg><b>Convex</b><span>Deployments, data and the convex CLI</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-context7"/></svg><b>Context7</b><span>Up-to-date library docs</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-playwright"/></svg><b>Playwright</b><span>A headless browser to test web apps</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-roblox"/></svg><b>Roblox Studio</b><span>Build and playtest places, when its MCP is installed</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-blender"/></svg><b>Blender</b><span>Scenes and models, when its MCP is installed</span></li>
+      <li><svg class="ic" aria-hidden="true"><use href="#i-omarchy"/></svg><b>Omarchy</b><span>Drive the Hyprland desktop, when installed</span></li>
+      <li class="custom"><svg class="ic" aria-hidden="true"><use href="#i-plug"/></svg><b>Any MCP server</b><span>Add your own, shared with the <code>claude</code> CLI</span></li>
+    </ul>
+    <p class="caption">Gmail, WhatsApp and Discord run from your own PC with your own sign-in; there is no Harbor server in between. See the <a href="/privacy">privacy policy</a>.</p>
+  </section>
+
+  <section class="install wrap" id="install">
+    <h2>Install</h2>
+    <p class="lede">One line per system. The installer also sets up Git, Claude Code, Codex and ripgrep when they're missing, then Harbor keeps itself updated.</p>
+    <div class="os">
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-linux"/></svg>Linux <span class="small">x86_64 · arm64</span></p>
+        <div class="cmd"><code><span class="prompt">$</span> <span class="c">curl -fsSL https://github.com/RDevNeo/harbor/releases/<wbr>latest/download/<wbr>install.sh | sh</span></code><button type="button" class="copy" aria-label="Copy the Linux install command">Copy</button></div>
+        <p class="small">Installs into <code>~/.local</code> without sudo. glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. Offline: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">x86_64</a> or <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-linux.tar.gz">aarch64</a> .tar.gz, then <code>./install.sh</code>.</p>
+      </div>
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-win"/></svg>Windows <span class="small">x64 · preview</span></p>
+        <div class="cmd"><code><span class="prompt">PS&gt;</span> <span class="c">irm https://github.com/RDevNeo/harbor/releases/<wbr>latest/download/<wbr>install.ps1 | iex</span></code><button type="button" class="copy" aria-label="Copy the Windows install command">Copy</button></div>
+        <p class="small">In PowerShell, for your user, no administrator needed. Windows 10 1809 or newer. Start menu, tray icon and <code>harbor</code> on PATH.</p>
+      </div>
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-mac"/></svg>macOS <span class="small">Apple Silicon · preview</span></p>
+        <div class="cmd"><code><span class="prompt">$</span> <span class="c">curl -fsSL https://github.com/RDevNeo/harbor/releases/<wbr>latest/download/<wbr>install.sh | sh</span></code><button type="button" class="copy" aria-label="Copy the macOS install command">Copy</button></div>
+        <p class="small">Puts Harbor.app in <code>~/Applications</code>. macOS 13 or newer. Not signed by Apple yet, so the command is the easy way; or get the <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-macos.dmg">.dmg</a>.</p>
+      </div>
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg>Android</p>
+        <a class="btn" href="/download/harbor.apk" download="harbor.apk" type="application/vnd.android.package-archive"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download the app (.apk)</a>
+        <p class="small">Open it on your phone and allow installs from your browser (asked once; on Samsung turn off Auto Blocker; if Play Protect warns, More details › Install anyway). Sign in with the same Google account as on your PCs: they show up by themselves, and the app updates itself.</p>
+      </div>
+    </div>
+    <p class="note">Every download is checked against the release's minisign signature. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/RDevNeo/harbor/releases/latest">Latest release</a> · <a href="https://github.com/RDevNeo/harbor/blob/main/CHANGELOG.md">Changelog</a></p>
   </section>
 </main>
 
 <footer class="wrap">
   <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>.
-  Made with <a href="https://slint.dev">Slint</a> and <a href="https://bun.sh">Bun</a>. Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
+  Made with <a href="https://slint.dev">Slint</a> and <a href="https://bun.sh">Bun</a>. Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names belong to their owners; Harbor isn't affiliated with them.</p>
   <p>No cookies, no analytics. <a href="/privacy">Privacy</a> · <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
 </footer>
 
 <script>
-document.getElementById('copy').addEventListener('click', function () {
-  var b = this;
-  navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(function () {
-    b.textContent = 'Copied';
-    setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+document.querySelectorAll('.copy').forEach(function (b) {
+  b.addEventListener('click', function () {
+    navigator.clipboard.writeText(b.parentNode.querySelector('.c').textContent).then(function () {
+      b.textContent = 'Copied';
+      setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+    });
   });
 });
 </script>
