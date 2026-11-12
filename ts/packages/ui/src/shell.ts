@@ -499,6 +499,8 @@ export class Shell {
     this.prs = hub.prs;
     this.workspaces = hub.workspaces;
     this.hub = hub;
+    // The @ menu's file list is read in the background (composer.ts): the menu shows it when it arrives.
+    this.menus.onFiles = () => this.refreshMenu();
     const shellMesh = hub.mesh ?? solo;
     this.shellMesh = shellMesh;
     this.draftSync = new DraftSync(() => shellMesh.me());
@@ -1443,7 +1445,8 @@ export class Shell {
     this.win.sel_shown = false;
     this.engine.unread.delete(id);
     this.engine.failed.delete(id);
-    this.data.store.set("last_chat", String(id));
+    // Every switch: written once the switching stops (a write can wait on a busy disk).
+    this.data.store.setLater("last_chat", String(id));
     this.enterComposer(id);
     this.syncDraft(id);
     this.draftSync.shown(id, { text: this.win.draft, mentions: this.mentions.get(id) ?? [], files: this.attached.get(id) ?? [] });
@@ -1581,7 +1584,8 @@ export class Shell {
     return new SplitPanes({
       win: this.win,
       get: (k) => this.data.store.get(k),
-      set: (k, v) => this.data.store.set(k, v),
+      // Written at every switch (the focused pane's chat): once the switching stops.
+      set: (k, v) => this.data.store.setLater(k, v),
       shown: () => (this.view === "chat" && this.page === null ? this.chatId : null),
       exists: (id) => this.data.chat(id) !== undefined,
       info: (id) => this.paneInfo(id),

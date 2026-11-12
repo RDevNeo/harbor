@@ -1,8 +1,9 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { turnscope } from "./packages/agents/src/index.ts";
 import { apps, control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview, newNote, scopeHas } from "./packages/net/src/index.ts";
-import { type Chat, dataDir, malloc, runDir, single, Store } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, malloc, runDir, single, stallwatch, Store } from "./packages/store/src/index.ts";
 import {
   FollowMain,
   FOLLOW_REMOTE as REMOTE,
@@ -57,6 +58,12 @@ export async function runApp(o: RunOptions): Promise<number> {
     return 0;
   }
   const stopTrims = malloc.trimEvery();
+  // A line in the log for every time the main thread stops answering for a quarter second or more (stallwatch.ts).
+  stallwatch.hookSqlite();
+  const stopStallWatch = stallwatch.start();
+  const stopMemTrace = stallwatch.memTrace();
+  // Ahead of turns and other apps for CPU, and its memory kept from reclaim (turnscope.ts).
+  void turnscope.protectApp();
   setHarborVersion(o.version);
   wire();
 
@@ -135,11 +142,22 @@ export async function runApp(o: RunOptions): Promise<number> {
     },
   });
 
+  // Values Store.setLater holds (the last chat, the split panes) are written before a restart's new Harbor reads them.
+  const flushKv = (): void => {
+    try {
+      run.store.flushLater();
+    } catch {
+      // closed already
+    }
+  };
   let stopped = false;
   const stopAll = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
     stopTrims();
+    stopStallWatch();
+    stopMemTrace();
+    flushKv();
     sock?.stop();
     follow?.stop();
     await run.stop();
@@ -148,7 +166,10 @@ export async function runApp(o: RunOptions): Promise<number> {
   reloader = new Reloader({
     cfg,
     kv: run.store,
-    snapshot: () => snapshot(),
+    snapshot: () => {
+      flushKv();
+      return snapshot();
+    },
     args: () => o.argv,
     hidden: () => hidden,
     beforeExit: stopAll,

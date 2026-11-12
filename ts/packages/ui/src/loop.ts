@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 import * as slint from "slint-ui";
 // Its source, not its path: a compiled executable or a bundle has no fdwait.ts beside it.
 import * as fdwaitText from "./fdwait.ts" with { type: "text" };
+import { stallwatch } from "@harbor/store";
 import * as switchTrace from "./switchtrace.ts";
 import native, { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed, setXdgAppId } from "slint-ui/rust-module.cjs";
 
@@ -177,7 +178,7 @@ function woken(fd: number, tickMs: number): Promise<void> {
       let r: ProcessEventsResult;
       const t0 = performance.now();
       try {
-        r = processEvents();
+        r = stallwatch.within("slint", processEvents);
       } catch (e) {
         r = ProcessEventsResult.Exited;
         reject(e);

@@ -82,7 +82,7 @@ test("ranks_issues_and_prs", () => {
   expect(find("")).toEqual([120, 12, 7, 3]);
 });
 
-test("lists_a_folder_without_git", () => {
+test("lists_a_folder_without_git", async () => {
   const d = join(tmpdir(), `harbor-tags-walk-${process.pid}`);
   rmSync(d, { recursive: true, force: true });
   for (const f of ["notes.md", "docs/plan.md", "docs/old/a.txt", ".hidden/x", "node_modules/p/i.js", ".env"]) {
@@ -90,8 +90,8 @@ test("lists_a_folder_without_git", () => {
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, "x");
   }
-  expect(listFiles(d)).toEqual(["docs/old/a.txt", "docs/plan.md", "notes.md"]);
-  expect(listFiles(join(d, "missing"))).toBeNull();
+  expect(await listFiles(d)).toEqual(["docs/old/a.txt", "docs/plan.md", "notes.md"]);
+  expect(await listFiles(join(d, "missing"))).toBeNull();
   rmSync(d, { recursive: true, force: true });
 });
 

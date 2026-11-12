@@ -7,6 +7,8 @@ import { changed as settingChanged } from "./settingsync.ts";
 import { SHARED, changed as sharedChanged } from "./wssettings.ts";
 
 const SHARED_KEYS: ReadonlySet<string> = new Set(SHARED);
+/** How long `Store.setLater` holds a value before writing it. */
+export const LATER_MS = 1500;
 
 export interface Repo {
   id: number;
@@ -367,6 +369,7 @@ export class Store {
   }
 
   close(): void {
+    this.flushLater();
     this.db.close();
   }
 
@@ -821,19 +824,54 @@ export class Store {
   }
 
   get(k: string): string | null {
+    const soon = this.later.get(k);
+    if (soon !== undefined) return soon;
     const r = this.db.query("SELECT v FROM kv WHERE k=?1").get(k) as Row | null;
     return r ? text(r.v) : null;
   }
 
+  /** `setLater`'s values not written yet, and when they will be. */
+  private later = new Map<string, string>();
+  private laterTimer: ReturnType<typeof setTimeout> | null = null;
+
   set(k: string, v: string): void {
-    const before = SHARED_KEYS.has(k) ? this.get(k) : null;
-    this.db.query("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)").run(k, v);
+    this.later.delete(k);
+    const before = this.get(k);
+    // The same value again writes nothing: every write is a transaction on the main thread, and under a busy disk
+    // (an agent's build, writeback of other files) one can wait a second or more in the kernel.
+    if (before !== v) this.db.query("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)").run(k, v);
     // A setting that follows the account goes to its other devices; one of the workspace to its PCs.
     settingChanged(k);
     if (SHARED_KEYS.has(k)) sharedChanged(this, k, before, v);
   }
 
+  /**
+   * `set` a moment later (LATER_MS), for state written at every click (the last chat opened): several in a row
+   * write once, the last value. `get` sees it at once; `withPrefix` only once written. Written on close too.
+   */
+  setLater(k: string, v: string): void {
+    this.later.set(k, v);
+    this.laterTimer ??= setTimeout(() => this.flushLater(), LATER_MS);
+    (this.laterTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** Writes what `setLater` holds. */
+  flushLater(): void {
+    if (this.laterTimer !== null) clearTimeout(this.laterTimer);
+    this.laterTimer = null;
+    const all = [...this.later];
+    this.later.clear();
+    for (const [k, v] of all) {
+      try {
+        this.set(k, v);
+      } catch (e) {
+        console.error(`harbor: couldn't save ${k}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
   del(k: string): void {
+    this.later.delete(k);
     this.db.query("DELETE FROM kv WHERE k=?1").run(k);
   }
 

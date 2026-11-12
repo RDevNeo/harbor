@@ -75,6 +75,17 @@ ends with a screenshot of each screen it touches, before you report done:
   `--key BACK`, `--shot NAME` step through the app, `--dark`, `--help`. Minutes, not seconds: start
   it with Harbor's start_process, and shoot every screen you need in one run.
 
+## Freezes and stalls
+
+Harbor main logs every main-thread stall of 250 ms or more (`ts/packages/store/src/stallwatch.ts`): `harbor:
+main thread blocked N ms in LABEL; samples running/disk/sleeping (wchan), in SYSCALL FILE; faults, CPU; PSI`
+(`journalctl --user -u 'app-harbor*' | grep 'main thread'`). LABEL is `slint` (a turn of Slint's loop: layout,
+paint, callbacks), `sqlite <SQL>` or `spawnSync <bin>`; wrap other suspects in `stallwatch.within(name, f)`.
+Don't add synchronous disk or process work to the main thread (no `*Sync` spawns, no SQLite writes per
+click: `Store.setLater` for state written on every switch). Turns run in `harbor.slice` at CPUWeight 20 and
+Harbor's own unit gets CPUWeight 200 and MemoryLow (`turnscope.ts` `protectApp`). `HARBOR_MEMTRACE=SECS`
+logs RSS, the JS heap and the object types that grew, for leak hunts.
+
 ## Hot reload (dev)
 
 `harbor hot on DIR` (DIR a checkout; `off`, `status`; or `HARBOR_HOT=DIR` for a rig) makes the

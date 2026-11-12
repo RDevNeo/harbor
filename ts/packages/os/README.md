@@ -11,6 +11,7 @@ Windows and macOS their own behind the same functions, so every feature above st
 | `desktop` | open a file or URL, the Downloads folder, raise Harbor's window |
 | `paths` | home, XDG data/state/cache/config/runtime folders, a RAM folder |
 | `platform` | which OS (`HARBOR_TEST_PLATFORM` stands in for another in tests) |
+| `stall` | the Worker that samples a stuck main thread (state, wchan, syscall and its file), PSI, own RSS/fds/threads |
 
 Every function answers "nothing" (undefined, null, false, an empty list) where it has no
 implementation yet, so callers fall back instead of failing.

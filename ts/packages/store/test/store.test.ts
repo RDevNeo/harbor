@@ -354,3 +354,25 @@ test("every change of a chat's settled flag is heard, whoever made it", () => {
   s.saveChat({ ...(s.chat(a.id) ?? a), settled: true });
   expect(heard).toEqual([]);
 });
+
+test("kv: the same value again writes nothing; setLater writes the last value once, seen by get at once", () => {
+  const s = Store.openTemp();
+  const changes = () => Number((s.db.query("SELECT total_changes() AS n").get() as { n: number }).n);
+  s.set("k1", "a");
+  const n = changes();
+  s.set("k1", "a");
+  expect(changes()).toBe(n);
+  s.setLater("last_chat", "1");
+  s.setLater("last_chat", "2");
+  expect(s.get("last_chat")).toBe("2");
+  expect(changes()).toBe(n);
+  s.flushLater();
+  expect(changes()).toBe(n + 1);
+  expect(s.get("last_chat")).toBe("2");
+  s.setLater("x", "later");
+  s.set("x", "now");
+  s.flushLater();
+  expect(s.get("x")).toBe("now");
+  s.setLater("y", "kept");
+  s.close();
+});

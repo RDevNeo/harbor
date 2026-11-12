@@ -8,3 +8,4 @@ export * as sys from "./sys.ts";
 export * as desktop from "./desktop.ts";
 export * as paths from "./paths.ts";
 export { platform, type Platform } from "./platform.ts";
+export * as stall from "./stall.ts";

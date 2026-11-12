@@ -47,19 +47,33 @@ const FILES_TTL_MS = 10_000;
 export class ComposerMenus {
   private state = newMenu();
   private open: Open | null = null;
-  private files = new Map<string, { at: number; list: string[] | null }>();
+  private files = new Map<string, { at: number; list: string[] | null; loading: boolean }>();
+  /** Called when a file list asked for by `update` arrived: the open menu shows it (update again). */
+  onFiles: (() => void) | null = null;
   private locals = new Map<string, { at: number; list: slash.Local[] }>();
 
   get selected(): number {
     return this.state.sel;
   }
 
+  /** The project's files as last read (null before the first read arrives); a stale or missing list is read again in the background. */
   private fileList(cwd: string): string[] | null {
     const hit = this.files.get(cwd);
-    if (hit && Date.now() - hit.at < FILES_TTL_MS) return hit.list;
-    const list = tags.listFiles(cwd);
-    this.files.set(cwd, { at: Date.now(), list });
-    return list;
+    if (hit && (hit.loading || Date.now() - hit.at < FILES_TTL_MS)) return hit.list;
+    const entry = { at: Date.now(), list: hit?.list ?? null, loading: true };
+    this.files.set(cwd, entry);
+    void tags.listFiles(cwd).then(
+      (list) => {
+        entry.list = list;
+        entry.at = Date.now();
+        entry.loading = false;
+        this.onFiles?.();
+      },
+      () => {
+        entry.loading = false;
+      },
+    );
+    return entry.list;
   }
 
   private localList(dir: string): slash.Local[] {

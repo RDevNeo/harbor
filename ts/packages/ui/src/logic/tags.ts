@@ -1,5 +1,6 @@
 // The phone asks the same ranked lists (`GET /v1/chats/{id}/tags`, android/PROTOCOL.md).
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { IconName } from "../icons.ts";
 import { replace } from "./slash.ts";
@@ -228,23 +229,24 @@ export function splitPath(path: string): { name: string; dir: string } {
 }
 
 
-/** A project's files: git's tracked and untracked-not-ignored ones; in a folder without Git, what's on disk (`walk`). Null when it can't be read. */
-export function listFiles(cwd: string): string[] | null {
-  const run = () => {
-    try {
-      return Bun.spawnSync(["git", "-C", cwd, "-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-    } catch {
-      return null;
-    }
-  };
-  const out = run();
-  if (out === null || !out.success) return walk(cwd);
-  const raw = new TextDecoder().decode(out.stdout);
-  const v = [...new Set(raw.split("\0").filter((s) => s !== ""))].sort(cmpStr);
+/** A project's files: git's tracked and untracked-not-ignored ones; in a folder without Git, what's on disk (`walk`). Null when it
+ *  can't be read. Off the main thread's way: git runs as a child process waited for asynchronously (a big repository on a busy
+ *  disk takes seconds), and the walk reads folders asynchronously. */
+export async function listFiles(cwd: string): Promise<string[] | null> {
+  let out: { ok: boolean; stdout: string } | null = null;
+  try {
+    const p = Bun.spawn(["git", "-C", cwd, "-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    out = { ok: code === 0, stdout };
+  } catch {
+    out = null;
+  }
+  if (out === null || !out.ok) return walk(cwd);
+  const v = [...new Set(out.stdout.split("\0").filter((s) => s !== ""))].sort(cmpStr);
   return v.slice(0, MAX_FILES);
 }
 
@@ -252,9 +254,9 @@ export function listFiles(cwd: string): string[] | null {
 const SKIP_DIRS: readonly string[] = ["node_modules", "target", "dist", "build", "__pycache__", "venv"];
 
 /** A folder's files without Git, breadth first (shallow ones first when it's huge): hidden entries, symlinks and `SKIP_DIRS` left out, paths relative to `cwd` with `/`. */
-export function walk(cwd: string): string[] | null {
+export async function walk(cwd: string): Promise<string[] | null> {
   try {
-    readdirSync(cwd);
+    await readdir(cwd);
   } catch {
     return null;
   }
@@ -263,7 +265,7 @@ export function walk(cwd: string): string[] | null {
   for (let rel = dirs.shift(); rel !== undefined; rel = dirs.shift()) {
     let found;
     try {
-      found = readdirSync(join(cwd, rel), { withFileTypes: true });
+      found = await readdir(join(cwd, rel), { withFileTypes: true });
     } catch {
       continue;
     }

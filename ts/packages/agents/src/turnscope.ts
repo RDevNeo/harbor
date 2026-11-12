@@ -4,16 +4,37 @@
 // its scope. The scope belongs to the user's systemd, not to Harbor's process tree, so turns still
 // outlive a Harbor reload. Without systemd --user (macOS, Windows, containers) turns start as before.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { totalmem } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { proc } from "@harbor/os";
 
 export const SLICE = "harbor-turns.slice";
 
+/** The slice SLICE sits in (a dash in a slice's name nests it). It is what competes with the desktop's
+ *  app.slice for CPU: a weight on SLICE alone, its only child, would change nothing. */
+export const PARENT = "harbor.slice";
+
 /** All turns together. Percentages of RAM so a small laptop and a big desktop both get sane limits:
  *  on 8 GB about 2.6 GB before throttling and 3.7 GB at most (swap comes on top). oomd acts on lasting
  *  pressure only, and then on the one turn under the most of it. */
-export const SLICE_LIMITS = ["MemoryHigh=35%", "MemoryMax=50%", "CPUWeight=50"];
+export const SLICE_LIMITS = ["MemoryHigh=35%", "MemoryMax=50%", "CPUWeight=20"];
 export const SLICE_OOM = ["ManagedOOMMemoryPressure=kill", "ManagedOOMMemoryPressureLimit=80%", "ManagedOOMSwap=kill"];
+/** Turns get a fifth of the CPU (and, where the user's systemd has the io controller, of the disk) that an app
+ *  at the default weight gets when both want it: builds and test loops can't starve the window. */
+export const PARENT_LIMITS = ["CPUWeight=20"];
+export const IO_LIMITS = ["IOWeight=20"];
+
+/** Harbor's own unit (the window, the hub, the store): ahead of the desktop's other apps for CPU, and its
+ *  memory protected so pressure from turns and other apps reclaims elsewhere first: a window whose pages were
+ *  swapped out or evicted waits on the disk at every click, and Hyprland calls it not responding. */
+export const APP_LIMITS = ["CPUWeight=200", "ManagedOOMPreference=avoid"];
+export const APP_IO = ["IOWeight=200"];
+
+/** The memory Harbor main keeps from reclaim: its window and store (~250-400 MB) plus some of the database's
+ *  pages, at most 8% of RAM so a small PC keeps room for everything else. */
+export function appMemoryLow(total: number = totalmem()): number {
+  return Math.min(512 * 2 ** 20, Math.round((total * 0.08) / 2 ** 20) * 2 ** 20);
+}
 
 /** How long a finished turn's leftovers get after SIGTERM before the scope is killed. */
 const GRACE_MS = 1500;
@@ -60,19 +81,73 @@ async function quiet(argv: string[]): Promise<boolean> {
   }
 }
 
+/** `systemctl --user set-property --runtime` (nothing lands in the user's config). */
+function setProperty(unit: string, props: readonly string[]): Promise<boolean> {
+  return quiet(["systemctl", "--user", "set-property", "--runtime", unit, ...props]);
+}
+
+/** Where cgroup v2 is mounted. */
+const CGROUP_ROOT = "/sys/fs/cgroup";
+
 let prepared: Promise<void> | undefined;
 
-/** Once per Harbor: the slice's limits (runtime only, so nothing lands in the user's config), and
- *  Harbor's own unit asks oomd to pick something else first. */
+/** Once per Harbor: the slice's limits (runtime only, so nothing lands in the user's config). */
 function prepare(): Promise<void> {
   prepared ??= (async () => {
-    const set = ["systemctl", "--user", "set-property", "--runtime", SLICE];
     // An older systemd without oomd's properties still gets the limits.
-    if (!(await quiet([...set, ...SLICE_LIMITS, ...SLICE_OOM]))) await quiet([...set, ...SLICE_LIMITS]);
-    const own = ownUnit();
-    if (own !== undefined && process.env.NODE_ENV !== "test") void quiet(["systemctl", "--user", "set-property", "--runtime", own, "ManagedOOMPreference=avoid"]);
+    if (!(await setProperty(SLICE, [...SLICE_LIMITS, ...SLICE_OOM]))) await setProperty(SLICE, SLICE_LIMITS);
+    await setProperty(PARENT, PARENT_LIMITS);
+    // The io controller is often not delegated to the user's systemd: then these say nothing and do nothing.
+    await setProperty(SLICE, IO_LIMITS);
+    await setProperty(PARENT, IO_LIMITS);
+    await protectApp();
   })();
   return prepared;
+}
+
+let protecting: Promise<void> | undefined;
+
+/**
+ * Once per Harbor main, at start: APP_LIMITS and MemoryLow on its own unit (runtime only). A cgroup's memory.low
+ * protects only as much as its parents pass down, so the slices between the unit and the user's manager
+ * (app.slice, app-graphical.slice) get at least as much, never less than they have. Not in tests or rigs
+ * (NODE_ENV=test, HARBOR_TURN_SCOPE=0), nor where Harbor isn't a unit of its own (a terminal's scope).
+ */
+export function protectApp(): Promise<void> {
+  protecting ??= (async () => {
+    if (!available() || process.env.NODE_ENV === "test") return;
+    const own = ownUnit();
+    const path = cgroupOf("self");
+    if (own === undefined || path === undefined) return;
+    const low = appMemoryLow();
+    const set = setProperty;
+    if (!(await set(own, [...APP_LIMITS, `MemoryLow=${low}`]))) await set(own, [`MemoryLow=${low}`]);
+    await set(own, APP_IO);
+    for (const slice of slicesAbove(path)) {
+      if (lowOf(slice.dir) < low) await set(slice.unit, [`MemoryLow=${low}`]);
+    }
+  })();
+  return protecting;
+}
+
+/** The slices between a unit's cgroup and the user's manager (user@N.service), nearest first. */
+export function slicesAbove(path: string): { unit: string; dir: string }[] {
+  const out: { unit: string; dir: string }[] = [];
+  for (let p = dirname(path); p !== "/" && p !== "." && !/\/user@\d+\.service$/.test(p); p = dirname(p)) {
+    const unit = basename(p);
+    if (!unit.endsWith(".slice")) break;
+    out.push({ unit, dir: join(CGROUP_ROOT, p) });
+  }
+  return out;
+}
+
+function lowOf(dir: string): number {
+  try {
+    const t = readFileSync(join(dir, "memory.low"), "utf8").trim();
+    return t === "max" ? Number.POSITIVE_INFINITY : Number(t) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** This process's own unit in the user's systemd, if it is a plain app scope or service. */
@@ -100,7 +175,7 @@ function cgroupOf(pid: number | "self"): string | undefined {
 export function scopeOf(pid: number | "self", dir: string): string | undefined {
   const path = cgroupOf(pid);
   if (path === undefined || basename(path) !== unitOf(dir)) return undefined;
-  const fs = join("/sys/fs/cgroup", path);
+  const fs = join(CGROUP_ROOT, path);
   return existsSync(fs) ? fs : undefined;
 }
 
@@ -192,4 +267,5 @@ export function end(dir: string, scope: string | undefined): void {
 export function reset(): void {
   usable = undefined;
   prepared = undefined;
+  protecting = undefined;
 }

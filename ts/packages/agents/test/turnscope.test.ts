@@ -44,6 +44,23 @@ describe("the waker", () => {
 });
 
 describe("turn scopes", () => {
+  test("Harbor main keeps up to 512 MB from reclaim, 8% of a small PC's RAM", () => {
+    expect(turnscope.appMemoryLow(16 * 2 ** 30)).toBe(512 * 2 ** 20);
+    expect(turnscope.appMemoryLow(4 * 2 ** 30)).toBe(328 * 2 ** 20);
+  });
+
+  test("the slices above Harbor's unit, up to the user's manager, get its protection passed down", () => {
+    const u = "/user.slice/user-1000.slice/user@1000.service";
+    expect(turnscope.slicesAbove(`${u}/app.slice/app-graphical.slice/app-harbor@autostart.service`).map((s) => s.unit)).toEqual(["app-graphical.slice", "app.slice"]);
+    expect(turnscope.slicesAbove(`${u}/app.slice/app-harbor-1.scope`).map((s) => s.unit)).toEqual(["app.slice"]);
+    expect(turnscope.slicesAbove(`${u}/harbor.service`)).toEqual([]);
+  });
+
+  test("turns are weighed down where it counts: the slice that competes with app.slice", () => {
+    expect(turnscope.SLICE.split("-")[0] + ".slice").toBe(turnscope.PARENT);
+    expect(turnscope.PARENT_LIMITS).toContain("CPUWeight=20");
+  });
+
   test("a scope is named after its turn folder", () => {
     expect(turnscope.unitOf("/s/turns/12-1792605157067846264")).toBe("harbor-turn-12-1792605157067846264.scope");
     expect(turnscope.unitOf("/s/turns/-3-7")).toBe("harbor-turn--3-7.scope");

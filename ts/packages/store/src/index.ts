@@ -19,3 +19,4 @@ export * as sidebartree from "./sidebartree.ts";
 export * as hot from "./hot.ts";
 export * as githead from "./githead.ts";
 export { ByteLru, type ByteLruOptions, stringBytes } from "./bytelru.ts";
+export * as stallwatch from "./stallwatch.ts";
