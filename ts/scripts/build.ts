@@ -150,7 +150,8 @@ const addonsFromRuntime: BunPlugin = {
   name: "addons-from-runtime",
   setup(build) {
     // sharp finds its addon through createRequire, which the bundler does not follow.
-    build.onLoad({ filter: /sharp\/dist\/sharp\.mjs$/ }, async (a) => ({
+    // A file's path: "\\" between its parts on Windows.
+    build.onLoad({ filter: /sharp[\\/]dist[\\/]sharp\.mjs$/ }, async (a) => ({
       contents: (await Bun.file(a.path).text()).replace(
         "const require = createRequire(import.meta.url);",
         'const nodeRequire = createRequire(import.meta.url);\nconst require = (id) => (id.startsWith("@img/sharp-") && id.endsWith("/sharp.node") ? globalThis.__harbor.addon("sharp") : nodeRequire(id));',

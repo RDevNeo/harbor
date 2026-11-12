@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.13] - 2026-11-12
+
+### Fixed
+- Windows: Harbor built on a Windows PC itself (Follow main there) shows images: its build missed the step that
+  points sharp at Harbor's own copy, so sharp couldn't load.
+
 ## [0.180.12] - 2026-11-12
 
 ### Added

@@ -32,7 +32,18 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(() => {
-  for (const d of folders) rmSync(d, { recursive: true, force: true });
+  // Windows holds an executable a moment after the last process that ran it: tried again for up to 10 s.
+  for (const d of folders) {
+    for (let i = 0; ; i++) {
+      try {
+        rmSync(d, { recursive: true, force: true });
+        break;
+      } catch (e) {
+        if (i >= 40 || !["EPERM", "EBUSY"].includes((e as { code?: string }).code ?? "")) throw e;
+        Bun.sleepSync(250);
+      }
+    }
+  }
 });
 
 test("the compiled runtime says its version and loads the real bundle built for it", async () => {
