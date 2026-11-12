@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.12] - 2026-11-12
+
+### Added
+- The installers (install.sh, install.ps1) also install ripgrep when it's missing: the agents' file search
+  needs it.
+
+### Fixed
+- Windows: runtime updates are no longer refused while Windows checks the new harbor.exe on its first start
+  (about 20 s, mostly Defender). The updater waits for it in the background, and install.ps1 starts Harbor
+  once before it finishes, so the first open after installing takes a fraction of a second.
+
 ## [0.180.11] - 2026-11-12
 
 ### Fixed
