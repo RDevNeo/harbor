@@ -165,3 +165,10 @@ test("a running Claude turn doesn't hold Codex's update back", async () => {
   await u.pending("codex");
   expect(u.list().map((s) => s.current)).toEqual(["2.1.1", "0.2.0"]);
 });
+
+test("an offline run or a test session never updates the CLIs by itself", async () => {
+  const { autoUpdates } = await import("../src/provupdate.ts");
+  expect(autoUpdates({})).toBe(true);
+  expect(autoUpdates({ HARBOR_OFFLINE: "1" })).toBe(false);
+  expect(autoUpdates({ HARBOR_NO_PROVIDER_UPDATES: "1" })).toBe(false);
+});

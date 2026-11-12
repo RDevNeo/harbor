@@ -341,11 +341,13 @@ export type NotifySend = (args: string[]) => NotifyProc | null;
 /** The real notify-send. */
 export const spawnNotifySend: NotifySend = (args) => {
   const child = spawn("notify-send", args, { stdio: ["ignore", "pipe", "ignore"] });
-  if (child.pid === undefined || child.stdout === null) return null;
+  // Before anything else: a notify-send that isn't there (macOS, a bare Linux) fails with an "error" event,
+  // which nothing would hear when the pid is missing below.
   const exited = new Promise<void>((resolve) => {
     child.once("exit", () => resolve());
     child.once("error", () => resolve());
   });
+  if (child.pid === undefined || child.stdout === null) return null;
   return {
     pid: child.pid,
     lines: createInterface({ input: child.stdout }),

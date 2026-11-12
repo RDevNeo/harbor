@@ -448,6 +448,8 @@ async function handle(m) {
 }
 
 app.on("window-all-closed", () => {});
+// macOS: a background helper, no Dock icon (a sign-in window still shows when one is needed).
+if (process.platform === "darwin") app.dock?.hide();
 app.whenReady().then(() => {
     // Every frame request (a frame's page, or a redirect of one) is checked against the list.
     session.defaultSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (d, done) => {

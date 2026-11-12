@@ -8,12 +8,14 @@ import { dataDir, now, privateDir, writePrivate } from "@harbor/store";
 import { isObj, message, sleep } from "./discordjson.ts";
 import { selfExe } from "./sys.ts";
 import SHELL_SUMS from "../../../../discord/SHA256SUMS" with { type: "text" };
+import { platform } from "@harbor/os";
 
 export const ELECTRON = "45.1.0";
 /** From the release's SHASUMS256.txt. */
 export const ELECTRON_SUMS: Record<string, string> = {
   x64: "9dafab2c57ce209f8f716f8f3e4fddd8ffe0820e2455bfbbfc00b0fc13e03a3b",
   arm64: "64b78d93d1129ab805cdc0f2710f446716afbe814a1d08e639dab3175d2285a1",
+  "darwin-arm64": "002b71efcf90e247317d3da486f2d4e51860e9c2889d49f33e229ab2268b0f3b",
 };
 const VENCORD_URL = "https://github.com/Vendicated/Vencord/releases/download/devbuild";
 export const VENCORD_FILES = ["vencordDesktopMain.js", "vencordDesktopPreload.js", "vencordDesktopRenderer.js", "vencordDesktopRenderer.css"];
@@ -155,18 +157,22 @@ function arch(): string {
   }
 }
 
+/** Electron's builds by system: Linux's (the key is the arch alone, as before) and macOS's. */
+const mac = (): boolean => platform() === "darwin";
+
 /** The Electron binary; `HARBOR_DISCORD_ELECTRON` points a test rig at its own. */
 export function electronBin(): string {
-  return process.env.HARBOR_DISCORD_ELECTRON ?? join(root(), `electron-${ELECTRON}`, "electron");
+  const dir = join(root(), `electron-${ELECTRON}`);
+  return process.env.HARBOR_DISCORD_ELECTRON ?? (mac() ? join(dir, "Electron.app", "Contents", "MacOS", "Electron") : join(dir, "electron"));
 }
 
 /** Downloads and unpacks Electron once. */
 export async function ensureElectron(say: Say, sums: Record<string, string> = ELECTRON_SUMS): Promise<void> {
   if (existsSync(electronBin())) return;
   const a = arch();
-  const want = sums[a];
+  const want = sums[mac() ? `darwin-${a}` : a];
   if (want === undefined) throw new Error("no pinned Electron");
-  const name = `electron-v${ELECTRON}-linux-${a}.zip`;
+  const name = `electron-v${ELECTRON}-${mac() ? "darwin" : "linux"}-${a}.zip`;
   const zip = join(root(), `${name}.part`);
   const override = process.env.HARBOR_DISCORD_ELECTRON_URL;
   const url = override !== undefined ? `${override}/${name}` : `https://github.com/electron/electron/releases/download/v${ELECTRON}/${name}`;

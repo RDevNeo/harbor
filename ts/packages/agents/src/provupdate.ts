@@ -130,7 +130,7 @@ export class ProviderUpdates {
     finally { this.put(tool, { busy: false }); }
   }
   tick(): void {
-    if (this.jobs.size) return;
+    if (this.jobs.size || !autoUpdates()) return;
     for (const s of this.list()) {
       if (s.busy || !this.idle(s.tool) || (!this.requested.has(s.tool) && !(s.available && s.method !== "other"))) continue;
       if (Date.now() - (this.lastAttempt.get(s.tool) ?? 0) < 6 * 3600_000) continue;
@@ -174,6 +174,14 @@ export class ProviderUpdates {
     } catch (e) { this.put(tool, { status: String(e) }); console.warn(`provider update (${tool}): ${String(e)}`); }
     finally { this.put(tool, { busy: false }); }
   }
+}
+
+/**
+ * Whether the CLIs are updated by themselves: not in an offline run or a test session on someone's PC
+ * (HARBOR_OFFLINE, HARBOR_NO_PROVIDER_UPDATES), where Harbor must leave their installs as they are.
+ */
+export function autoUpdates(env: Record<string, string | undefined> = process.env): boolean {
+  return !env.HARBOR_OFFLINE && !env.HARBOR_NO_PROVIDER_UPDATES;
 }
 
 export let providerUpdates = new ProviderUpdates(io);

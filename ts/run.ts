@@ -199,7 +199,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   if (!o.window) {
     void confirmStart(cfg);
     let quit = (): void => {};
-    const tray = offline ? null : trayStart({ onOpen: reopen, onQuit: () => quit(), hidden: () => true });
+    const tray = offline && !process.env.HARBOR_TRAY ? null : trayStart({ onOpen: reopen, onQuit: () => quit(), hidden: () => true });
     await new Promise<void>((resolve) => {
       quit = resolve;
       process.once("SIGTERM", resolve);
@@ -216,7 +216,8 @@ export async function runApp(o: RunOptions): Promise<number> {
       quitting = true;
       closeWindow();
     };
-    const tray = offline ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
+    // Offline rigs have no tray (HARBOR_TRAY=1 shows it anyway: a test session of the tray itself).
+    const tray = offline && !process.env.HARBOR_TRAY ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
     // The window shows only this PC's chats and copies from the PCs this account uses (account.ts `pcScope`).
     data.scope = (home: string) => scopeHas(run.account.scope(), home);
     const hub = {

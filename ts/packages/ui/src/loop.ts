@@ -129,7 +129,8 @@ export function runLoop(tickMs: number = TICK_MS): Promise<void> {
     loopState.kind = "fixed";
     return fixed(tickMs);
   }
-  const fd = backendFd();
+  // HARBOR_PACED_LOOP=1: the loop macOS and Windows run, also here (to measure it on Linux).
+  const fd = process.env.HARBOR_PACED_LOOP ? null : backendFd();
   loopState.kind = fd === null ? "paced" : "woken";
   return fd === null ? paced(tickMs) : woken(fd, tickMs);
 }
@@ -153,8 +154,19 @@ function fixed(tickMs: number): Promise<void> {
   });
 }
 
-/** The longest a paced loop waits between turns while nothing happens: the most input waits for its first frame. */
+/**
+ * How long a paced loop waits between turns while nothing happens, at least and at most: the most input
+ * waits for its first frame. Between the two, an idle turn's own cost decides (PACED_IDLE_SHARE).
+ */
 export const PACED_IDLE_MS = 33;
+export const PACED_IDLE_MAX_MS = 100;
+/** The share of a core idle turns may take: on macOS a turn costs ~1.5 ms (AppKit runs its loop), so it waits ~100 ms. */
+export const PACED_IDLE_SHARE = 0.01;
+
+/** The wait between idle turns that keeps them near PACED_IDLE_SHARE of a core, given what one costs (ms). */
+export function pacedIdleMs(turnMs: number): number {
+  return Math.min(PACED_IDLE_MAX_MS, Math.max(PACED_IDLE_MS, turnMs / PACED_IDLE_SHARE));
+}
 
 /** A turn that took this long drew or handled something: the next ones come at the frame rate again. */
 const BUSY_TURN_MS = 0.5;
@@ -174,6 +186,8 @@ function paced(tickMs: number): Promise<void> {
     let due = Number.POSITIVE_INFINITY;
     let busyAt = performance.now();
     let done = false;
+    /** An idle turn's cost, smoothed (ms). */
+    let idleCost = 0;
     const at = (ms: number) => {
       const t = performance.now() + ms;
       if (timer !== null && due <= t) return;
@@ -202,10 +216,15 @@ function paced(tickMs: number): Promise<void> {
         return;
       }
       loopState.wakes++;
-      if (t1 - t0 >= BUSY_TURN_MS) busyAt = t1;
-      const idle = t1 - busyAt;
-      // At the frame rate while busy, then a little slower each turn up to PACED_IDLE_MS.
-      at(idle < BUSY_HOLD_MS ? tickMs : Math.min(PACED_IDLE_MS, tickMs + (idle - BUSY_HOLD_MS) / 10));
+      const cost = t1 - t0;
+      // What a turn with nothing to do costs here: the cheapest turns seen, drifting up slowly (on macOS
+      // even an empty turn runs AppKit's loop, ~1.5 ms).
+      idleCost = idleCost === 0 || cost < idleCost ? cost : idleCost * 0.99 + cost * 0.01;
+      // A turn well above that drew or handled something: the frame rate for a while.
+      if (cost >= Math.max(BUSY_TURN_MS, idleCost * 3)) busyAt = t1;
+      // At the frame rate while busy, then a little slower each turn up to the idle wait.
+      const since = t1 - busyAt;
+      at(since < BUSY_HOLD_MS ? tickMs : Math.min(pacedIdleMs(idleCost), tickMs + (since - BUSY_HOLD_MS) / 10));
     };
     hookChanges();
     touched = () => {

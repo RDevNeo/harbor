@@ -349,3 +349,15 @@ describe("notify", () => {
     ]);
   });
 });
+
+test("a notifier that isn't installed fails quietly: no unhandled error", async () => {
+  const { spawnNotifySend } = await import("../src/notify.ts");
+  const saved = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  try {
+    expect(spawnNotifySend(["Harbor", "test"])).toBeNull();
+    await Bun.sleep(50);
+  } finally {
+    process.env.PATH = saved;
+  }
+});

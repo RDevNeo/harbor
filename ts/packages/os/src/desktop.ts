@@ -46,6 +46,12 @@ export function downloadsDir(env: Env = process.env): string {
  * False when there is no way to ask.
  */
 export function raise(env: Env = process.env, pid: number = process.pid): boolean {
+  if (platform() === "darwin" && pid === process.pid) {
+    // macOS: this process brings itself (and its window) to the front.
+    const o = require("./darwin-objc.ts") as typeof import("./darwin-objc.ts");
+    o.pool(() => o.callBool(o.call(o.cls("NSApplication"), "sharedApplication"), "activateIgnoringOtherApps:", true));
+    return true;
+  }
   if (platform() !== "linux") return false;
   if (env.HYPRLAND_INSTANCE_SIGNATURE) {
     const hypr = (args: string[]): boolean => {
