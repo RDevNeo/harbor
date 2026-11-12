@@ -5,6 +5,21 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.176.4] - 2026-11-11
+
+### Fixed
+- Split panes: giving another pane the keyboard builds neither transcript again. Every pane keeps its own
+  transcript (the focused one included), so only the focus moves: the title's brightness and which composer
+  is the window's. The Agents column stays docked while any pane on screen is a lead's.
+- A maximized split pane is the usual single-chat view: the title bar with project, chat and branch, the
+  memory pill, the full composer with its model row, agents strip and footer, and the Agents column. A
+  button in the title bar shows every pane again.
+- Side panes stay live and cheap while they stream: a pane's cards no longer lay out again whenever its
+  header changes (its status, a draft, the focus), and a chat in a pane on screen counts as seen (no
+  unread mark or notification for a turn that ends there).
+- Zooming in several steps quickly no longer leaves an image drawn from an earlier step's decode: a decode
+  that lands after the scale moved on rests instead of replacing the one on the screen (0.176.3).
+
 ## [0.176.3] - 2026-11-11
 
 ### Fixed
