@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.178.1] - 2026-11-11
+
+### Changed
+- macOS groundwork: the macOS build brings its own libintl for Slint's addon instead of needing
+  Homebrew, and works on macOS 13 and newer. `harbor --check-native` also loads Slint's addon.
+
 ## [0.178.0] - 2026-11-11
 
 ### Added
