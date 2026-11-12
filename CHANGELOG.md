@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.14] - 2026-11-12
+
+### Fixed
+- Windows: a terminal pane opens Git Bash (cmd without Git); it tried /bin/bash.
+- Windows: Add project's folder step goes to a full `C:\…` path typed in, and `harbor hot` follows saves there.
+
 ## [0.180.13] - 2026-11-12
 
 ### Fixed

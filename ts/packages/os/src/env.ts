@@ -173,3 +173,11 @@ export function argvOf(program: string, env: Env = process.env): string[] {
   const { argvOf: shim } = require("./win32/shim.ts") as typeof import("./win32/shim.ts");
   return shim(program, (name) => Bun.which(name, { PATH: env.PATH ?? env.Path ?? "" }) as string | null, gitBashDir(env));
 }
+
+/** The shell a terminal opens: $SHELL (else bash) on Linux and macOS; Git Bash's bash on Windows, else cmd. */
+export function defaultShell(env: Env = process.env): string[] {
+  if (platform() !== "win32") return [env.SHELL ?? "/bin/bash"];
+  const git = gitBashDir(env);
+  if (git !== null && existsSync(join(git, "bash.exe"))) return [join(git, "bash.exe"), "--login", "-i"];
+  return [env.ComSpec ?? env.COMSPEC ?? "cmd.exe"];
+}

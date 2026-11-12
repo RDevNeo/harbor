@@ -1,5 +1,5 @@
 import { paths as osPaths } from "@harbor/os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { ICONS } from "../icons.ts";
 
 export type Step = "sources" | "new" | "local" | "url" | "github";
@@ -105,7 +105,7 @@ export class AddProject {
         break;
       case "local": {
         const typed = this.expand(q);
-        if ((q.startsWith("/") || q.startsWith("~")) && this.disk.isDir(typed)) v.push({ icon: g(ICONS.FOLDER), title: `Go to ${this.tilde(typed)}`, detail: "", act: { kind: "enter", dir: typed } });
+        if ((q.startsWith("/") || q.startsWith("~") || isAbsolute(q)) && this.disk.isDir(typed)) v.push({ icon: g(ICONS.FOLDER), title: `Go to ${this.tilde(typed)}`, detail: "", act: { kind: "enter", dir: typed } });
         if (!ql && this.dir !== this.disk.home && dirname(this.dir) !== this.dir) v.push({ icon: g(ICONS.ARROW_UP), title: "..", detail: "", act: { kind: "enter", dir: dirname(this.dir) } });
         for (const p of this.dirs) {
           const name = basename(p);

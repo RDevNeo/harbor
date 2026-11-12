@@ -13,7 +13,7 @@
  *   changed since then (and aren't pinned) taken from the checkout.
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as slint from "slint-ui";
 import * as agents from "@harbor/agents";
 import * as mcp from "@harbor/mcp";
@@ -140,8 +140,11 @@ export class HotDev {
     mkdirSync(this.out, { recursive: true, mode: 0o700 });
     // Files written before the first build below are built from disk, so their events (FSEvents replays them) don't count.
     let since = Number.POSITIVE_INFINITY;
-    this.watcher = watch(join(this.ts, "packages"), { recursive: true }, (_ev, file) => {
-      if (typeof file !== "string" || !file.endsWith(".ts") || file.endsWith(".test.ts") || file.endsWith(".d.ts") || file.includes("/test/") || file.includes("node_modules")) return;
+    this.watcher = watch(join(this.ts, "packages"), { recursive: true }, (_ev, name) => {
+      if (typeof name !== "string") return;
+      // Keys with "/" on every system (Windows names the file with "\\").
+      const file = slashed(name);
+      if (!file.endsWith(".ts") || file.endsWith(".test.ts") || file.endsWith(".d.ts") || file.includes("/test/") || file.includes("node_modules")) return;
       const rel = `packages/${file}`;
       // macOS's FSEvents also reports writes from just before the watch began, and may report one save twice:
       // only saves made since count, each once (by the file's modification time).
@@ -248,16 +251,16 @@ export class HotDev {
       setup(b) {
         b.onResolve({ filter: /.*/ }, (args) => {
           const spec = args.path;
-          if (args.namespace === "harbor-host" && spec.startsWith("/")) return { path: spec };
-          if (spec.startsWith(".") || spec.startsWith("/")) {
-            const base = args.importer.startsWith("/") ? dirname(args.importer) : ts;
+          if (args.namespace === "harbor-host" && isAbsolute(spec)) return { path: spec };
+          if (spec.startsWith(".") || isAbsolute(spec)) {
+            const base = isAbsolute(args.importer) ? dirname(args.importer) : ts;
             let abs: string;
             try {
               abs = Bun.resolveSync(spec, base);
             } catch {
               return undefined;
             }
-            const rel = relative(ts, abs);
+            const rel = slashed(relative(ts, abs));
             if (rel.startsWith("..")) return { path: abs };
             if (pinned.has(rel) || (hot.sharedOf(rel) !== undefined && !changed.has(rel))) {
               files.add(rel);
@@ -278,6 +281,9 @@ export class HotDev {
     };
   }
 }
+
+/** A path relative to the checkout as the unit keys write it: "/" between its parts. */
+const slashed = (p: string): string => (sep === "/" ? p : p.split(sep).join("/"));
 
 /** "@harbor/net" for a file of packages/net/src. */
 function pkgOf(rel: string): string | null {

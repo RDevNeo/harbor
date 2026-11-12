@@ -53,7 +53,8 @@ export class Terminal {
     this.term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (p) => this.dectcem(p, true));
     const vars: Record<string, string> = {};
     for (const [k, v] of Object.entries({ ...process.env, ...osEnv.childDefaults(), TERM: "xterm-256color", COLORTERM: "truecolor", ...env })) if (typeof v === "string") vars[k] = v;
-    this.proc = Bun.spawn(argv.length > 0 ? argv : [process.env.SHELL ?? "/bin/bash"], {
+    // Bun's terminal: a PTY on Linux and macOS, a pseudo console (ConPTY) on Windows.
+    this.proc = Bun.spawn(argv.length > 0 ? argv : osEnv.defaultShell(), {
       cwd,
       env: vars,
       terminal: { rows, cols, data: (_t, d) => this.term.write(d, wake) },

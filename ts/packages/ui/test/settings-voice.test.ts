@@ -142,6 +142,16 @@ test("Voice shows the microphone, where to transcribe, the cleanup switch and th
   expect(voiceChose(ctl, "voice:input", 1)).toBe(true);
   expect(kv.get("voice_input")).toBe("usb");
   // Dictation records from the chosen input: a stand-in pw-record on the PATH (a sandbox may have none).
+  // Linux's recorder; macOS and Windows record through Harbor itself (os.audio).
+  if (process.platform === "linux") recordsFromInput();
+  expect(voiceToggled(ctl, "voice:cleanup", true)).toBe(true);
+  expect([kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["1", true]);
+  expect(voiceToggled(ctl, "voice:cleanup", false)).toBe(true);
+  expect([kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["0", false]);
+  expect(voiceToggled(ctl, "voice:other", true)).toBe(false);
+});
+
+function recordsFromInput(): void {
   const bin = mkdtempSync(join(tmpdir(), "hvoice-bin-"));
   writeFileSync(join(bin, "pw-record"), "#!/bin/sh\n");
   chmodSync(join(bin, "pw-record"), 0o755);
@@ -153,12 +163,7 @@ test("Voice shows the microphone, where to transcribe, the cleanup switch and th
     process.env.PATH = path;
     rmSync(bin, { recursive: true, force: true });
   }
-  expect(voiceToggled(ctl, "voice:cleanup", true)).toBe(true);
-  expect([kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["1", true]);
-  expect(voiceToggled(ctl, "voice:cleanup", false)).toBe(true);
-  expect([kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["0", false]);
-  expect(voiceToggled(ctl, "voice:other", true)).toBe(false);
-});
+}
 
 test("Transcribe on lists Automatic, this PC and the mesh's PCs, and stores the pick by mesh id", () => {
   const peers = [

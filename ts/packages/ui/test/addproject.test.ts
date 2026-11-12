@@ -7,11 +7,13 @@ const TREE: Record<string, string[]> = {
   "/h/Projects": ["/h/Projects/app", "/h/Projects/site"],
   "/": ["/h", "/tmp"],
 };
+// The made-up disk's paths with "/", whatever this system's join writes ("\\" on Windows).
+const u = (p: string): string => p.replaceAll("\\", "/");
 const disk: Disk = {
   home: H,
-  subdirs: (d) => TREE[d] ?? [],
-  isDir: (p) => p in TREE || Object.values(TREE).some((v) => v.includes(p)),
-  exists: (p) => p === "/h/Projects/site/.git",
+  subdirs: (d) => TREE[u(d)] ?? [],
+  isDir: (p) => u(p) in TREE || Object.values(TREE).some((v) => v.includes(u(p))),
+  exists: (p) => u(p) === "/h/Projects/site/.git",
 };
 const titles = (ap: AddProject, known = new Set<string>()) => ap.rows(known).map((r) => r.title);
 

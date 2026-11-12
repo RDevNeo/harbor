@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import { ansiPalette, fade, gridSize, idxColor, keyBytes, pasteBytes, pasteText } from "../src/logic/terminal.ts";
 import { Terminal } from "../src/terminal.ts";
 import { token } from "../src/theme.ts";
@@ -40,7 +41,7 @@ describe("terminal.rs", () => {
   });
 
   test("a shell's output becomes styled runs on the grid", async () => {
-    const t = new Terminal("t", "/tmp", ["/bin/sh", "-c", "printf 'a\\033[31mred\\033[0m \\033[7minv\\033[0m\\n'; sleep 5"], {}, () => {});
+    const t = new Terminal("t", tmpdir(), ["sh", "-c", "printf 'a\\033[31mred\\033[0m \\033[7minv\\033[0m\\n'; sleep 5"], {}, () => {});
     t.resize(5, 30);
     for (let i = 0; i < 50 && !t.frame(true).rows[0]?.runs.some((r) => r.text.includes("inv")); i++) await Bun.sleep(40);
     await t.settled();

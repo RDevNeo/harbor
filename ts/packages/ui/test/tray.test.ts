@@ -24,6 +24,10 @@ import {
   trayItemProps,
   trayStart,
 } from "../src/tray.ts";
+import { tray as osTray } from "@harbor/os";
+
+// trayStart talks D-Bus where the system has no tray of its own for Harbor (Linux); macOS's and Windows' are os.tray's.
+const dbusTray = !osTray.available();
 
 const MENU_PATH = "/MenuBar";
 const MENU_IFACE = "com.canonical.dbusmenu";
@@ -194,7 +198,7 @@ test("address_unescapes", () => {
   expect(dbusUnescape("/tmp/a%20b")).toBe("/tmp/a b");
 });
 
-test("the tray talks to a fake session bus: registers, serves the menu, routes clicks, follows the watcher", async () => {
+test.if(dbusTray)("the tray talks to a fake session bus: registers, serves the menu, routes clicks, follows the watcher", async () => {
   const fake = new FakeBus(join(tmp, "bus-socket"));
   await fake.listen();
   process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${fake.path}`;
@@ -256,7 +260,7 @@ test("the tray talks to a fake session bus: registers, serves the menu, routes c
   }
 });
 
-test("a refused registration leaves the tray inactive until a host answers", async () => {
+test.if(dbusTray)("a refused registration leaves the tray inactive until a host answers", async () => {
   const fake = new FakeBus(join(tmp, "bus-socket"));
   fake.watcherAnswers = false;
   await fake.listen();
@@ -290,7 +294,7 @@ test("HARBOR_NO_TRAY keeps the tray off and never connects", async () => {
   }
 });
 
-test("no session bus: the tray reports it and stays off", async () => {
+test.if(dbusTray)("no session bus: the tray reports it and stays off", async () => {
   const errors: string[] = [];
   const tray = trayStart({ ...noHooks, onError: (m) => errors.push(m) });
   await tray?.done;
@@ -298,7 +302,7 @@ test("no session bus: the tray reports it and stays off", async () => {
   expect(errors).toEqual(["harbor: no tray icon: no D-Bus session bus"]);
 });
 
-test("a bus that refuses the login is reported", async () => {
+test.if(dbusTray)("a bus that refuses the login is reported", async () => {
   const path = join(tmp, "refusing");
   const server = createServer((s) => {
     s.on("data", () => s.write("REJECTED EXTERNAL\r\n"));
