@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.0] - 2026-11-11
+
+### Removed
+- The built-in browser, on the desktop and on the phone. Links in chats, PR and issue pages, a
+  process's URL and patch panels with a `url` open in the system's default browser (`xdg-open`), on
+  the phone in its own browser. Gone with it: the panes' Browser tab and its "Dev servers and recent
+  pages" menu, Ctrl+Shift+B and the palette's "Open or close the browser", "Open in Harbor's
+  browser" in the PR and issue menus, the Servo engine (`browser/`, the phone's `android/servo` and
+  its `:browser` process), its release archives and CI (browser.yml, prune.yml), and the installer's
+  engine download (`--no-browser` and `--with-browser` are still accepted and do nothing).
+- The phone app download goes from about 104 MB to about 18 MB without the engine.
+
+### Changed
+- An updated Harbor deletes the old engine (`harbor-browser`, about 45 MB, with its rollback copy
+  and marks) from `~/.local/lib/harbor` when it starts; install.sh does the same.
+
 ## [0.176.4] - 2026-11-11
 
 ### Fixed
