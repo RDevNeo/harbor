@@ -18,8 +18,8 @@ A session keeps its sandbox and VM between commands (one per name, default "defa
   sync                           copy this working tree to ~/src again
   ps 'SCRIPT'                    PowerShell in the VM as the administrator "harbor" (stdout/stderr here,
                                  its exit code). Windows' own SSH session: no desktop, windows don't show
-  gui 'CMDLINE'                  start a cmd.exe line in the logged-on desktop (where windows show); its
-                                 output goes to C:\rig\gui.log (ps 'Get-Content C:\rig\gui.log')
+  gui 'CMDLINE'                  start a cmd.exe line in the logged-on desktop (where windows show) and
+                                 return; prints its log's path (ps 'Get-Content C:\rig\gui-…log')
   build                          cross-build Harbor for Windows x64 from the synced tree to the sandbox's
                                  ~/out/harbor.exe (then: vmput out/harbor.exe C:/rig/harbor.exe)
   sh 'BASH'                      bash on the sandbox in ~/src (the Linux side)

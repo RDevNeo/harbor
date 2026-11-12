@@ -47,7 +47,7 @@ if ($path -notlike '*C:\Tools\bun*') { [Environment]::SetEnvironmentVariable('Pa
 Step 'the desktop task'
 New-Item -ItemType Directory -Force C:\rig | Out-Null
 Set-Content C:\rig\gui.cmd '@echo nothing to run' -Encoding ASCII
-$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c C:\rig\gui.cmd > C:\rig\gui.log 2>&1' -WorkingDirectory C:\rig
+$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c C:\rig\gui.cmd' -WorkingDirectory C:\rig
 $principal = New-ScheduledTaskPrincipal -UserId 'harbor' -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Parallel
 Register-ScheduledTask -TaskName 'harbor-gui' -Action $action -Principal $principal -Settings $settings -Force | Out-Null

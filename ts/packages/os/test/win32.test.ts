@@ -4,6 +4,7 @@ import { decodeCfHtml, decodeDib, decodeHdrop, decodePng, encodeCfHtml, encodeDi
 import { plan } from "../src/win32/clipboard.ts";
 import { command, isOn } from "../src/win32/login.ts";
 import { toastXml } from "../src/win32/notify.ts";
+import { fitRect } from "../src/win32/desktop.ts";
 import { menuLabel, notifyIconData } from "../src/win32/tray.ts";
 import { guid } from "../src/win32/gui.ts";
 
@@ -154,5 +155,24 @@ describe("tray and toasts", () => {
 
   test("GUIDs in COM's byte order", () => {
     expect([...guid("50AC103F-D235-4598-BBEF-98FE4D1A3AD4")]).toEqual([0x3f, 0x10, 0xac, 0x50, 0x35, 0xd2, 0x98, 0x45, 0xbb, 0xef, 0x98, 0xfe, 0x4d, 0x1a, 0x3a, 0xd4]);
+  });
+});
+
+describe("fitRect", () => {
+  const work = { left: 0, top: 0, right: 1920, bottom: 1032 };
+  test("a window that fits stays", () => {
+    expect(fitRect({ left: 100, top: 50, right: 1500, bottom: 950 }, work)).toBeNull();
+  });
+  test("1400x900 at 150 % shrinks into the work area, centred", () => {
+    const r = fitRect({ left: 200, top: 100, right: 2300, bottom: 1450 }, work);
+    expect(r).toEqual({ left: 39, top: 21, right: 1882, bottom: 1012 });
+  });
+  test("one only off the edge keeps its size and is centred", () => {
+    expect(fitRect({ left: 900, top: 0, right: 2300, bottom: 900 }, work)).toEqual({ left: 260, top: 66, right: 1660, bottom: 966 });
+  });
+  test("a second screen's work area is honoured", () => {
+    const r = fitRect({ left: 1920, top: 0, right: 4020, bottom: 1350 }, { left: 1920, top: 0, right: 3840, bottom: 1080 });
+    expect(r?.left).toBeGreaterThanOrEqual(1920);
+    expect(r?.right).toBeLessThanOrEqual(3840);
   });
 });

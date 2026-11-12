@@ -83,3 +83,22 @@ export function hyprland(env: Env = process.env): boolean {
 export function allowRaise(): void {
   win()?.desktop.allowRaise();
 }
+
+/**
+ * Right after Harbor shows its main window: on Windows, gives it Harbor's icon and fits it on its screen when
+ * Slint's preferred size is bigger than the screen (a scaled display). Slint makes the native window on its loop's
+ * next turns, so this looks for it a few times. Nothing elsewhere: the Linux and macOS window managers do both.
+ */
+export function settleShownWindow(pid: number = process.pid): void {
+  const w = win();
+  if (!w) return;
+  // By the clock, not by tries: Harbor's first seconds block its main thread for seconds at a time.
+  const until = Date.now() + 20_000;
+  const look = (): void => {
+    const n = w.desktop.settleWindows(pid);
+    if (n > 0) return;
+    if (Date.now() < until) setTimeout(look, 100);
+    else console.error("harbor: no window of its own came up to fit on the screen");
+  };
+  look();
+}

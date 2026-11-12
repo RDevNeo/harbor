@@ -175,12 +175,18 @@ down() {
 }
 
 gui() {
-  # The line runs as cmd.exe would run it, in the desktop session, with gui.log for its output.
-  local f; f=$(mktemp -p "$wh/run" gui.XXXX)
+  # The line runs as cmd.exe would run it, in the desktop session, in its own C:\rig\gui-N.cmd with its output in
+  # C:\rig\gui-N.log (printed). The task only starts it and ends: a run still going (Harbor) keeps neither the
+  # task nor a log busy for the next one. An older snapshot's task wrote gui.log itself, which the first run
+  # then held open: its action is made the plain one here.
+  local f n; f=$(mktemp -p "$wh/run" gui.XXXX); n=gui-$(date +%H%M%S)-${f##*.}
   printf '@echo off\r\ncd /d C:\\rig\r\n%s\r\n' "$1" > "$f"
+  vm scp -q "${SCP_OPTS[@]}" "${f/#$cache//c}" "harbor@127.0.0.1:C:/rig/$n.cmd"
+  printf '@echo off\r\nstart "" /min cmd /c "C:\\rig\\%s.cmd > C:\\rig\\%s.log 2>&1"\r\n' "$n" "$n" > "$f"
   vm scp -q "${SCP_OPTS[@]}" "${f/#$cache//c}" harbor@127.0.0.1:C:/rig/gui.cmd
   rm -f "$f"
-  ps_run 'Start-ScheduledTask -TaskName harbor-gui'
+  ps_run '$t = Get-ScheduledTask harbor-gui; if ($t.Actions[0].Arguments -ne "/c C:\rig\gui.cmd") { Set-ScheduledTask -TaskName harbor-gui -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument "/c C:\rig\gui.cmd" -WorkingDirectory C:\rig) | Out-Null }; Start-ScheduledTask -TaskName harbor-gui'
+  echo "C:\\rig\\$n.log"
 }
 
 build_exe() {
@@ -188,10 +194,11 @@ build_exe() {
   core=$(image harbor-builder .github/boat/Dockerfile)
   b=$(bun_get "$core" x64)
   v=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' ts/package.json | head -1)
-  # Its own node_modules: the Windows addons replace Linux's (a later Linux build runs bun install again).
+  # The release's own Windows build (its icon and name stamped in), from a copy of the tree: Linux's
+  # node_modules stay.
   run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e BUN_INSTALL_CACHE_DIR=/c/bun-cache -e V="$v-win" -- \
-    bash -euo pipefail -c 'export HOME=/tmp/home && mkdir -p $HOME && cd ts && bun install --frozen-lockfile --os win32 --cpu x64 >/dev/null &&
-      bun scripts/build.ts single /out/harbor.exe --target windows-x64 --version "$V" && ls -l /out/harbor.exe'
+    bash -euo pipefail -c 'export HOME=/tmp/home && mkdir -p $HOME && rm -rf /out/win && bash .github/windows-build.sh . /out/win >/dev/null &&
+      cp /out/win/harbor-windows/harbor.exe /out/harbor.exe && ls -l /out/harbor.exe'
 }
 
 cmd=${1:-}; [ $# = 0 ] || shift

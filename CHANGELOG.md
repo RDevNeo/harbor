@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.1] - 2026-11-12
+
+### Fixed
+- Windows: Harbor's window no longer opens bigger than the screen on a scaled display (1400x900 at 150 % was
+  2100x1350 on a 1920x1080 screen); it's fitted and centred on the screen it opens on.
+- Windows: Harbor's icon in its window's title bar and in Alt+Tab, instead of a blank one.
+
 ## [0.180.0] - 2026-11-12
 
 ### Added

@@ -2,6 +2,7 @@ import * as switchTrace from "./switchtrace.ts";
 import { deviceWorkspace } from "./logic/devices.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
+import { desktop as osDesktop } from "@harbor/os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
@@ -5413,6 +5414,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   hooks.busyIn?.((dir) => (shell.terminalIn(dir) ? "a terminal is open in it" : null));
   hooks.projects?.({ icon: (repo, refresh) => shell.reloadIcon(repo, refresh), removed: (repo) => shell.projectRemoved(repo), settled: (repo, on) => shell.projectSettled(repo, on) });
   win.show();
+  osDesktop.settleShownWindow();
   shell.shown();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
