@@ -119,14 +119,15 @@ bun_get() {
   [ -n "$v" ] || { echo "no bun version in ts/package.json" >&2; return 1; }
   if [ ! -x "$cache/bun/$v-$arch/bun" ]; then
     run_in "$img" -e V="$v" -e A="$arch" -- bash -euo pipefail -c '
-      d=/c/bun/$V-$A z=bun-linux-$A.zip base=https://github.com/oven-sh/bun/releases/download/bun-v$V
-      rm -rf "$d.tmp" && mkdir -p "$d.tmp" && cd "$d.tmp"
+      # A folder of its own per call: parts that build side by side (build.sh) fetch a new version at once.
+      d=/c/bun/$V-$A t=/c/bun/$V-$A.tmp.$$ z=bun-linux-$A.zip base=https://github.com/oven-sh/bun/releases/download/bun-v$V
+      rm -rf "$t" && mkdir -p "$t" && cd "$t"
       curl -fsSL --retry 3 "$base/$z" -o "$z"
       curl -fsSL --retry 3 "$base/SHASUMS256.txt" -o SHASUMS256.txt
       grep " $z\$" SHASUMS256.txt | sha256sum -c - >&2
       python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(\".\")" "$z"
       install -m755 "bun-linux-$A/bun" bun.bin
-      mkdir -p "$d" && mv bun.bin "$d/bun" && cd / && rm -rf "$d.tmp"' >&2
+      mkdir -p "$d" && mv -f bun.bin "$d/bun" && cd / && rm -rf "$t"' >&2
   fi
   echo "/c/bun/$v-$arch"
 }
