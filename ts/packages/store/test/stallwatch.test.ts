@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { heapStats } from "bun:jsc";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,6 +42,9 @@ test("a main thread that sleeps synchronously shows as sleeping, short ones not 
   const count = stallwatch.seen.count;
   spin(60);
   await tick(200);
+  // Rare on boat (2 full runs in ~40, not reproduced since): the extra stall's own samples (label, where the main
+  // thread was, PSI) and the heap say whether it was the sandbox or this process, next time it happens.
+  if (stallwatch.seen.count !== count) console.error(`stallwatch: a stall while nothing blocked: ${JSON.stringify(stallwatch.seen.last.slice(count - stallwatch.seen.count))} heap ${Math.round(heapStats().heapSize / 1e6)} MB`);
   expect(stallwatch.seen.count).toBe(count);
   stallwatch.within("sleep test", () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500));
   await tick(200);

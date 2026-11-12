@@ -83,7 +83,10 @@ test("resolves_real_commits_only", async () => {
   g("remote", "add", "origin", "git@github.com:o/r.git");
   const sha = g("rev-parse", "HEAD");
   const tree = g("rev-parse", "HEAD^{tree}");
-  const short = sha.slice(0, 9);
+  // A short id as the app links one (shaLike: a digit and a letter, so plain numbers stay text). Nine
+  // characters alone are all digits for about 1 commit in 70.
+  let short = sha.slice(0, 9);
+  for (let n = 10; !cm.shaLike(short); n++) short = sha.slice(0, n);
   const fake = "0123abc0123abc0";
   const found = await cm.resolve(dir, [short, fake, tree.slice(0, 10)]);
   // A tree or an unknown id isn't a commit.
