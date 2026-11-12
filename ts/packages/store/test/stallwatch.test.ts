@@ -77,3 +77,17 @@ test.skipIf(process.platform !== "linux" || !["x64", "arm64"].includes(process.a
   expect(lines.at(-1)).toContain(fifo);
   rmSync(dir, { recursive: true, force: true });
 }, 10_000);
+
+test("HARBOR_STALL_PROFILE's samples name the hottest call chains", () => {
+  const f = (name: string, file: string, line: number) => ({ name, sourceURL: `B:\\~BUN\\root\\${file}`, line });
+  const now = { name: "readFileSync" };
+  const t = {
+    traces: [
+      ...Array.from({ length: 3 }, () => ({ frames: [now, f("scan", "icons.ts", 12), f("added", "addproject.ts", 40)] })),
+      { frames: [f("render", "cards.ts", 7)] },
+      { frames: [now] },
+    ],
+  };
+  expect(stallwatch.hottest(t)).toBe("readFileSync (native) < scan icons.ts:12 < added addproject.ts:40 (60%) | render cards.ts:7 (20%)");
+  expect(stallwatch.hottest({ traces: [] })).toBe("");
+});

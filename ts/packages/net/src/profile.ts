@@ -1,5 +1,4 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { parseIp } from "./ip.ts";
@@ -325,7 +324,7 @@ export interface ProfileEnv {
   /** The names in a folder, [] when unreadable. */
   readDir(path: string): string[];
   /** `git config --global <key>`, "" when unset. */
-  git(key: string): string;
+  git(key: string): Promise<string>;
   /** Harbor's own GitHub sign-in (the apps), if any. */
   githubUser(): string | null;
 }
@@ -351,9 +350,12 @@ export function profileNodeEnv(githubUser: () => string | null = () => null): Pr
         return [];
       }
     },
-    git: (key) => {
+    // Beside the window, not on its thread: git can take a second or more to start on Windows.
+    git: async (key) => {
       try {
-        return execFileSync("git", ["config", "--global", key], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        const p = Bun.spawn(["git", "config", "--global", key], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+        const [out] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+        return out.trim();
       } catch {
         return "";
       }
@@ -372,7 +374,7 @@ export function profileFullName(env: Pick<ProfileEnv, "user" | "read">): string 
 }
 
 /** This PC's own facts. */
-export function profileGatherLocal(env: ProfileEnv): ProfileLocalFacts {
+export async function profileGatherLocal(env: ProfileEnv): Promise<ProfileLocalFacts> {
   const ssh = join(env.home, ".ssh");
   const logins = ghHostsLogins(env.read(join(env.home, ".config/gh/hosts.yml")));
   const gh = env.githubUser();
@@ -383,12 +385,13 @@ export function profileGatherLocal(env: ProfileEnv): ProfileLocalFacts {
     return [...new Set(v.sort(byteCmp))].slice(0, 30);
   };
   const own = env.readDir(ssh).filter((n) => n.endsWith(".pub")).map((n) => env.read(join(ssh, n))).join("\n");
+  const [git_name, git_email] = await Promise.all([env.git("user.name"), env.git("user.email")]);
   return {
     hostname: env.hostname,
     os_user: env.user,
     full_name: profileFullName(env),
-    git_name: env.git("user.name"),
-    git_email: env.git("user.email"),
+    git_name,
+    git_email,
     github_logins,
     ssh_hosts: profileSshHosts(env.read(join(ssh, "config"))),
     authorized_key_comments: comments(env.read(join(ssh, "authorized_keys"))),
@@ -564,7 +567,7 @@ export function mergeProfileProposals(model: ReadonlyMap<string, ProfileProposal
 
 /** One detection: the facts, the rules, then the model when there's one (a failing model leaves the rules). */
 export async function detectProfiles(inp: ProfileDetectInputs, sig: string, env: ProfileEnv, at: number = now()): Promise<ProfileDetected> {
-  const l = profileGatherLocal(env);
+  const l = await profileGatherLocal(env);
   const rules = profileRules(l, inp);
   const ids = inp.pcs.map((p) => p.id);
   let all = rules;

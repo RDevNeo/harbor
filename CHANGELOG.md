@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.181.5] - 2026-11-12
+
+### Fixed
+- Working out who owns each PC no longer holds the window while `git config` answers (up to half a second on
+  Windows).
+
+### Added
+- `HARBOR_STALL_PROFILE=1`: each main-thread stall line also names the JavaScript it was running (its hottest
+  call chains), where the PC can't say more itself (Windows, macOS).
+
 ## [0.181.4] - 2026-11-12
 
 ### Fixed

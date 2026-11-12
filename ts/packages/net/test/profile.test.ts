@@ -114,13 +114,13 @@ describe("profile", () => {
     // The made-up files by "/" paths, whatever this system's join writes.
     read: (p) => files[p.replaceAll("\\", "/")] ?? "",
     readDir: (p) => (p.replaceAll("\\", "/") === "/h/.ssh" ? ["config", "id.pub", "authorized_keys"] : []),
-    git: (k) => (k === "user.name" ? "Sam Lee" : k === "user.email" ? "7+sam-lee@users.noreply.github.com" : ""),
+    git: async (k) => (k === "user.name" ? "Sam Lee" : k === "user.email" ? "7+sam-lee@users.noreply.github.com" : ""),
     githubUser: () => "sam-app",
   };
 
-  test("this PC's facts come from the files", () => {
+  test("this PC's facts come from the files", async () => {
     expect(profileFullName(env)).toBe("Sam Lee");
-    const l = profileGatherLocal(env);
+    const l = await profileGatherLocal(env);
     expect(l).toEqual({
       hostname: "desk",
       os_user: "sam",

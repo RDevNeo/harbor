@@ -49,6 +49,8 @@ export interface Stall {
   /** The file syscall it was in, with its file: "read /usr/share/fonts/…". */
   syscall: string;
   pressure: string;
+  /** HARBOR_STALL_PROFILE: the JavaScript it was running, its hottest call chains ("" otherwise). */
+  js: string;
 }
 
 /** The last stalls (newest last), and how many there were since start. */
@@ -88,7 +90,52 @@ export function within<T>(name: string, f: () => T): T {
 export function describe(s: Stall): string {
   const where = s.label || "between labels";
   const kernel = s.running + s.disk + s.sleeping > 0 ? `; samples running ${s.running}, disk ${s.disk}, sleeping ${s.sleeping}${s.wchan ? ` (${s.wchan})` : ""}${s.syscall ? `, in ${s.syscall}` : ""}` : "";
-  return `harbor: main thread blocked ${Math.round(s.ms)} ms in ${where}${kernel}; ${s.majorFaults} major faults, ${s.cpuMs} ms CPU${s.pressure ? `; pressure ${s.pressure}` : ""}`;
+  return `harbor: main thread blocked ${Math.round(s.ms)} ms in ${where}${kernel}; ${s.majorFaults} major faults, ${s.cpuMs} ms CPU${s.pressure ? `; pressure ${s.pressure}` : ""}${s.js ? `; js ${s.js}` : ""}`;
+}
+
+interface Frame {
+  name?: string;
+  sourceURL?: string;
+  line?: number;
+}
+type Traces = { traces?: { frames?: Frame[] }[] };
+
+/**
+ * JavaScriptCore's sampler, for HARBOR_STALL_PROFILE=1 (where the kernel can't say what the main thread did:
+ * Windows, macOS; or to see the JavaScript anywhere). Each beat takes the samples since the last one; a stall's
+ * line then names its hottest call chains. A rig and bug-hunt switch: sampling costs a few % CPU.
+ */
+function jsSampler(env: Record<string, string | undefined> = process.env): (() => Traces) | null {
+  if (env.HARBOR_STALL_PROFILE !== "1") return null;
+  try {
+    const jsc = require("bun:jsc") as { startSamplingProfiler(dir?: string, us?: number): void; samplingProfilerStackTraces(): Traces };
+    jsc.startSamplingProfiler(undefined, 2000);
+    return () => jsc.samplingProfilerStackTraces();
+  } catch {
+    return null;
+  }
+}
+
+/** The samples' commonest call chains (innermost 4 frames with a source), with their share: "f a.ts:3 < g b.ts:9 (80%)". */
+export function hottest(t: Traces, top = 2): string {
+  const chains = new Map<string, number>();
+  let n = 0;
+  for (const tr of t.traces ?? []) {
+    const frames = (tr.frames ?? []).filter((f) => f.sourceURL !== undefined && f.sourceURL !== "");
+    const native = (tr.frames ?? [])[0];
+    const head = native !== undefined && native.sourceURL === undefined && native.name ? [`${native.name} (native)`] : [];
+    const at = (f: Frame) => `${f.name || "(anonymous)"} ${String(f.sourceURL).split(/[\\/]/).pop()}:${f.line ?? 0}`;
+    const key = [...head, ...frames.slice(0, 4).map(at)].join(" < ");
+    if (key === "") continue;
+    n++;
+    chains.set(key, (chains.get(key) ?? 0) + 1);
+  }
+  if (n === 0) return "";
+  return [...chains]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, top)
+    .map(([k, c]) => `${k} (${Math.round((c / n) * 100)}%)`)
+    .join(" | ");
 }
 
 /** Labels synchronous process starts and SQLite statements, the usual ways the main thread waits on the disk. */
@@ -168,6 +215,7 @@ export function start(log: (line: string) => void = (l) => console.error(l), o: 
       worker = null;
     }
   }
+  const samples = jsSampler();
   let prev = performance.now();
   let held = 0;
   let lastLog = Number.NEGATIVE_INFINITY;
@@ -178,6 +226,7 @@ export function start(log: (line: string) => void = (l) => console.error(l), o: 
     const s = v;
     if (s === null) return;
     Atomics.store(s, BEAT, Date.now() - base);
+    const traces = samples?.() ?? null;
     if (late < stallMs) return;
     const stall: Stall = {
       ms: late,
@@ -190,6 +239,7 @@ export function start(log: (line: string) => void = (l) => console.error(l), o: 
       wchan: wbytes ? new TextDecoder().decode(wbytes).replace(/\0.*$/s, "") : "",
       syscall: whatBytes ? new TextDecoder().decode(whatBytes).replace(/\0.*$/s, "") : "",
       pressure: os.pressure(),
+      js: traces === null ? "" : hottest(traces),
     };
     for (const k of [RUN, DISK, SLEEP, MAJ, CPU, SEEN]) Atomics.store(s, k, 0);
     wbytes?.fill(0);
