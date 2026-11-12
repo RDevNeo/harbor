@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.5] - 2026-11-11
+
+### Fixed
+- Split panes: a chat started from the New thread screen opens in the focused pane, as a chat clicked in
+  the sidebar does, and the other panes keep theirs. Both panes used to go blank, with the new chat in
+  neither. A chat on screen that no pane holds now always shows as the usual view, never as empty panes.
+
 ## [0.177.4] - 2026-11-11
 
 ### Fixed
