@@ -488,8 +488,11 @@ export type AgentEnv = (signedIn: boolean) => EnvPairs | Promise<EnvPairs>;
 
 let agentEnvAs: AgentEnv = signedOutEnv;
 
-export function setAgentEnv(f: AgentEnv): void {
+/** Returns the one it replaces. */
+export function setAgentEnv(f: AgentEnv): AgentEnv {
+  const was = agentEnvAs;
   agentEnvAs = f;
+  return was;
 }
 
 /** The environment changes an agent (or a process it starts) gets. */
@@ -563,9 +566,24 @@ type SpawnOpts = Parameters<typeof Bun.spawn>[1];
 
 /** The `harbor turn <dir>` command: the turn, then whatever it left running in its scope goes with it. */
 export async function turn(args: readonly string[]): Promise<void> {
-  await run(args);
   const dir = args[0];
+  try {
+    await run(args);
+  } catch (e) {
+    // Its output goes nowhere: a runner that fails before its agent ends the turn and says why in the
+    // turn's own error output, instead of vanishing and leaving "The agent exited with an error".
+    if (dir !== undefined) failed(dir, e);
+  }
   if (dir !== undefined) await turnscope.endOwn(dir);
+}
+
+function failed(dir: string, e: unknown): void {
+  try {
+    appendFileSync(join(dir, "err"), `harbor: the turn couldn't start: ${e instanceof Error ? e.message : String(e)}\n`, { mode: 0o600 });
+    if (!existsSync(join(dir, "exit"))) writeFileSync(join(dir, "exit"), "1");
+  } catch {
+    // a turn folder deleted under its runner
+  }
 }
 
 /** Runs the agent described in `<dir>/cmd.json`. */

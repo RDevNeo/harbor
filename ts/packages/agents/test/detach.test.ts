@@ -366,6 +366,24 @@ describe("harbor turn", () => {
     expect(readFileSync(join(dir, "err"), "utf8")).toBe("/nonexistent/agent: No such file or directory (os error 2)\n");
   });
 
+  // Its own output goes nowhere: a runner that threw used to vanish without an `exit`, and the turn read as
+  // "The agent exited with an error" with nothing to say why (two turns starting at once, 0.179.3).
+  test("a runner that fails before its agent starts ends the turn and says why", async () => {
+    const dir = fresh("setupfails");
+    writeFileSync(join(dir, "cmd.json"), compact({ program: "sh", args: ["-c", "echo ran"], input: false, agent_env: true }));
+    const was = detach.setAgentEnv(() => {
+      throw new Error("ENOENT: no such file or directory, rename 'hosts.tmp' -> 'hosts.yml'");
+    });
+    try {
+      await detach.turn([dir]);
+    } finally {
+      detach.setAgentEnv(was);
+    }
+    expect(readFileSync(join(dir, "exit"), "utf8")).toBe("1");
+    expect(readFileSync(join(dir, "err"), "utf8")).toBe("harbor: the turn couldn't start: ENOENT: no such file or directory, rename 'hosts.tmp' -> 'hosts.yml'\n");
+    expect(existsSync(join(dir, "out"))).toBe(false);
+  });
+
   // Linux only: a process's open files are readable through /proc after they're deleted; elsewhere the output is gone.
   test.if(process.platform === "linux")("a deleted folder's output is still read through the runner's open files", async () => {
     const root = fresh("gone");

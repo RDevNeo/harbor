@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,6 +125,28 @@ async function until(what: string, f: () => Promise<boolean>, ms = 15000): Promi
   }
 }
 
+/** Each chat's transcript (kinds, texts clipped) and the turn folders still there, for a failure's log. */
+function turnsDump(chats: Chat[]): string {
+  const clip = (t: string): string => (t.length > 300 ? `${t.slice(0, 300)}…` : t);
+  const out = chats.map((c) => {
+    const items = h.engine.liveItems(c.id) ?? h.store.items(c.id);
+    return `chat ${c.id} (${c.title}): ${items.map((it) => ("text" in it && typeof it.text === "string" ? `${it.kind} ${JSON.stringify(clip(it.text))}` : it.kind)).join(" | ")}`;
+  });
+  const state = join(root, "state", "harbor");
+  try {
+    for (const d of existsSync(state) ? readdirSync(state).filter((d) => d.startsWith("turns")) : []) {
+      for (const t of readdirSync(join(state, d))) {
+        const dir = join(state, d, t);
+        const files = readdirSync(dir).map((f) => (["exit", "err", "out"].includes(f) ? `${f}=${JSON.stringify(clip(readFileSync(join(dir, f), "utf8")))}` : f));
+        out.push(`turn folder ${t}: ${files.join(" ")}`);
+      }
+    }
+  } catch (e) {
+    out.push(`turn folders: ${String(e)}`);
+  }
+  return `chatstate: the failed flags are off\n${out.join("\n")}`;
+}
+
 const send = (c: Chat, text: string) => call("POST", `/v1/chats/${c.id}/send`, JSON.stringify({ text }));
 
 test("a_chat_row_says_its_pull_request_from_the_lead_s_branch_and_nothing_for_the_rest", async () => {
@@ -143,7 +165,10 @@ test("a_finished_turn_nobody_watched_is_unread_and_a_failed_one_says_so_until_a_
     return [ids.plain, ids.failing, ids.other].every((c) => r.get(c.id)?.unread === true && r.get(c.id)?.running === false);
   });
   let r = await rows();
-  expect([r.get(ids.plain.id)?.failed, r.get(ids.failing.id)?.failed, r.get(ids.other.id)?.failed]).toEqual([false, true, false]);
+  const failed = [r.get(ids.plain.id)?.failed, r.get(ids.failing.id)?.failed, r.get(ids.other.id)?.failed];
+  // Rare on boat (1 full run in many, never reproduced since): what each turn left says why, next time it happens.
+  if (failed.join() !== "false,true,false") console.error(turnsDump([ids.plain, ids.failing, ids.other]));
+  expect(failed).toEqual([false, true, false]);
   const [st] = await call("GET", `/v1/chats/${ids.failing.id}/items?since=0`);
   expect(st).toBe(200);
   r = await rows();

@@ -1,8 +1,8 @@
 // Where Claude Code keeps a profile's login: `.credentials.json` in its config folder, except on macOS,
 // where it keeps it in the login keychain (one item per config folder) and the file, if any, is stale.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { keychain } from "@harbor/os";
 import { home, writePrivate } from "./paths.ts";
 
@@ -42,10 +42,7 @@ export function write(configDir: string | null, text: string): void {
     if (!keychain.write(keychainService(configDir), text)) throw new Error("the keychain didn't take the login");
     return;
   }
-  const path = credentialsPath(configDir);
-  const tmp = join(dirname(path), ".credentials.json.tmp");
-  writePrivate(tmp, text);
-  renameSync(tmp, path);
+  writePrivate(credentialsPath(configDir), text);
 }
 
 /** Removes the profile's credentials (a lent login going back). */

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "@harbor/os";
 
@@ -27,12 +27,19 @@ export function privateDir(p: string): string {
   return p;
 }
 
-/** Writes through a temporary file so a reader never sees half of it; owner-only. */
+/** Writes through a temporary file so a reader never sees half of it; owner-only. The temporary file is this
+ *  writer's own: two processes writing the same file at once (turns starting together) each rename a whole
+ *  one, where a shared name let one rename the other's away and fail. */
 export function writePrivate(p: string, data: string): void {
-  const tmp = `${p.replace(/([^/])\.[^./]*$/, "$1")}.tmp`;
-  writeFileSync(tmp, data, { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, p);
+  const tmp = `${p}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, data, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, p);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 export function now(): number {

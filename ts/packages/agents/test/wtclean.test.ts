@@ -1,8 +1,12 @@
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as wc from "../src/wtclean.ts";
+
+// Each test is dozens of git processes on real repositories (the remote one about twice its siblings'): a
+// loaded sandbox makes that several times slower without anything waiting on anything.
+setDefaultTimeout(20_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-wtclean-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));

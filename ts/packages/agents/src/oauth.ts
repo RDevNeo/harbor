@@ -1,6 +1,6 @@
 // Only the access token may leave this PC: the CLI rotates the refresh token on every refresh, so
 // a copy used elsewhere would sign this PC out.
-import { readFileSync, renameSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as creds from "./claudecreds.ts";
 import { lockFile } from "./flock.ts";
@@ -114,9 +114,7 @@ export function apply(data: Record<string, unknown>, payload: unknown, nowMs: nu
 }
 
 function write(path: string, text: string): void {
-  const tmp = join(dirname(path), ".credentials.json.tmp");
-  writePrivate(tmp, text);
-  renameSync(tmp, path);
+  writePrivate(path, text);
 }
 
 function lock(path: string): (() => void) | null {
