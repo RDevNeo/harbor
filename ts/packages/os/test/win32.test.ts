@@ -8,7 +8,7 @@ import { plan } from "../src/win32/clipboard.ts";
 import { command, isOn } from "../src/win32/login.ts";
 import { toastXml } from "../src/win32/notify.ts";
 import { fitRect } from "../src/win32/desktop.ts";
-import { argvOf, shimTarget } from "../src/win32/shim.ts";
+import { argvOf, interpreterOf, shebang, shimTarget } from "../src/win32/shim.ts";
 import { menuLabel, notifyIconData } from "../src/win32/tray.ts";
 import { guid } from "../src/win32/gui.ts";
 
@@ -223,6 +223,34 @@ describe("npm shims", () => {
       expect(argvOf(join(d, "codex.cmd"), () => "/x/node")).toEqual(["/x/node", target]);
       expect(argvOf(join(d, "codex.cmd"), () => null)).toEqual([join(d, "codex.cmd")]);
       expect(argvOf(join(d, "codex.exe"), () => "/x/node")).toEqual([join(d, "codex.exe")]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#! scripts", () => {
+  const which = (n: string): string | null => ({ bun: "C:\\b\\bun.exe", python3: "C:\\p\\python3.exe", sh: "C:\\x\\sh.exe" })[n] ?? null;
+  test("the line read", () => {
+    expect(shebang("#!/bin/sh\necho hi\n")).toEqual({ interpreter: "/bin/sh", arg: null });
+    expect(shebang("#!/usr/bin/env -S bun --smol\r\n")).toEqual({ interpreter: "/usr/bin/env", arg: "-S bun --smol" });
+    expect(shebang("echo hi")).toBeNull();
+  });
+  test("env finds its program, shells are Git's, a Windows path is itself", () => {
+    expect(interpreterOf({ interpreter: "/usr/bin/env", arg: "bun" }, which, null)).toEqual(["C:\\b\\bun.exe"]);
+    expect(interpreterOf({ interpreter: "/usr/bin/env", arg: "-S bun --smol" }, which, null)).toEqual(["C:\\b\\bun.exe", "--smol"]);
+    expect(interpreterOf({ interpreter: "/usr/bin/python3", arg: "-u" }, which, null)).toEqual(["C:\\p\\python3.exe", "-u"]);
+    expect(interpreterOf({ interpreter: "/bin/sh", arg: null }, which, null)).toEqual(["C:\\x\\sh.exe"]);
+    expect(interpreterOf({ interpreter: "/usr/bin/env", arg: "ruby" }, which, null)).toBeNull();
+  });
+  test("argvOf runs a script with its interpreter, leaves other files alone", () => {
+    const d = mkdtempSync(join(tmpdir(), "shebang-"));
+    try {
+      writeFileSync(join(d, "tool"), "#!/usr/bin/env bun\nconsole.log(1)\n");
+      writeFileSync(join(d, "plain"), "MZ not a script");
+      expect(argvOf(join(d, "tool"), which)).toEqual(["C:\\b\\bun.exe", join(d, "tool")]);
+      expect(argvOf(join(d, "plain"), which)).toEqual([join(d, "plain")]);
+      expect(argvOf(join(d, "nothing-here"), which)).toEqual([join(d, "nothing-here")]);
     } finally {
       rmSync(d, { recursive: true, force: true });
     }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { autostart, clipboard, desktop, env, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
@@ -129,7 +129,7 @@ describe.if(linux)("libc on Linux", () => {
 });
 
 describe("paths", () => {
-  test("XDG folders, and their defaults under the home", () => {
+  test.if(process.platform !== "win32")("XDG folders, and their defaults under the home", () => {
     const env = { HOME: "/h" };
     expect(paths.home(env)).toBe("/h");
     expect(paths.dataHome(env)).toBe("/h/.local/share");
@@ -140,6 +140,14 @@ describe("paths", () => {
     const x = { HOME: "/h", XDG_DATA_HOME: "/d", XDG_STATE_HOME: "/s", XDG_CACHE_HOME: "/c", XDG_CONFIG_HOME: "/g", XDG_RUNTIME_DIR: "/r" };
     expect([paths.dataHome(x), paths.stateHome(x), paths.cacheHome(x), paths.configHome(x), paths.runtimeDir(x)]).toEqual(["/d", "/s", "/c", "/g", "/r"]);
     expect(paths.runtimeDir({ XDG_RUNTIME_DIR: "relative" })).toBeUndefined();
+  });
+
+  test.if(process.platform === "win32")("Windows: %APPDATA% and %LOCALAPPDATA%, else under the profile", () => {
+    const env = { USERPROFILE: "C:\\Users\\sam", APPDATA: "D:\\roam", LOCALAPPDATA: "D:\\local" };
+    expect(paths.home(env)).toBe("C:\\Users\\sam");
+    expect([paths.dataHome(env), paths.configHome(env), paths.stateHome(env), paths.cacheHome(env)]).toEqual(["D:\\roam", "D:\\roam", "D:\\local", "D:\\local\\Cache"]);
+    const bare = { USERPROFILE: "C:\\Users\\sam" };
+    expect([paths.dataHome(bare), paths.stateHome(bare)]).toEqual(["C:\\Users\\sam\\AppData\\Roaming", "C:\\Users\\sam\\AppData\\Local"]);
   });
 });
 
@@ -157,8 +165,8 @@ describe("desktop", () => {
 
   test("Downloads: the desktop's own folder, else the home's", () => {
     const d = desktop.downloadsDir({ HOME: "/nowhere-home" });
-    expect(d.startsWith("/")).toBe(true);
-    expect(d === "/nowhere-home/Downloads" || d !== "/nowhere-home").toBe(true);
+    expect(isAbsolute(d)).toBe(true);
+    expect(d === join("/nowhere-home", "Downloads") || d !== "/nowhere-home").toBe(true);
   });
 });
 
@@ -312,7 +320,8 @@ describe.if(process.platform === "darwin")("macOS clipboard (a private pasteboar
 });
 
 describe("autostart", () => {
-  test("Linux: an XDG autostart entry; macOS: a LaunchAgent in the user's session", () => {
+  // Windows' Run key: win32.test.ts.
+  test.if(process.platform !== "win32")("Linux: an XDG autostart entry; macOS: a LaunchAgent in the user's session", () => {
     const linux = { HARBOR_TEST_PLATFORM: "linux", HOME: "/h" };
     const mac = { HARBOR_TEST_PLATFORM: "darwin", HOME: "/Users/sam" };
     expect(autostart.entryPath(linux)).toBe("/h/.config/autostart/harbor.desktop");

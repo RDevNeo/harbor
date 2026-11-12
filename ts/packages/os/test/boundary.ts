@@ -3,7 +3,7 @@
 // lowered there (so it can't come back). `bun packages/os/test/boundary.ts` prints the current counts;
 // `--write` saves them, but only when none went up (adding to the list is a deliberate, by-hand edit).
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 /** The ts/ folder. */
 export const ROOT = join(import.meta.dir, "..", "..", "..");
@@ -54,7 +54,8 @@ export function scan(root: string = ROOT): Counts {
     for (const [rule, re] of Object.entries(RULES)) {
       const n = lines.filter((l) => re.test(l)).length;
       if (n === 0) continue;
-      const key = relative(root, f);
+      // "/" on every system: boundary.json is one list for all.
+      const key = relative(root, f).split(sep).join("/");
       out[key] = { ...(out[key] ?? {}), [rule]: n };
     }
   }

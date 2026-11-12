@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.4] - 2026-11-12
+
+### Fixed
+- Windows: an agent CLI or a tool that is a script with a `#!` line (a wrapper in `~/.local/bin`) runs, with its
+  interpreter as Git Bash would run it (Git's own `sh`/`bash`, `/usr/bin/env bun`); Windows can't start one itself.
+
 ## [0.180.3] - 2026-11-12
 
 ### Fixed
