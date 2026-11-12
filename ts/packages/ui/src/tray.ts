@@ -60,13 +60,15 @@ export function trayStart(hooks: TrayHooks): TrayHandle | null {
   };
 }
 
-/** macOS: the same icon and menu in the menu bar (os.tray), drawn by the system in its own colour. */
+/** macOS and Windows: the same icon and menu by the clock (os.tray); macOS draws it in the menu bar's colour. */
 function menuBar(hooks: TrayHooks): TrayHandle | null {
   let stop: (() => void) | null = null;
   try {
     stop = osTray.start({
       iconPng: pngOf(templateIcon(36), 36, 36),
       iconPoints: 18,
+      colorPng: pngOf(rgbaOfArgb(trayIcon(32)), 32, 32),
+      onActivate: () => hooks.onOpen(),
       tooltip: "Harbor",
       items: [{ label: "Open Harbor", onClick: () => hooks.onOpen() }, "separator", { label: "Quit Harbor completely", onClick: () => hooks.onQuit() }],
     });
@@ -927,6 +929,13 @@ function crc32(b: Uint8Array): number {
   let c = 0xffffffff;
   for (const x of b) c = (CRC[(c ^ x) & 0xff] as number) ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
+}
+
+/** trayIcon's ARGB (network byte order) as RGBA. */
+export function rgbaOfArgb(argb: Uint8Array): Uint8Array {
+  const out = new Uint8Array(argb.length);
+  for (let i = 0; i < argb.length; i += 4) out.set([argb[i + 1] ?? 0, argb[i + 2] ?? 0, argb[i + 3] ?? 0, argb[i] ?? 0], i);
+  return out;
 }
 
 /** RGBA pixels as a PNG file. */

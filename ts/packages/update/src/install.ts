@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
 import { DownloadError, fetchSigned } from "./download.ts";
 import { pendingExtras } from "./extras.ts";
-import { BUNDLE_FILE, fresh, isFile, read, remove, replace, RUNTIME_FILE, writeAtomic } from "./files.ts";
+import { BUNDLE_FILE, fresh, isFile, read, remove, replace, RUNTIME_FILE, sweepAside, writeAtomic } from "./files.ts";
 import { MANIFEST, parseManifest, type Manifest } from "./manifest.ts";
 import { newer } from "./version.ts";
 
@@ -89,13 +89,19 @@ export interface Installed {
 }
 
 // Runtime first, bundle last: whoever watches the bundle file sees one change.
-/** The release's runtime for this system: `harbor-runtime-<arch>` on Linux, `harbor-runtime-<arch>-macos` on macOS. */
+/**
+ * The release's runtime for this system: `harbor-runtime-<arch>` on Linux, `harbor-runtime-<arch>-macos` on
+ * macOS, `harbor-runtime-<arch>-windows.exe` on Windows.
+ */
 export function runtimeAsset(cfg: Pick<UpdateConfig, "arch" | "os">): string {
-  return cfg.os === "macos" ? `harbor-runtime-${cfg.arch}-macos` : `harbor-runtime-${cfg.arch}`;
+  if (cfg.os === "macos") return `harbor-runtime-${cfg.arch}-macos`;
+  if (cfg.os === "windows") return `harbor-runtime-${cfg.arch}-windows.exe`;
+  return `harbor-runtime-${cfg.arch}`;
 }
 
 export async function install(cfg: UpdateConfig, version: string): Promise<Installed> {
   const dir = dirOf(cfg);
+  sweepAside(dir);
   const stage = fresh(join(dir, ".staging"));
   try {
     const manifest = await fetchManifest(cfg, version, stage);

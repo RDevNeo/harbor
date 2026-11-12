@@ -26,11 +26,12 @@ export function runtimeInfo(): RuntimeInfo | undefined {
   return globalThis.__harbor?.runtime;
 }
 
-/** The system releases are built for: Linux's assets keep their old names, macOS's say so. */
-export type ReleaseOs = "linux" | "macos";
+/** The system releases are built for: Linux's assets keep their old names, macOS's and Windows' say so. */
+export type ReleaseOs = "linux" | "macos" | "windows";
 
 export function currentOs(): ReleaseOs {
-  return platform() === "darwin" ? "macos" : "linux";
+  const p = platform();
+  return p === "darwin" ? "macos" : p === "win32" ? "windows" : "linux";
 }
 
 export interface UpdateConfig {

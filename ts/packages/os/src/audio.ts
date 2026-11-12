@@ -1,11 +1,12 @@
 // Recording the microphone for dictation. Linux records with PipeWire's or PulseAudio's own tools
-// (media/src/voice.ts finds them); where Harbor records itself (macOS: CoreAudio), it runs
+// (media/src/voice.ts finds them); where Harbor records itself (macOS: CoreAudio; Windows: waveIn), it runs
 // `harbor record-mic`, which writes 16 kHz mono signed 16-bit samples to stdout until it's stopped.
 import { platform } from "./platform.ts";
 
 /** Whether Harbor records the microphone itself here (`record-mic`). */
 export function available(): boolean {
-  return platform() === "darwin";
+  const p = platform();
+  return p === "darwin" || p === "win32";
 }
 
 /** The command that records: Harbor itself (`self`, as spawn.selfArgv gives it) with `record-mic`. */
@@ -16,11 +17,12 @@ export function recorder(self: readonly string[]): { bin: string; args: string[]
 
 /** `harbor record-mic`: records to stdout until the process is stopped; 1 when the microphone can't be used. */
 export async function recordToStdout(): Promise<number> {
-  if (platform() !== "darwin") {
+  if (!available()) {
     console.error("harbor record-mic: not on this system");
     return 2;
   }
-  const mic = require("./darwin-mic.ts") as typeof import("./darwin-mic.ts");
+  const mic: { record: (sink: (s: Uint8Array) => void) => () => void } =
+    platform() === "win32" ? (require("./win32/mic.ts") as typeof import("./win32/mic.ts")) : (require("./darwin-mic.ts") as typeof import("./darwin-mic.ts"));
   let stop: () => void;
   try {
     stop = mic.record((samples) => process.stdout.write(samples));

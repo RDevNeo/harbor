@@ -100,7 +100,7 @@ export function pendingExtras(cfg: UpdateConfig, dir: string, m: Manifest): Extr
   };
   const { video, apk: phone } = m;
   // The video player is Linux's (libmpv-harbor.so) until macOS gets its own.
-  if (video !== undefined && cfg.os !== "macos" && videoStale(dir, video.id)) work.push({ name: "video", run: staged("video", (s) => fetchVideo(cfg, video.release, video.id, dir, s)) });
+  if (video !== undefined && (cfg.os ?? "linux") === "linux" && videoStale(dir, video.id)) work.push({ name: "video", run: staged("video", (s) => fetchVideo(cfg, video.release, video.id, dir, s)) });
   if (phone !== undefined && (apk(dir)?.code ?? -1) < phone.code) work.push({ name: "apk", run: staged("apk", (s) => fetchApk(cfg, phone.release, phone.code, dir, s)) });
   return work;
 }

@@ -1,10 +1,21 @@
-// The system clipboard by MIME type, where Harbor talks to it directly (macOS). Linux's backends are
+// The system clipboard by MIME type, where Harbor talks to it directly (macOS, Windows). Linux's backends are
 // still in media/src/clipboard.ts (wl-copy, xclip, the Wayland data-control Worker).
 import { platform } from "./platform.ts";
 
-let darwinLib: typeof import("./darwin-clipboard.ts") | undefined;
-const mac = (): typeof import("./darwin-clipboard.ts") | undefined =>
-  platform() === "darwin" ? (darwinLib ??= require("./darwin-clipboard.ts") as typeof import("./darwin-clipboard.ts")) : undefined;
+type Lib = Pick<typeof import("./darwin-clipboard.ts"), "types" | "read" | "write" | "changeCount">;
+let lib: Lib | null | undefined;
+const mac = (): Lib | undefined => {
+  if (lib === undefined) {
+    const p = platform();
+    lib =
+      p === "darwin"
+        ? (require("./darwin-clipboard.ts") as typeof import("./darwin-clipboard.ts"))
+        : p === "win32"
+          ? (require("./win32/clipboard.ts") as typeof import("./win32/clipboard.ts"))
+          : null;
+  }
+  return lib ?? undefined;
+};
 
 /** One type of a copy. */
 export interface Offer {

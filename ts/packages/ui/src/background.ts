@@ -1,5 +1,4 @@
 import { existsSync, realpathSync } from "node:fs";
-import { join } from "node:path";
 import { autostart as osAutostart } from "@harbor/os";
 
 /** Closing the window leaves Harbor running, unless HARBOR_NO_BACKGROUND is set (a preview rig: closing it ends it). */
@@ -209,10 +208,10 @@ function canonical(p: string): string | null {
   }
 }
 
-/** What autostart runs: the installed launcher (~/.local/bin/harbor) when it leads to this install, so it follows updates; else this very file. */
+/** What autostart runs: the installed launcher (~/.local/bin/harbor; Windows: the installed harbor.exe) when it leads to this install, so it follows updates; else this very file. */
 export function autostartLauncher(self: SelfInstall): string | null {
   if (self.exe === null) return null;
-  const bin = join(process.env.HOME ?? "", ".local/bin/harbor");
+  const bin = osAutostart.installedLauncher();
   const a = canonical(bin);
   const b = canonical(self.exe);
   return self.managed && a !== null && a === b ? bin : self.exe;
@@ -225,7 +224,7 @@ export function autostart(): boolean {
 
 /** The installed launcher (~/.local/bin/harbor), which follows updates; null when Harbor isn't installed. */
 export function installedLauncher(): string | null {
-  const bin = join(process.env.HOME ?? "", ".local/bin/harbor");
+  const bin = osAutostart.installedLauncher();
   return existsSync(bin) ? bin : null;
 }
 

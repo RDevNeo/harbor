@@ -243,4 +243,30 @@ test("the runtime's asset per system: Linux's old names, macOS's own", async () 
   expect(runtimeAsset({ arch: "x86_64" })).toBe("harbor-runtime-x86_64");
   expect(runtimeAsset({ arch: "aarch64", os: "linux" })).toBe("harbor-runtime-aarch64");
   expect(runtimeAsset({ arch: "aarch64", os: "macos" })).toBe("harbor-runtime-aarch64-macos");
+  expect(runtimeAsset({ arch: "x86_64", os: "windows" })).toBe("harbor-runtime-x86_64-windows.exe");
+});
+
+test("Windows: a file in use is renamed, never overwritten; what's set aside is swept later", async () => {
+  const { mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { replace, ASIDE } = await import("../src/files.ts");
+  const dir = mkdtempSync(join(tmpdir(), "harbor-win-replace-"));
+  const prev = join(dir, ".previous");
+  mkdirSync(prev);
+  writeFileSync(join(dir, "harbor.exe"), "A");
+  writeFileSync(join(dir, "new"), "B");
+  replace(join(dir, "new"), join(dir, "harbor.exe"), prev, true);
+  expect(readFileSync(join(dir, "harbor.exe"), "utf8")).toBe("B");
+  expect(readFileSync(join(prev, "harbor.exe"), "utf8")).toBe("A");
+  // Again: the one kept before is in use too, so it goes aside in .previous.
+  writeFileSync(join(dir, "new"), "C");
+  replace(join(dir, "new"), join(dir, "harbor.exe"), prev, true);
+  expect(readFileSync(join(prev, "harbor.exe"), "utf8")).toBe("B");
+  expect(readdirSync(prev).filter((n) => n.startsWith(`harbor.exe${ASIDE}`))).toHaveLength(1);
+  // A rollback (no prev): the running file goes aside in the install folder.
+  writeFileSync(join(dir, "old"), "B");
+  replace(join(dir, "old"), join(dir, "harbor.exe"), undefined, true);
+  expect(readFileSync(join(dir, "harbor.exe"), "utf8")).toBe("B");
+  expect(readdirSync(dir).filter((n) => n.startsWith(`harbor.exe${ASIDE}`))).toHaveLength(1);
 });
