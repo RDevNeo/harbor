@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.179.0] - 2026-11-12
+
+### Added
+- Harbor for macOS (Apple Silicon, macOS 13 or newer), a first preview: the same install line puts
+  Harbor.app in ~/Applications (`harbor-aarch64-macos.tar.gz`), and it updates itself like on Linux.
+  Not signed by Apple yet: install it with the command below rather than from a browser download.
+- The installer brings what Harbor needs when it's missing, on Linux and macOS: Claude Code, Codex and
+  git (on macOS, Apple's Command Line Tools ask once; on Linux your package manager asks for your
+  password once).
+
 ## [0.178.4] - 2026-11-11
 
 ### Fixed
