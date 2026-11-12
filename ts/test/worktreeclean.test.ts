@@ -74,7 +74,8 @@ beforeAll(async () => {
   store.set("api_tokens", JSON.stringify([{ token: "tok", name: "Pixel", created: 0, group: "", fp: "" }]));
   repoId = store.addRepo(repo);
   h = await startHub({ version: "9.9.9", hookPort: await freePort(), store });
-});
+  // A fresh sandbox's first hub start reads its disk cold: more than the default 10 s now and then.
+}, 30_000);
 
 afterAll(async () => {
   await h.stop();
@@ -147,8 +148,13 @@ test("a_merged_chats_worktree_and_branch_go_once_its_pr_is_seen_merged_and_the_c
   expect(ws).toMatchObject({ git: true, mode: "checkout", branch: "main", can_move: true });
 }, 20_000);
 
+// The worktree the dirty-chat test leaves behind, clean at its end: the next test's cleanup takes it, unless the
+// cleanup's own retry took it first.
+let leftDir = "";
+
 test("a_dirty_worktree_stays_and_the_chat_says_why_once", async () => {
   const { id, dir, branch } = await mergedChat("Add a thing", 12);
+  leftDir = dir;
   writeFileSync(join(dir, "wip.txt"), "wip\n");
   h.prs.want(id, null);
   await until(() => notices(id).some((t) => t.startsWith("Kept the worktree")));
@@ -164,29 +170,35 @@ test("a_dirty_worktree_stays_and_the_chat_says_why_once", async () => {
 test("clean_up_merged_worktrees_in_the_project_menu_reports_counts_and_keeps_branches_when_asked", async () => {
   h.store.set("wt_clean_merged", "0");
   h.store.set("wt_clean_branch", "0");
-  const a = await mergedChat("Make it faster", 13);
-  const b = await mergedChat("Tidy the docs", 14);
-  // b has a commit the PR didn't.
-  writeFileSync(join(b.dir, "late.txt"), "late\n");
-  sh(b.dir, "add", "-A");
-  sh(b.dir, "commit", "-q", "-m", "late");
-  // Turned off: a lookup alone does nothing.
-  h.prs.want(a.id, null);
-  await Bun.sleep(300);
-  expect(existsSync(a.dir)).toBe(true);
-  const [, menu] = await json("POST", "/v1/projects/menu", { project: repoId });
-  expect((menu.items as { act: string }[]).some((i) => i.act === "clean_worktrees")).toBe(true);
-  const [st, done] = await json("POST", "/v1/projects/do", { project: repoId, act: "clean_worktrees" });
-  expect(st).toBe(200);
-  // a: removed, branch kept; b: kept (late commit); the dirty chat of the last test: now clean, removed.
-  expect(done).toMatchObject({ ok: true, removed: 2, branches: 0, kept: 1 });
-  expect(String(done.said)).toContain("Removed 2 merged worktrees");
-  expect(String(done.said)).toContain(`Tidy the docs: ${b.branch} has commits that aren't in PR #14`);
-  expect(existsSync(a.dir)).toBe(false);
-  expect(hasBranch(a.branch)).toBe(true);
-  expect(existsSync(b.dir)).toBe(true);
-  h.store.set("wt_clean_merged", "1");
-  h.store.set("wt_clean_branch", "1");
+  try {
+    const left = leftDir !== "" && existsSync(leftDir) ? 1 : 0;
+    const a = await mergedChat("Make it faster", 13);
+    const b = await mergedChat("Tidy the docs", 14);
+    // b has a commit the PR didn't.
+    writeFileSync(join(b.dir, "late.txt"), "late\n");
+    sh(b.dir, "add", "-A");
+    sh(b.dir, "commit", "-q", "-m", "late");
+    // Turned off: a lookup alone does nothing.
+    h.prs.want(a.id, null);
+    await Bun.sleep(300);
+    expect(existsSync(a.dir)).toBe(true);
+    const [, menu] = await json("POST", "/v1/projects/menu", { project: repoId });
+    expect((menu.items as { act: string }[]).some((i) => i.act === "clean_worktrees")).toBe(true);
+    const [st, done] = await json("POST", "/v1/projects/do", { project: repoId, act: "clean_worktrees" });
+    expect(st).toBe(200);
+    // a: removed, branch kept; b: kept (late commit); the dirty chat of the last test: now clean, removed (if
+    // the retry didn't remove it already).
+    expect(done).toMatchObject({ ok: true, removed: 1 + left, branches: 0, kept: 1 });
+    expect(String(done.said)).toContain(left ? "Removed 2 merged worktrees" : "Removed 1 merged worktree");
+    expect(String(done.said)).toContain(`Tidy the docs: ${b.branch} has commits that aren't in PR #14`);
+    expect(existsSync(a.dir)).toBe(false);
+    expect(hasBranch(a.branch)).toBe(true);
+    expect(existsSync(b.dir)).toBe(true);
+  } finally {
+    // Back on whatever happened above, or the next tests see the cleanup off.
+    h.store.set("wt_clean_merged", "1");
+    h.store.set("wt_clean_branch", "1");
+  }
 }, 20_000);
 
 test("phone_settings_route_reads_and_sets_the_three_toggles", async () => {
