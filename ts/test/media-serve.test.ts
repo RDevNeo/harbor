@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import sharp from "sharp";
 import { media } from "../packages/media/src/index.ts";
 import { Api, cardJson, Hub, ok, project, type ApiDeps } from "../packages/net/src/index.ts";
@@ -145,7 +145,7 @@ test("a_replys_images_kept_in_its_chats_uploads_are_what_phones_and_other_pcs_ar
   // On the chat's PC, as the reply is written (engine `textFinal` → media.adopt).
   const text = media.adopt(`Done.\n\n![The page](${shot})`, null, 9);
   const kept = media.find(text, null)[0]?.path ?? "";
-  expect(kept.startsWith(join(media.uploadsDir(), "9") + "/")).toBe(true);
+  expect(kept.startsWith(join(media.uploadsDir(), "9") + sep)).toBe(true);
   rmSync(shot);
   // A phone (or a copy's hub, asking this PC) gets the kept copy's address and its bytes.
   const shown = project([{ kind: "text", text, at: 1 }], false, [])[0];

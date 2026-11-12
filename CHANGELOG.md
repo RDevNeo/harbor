@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Windows: renaming or moving the Projects folder (or a folder holding projects) works while Harbor runs: Harbor
+  watched those folders, and Windows won't move a folder being watched; a moved worktree or chats folder is
+  followed there too.
+- Windows: a script on PATH without an extension (a `gh` or `claude` wrapper) runs, as in Git Bash.
+
 ## [0.180.19] - 2026-11-12
 
 ### Added

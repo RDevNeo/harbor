@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { blankChat, dataDir, Store } from "../packages/store/src/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), `hbt-${process.pid}-offline-`));
@@ -45,7 +45,7 @@ function start(name: string, offline: boolean): { trap: string; started: string;
 
   const entry = join(import.meta.dir, "..", "harbor.ts");
   const proc = Bun.spawn([process.execPath, "--preload", join(import.meta.dir, "trap.ts"), entry, "--background"], {
-    env: { ...env, PATH: `${join(dir, "bin")}:/usr/bin:/bin` },
+    env: { ...env, PATH: [join(dir, "bin"), "/usr/bin", "/bin", ...(process.platform === "win32" ? [process.env.PATH ?? ""] : [])].join(delimiter) },
     stdout: "ignore",
     stderr: "ignore",
   });

@@ -1,8 +1,8 @@
 // What programs Harbor starts expect to find in their environment.
 
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, extname, isAbsolute, join } from "node:path";
 import { setenv } from "./libc.ts";
 import { platform } from "./platform.ts";
 
@@ -119,10 +119,11 @@ function currentEnvForBun(): void {
     const first = cmd[0];
     let path = first;
     if (!isAbsolute(first)) {
-      // A bare name: only an npm shim needs a change (Bun runs a .cmd through cmd.exe).
+      // A bare name: an npm shim needs a change (Bun runs a .cmd through cmd.exe), and so does a #! script on PATH
+      // without an extension, which Windows doesn't look for (Git Bash finds it: so does this).
       if (/[\\/]/.test(first)) return cmd;
-      const found = findIn(first, env);
-      if (found === null || !/\.(cmd|bat)$/i.test(found)) return cmd;
+      const found = findIn(first, env) ?? scriptOnPath(first, env);
+      if (found === null || (!/\.(cmd|bat)$/i.test(found) && extname(found) !== "")) return cmd;
       path = found;
     } else if (/\.(exe|com)$/i.test(first)) {
       return cmd;
@@ -190,4 +191,25 @@ export function defaultShell(env: Env = process.env): string[] {
 export function essentialNames(p = platform()): string[] {
   if (p !== "win32") return [];
   return ["SystemRoot", "SystemDrive", "windir", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles", "ComSpec", "PATHEXT", "HOMEDRIVE", "HOMEPATH", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS"];
+}
+
+/** The first file named `name` exactly (no extension) on PATH that starts with "#!": a script Git Bash would run. */
+function scriptOnPath(name: string, env: Env): string | null {
+  for (const d of (env.PATH ?? env.Path ?? "").split(delimiter)) {
+    if (d === "") continue;
+    const p = join(d, name);
+    try {
+      if (!statSync(p).isFile()) continue;
+      const fd = openSync(p, "r");
+      try {
+        const b = Buffer.alloc(2);
+        if (readSync(fd, b, 0, 2, 0) === 2 && b.toString("latin1") === "#!") return p;
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      // not there
+    }
+  }
+  return null;
 }

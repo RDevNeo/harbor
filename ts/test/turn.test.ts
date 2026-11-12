@@ -90,7 +90,7 @@ describe("startTurn", () => {
     writeFileSync(
       bin,
       `#!/bin/sh
-cat > ${dir}/stdin
+cat > '${dir.replaceAll("\\", "/")}/stdin'
 printf '{"type":"system","subtype":"init","session_id":"s"}\\n{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"po'
 sleep 0.05
 printf 'ng"}}}\\nnot json\\n'

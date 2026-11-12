@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine, type providers } from "../packages/agents/src/index.ts";
 import { blankChat, dataDir, Store, type Chat } from "../packages/store/src/index.ts";
 import { type RunningHub, startHub } from "../hub.ts";
+import { paths as osPaths } from "../packages/os/src/index.ts";
+// The line names the folder as the window does: under the user's home as ~/… (on Windows the temp folder is there).
 
 let root: string;
 let h: RunningHub;
@@ -206,7 +208,7 @@ test("the_bars_under_a_transcript_say_a_usage_limit_and_a_project_folder_that_is
   expect([limited.limit?.can_cancel, limited.limit?.targets]).toEqual([true, [{ id: "claude", name: "Claude · C1 · " }]]);
   expect((await bars(ids.plain)).limit).toBeNull();
   const lost = await bars(ids.nofolder);
-  expect([lost.folder?.text, lost.folder?.cloning, lost.folder?.owner, lost.folder?.action]).toEqual([`gone's folder (${join(root, "gone")}) isn't on this PC.`, false, null, "Use a folder here"]);
+  expect([lost.folder?.text, lost.folder?.cloning, lost.folder?.owner, lost.folder?.action]).toEqual([`gone's folder (${osPaths.tilde(join(root, "gone"), homedir())}) isn't on this PC.`, false, null, "Use a folder here"]);
   expect((await bars(ids.plain)).folder).toBeNull();
 });
 

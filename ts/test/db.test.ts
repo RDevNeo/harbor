@@ -43,7 +43,7 @@ describe("db", () => {
   });
 
   test("the live path follows XDG_DATA_HOME", () => {
-    expect(liveDb({ XDG_DATA_HOME: "/x", HOME: "/h" })).toBe("/x/harbor/harbor.db");
+    expect(liveDb({ XDG_DATA_HOME: "/x", HOME: "/h" })).toBe(join("/x", "harbor", "harbor.db"));
     expect(liveDb({ HOME: "/h" })).toBe("/h/.local/share/harbor/harbor.db");
   });
 });

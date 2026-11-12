@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { Engine, type providers } from "../packages/agents/src/index.ts";
 import { connect, machines, mcpshim } from "../packages/mcp/src/index.ts";
 import { type Call, Hub } from "../packages/net/src/index.ts";
@@ -43,7 +43,7 @@ beforeAll(async () => {
     XDG_STATE_HOME: join(root, "state"),
     XDG_RUNTIME_DIR: join(root, "run"),
     HARBOR_SOCK: join(root, "run", "harbor.sock"),
-    PATH: `${bin}:${saved.PATH ?? ""}`,
+    PATH: `${bin}${delimiter}${saved.PATH ?? ""}`,
   });
   mkdirSync(join(root, "run"), { recursive: true });
   mkdirSync(process.env.HOME ?? "", { recursive: true });
@@ -142,12 +142,12 @@ test("a peer's project with no folder here is not shared, and a call in its name
     const share = await svc.routeMesh(call("GET", ["mesh", "v1", "share"], [], null, "peer-1"));
     expect((share?.body as { projects: { name: string; path: string }[] }).projects).toEqual([{ name: "own", path: own }]);
     const pwd = async (project: string): Promise<string> => {
-      const r = await svc.routeMesh(call("POST", ["mesh", "v1", "tool"], [], { tool: "bash", args: { command: "pwd" }, project, chat: `chat-${project}` }, "peer-1"));
+      const r = await svc.routeMesh(call("POST", ["mesh", "v1", "tool"], [], { tool: "bash", args: { command: process.platform === "win32" ? "pwd -W" : "pwd" }, project, chat: `chat-${project}` }, "peer-1"));
       const body = r?.body as { ok: boolean; content: { text: string }[] };
       expect(body.ok).toBe(true);
       return body.content.map((c) => c.text).join("").trim();
     };
-    // Real paths: macOS's temp folder is /var/..., a link to /private/var/....
+    // Real paths: macOS's temp folder is /var/..., a link to /private/var/.... (Windows: Git Bash's `pwd -W`, C:/….)
     expect(realpathSync(await pwd("not-on-this-pc"))).toBe(realpathSync(process.env.HOME ?? ""));
     expect(realpathSync(await pwd("own"))).toBe(realpathSync(own));
   } finally {

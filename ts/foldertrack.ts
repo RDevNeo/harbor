@@ -6,8 +6,8 @@
 // deleted or in the Trash. Looked at every few seconds (a stat per folder), when a watched parent
 // folder changes, and when a chat's turn is about to start in a folder that isn't there.
 import { existsSync, statSync, watch, type FSWatcher } from "node:fs";
-import { dirname, join } from "node:path";
-import { folders } from "./packages/os/src/index.ts";
+import { dirname, isAbsolute, join } from "node:path";
+import { folders, platform } from "./packages/os/src/index.ts";
 import { type Chat, projectsdir, repoDir, type Store } from "./packages/store/src/index.ts";
 import { type Engine, foldermove as fm, worktree as wt } from "./packages/agents/src/index.ts";
 import { workspace } from "./packages/mcp/src/index.ts";
@@ -116,8 +116,9 @@ export class FolderTracker {
     const chosen = projectsdir.chosen(s, this.h.home);
     if (chosen !== null) out.set(chosen, "projects");
     for (const r of s.repos()) out.set(repoDir(r), "project");
-    for (const [, v] of s.withPrefix("worktree:")) if (v.startsWith("/")) out.set(v, "worktree");
-    for (const [, v] of s.withPrefix("chat_dir:")) if (v.startsWith("/") && !out.has(v)) out.set(v, "chats");
+    // Full paths only (C:\… on Windows too).
+    for (const [, v] of s.withPrefix("worktree:")) if (isAbsolute(v)) out.set(v, "worktree");
+    for (const [, v] of s.withPrefix("chat_dir:")) if (isAbsolute(v) && !out.has(v)) out.set(v, "chats");
     return [...out].map(([path, kind]) => ({ path, kind })).sort((a, b) => a.path.length - b.path.length);
   }
 
@@ -264,6 +265,9 @@ export class FolderTracker {
 
   /** Parents of the followed folders, watched: a rename there is looked at within a second. */
   private watchParents(): void {
+    // Windows: a folder being watched can't be renamed or moved (Explorer says it's open in another program),
+    // and every Projects folder is a watched parent: there the timer alone looks.
+    if (platform() === "win32") return;
     const want = new Set<string>();
     for (const f of this.followed()) {
       const p = dirname(f.path);

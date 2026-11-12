@@ -74,9 +74,11 @@ describe("devices", () => {
     const ctx = { home: "/home/me", selfExe: () => null, sshConfig: () => [], probe: () => undefined };
     const v = deviceSshArgs(ctx, newConfig(), h);
     const joined = v.join(" ");
-    expect(joined.startsWith("-o ControlMaster=auto -o ControlPath=")).toBe(true);
-    expect(v.filter((o) => o.startsWith("ControlMaster=")).length).toBe(1);
-    expect(v.filter((o) => o.startsWith("ControlPath=")).length).toBe(1);
+    // One shared connection where ssh has them; Windows' OpenSSH hasn't (none asked for there, the agents' "no" left out too).
+    const shared = process.platform === "win32" ? 0 : 1;
+    if (shared) expect(joined.startsWith("-o ControlMaster=auto -o ControlPath=")).toBe(true);
+    expect(v.filter((o) => o.startsWith("ControlMaster=")).length).toBe(shared);
+    expect(v.filter((o) => o.startsWith("ControlPath=")).length).toBe(shared);
     expect(joined).toContain("-l me");
     expect(v.slice(-2)).toEqual(["--", ip(192, 0, 2, 5)]);
   });

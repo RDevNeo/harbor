@@ -8,6 +8,9 @@ import { type Chat, Store } from "../packages/store/src/index.ts";
 import { Engine, foldermove as fm, movechat, worktree as wt } from "../packages/agents/src/index.ts";
 import { FolderTracker } from "../foldertrack.ts";
 
+// Paths as git writes them: "/" between the parts on Windows too.
+const g = (p: string): string => p.replaceAll("\\", "/");
+
 setDefaultTimeout(30_000);
 
 const base = mkdtempSync(join(tmpdir(), "hts-foldertrack-"));
@@ -110,8 +113,8 @@ test("a renamed project: its row, chats, worktree links, Claude sessions and fol
   expect(x.store.get(`untrusted:${x.app}`)).toBeNull();
   expect(JSON.parse(x.store.get(`path_was:${x.appId}`) ?? "[]")).toEqual([x.app]);
   // The worktree's link back to its checkout, repaired.
-  expect(git(x.wt, "rev-parse", "--git-common-dir").trim()).toBe(join(app2, ".git"));
-  expect(git(app2, "worktree", "list")).toContain(x.wt);
+  expect(g(git(x.wt, "rev-parse", "--git-common-dir").trim())).toBe(g(join(app2, ".git")));
+  expect(g(git(app2, "worktree", "list"))).toContain(g(x.wt));
   expect(existsSync(join(movechat.sessionDir(x.cfg, app2), `${x.inApp.sessionId}.jsonl`))).toBe(true);
   expect(notices(x.e, x.inApp.id)).toEqual([`Project moved to ${wt.tilde(app2)}`]);
   expect(x.store.get(`worktree_note:${x.inApp.id}`)).toContain(app2);
@@ -136,7 +139,7 @@ test("the whole Projects folder moved: the setting, every project, worktree and 
   expect(x.e.chatCwd(x.e.chat(x.loose.id) as Chat)).toBe(join(to, "chats"));
   // Both ends of the worktree's link moved: repaired both ways.
   expect(git(join(to, ".worktrees", "app-fix"), "status", "--short")).toBe("");
-  expect(git(join(to, "app"), "worktree", "list")).toContain(join(to, ".worktrees", "app-fix"));
+  expect(g(git(join(to, "app"), "worktree", "list"))).toContain(g(join(to, ".worktrees", "app-fix")));
   expect(notices(x.e, x.inWt.id)).toEqual([`Worktree moved to ${wt.tilde(join(to, ".worktrees", "app-fix"))}`]);
   expect(notices(x.e, x.inNotes.id)).toEqual([`Project moved to ${wt.tilde(join(to, "notes"))}`]);
   expect(notices(x.e, x.loose.id)).toEqual([`Folder moved to ${wt.tilde(join(to, "chats"))}`]);
@@ -150,7 +153,7 @@ test("a worktree moved on its own: the chat follows it and its checkout knows wh
   renameSync(x.wt, to);
   expect(await x.t.check()).toEqual([{ from: x.wt, to, kind: "worktree" }]);
   expect(x.e.chatCwd(x.e.chat(x.inWt.id) as Chat)).toBe(to);
-  expect(git(x.app, "worktree", "list")).toContain(to);
+  expect(g(git(x.app, "worktree", "list"))).toContain(g(to));
   expect(git(to, "status", "--short")).toBe("");
 });
 

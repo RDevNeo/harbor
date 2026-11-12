@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { dataDir, Store } from "../packages/store/src/index.ts";
 import { type RunningHub, startHub } from "../hub.ts";
 import { projectSaid } from "../worktreeclean.ts";
@@ -45,7 +45,7 @@ beforeAll(async () => {
   );
   chmodSync(join(bin, "gh"), 0o755);
   Object.assign(process.env, {
-    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     HOME: join(root, "home"),
     XDG_DATA_HOME: join(root, "data"),
     XDG_STATE_HOME: join(root, "state"),
