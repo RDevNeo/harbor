@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@harbor/os": "workspace:*",
     "@harbor/store": "workspace:*",
     "markdown-it": "15.0.3"
   },

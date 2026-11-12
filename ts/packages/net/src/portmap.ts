@@ -1,5 +1,4 @@
 import { createSocket, type Socket } from "node:dgram";
-import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { isIPv4 } from "node:net";
 import { canonical, ipString, isUnspecified, parseIp } from "./ip.ts";
@@ -7,6 +6,7 @@ import type { Kv } from "./kv.ts";
 import { now as nowSecs } from "./kv.ts";
 import { socketAddr } from "./shared.ts";
 import { DEFAULT_PORT, firewallBlocksInternet, firewallFixInternet, hostPort, lanAddrs, privateIp } from "./tls.ts";
+import { sys } from "@harbor/os";
 
 const LIFETIME = 3600;
 const EVERY_MS = 20 * 60 * 1000;
@@ -70,19 +70,11 @@ export interface PortmapNet {
   forwardEveryMs: number;
 }
 
-function readOrEmpty(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-/** The real network: the router found in /proc, PCP/NAT-PMP on 5351, SSDP on 239.255.255.250:1900. */
+/** The real network: the router from the kernel's route tables, PCP/NAT-PMP on 5351, SSDP on 239.255.255.250:1900. */
 export function lanPortmapNet(): PortmapNet {
   return {
-    gatewayV4: () => gatewayV4(readOrEmpty("/proc/net/route")),
-    gatewayV6: () => gatewayV6(readOrEmpty("/proc/net/ipv6_route")),
+    gatewayV4: () => gatewayV4(sys.netTable("route") ?? ""),
+    gatewayV6: () => gatewayV6(sys.netTable("ipv6_route") ?? ""),
     localTo: localToDefault,
     lanAddrs: () => lanAddrs(),
     natPort: 5351,

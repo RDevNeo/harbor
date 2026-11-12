@@ -143,6 +143,7 @@ import { type Chat, dataDir, home, repoDir, secrets, settingsync, stateDir, Stor
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
+import { desktop } from "./packages/os/src/index.ts";
 
 export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover">;
 
@@ -259,16 +260,7 @@ async function updateRoute(u: Updater | null, call: Call, store: Store): Promise
   return s.t === "available" ? ok({ ok: true }) : { status: 202, body: { ok: true, checking: true } };
 }
 
-function downloadsDir(): string {
-  const home = process.env.HOME ?? "";
-  try {
-    const d = Bun.spawnSync(["xdg-user-dir", "DOWNLOAD"], { stdin: "ignore", stderr: "ignore" }).stdout.toString().trim();
-    if (d !== "" && d !== home && existsSync(d)) return d;
-  } catch {
-    // no xdg-user-dir
-  }
-  return join(home, "Downloads");
-}
+const downloadsDir = (): string => desktop.downloadsDir();
 
 /** The one chat whose running turn waits on a Discord join (its call has no result yet): where a captcha from a server that didn't name its chat belongs. Two or none: unknown. */
 export function discordCaller(e: Pick<Engine, "turns" | "transcript" | "chat">): Chat | undefined {
@@ -775,7 +767,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         home: home(),
         copyText: (text) => void clipboard.copyText(text),
         copyImage: (bytes) => void clipboard.copyImage(bytes),
-        open: (path) => void Bun.spawn(["xdg-open", path], { stdio: ["ignore", "ignore", "ignore"] }).exited.catch(() => undefined),
+        open: (path) => desktop.open(path),
         notify: (title, body) => notifier.post("pc", `deliver:${title}`, title, body, "", false),
         read,
       }),

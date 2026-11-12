@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
 import { newPeer, type Peer } from "./shared.ts";
+import { sys } from "@harbor/os";
 
 /** The composer's "Auto" pick of where a new chat runs: resolved to a PC at its first message. */
 export const AUTO_DEVICE = "auto";
@@ -8,19 +8,8 @@ export const RAM_WINDOW_MS = 10 * 60_000;
 /** How often each PC reads its free memory. */
 export const RAM_SAMPLE_MS = 30_000;
 
-/** Free memory in MB (`MemAvailable` of /proc/meminfo); null when it can't be read. `HARBOR_TEST_MEMAVAIL_MB` for rigs. */
-export function memAvailableMb(): number | null {
-  const forced = process.env.HARBOR_TEST_MEMAVAIL_MB;
-  if (forced !== undefined && /^\d+$/.test(forced)) return Number(forced);
-  let s = "";
-  try {
-    s = readFileSync("/proc/meminfo", "utf8");
-  } catch {
-    return null;
-  }
-  const kb = /^MemAvailable:\s+(\d+)/m.exec(s)?.[1];
-  return kb ? Math.floor(Number(kb) / 1024) : null;
-}
+/** Free memory in MB (MemAvailable); null when it can't be read. `HARBOR_TEST_MEMAVAIL_MB` for rigs. */
+export const memAvailableMb = (): number | null => sys.memAvailableMb();
 
 /** This PC's free memory, sampled every 30 s: the average over the last 10 minutes, or the current value while there are no samples yet. */
 export class RamMeter {

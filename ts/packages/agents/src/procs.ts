@@ -6,7 +6,8 @@ import { basename, dirname, join } from "node:path";
 import type { ProcRow, Store } from "@harbor/store";
 import * as detach from "./detach.ts";
 import { stateDir } from "./paths.ts";
-import { pids, procStart } from "./procfs.ts";
+import { proc } from "@harbor/os";
+import { procStart } from "./procfs.ts";
 import { childPath } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
 
@@ -66,23 +67,8 @@ export function signalGroup(sig: NodeJS.Signals, pgid: number): void {
   }
 }
 
-/** The live processes of process group `pgid` (field 5 of /proc/<pid>/stat). */
-export function group(pgid: number): number[] {
-  const out: number[] = [];
-  for (const p of pids()) {
-    let stat: string;
-    try {
-      stat = readFileSync(`/proc/${p}/stat`, "utf8");
-    } catch {
-      continue;
-    }
-    const i = stat.lastIndexOf(")");
-    if (i < 0) continue;
-    const f = stat.slice(i + 1).trim().split(/\s+/);
-    if ((f[0] ?? "Z") !== "Z" && f[2] === String(pgid)) out.push(p);
-  }
-  return out;
-}
+/** The live processes of process group `pgid`. */
+export const group = proc.group;
 
 /** Cuts `path` down to its last `keep` bytes, in place: the process writes with O_APPEND, so its next output lands after them. */
 export function trim(path: string, keep: number): void {
@@ -172,17 +158,7 @@ function rustLines(s: string): string[] {
 export const startTicks = procStart;
 
 /** The process that started at `ticks` still runs (a zombie has ended). */
-export function alive(pid: number, ticks: number): boolean {
-  let stat: string;
-  try {
-    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-  } catch {
-    return false;
-  }
-  const i = stat.lastIndexOf(")");
-  if (i >= 0 && stat.slice(i + 1).trimStart().startsWith("Z")) return false;
-  return procStart(pid) === ticks;
-}
+export const alive = proc.alive;
 
 /** First http(s) URL on this machine in a line of output. */
 export function localUrl(line: string): string | null {

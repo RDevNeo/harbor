@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { apps, control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview, newNote, scopeHas } from "./packages/net/src/index.ts";
@@ -23,6 +23,7 @@ import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
 import { autostartByDefault, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
+import { proc } from "./packages/os/src/index.ts";
 
 export interface RunOptions {
   window: boolean;
@@ -310,7 +311,7 @@ async function handedOver(file: string, oldPid: number, late: () => void, loop: 
   for (let i = 0; i < 50 && loop.wakes < 2; i++) await sleep(20);
   await sleep(50);
   handoverSay(file, "shown");
-  for (let i = 0; i < 250 && oldPid > 0 && existsSync(`/proc/${oldPid}`); i++) await sleep(20);
+  for (let i = 0; i < 250 && oldPid > 0 && proc.exists(oldPid); i++) await sleep(20);
   rmSync(file, { force: true });
   try {
     late();

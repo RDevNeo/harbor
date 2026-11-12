@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { alive } from "./procfs.ts";
+import { sys } from "@harbor/os";
 
 /**
  * A turn's way to Harbor's MCP bridge that outlives a Harbor restart. The turn's runner listens on a port of its own
@@ -57,19 +58,15 @@ export function writerAlive(o: PortOwner): boolean {
   }
 }
 
-/** Loopback listeners in /proc/net/tcp{,6}: whether every one on `port` is this user's (null: there's no /proc to ask). */
+/** Loopback listeners (the kernel's tcp tables): whether every one on `port` is this user's (null: there are no tables to ask). */
 export function listenerIsMine(port: number): boolean | null {
   const uid = process.getuid?.();
   let rows = 0;
   let mine = 0;
   let read = false;
-  for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) {
-    let text: string;
-    try {
-      text = readFileSync(f, "utf8");
-    } catch {
-      continue;
-    }
+  for (const f of ["tcp", "tcp6"] as const) {
+    const text = sys.netTable(f);
+    if (text === null) continue;
     read = true;
     for (const line of text.split("\n").slice(1)) {
       const c = line.trim().split(/\s+/);

@@ -1,0 +1,124 @@
+{
+  "packages/agents/src/detach.ts": {
+    "linux-paths": 1,
+    "session": 1
+  },
+  "packages/agents/src/paths.ts": {
+    "xdg": 1
+  },
+  "packages/agents/src/procs.ts": {
+    "process-groups": 1
+  },
+  "packages/agents/src/providers.ts": {
+    "linux-paths": 1
+  },
+  "packages/agents/src/turnscope.ts": {
+    "platform": 1,
+    "systemd": 8,
+    "xdg": 2
+  },
+  "packages/mcp/src/discordfreeze.ts": {
+    "process-groups": 1,
+    "systemd": 1
+  },
+  "packages/mcp/src/discordhost.ts": {
+    "compositor": 2,
+    "dbus": 1,
+    "process-groups": 1,
+    "systemd": 2,
+    "xdg": 5
+  },
+  "packages/mcp/src/discordrepair.ts": {
+    "xdg": 2
+  },
+  "packages/mcp/src/shell.ts": {
+    "process-groups": 1
+  },
+  "packages/media/src/clipboard.ts": {
+    "compositor": 9,
+    "xdg": 1
+  },
+  "packages/media/src/clipowner.ts": {
+    "ffi": 1,
+    "libc": 1
+  },
+  "packages/media/src/libmpv.ts": {
+    "ffi": 1,
+    "libc": 1
+  },
+  "packages/media/src/videoworker.ts": {
+    "ffi": 1,
+    "libc": 1
+  },
+  "packages/media/src/voice.ts": {
+    "audio": 3
+  },
+  "packages/net/src/devices.ts": {
+    "desktop-tools": 1
+  },
+  "packages/net/src/notify.ts": {
+    "desktop-tools": 1
+  },
+  "packages/net/src/remote.ts": {
+    "linux-paths": 1
+  },
+  "packages/store/src/limits.ts": {
+    "desktop-tools": 1
+  },
+  "packages/store/src/single.ts": {
+    "compositor": 3,
+    "xdg": 2
+  },
+  "packages/ui/src/assets.ts": {
+    "xdg": 1
+  },
+  "packages/ui/src/background.ts": {
+    "linux-paths": 1,
+    "xdg": 1
+  },
+  "packages/ui/src/fdwait.ts": {
+    "ffi": 1,
+    "libc": 1,
+    "platform": 1
+  },
+  "packages/ui/src/issuesrun.ts": {
+    "compositor": 1
+  },
+  "packages/ui/src/loop.ts": {
+    "platform": 1,
+    "procfs": 4
+  },
+  "packages/ui/src/modalopacity.ts": {
+    "compositor": 5,
+    "platform": 1
+  },
+  "packages/ui/src/shell.ts": {
+    "compositor": 1,
+    "desktop-tools": 4
+  },
+  "packages/ui/src/termrun.ts": {
+    "compositor": 1
+  },
+  "packages/ui/src/tray.ts": {
+    "dbus": 13,
+    "xdg": 1
+  },
+  "packages/ui/src/window.ts": {
+    "ffi": 1,
+    "libc": 1,
+    "platform": 1
+  },
+  "packages/update/src/native.ts": {
+    "xdg": 1
+  },
+  "run.ts": {
+    "desktop-tools": 1,
+    "xdg": 1
+  },
+  "scripts/build.ts": {
+    "xdg": 1
+  },
+  "services.ts": {
+    "xdg": 1
+  }
+}

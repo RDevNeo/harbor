@@ -2,9 +2,9 @@
 // ended, and whether its build's checks passed. `soaked.ts` tags a release only for a commit that ran
 // here long enough without a crash. One small JSON file under Harbor's data folder, written about once a
 // minute while Harbor runs.
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureDir, readJson, writeAtomic } from "./files.ts";
+import { sys } from "@harbor/os";
 
 export const HEALTH_FILE = "health.json";
 /** A run's heartbeat: how often its uptime is added up. */
@@ -103,13 +103,7 @@ function entry(h: HealthFile, commit: string, version: string, now: number): Com
   return c;
 }
 
-export function bootId(): string {
-  try {
-    return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-  } catch {
-    return "";
-  }
-}
+export const bootId = (): string => sys.bootId();
 
 const gapUptime = (from: number, to: number): number => (to > from && to - from <= MAX_GAP_MS ? to - from : 0);
 

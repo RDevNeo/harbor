@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@harbor/os": "workspace:*",
     "@harbor/store": "workspace:*",
     "@types/mdast": "4.0.4",
     "mdast-util-from-markdown": "2.1.0",

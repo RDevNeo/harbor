@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
 import type { SentVia } from "@harbor/store";
 import { type Call, type ConnPeer, MAX_AUDIO } from "./api.ts";
@@ -15,6 +14,7 @@ import { PIECE_BYTES } from "./foldercopy.ts";
 import { meshAccountJson, meshAccounts } from "./meshaccounts.ts";
 import { PROJECT_MOVES_VERSION } from "./projectmove.ts";
 import { ramOf } from "./ram.ts";
+import { sys } from "@harbor/os";
 
 /** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, the person and device kind when known, and the stable device id (`Item` user's `dev`). */
 export type Sender = [label: string, device: string, who?: string, via?: SentVia | "", dev?: string, acct?: string];
@@ -853,12 +853,10 @@ function noRoute(addr: string): boolean {
   const sa = socketAddr(addr);
   const ip = sa ? parseIp(sa.ip) : null;
   if (!ip) return false;
-  let tables;
-  try {
-    tables = { v4: readFileSync("/proc/net/route", "utf8"), v6: readFileSync("/proc/net/ipv6_route", "utf8") };
-  } catch {
-    return false;
-  }
+  const v4 = sys.netTable("route");
+  const v6 = sys.netTable("ipv6_route");
+  if (v4 === null || v6 === null) return false;
+  const tables = { v4, v6 };
   const own = Object.values(networkInterfaces())
     .flat()
     .flatMap((i): Ip[] => {

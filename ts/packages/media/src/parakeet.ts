@@ -1,8 +1,9 @@
-import { readFileSync, rmSync, statSync } from "node:fs";
+import { rmSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { dataDir } from "@harbor/store";
 import type { Part } from "./voice.ts";
+import { sys } from "@harbor/os";
 
 export const RATE = 16_000;
 
@@ -60,18 +61,7 @@ export function installed(): boolean {
 }
 
 /** Free memory in MB (`MemAvailable`; `HARBOR_TEST_MEMAVAIL_MB` for test rigs). */
-export function memAvailableMb(): number {
-  const forced = process.env.HARBOR_TEST_MEMAVAIL_MB;
-  if (forced !== undefined && /^\d+$/.test(forced)) return Number(forced);
-  let s = "";
-  try {
-    s = readFileSync("/proc/meminfo", "utf8");
-  } catch {
-    return 0;
-  }
-  const kb = /^MemAvailable:\s+(\d+)/m.exec(s)?.[1];
-  return kb ? Math.floor(Number(kb) / 1024) : 0;
-}
+export const memAvailableMb = (): number => sys.memAvailableMb() ?? 0;
 
 function threads(): number {
   const forced = process.env.HARBOR_SPEECH_THREADS;

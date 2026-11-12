@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { proc } from "@harbor/os";
 
 export const MANAGED = ".managed";
 export const RUNTIME_FILE = "harbor";
@@ -66,15 +67,7 @@ export const fresh = (p: string): string => {
 
 export const exists = existsSync;
 
-export function alive(pid: number): boolean {
-  try {
-    const s = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const rest = s.slice(s.lastIndexOf(") ") + 2);
-    return !(rest.startsWith("Z") || rest.startsWith("X"));
-  } catch {
-    return false;
-  }
-}
+export const alive = (pid: number): boolean => proc.running(pid);
 
 export function readJson<T>(p: string): T | null {
   try {

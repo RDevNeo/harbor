@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { home } from "./paths.ts";
+import { desktop } from "@harbor/os";
 
 export interface Status {
   branch: string;
@@ -119,9 +120,5 @@ function scan(dir: string, depth: number, out: string[]): void {
 }
 
 export function openUrl(url: string): void {
-  try {
-    Bun.spawn(["xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  } catch {
-    // no xdg-open: the link just doesn't open
-  }
+  desktop.open(url);
 }

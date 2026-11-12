@@ -8,7 +8,6 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   readSync,
   rmSync,
   statSync,
@@ -21,6 +20,7 @@ import { compactFirst } from "./compaction.ts";
 import { arr, at, compact, isNull, optStr, parse } from "./json.ts";
 import { lend, token, unlend } from "./oauth.ts";
 import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from "./paths.ts";
+import { proc } from "@harbor/os";
 import { alive, cmdline, myUid, ownerOf, parentOf, pids, procStart, startedAt } from "./procfs.ts";
 import { bin, KINDS, which } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
@@ -336,26 +336,8 @@ class Tail {
   }
 }
 
-/** The runner's open `<dir>/<name>` (also once deleted), as a /proc/<pid>/fd path. */
-function fdOf(pid: number, dir: string, name: string): string | undefined {
-  const want = join(dir, name);
-  let fds: string[];
-  try {
-    fds = readdirSync(`/proc/${pid}/fd`);
-  } catch {
-    return undefined;
-  }
-  for (const fd of fds) {
-    const p = `/proc/${pid}/fd/${fd}`;
-    try {
-      const t = readlinkSync(p);
-      if (t === want || t === `${want} (deleted)`) return p;
-    } catch {
-      // an fd closed meanwhile
-    }
-  }
-  return undefined;
-}
+/** The runner's open `<dir>/<name>` (also once deleted), as a path that reads it. */
+const fdOf = (pid: number, dir: string, name: string): string | undefined => proc.openFile(pid, dir, name);
 
 /** What the runner wrote to `exit`: "" while there is none (or it is being written). */
 function exitCode(dir: string): string {

@@ -1,7 +1,7 @@
-import { dlopen, FFIType } from "bun:ffi";
 import { PUBKEY, parsePublicKey, type PublicKey } from "./minisign.ts";
 import { installDir } from "./files.ts";
 import { parseGlibc, RUNTIME_VERSION, VERSION } from "./version.ts";
+import { libc } from "@harbor/os";
 
 export type Arch = "x86_64" | "aarch64";
 
@@ -87,12 +87,8 @@ export function defaultConfig(env: Record<string, string | undefined> = process.
 }
 
 function hostGlibc(): readonly [number, number] | null {
-  try {
-    const lib = dlopen("libc.so.6", { gnu_get_libc_version: { args: [], returns: FFIType.cstring } });
-    return parseGlibc(String(lib.symbols.gnu_get_libc_version()));
-  } catch {
-    return null;
-  }
+  const g = libc.glibc();
+  return g === null ? null : parseGlibc(g.version);
 }
 
 const keys = new Map<string, Promise<PublicKey>>();

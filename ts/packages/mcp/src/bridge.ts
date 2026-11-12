@@ -16,6 +16,7 @@ import { ackFor, asked, cached, flush, idleFor, limits, remember, rememberAck, r
 import { answer as teamAnswer, callApp } from "./mcpshim.ts";
 import { selfExe } from "./sys.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
+import { proc } from "@harbor/os";
 
 export { OUTPUT_MAX, shell, token };
 
@@ -970,18 +971,8 @@ export function parsePortFile(text: string): PortOwner | null {
 
 export const portLine = (port: number, pid: number, start: number | null): string => `${port} ${pid}${start === null ? "" : ` ${start}`}\n`;
 
-/** /proc stat field 22 of a process: when it started, in clock ticks since boot (null off Linux). */
-function procStart(pid: number | "self"): number | null {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const f = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
-    if (f[0] === "Z" || f[0] === "X") return null;
-    const v = f[19];
-    return v !== undefined && /^\d+$/.test(v) ? Number(v) : null;
-  } catch {
-    return null;
-  }
-}
+/** When a running process started, in clock ticks since boot (null for an ended one, or where that can't be read). */
+const procStart = (pid: number | "self"): number | null => proc.liveStart(pid) ?? null;
 
 /** The process that wrote the file still runs (an unknown writer counts as running). */
 export function ownerAlive(o: PortOwner): boolean {

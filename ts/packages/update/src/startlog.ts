@@ -1,7 +1,7 @@
-import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, existsSync, openSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { isatty } from "node:tty";
+import { libc } from "@harbor/os";
 
 export const START_LOG = "start.log";
 export const FAILED_LOG = "failed-start.log";
@@ -11,21 +11,16 @@ export const FAILED_LOG = "failed-start.log";
  * the install folder, then back where it was. A terminal keeps it.
  */
 export function captureStart(dir: string, confirmed: () => boolean): void {
-  if (process.platform !== "linux" || isatty(2)) return;
-  const libc = dlopen("libc.so.6", {
-    dup: { args: [FFIType.i32], returns: FFIType.i32 },
-    dup2: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-    close: { args: [FFIType.i32], returns: FFIType.i32 },
-  });
+  if (!libc.redirectable() || isatty(2)) return;
   let fd: number;
   try {
     fd = openSync(join(dir, START_LOG), "w", 0o600);
   } catch {
     return;
   }
-  const saved = libc.symbols.dup(2);
-  if (saved < 0 || libc.symbols.dup2(fd, 2) < 0) {
-    if (saved >= 0) libc.symbols.close(saved);
+  const saved = libc.dup(2) ?? -1;
+  if (saved < 0 || (libc.dup2(fd, 2) ?? -1) < 0) {
+    if (saved >= 0) libc.close(saved);
     closeSync(fd);
     return;
   }
@@ -33,8 +28,8 @@ export function captureStart(dir: string, confirmed: () => boolean): void {
   const t = setInterval(() => {
     if (!confirmed()) return;
     clearInterval(t);
-    libc.symbols.dup2(saved, 2);
-    libc.symbols.close(saved);
+    libc.dup2(saved, 2);
+    libc.close(saved);
   }, 500);
   t.unref();
 }

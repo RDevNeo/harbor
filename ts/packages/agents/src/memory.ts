@@ -1,6 +1,5 @@
-// What a chat's processes and this PC hold in memory, read from /proc only when something shows it.
-import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+// What a chat's processes and this PC hold in memory, read only when something shows it.
+import { proc, sys } from "@harbor/os";
 import type { Kind } from "./providers.ts";
 
 /** Bytes. */
@@ -13,15 +12,12 @@ export interface Ram {
 
 /** /proc/meminfo: used is what isn't available (the kernel's own estimate, caches it can drop aside). */
 export function parseMeminfo(text: string): Ram | null {
-  const kb = (key: string): number | null => {
-    const m = text.match(new RegExp(`^${key}:\\s+(\\d+)\\s*kB`, "m"));
-    return m?.[1] === undefined ? null : Number(m[1]) * 1024;
-  };
-  const total = kb("MemTotal");
-  const avail = kb("MemAvailable") ?? kb("MemFree");
-  if (total === null || avail === null || total <= 0) return null;
-  const swapTotal = kb("SwapTotal") ?? 0;
-  return { total, used: Math.max(0, total - avail), swapTotal, swapUsed: Math.max(0, swapTotal - (kb("SwapFree") ?? swapTotal)) };
+  const m = sys.parseMeminfo(text);
+  return m === null ? null : ramOf(m);
+}
+
+function ramOf(m: sys.Memory): Ram {
+  return { total: m.total, used: Math.max(0, m.total - m.available), swapTotal: m.swapTotal, swapUsed: Math.max(0, m.swapTotal - m.swapFree) };
 }
 
 /** The shell line that prints a device's RAM over SSH: /proc/meminfo on Linux, sysctl and vm_stat on macOS. */
@@ -78,11 +74,8 @@ export function parseDeviceRam(text: string): Ram | null {
 }
 
 export function ram(): Ram | null {
-  try {
-    return parseMeminfo(readFileSync("/proc/meminfo", "utf8"));
-  } catch {
-    return null;
-  }
+  const m = sys.memory();
+  return m === null ? null : ramOf(m);
 }
 
 /** Every process once: its resident bytes, its children and the members of each process group. */
@@ -94,46 +87,18 @@ export interface ProcTable {
 
 /** /proc/<pid>/stat after "(comm)": ppid is field 4, pgrp 5, rss (pages) 24. */
 export function parseStat(stat: string): { ppid: number; pgrp: number; pages: number } | null {
-  const i = stat.lastIndexOf(")");
-  if (i < 0) return null;
-  const f = stat.slice(i + 1).trim().split(/\s+/);
-  const n = (k: number): number => Number(f[k]);
-  const out = { ppid: n(1), pgrp: n(2), pages: n(21) };
-  return Number.isInteger(out.ppid) && Number.isInteger(out.pgrp) && Number.isInteger(out.pages) ? out : null;
-}
-
-let pageBytes: number | null = null;
-
-function pageSize(): number {
-  if (pageBytes === null) {
-    const out = spawnSync("getconf", ["PAGESIZE"], { encoding: "utf8", timeout: 2000 }).stdout ?? "";
-    pageBytes = /^\d+\s*$/.test(out) ? Number(out) : 4096;
-  }
-  return pageBytes;
+  const s = proc.parseStat(stat);
+  return s !== undefined && Number.isInteger(s.rssPages) ? { ppid: s.ppid, pgrp: s.pgid, pages: s.rssPages } : null;
 }
 
 export function procTable(): ProcTable {
   const t: ProcTable = { rss: new Map(), kids: new Map(), groups: new Map() };
-  let names: string[];
-  try {
-    names = readdirSync("/proc");
-  } catch {
-    return t;
-  }
-  const page = pageSize();
-  for (const n of names) {
-    if (!/^\d+$/.test(n)) continue;
-    let s;
-    try {
-      s = parseStat(readFileSync(`/proc/${n}/stat`, "utf8"));
-    } catch {
-      continue;
-    }
-    if (!s) continue;
-    const pid = Number(n);
-    t.rss.set(pid, s.pages * page);
+  const page = proc.pageSize();
+  for (const [pid, s] of proc.table()) {
+    if (!Number.isInteger(s.rssPages)) continue;
+    t.rss.set(pid, s.rssPages * page);
     push(t.kids, s.ppid, pid);
-    push(t.groups, s.pgrp, pid);
+    push(t.groups, s.pgid, pid);
   }
   return t;
 }

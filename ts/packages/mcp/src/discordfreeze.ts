@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { proc } from "@harbor/os";
 
 /** Reclaimed a little at a time: a tool call shouldn't wait for it, and all at once is hard on a PC. */
 const STEP = "32M";
@@ -20,28 +21,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** `leader`'s process group and everything under it. */
 export function tree(leader: number): number[] {
-  const all: [pid: number, ppid: number, pgrp: number][] = [];
-  let names: string[] = [];
-  try {
-    names = readdirSync("/proc");
-  } catch {
-    return [];
-  }
-  for (const name of names) {
-    const pid = Number(name);
-    if (!Number.isInteger(pid)) continue;
-    let st: string;
-    try {
-      st = readFileSync(`/proc/${pid}/stat`, "utf8");
-    } catch {
-      continue;
-    }
-    // pid (comm) state ppid pgrp ...: comm can hold anything, so from the last ')'.
-    const rest = st.slice(st.lastIndexOf(")") + 1).trim().split(/\s+/);
-    const ppid = Number.parseInt(rest[1] ?? "", 10);
-    const pgrp = Number.parseInt(rest[2] ?? "", 10);
-    if (Number.isFinite(ppid) && Number.isFinite(pgrp)) all.push([pid, ppid, pgrp]);
-  }
+  const all: [pid: number, ppid: number, pgrp: number][] = [...proc.table()].map(([pid, s]) => [pid, s.ppid, s.pgid]);
   const set = new Set(all.filter((p) => p[0] === leader || p[2] === leader).map((p) => p[0]));
   for (;;) {
     const more = all.filter((p) => !set.has(p[0]) && set.has(p[1])).map((p) => p[0]);
@@ -62,7 +42,9 @@ function cgroups(pids: number[]): string[] {
   const found = new Set<string>();
   for (const p of pids) {
     try {
-      const cg = cgroupIn(readFileSync(`/proc/${p}/cgroup`, "utf8"), CGROUP_ROOT);
+      const text = proc.cgroupText(p);
+      if (text === undefined) continue;
+      const cg = cgroupIn(text, CGROUP_ROOT);
       if (cg !== undefined) found.add(cg);
     } catch {
       continue;

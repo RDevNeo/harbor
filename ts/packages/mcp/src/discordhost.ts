@@ -1,7 +1,6 @@
-import { dlopen, FFIType } from "bun:ffi";
 import { randomBytes } from "node:crypto";
 import { type ChildProcess, spawn } from "node:child_process";
-import { closeSync, openSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -10,6 +9,7 @@ import * as repair from "./discordrepair.ts";
 import { type Held, freeze as freezeTree, heldWord, killLeftOver, reclaim as reclaimMemory, thaw as thawHeld, type StopFlag } from "./discordfreeze.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
+import { libc, proc, sys } from "@harbor/os";
 
 export { account, notice } from "./discordsetup.ts";
 export type { Account } from "./discordsetup.ts";
@@ -379,7 +379,7 @@ export class Policy {
   }
 }
 
-/** Whether /proc/meminfo's text shows any swap: a disk's, or zram. */
+/** Whether /proc/meminfo's text shows any swap: a disk's, or zram (kept for its tests: hasSwap asks @harbor/os). */
 export function swapIn(meminfo: string): boolean {
   for (const l of meminfo.split("\n")) {
     if (l.startsWith("SwapTotal:")) return (Number.parseInt(l.slice(10).trim().split(/\s+/)[0] ?? "", 10) || 0) > 0;
@@ -390,11 +390,7 @@ export function swapIn(meminfo: string): boolean {
 /** Asked each time, as swap can come and go. A rig stands in for a PC without it. */
 export function hasSwap(): boolean {
   if (process.env.HARBOR_DISCORD_NO_SWAP !== undefined) return false;
-  try {
-    return swapIn(readFileSync("/proc/meminfo", "utf8"));
-  } catch {
-    return false;
-  }
+  return (sys.memory()?.swapTotal ?? 0) > 0;
 }
 
 
@@ -1768,13 +1764,7 @@ export class Host {
   }
 }
 
-function exeDeleted(): boolean {
-  try {
-    return readlinkSync("/proc/self/exe").endsWith(" (deleted)");
-  } catch {
-    return process.execPath.endsWith(" (deleted)");
-  }
-}
+const exeDeleted = (): boolean => proc.selfExeReplaced();
 
 /** How long a tool may take: waits as long as they ask, uploads and typing pauses a while. */
 export function callWait(name: string, args: Json): number {
@@ -1853,22 +1843,20 @@ export function statusOffline(): Json {
 }
 
 
-const libc = dlopen("libc.so.6", { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
-const LOCK_EX = 2;
-const LOCK_NB = 4;
-
 /** The lock fd, or undefined when another host holds it for the next two seconds. */
 export async function takeLock(path: string): Promise<number | undefined> {
   const fd = openSync(path, "a+", 0o600);
   const until = Date.now() + 2000;
-  while (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) !== 0) {
+  for (;;) {
+    const got = libc.flock(fd, libc.LOCK_EX | libc.LOCK_NB);
+    // null: no libc to lock with; one host is all there can be then.
+    if (got === 0 || got === null) return fd;
     if (Date.now() > until) {
       closeSync(fd);
       return undefined;
     }
     await sleep(50);
   }
-  return fd;
 }
 
 export interface Running {
@@ -1957,7 +1945,7 @@ export async function run(): Promise<number> {
   const probe = await takeLock(join(root, "h.lock"));
   if (probe === undefined) return 0;
   closeSync(probe);
-  if (Number.isFinite(pid) && safeRead(`/proc/${pid}/cmdline`).includes(setup.shellDir())) killLeftOver(pid);
+  if (Number.isFinite(pid) && (proc.cmdline(pid) ?? []).join("\0").includes(setup.shellDir())) killLeftOver(pid);
   rmSync(leftOverPath(), { force: true });
   rmSync(join(root, "scratch"), { recursive: true, force: true });
   rmSync(sock, { force: true });

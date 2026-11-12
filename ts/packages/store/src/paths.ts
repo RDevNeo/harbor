@@ -1,22 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { paths } from "@harbor/os";
 
 type Env = Record<string, string | undefined>;
 
-export function home(env: Env = process.env): string {
-  return env.HOME || homedir() || "/";
-}
+export const home = (env: Env = process.env): string => paths.home(env);
 
 /** Harbor's data on this computer: harbor.db and the app sign-ins under `apps/`. */
 export function dataDir(env: Env = process.env): string {
-  return join(env.XDG_DATA_HOME || join(home(env), ".local", "share"), "harbor");
+  return join(paths.dataHome(env), "harbor");
 }
 
 /** Harbor's state on this computer (running turns, process logs), owner-only. */
 export function stateDir(env: Env = process.env): string {
-  return privateDir(join(env.XDG_STATE_HOME || join(home(env), ".local", "state"), "harbor"));
+  return privateDir(join(paths.stateHome(env), "harbor"));
 }
 
 export function privateDir(p: string): string {
@@ -55,8 +53,9 @@ export function newUuid(): string {
  */
 export function runDir(env: Env = process.env): string {
   const uid = process.getuid?.() ?? -1;
-  const runtime = env.XDG_RUNTIME_DIR && env.XDG_RUNTIME_DIR.startsWith("/") && existsSync(env.XDG_RUNTIME_DIR) ? env.XDG_RUNTIME_DIR : undefined;
-  const base = runtime ?? "/dev/shm";
+  const rt = paths.runtimeDir(env);
+  const runtime = rt !== undefined && existsSync(rt) ? rt : undefined;
+  const base = runtime ?? paths.ramBase();
   const ours = (p: string): boolean => {
     try {
       const m = lstatSync(p);

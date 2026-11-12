@@ -5,6 +5,7 @@
 // outlive a Harbor reload. Without systemd --user (macOS, Windows, containers) turns start as before.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { proc } from "@harbor/os";
 
 export const SLICE = "harbor-turns.slice";
 
@@ -86,7 +87,7 @@ function ownUnit(): string | undefined {
 /** The cgroup v2 path of a process ("self" or a pid). */
 function cgroupOf(pid: number | "self"): string | undefined {
   try {
-    const line = readFileSync(`/proc/${pid}/cgroup`, "utf8")
+    const line = (proc.cgroupText(pid) ?? "")
       .split("\n")
       .find((l) => l.startsWith("0::"));
     return line === undefined ? undefined : line.slice(3);

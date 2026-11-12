@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -9,6 +8,7 @@ import { peerDevices, type Allowed, type Me, type PeerDevice } from "./shared.ts
 import { sha256Hex, short, signWith, spkiOf, type Identity } from "./tls.ts";
 import type { Vault } from "./vault.ts";
 import { wire, type Json } from "./wire.ts";
+import { desktop } from "@harbor/os";
 
 /** Clerk's Frontend API of Harbor's Clerk app (OAuth endpoints). */
 export const CLERK_URL = "https://maximum-feline-2818.clerk.accounts.dev";
@@ -1386,13 +1386,8 @@ export class AccountService {
       this.o.open(url);
       return;
     }
-    try {
-      const p = spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { stdio: "ignore", detached: true });
-      p.on("error", () => {});
-      p.unref();
-    } catch {
-      // The URL is in the status, to open by hand.
-    }
+    // Without an opener the URL is still in the status, to open by hand.
+    desktop.open(url);
   }
 
   private async finishSignIn(code: string, redirect: string, verifier: string): Promise<void> {

@@ -1,22 +1,15 @@
 // One Harbor per session: an flock on `harbor.lock`, beside the control socket. The kernel
 // drops the lock when its holder dies, so a crash never blocks the next start.
 
-import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, ftruncateSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { createConnection } from "node:net";
 import { runDir } from "./paths.ts";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { desktop, libc } from "@harbor/os";
 
 /** Set by a restart (reload.ts): the pid of the process that is leaving. The Rust app's exec keeps its pid; the runtime starts a new process. */
 export const RELOADED_PID = "HARBOR_RELOADED_PID";
-
-const LOCK_EX = 2;
-const LOCK_NB = 4;
-
-const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
-  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-});
 
 /** The control socket: HARBOR_SOCK, else harbor.sock in the runtime folder. */
 export function socketPath(env: Record<string, string | undefined> = process.env): string {
@@ -43,7 +36,9 @@ export async function acquire(env: Record<string, string | undefined> = process.
   const reloaded = Number(env[RELOADED_PID]) > 0;
   const deadline = Date.now() + (waitMs ?? (reloaded ? 5000 : 0));
   for (;;) {
-    if (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) === 0) {
+    const got = libc.flock(fd, libc.LOCK_EX | libc.LOCK_NB);
+    // null: no libc to lock with; start, as without a lock file.
+    if (got === 0 || got === null) {
       ftruncateSync(fd, 0);
       writeSync(fd, `${process.pid}\n`, 0);
       held = fd;
@@ -106,19 +101,7 @@ export function restartRunning(env: Record<string, string | undefined> = process
 
 /** Raises this process's window through the compositor (Wayland clients can't raise themselves). False when there is no compositor IPC to ask. */
 export function raise(env: Record<string, string | undefined> = process.env): boolean {
-  const pid = process.pid;
-  if (env.HYPRLAND_INSTANCE_SIGNATURE) {
-    const hypr = (args: string[]): boolean => {
-      const r = spawnSync("hyprctl", args, { encoding: "utf8" });
-      return !r.error && r.stdout.trim() === "ok";
-    };
-    return hypr(["dispatch", `hl.dsp.focus({ window = "pid:${pid}" })`]) || hypr(["dispatch", "focuswindow", `pid:${pid}`]);
-  }
-  if (env.SWAYSOCK) {
-    const r = spawnSync("swaymsg", [`[pid=${pid}] focus`], { encoding: "utf8" });
-    return !r.error && r.status === 0;
-  }
-  return false;
+  return desktop.raise(env);
 }
 
 interface HyprClient {

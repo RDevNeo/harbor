@@ -16,6 +16,7 @@ import { createServer as tcpServer, type Server as TcpServer, type Socket } from
 import { Duplex } from "node:stream";
 import { connect as tlsConnect, TLSSocket } from "node:tls";
 import { canonical, ipString, isLoopback, isUnspecified, linkLocal, parseIp, word, type Ip } from "./ip.ts";
+import { sys } from "@harbor/os";
 
 export const DEFAULT_PORT = 47930;
 /** discover.rs's UDP port. */
@@ -433,7 +434,7 @@ export function interfaces(): [string, string][] {
   const out: [string, string][] = [];
   let temp: string[] = [];
   try {
-    temp = temporaryV6(readFileSync("/proc/net/if_inet6", "utf8"));
+    temp = temporaryV6(sys.netTable("if_inet6") ?? "");
   } catch {
     temp = [];
   }

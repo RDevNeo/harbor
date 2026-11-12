@@ -11,6 +11,15 @@ slint-ui's, patched so a compiled UI doesn't keep the compiler's state (`slint/`
 Bun (`cd ts && bun install && bunx tsc --noEmit && bun test`). `scripts/boat/check` runs the same on
 a clean sandbox and builds the release executable. Everything else keeps the boat.dev rule below.
 
+## The OS goes through `@harbor/os`
+
+`ts/packages/os` is the only place that may look at `process.platform`, `/proc`, libc (`bun:ffi`), the
+compositor, the desktop's tools (`xdg-open`, `notify-send`…), systemd, D-Bus or the XDG folders: the rest of
+`ts/` calls its functions (`proc`, `sys`, `libc`, `desktop`, `paths`), so Windows and macOS can get their
+own implementations later without forking features. `packages/os/test/boundary.test.ts` fails on any new
+direct call elsewhere; what isn't moved yet is counted in `packages/os/boundary.json`, and those counts only
+go down (`bun packages/os/test/boundary.ts --write` lowers them after you move something).
+
 ## Follow main and soaked releases
 
 A PC with Follow main on (`ts/packages/update/src/followmain.ts`) builds and runs every main commit that

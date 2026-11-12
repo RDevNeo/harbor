@@ -19,6 +19,7 @@
       "name": "@harbor/agents",
       "version": "0.0.0",
       "dependencies": {
+        "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
       },
     },
@@ -28,6 +29,7 @@
       "dependencies": {
         "@harbor/agents": "workspace:*",
         "@harbor/net": "workspace:*",
+        "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
       },
     },
@@ -35,6 +37,7 @@
       "name": "@harbor/media",
       "version": "0.0.0",
       "dependencies": {
+        "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
         "@types/mdast": "4.0.4",
         "mdast-util-from-markdown": "2.1.0",
@@ -50,6 +53,7 @@
       "name": "@harbor/net",
       "version": "0.0.0",
       "dependencies": {
+        "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
         "markdown-it": "15.0.3",
       },
@@ -57,9 +61,16 @@
         "@harbor/agents": "workspace:*",
       },
     },
+    "packages/os": {
+      "name": "@harbor/os",
+      "version": "0.0.0",
+    },
     "packages/store": {
       "name": "@harbor/store",
       "version": "0.0.0",
+      "dependencies": {
+        "@harbor/os": "workspace:*",
+      },
     },
     "packages/ui": {
       "name": "@harbor/ui",
@@ -69,6 +80,7 @@
         "@harbor/mcp": "workspace:*",
         "@harbor/media": "workspace:*",
         "@harbor/net": "workspace:*",
+        "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
         "@xterm/headless": "6.0.0",
         "qrcode": "1.5.4",
@@ -79,6 +91,7 @@
       "name": "@harbor/update",
       "version": "0.0.0",
       "dependencies": {
+        "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
       },
     },
@@ -93,6 +106,8 @@
     "@harbor/media": ["@harbor/media@workspace:packages/media"],
 
     "@harbor/net": ["@harbor/net@workspace:packages/net"],
+
+    "@harbor/os": ["@harbor/os@workspace:packages/os"],
 
     "@harbor/store": ["@harbor/store@workspace:packages/store"],
 
