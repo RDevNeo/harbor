@@ -17,3 +17,4 @@ export * as clipboard from "./clipboard.ts";
 export * as tray from "./tray.ts";
 export * as autostart from "./autostart.ts";
 export * as audio from "./audio.ts";
+export * as notify from "./notify.ts";

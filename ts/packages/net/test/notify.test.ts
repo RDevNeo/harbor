@@ -361,3 +361,30 @@ test("a notifier that isn't installed fails quietly: no unhandled error", async 
     process.env.PATH = saved;
   }
 });
+
+test("notify-send's arguments, as macOS's notifications read them", async () => {
+  const { notifySendArgs } = await import("../src/notify.ts");
+  expect(notifySendArgs(["-a", "Harbor", "-p", "-u", "critical", "--replace-id=7", "-h", "boolean:suppress-sound:true", "-h", "boolean:transient:true", "-A", "default=Open", "Done (2)", "The build passed"])).toEqual({
+    title: "Done (2)",
+    body: "The build passed",
+    replace: 7,
+    quiet: true,
+    actions: ["default"],
+  });
+  expect(notifySendArgs(["-a", "Harbor", "Test", "Works"])).toEqual({ title: "Test", body: "Works", replace: null, quiet: false, actions: [] });
+});
+
+test("macOS's stand-in speaks notify-send's protocol: an id, then the click", async () => {
+  const { osNotifySend } = await import("../src/notify.ts");
+  const p = osNotifySend(["-a", "Harbor", "-p", "-A", "default=Open", "T", "B"]);
+  if (!p) throw new Error("no proc");
+  const it = p.lines[Symbol.asyncIterator]();
+  expect(String((await it.next()).value)).toMatch(/^\d+$/);
+  p.kill();
+  await p.exited;
+  expect((await it.next()).done).toBe(true);
+  const once = osNotifySend(["-a", "Harbor", "--replace-id=42", "T", "B"]);
+  const first = await once?.lines[Symbol.asyncIterator]().next();
+  expect(String(first?.value)).toBe("42");
+  await once?.exited;
+});

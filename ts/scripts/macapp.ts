@@ -39,6 +39,30 @@ export function infoPlist(version: string): string {
 `;
 }
 
+/**
+ * The LaunchAgent the bundle carries for start at login (os.autostart registers it with SMAppService, so
+ * Login Items shows it as Harbor): Harbor in the background, from inside the bundle (BundleProgram).
+ */
+export function loginAgent(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${APP_ID}</string>
+  <key>BundleProgram</key><string>Contents/MacOS/harbor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>Contents/MacOS/harbor</string>
+    <string>--background</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+`;
+}
+
 /** An .icns file of PNGs (128 to 1024 px) drawn from Harbor's SVG icon. */
 export async function icns(svg: Uint8Array): Promise<Buffer> {
   const entries: Buffer[] = [];
@@ -69,6 +93,8 @@ export async function makeApp(exe: string, out: string, version: string, svgPath
   writeFileSync(join(contents, "Resources", "harbor.icns"), await icns(await Bun.file(svgPath).bytes()));
   writeFileSync(join(contents, "Info.plist"), infoPlist(version));
   writeFileSync(join(contents, "PkgInfo"), "APPL????");
+  mkdirSync(join(contents, "Library", "LaunchAgents"), { recursive: true });
+  writeFileSync(join(contents, "Library", "LaunchAgents", `${APP_ID}.plist`), loginAgent());
   return app;
 }
 

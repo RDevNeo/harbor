@@ -1,6 +1,6 @@
 // A small Objective-C bridge for macOS (bun:ffi): classes, selectors and objc_msgSend called with the
 // argument types each message needs. Loaded only on macOS (and only by the modules that need AppKit).
-import { CFunction, CString, dlopen, FFIType, JSCallback, type Pointer, ptr, toArrayBuffer } from "bun:ffi";
+import { CFunction, CString, dlopen, FFIType, JSCallback, type Pointer, ptr, read, toArrayBuffer } from "bun:ffi";
 
 const objc = dlopen("/usr/lib/libobjc.A.dylib", {
   objc_getClass: { args: [FFIType.cstring], returns: FFIType.ptr },
@@ -166,6 +166,81 @@ export function actionClass(name: string, method: string, f: (sender: Id) => voi
   const cb = new JSCallback((_self: Id, _cmd: Id, sender: Id) => f(sender), { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.void });
   callbacks.push(cb);
   if (!objc.symbols.class_addMethod(c, sel(method), cb.ptr, Buffer.from("v@:@\0"))) throw new Error(`couldn't add ${method} to ${name}`);
+  objc.symbols.objc_registerClassPair(c);
+  return c;
+}
+
+// Blocks (the ^(…){…} closures Apple's APIs take): a global block in memory whose invoke is a JSCallback.
+const sys = dlopen("/usr/lib/libSystem.B.dylib", {
+  dlopen: { args: [FFIType.cstring, FFIType.i32], returns: FFIType.ptr },
+  dlsym: { args: [FFIType.ptr, FFIType.cstring], returns: FFIType.ptr },
+}).symbols;
+const BLOCK_IS_GLOBAL = 1 << 28;
+let globalBlockIsa: Pointer | null = null;
+const blocks: { mem: Uint8Array; desc: Uint8Array; cb: JSCallback }[] = [];
+
+/**
+ * A block that calls `f` with its arguments (after the block itself), typed `args` → `returns`. Apple may
+ * call it on any thread: the callback is threadsafe (it runs on Bun's thread). It lives as long as the process.
+ */
+export function block(args: FFIType[], returns: FFIType, f: (...a: never[]) => unknown): Pointer {
+  if (globalBlockIsa === null) {
+    const h = sys.dlopen(Buffer.from("/usr/lib/libSystem.B.dylib\0"), 1) as Pointer | null;
+    globalBlockIsa = sys.dlsym(h, Buffer.from("_NSConcreteGlobalBlock\0")) as Pointer | null;
+    if (globalBlockIsa === null) throw new Error("no _NSConcreteGlobalBlock");
+  }
+  const cb = new JSCallback((_blk: Pointer, ...a: never[]) => f(...a), { args: [FFIType.ptr, ...args], returns, threadsafe: true });
+  const desc = new Uint8Array(16);
+  new DataView(desc.buffer).setBigUint64(8, 32n, true);
+  const mem = new Uint8Array(32);
+  const v = new DataView(mem.buffer);
+  v.setBigUint64(0, BigInt(globalBlockIsa), true);
+  v.setInt32(8, BLOCK_IS_GLOBAL, true);
+  v.setBigUint64(16, BigInt(cb.ptr as number), true);
+  v.setBigUint64(24, BigInt(ptr(desc)), true);
+  blocks.push({ mem, desc, cb });
+  return ptr(mem);
+}
+
+/** Loads a system framework by path (its classes register with the Objective-C runtime). */
+export function loadFramework(path: string): void {
+  if (sys.dlopen(Buffer.from(`${path}\0`), 1) === null) throw new Error(`couldn't load ${path}`);
+}
+
+/** Calls a block Apple handed over (a completion handler), with one integer argument or none. */
+export function callBlock(b: Pointer | null, n?: number): void {
+  if (b === null) return;
+  const invoke = read.ptr(b, 16) as Pointer;
+  if (n === undefined) CFunction({ ptr: invoke, args: [P], returns: FFIType.void })(b);
+  else CFunction({ ptr: invoke, args: [P, FFIType.u64], returns: FFIType.void })(b, n);
+}
+
+/** [recv sel:a b:(NSUInteger)n …] shapes the notification center needs. */
+const sendVoidU64Ptr = send([FFIType.u64, P], FFIType.void);
+const sendVoidPtrPtr = send([P, P], FFIType.void);
+const sendIdIdIdId = send([P, P, P], P);
+export const callU64Block = (recv: Id, name: string, n: number, b: Pointer | null): void => void sendVoidU64Ptr(recv, sel(name), n, b);
+export const callVoid2 = (recv: Id, name: string, a: Id, b: Pointer | null): void => void sendVoidPtrPtr(recv, sel(name), a, b);
+export const call3 = (recv: Id, name: string, a: Id, b: Id, c: Id): Id => sendIdIdIdId(recv, sel(name), a, b, c) as Id;
+
+/**
+ * A new NSObject subclass with methods whose JavaScript gets every object argument after self and _cmd.
+ * `types` is each method's Objective-C type string ("v@:@@@?" and such).
+ */
+export function delegateClass(name: string, methods: { sel: string; types: string; args: number; f: (...a: (Pointer | null)[]) => void }[]): Pointer {
+  const existing = objc.symbols.objc_getClass(Buffer.from(`${name}\0`)) as Pointer | null;
+  if (existing !== null) return existing;
+  const c = objc.symbols.objc_allocateClassPair(cls("NSObject"), Buffer.from(`${name}\0`), 0) as Pointer | null;
+  if (c === null) throw new Error(`couldn't make class ${name}`);
+  for (const m of methods) {
+    const cb = new JSCallback((_self: Pointer, _cmd: Pointer, ...a: (Pointer | null)[]) => m.f(...a), {
+      args: [FFIType.ptr, FFIType.ptr, ...Array<FFIType>(m.args).fill(FFIType.ptr)],
+      returns: FFIType.void,
+      threadsafe: true,
+    });
+    callbacks.push(cb);
+    if (!objc.symbols.class_addMethod(c, sel(m.sel), cb.ptr, Buffer.from(`${m.types}\0`))) throw new Error(`couldn't add ${m.sel} to ${name}`);
+  }
   objc.symbols.objc_registerClassPair(c);
   return c;
 }

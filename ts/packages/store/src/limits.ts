@@ -8,6 +8,7 @@ import { f64Json } from "./item.ts";
 import { home, now as unixNow } from "./paths.ts";
 import type { Chat, Store } from "./store.ts";
 import { UsageCtl } from "./usage_ctl.ts";
+import { notify as osNotify } from "@harbor/os";
 
 export const RESUME = "[harbor] Your usage limit reset. Continue the task from where you stopped.";
 /** A chat moved to another account mid-task (a switch by hand or an automatic one). */
@@ -289,6 +290,8 @@ export function nextBlock(prev: Block | undefined, kind: string, resetsAt: numbe
 }
 
 export function notify(title: string, body: string): void {
+  // macOS (inside Harbor.app): its own notifications.
+  if (osNotify.available()) return osNotify.post({ id: `harbor-limits-${Date.now()}`, title, body, sound: true });
   try {
     const p = spawn("notify-send", ["-a", "Harbor", title, body], { stdio: "ignore", detached: true });
     p.on("error", () => {});

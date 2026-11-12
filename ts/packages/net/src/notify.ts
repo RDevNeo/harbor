@@ -5,6 +5,8 @@ import { spawn } from "node:child_process";
 import { ALIVE_WAIT_MS } from "./api.ts";
 import { now as unixNow, type Kv } from "./kv.ts";
 import { Ordered, wire, type Json } from "./wire.ts";
+import { PassThrough } from "node:stream";
+import { notify as osNotify } from "@harbor/os";
 
 /** Notes with one key this close together are one (the newest, with a count), in seconds. */
 export const COALESCE_S = 90;
@@ -338,8 +340,65 @@ export interface NotifyProc {
 /** Starts notify-send with `args`; null when it can't start. */
 export type NotifySend = (args: string[]) => NotifyProc | null;
 
-/** The real notify-send. */
+/** notify-send's arguments as the Desktop class gives them: the title and body, a note to replace, whether it's quiet, its actions. */
+export function notifySendArgs(args: readonly string[]): { title: string; body: string; replace: number | null; quiet: boolean; actions: string[] } {
+  const pos: string[] = [];
+  const actions: string[] = [];
+  let replace: number | null = null;
+  let quiet = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "-p") continue;
+    if (a.startsWith("--replace-id=")) replace = Number(a.slice(13)) || null;
+    else if (a === "-A") actions.push((args[++i] ?? "").split("=")[0] ?? "");
+    else if (a === "-h") {
+      const hint = args[++i] ?? "";
+      if (hint.includes("suppress-sound:true")) quiet = true;
+    }
+    else if (["-a", "-u", "-t", "-i", "-c"].includes(a)) i++;
+    else pos.push(a);
+  }
+  return { title: pos[0] ?? "", body: pos[1] ?? "", replace, quiet, actions };
+}
+
+let macNoteId = 0;
+
+/**
+ * macOS (inside Harbor.app): os.notify behind notify-send's protocol, so the Desktop class works as on
+ * Linux: the note's id on the first line, then "default" when it's clicked. A note without an action
+ * ends at once; one with an action waits for its click (or 6 hours, as an unanswered notify-send ends).
+ */
+export const osNotifySend: NotifySend = (args) => {
+  const a = notifySendArgs(args);
+  const n = a.replace ?? ++macNoteId;
+  const out = new PassThrough();
+  let ended = false;
+  let end: () => void = () => {};
+  const exited = new Promise<void>((r) => (end = r));
+  const finish = (): void => {
+    if (ended) return;
+    ended = true;
+    clearTimeout(timer);
+    out.end();
+    end();
+  };
+  const timer = setTimeout(finish, 6 * 3600_000);
+  (timer as { unref?: () => void }).unref?.();
+  out.write(`${n}\n`);
+  const click = a.actions.includes("default")
+    ? () => {
+        out.write("default\n");
+        finish();
+      }
+    : undefined;
+  osNotify.post({ id: `harbor-${n}`, title: a.title, body: a.body, sound: !a.quiet, ...(click ? { onClick: click } : {}) });
+  if (!click) finish();
+  return { pid: n, lines: createInterface({ input: out }), kill: () => (osNotify.remove(`harbor-${n}`), finish()), exited };
+};
+
+/** The real notify-send (macOS's own notifications from inside Harbor.app). */
 export const spawnNotifySend: NotifySend = (args) => {
+  if (osNotify.available()) return osNotifySend(args);
   const child = spawn("notify-send", args, { stdio: ["ignore", "pipe", "ignore"] });
   // Before anything else: a notify-send that isn't there (macOS, a bare Linux) fails with an "error" event,
   // which nothing would hear when the pid is missing below.

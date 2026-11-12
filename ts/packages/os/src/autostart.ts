@@ -1,6 +1,7 @@
 // Starting Harbor at login: the system's own entry for it (Linux: an XDG autostart .desktop file; macOS:
 // a LaunchAgent in the user's session). Harbor writes it; the system runs `EXE ARG` at the next login.
-import { isAbsolute, join } from "node:path";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { home } from "./paths.ts";
 import { platform } from "./platform.ts";
 
@@ -62,4 +63,51 @@ export function launchAgent(exe: string, arg: string): string {
 </dict>
 </plist>
 `;
+}
+
+let darwinLogin: typeof import("./darwin-login.ts") | undefined;
+/** macOS from inside Harbor.app: SMAppService (Login Items shows it as Harbor). Elsewhere a file. */
+const bundleLogin = (exe: string): typeof import("./darwin-login.ts") | undefined =>
+  platform() === "darwin" && /\.app\/Contents\/MacOS\/[^/]+$/.test(exe)
+    ? (darwinLogin ??= require("./darwin-login.ts") as typeof import("./darwin-login.ts"))
+    : undefined;
+
+/** Whether Harbor starts at login (its entry is there and on). */
+export function enabled(arg: string, exe: string = process.execPath, env: Env = process.env): boolean {
+  const b = bundleLogin(exe);
+  if (b && (b.status() === "on" || b.status() === "approval")) return true;
+  try {
+    return isOn(readFileSync(entryPath(env), "utf8"), arg, env);
+  } catch {
+    return false;
+  }
+}
+
+/** Turns start at login on or off: `exe arg` runs then. Throws an Error whose message is for the person. */
+export function set(on: boolean, exe: string, arg: string, env: Env = process.env): void {
+  const b = bundleLogin(exe);
+  if (b) {
+    try {
+      b.set(on);
+      if (!on) rmSync(entryPath(env), { force: true });
+      return;
+    } catch {
+      // macOS refused it (an unsigned bundle may be): the LaunchAgent file instead, as without a bundle.
+    }
+  }
+  const path = entryPath(env);
+  if (!on) {
+    try {
+      rmSync(path);
+    } catch (e) {
+      if (!(typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT")) throw new Error(`${path}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return;
+  }
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, entry(exe, arg, env));
+  } catch (e) {
+    throw new Error(`${path}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }

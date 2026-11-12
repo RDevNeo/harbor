@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { autostart as osAutostart } from "@harbor/os";
 
 /** Closing the window leaves Harbor running, unless HARBOR_NO_BACKGROUND is set (a preview rig: closing it ends it). */
@@ -220,11 +220,7 @@ export function autostartLauncher(self: SelfInstall): string | null {
 
 /** The entry is Harbor's (written by `setAutostart`) and not hidden. */
 export function autostart(): boolean {
-  try {
-    return osAutostart.isOn(readFileSync(autostartFile(), "utf8"), BACKGROUND_FLAG);
-  } catch {
-    return false;
-  }
+  return osAutostart.enabled(BACKGROUND_FLAG);
 }
 
 /** The installed launcher (~/.local/bin/harbor), which follows updates; null when Harbor isn't installed. */
@@ -252,27 +248,9 @@ export function autostartByDefault(kv: BackgroundKv, managed: boolean): void {
 
 /** Writes or removes the entry. Throws an Error whose message is for the person. */
 export function setAutostart(on: boolean, self: SelfInstall): void {
-  const path = autostartFile();
-  if (!on) {
-    try {
-      rmSync(path);
-    } catch (e) {
-      if (!isNotFound(e)) throw new Error(`${path}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    return;
-  }
-  const exe = autostartLauncher(self);
+  const exe = on ? autostartLauncher(self) : (self.exe ?? process.execPath);
   if (exe === null) throw new Error("Harbor can't tell where its own file is");
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, osAutostart.entry(exe, BACKGROUND_FLAG));
-  } catch (e) {
-    throw new Error(`${path}: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-function isNotFound(e: unknown): boolean {
-  return typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT";
+  osAutostart.set(on, exe, BACKGROUND_FLAG);
 }
 
 export const desktopEntry = (exe: string): string => osAutostart.desktopEntry(exe, BACKGROUND_FLAG);
