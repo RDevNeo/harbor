@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.19] - 2026-11-12
+
+### Added
+- `harbor api METHOD PATH [JSON]` calls the running Harbor's own API from a terminal; `harbor api transcribe
+  FILE.wav` dictates a recording through it.
+
+### Fixed
+- Less CPU while idle, most on macOS: folders that are on another PC are no longer looked at again and again
+  (each look costs milliseconds under macOS's /home), project icons aren't searched for in them, the sidebar
+  redraws only the running chats' rows each second, and a running chat copied from another PC saves only
+  what's new.
+
 ### Changed
 - Harbor runs on Bun 1.4.4 (was 1.4.3): on Windows Bun 1.4.3 could crash when a connection to another PC closed
   while data was still coming (seen in the mesh's TLS and relay tests); 1.4.4 doesn't.
