@@ -14,7 +14,7 @@ interface PaletteWindow extends slint.ComponentHandle {
 
 const store = Store.open(dataDir());
 const tilde = (p: string) => (p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p);
-const ui = slint.loadFile(join(await uiDir(), "palette.slint"), { style: "fluent" });
+const ui = slint.loadFile(join(await uiDir(), "palette.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "PaletteWindow");
 if (typeof ctor !== "function") throw new Error("palette.slint has no PaletteWindow");
 const win: PaletteWindow = new ctor();

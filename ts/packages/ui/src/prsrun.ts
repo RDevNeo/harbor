@@ -15,7 +15,7 @@ interface PrsWindow extends slint.ComponentHandle {
 }
 
 const store = Store.open(dataDir());
-const ui = slint.loadFile(join(await uiDir(), "prs.slint"), { style: "fluent" });
+const ui = slint.loadFile(join(await uiDir(), "prs.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "PrsWindow");
 if (typeof ctor !== "function") throw new Error("prs.slint has no PrsWindow");
 const win: PrsWindow = new ctor();

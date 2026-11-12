@@ -20,7 +20,7 @@ interface SettingsWindow extends slint.ComponentHandle {
 
 setHarborVersion(pkg.version);
 const store = Store.open(dataDir());
-const ui = slint.loadFile(join(await uiDir(), "settings.slint"), { style: "fluent" });
+const ui = slint.loadFile(join(await uiDir(), "settings.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "SettingsWindow");
 if (typeof ctor !== "function") throw new Error("settings.slint has no SettingsWindow");
 const win: SettingsWindow = new ctor();

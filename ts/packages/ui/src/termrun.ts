@@ -23,7 +23,7 @@ interface TerminalWindow extends slint.ComponentHandle {
   resized: (w: number, h: number) => void;
 }
 
-const ui = slint.loadFile(join(await uiDir(), "terminal.slint"), { style: "fluent" });
+const ui = slint.loadFile(join(await uiDir(), "terminal.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "TerminalWindow");
 if (typeof ctor !== "function") throw new Error("terminal.slint has no TerminalWindow");
 const win: TerminalWindow = new ctor();

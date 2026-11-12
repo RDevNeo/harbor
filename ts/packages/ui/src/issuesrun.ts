@@ -15,7 +15,7 @@ interface IssuesWindow extends slint.ComponentHandle {
 }
 
 const store = Store.open(dataDir());
-const ui = slint.loadFile(join(await uiDir(), "issues.slint"), { style: "fluent" });
+const ui = slint.loadFile(join(await uiDir(), "issues.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "IssuesWindow");
 if (typeof ctor !== "function") throw new Error("issues.slint has no IssuesWindow");
 const win: IssuesWindow = new ctor();

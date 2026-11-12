@@ -14,7 +14,7 @@ interface AddProjectWindow extends slint.ComponentHandle {
 }
 
 const store = Store.open(dataDir());
-const ui = slint.loadFile(join(await uiDir(), "addproject.slint"), { style: "fluent" });
+const ui = slint.loadFile(join(await uiDir(), "addproject.slint"), { style: "fluent", quiet: true });
 const ctor = Reflect.get(ui, "AddProjectWindow");
 if (typeof ctor !== "function") throw new Error("addproject.slint has no AddProjectWindow");
 const win: AddProjectWindow = new ctor();

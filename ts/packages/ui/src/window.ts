@@ -882,7 +882,7 @@ function slintEnv(): void {
 
 export async function loadWindow(): Promise<AppWindow> {
   slintEnv();
-  const ui = slint.loadFile(join(await uiDir(), "app.slint"), { style: "fluent" });
+  const ui = slint.loadFile(join(await uiDir(), "app.slint"), { style: "fluent", quiet: true });
   // Harbor's Slint addon (slint/) frees the compiler's state as the compile ends, ~100 MB in the
   // middle of glibc's heap: given back now, not at the first periodic trim minutes later.
   malloc.trim();
