@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.179.1] - 2026-11-12
+
+### Changed
+- macOS (Harbor.app): "Start Harbor when I log in" is a login item macOS lists as Harbor, with its icon,
+  and desktop notifications are macOS's own, shown as Harbor's; clicking one opens its chat.
+
 ## [0.179.0] - 2026-11-12
 
 ### Added
