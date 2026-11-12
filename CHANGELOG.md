@@ -5,6 +5,23 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.3] - 2026-11-11
+
+### Fixed
+- Harbor no longer freezes ("not responding") while agents run heavy builds and tests: turns now get a fifth
+  of the CPU an app gets when both want it (their weight was set where it had no effect), and Harbor's own
+  window gets more CPU and keeps up to 512 MB (8% of RAM on small PCs) from being swapped out or evicted,
+  so a click doesn't wait on the disk.
+- Switching chats no longer writes to the database each time: the last chat and the split layout are
+  written once the switching stops, and unchanged settings aren't written at all. Under a busy disk one
+  such write held the window for up to 3 seconds.
+- Typing `@` in the composer lists the project's files without holding the window while git reads them.
+
+### Added
+- The log says when Harbor's window stopped answering for a quarter second or more, and why: what it was
+  doing (drawing, a database query, a program it waited for), whether it waited on the disk, CPU or memory,
+  and the file it was reading (`journalctl --user -u 'app-harbor*' | grep 'main thread'`).
+
 ## [0.177.2] - 2026-11-11
 
 ### Fixed
