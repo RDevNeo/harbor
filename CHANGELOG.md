@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.6] - 2026-11-11
+
+### Fixed
+- Usage-limit reset times ("resets 12am (America/Sao_Paulo)") are read without GNU `date`, in the
+  limit's own time zone, so they're right on every system.
+- Hot reload works from a checkout reached through a link, and builds each save once.
+
+### Changed
+- Groundwork for Harbor on macOS, nothing changes on Linux: processes, memory, Claude Code logins in
+  the keychain, turns that outlive Harbor, a window loop for systems without an fd to wait on, a
+  UTF-8 locale and Homebrew's tools for what Harbor starts, and `build.ts --target darwin-arm64`.
+
 ## [0.177.5] - 2026-11-11
 
 ### Fixed
