@@ -7,6 +7,7 @@
 // folder changes, and when a chat's turn is about to start in a folder that isn't there.
 import { existsSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
+import { folders } from "./packages/os/src/index.ts";
 import { type Chat, projectsdir, repoDir, type Store } from "./packages/store/src/index.ts";
 import { type Engine, foldermove as fm, worktree as wt } from "./packages/agents/src/index.ts";
 import { workspace } from "./packages/mcp/src/index.ts";
@@ -191,7 +192,9 @@ export class FolderTracker {
     for (const f of this.followed()) {
       kinds.set(f.path, f.kind);
       const was = this.ident(f.path);
-      if (isDir(f.path)) {
+      // One seen here before is looked at for real (a move is noticed at once); one that never was (another PC's
+      // project) through the cache, which answers a whole missing parent at once.
+      if (was !== null ? isDir(f.path) : folders.here(f.path)) {
         this.missed.delete(f.path);
         this.binned.delete(f.path);
         // Cheap while it's the same folder: a stat; what's in it is read again hourly (a plain folder is matched by some of its names).
@@ -264,7 +267,7 @@ export class FolderTracker {
     const want = new Set<string>();
     for (const f of this.followed()) {
       const p = dirname(f.path);
-      if (isDir(p) && want.size < MAX_WATCHES) want.add(p);
+      if (want.size < MAX_WATCHES && !want.has(p) && folders.here(p)) want.add(p);
     }
     for (const [p, w] of this.watches) {
       if (want.has(p)) continue;

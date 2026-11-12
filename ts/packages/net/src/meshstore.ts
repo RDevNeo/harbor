@@ -539,22 +539,18 @@ export class StoreReplica implements MeshApp {
   applyItems(peer: string, epoch: number, hid: number, body: Record<string, unknown>): void {
     const id = this.o.hub.mesh.localId(peer, hid);
     if (id === null) return;
-    const items: Item[] = this.o.store.items(id);
-    const count = int(body.count) ?? 0;
-    items.length = Math.min(items.length, Math.max(0, count));
-    let whole = true;
+    const count = Math.max(0, int(body.count) ?? 0);
+    // Only what came is parsed, hashed and written (store.patchItems), not the whole transcript again.
+    const got = new Map<number, Item>();
     for (const e of Array.isArray(body.items) ? body.items : []) {
       const o = obj(e);
       const seq = int(o.seq);
       const it = parseItem(JSON.stringify(o.item ?? null));
       if (seq === null || seq < 0 || it === null) continue;
-      if (seq < items.length) items[seq] = it;
-      else if (seq === items.length) items.push(it);
-      else whole = false;
+      got.set(seq, it);
     }
-    whole = whole && items.length === count;
+    const whole = this.o.store.patchItems(id, count, got) === count;
     this.isince.set(`${peer}\0${hid}`, [epoch, whole ? (int(body.rev) ?? 0) : 0]);
-    this.o.store.saveItems(id, items);
     this.o.hub.touch(id, false);
     this.o.copied?.(id);
   }

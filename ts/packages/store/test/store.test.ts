@@ -99,6 +99,27 @@ test("saves_only_what_changed", () => {
   expect(texts(fresh, b)).toEqual(["one"]);
 });
 
+test("patch_items_writes_only_what_came_and_keeps_the_digest", () => {
+  const dir = tmp();
+  const path = join(dir, "harbor.db");
+  const s = open(path);
+  const repo = s.addRepo(dir);
+  const a = s.createChat(blankChat({ repoId: repo, title: "t" })).id;
+  s.saveItems(a, ["one", "two", "three"].map(text));
+  // One changed, one added at the end, one past a gap (left out): the length says it isn't whole.
+  expect(s.patchItems(a, 5, new Map([[1, text("TWO")], [3, text("four")], [6, text("seven")]]))).toBe(4);
+  expect(texts(s, a)).toEqual(["one", "TWO", "three", "four"]);
+  expect(s.summary(a)).toEqual({ count: 4, digest: digest(["one", "TWO", "three", "four"].map(text)) });
+  // Cut to a shorter count, on a store that hasn't seen this chat yet: the rest goes.
+  const fresh = open(path);
+  expect(fresh.patchItems(a, 2, new Map())).toBe(2);
+  expect(texts(fresh, a)).toEqual(["one", "TWO"]);
+  expect(fresh.summary(a)).toEqual({ count: 2, digest: digest(["one", "TWO"].map(text)) });
+  // The same items again: nothing to write.
+  expect(fresh.patchItems(a, 2, new Map([[0, text("one")]]))).toBe(2);
+  expect(texts(open(path), a)).toEqual(["one", "TWO"]);
+});
+
 test("a_deleted_main_chat_is_forgotten", () => {
   const dir = tmp();
   const path = join(dir, "harbor.db");

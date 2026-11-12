@@ -819,6 +819,46 @@ export class Store {
     }
   }
 
+  /**
+   * Items copied from another PC into a chat's transcript: the transcript cut to `count` items, then `items`
+   * (seq → item) put at their seqs, an item one past the end added, one further out (a gap) left out. Only those
+   * items are hashed and written, not the whole transcript (a running chat of a peer sends a few at a time).
+   * Gives the transcript's length after it.
+   */
+  patchItems(chatId: number, count: number, items: ReadonlyMap<number, Item>): number {
+    const saved = this.saved.get(chatId) ?? this.savedHashes(chatId);
+    this.saved.delete(chatId);
+    const was = saved.length;
+    const hashes = saved.slice(0, Math.max(0, Math.min(was, count)));
+    const put = new Map<number, Item>();
+    for (const [seq, it] of [...items].sort((x, y) => x[0] - y[0])) {
+      if (seq < 0 || seq > hashes.length) continue;
+      const h = itemHash(it);
+      if (seq === hashes.length) hashes.push(h);
+      else if (hashes[seq] === h) continue;
+      else hashes[seq] = h;
+      put.set(seq, it);
+    }
+    if (put.size === 0 && hashes.length === was) {
+      this.saved.set(chatId, saved);
+      return hashes.length;
+    }
+    this.sums.delete(chatId);
+    const write = this.db.transaction(() => {
+      const q = this.db.query("INSERT OR REPLACE INTO items(chat_id, seq, body) VALUES(?1, ?2, ?3)");
+      for (const [seq, it] of put) q.run(chatId, seq, itemJson(it));
+      if (was > hashes.length) this.db.query("DELETE FROM items WHERE chat_id=?1 AND seq>=?2").run(chatId, hashes.length);
+    });
+    try {
+      write();
+      this.saved.set(chatId, hashes);
+      this.sums.set(chatId, { count: hashes.length, digest: digestOf(hashes) });
+    } catch (e) {
+      console.error(`harbor: can't save the transcript of chat ${chatId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return hashes.length;
+  }
+
   /** The hashes of a chat's items as the database has them, by seq. */
   private savedHashes(chatId: number): bigint[] {
     const v: bigint[] = [];

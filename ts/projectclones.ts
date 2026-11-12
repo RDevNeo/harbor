@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { folders } from "./packages/os/src/index.ts";
 import { basename } from "node:path";
 import { type Engine } from "./packages/agents/src/index.ts";
 import { type Chat, repoDir, type Store } from "./packages/store/src/index.ts";
@@ -76,7 +77,7 @@ export class ProjectClones {
     const t = Date.now();
     const k = this.seen.get(dir);
     if (k && t - k.at < (k.here ? HERE_MS : MISSING_MS)) return k.here;
-    const here = isDir(dir);
+    const here = folders.here(dir);
     this.seen.set(dir, { at: t, here });
     return here;
   }
@@ -133,6 +134,7 @@ export class ProjectClones {
 
   private finished(repoId: number, result: { ok: true; dir: string } | { ok: false; error: string }): void {
     this.seen.clear();
+    folders.forget();
     const e = this.e;
     const out = this.state.finished({
       repo: this.repoOf(repoId),

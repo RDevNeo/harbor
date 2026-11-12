@@ -8,6 +8,7 @@ export * as proc from "./proc.ts";
 export * as sys from "./sys.ts";
 export * as desktop from "./desktop.ts";
 export * as paths from "./paths.ts";
+export * as folders from "./folders.ts";
 export * as keychain from "./keychain.ts";
 export * as spawn from "./spawn.ts";
 export * as env from "./env.ts";

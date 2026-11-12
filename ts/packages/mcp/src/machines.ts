@@ -1,7 +1,7 @@
 import { realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
-import { paths as osPaths } from "@harbor/os";
+import { folders, paths as osPaths } from "@harbor/os";
 import { type Body, type Dest, dest, hostname, http as meshHttp, jsonBody, type Kv, type Me, type Peer, shQuote } from "@harbor/net";
 import { home, privateDir, randomHex } from "@harbor/store";
 import { argStr, argStrings, argUint } from "./args.ts";
@@ -61,7 +61,7 @@ export type Project = [name: string, path: string];
 
 /** This PC's projects among `repos` (name, folder here): a peer's project with no folder on this PC isn't one. */
 export function ownProjects(repos: readonly { name: string; dir: string }[]): Project[] {
-  return repos.filter((r) => isDir(r.dir)).map((r) => [r.name, r.dir]);
+  return repos.filter((r) => folders.here(r.dir)).map((r) => [r.name, r.dir]);
 }
 
 interface Share {

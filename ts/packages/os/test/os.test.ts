@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { autostart, clipboard, desktop, env, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
+import { autostart, clipboard, desktop, env, folders, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
 
@@ -427,6 +427,35 @@ describe("lock", () => {
       expect(b).toBeTruthy();
       b?.release();
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("folders", () => {
+  test("a missing folder answers from its outermost missing parent until it's due again or forgotten", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hfolders-"));
+    try {
+      const t = 1_000_000;
+      expect(folders.here(dir, t)).toBe(true);
+      const gone = join(dir, "away", "deep");
+      expect(folders.here(join(gone, "x"), t)).toBe(false);
+      // Made now, but `away` was found missing: still missing until MISSING_MS passed…
+      mkdirSync(join(gone, "y"), { recursive: true });
+      expect(folders.here(join(gone, "y"), t + 1)).toBe(false);
+      expect(folders.here(join(gone, "y"), t + folders.MISSING_MS)).toBe(true);
+      // …or it's forgotten (Harbor made it).
+      expect(folders.here(join(dir, "new", "z"), t)).toBe(false);
+      mkdirSync(join(dir, "new", "z"), { recursive: true });
+      folders.forget(join(dir, "new", "z"));
+      expect(folders.here(join(dir, "new", "z"), t + 1)).toBe(true);
+      // A file isn't a folder; one that's there isn't remembered (it can go any time).
+      writeFileSync(join(dir, "f"), "");
+      expect(folders.here(join(dir, "f"), t)).toBe(false);
+      rmSync(join(gone, "y"), { recursive: true });
+      expect(folders.here(join(gone, "y"), t + folders.MISSING_MS + 2)).toBe(false);
+    } finally {
+      folders.forget();
       rmSync(dir, { recursive: true, force: true });
     }
   });

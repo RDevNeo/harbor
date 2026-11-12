@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { basename, dirname, join } from "node:path";
+import { folders } from "@harbor/os";
 import { dataDir } from "@harbor/store";
 import { type Decoded, decodeBytes } from "./images.ts";
 import { sharpLib } from "./sharplib.ts";
@@ -106,6 +107,12 @@ export async function resolve(repo: number, root: string, name: string, refresh:
       return img;
     }
   }
+  // A folder that isn't on this PC (a project of another PC) has nothing to look through: a look would cost a
+  // hundred-odd failed stats, each slow where an automounter holds the parent (macOS's /home).
+  if (!folders.here(root)) {
+    watch(repo, null);
+    return null;
+  }
   for (const src of await localCandidates(root, name)) {
     const img = await decode(src, size);
     if (img) {
@@ -128,6 +135,7 @@ export async function png(img: Decoded): Promise<Uint8Array> {
 }
 
 export async function describeLocal(root: string, name: string): Promise<string> {
+  if (!folders.here(root)) return "monogram";
   for (const src of await localCandidates(root, name)) if (await decode(src)) return src;
   const d = website(root);
   return d === null ? "monogram" : `website ${d}`;

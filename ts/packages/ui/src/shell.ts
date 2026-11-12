@@ -2098,6 +2098,8 @@ export class Shell {
       return { place: placeHint(at, dir, clash.has(name)), place_pc: at !== null, tip: placeLine(at, dir) };
     };
     const rows: SideRow[] = [];
+    // Rows whose status a running turn moves (its timer): refreshRunning redraws only them.
+    const live: { kind: SideRow["kind"]; id: number; status: () => StatusData }[] = [];
     const asks = secrets.loadAsks(d.store);
     const panes = this.split.marks();
     const shared = this.shared();
@@ -2119,12 +2121,14 @@ export class Shell {
       // Someone else's chat: their photo, else their initials.
       const o = chatOwner(shared, c);
       const photo = o === null ? null : this.photoPixels(o.photo);
+      const status = (): StatusData => this.statusData(this.chatStatus(c, idle, asks));
+      if (this.engine.live(c.id)) live.push({ kind, id: c.id, status });
       return {
         kind,
         id: c.id,
         title: c.title,
         active,
-        status: this.statusData(this.chatStatus(c, idle, asks)),
+        status: status(),
         letter: "",
         avatar: noPixels,
         has_avatar: false,
@@ -2162,16 +2166,19 @@ export class Shell {
       const selected = (main !== null && this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftMain && this.draftRepo === p.repo.id);
       const fold = p.chats.length === 0 ? "" : folded.has(p.repo.id) ? "folded" : "open";
       const shownChats = fold === "folded" ? p.chats.filter((c) => (this.view === "chat" && this.chatId === c.id) || panes.has(c.id)) : p.chats;
-      const mainStatus = mainChat ? this.chatStatus(mainChat, idle, asks) : idle;
       const hidden = p.chats.filter((c) => !shownChats.includes(c));
       // Folded and quiet, it says how many chats it holds.
-      const status = fold === "folded" && !asleep ? foldedStatus(mainChat ? mainStatus : null, hidden.map((c) => this.chatStatus(c, idle, asks)), idle.kind === "text" && idle.icon === null ? { kind: "text", icon: null, text: String(hidden.length), color: "gray-800" } : idle) : mainStatus;
+      const status = (): StatusData => {
+        const mainStatus = mainChat ? this.chatStatus(mainChat, idle, asks) : idle;
+        return this.statusData(fold === "folded" && !asleep ? foldedStatus(mainChat ? mainStatus : null, hidden.map((c) => this.chatStatus(c, idle, asks)), idle.kind === "text" && idle.icon === null ? { kind: "text", icon: null, text: String(hidden.length), color: "gray-800" } : idle) : mainStatus);
+      };
+      if ((mainChat && this.engine.live(mainChat.id)) || (fold === "folded" && hidden.some((c) => this.engine.live(c.id)))) live.push({ kind: "project", id: p.repo.id, status });
       rows.push({
         kind: "project",
         id: p.repo.id,
         title: p.repo.name,
         active: selected,
-        status: this.statusData(status),
+        status: status(),
         letter: projectInitial(p.repo.name),
         avatar: this.avatar(p.repo.id) ?? noPixels,
         has_avatar: this.avatar(p.repo.id) !== null,
@@ -2193,6 +2200,10 @@ export class Shell {
       for (const c of list.loose) rows.push(chatRow(c, "loose"));
     }
     sync(this.rows, rows, sameSideRow);
+    this.liveRows = live.flatMap((l) => {
+      const at = rows.findIndex((r) => r.kind === l.kind && r.id === l.id);
+      return at < 0 ? [] : [{ ...l, at }];
+    });
     const projectRow = (r: { id: number; name: string }): SideRow => {
       return {
         kind: "settled-project",
@@ -3627,11 +3638,28 @@ export class Shell {
 
   private spinTimer: ReturnType<typeof setInterval> | null = null;
 
+  /** The sidebar rows a running turn's timer moves, where refreshSidebar last put them. */
+  private liveRows: { kind: SideRow["kind"]; id: number; at: number; status: () => StatusData }[] = [];
+
+  /**
+   * Once a second while turns run (here or on other PCs): only the running rows' timers move, so only those
+   * rows are read again, not the whole sidebar (hundreds of rows). A turn that starts or ends, and anything
+   * else that moves rows, comes through `changed` and redraws it all.
+   */
+  private refreshLiveRows(): void {
+    for (const l of this.liveRows) {
+      const row = this.rows.rowData(l.at);
+      if (row === undefined || row.kind !== l.kind || row.id !== l.id) return this.refreshSidebar();
+      const status = l.status();
+      if (JSON.stringify(status) !== JSON.stringify(row.status)) this.rows.setRowData(l.at, { ...row, status });
+    }
+  }
+
   private refreshRunning(): void {
     if (this.engine.liveCount() === 0) return;
     if (this.view === "chat" && this.engine.live(this.chatId)) this.refreshCards();
     this.split.running((id) => this.engine.live(id));
-    this.refreshSidebar();
+    this.refreshLiveRows();
     this.refreshTeam();
     this.refreshStrip();
   }
