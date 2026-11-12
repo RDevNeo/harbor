@@ -344,7 +344,7 @@ export async function decodeIcon(bytes: Uint8Array, size = SIZE): Promise<Decode
     let pipe = sharp(image.data, { raw: { width: image.width, height: image.height, channels: 4 } }).resize({ width: s, height: s, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } });
     if (s !== size) pipe = pipe.resize(size, size, { kernel: "lanczos3" });
     const out = await pipe.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    return { width: size, height: size, data: new Uint8Array(out.data.buffer, out.data.byteOffset, out.data.byteLength) };
+    return { width: size, height: size, data: new Uint8ClampedArray(out.data.buffer, out.data.byteOffset, out.data.byteLength) };
   } catch {
     return null;
   }

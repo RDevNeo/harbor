@@ -12,7 +12,7 @@ const pr = (n: number, o: Partial<ghapi.Pr> = {}): ghapi.Pr => ({
 const none = (): void => {};
 const nums = (v: PrsView): string[] => v.rows.filter((r) => r.kind === "row").map((r) => r.number);
 const blank = (): PrsView => ({
-  page_title: "", docked: true, list_w: 0, panel_w: 0, wrap: false, search_w: 0, search: "", hint: "", active_filters: 0, loading: false, github: { width: 0, height: 0, data: new Uint8Array() }, list_state: "",
+  page_title: "", docked: true, list_w: 0, panel_w: 0, wrap: false, search_w: 0, search: "", hint: "", active_filters: 0, loading: false, github: { width: 0, height: 0, data: new Uint8ClampedArray() }, list_state: "",
   rows: [], empty_icon: "", empty_title: "", empty_desc: "", has_tabs: false, menu: "", menu_rows: [], menu_w: 0, menu_h: 0, menu_hl: -1, sub: "", sub_rows: [], sub_w: 0, sub_h: 0, sub_row_y: 0,
   sub_scroll_from: -1, sub_scroll_h: 0, sub_hl: -1, popup_items: [], popup_w: 0, popup_h: 0, popup_kind: "", tabs: [], active_tab: 0, maxed: false, head: headerOf(newDetail(), { url: "", list: undefined, project: undefined, now: NOW, notProject: "" }),
   tab: "summary", summary: { reviewers: [], labels: [], desc_open: true, body: [], checks_open: false, checks_icon: "", checks_tone: "subtle", checks_text: "", checks: [], has_checks: false, comments_open: true, comments_title: "", comments: [] },

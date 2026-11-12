@@ -114,7 +114,7 @@ function rig(answers: Answer[], o: { holdDecode?: boolean } = {}) {
       }
       if (o.holdDecode) await new Promise<void>((done) => decodes.push(done));
       decoded.push(name);
-      return { width: name.length, height: 1, data: new Uint8Array(4 * name.length) };
+      return { width: name.length, height: 1, data: new Uint8ClampedArray(4 * name.length) };
     },
     me: () => ({ who: "pc:me", label: "Me" }),
     show: (d) => shown.push(d),

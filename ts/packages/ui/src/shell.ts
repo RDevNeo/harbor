@@ -1826,7 +1826,7 @@ export class Shell {
         status_color: token(card.status.color, this.dark),
         running: since !== null,
         settled: isSettled,
-        logo: this.logos.get(`${kind}:${this.dark}`) ?? { width: 1, height: 1, data: new Uint8Array(4) },
+        logo: this.logos.get(`${kind}:${this.dark}`) ?? { width: 1, height: 1, data: new Uint8ClampedArray(4) },
         badge: this.badgeOf(c.account, acc),
       };
     };
@@ -3975,7 +3975,7 @@ export class Shell {
       if (this.win.pop_id === "model") this.refreshPicker();
       this.split.refreshHeads();
     });
-    return { width: 1, height: 1, data: new Uint8Array(4) };
+    return { width: 1, height: 1, data: new Uint8ClampedArray(4) };
   }
 
   /** The mesh's accounts, each sign-in once (meshaccounts.ts), read at most every 2 s; none without a hub. */

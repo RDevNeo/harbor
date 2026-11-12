@@ -102,7 +102,8 @@ export interface Block {
 export interface BlockImage {
   width: number;
   height: number;
-  data: Uint8Array;
+  /** Clamped (logos.ts `Pixels`). */
+  data: Uint8ClampedArray;
 }
 
 /** A tab drawn from blocks, and what its controls do. `submit` returns an error to show under the form, or "". */
@@ -114,7 +115,7 @@ export interface BlockTab {
   submitted(key: string, values: readonly string[]): string;
 }
 
-const noImage = (): BlockImage => ({ width: 1, height: 1, data: new Uint8Array(4) });
+const noImage = (): BlockImage => ({ width: 1, height: 1, data: new Uint8ClampedArray(4) });
 
 export const btn = (key: string, label: string, p: Partial<BlockBtn> = {}): BlockBtn => ({ key, label, icon: "", variant: "outline", enabled: true, tip: "", on: false, ...p });
 

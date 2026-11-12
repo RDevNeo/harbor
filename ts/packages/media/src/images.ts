@@ -36,7 +36,9 @@ export function isImage(path: string): boolean {
 export interface Decoded {
   width: number;
   height: number;
-  data: Uint8Array;
+  /** Clamped, as the window takes it: slint-ui reads a plain Uint8Array through a failed Uint8ClampedArray
+   * conversion that leaves an N-API reference on the array behind, one per read (a protected object for good). */
+  data: Uint8ClampedArray;
 }
 
 export type Slot =
@@ -85,7 +87,7 @@ export async function decodeBytes(bytes: Uint8Array, cap: number, limits: Limits
   let pipe = sharp(input, opts).autoOrient();
   if (Math.max(dims[0], dims[1]) > cap) pipe = pipe.resize({ width: cap, height: cap, fit: "inside", kernel: "linear" });
   const out = await pipe.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  return { image: { width: out.info.width, height: out.info.height, data: new Uint8Array(out.data.buffer, out.data.byteOffset, out.data.byteLength) }, dims };
+  return { image: { width: out.info.width, height: out.info.height, data: new Uint8ClampedArray(out.data.buffer, out.data.byteOffset, out.data.byteLength) }, dims };
 }
 
 /** An image's size as it's drawn, from its file's head (imagesize.ts), before it's decoded; null: not known (a video, an

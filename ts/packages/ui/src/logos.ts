@@ -10,16 +10,18 @@ export type ProviderKind = "Claude" | "Codex" | "OpenCode";
 export interface Pixels {
   width: number;
   height: number;
-  data: Uint8Array;
+  /** Clamped: slint-ui reads a plain Uint8Array through a failed Uint8ClampedArray conversion that leaves an N-API
+   * reference on the array behind, one per read (a protected object that never goes). See `clamped`. */
+  data: Uint8ClampedArray;
 }
 
 const SIZE = 48;
 
 /** A mask's or an RGBA file's pixels, a mask as white with its alpha (`tint` colours it). */
 export function pixels(bytes: Uint8Array, tint: [number, number, number] = [255, 255, 255]): Pixels {
-  if (bytes.length === SIZE * SIZE * 4) return { width: SIZE, height: SIZE, data: bytes };
+  if (bytes.length === SIZE * SIZE * 4) return { width: SIZE, height: SIZE, data: new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, bytes.byteLength) };
   if (bytes.length !== SIZE * SIZE) throw new Error(`a logo is ${SIZE}×${SIZE}: got ${bytes.length} bytes`);
-  const data = new Uint8Array(SIZE * SIZE * 4);
+  const data = new Uint8ClampedArray(SIZE * SIZE * 4);
   for (let i = 0; i < bytes.length; i++) {
     data[i * 4] = tint[0];
     data[i * 4 + 1] = tint[1];

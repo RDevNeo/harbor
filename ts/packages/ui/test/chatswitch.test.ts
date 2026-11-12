@@ -44,7 +44,7 @@ test("an image's pixels coming in leave its card's built text as it was", () => 
   const row = (): MediaRow => ({ image, caption: "s", large: true, w: 480, h: 300, path: "/tmp/x.png", video: false, name: "", slot: -1, thumbs: 0 });
   const open = newOpened();
   const a = transcriptCards(items, false, [], open, "", 0, () => [row()]).find((c) => c.kind === "text");
-  image = { width: 480, height: 300, data: new Uint8Array(480 * 300 * 4) };
+  image = { width: 480, height: 300, data: new Uint8ClampedArray(480 * 300 * 4) };
   const b = transcriptCards(items, false, [], open, "", 0, () => [row()]).find((c) => c.kind === "text");
   expect(b).not.toBe(a as never);
   expect(b?.media[0]?.image).toBe(image);

@@ -51,7 +51,7 @@ export class VideoPane {
         repaint: () => this.refresh(),
         frame: (f) => {
           // The window copies it here: the buffer goes straight back to the renderer.
-          w.vid_frame = { width: f.width, height: f.height, data: new Uint8Array(f.data.buffer, f.data.byteOffset, f.data.byteLength) };
+          w.vid_frame = { width: f.width, height: f.height, data: new Uint8ClampedArray(f.data.buffer, f.data.byteOffset, f.data.byteLength) };
           if (!this.hasFrame) this.refresh();
         },
         fullscreen: () => w.window.fullscreen,

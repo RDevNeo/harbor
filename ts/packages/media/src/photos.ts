@@ -87,7 +87,7 @@ export async function round(bytes: Uint8Array): Promise<Decoded | null> {
       .ensureAlpha()
       .raw()
       .toBuffer();
-    const data = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
+    const data = new Uint8ClampedArray(out.buffer, out.byteOffset, out.byteLength);
     circle(data, SIZE);
     return { width: SIZE, height: SIZE, data };
   } catch {
@@ -96,7 +96,7 @@ export async function round(bytes: Uint8Array): Promise<Decoded | null> {
 }
 
 /** Clears what lies outside the circle, with a one-pixel soft edge. */
-export function circle(rgba: Uint8Array, n: number): void {
+export function circle(rgba: Uint8Array | Uint8ClampedArray, n: number): void {
   const c = n / 2;
   for (let y = 0; y < n; y++)
     for (let x = 0; x < n; x++) {
@@ -126,7 +126,7 @@ export function fakeColour(who: string): number {
 export function fake(who: string): Decoded {
   const n = SIZE;
   const [a, b] = FAKE_COLOURS[fakeColour(who)]!;
-  const data = new Uint8Array(n * n * 4);
+  const data = new Uint8ClampedArray(n * n * 4);
   for (let y = 0; y < n; y++)
     for (let x = 0; x < n; x++) {
       const t = (x + y) / (2 * n);

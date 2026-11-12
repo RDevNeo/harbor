@@ -24,7 +24,7 @@ export function begin(what: string): void {
   if (report !== null) flush();
   start = last = performance.now();
   epoch = Date.now();
-  parts = [what];
+  parts = [what + (jscMod ? ` p${jscMod.heapStats().protectedObjectCount}` : "")];
   turns = [];
   js = 0;
   if (prof !== "") {
@@ -56,10 +56,12 @@ export function begin(what: string): void {
   report = setTimeout(flush, 1500);
 }
 
+let jscMod: { heapStats(): { protectedObjectCount: number } } | null = null;
+if (process.env.HARBOR_SWITCH_PROTECTED) void import("bun:jsc").then((m) => (jscMod = m as never));
 export function mark(what: string): void {
   if (!on || start === 0) return;
   const t = performance.now();
-  parts.push(`${what} ${(t - last).toFixed(1)}`);
+  parts.push(`${what} ${(t - last).toFixed(1)}${jscMod ? ` p${jscMod.heapStats().protectedObjectCount}` : ""}`);
   last = t;
 }
 
@@ -86,7 +88,7 @@ function flush(): void {
   report = null;
   const first = turns.find((x) => x.startsWith("turn "));
   const paint = first ? first.split(" ")[1]?.split("-")[1] : "?";
-  console.error(`switch @${epoch} ${parts[0]} js ${js.toFixed(0)} ms, first turn done +${paint} ms, rss ${Math.round(process.memoryUsage.rss() / 2 ** 20)} MB: ${parts.slice(1).join(" | ")}\n  ${turns.join("\n  ")}`);
+  console.error(`switch @${epoch} ${parts[0]} js ${js.toFixed(0)} ms, first turn done +${paint} ms, rss ${Math.round(process.memoryUsage.rss() / 2 ** 20)} MB${jscMod ? ` p${jscMod.heapStats().protectedObjectCount}` : ""}: ${parts.slice(1).join(" | ")}\n  ${turns.join("\n  ")}`);
   start = 0;
 }
 
@@ -110,6 +112,19 @@ export function drive(open: (id: number) => void): void {
   ids.forEach((id, i) => setTimeout(() => open(id), at + i * every));
   setTimeout(() => console.error("switch cycle done"), at + ids.length * every);
   setTimeout(() => console.error(`switch cycle rss ${Math.round(process.memoryUsage.rss() / 2 ** 20)} MB`), at + ids.length * every + 3000);
+  // HARBOR_SWITCH_PROTECTED=1: the engine's protected objects (N-API references) by type, before the cycle and after.
+  if (process.env.HARBOR_SWITCH_PROTECTED) {
+    const dump = (when: string) =>
+      void import("bun:jsc").then((m) => {
+        Bun.gc(true);
+        const h = m.heapStats();
+        const top = Object.entries(h.protectedObjectTypeCounts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+        console.error(`protected ${when} ${h.protectedObjectCount} heap ${Math.round(h.heapSize / 2 ** 20)} MB objects ${h.objectCount}: ${top.map(([k, v]) => `${k}=${v}`).join(" ")}`);
+      });
+    setTimeout(() => dump("before"), at - 500);
+    setTimeout(() => dump("after"), at + ids.length * every + 4000);
+    setTimeout(() => dump("later"), at + ids.length * every + 9000);
+  }
 }
 
 

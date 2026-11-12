@@ -96,7 +96,7 @@ export interface IntInput {
   qr(url: string): Pixels;
 }
 
-const blank: Pixels = { width: 1, height: 1, data: new Uint8Array(4) };
+const blank: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 
 function card(a: mcp.App, i: IntInput): IntApp {
   const { view } = i;

@@ -45,7 +45,9 @@ export type SubName = "account" | "state" | "involvement" | "author" | "assignee
 export interface Pixels {
   width: number;
   height: number;
-  data: Uint8Array;
+  /** Clamped: slint-ui reads a plain Uint8Array through a failed Uint8ClampedArray conversion that leaves an N-API
+   * reference on the array behind, one per read (a protected object that never goes). See `clamped`. */
+  data: Uint8ClampedArray;
 }
 
 /** unix seconds → "2h ago" (prs.rs `ago`). */
@@ -91,7 +93,7 @@ export interface ListItem {
   h: number;
 }
 
-export const NO_PIXELS: Pixels = { width: 1, height: 1, data: new Uint8Array(4) };
+export const NO_PIXELS: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 
 export const STATE_TIPS: Record<ghapi.IssueState, string> = { open: "Open", done: "Closed as completed", not_planned: "Closed as not planned" };
 

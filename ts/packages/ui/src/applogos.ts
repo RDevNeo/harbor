@@ -43,7 +43,7 @@ const MARKS: [string, Mark][] = [
 
 const rgb = (c: number): [number, number, number] => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
 const css = (c: [number, number, number]): string => `#${c.map((x) => x.toString(16).padStart(2, "0")).join("")}`;
-const blank: Pixels = { width: 1, height: 1, data: new Uint8Array(4) };
+const blank: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 
 function hex(c: string): [number, number, number] {
   const n = Number.parseInt(c.slice(1, 7), 16);

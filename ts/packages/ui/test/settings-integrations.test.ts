@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import type { Tile } from "../src/applogos.ts";
 import { type AppsApi, type AppsView, type Form, integrationsAct, integrationsData, type IntApp, type IntHost } from "../src/logic/settings-integrations.ts";
 
-const pixel = { width: 1, height: 1, data: new Uint8Array(4) };
+const pixel = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 const tile = (name: string): Tile => ({ kind: "initial", logo: pixel, glyph: "", glyph_color: "#000000", initial: name.slice(0, 1).toUpperCase() });
 
 function view(over: Partial<AppsView> = {}): AppsView {

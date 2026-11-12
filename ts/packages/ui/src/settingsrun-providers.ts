@@ -20,7 +20,7 @@ const ACTS = ["add", "login", "default", "on", "off", "remove", "remove_yes", "r
 export async function providerLogos(): Promise<(kind: providers.Kind, dark: boolean) => Pixels> {
   const logos = new Map<string, Pixels>();
   for (const dark of [true, false]) for (const k of providers.KINDS) logos.set(`${k}:${dark}`, await providerLogo(k, token("fg", dark)));
-  return (k, dark) => logos.get(`${k}:${dark}`) ?? { width: 1, height: 1, data: new Uint8Array(4) };
+  return (k, dark) => logos.get(`${k}:${dark}`) ?? { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 }
 
 /** The tab's data and its buttons over `kv`, with both themes' logos loaded. */

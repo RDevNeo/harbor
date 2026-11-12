@@ -351,7 +351,7 @@ describe("people's photos", () => {
     const f = signedIn("owner");
     const home = f.dir.workspaces[0]!;
     home.members[0] = { ...home.members[0]!, image: "https://img.example/ana.jpg" };
-    const px = { width: 1, height: 1, data: new Uint8Array([1, 2, 3, 255]) };
+    const px = { width: 1, height: 1, data: new Uint8ClampedArray([1, 2, 3, 255]) };
     const asked: string[] = [];
     const photo = (url: string) => {
       asked.push(url);

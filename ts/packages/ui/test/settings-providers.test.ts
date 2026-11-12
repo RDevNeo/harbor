@@ -12,7 +12,7 @@ class Kv {
   }
 }
 
-const logo = () => ({ width: 1, height: 1, data: new Uint8Array(4) });
+const logo = () => ({ width: 1, height: 1, data: new Uint8ClampedArray(4) });
 
 const account = (over: Partial<providers.Account>): providers.Account => ({ id: "claude", kind: "Claude", name: "Claude", email: "", badge: "C1", plan: "", configDir: null, bin: "/bin/claude", loggedIn: true, usage: [], ...over });
 

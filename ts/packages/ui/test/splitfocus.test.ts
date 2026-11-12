@@ -22,7 +22,7 @@ function rig() {
     set: (k, v) => kv.set(k, v),
     shown: () => shown,
     exists: () => true,
-    info: () => ({ title: "", status: null, running: false, draft: "", composer: {}, logo: { width: 1, height: 1, data: new Uint8Array(4) }, photo: null, bar: {}, strip: [], stripView: { title: "", names: "", header: false, folded: false, open: false } }) as never,
+    info: () => ({ title: "", status: null, running: false, draft: "", composer: {}, logo: { width: 1, height: 1, data: new Uint8ClampedArray(4) }, photo: null, bar: {}, strip: [], stripView: { title: "", names: "", header: false, folded: false, open: false } }) as never,
     cards: (chat) => {
       built.push(chat);
       return { cards: cardsOf(chat), running: false };

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { CaptchaPane, type CaptchaApi, type CaptchaWindow, noCaptcha } from "../src/captchapane.ts";
 import type { discord } from "@harbor/mcp";
 
-const pixels = { width: 2, height: 1, data: new Uint8Array(8) };
+const pixels = { width: 2, height: 1, data: new Uint8ClampedArray(8) };
 
 function rig(frames: (discord.CaptchaFrame | undefined)[]) {
   const sent: [string, number, number][] = [];

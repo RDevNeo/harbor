@@ -3,7 +3,7 @@ import { AttachThumbs, sameFile } from "../src/attachthumbs.ts";
 import type { Pixels } from "../src/logos.ts";
 import { noPixels } from "../src/window.ts";
 
-const pic = (w: number): Pixels => ({ width: w, height: w, data: new Uint8Array(w * w * 4) });
+const pic = (w: number): Pixels => ({ width: w, height: w, data: new Uint8ClampedArray(w * w * 4) });
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 test("images become numbered tiles showing their picture once decoded, other files stay chips", async () => {

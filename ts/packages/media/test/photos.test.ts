@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const jpeg = (w: number, h: number): Promise<Buffer> => sharp({ create: { width: w, height: h, channels: 3, background: "#3b6ea8" } }).jpeg().toBuffer();
-const alpha = (img: { data: Uint8Array; width: number }, x: number, y: number) => img.data[(y * img.width + x) * 4 + 3];
+const alpha = (img: { data: Uint8ClampedArray; width: number }, x: number, y: number) => img.data[(y * img.width + x) * 4 + 3];
 
 test("a photo comes out square and round: corners clear, middle solid", async () => {
   const img = await p.round(await jpeg(300, 200));
