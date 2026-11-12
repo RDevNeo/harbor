@@ -184,9 +184,10 @@ export class MediaRows {
           this.ahead.set(path, dims);
           const got = { image: this.native(image), dims };
           this.got.set(key, got);
-          if (slot !== null) this.shown.set(slot, key);
-          // Its chat was left while it decoded: it rests, ready for when that chat is shown again.
+          // Its chat was left while it decoded (or the scale moved on): it rests, ready for when it's asked for again,
+          // and doesn't take the place of the image its slot shows now.
           if (!this.wanted(key)) return this.toRest(key, got);
+          if (slot !== null) this.shown.set(slot, key);
           this.loaded();
         })
         .catch(() => {

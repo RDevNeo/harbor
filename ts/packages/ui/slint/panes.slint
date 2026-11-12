@@ -1,10 +1,11 @@
-// Split chat panes (logic/splitpanes.ts): up to four chats side by side in the centre. The focused pane is the usual
-// chat view (app.slint moves it into its place under its header); the others are drawn here, each with its own
-// transcript and the same Composer as the focused one, which hands the keyboard to it with a click.
+// Split chat panes (logic/splitpanes.ts): up to four chats side by side in the centre, each drawn here with its own
+// transcript; the focused one has the window's composer under it (app.slint puts it there), the others the same
+// Composer, compact, which hands the keyboard to them with a click.
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Glyph, Spinner, Btn, TipArea, StatusData, StatusView } from "widgets.slint";
 import { Transcript, CardData } from "chat.slint";
+import { ChatCaptchaData } from "captcha.slint";
 import { MdBlock } from "markdown.slint";
 import { SideRow } from "sidebar.slint";
 import { Composer, ComposerState, WorkBarData, StripRow } from "composer.slint";
@@ -39,8 +40,8 @@ export struct PaneHead {
     strip-open: bool,
 }
 
-/** A pane's transcript and its agents strip (empty for the focused one: the usual view shows it). Set once per pane,
- * filled in place. */
+/** A pane's transcript and its agents strip (the strip empty for the focused one: the window's composer shows it). Set
+ * once per pane, filled in place. */
 export struct PaneBody {
     cards: [CardData],
     live: [MdBlock],
@@ -209,12 +210,16 @@ export component PaneHeader inherits Rectangle {
     }
 }
 
-// A pane without the keyboard: its header, its transcript, and a one-line composer (as the focused pane's, compact)
-// that gives it the keyboard.
+// A pane: its header, its transcript, and (without the keyboard) a one-line composer, as the focused pane's, that
+// gives it the keyboard. The focused pane is the same element, only its composer is the window's own one under it: a
+// pane taking the keyboard builds nothing again, its transcript stays as it was.
 export component SidePane inherits Rectangle {
     in property <PaneHead> head;
     in property <PaneBody> body;
     in property <length> content-w: 760px;
+    // The focused pane's captcha (a chat's own browser step), as the usual view shows it.
+    in property <ChatCaptchaData> captcha;
+    in property <image> captcha-frame;
     // To the shell: the transcript's distance from its end and whether it follows it, kept as the pane takes the keyboard.
     callback take(bool, length, bool);
     callback close();
@@ -227,9 +232,38 @@ export component SidePane inherits Rectangle {
     callback open-url(string);
     callback open-media(string);
     callback copy-text(string);
+    callback near-top();
+    callback queue-menu(int, length, length);
+    callback captcha-seen(string, bool, float);
+    callback captcha-pointer(string, string, float, float);
+    callback captcha-cancel(string);
+    // Its transcript, for the window (the focused pane's is the one the shell scrolls).
+    out property <bool> at-end: tr.at-end;
+    out property <length> content-height: tr.content-height;
+    out property <length> view-height: tr.height;
+    out property <bool> follow: tr.follow;
+    out property <length> from-end-now: tr.from-end-now;
+    public function scroll-to-end() {
+        tr.scroll-to-end();
+    }
+    public function page(dir: int) {
+        tr.page(dir);
+    }
+    public function scroll-to-top() {
+        tr.scroll-to-top();
+    }
+    public function grew-above(before: length) {
+        tr.grew-above(before);
+    }
+    public function anchor-off() {
+        tr.anchor-off();
+    }
+    public function keep-from-end(d: length) {
+        tr.keep-from-end(d);
+    }
     clip: true;
     background: Theme.bg100;
-    property <length> box: cbox.height;
+    property <length> box: root.head.focused ? 0px : cbox.height;
     property <length> head-h: round(PaneMetrics.head / 1phx) * 1phx;
     // Behind everything: a click on the pane where nothing else takes it gives it the keyboard.
     TouchArea {
@@ -259,17 +293,30 @@ export component SidePane inherits Rectangle {
         }
     }
     property <length> side: max((root.width - root.content-w) / 2, root.width < 520px ? 12px : 24px);
+    // Every card reads these two: bound to the header (which changes with the focus, a title, a status), each change
+    // there would lay every card out again. They're set only when they really change.
+    property <int> head-live-seq: root.head.live-seq;
+    property <bool> head-running: root.head.running;
+    property <int> live-seq: -1;
+    property <bool> running;
+    changed head-live-seq => {
+        root.live-seq = self.head-live-seq;
+    }
+    changed head-running => {
+        root.running = self.head-running;
+    }
     tr := Transcript {
-        visible: !root.head.focused;
         x: 0;
         y: root.head-h;
         width: root.width;
         height: max(0px, root.height - root.head-h - root.box);
         cards: root.body.cards;
         live-blocks: root.body.live;
-        live-seq: root.head.live-seq;
-        running: root.head.running;
+        live-seq: root.live-seq;
+        running: root.running;
         content-w: root.content-w;
+        captcha: root.captcha;
+        captcha-frame: root.captcha-frame;
         toggle(seq) => {
             root.toggle(seq);
         }
@@ -288,9 +335,26 @@ export component SidePane inherits Rectangle {
         copy-text(t) => {
             root.copy-text(t);
         }
+        near-top => {
+            if root.head.focused {
+                root.near-top();
+            }
+        }
+        queue-menu(seq, x, y) => {
+            root.queue-menu(seq, x, y);
+        }
+        captcha-seen(id, on, w) => {
+            root.captcha-seen(id, on, w);
+        }
+        captcha-pointer(id, kind, fx, fy) => {
+            root.captcha-pointer(id, kind, fx, fy);
+        }
+        captcha-cancel(id) => {
+            root.captcha-cancel(id);
+        }
     }
     // Over the transcript: the first click on a pane without the keyboard gives it the keyboard (the wheel still
-    // scrolls it); a pane is acted on once it's the focused one, the usual view.
+    // scrolls it); a pane is acted on once it's the focused one.
     TouchArea {
         visible: !root.head.focused;
         x: 0;
@@ -338,6 +402,355 @@ export component SidePane inherits Rectangle {
         mouse-cursor: text;
         clicked => {
             root.take(true, tr.from-end-now, tr.at-end);
+        }
+    }
+}
+
+// The split panes, all four places drawn by the same SidePane (unused ones hidden): each keeps its own transcript,
+// so the keyboard going to another pane moves only the focus (its header's brightness, which composer is the
+// window's). Not repeated, so the window reaches the focused pane's transcript (scrolling, its place, its end).
+export component Panes {
+    in property <[PaneHead]> heads;
+    in property <[PaneBody]> bodies;
+    in property <length> content-w: 760px;
+    // The window's composer under the focused pane: that pane ends above it.
+    in property <length> focus-box;
+    in property <ChatCaptchaData> captcha;
+    in property <image> captcha-frame;
+    callback take(int, bool, length, bool);
+    callback close(int);
+    callback maximize(int);
+    callback drag(int, length, length);
+    callback dropped(int, length, length);
+    callback toggle(int, int);
+    callback act(int, int, string);
+    callback link(string);
+    callback open-url(string);
+    callback open-media(string);
+    callback copy-text(string);
+    callback near-top();
+    callback queue-menu(int, length, length);
+    callback captcha-seen(string, bool, float);
+    callback captcha-pointer(string, string, float, float);
+    callback captcha-cancel(string);
+    property <PaneHead> none;
+    property <PaneBody> nobody;
+    property <ChatCaptchaData> nocap;
+    // The focused pane (0 when none is, as the window then shows no panes).
+    property <int> fi: root.heads.length > 1 && root.heads[1].focused ? 1 : root.heads.length > 2 && root.heads[2].focused ? 2 : root.heads.length > 3 && root.heads[3].focused ? 3 : 0;
+    out property <bool> at-end: fi == 1 ? p1.at-end : fi == 2 ? p2.at-end : fi == 3 ? p3.at-end : p0.at-end;
+    out property <length> content-height: fi == 1 ? p1.content-height : fi == 2 ? p2.content-height : fi == 3 ? p3.content-height : p0.content-height;
+    out property <length> view-height: fi == 1 ? p1.view-height : fi == 2 ? p2.view-height : fi == 3 ? p3.view-height : p0.view-height;
+    out property <bool> follow: fi == 1 ? p1.follow : fi == 2 ? p2.follow : fi == 3 ? p3.follow : p0.follow;
+    out property <length> from-end-now: fi == 1 ? p1.from-end-now : fi == 2 ? p2.from-end-now : fi == 3 ? p3.from-end-now : p0.from-end-now;
+    public function scroll-to-end() {
+        if fi == 1 {
+            p1.scroll-to-end();
+        } else if fi == 2 {
+            p2.scroll-to-end();
+        } else if fi == 3 {
+            p3.scroll-to-end();
+        } else {
+            p0.scroll-to-end();
+        }
+    }
+    public function page(dir: int) {
+        if fi == 1 {
+            p1.page(dir);
+        } else if fi == 2 {
+            p2.page(dir);
+        } else if fi == 3 {
+            p3.page(dir);
+        } else {
+            p0.page(dir);
+        }
+    }
+    public function scroll-to-top() {
+        if fi == 1 {
+            p1.scroll-to-top();
+        } else if fi == 2 {
+            p2.scroll-to-top();
+        } else if fi == 3 {
+            p3.scroll-to-top();
+        } else {
+            p0.scroll-to-top();
+        }
+    }
+    public function grew-above(before: length) {
+        if fi == 1 {
+            p1.grew-above(before);
+        } else if fi == 2 {
+            p2.grew-above(before);
+        } else if fi == 3 {
+            p3.grew-above(before);
+        } else {
+            p0.grew-above(before);
+        }
+    }
+    public function anchor-off() {
+        if fi == 1 {
+            p1.anchor-off();
+        } else if fi == 2 {
+            p2.anchor-off();
+        } else if fi == 3 {
+            p3.anchor-off();
+        } else {
+            p0.anchor-off();
+        }
+    }
+    public function keep-from-end(d: length) {
+        if fi == 1 {
+            p1.keep-from-end(d);
+        } else if fi == 2 {
+            p2.keep-from-end(d);
+        } else if fi == 3 {
+            p3.keep-from-end(d);
+        } else {
+            p0.keep-from-end(d);
+        }
+    }
+    p0 := SidePane {
+        property <PaneHead> h: root.heads.length > 0 ? root.heads[0] : root.none;
+        visible: root.heads.length > 0 && self.h.shown;
+        x: floor(self.h.x * root.width / 1phx) * 1phx;
+        y: floor(self.h.y * root.height / 1phx) * 1phx;
+        width: floor((self.h.x + self.h.w) * root.width / 1phx) * 1phx - self.x;
+        height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
+        head: self.h;
+        body: root.bodies.length > 0 ? root.bodies[0] : root.nobody;
+        content-w: root.content-w;
+        captcha: self.h.focused ? root.captcha : root.nocap;
+        captcha-frame: root.captcha-frame;
+        take(composer, from-end, follow) => {
+            root.take(0, composer, from-end, follow);
+        }
+        close => {
+            root.close(0);
+        }
+        maximize => {
+            root.maximize(0);
+        }
+        drag(x, y) => {
+            root.drag(0, x, y);
+        }
+        dropped(x, y) => {
+            root.dropped(0, x, y);
+        }
+        toggle(seq) => {
+            root.toggle(0, seq);
+        }
+        act(seq, a) => {
+            root.act(0, seq, a);
+        }
+        link(u) => {
+            root.link(u);
+        }
+        open-url(u) => {
+            root.open-url(u);
+        }
+        open-media(p) => {
+            root.open-media(p);
+        }
+        copy-text(t) => {
+            root.copy-text(t);
+        }
+        near-top => {
+            root.near-top();
+        }
+        queue-menu(seq, x, y) => {
+            root.queue-menu(seq, x, y);
+        }
+        captcha-seen(id, on, w) => {
+            root.captcha-seen(id, on, w);
+        }
+        captcha-pointer(id, kind, fx, fy) => {
+            root.captcha-pointer(id, kind, fx, fy);
+        }
+        captcha-cancel(id) => {
+            root.captcha-cancel(id);
+        }
+    }
+    p1 := SidePane {
+        property <PaneHead> h: root.heads.length > 1 ? root.heads[1] : root.none;
+        visible: root.heads.length > 1 && self.h.shown;
+        x: floor(self.h.x * root.width / 1phx) * 1phx;
+        y: floor(self.h.y * root.height / 1phx) * 1phx;
+        width: floor((self.h.x + self.h.w) * root.width / 1phx) * 1phx - self.x;
+        height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
+        head: self.h;
+        body: root.bodies.length > 1 ? root.bodies[1] : root.nobody;
+        content-w: root.content-w;
+        captcha: self.h.focused ? root.captcha : root.nocap;
+        captcha-frame: root.captcha-frame;
+        take(composer, from-end, follow) => {
+            root.take(1, composer, from-end, follow);
+        }
+        close => {
+            root.close(1);
+        }
+        maximize => {
+            root.maximize(1);
+        }
+        drag(x, y) => {
+            root.drag(1, x, y);
+        }
+        dropped(x, y) => {
+            root.dropped(1, x, y);
+        }
+        toggle(seq) => {
+            root.toggle(1, seq);
+        }
+        act(seq, a) => {
+            root.act(1, seq, a);
+        }
+        link(u) => {
+            root.link(u);
+        }
+        open-url(u) => {
+            root.open-url(u);
+        }
+        open-media(p) => {
+            root.open-media(p);
+        }
+        copy-text(t) => {
+            root.copy-text(t);
+        }
+        near-top => {
+            root.near-top();
+        }
+        queue-menu(seq, x, y) => {
+            root.queue-menu(seq, x, y);
+        }
+        captcha-seen(id, on, w) => {
+            root.captcha-seen(id, on, w);
+        }
+        captcha-pointer(id, kind, fx, fy) => {
+            root.captcha-pointer(id, kind, fx, fy);
+        }
+        captcha-cancel(id) => {
+            root.captcha-cancel(id);
+        }
+    }
+    p2 := SidePane {
+        property <PaneHead> h: root.heads.length > 2 ? root.heads[2] : root.none;
+        visible: root.heads.length > 2 && self.h.shown;
+        x: floor(self.h.x * root.width / 1phx) * 1phx;
+        y: floor(self.h.y * root.height / 1phx) * 1phx;
+        width: floor((self.h.x + self.h.w) * root.width / 1phx) * 1phx - self.x;
+        height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
+        head: self.h;
+        body: root.bodies.length > 2 ? root.bodies[2] : root.nobody;
+        content-w: root.content-w;
+        captcha: self.h.focused ? root.captcha : root.nocap;
+        captcha-frame: root.captcha-frame;
+        take(composer, from-end, follow) => {
+            root.take(2, composer, from-end, follow);
+        }
+        close => {
+            root.close(2);
+        }
+        maximize => {
+            root.maximize(2);
+        }
+        drag(x, y) => {
+            root.drag(2, x, y);
+        }
+        dropped(x, y) => {
+            root.dropped(2, x, y);
+        }
+        toggle(seq) => {
+            root.toggle(2, seq);
+        }
+        act(seq, a) => {
+            root.act(2, seq, a);
+        }
+        link(u) => {
+            root.link(u);
+        }
+        open-url(u) => {
+            root.open-url(u);
+        }
+        open-media(p) => {
+            root.open-media(p);
+        }
+        copy-text(t) => {
+            root.copy-text(t);
+        }
+        near-top => {
+            root.near-top();
+        }
+        queue-menu(seq, x, y) => {
+            root.queue-menu(seq, x, y);
+        }
+        captcha-seen(id, on, w) => {
+            root.captcha-seen(id, on, w);
+        }
+        captcha-pointer(id, kind, fx, fy) => {
+            root.captcha-pointer(id, kind, fx, fy);
+        }
+        captcha-cancel(id) => {
+            root.captcha-cancel(id);
+        }
+    }
+    p3 := SidePane {
+        property <PaneHead> h: root.heads.length > 3 ? root.heads[3] : root.none;
+        visible: root.heads.length > 3 && self.h.shown;
+        x: floor(self.h.x * root.width / 1phx) * 1phx;
+        y: floor(self.h.y * root.height / 1phx) * 1phx;
+        width: floor((self.h.x + self.h.w) * root.width / 1phx) * 1phx - self.x;
+        height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
+        head: self.h;
+        body: root.bodies.length > 3 ? root.bodies[3] : root.nobody;
+        content-w: root.content-w;
+        captcha: self.h.focused ? root.captcha : root.nocap;
+        captcha-frame: root.captcha-frame;
+        take(composer, from-end, follow) => {
+            root.take(3, composer, from-end, follow);
+        }
+        close => {
+            root.close(3);
+        }
+        maximize => {
+            root.maximize(3);
+        }
+        drag(x, y) => {
+            root.drag(3, x, y);
+        }
+        dropped(x, y) => {
+            root.dropped(3, x, y);
+        }
+        toggle(seq) => {
+            root.toggle(3, seq);
+        }
+        act(seq, a) => {
+            root.act(3, seq, a);
+        }
+        link(u) => {
+            root.link(u);
+        }
+        open-url(u) => {
+            root.open-url(u);
+        }
+        open-media(p) => {
+            root.open-media(p);
+        }
+        copy-text(t) => {
+            root.copy-text(t);
+        }
+        near-top => {
+            root.near-top();
+        }
+        queue-menu(seq, x, y) => {
+            root.queue-menu(seq, x, y);
+        }
+        captcha-seen(id, on, w) => {
+            root.captcha-seen(id, on, w);
+        }
+        captcha-pointer(id, kind, fx, fy) => {
+            root.captcha-pointer(id, kind, fx, fy);
+        }
+        captcha-cancel(id) => {
+            root.captcha-cancel(id);
         }
     }
 }

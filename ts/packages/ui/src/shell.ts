@@ -58,7 +58,7 @@ import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from 
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
-import { type PaneInfo, SplitPanes } from "./splitrun.ts";
+import { type PaneInfo, type PaneTarget, SplitPanes } from "./splitrun.ts";
 import { AttachThumbs, sameFile } from "./attachthumbs.ts";
 import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
@@ -1061,8 +1061,9 @@ export class Shell {
   }
 
 
+  /** Chat `id` is on the screen: the open one, or one in a split pane beside it (its turns end read, not unread). */
   showing(id: number): boolean {
-    return this.view === "chat" && this.chatId === id && this.win.window.visible;
+    return this.view === "chat" && (this.chatId === id || this.split.onScreenChats().includes(id)) && this.win.window.visible;
   }
 
   /** The key of the composer shown: the open chat, or the draft. */
@@ -1388,9 +1389,12 @@ export class Shell {
   openChat(id: number, fromEnd: number | null = null): void {
     if (!this.data.chat(id)) return;
     switchTrace.begin(`open ${id}`);
+    // A split pane on screen taking the keyboard: its transcript stays as it is, where it was read.
+    const inPane = this.view === "chat" && this.page === null && this.split.holds(id);
+    if (inPane) fromEnd = null;
     // The transcript sticks to the end before the new cards come in, so the chat's first frame shows its end, not
     // the place the last one was read at.
-    if (fromEnd === null) this.win.scroll_to_end();
+    if (fromEnd === null && !inPane) this.win.scroll_to_end();
     this.leaveComposer();
     this.page = null;
     this.refreshInvite();
@@ -1414,7 +1418,7 @@ export class Shell {
     // A chat that comes on screen draws first only its latest cards that fill the view; the rest of its page
     // comes in above them right after, out of sight (the view stays at the end).
     const o = this.openedOf(id);
-    const fresh = fromEnd === null && this.cardsOf !== id;
+    const fresh = fromEnd === null && this.cardsOf !== id && !inPane;
     o.fill = fresh ? this.win.transcript_view * FILL_VIEWS : undefined;
     this.refreshView();
     switchTrace.mark("view");
@@ -1422,7 +1426,9 @@ export class Shell {
     this.syncFiles();
     // Laid out now, at its end: the first frame shows it there. A long chat's first layout can still take a few
     // frames, so its end is sought until then, unless the reader scrolled up meanwhile.
-    if (fromEnd === null) {
+    if (inPane) {
+      // Nothing to seek: the pane shows what it showed.
+    } else if (fromEnd === null) {
       this.win.scroll_to_end();
       for (const ms of [30, 120, 400, 900]) setTimeout(() => this.view === "chat" && this.chatId === id && this.win.transcript_follow && this.win.scroll_to_end(), ms);
     }
@@ -1551,6 +1557,7 @@ export class Shell {
       focusComposer: () => this.win.focus_composer(),
       cardAct: (seq, a) => this.win.card_act(seq, a),
       sidebar: () => this.refreshSidebar(),
+      relaid: () => this.refreshView(),
       schedule: () => {
         this.cardsDirty = true;
         this.schedule(80);
@@ -1664,7 +1671,7 @@ export class Shell {
       title: chat ? (chat.role === "sub" ? chat.name : chat.title) : this.draftMain ? "Main chat" : "New thread",
       branch: this.headBranch(st?.branch ?? ""),
     };
-    w.team_enabled = chat?.role === "lead";
+    w.team_enabled = this.teamLead()?.role === "lead";
     this.refreshTeam();
     this.refreshStrip();
     const empty = chat ? this.items(chat.id).length === 0 : true;
@@ -1709,8 +1716,21 @@ export class Shell {
   }
 
   /** The team panel beside a lead chat (teamui.rs `team_panel`). */
+  /** The lead the Agents column shows: the open chat; beside split panes, the focused pane's chat when it's a lead,
+   * else the first pane's that is one (so the column, and the panes' widths, stay as the keyboard moves between them). */
+  private teamLead(): Chat | undefined {
+    if (this.view !== "chat") return undefined;
+    const open = this.data.chat(this.chatId);
+    if (open?.role === "lead") return open;
+    for (const id of this.split.onScreenChats()) {
+      const c = this.data.chat(id);
+      if (c?.role === "lead") return c;
+    }
+    return open;
+  }
+
   private refreshTeam(): void {
-    const lead = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const lead = this.teamLead();
     if (!lead || lead.role !== "lead") {
       for (const m of [this.teamAgentRows, this.teamSettledRows]) sync(m, []);
       sync(this.wakeRows, []);
@@ -1794,8 +1814,27 @@ export class Shell {
     }
   }
 
-  /** While a reply streams, its blocks go to `liveBlocks` and its card row carries none. */
-  private live(cards: CardData[], running: boolean): CardData[] {
+  /** Where the open chat's transcript is built: the usual view's models, or (split) its pane's. */
+  private target(): PaneTarget {
+    const pane = this.view === "chat" ? this.split.target(this.chatId) : null;
+    if (pane !== null) return pane;
+    return {
+      cards: this.cards,
+      live: this.liveBlocks,
+      media: this.mediaRows,
+      setLive: (seq) => {
+        if (this.win.live_seq !== seq) this.win.live_seq = seq;
+      },
+    };
+  }
+
+  /** The open chat's cards as built (the usual view's, or its split pane's). */
+  private shownCards(): slint.ArrayModel<CardData> {
+    return (this.view === "chat" ? this.split.target(this.chatId)?.cards : undefined) ?? this.cards;
+  }
+
+  /** While a reply streams, its blocks go to the live model and its card row carries none. */
+  private live(cards: CardData[], running: boolean, t: PaneTarget): CardData[] {
     let at = -1;
     if (running) {
       for (let i = cards.length - 1; i >= 0; i--) {
@@ -1806,12 +1845,12 @@ export class Shell {
     }
     const card = cards[at];
     if (!card) {
-      if (this.win.live_seq !== -1) this.win.live_seq = -1;
-      if (this.liveBlocks.length > 0) sync(this.liveBlocks, []);
+      t.setLive(-1, running);
+      if (t.live.length > 0) sync(t.live, []);
       return cards;
     }
-    sync(this.liveBlocks, card.blocks, transcript.now.sameBlock);
-    if (this.win.live_seq !== card.seq) this.win.live_seq = card.seq;
+    sync(t.live, card.blocks, transcript.now.sameBlock);
+    t.setLive(card.seq, running);
     let bare = this.bare.get(card);
     if (!bare) this.bare.set(card, (bare = { ...card, blocks: [] }));
     const out = cards.slice();
@@ -1821,7 +1860,8 @@ export class Shell {
 
   /** Scrolled near the top of what's built: one more page of earlier cards above, the view kept where it was. */
   private loadEarlier(): void {
-    if (this.view !== "chat" || this.cards.rowCount() < 2 || this.cards.rowData(1)?.kind !== "earlier") return;
+    const shown = this.shownCards();
+    if (this.view !== "chat" || shown.rowCount() < 2 || shown.rowData(1)?.kind !== "earlier") return;
     const o = this.openedOf(this.chatId);
     if (Date.now() - o.grew < 250) return;
     const above = this.win.transcript_height;
@@ -1890,7 +1930,14 @@ export class Shell {
     const waits = since === null ? this.engine.waiting(chat.id) : null;
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${transcript.now.subsRunning(subs)}` : waits !== null ? { text: waiting.waitText(waits, now(), utcOffset()), tone: "waiting" as const } : "";
     const cwd = this.data.cwd(chat);
-    const rows = this.mediaRows;
+    // Split, the focused pane's own models (and images): the keyboard going to another pane rebuilds nothing.
+    const t = this.target();
+    if (t.cards !== this.cards && (this.cards.length > 0 || this.liveBlocks.length > 0)) {
+      sync(this.cards, []);
+      sync(this.liveBlocks, []);
+      this.mediaRows?.sweep();
+    }
+    const rows = t.media;
     // Another PC's chat: an image that isn't on this PC comes from that PC.
     const homeImage = this.hub.homeImage;
     const fetch = homeImage && this.meshChat.foreign(chat) ? (path: string) => homeImage(chat.id, path) : undefined;
@@ -1903,7 +1950,7 @@ export class Shell {
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
     );
     rows?.sweep();
-    sync(this.cards, transcript.now.withQueue(this.live(next, running), queue), sameCard);
+    sync(t.cards, transcript.now.withQueue(this.live(next, running, t), queue), sameCard);
     this.chatCap.cards(chat.id, next.filter((c) => c.kind === "captcha").map((c) => c.detail));
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
@@ -2888,8 +2935,9 @@ export class Shell {
         if (!images.includes(l)) images.push(l);
       });
     }
-    for (let i = 0; i < this.cards.length; i++) {
-      const c = this.cards.rowData(i);
+    const shown = this.shownCards();
+    for (let i = 0; i < shown.length; i++) {
+      const c = shown.rowData(i);
       if (c?.seq !== seq || (c.kind !== "user" && c.kind !== "text")) continue;
       for (const m of c.media) {
         const l = m.video ? null : here(m.path);
@@ -3471,8 +3519,9 @@ export class Shell {
       return;
     }
     let group: string[] = [path];
-    for (let i = 0; i < this.cards.length; i++) {
-      const c = this.cards.rowData(i);
+    const shown = this.shownCards();
+    for (let i = 0; i < shown.length; i++) {
+      const c = shown.rowData(i);
       if (c?.media.some((m) => m.path === path)) group = c.media.map((m) => m.path).filter(shows);
     }
     img.openClicked(path, group);
@@ -5453,6 +5502,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   scripted(win.window, process.env.HARBOR_POINTER);
   switchTrace.probeWith(() => `end=${win.at_end ? 1 : 0} h=${Math.round(win.transcript_height)} fe=${Math.round(win.transcript_from_end)}`);
   switchTrace.drive((id) => shell.openChat(id));
+  switchTrace.stream((id) => data.engine.transcript(id).items as never, (id) => shell.changed(id));
   hooks.shown?.(win.window);
   const tick = setInterval(() => shell.tick(), 1000);
   const unhot = followHot(shell);

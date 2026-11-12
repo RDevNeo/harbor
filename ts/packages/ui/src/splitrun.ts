@@ -1,7 +1,8 @@
-// Split chat panes on screen (logic/splitpanes.ts has the layout). The focused pane is the shell's usual chat view;
-// this keeps the others: their headers, transcripts (built here, each in models of its own that stay with the pane),
-// the dividers, and a chat dragged from the sidebar (layout is by dragging only). A pane that isn't on screen (another page,
-// a pane shown alone) holds no cards and its transcript is let go.
+// Split chat panes on screen (logic/splitpanes.ts has the layout): their headers, transcripts (each in models of its own
+// that stay with the pane), the dividers, and a chat dragged from the sidebar (layout is by dragging only). The focused
+// pane's transcript is built by the shell, as the usual view's, into that pane's models (`target`); the others' here.
+// So the keyboard going to another pane builds nothing again: both transcripts stay as they are. A pane that isn't on
+// screen (another page, a pane shown alone) holds no cards and its transcript is let go.
 import * as slint from "slint-ui";
 import { type Band, close, type Drop, dropAt, dropped, dividers, MAX_PANES, opened, order, paneDropAt, paneDropped, parse, prune, rects, resize, serialize, single, type Split, SPLIT_KEY, toggleMax } from "./logic/splitpanes.ts";
 import type { MediaRows } from "./mediarows.ts";
@@ -41,6 +42,9 @@ export interface SplitHost {
   focusComposer(): void;
   cardAct(seq: number, action: string): void;
   sidebar(): void;
+  /** The layout changed under the shown chat: the view built again (the focused pane's transcript moves between the
+   * usual view's models and its pane's when a pane is maximized or shown among the others again). */
+  relaid(): void;
   /** Cards were marked dirty: the shell's next flush builds them. */
   schedule(): void;
   sameCard(a: CardData, b: CardData): boolean;
@@ -57,7 +61,18 @@ interface Slot {
   running: boolean;
   built: boolean;
   dirty: boolean;
+  /** Its cards were last built by the shell (it had the keyboard): built here once it no longer has. */
+  byShell: boolean;
   media: MediaRows | null;
+}
+
+/** Where the shell builds the focused pane's transcript: its models, its images, its streaming reply. */
+export interface PaneTarget {
+  cards: slint.ArrayModel<CardData>;
+  live: slint.ArrayModel<MdBlockData>;
+  media: MediaRows | null;
+  /** The streaming reply's card (-1: none) and whether the chat works. */
+  setLive(seq: number, running: boolean): void;
 }
 
 const NO_DROP: PaneDrop = { kind: "", pane: -1, x: 0, y: 0, w: 0, h: 0, label: "", sub: "", cap: false };
@@ -121,7 +136,11 @@ export class SplitPanes {
     w.split_drop = NO_DROP;
     w.split_focus = (i, composer, fromEnd, follow) => this.focus(i, composer, follow ? null : fromEnd);
     w.split_close = (i) => this.close(i);
-    w.split_solo = (i) => this.change(toggleMax(this.now(), i));
+    // -1: the maximized pane back among the others (the title bar's button).
+    w.split_solo = (i) => {
+      const s = this.now();
+      this.change(toggleMax(s, i < 0 ? (s.max ?? -1) : i));
+    };
     w.split_resize = (path, at) => this.resize(path, at);
     w.split_drag = (chat, u, v, bu, bv) => this.drag(chat, u, v, { u: bu, v: bv });
     w.split_dropped = (chat, u, v, bu, bv) => this.drop(chat, u, v, { u: bu, v: bv });
@@ -131,6 +150,8 @@ export class SplitPanes {
     w.split_toggle = (i, seq) => {
       const s = this.slots[i];
       if (!s) return;
+      // The focused pane's transcript is the usual view's: the shell folds it (and loads earlier cards) as it does.
+      if (s === this.focused()) return this.host.win.toggle(seq);
       this.host.toggle(s.chat, seq);
       this.fill(s);
     };
@@ -199,9 +220,60 @@ export class SplitPanes {
     this.flush();
   }
 
-  /** The dirty panes built again. */
+  /** The dirty panes built again (not the focused one: the shell builds it). */
   flush(): void {
-    for (const s of this.slots) if (s.built && s.dirty) this.fill(s);
+    const f = this.focused();
+    for (const s of this.slots) if (s.built && s.dirty && s !== f) this.fill(s);
+  }
+
+  /** The panes are on screen, the usual view's chat the focused one. */
+  private onScreen(): Split | null {
+    const s = this.state;
+    const shown = this.host.shown();
+    return s !== null && s.chats.length > 1 && s.max === null && shown !== null && s.chats[s.focus] === shown ? s : null;
+  }
+
+  private focused(): Slot | null {
+    const s = this.onScreen();
+    if (s === null) return null;
+    const chat = s.chats[s.focus];
+    return this.slots.find((x) => x.chat === chat) ?? null;
+  }
+
+  /** The chats of the panes on screen (none when the panes aren't). */
+  onScreenChats(): number[] {
+    const s = this.onScreen();
+    if (s === null) return [];
+    const all = rects(s);
+    return s.chats.filter((_, i) => all[i] !== null);
+  }
+
+  /** Where the shell builds chat `chat`'s transcript: its pane's models while it's the focused pane on screen, else
+   * null (the usual view's). */
+  target(chat: number): PaneTarget | null {
+    const s = this.onScreen();
+    if (s === null || s.chats[s.focus] !== chat) return null;
+    if (this.slots.length !== s.chats.length || this.slots.some((x, i) => x.chat !== s.chats[i])) this.reconcile(s);
+    const slot = this.slots[s.focus];
+    if (!slot) return null;
+    slot.built = true;
+    slot.dirty = false;
+    slot.byShell = true;
+    slot.media ??= this.host.media(() => {
+      slot.dirty = true;
+      this.host.schedule();
+    });
+    return {
+      cards: slot.cards,
+      live: slot.live,
+      media: slot.media,
+      setLive: (seq, running) => {
+        if (seq === slot.liveSeq && running === slot.running) return;
+        slot.liveSeq = seq;
+        slot.running = running;
+        this.refreshHeads();
+      },
+    };
   }
 
   /** Lays the panes out (the usual view's chat is the focused one) and fills those on screen. */
@@ -217,8 +289,13 @@ export class SplitPanes {
       }
     }
     const split = s !== null && s.chats.length > 1 && shown !== null && s.chats[s.focus] === shown;
-    if (!split || s === null) {
-      if (w.split_count !== (s?.chats.length ?? 1)) w.split_count = s?.chats.length ?? 1;
+    // A pane maximized is the usual single-chat view (its title bar, full composer, Agents column), with a button in
+    // the title bar that brings the other panes back.
+    const maxed = split && s !== null && s.max !== null;
+    if (w.split_maxed !== maxed) w.split_maxed = maxed;
+    if (!split || s === null || maxed) {
+      const n = maxed ? 1 : (s?.chats.length ?? 1);
+      if (w.split_count !== n) w.split_count = n;
       for (const slot of this.slots) this.empty(slot);
       // Off screen, the panes keep only their chats (and come back with them).
       if (this.heads.rowCount() > 0) sync(this.heads, [], sameJson);
@@ -238,11 +315,12 @@ export class SplitPanes {
       sameJson,
     );
     this.refreshHeads();
-    // The panes on screen are built (once, then as their chats change); the hidden ones hold nothing.
+    // The panes on screen are built (once, then as their chats change; the focused one by the shell); the hidden ones
+    // hold nothing.
     s.chats.forEach((_, i) => {
       const slot = this.slots[i] as Slot;
-      if (i === s.focus || all[i] === null) this.empty(slot);
-      else if (!slot.built || slot.dirty) this.fill(slot);
+      if (all[i] === null) this.empty(slot);
+      else if (i !== s.focus && (!slot.built || slot.dirty || slot.byShell)) this.fill(slot);
     });
     if (w.split_count !== s.chats.length) w.split_count = s.chats.length;
   }
@@ -308,7 +386,7 @@ export class SplitPanes {
     const cards = new slint.ArrayModel<CardData>([]);
     const live = new slint.ArrayModel<MdBlockData>([]);
     const strip = new slint.ArrayModel<StripRow>([]);
-    const slot: Slot = { chat, body: { cards, live, strip }, cards, live, strip, liveSeq: -1, running: false, built: false, dirty: false, media: null };
+    const slot: Slot = { chat, body: { cards, live, strip }, cards, live, strip, liveSeq: -1, running: false, built: false, dirty: false, byShell: false, media: null };
     return slot;
   }
 
@@ -321,6 +399,7 @@ export class SplitPanes {
     const { cards, running } = this.host.cards(s.chat, s.media);
     s.built = true;
     s.dirty = false;
+    s.byShell = false;
     let at = -1;
     if (running) {
       for (let i = cards.length - 1; i >= 0; i--) {
@@ -352,6 +431,7 @@ export class SplitPanes {
     if (!s.built) return;
     s.built = false;
     s.dirty = false;
+    s.byShell = false;
     if (s.cards.rowCount() > 0) sync(s.cards, [], this.host.sameCard);
     if (s.live.rowCount() > 0) sync(s.live, [], this.host.sameBlock);
     // Two sweeps: the first forgets what was used, the second lets every decoded image go.
@@ -385,7 +465,7 @@ export class SplitPanes {
     const chat = next.chats[next.focus] as number;
     if (chat !== this.host.shown()) this.host.openChat(chat, null);
     else {
-      this.render();
+      this.host.relaid();
       this.host.sidebar();
     }
     for (const c of gone) if (c !== this.host.shown()) this.host.release(c);

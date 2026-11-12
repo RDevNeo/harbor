@@ -27,7 +27,7 @@ import { IssuesBus, IssuesPage } from "issues.slint";
 import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
-import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, SidePane, PaneHeader, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
+import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, Panes, PaneHeader, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
 
 export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
@@ -119,6 +119,9 @@ component TopBar {
     // a chat is dragged, the notice that only a replace is left.
     in property <bool> split;
     in property <bool> cap;
+    // A split pane maximized: this is its title bar, with a button that shows every pane again.
+    in property <bool> maxed;
+    callback restore();
     // Whole physical pixels, so the 1px line under it is one crisp row at any scale (zoom 90% on a 1.25 display
     // put it at 51.75: drawn on two half-lit rows that partial redraws left uneven, as a flickering stroke).
     height: round(46px / 1phx) * 1phx;
@@ -239,6 +242,16 @@ component TopBar {
         HorizontalLayout {
             horizontal-stretch: 0;
             spacing: 4px;
+            if root.maxed: Btn {
+                y: 1px;
+                icon: Icons.minimize;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Show every pane";
+                clicked => {
+                    root.restore();
+                }
+            }
             Btn {
                 y: 1px;
                 icon: Icons.square-menu;
@@ -497,6 +510,7 @@ export component AppWindow inherits Window {
     // Split panes (logic/splitpanes.ts): how many, each one's header and place, the others' transcripts, the dividers,
     // the focused one's place (shares of the centre) and where a dragged chat would land.
     in property <int> split-count: 1;
+    in property <bool> split-maxed;
     in property <[PaneHead]> split-heads;
     in property <[PaneBody]> split-bodies;
     in property <[PaneDiv]> split-divs;
@@ -757,11 +771,27 @@ export component AppWindow inherits Window {
     public function set-cursor(at: int) {
         composer-el.set-cursor(at);
     }
+    // Split, the transcript the shell scrolls and reads is the focused pane's.
+    property <bool> panes-on: root.view == "chat" && root.split-count > 1;
     public function scroll-to-end() {
-        transcript.scroll-to-end();
+        if root.panes-on {
+            panes.scroll-to-end();
+        } else {
+            transcript.scroll-to-end();
+        }
     }
     public function transcript-key(k: string) {
-        if k == "up" {
+        if root.panes-on {
+            if k == "up" {
+                panes.page(1);
+            } else if k == "down" {
+                panes.page(-1);
+            } else if k == "home" {
+                panes.scroll-to-top();
+            } else {
+                panes.scroll-to-end();
+            }
+        } else if k == "up" {
             transcript.page(1);
         } else if k == "down" {
             transcript.page(-1);
@@ -774,12 +804,12 @@ export component AppWindow inherits Window {
     public function copy-text(t: string) {
         composer-el.copy-text(t);
     }
-    out property <bool> at-end: transcript.at-end;
-    out property <length> transcript-height: transcript.content-height;
+    out property <bool> at-end: root.panes-on ? panes.at-end : transcript.at-end;
+    out property <length> transcript-height: root.panes-on ? panes.content-height : transcript.content-height;
     // The transcript's own height on the screen (what a chat's first frame has to fill).
-    out property <length> transcript-view: transcript.height;
+    out property <length> transcript-view: root.panes-on ? panes.view-height : transcript.height;
     // Still stuck to the end (not scrolled up since).
-    out property <bool> transcript-follow: transcript.follow;
+    out property <bool> transcript-follow: root.panes-on ? panes.follow : transcript.follow;
     // The screen's pixels per logical pixel (1.25 on a 125% display): images are decoded to the size drawn.
     out property <float> scale-factor: 1px / 1phx;
     // Browser-style zoom: the level (1 = 100%),
@@ -791,15 +821,27 @@ export component AppWindow inherits Window {
         root.scale-changed(self.scale-factor);
     }
     public function transcript-grew-above(before: length) {
-        transcript.grew-above(before);
+        if root.panes-on {
+            panes.grew-above(before);
+        } else {
+            transcript.grew-above(before);
+        }
     }
     public function transcript-anchor-off() {
-        transcript.anchor-off();
+        if root.panes-on {
+            panes.anchor-off();
+        } else {
+            transcript.anchor-off();
+        }
     }
     // The transcript's place for a restart: px from the view's top to the content's end, and putting it back.
-    out property <length> transcript-from-end: transcript.from-end-now;
+    out property <length> transcript-from-end: root.panes-on ? panes.from-end-now : transcript.from-end-now;
     public function transcript-keep(d: length) {
-        transcript.keep-from-end(d);
+        if root.panes-on {
+            panes.keep-from-end(d);
+        } else {
+            transcript.keep-from-end(d);
+        }
     }
 
     property <length> content-w: 760px;
@@ -1053,6 +1095,10 @@ export component AppWindow inherits Window {
                         mem: root.view == "chat" ? root.chat-mem : "";
                         split: body.split;
                         cap: root.drag-chat >= 0 && root.split-drop.cap;
+                        maxed: root.split-maxed;
+                        restore => {
+                            root.split-solo(-1);
+                        }
                         mem-open: root.pop-id == "mem-chat";
                         mem-clicked(x, y) => {
                             root.mem-pop("mem-chat", x, y);
@@ -1061,8 +1107,8 @@ export component AppWindow inherits Window {
                     if root.view == "draft" || root.view == "chat": Separator { }
                     body := Rectangle {
                         vertical-stretch: 1;
-                        // Split panes: the focused one is this usual view, moved into its place under its header.
-                        property <bool> split: root.view == "chat" && root.split-count > 1;
+                        // Split panes: each one is drawn by Panes; the focused one has this usual composer under it.
+                        property <bool> split: root.panes-on;
                         // chat.rs: the panel docks while the chat keeps its 440px minimum.
                         property <bool> team-docked: root.view == "chat" && root.team-enabled && root.team-on && self.width - 300px >= 440px;
                         // The panes' area: the centre left of the docked panel.
@@ -1137,7 +1183,7 @@ export component AppWindow inherits Window {
                             }
                         }
                         transcript := Transcript {
-                            visible: root.view == "chat" && !root.hero;
+                            visible: root.view == "chat" && !root.hero && !body.split;
                             x: body.fx;
                             y: body.fy + body.top;
                             width: body.room;
@@ -1173,6 +1219,78 @@ export component AppWindow inherits Window {
                             }
                             captcha: root.chat-cap;
                             captcha-frame: root.chat-cap-frame;
+                            captcha-seen(id, on, w) => {
+                                root.chat-cap-seen(id, on, w);
+                            }
+                            captcha-pointer(id, kind, fx, fy) => {
+                                root.chat-cap-pointer(id, kind, fx, fy);
+                            }
+                            captcha-cancel(id) => {
+                                root.chat-cap-cancel(id);
+                            }
+                        }
+                        // The panes, each with its own transcript (the focused one's composer is the usual one, below).
+                        panes := Panes {
+                            visible: body.split;
+                            x: 0;
+                            y: 0;
+                            width: body.area-w;
+                            height: body.height;
+                            heads: root.split-heads;
+                            bodies: root.split-bodies;
+                            content-w: root.content-w;
+                            focus-box: composer-box.height;
+                            captcha: root.chat-cap;
+                            captcha-frame: root.chat-cap-frame;
+                            take(i, composer, from-end, follow) => {
+                                root.split-focus(i, composer, from-end, follow);
+                            }
+                            drag(i, x, y) => {
+                                if !root.drag-dead && !root.split-heads[i].maxed {
+                                    root.drag-head = root.split-heads[i];
+                                    root.drag-pane = i;
+                                    root.drag-x = x;
+                                    root.drag-y = y;
+                                    root.split-move(i, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
+                                }
+                            }
+                            dropped(i, x, y) => {
+                                if root.drag-pane >= 0 && !root.drag-dead {
+                                    root.split-moved(i, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
+                                }
+                                root.drag-pane = -1;
+                                root.drag-dead = false;
+                            }
+                            close(i) => {
+                                root.split-close(i);
+                            }
+                            maximize(i) => {
+                                root.split-solo(i);
+                            }
+                            toggle(i, seq) => {
+                                root.split-toggle(i, seq);
+                            }
+                            act(i, seq, a) => {
+                                root.split-act(i, seq, a);
+                            }
+                            link(u) => {
+                                root.link(u);
+                            }
+                            open-url(u) => {
+                                root.open-url(u);
+                            }
+                            open-media(p) => {
+                                root.open-media(p);
+                            }
+                            copy-text(t) => {
+                                root.copy-text(t);
+                            }
+                            near-top => {
+                                root.transcript-near-top();
+                            }
+                            queue-menu(seq, x, y) => {
+                                root.queue-menu(seq, x, y);
+                            }
                             captcha-seen(id, on, w) => {
                                 root.chat-cap-seen(id, on, w);
                             }
@@ -1323,65 +1441,12 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        // The panes: each one's header (the focused one's over the usual view), the others whole.
+                        // The panes' dividers, over the panes and the composer's sides.
                         if body.split: Rectangle {
                             x: 0;
                             y: 0;
                             width: body.area-w;
                             height: body.height;
-                            for h[i] in root.split-heads: SidePane {
-                                visible: h.shown;
-                                x: floor(h.x * body.area-w / 1phx) * 1phx;
-                                y: floor(h.y * body.height / 1phx) * 1phx;
-                                width: floor((h.x + h.w) * body.area-w / 1phx) * 1phx - self.x;
-                                height: h.focused ? round(PaneMetrics.head / 1phx) * 1phx : floor((h.y + h.h) * body.height / 1phx) * 1phx - self.y;
-                                head: h;
-                                body: root.split-bodies[i];
-                                content-w: root.content-w;
-                                take(composer, from-end, follow) => {
-                                    root.split-focus(i, composer, from-end, follow);
-                                }
-                                drag(x, y) => {
-                                    if !root.drag-dead && !h.maxed {
-                                        root.drag-head = h;
-                                        root.drag-pane = i;
-                                        root.drag-x = x;
-                                        root.drag-y = y;
-                                        root.split-move(i, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
-                                    }
-                                }
-                                dropped(x, y) => {
-                                    if root.drag-pane >= 0 && !root.drag-dead {
-                                        root.split-moved(i, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
-                                    }
-                                    root.drag-pane = -1;
-                                    root.drag-dead = false;
-                                }
-                                close => {
-                                    root.split-close(i);
-                                }
-                                maximize => {
-                                    root.split-solo(i);
-                                }
-                                toggle(seq) => {
-                                    root.split-toggle(i, seq);
-                                }
-                                act(seq, a) => {
-                                    root.split-act(i, seq, a);
-                                }
-                                link(u) => {
-                                    root.link(u);
-                                }
-                                open-url(u) => {
-                                    root.open-url(u);
-                                }
-                                open-media(p) => {
-                                    root.open-media(p);
-                                }
-                                copy-text(t) => {
-                                    root.copy-text(t);
-                                }
-                            }
                             // 1px dividers: brighter and wider, with the resize cursor, under the pointer; dragged, they resize.
                             // The panes' right edge beside the docked Agents column: the same line, on top of the panes so
                             // nothing they redraw covers it, the whole height, on a whole physical pixel.

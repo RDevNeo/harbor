@@ -101,3 +101,24 @@ export function drive(open: (id: number) => void): void {
   setTimeout(() => console.error(`switch cycle rss ${Math.round(process.memoryUsage.rss() / 2 ** 20)} MB`), at + ids.length * every + 3000);
 }
 
+
+/** HARBOR_SWITCH_STREAM=ID (with HARBOR_SWITCH_TRACE): from HARBOR_SWITCH_AT s on, chat ID gets a reply that grows
+ * every 250 ms, as a streaming turn does, so a rig can watch a pane that shows it (split panes) follow along. */
+export function stream(items: (id: number) => { kind: string; text?: string; at?: number }[], changed: (id: number) => void): void {
+  const id = Number(process.env.HARBOR_SWITCH_STREAM ?? "");
+  if (!on || !Number.isInteger(id) || id <= 0) return;
+  const at = Number(process.env.HARBOR_SWITCH_AT ?? "10") * 1000;
+  setTimeout(() => {
+    const reply = { kind: "text", text: "Streaming:", at: Date.now() };
+    items(id).push(reply);
+    let n = 0;
+    const t = setInterval(() => {
+      n++;
+      reply.text += ` word${n}`;
+      if (n % 12 === 0) reply.text += "\n\nA new paragraph.";
+      changed(id);
+      if (n >= 120) clearInterval(t);
+    }, 250);
+    changed(id);
+  }, at);
+}

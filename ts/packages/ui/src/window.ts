@@ -570,6 +570,8 @@ export interface AppWindow extends slint.ComponentHandle {
 
   crumbs: Crumbs;
   split_count: number;
+  /** A split pane is maximized: the window is the usual single-chat view, with a button to show every pane. */
+  split_maxed: boolean;
   split_heads: slint.Model<PaneHead>;
   split_bodies: slint.Model<PaneBody>;
   split_divs: slint.Model<PaneDiv>;
