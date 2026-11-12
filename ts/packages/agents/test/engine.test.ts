@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Chat, type Item, Store } from "@harbor/store";
+import { procStart } from "../src/procfs.ts";
 import * as detach from "../src/detach.ts";
 import { Engine, type EngineHost, mcpFailNotice, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, PROMOTED } from "../src/engine.ts";
 import { opposite, parseMode } from "../src/queue.ts";
@@ -696,6 +697,35 @@ describe("pickup at start", () => {
     expect(next.running(c.id)).toBe(true);
     await until("the replayed end", () => !next.running(c.id));
     expect(texts(next.transcript(c.id).items)).toEqual(["user: slow pickup", "echo: slow pickup"]);
+    store.close();
+  });
+
+  test("a turn whose result is already out when it's followed still gets its input closed, so it ends", async () => {
+    // A fast agent's whole reply can be in the follow's first look, before start or reattach hands the turn over.
+    const { e, store } = setup();
+    const c = newChat(store, { started: true });
+    e.reload();
+    const runner = Bun.spawn(["sleep", "30"]);
+    try {
+      const dir = join(detach.root(), `${c.id}-1`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "in"), "");
+      const line = (v: unknown): string => `${JSON.stringify(v)}\n`;
+      writeFileSync(
+        join(dir, "out"),
+        line({ type: "system", subtype: "init", session_id: c.sessionId, mcp_servers: [] }) +
+          line({ type: "assistant", message: { content: [{ type: "text", text: "done" }] } }) +
+          line({ type: "result", subtype: "success", total_cost_usd: 0, duration_ms: 3, num_turns: 1, usage: {} }),
+      );
+      writeFileSync(join(dir, "meta.json"), detach.metaJson({ chat_id: c.id, kind: "Claude", started: Math.floor(Date.now() / 1000), base: 0, pid: runner.pid, pid_start: procStart(runner.pid) ?? 0 }));
+      e.reattachTurns();
+      expect(e.running(c.id)).toBe(true);
+      expect(existsSync(join(dir, "in.closed"))).toBe(true);
+    } finally {
+      runner.kill();
+      await runner.exited;
+    }
+    await until("its end", () => !e.running(c.id));
     store.close();
   });
 

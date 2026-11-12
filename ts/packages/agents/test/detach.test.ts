@@ -270,6 +270,33 @@ test("sees_a_live_runner_by_its_process", async () => {
   expect(detach.runners(root).some((r) => r[0] === 424242)).toBe(false);
 });
 
+test("a runner that wrote its exit is no running turn, also once its folder is gone", async () => {
+  // A runner tidies up after `exit` (its scope's leftovers, a slow teardown): the chat's next turn mustn't wait on it.
+  const tmp = fresh("ending");
+  writeFileSync(join(tmp, "turn"), "import time\ntime.sleep(10)\n");
+  const root = fresh("ending-root");
+  const done = join(root, "77-1");
+  const followed = join(root, "78-1");
+  for (const d of [done, followed]) mkdirSync(d, { recursive: true });
+  const a = Bun.spawn(["python3", "turn", done], { cwd: tmp });
+  const b = Bun.spawn(["python3", "turn", followed], { cwd: tmp });
+  try {
+    await Bun.sleep(200);
+    expect(detach.runners(root).map((r) => r[0]).sort()).toEqual([77, 78]);
+    writeFileSync(join(done, "exit"), "0");
+    expect(detach.runners(root).map((r) => r[0])).toEqual([78]);
+    // Followed to its end here, then its folder removed (agent.ts does) while the process lingers.
+    writeFileSync(join(followed, "exit"), "0");
+    expect(await detach.follow(followed, { chat_id: 78, kind: "Claude", started: 1, base: 0, pid: b.pid, pid_start: procStart(b.pid) ?? 0 }, () => {}, () => {})).toBe(true);
+    rmSync(followed, { recursive: true, force: true });
+    expect(detach.runners(root)).toEqual([]);
+  } finally {
+    a.kill();
+    b.kill();
+    await Promise.all([a.exited, b.exited]);
+  }
+});
+
 describe("the turn folder is the Rust app's", () => {
   test("cmd.json has serde's sorted keys and env as Rust's Command keeps it", () => {
     const c = detach.command("claude");

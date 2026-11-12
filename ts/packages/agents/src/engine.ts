@@ -632,7 +632,7 @@ export class Engine {
     this.turns.set(id, run);
     this.persist(id);
     const p = agent
-      .start(spec, (cid, ev) => this.onEvent(cid, ev, run), () => {})
+      .start(spec, (cid, ev, turn) => this.onEvent(cid, ev, run, turn), () => {})
       .then(
         (turn) => {
           // Harbor stopped while it started: its runner goes on, for the next Harbor to pick up, as the hub's stop leaves the others.
@@ -689,7 +689,9 @@ export class Engine {
     this.persist(id);
   }
 
-  onEvent(id: number, ev: Event, from: Running): void {
+  onEvent(id: number, ev: Event, from: Running, turn?: Turn): void {
+    // Its first events can come before its start lands: what they do (closing the input after the result) needs the turn.
+    from.turn ??= turn ?? null;
     // Harbor stopped: the runner goes on writing, the next Harbor replays it; the store may be closed.
     if (this.stopped) return;
     if (this.undoSwallow.has(from)) {
@@ -1090,7 +1092,7 @@ export class Engine {
     this.transcripts.set(id, { items, pendingText: null, pendingThinking: null, mcp: [], stderr: [], gotResult: false });
     const run: Running = { turn: null, at: Math.min(Date.now(), meta.started * 1000) };
     this.turns.set(id, run);
-    run.turn = agent.reattach(dir, meta, (cid, ev) => this.onEvent(cid, ev, run));
+    run.turn = agent.reattach(dir, meta, (cid, ev, turn) => this.onEvent(cid, ev, run, turn));
   }
 
   /** A runner of this chat the engine isn't following is taken back by its pid; true if one was found. */

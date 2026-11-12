@@ -121,10 +121,27 @@ function runnerDir(args: readonly string[]): string {
   return args[i] ?? "";
 }
 
-/** Live runners of this Harbor's turns, from the processes themselves: chat id, folder, pid. Only this user's. */
+/** Runners whose turn's end was followed here (`pid:start`). Once it wrote `exit` a runner only tidies up
+ *  and exits, which can take a moment (its scope's leftovers get GRACE_MS, a loaded PC is slow to tear a
+ *  process down), while the follower has already removed its folder: taken for a turn still going, the
+ *  chat's next turn would wait on it, rewind the transcript over the reply and end it as failed. */
+const ended = new Set<string>();
+
+/** A runner of this Harbor's turns that hasn't finished its turn yet. */
+function running(pid: number, start: number, dir: string): boolean {
+  if (ended.has(`${pid}:${start}`) || existsSync(join(dir, "exit"))) return false;
+  return alive(pid, start);
+}
+
+/** Live runners of this Harbor's turns, from the processes themselves: chat id, folder, pid. Only this
+ *  user's, and only those whose turn is still going. */
 export function runners(rootDir: string = root()): [number, string, number][] {
   const me = myUid();
   if (me === undefined) return [];
+  for (const k of ended) {
+    const [pid, start] = k.split(":").map(Number);
+    if (!alive(pid ?? 0, start ?? 0)) ended.delete(k);
+  }
   const v: [number, string, number][] = [];
   for (const pid of pids()) {
     if (ownerOf(pid) !== me) continue;
@@ -133,7 +150,7 @@ export function runners(rootDir: string = root()): [number, string, number][] {
     const chat = runnerChat(args, rootDir);
     if (chat === undefined) continue;
     const st = procStart(pid);
-    if (st !== undefined && alive(pid, st)) v.push([chat, runnerDir(args), pid]);
+    if (st !== undefined && running(pid, st, runnerDir(args))) v.push([chat, runnerDir(args), pid]);
   }
   return v;
 }
@@ -361,6 +378,7 @@ export async function follow(dir: string, meta: Meta, line: (l: string) => void,
       const a = out.lines(line);
       const b = errs.lines(err);
       if (done) {
+        if (exitCode(dir) !== "") ended.add(`${meta.pid}:${meta.pid_start}`);
         out.lines(line);
         errs.lines(err);
         return exitCode(dir) === "0";

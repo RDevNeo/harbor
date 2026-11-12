@@ -567,7 +567,9 @@ export function savedGrant(dir: string): Grant | undefined {
   return { token, chat_id: chat, cwd, servers, commands, workspace: arr(at(v, "workspace")).filter((x): x is string => typeof x === "string"), machines: at(v, "machines") };
 }
 
-export type Sink = (chatId: number, ev: Event) => void;
+/** Gets each event with the turn it came from: the first ones can come before `start` or `reattach` returns it
+ *  (a fast agent's whole reply is read in the follow's first look), and the result's handling needs the turn. */
+export type Sink = (chatId: number, ev: Event, turn: Turn) => void;
 
 /** Spawns the turn; events go to `sink` tagged with the chat id, `wake` repaints the UI (`true` once the turn has ended). */
 export async function start(spec: TurnSpec, sink: Sink, wake: (ended: boolean) => void = () => {}, rootDir?: string): Promise<Turn> {
@@ -633,13 +635,13 @@ function followTurn(dir: string, meta: detach.Meta, sink: Sink, wake: (ended: bo
             firstEcho = false;
             continue;
           }
-          sink(id, ev);
+          sink(id, ev, turn);
         }
         wake(false);
       },
       (line) => {
         if (line.trim() !== "") {
-          sink(id, { type: "stderr", text: line });
+          sink(id, { type: "stderr", text: line }, turn);
           wake(false);
         }
       },
@@ -650,7 +652,7 @@ function followTurn(dir: string, meta: detach.Meta, sink: Sink, wake: (ended: bo
     if (!existsSync(join(dir, "exit"))) turnscope.end(dir, undefined);
     const g = savedGrant(dir);
     if (g) integrations.bridge?.revoke(g.token);
-    sink(id, { type: "exited", ok, dir });
+    sink(id, { type: "exited", ok, dir }, turn);
     wake(true);
     // Its events are out: the folder is done.
     rmSync(dir, { recursive: true, force: true });
