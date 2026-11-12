@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.179.3] - 2026-11-12
+
+### Added
+- `harbor quit` quits the running Harbor as its tray's Quit does (turns stop, its data is saved) and waits
+  until it's gone. Uninstalling with install.sh uses it first.
+
 ## [0.179.2] - 2026-11-12
 
 ### Fixed
