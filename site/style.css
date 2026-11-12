@@ -96,6 +96,8 @@ h1 { margin: 0; font-size: clamp(38px, 7vw, 68px); line-height: 1.05; font-weigh
 section { scroll-margin-top: 72px; }
 .mesh, .features, .integrations, .install { padding-top: 88px; }
 .install { padding-bottom: 72px; }
+.install.download { padding-top: 56px; padding-bottom: 8px; }
+.card .btn { justify-content: center; }
 h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 600; letter-spacing: -.03em; text-align: center; margin: 0 0 14px; line-height: 1.15; }
 .lede { max-width: 660px; margin: 0 auto 40px; text-align: center; color: var(--gray900); }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border: 1px solid var(--gray400); border-radius: var(--r-xl); background: var(--gray400); overflow: hidden; }
@@ -119,11 +121,7 @@ h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 600; letter-spacing: -.03em
 .label .small { font-weight: 400; }
 .small { margin: 0; color: var(--gray600); font-size: 13px; }
 .small a, .note a { color: var(--gray900); }
-.cmd { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 8px 8px 14px; border: 1px solid var(--gray400); border-radius: var(--r-lg); background: var(--bg100); }
-.cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--gray1000); }
 .prompt { color: var(--gray600); user-select: none; }
-.cmd button { flex: none; height: 32px; padding: 0 12px; border: 1px solid var(--gray400); border-radius: var(--r-md); background: var(--gray200); color: var(--gray1000); font: 600 13px Geist, sans-serif; cursor: pointer; }
-.cmd button:hover { background: var(--gray300); }
 .note { margin: 20px auto 0; text-align: center; color: var(--gray600); font-size: 13px; }
 
 /* Text pages (privacy policy). */
@@ -156,7 +154,7 @@ footer a:hover { color: var(--gray1000); }
 @media (max-width: 720px) {
   .os { grid-template-columns: 1fr; }
   .int-grid { grid-template-columns: 1fr 1fr; }
-  .nav nav a:not(:last-child):not([href="#install"]) { display: none; }
+  .nav nav a:not(:last-child):not([href="#download"]) { display: none; }
 }
 @media (max-width: 560px) {
   .app { grid-template-columns: 1fr; }

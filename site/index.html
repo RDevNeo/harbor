@@ -48,18 +48,46 @@
     <a href="#mesh">Mesh</a>
     <a href="#features">Features</a>
     <a href="#integrations">Integrations</a>
-    <a href="#install">Install</a>
+    <a href="#download">Download</a>
     <a href="https://github.com/RDevNeo/harbor">GitHub</a>
   </nav>
 </header>
 
 <main>
+  <section class="install download wrap" id="download">
+    <h2>Download Harbor</h2>
+    <p class="lede">Download, open, done. Harbor also sets up Git, Claude Code, Codex and ripgrep when they're missing, then keeps itself updated.</p>
+    <div class="os">
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-win"/></svg>Windows <span class="small">x64 · preview</span></p>
+        <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-windows-setup.exe"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download for Windows (.exe)</a>
+        <p class="small">Installs for your user, no administrator needed. Windows 10 1809 or newer. Not signed yet: if SmartScreen warns, More info › Run anyway.</p>
+      </div>
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-mac"/></svg>macOS <span class="small">Apple Silicon · preview</span></p>
+        <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-macos.dmg"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download for macOS (.dmg)</a>
+        <p class="small">Drag Harbor to Applications. macOS 13 or newer. Not signed by Apple yet: the first time, right-click Harbor › Open (or System Settings › Privacy &amp; Security › Open Anyway).</p>
+      </div>
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-linux"/></svg>Linux <span class="small">Debian · Ubuntu</span></p>
+        <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.deb"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download for Linux (.deb)</a>
+        <p class="small">Open it with your software center. x86_64; on ARM get the <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-linux.deb">arm64 .deb</a>. Ubuntu 22.04+, Debian 12+, Wayland or X11.</p>
+      </div>
+      <div class="card">
+        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg>Android</p>
+        <a class="btn primary" href="/download/harbor.apk" download="harbor.apk" type="application/vnd.android.package-archive"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download the app (.apk)</a>
+        <p class="small">Open it on your phone and allow installs from your browser (asked once; on Samsung turn off Auto Blocker; if Play Protect warns, More details › Install anyway). Sign in with the same Google account as on your PCs: they show up by themselves, and the app updates itself.</p>
+      </div>
+    </div>
+    <p class="note">Every release is signed with minisign. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/RDevNeo/harbor/releases/latest">Latest release</a> · <a href="https://github.com/RDevNeo/harbor/blob/main/CHANGELOG.md">Changelog</a></p>
+  </section>
+
   <section class="hero wrap">
     <p class="eyebrow"><span class="dot"></span>Linux · Windows · macOS · Android</p>
     <h1>Your coding agents,<br>on every computer you own.</h1>
     <p class="pitch">Harbor runs Claude Code, Codex and OpenCode in one native window. Every PC runs Harbor, they form one mesh under your account, and your phone drives it all.</p>
     <div class="cta">
-      <a class="btn primary" href="#install"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Install Harbor</a>
+      <a class="btn primary" href="#download"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download Harbor</a>
       <a class="btn" href="#integrations">See integrations</a>
     </div>
     <ul class="stats" aria-label="Harbor at a glance">
@@ -212,33 +240,6 @@
     <p class="caption">Gmail, WhatsApp and Discord run from your own PC with your own sign-in; there is no Harbor server in between. See the <a href="/privacy">privacy policy</a>.</p>
   </section>
 
-  <section class="install wrap" id="install">
-    <h2>Install</h2>
-    <p class="lede">One line per system. The installer also sets up Git, Claude Code, Codex and ripgrep when they're missing, then Harbor keeps itself updated.</p>
-    <div class="os">
-      <div class="card">
-        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-linux"/></svg>Linux <span class="small">x86_64 · arm64</span></p>
-        <div class="cmd"><code><span class="prompt">$</span> <span class="c">curl -fsSL https://github.com/RDevNeo/harbor/releases/<wbr>latest/download/<wbr>install.sh | sh</span></code><button type="button" class="copy" aria-label="Copy the Linux install command">Copy</button></div>
-        <p class="small">Installs into <code>~/.local</code> without sudo. glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. Offline: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">x86_64</a> or <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-linux.tar.gz">aarch64</a> .tar.gz, then <code>./install.sh</code>.</p>
-      </div>
-      <div class="card">
-        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-win"/></svg>Windows <span class="small">x64 · preview</span></p>
-        <div class="cmd"><code><span class="prompt">PS&gt;</span> <span class="c">irm https://github.com/RDevNeo/harbor/releases/<wbr>latest/download/<wbr>install.ps1 | iex</span></code><button type="button" class="copy" aria-label="Copy the Windows install command">Copy</button></div>
-        <p class="small">In PowerShell, for your user, no administrator needed. Windows 10 1809 or newer. Start menu, tray icon and <code>harbor</code> on PATH.</p>
-      </div>
-      <div class="card">
-        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-mac"/></svg>macOS <span class="small">Apple Silicon · preview</span></p>
-        <div class="cmd"><code><span class="prompt">$</span> <span class="c">curl -fsSL https://github.com/RDevNeo/harbor/releases/<wbr>latest/download/<wbr>install.sh | sh</span></code><button type="button" class="copy" aria-label="Copy the macOS install command">Copy</button></div>
-        <p class="small">Puts Harbor.app in <code>~/Applications</code>. macOS 13 or newer. Not signed by Apple yet, so the command is the easy way; or get the <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-macos.dmg">.dmg</a>.</p>
-      </div>
-      <div class="card">
-        <p class="label"><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg>Android</p>
-        <a class="btn" href="/download/harbor.apk" download="harbor.apk" type="application/vnd.android.package-archive"><svg class="ic" aria-hidden="true"><use href="#i-dl"/></svg>Download the app (.apk)</a>
-        <p class="small">Open it on your phone and allow installs from your browser (asked once; on Samsung turn off Auto Blocker; if Play Protect warns, More details › Install anyway). Sign in with the same Google account as on your PCs: they show up by themselves, and the app updates itself.</p>
-      </div>
-    </div>
-    <p class="note">Every download is checked against the release's minisign signature. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/RDevNeo/harbor/releases/latest">Latest release</a> · <a href="https://github.com/RDevNeo/harbor/blob/main/CHANGELOG.md">Changelog</a></p>
-  </section>
 </main>
 
 <footer class="wrap">
@@ -247,15 +248,5 @@
   <p>No cookies, no analytics. <a href="/privacy">Privacy</a> · <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
 </footer>
 
-<script>
-document.querySelectorAll('.copy').forEach(function (b) {
-  b.addEventListener('click', function () {
-    navigator.clipboard.writeText(b.parentNode.querySelector('.c').textContent).then(function () {
-      b.textContent = 'Copied';
-      setTimeout(function () { b.textContent = 'Copy'; }, 1500);
-    });
-  });
-});
-</script>
 </body>
 </html>
