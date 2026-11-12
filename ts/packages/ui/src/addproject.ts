@@ -95,15 +95,16 @@ export function localClones(): Map<string, string> {
 }
 
 /** New project `name` in `projectsDir`: its folder, with `git init` when `git`. Throws why it can't. */
-export function createProject(projectsDir: string, name: string, git: boolean, tilde: (p: string) => string): string {
+export async function createProject(projectsDir: string, name: string, git: boolean, tilde: (p: string) => string): Promise<string> {
   const bad = nameProblem(name);
   if (bad !== null) throw new Error(bad);
   const dir = join(projectsDir, name.trim());
   if (existsSync(dir)) throw new Error(`${tilde(dir)} already exists`);
   mkdirSync(dir, { recursive: true });
   if (git) {
-    const r = Bun.spawnSync(["git", "init", "-q", dir], { stdio: ["ignore", "ignore", "pipe"] });
-    if (r.exitCode !== 0) throw new Error(`git init failed: ${cloneError(r.stderr.toString())}`);
+    const p = Bun.spawn(["git", "init", "-q", dir], { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+    if (code !== 0) throw new Error(`git init failed: ${cloneError(err)}`);
   }
   return dir;
 }
@@ -138,12 +139,13 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
     if (view.query !== ap.query) view.query = ap.query;
   };
 
-  const addPath = (dir: string): boolean => {
+  const addPath = async (dir: string): Promise<boolean> => {
     if (!isDir(dir)) {
       ap.error = `Not a folder: ${ap.tilde(dir)}`;
       return false;
     }
-    hooks.added(addFolder(store, dir, gitRemote(dir), homedir()));
+    const remote = await gitRemote(dir);
+    hooks.added(addFolder(store, dir, remote, homedir()));
     hooks.done();
     return true;
   };
@@ -166,11 +168,11 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
         ap.enter(act.dir);
         break;
       case "add":
-        if (addPath(act.dir)) return;
+        if (await addPath(act.dir)) return;
         break;
       case "create":
         try {
-          if (addPath(createProject(ap.projectsDir(), act.name, act.git, (p) => ap.tilde(p)))) return;
+          if (await addPath(await createProject(ap.projectsDir(), act.name, act.git, (p) => ap.tilde(p)))) return;
         } catch (e) {
           ap.error = e instanceof Error ? e.message : String(e);
         }
@@ -182,11 +184,11 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
           break;
         }
         ap.busy = `Cloning ${act.url}…`;
-        void cloneProject(act.url, dir, ap.step === "github", ap.projectsDir()).then((e) => {
+        void cloneProject(act.url, dir, ap.step === "github", ap.projectsDir()).then(async (e) => {
           ap.busy = null;
           if (e === null) {
             store.set(untrustedKey(dir), "1");
-            if (addPath(dir)) return;
+            if (await addPath(dir)) return;
           } else ap.error = e;
           show();
         });

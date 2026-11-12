@@ -44,7 +44,7 @@ function api(over: Partial<ProjectsHost> = {}): { api: ProjectsApi; touched: () 
     sender: () => "Pixel",
     disk: () => ({ ...realDisk(), home }),
     clones: () => new Map(),
-    origin: () => "",
+    origin: async () => "",
     ...over,
   });
   return { api: a, touched: () => touched, forwarded };

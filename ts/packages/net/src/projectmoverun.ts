@@ -555,7 +555,7 @@ export class ProjectMove {
           let tmpRef: string | null = null;
           if (mode === "existing" && info !== null && info.sha !== "") {
             const haveSet = new Set(have);
-            const wtBranches = this.worktreeBranches(p.leads);
+            const wtBranches = await this.worktreeBranches(p.leads);
             refs = refs.filter(([r, o]) => r.startsWith("refs/heads/") && (!haveSet.has(o) || wtBranches.has(r.slice(11))));
             revs.length = 0;
             revs.push(...refs.map(([r]) => r));
@@ -687,14 +687,15 @@ export class ProjectMove {
   }
 
   /** The branches of the project's chats' worktrees. */
-  private worktreeBranches(leads: Chat[]): Set<string> {
+  private async worktreeBranches(leads: Chat[]): Promise<Set<string>> {
     const out = new Set<string>();
     for (const c of leads) {
       for (const x of [c, ...this.d.store.chats().filter((y) => y.role === "sub" && y.parent === c.id)]) {
         const wt = this.d.store.get(`worktree:${x.id}`) ?? "";
         if (wt === "") continue;
-        const r = Bun.spawnSync(["git", "-C", wt, "symbolic-ref", "-q", "--short", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] });
-        const b = r.exitCode === 0 ? r.stdout.toString().trim() : "";
+        const g = Bun.spawn(["git", "-C", wt, "symbolic-ref", "-q", "--short", "HEAD"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+        const [said, code] = await Promise.all([new Response(g.stdout).text(), g.exited]);
+        const b = code === 0 ? said.trim() : "";
         if (b !== "") out.add(b);
       }
     }

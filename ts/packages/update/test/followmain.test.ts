@@ -524,7 +524,7 @@ test("a push from this PC's checkout tells the worker at once, with this PC's to
   sh(upstream, "git", "checkout", "-q", "--detach");
   const checkout = join(tmp("hfm-co-"), "harbor");
   sh(upstream, "git", "clone", "-q", upstream, checkout);
-  let fire: () => void = () => undefined;
+  const hook: { fire: (() => void) | null } = { fire: null };
   let token: string | null = "pc-token";
   const kv = new Map<string, string>([["follow_main_checkout", checkout]]);
   const fm = new FollowMain({
@@ -537,15 +537,17 @@ test("a push from this PC's checkout tells the worker at once, with this PC's to
     remote: upstream,
     token: () => token,
     run: defaultRunner,
-    watchRefs: (_dir, on) => ((fire = on), () => undefined),
+    watchRefs: (_dir, on) => ((hook.fire = on), () => undefined),
   });
   try {
     fm.start();
+    // The refs are watched once git has named the checkout's folder.
+    for (let i = 0; hook.fire === null && i < 200; i++) await Bun.sleep(10);
     // A push from the checkout: a new commit lands upstream and origin/main moves.
     const c = commit(checkout, { "ts/app.ts": "2\n" }, "pushed from here");
     sh(checkout, "git", "push", "-q", "origin", "HEAD:main");
-    fire();
-    fire();
+    hook.fire?.();
+    hook.fire?.();
     await whenPosted;
     expect(posts).toEqual([{ url: "/v1/main", auth: "Bearer pc-token", body: JSON.stringify({ sha: c }) }]);
     // The same commit again (any other ref write): nothing more. Signed out: nothing.

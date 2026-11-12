@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.181.4] - 2026-11-12
+
+### Fixed
+- Adding or creating a project, the phone's project sheet, Follow main and moving a project no longer hold the
+  window while git answers (up to seconds on Windows): those git calls run beside it.
+
 ## [0.181.3] - 2026-11-12
 
 ### Fixed

@@ -1,9 +1,9 @@
 // The pages read through here, never the database: the Engine of @harbor/agents keeps chats and turns.
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Account, Engine, type EngineHost, providers } from "@harbor/agents";
 import { media } from "@harbor/media";
-import { addFolder, Desktop, gitRemote, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
+import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { dictate } from "@harbor/media";
 import { repoDir, sidebartree, type Chat, type Item, type Mention as StoreMention, type Repo, type Store, type Timer } from "@harbor/store";
 import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
@@ -201,15 +201,6 @@ export class Data {
   removeRepo(id: number): void {
     this.store.removeRepo(id);
     this.engine.reload();
-  }
-
-  addRepo(path: string): number | null {
-    if (!existsSync(path) || !statSync(path).isDirectory()) return null;
-    const known = this.repos.find((r) => r.path === path);
-    if (known) return known.id;
-    const id = addFolder(this.store, path, gitRemote(path), homedir());
-    this.engine.reload();
-    return this.repo(id) ? id : null;
   }
 }
 

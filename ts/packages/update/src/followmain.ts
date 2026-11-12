@@ -357,12 +357,14 @@ export class FollowMain {
     this.afterStart();
     const checkout = this.checkout();
     if (checkout !== null) {
-      const common = this.commonDir(checkout);
-      if (common !== null)
+      const arming = ++this.arming;
+      void this.commonDir(checkout).then((common) => {
+        if (common === null || !this.armed || arming !== this.arming) return;
         this.unwatch = (this.d.watchRefs ?? watchMainRefs)(common, () => {
           this.nudgeSoon(checkout);
           this.soon();
         });
+      });
     }
     this.pollTimer = setInterval(() => this.poke(), this.remote !== null ? REMOTE_POLL_MS : POLL_MS);
     this.pollTimer.unref?.();
@@ -425,9 +427,17 @@ export class FollowMain {
     this.unwatch = null;
   }
 
-  private commonDir(checkout: string): string | null {
-    const r = Bun.spawnSync(["git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdout: "pipe", stderr: "ignore" });
-    return r.exitCode === 0 ? r.stdout.toString().trim() : null;
+  /** Bumped by each arm: a watch asked by an earlier one that answers late isn't set up. */
+  private arming = 0;
+
+  private async commonDir(checkout: string): Promise<string | null> {
+    try {
+      const p = Bun.spawn(["git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+      return code === 0 ? out.trim() : null;
+    } catch {
+      return null;
+    }
   }
 
   /** A ref write in the checkout: if `origin/main` moved (a push from here), the worker hears it now. */

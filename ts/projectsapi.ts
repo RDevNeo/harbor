@@ -35,7 +35,7 @@ export interface ProjectsHost {
   clones?: () => Map<string, string>;
   github?: () => Promise<GhList>;
   clone?: (url: string, dir: string, github: boolean, projectsDir: string) => Promise<string | null>;
-  origin?: (dir: string) => string;
+  origin?: (dir: string) => Promise<string>;
   /** Project `repo`'s main chat, by the id the caller asks (`global`: its gid). */
   mainChat?: (repo: number, global: boolean) => { id: Json; title: string } | null;
   /** An image of the user's own is the project's icon. */
@@ -160,7 +160,7 @@ export class ProjectsApi {
     if (sub === "menu" || sub === "do") {
       const r = this.repoOf(b.project);
       if (r === null) return err(404, "that project isn't on this PC any more");
-      return sub === "menu" ? ok(this.menu(r, call.global)) : this.run(r, b, call.from !== undefined && call.from !== null);
+      return sub === "menu" ? ok(await this.menu(r, call.global)) : this.run(r, b, call.from !== undefined && call.from !== null);
     }
     if (sub === "job") return this.job(str(b.job), call.global);
     return this.act(b, call.global);
@@ -250,13 +250,13 @@ export class ProjectsApi {
       case "add": {
         const dir = ap.expand(act.dir);
         if (!disk.isDir(dir)) return err(409, `Not a folder: ${ap.tilde(dir)}`);
-        return ok(this.added(dir, global));
+        return ok(await this.added(dir, global));
       }
       case "create": {
         const bad = nameProblem(act.name);
         if (bad !== null) return err(400, bad);
         try {
-          return ok(this.added(createProject(pdir, act.name, act.git, (p) => ap.tilde(p)), global));
+          return ok(await this.added(await createProject(pdir, act.name, act.git, (p) => ap.tilde(p)), global));
         } catch (e) {
           return err(409, say(e));
         }
@@ -273,14 +273,14 @@ export class ProjectsApi {
         this.jobs.set(id, { state: "cloning", text, at: Date.now() });
         void (this.h.clone ?? cloneProject)(act.url, dir, github, pdir)
           .catch((e: unknown) => say(e))
-          .then((e) => {
+          .then(async (e) => {
             if (e !== null) {
               this.jobs.set(id, { state: "failed", error: e, at: Date.now() });
               return;
             }
             this.h.store.set(untrustedKey(dir), "1");
             // Its id as asked when the phone polls (the phone asks global ids).
-            this.jobs.set(id, { state: "done", project: this.added(dir, false), at: Date.now() });
+            this.jobs.set(id, { state: "done", project: await this.added(dir, false), at: Date.now() });
           });
         return { status: 202, body: { ok: true, job: id, text, into: ap.tilde(dir) } };
       }
@@ -303,9 +303,9 @@ export class ProjectsApi {
   }
 
   /** `dir` as a project here (the one it already is, or a new one). */
-  private added(dir: string, global: boolean): Record<string, Json> {
+  private async added(dir: string, global: boolean): Promise<Record<string, Json>> {
+    const remote = await (this.h.origin ?? gitOrigin)(dir);
     const known = this.h.store.repos().find((r) => r.path === dir || repoDir(r) === dir);
-    const remote = (this.h.origin ?? gitOrigin)(dir);
     // Another PC's project that this folder is a folder of takes it, instead of a second row (projectfold.ts).
     const id = known ? known.id : addFolder(this.h.store, dir, remote, homedir());
     this.h.reload();
@@ -356,8 +356,8 @@ export class ProjectsApi {
   }
 
   /** A project's page on the web, from its stored origin (null without one). */
-  private remoteOf(r: Repo): string | null {
-    const o = r.remote !== "" ? r.remote : (this.h.origin ?? gitOrigin)(repoDir(r));
+  private async remoteOf(r: Repo): Promise<string | null> {
+    const o = r.remote !== "" ? r.remote : await (this.h.origin ?? gitOrigin)(repoDir(r));
     return o === "" ? null : webUrl(o);
   }
 
@@ -366,8 +366,8 @@ export class ProjectsApi {
    * its own buttons (`row`: New chat, Snooze) then its menu in the same order and words. Open
    * terminal is the window's own: greyed here, with why.
    */
-  menu(r: Repo, global: boolean): Json {
-    const remote = this.remoteOf(r);
+  async menu(r: Repo, global: boolean): Promise<Json> {
+    const remote = await this.remoteOf(r);
     const main = this.h.mainChat?.(r.id, global) ?? null;
     const until = this.snoozeOf(`r${r.id}`);
     const settled = this.h.store.settledProjects().has(r.id);

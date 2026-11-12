@@ -26,11 +26,12 @@ const isDir = (p: string): boolean => {
   }
 };
 
-/** origin's URL of the repository in `dir` ("" without one). */
-export function gitRemote(dir: string): string {
+/** origin's URL of the repository in `dir` ("" without one). Off the main thread's clock: git can take seconds on Windows. */
+export async function gitRemote(dir: string): Promise<string> {
   try {
-    const r = Bun.spawnSync(["git", "-C", dir, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] });
-    return r.exitCode === 0 ? r.stdout.toString().trim() : "";
+    const p = Bun.spawn(["git", "-C", dir, "remote", "get-url", "origin"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    return code === 0 ? out.trim() : "";
   } catch {
     return "";
   }
