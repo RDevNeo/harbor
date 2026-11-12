@@ -111,3 +111,11 @@ export function glibc(): Glibc | null {
   }
   return glibcLib;
 }
+
+/**
+ * Windows: the process's stderr handle (native code's) goes to `path` until the returned function puts it back;
+ * null elsewhere (dup2 there) or when it can't. Bun's console keeps its own.
+ */
+export function stderrHandleTo(path: string): (() => void) | null {
+  return win()?.libc.stderrTo(path) ?? null;
+}

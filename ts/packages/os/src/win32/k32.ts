@@ -24,6 +24,8 @@ const KERNEL32 = {
   LockFileEx: { args: [H, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
   UnlockFileEx: { args: [H, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
   GetLastError: { args: [], returns: FFIType.u32 },
+  GetStdHandle: { args: [FFIType.u32], returns: H },
+  SetStdHandle: { args: [FFIType.u32, H], returns: FFIType.i32 },
   SetEnvironmentVariableW: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   CreateJobObjectW: { args: [FFIType.ptr, FFIType.ptr], returns: H },
   SetInformationJobObject: { args: [H, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },

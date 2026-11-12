@@ -223,5 +223,20 @@ console.error("after the start");`;
   const [err, exit] = await Promise.all([new Response(p.stderr).text(), p.exited]);
   expect(exit).toBe(0);
   expect(readFileSync(join(dir, START_LOG), "utf8")).toBe("while starting\n");
-  expect(err).toBe("after the start\n");
+  // Windows copies what Bun writes (no dup2 there): it still reaches the old stderr too.
+  expect(err).toBe(process.platform === "win32" ? "while starting\nafter the start\n" : "after the start\n");
+});
+
+test("an error that ends a start before it is confirmed is in start.log, and the start still fails", async () => {
+  for (const how of ["throw new Error('boom at start')", "Promise.reject(new Error('boom at start'))"]) {
+    const dir = tmp();
+    const code = `import { captureStart } from ${JSON.stringify(join(import.meta.dir, "..", "src", "startlog.ts"))};
+captureStart(${JSON.stringify(dir)}, () => false);
+setTimeout(() => { ${how}; }, 10);
+setTimeout(() => process.exit(0), 3000);`;
+    const p = Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "pipe" });
+    const exit = await p.exited;
+    expect(exit).toBe(1);
+    expect(readFileSync(join(dir, START_LOG), "utf8")).toContain("boom at start");
+  }
 });

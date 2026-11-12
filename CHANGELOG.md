@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.11] - 2026-11-12
+
+### Fixed
+- Windows: a start that fails from the Start menu or a shortcut leaves its errors in `failed-start.log` beside
+  harbor.exe, as on Linux and macOS: what Harbor and its native parts printed, and the error that ended it.
+
 ## [0.180.10] - 2026-11-12
 
 ### Fixed
