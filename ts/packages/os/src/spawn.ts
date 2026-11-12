@@ -1,5 +1,6 @@
 // Starting programs that must outlive Harbor: a reload or Harbor exiting doesn't reach them.
 import { spawn, spawnSync } from "node:child_process";
+import { constants, openSync, readSync } from "node:fs";
 import { platform } from "./platform.ts";
 
 /**
@@ -32,4 +33,21 @@ export function selfArgv(): string[] {
   const exe = process.execPath.replace(/ \(deleted\)$/, "");
   if (Bun.main.startsWith("/$bunfs/") || Bun.main.startsWith("B:/~BUN/")) return [exe];
   return [exe, process.env.HARBOR_ENTRY ?? Bun.main];
+}
+
+/**
+ * A file a child program writes its output to, after what it holds already: an append-mode fd on Linux and
+ * macOS. Windows: an append-mode handle there is write-at-end only, which Git Bash's programs (sh, bash and
+ * what they run) refuse ("write error: Bad file descriptor"); this one is read-write, placed at the end. Two
+ * outputs into one file share one such fd (each its own would write over the other's).
+ */
+export function outputFile(path: string, mode = 0o600): number {
+  if (platform() !== "win32") return openSync(path, "a", mode);
+  const fd = openSync(path, constants.O_RDWR | constants.O_CREAT, mode);
+  // To the end: reads move this handle's place (positional ones put it back).
+  const buf = Buffer.alloc(1 << 16);
+  while (readSync(fd, buf, 0, buf.length, null) > 0) {
+    // what was written before this one
+  }
+  return fd;
 }

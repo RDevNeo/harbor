@@ -687,8 +687,8 @@ export async function run(args: readonly string[]): Promise<void> {
     let errFd: number;
     try {
       // Owner-only: the agent's whole stream (prompts, files it read, command output).
-      outFd = openSync(join(dir, "out"), "a", 0o600);
-      errFd = openSync(join(dir, at(spec, "merge_output") === true ? "out" : "err"), "a", 0o600);
+      outFd = osSpawn.outputFile(join(dir, "out"));
+      errFd = at(spec, "merge_output") === true ? outFd : osSpawn.outputFile(join(dir, "err"));
     } catch {
       return;
     }
@@ -737,7 +737,7 @@ export async function run(args: readonly string[]): Promise<void> {
       await sleep(wait);
       wait = Math.min(wait * 2, timing.retryMaxMs);
       closeSync(outFd);
-      closeSync(errFd);
+      if (errFd !== outFd) closeSync(errFd);
       continue;
     }
     appendTo(join(dir, "err"), `${unreachableText(device ?? why[0], why[0], why[1], tries, Date.now() - started)}\n`);

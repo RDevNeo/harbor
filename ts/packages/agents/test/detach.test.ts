@@ -257,12 +257,12 @@ test("picks_up_a_chats_live_turn_before_an_older_stopped_one", async () => {
 });
 
 test("sees_a_live_runner_by_its_process", async () => {
-  // `python3 turn <dir>` (a script named "turn") has a runner's command line.
+  // `bun turn <dir>` (a script named "turn") has a runner's command line.
   const tmp = fresh("runner");
-  writeFileSync(join(tmp, "turn"), "import time\ntime.sleep(10)\n");
+  writeFileSync(join(tmp, "turn"), "setTimeout(() => {}, 10_000);\n");
   const root = fresh("runner-root");
   const dir = join(root, "424242-1");
-  const p = Bun.spawn(["python3", "turn", dir], { cwd: tmp });
+  const p = Bun.spawn([process.execPath, "turn", dir], { cwd: tmp });
   await Bun.sleep(200);
   const found = detach.runners(root).find((r) => r[0] === 424242);
   p.kill();
@@ -274,13 +274,13 @@ test("sees_a_live_runner_by_its_process", async () => {
 test("a runner that wrote its exit is no running turn, also once its folder is gone", async () => {
   // A runner tidies up after `exit` (its scope's leftovers, a slow teardown): the chat's next turn mustn't wait on it.
   const tmp = fresh("ending");
-  writeFileSync(join(tmp, "turn"), "import time\ntime.sleep(10)\n");
+  writeFileSync(join(tmp, "turn"), "setTimeout(() => {}, 10_000);\n");
   const root = fresh("ending-root");
   const done = join(root, "77-1");
   const followed = join(root, "78-1");
   for (const d of [done, followed]) mkdirSync(d, { recursive: true });
-  const a = Bun.spawn(["python3", "turn", done], { cwd: tmp });
-  const b = Bun.spawn(["python3", "turn", followed], { cwd: tmp });
+  const a = Bun.spawn([process.execPath, "turn", done], { cwd: tmp });
+  const b = Bun.spawn([process.execPath, "turn", followed], { cwd: tmp });
   try {
     await Bun.sleep(200);
     expect(detach.runners(root).map((r) => r[0]).sort()).toEqual([77, 78]);

@@ -4,6 +4,7 @@
 // this turn and the ones after it load a summary instead of the whole conversation. The chat keeps
 // every message: only what Claude reloads is summarized.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { spawn as osSpawn } from "@harbor/os";
 import { join } from "node:path";
 import { at, compact, optStr, parse, str } from "./json.ts";
 
@@ -133,8 +134,8 @@ export async function compactFirst(
   const errPath = join(dir, "compact.err");
   let error = "";
   try {
-    const outFd = openSync(outPath, "a", 0o600);
-    const errFd = openSync(errPath, "a", 0o600);
+    const outFd = osSpawn.outputFile(outPath);
+    const errFd = osSpawn.outputFile(errPath);
     try {
       const child = Bun.spawn([run.program, ...run.argv], { cwd: run.cwd, env: run.env, stdin: "pipe", stdout: outFd, stderr: errFd } as SpawnOpts);
       const stdin = child.stdin as { write(s: string): void; end(): unknown } | undefined;

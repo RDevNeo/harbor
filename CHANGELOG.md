@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.7] - 2026-11-12
+
+### Fixed
+- Windows: what a shell command an agent starts prints (Git Bash's `sh`, `bash` and the programs they run)
+  reaches its log and the chat: the turn's log files were opened write-at-end only, which those programs
+  refuse ("Bad file descriptor"), so their output was lost.
+
 ## [0.180.6] - 2026-11-12
 
 ### Fixed
