@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.16] - 2026-11-12
+
+### Fixed
+- A PC that just signed in, or moved to another workspace, shows the chats and projects of the account's other
+  PCs at once (they only showed after a restart).
+- A PC signing in for the first time lands in the account's own workspace when the account is in several.
+- macOS: Harbor no longer keeps a core busy (19-33 % idle) looking for other PCs' project folders under /home.
+- Projects whose folder is on another PC show their icon, from that PC, instead of their letter.
+- The Parakeet speech model downloads again: its source changed its files, so new downloads were refused.
+
 ## [0.180.15] - 2026-11-12
 
 ### Fixed
