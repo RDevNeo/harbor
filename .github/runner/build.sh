@@ -5,7 +5,7 @@
 # exceptions to "every build runs on boat" (CLAUDE.md): Bun bundles and compiles JavaScript in seconds, while a
 # boat sandbox costs a minute or more to start, fill and fetch from.
 #
-#   build.sh x86_64|aarch64 OUT
+#   build.sh x86_64|aarch64|macos OUT
 #
 # The same steps as .github/boat/build.sh's build_ts, minus the runtime alone (a bundle-only release
 # ships none): OUT/harbor-<arch>/harbor, and on x86_64 also OUT/harbor-x86_64/harbor-app.js and
@@ -21,7 +21,7 @@ V=${HARBOR_VERSION:?} MIN=${HARBOR_MIN_RUNTIME:-$HARBOR_VERSION} SHA=${HARBOR_GI
 # Bun at the version ts/package.json pins, the same build boat uses (bun-linux-<arch>.zip, not the
 # baseline one), checked against Bun's SHASUMS256.txt.
 bv=$(jq -r '.packageManager | sub("bun@"; "")' ts/package.json)
-ba=x64; [ "$arch" = x86_64 ] || ba=aarch64
+ba=x64; [ "$arch" != aarch64 ] || ba=aarch64
 z=bun-linux-$ba.zip base=https://github.com/oven-sh/bun/releases/download/bun-v$bv
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -31,6 +31,11 @@ curl -fsSL --retry 3 "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
 unzip -q "$tmp/$z" -d "$tmp"
 export PATH="$tmp/bun-linux-$ba:$PATH"
 bun --version
+# macOS (Apple Silicon), cross-built from a copy of the tree: OUT/harbor-macos.
+if [ "$arch" = macos ]; then
+  V=$V SHA=$SHA bash "$root/.github/macos-build.sh" "$root" "$out"
+  exit 0
+fi
 
 cd ts
 bun install --frozen-lockfile

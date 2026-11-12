@@ -165,7 +165,7 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences
+        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences macos
       - name: Fetch the results
         run: |
           set -eu
@@ -186,6 +186,10 @@ jobs:
         with:
           name: harbor-extra
           path: out/extra/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-macos
+          path: out/harbor-macos/
 
   # aarch64 on a sandbox of its own, from the same snapshot, which it doesn't save: Bun builds it
   # under qemu (build.sh), which would slow x86_64's build beside it.
@@ -256,7 +260,7 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/runner/build.sh x86_64 out
+        run: .github/runner/build.sh x86_64 out && .github/runner/build.sh macos out
       - run: ldd out/harbor-x86_64/harbor
       - uses: actions/upload-artifact@v7
         with:
@@ -266,6 +270,10 @@ jobs:
         with:
           name: harbor-extra
           path: out/extra/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-macos
+          path: out/harbor-macos/
 
   quick-aarch64:
     needs: [plan, slint]
@@ -458,11 +466,25 @@ jobs:
             [ ! -f art/harbor-extra/lic/third-party-harbor.txt ] || cp art/harbor-extra/lic/third-party-harbor.txt "$d/licenses/third-party-harbor.txt"
           done
 
+          # macOS (Apple Silicon): Harbor.app with the same licences, packed below; its runtime with
+          # Linux's when the runtime changed. Artifacts lose file modes: the executables get theirs back.
+          if [ -d art/harbor-macos/Harbor.app ]; then
+            m=pkg-macos/Harbor.app
+            mkdir -p pkg-macos
+            cp -r art/harbor-macos/Harbor.app pkg-macos/
+            chmod 755 "$m/Contents/MacOS/harbor"
+            mkdir -p "$m/Contents/Resources/licenses"
+            cp -r pkg/harbor-x86_64-linux/licenses/. "$m/Contents/Resources/licenses/"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::a release needs the macOS build"; exit 1
+          fi
+
           # What installed Harbors update from (plan): the manifest and bundle always, the runtimes
           # when the lane says the runtime changed.
           cp art/harbor-manifest/harbor-app.json art/harbor-x86_64/harbor-app.js dist/
           if [ "${{ needs.plan.outputs.lane }}" = runtime ]; then
             for arch in x86_64 aarch64; do install -m755 "art/harbor-$arch/harbor-runtime-$arch" "dist/harbor-runtime-$arch"; done
+            [ ! -f art/harbor-macos/harbor-runtime-aarch64-macos ] || install -m755 art/harbor-macos/harbor-runtime-aarch64-macos dist/harbor-runtime-aarch64-macos
           fi
 
           # The video player per arch, and its sources beside it, as its licence asks.
@@ -525,6 +547,7 @@ jobs:
           z=$(command -v pigz || echo gzip)
           tar -C pkg -I "$z" -cf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
           tar -C pkg -I "$z" -cf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
+          [ ! -d pkg-macos/Harbor.app ] || tar -C pkg-macos -I "$z" -cf dist/harbor-aarch64-macos.tar.gz Harbor.app
           for arch in x86_64 aarch64; do
             [ ! -d pkg/harbor-video-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-video-$arch-linux.tar.gz harbor-video-$arch-linux
             [ ! -d pkg/harbor-slint-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-slint-$arch-linux.tar.gz harbor-slint-$arch-linux

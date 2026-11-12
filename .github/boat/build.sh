@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run by release.yml (jobs build and build-aarch64) on a boat.dev sandbox, from the extracted source:
-# the parts it names, side by side, of x86_64, aarch64, licences (the reports) and android (the
-# unsigned APK). Without any, all four.
+# the parts it names, side by side, of x86_64, aarch64, macos (Apple Silicon, cross-built), licences
+# (the reports) and android (the unsigned APK). Without any, all five.
 #
 # Harbor is TypeScript on Bun (ts/): each architecture gets the single executable `harbor` (what
 # install.sh installs and older Harbors update to), and for the updater the runtime alone
@@ -60,6 +60,13 @@ aarch64() {
     ubuntu:22.04 bash -euo pipefail -c "$build_ts"
 }
 
+# macOS (Apple Silicon), cross-built in the same image from a copy of the tree (.github/macos-build.sh).
+macos() {
+  local b; b=$(bun_get "$core" x64)
+  run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e BUN_INSTALL_CACHE_DIR=/c/bun-cache-macos "${google[@]}" \
+    -e V="$ver" -e SHA="$sha" -- bash -euo pipefail /src/.github/macos-build.sh /src /out
+}
+
 # The 256 px icon (the npm packages' licence notices are npm_notices', after x86_64's build).
 licences() {
   mkdir -p "$HOME/out/extra/lic"
@@ -79,7 +86,7 @@ cpu_mark
 ( while [ "$(findmnt -no FSTYPE -T "$cache")" = fuse ]; do sleep 2; done; echo "disk loaded at $SECONDS s" ) > "$HOME/out/disk.log" &
 disk=$!
 names=("$@")
-[ $# != 0 ] || names=(x86_64 aarch64 licences android)
+[ $# != 0 ] || names=(x86_64 aarch64 macos licences android)
 pids=()
 for n in "${names[@]}"; do
   ( s=$(date +%s); "$n"; echo "$n: $(( $(date +%s) - s ))s" ) > "$HOME/out/$n.log" 2>&1 &
