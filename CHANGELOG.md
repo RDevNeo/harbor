@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.178.0] - 2026-11-11
+
+### Added
+- Projects folder (Settings › General › Projects; on the phone, Settings › Projects): one folder per PC where
+  new projects and clones go. Once you pick one, new worktrees go in its `.worktrees` folder and new chats
+  without a project run in its `chats` folder. Without one, nothing changes: `~/Projects`, Harbor's data
+  folder and the home folder, as before; chats without a project that already ran stay where they ran.
+- Moving or renaming a folder no longer breaks Harbor. A project, a worktree, a chats folder or the
+  Projects folder itself moved or renamed anywhere under your home folder is found again within seconds
+  (or before the next message's turn starts) and followed: the project keeps its place in the sidebar, its
+  chats go on in the new folder with their sessions, worktrees are linked to their checkout again
+  (`git worktree repair`), and each chat says where it went. A folder moved to the Trash counts as gone,
+  and its chat says so; restored, it's found again. Other PCs follow the project's new path too.
+
 ## [0.177.6] - 2026-11-11
 
 ### Fixed
