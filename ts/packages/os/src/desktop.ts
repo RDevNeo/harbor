@@ -102,3 +102,12 @@ export function settleShownWindow(pid: number = process.pid): void {
   };
   look();
 }
+
+/**
+ * The command that shows the system's own file picker and prints the chosen paths, one a line (exit 1: cancelled);
+ * null where Harbor uses the desktop's tools instead (zenity, kdialog on Linux).
+ */
+export function pickerCommand(o: import("./win32/picker.ts").PickOptions): string[] | null {
+  if (platform() !== "win32") return null;
+  return (require("./win32/picker.ts") as typeof import("./win32/picker.ts")).pickerCommand(o);
+}

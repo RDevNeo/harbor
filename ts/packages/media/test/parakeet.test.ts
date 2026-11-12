@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, truncateSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import * as parakeet from "../src/parakeet.ts";
 import { type Sandbox, findModel, installModel, pidAlive, sandbox, until, wavFile } from "./fixture.ts";
 
@@ -15,7 +15,7 @@ describe("the model files", () => {
 
   test("are listed with their sources, sizes and checksums", () => {
     const parts = parakeet.parts();
-    expect(parts.map((p) => p.dst.split("/").pop())).toEqual(["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt", "silero_vad.onnx"]);
+    expect(parts.map((p) => basename(p.dst))).toEqual(["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt", "silero_vad.onnx"]);
     expect(parts[0]?.url).toBe("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/encoder.int8.onnx");
     expect(parts[4]?.url).toBe("https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx");
     expect(parts.every((p) => p.dst.startsWith(parakeet.dir()))).toBe(true);

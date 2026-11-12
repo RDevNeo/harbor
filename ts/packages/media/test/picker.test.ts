@@ -3,6 +3,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as p from "../src/picker.ts";
+import { desktop as osDesktop } from "@harbor/os";
+
+// zenity and kdialog, where the system has no picker of its own Harbor shows (Linux).
+const linuxTools = osDesktop.pickerCommand({}) === null;
 
 const path = process.env.PATH;
 let dir = "";
@@ -22,7 +26,7 @@ test("picker_args", () => {
   expect(p.paths(Buffer.from("/a b\n\n/c\n"))).toEqual(["/a b", "/c"]);
 });
 
-test("a picker that answers gives its paths, a cancelled one none", async () => {
+test.if(linuxTools)("a picker that answers gives its paths, a cancelled one none", async () => {
   dir = mkdtempSync(join(tmpdir(), "hpick-"));
   writeFileSync(join(dir, "zenity"), '#!/bin/bash\nif [ -f "${0%/*}/cancel" ]; then exit 1; fi\nprintf "/one\\n/two w\\n"\n');
   chmodSync(join(dir, "zenity"), 0o755);
@@ -32,7 +36,7 @@ test("a picker that answers gives its paths, a cancelled one none", async () => 
   expect(await p.pick({})).toEqual([]);
 });
 
-test("without a picker a toast says what to install, for a few seconds", async () => {
+test.if(linuxTools)("without a picker a toast says what to install, for a few seconds", async () => {
   dir = mkdtempSync(join(tmpdir(), "hpick-"));
   process.env.PATH = dir;
   const seen: number[] = [];

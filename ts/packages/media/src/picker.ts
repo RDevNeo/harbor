@@ -1,3 +1,4 @@
+import { desktop as osDesktop } from "@harbor/os";
 export const IMAGES: readonly string[] = ["*.png", "*.svg", "*.ico", "*.jpg", "*.jpeg", "*.webp", "*.gif"];
 export const NO_PICKER = "No file picker found: install zenity (or kdialog on KDE).";
 const SHOW_FOR_MS = 8000;
@@ -27,9 +28,6 @@ export function kdialogArgs(o: Opts): string[] {
   return a;
 }
 
-export function paths(stdout: Uint8Array): string[] {
-  return Buffer.from(stdout).toString("utf8").split("\n").filter((l) => l !== "");
-}
 
 let error: { msg: string; at: number } | null = null;
 const listeners = new Set<() => void>();
@@ -60,7 +58,25 @@ export function toast(now: number = Date.now()): { msg: string; leftMs: number }
   return { msg: error.msg, leftMs };
 }
 
+export function paths(stdout: Uint8Array): string[] {
+  return Buffer.from(stdout).toString("utf8").split(/\r?\n/).filter((l) => l !== "");
+}
+
 export async function pick(o: Opts): Promise<string[]> {
+  // Windows (and any system with a picker of its own): the system's dialog.
+  const own = osDesktop.pickerCommand(o);
+  if (own !== null) {
+    try {
+      const proc = Bun.spawn(own, { stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true });
+      const out = new Uint8Array(await new Response(proc.stdout as ReadableStream).arrayBuffer());
+      const code = await proc.exited;
+      if (code === 0) return paths(out);
+      if (code === 1) return [];
+      return fail(`Couldn't open the file picker: ${(await new Response(proc.stderr as ReadableStream).text()).trim().split("\n")[0] ?? `exit ${code}`}`);
+    } catch (e) {
+      return fail(`Couldn't open the file picker: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   for (const [bin, args] of [["zenity", zenityArgs(o)], ["kdialog", kdialogArgs(o)]] as const) {
     let proc: ReturnType<typeof Bun.spawn>;
     try {

@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.15] - 2026-11-12
+
+### Fixed
+- Windows: Attach files, a project's icon and the Projects folder open Windows' own file and folder dialogs; they
+  only said to install zenity.
+- Windows: a Projects folder typed with a trailing `\` or as `~\…` is read as meant.
+
 ## [0.180.14] - 2026-11-12
 
 ### Fixed

@@ -5,6 +5,10 @@ import { join } from "node:path";
 import * as voice from "../src/voice.ts";
 import { Fail, Recording, RATE, clean, insertSpaced, outputWithin, rms, wav, wavSamples } from "../src/voice.ts";
 import { type Sandbox, fakeRecorder, sandbox, tmp, until } from "./fixture.ts";
+import { audio as osAudio } from "@harbor/os";
+
+// PipeWire's and PulseAudio's recorders, where Harbor doesn't record itself (Linux).
+const linuxTools = !osAudio.available();
 
 let box: Sandbox;
 
@@ -270,7 +274,7 @@ test("Whisper models are known by name and found when all their files are there"
   expect(voice.config()).toEqual(["auto", ""]);
 });
 
-test("the recorder is PipeWire's, else PulseAudio's, else none", () => {
+test.if(linuxTools)("the recorder is PipeWire's, else PulseAudio's, else none", () => {
   const bin = tmp("bin");
   process.env.PATH = bin;
   expect(voice.recorder()).toBeNull();
@@ -282,7 +286,7 @@ test("the recorder is PipeWire's, else PulseAudio's, else none", () => {
   expect(voice.cantRecord()).toBeNull();
 });
 
-test("a recording collects what the recorder prints and stops on request", async () => {
+test.if(linuxTools)("a recording collects what the recorder prints and stops on request", async () => {
   const dir = tmp("rec");
   const source = join(dir, "pcm");
   writeFileSync(source, Buffer.from(Int16Array.from({ length: 4000 }, (_, i) => (i % 2 ? 12000 : -12000)).buffer));
@@ -302,7 +306,7 @@ test("a recording collects what the recorder prints and stops on request", async
   expect((await rec.stop()).length).toBe(0);
 });
 
-test("recording without a recorder fails at once", () => {
+test.if(linuxTools)("recording without a recorder fails at once", () => {
   process.env.PATH = tmp("empty");
   expect(() => Recording.start(() => undefined)).toThrow("no recorder");
 });

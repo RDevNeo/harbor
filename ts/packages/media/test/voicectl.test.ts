@@ -7,6 +7,10 @@ import * as parakeet from "../src/parakeet.ts";
 import * as voice from "../src/voice.ts";
 import { type Host, VoiceCtl, micVerdict } from "../src/voicectl.ts";
 import { type Sandbox, fakeRecorder, findModel, installModel, sandbox, tmp, until, wavFile } from "./fixture.ts";
+import { audio as osAudio } from "@harbor/os";
+
+// The mic through PipeWire's or PulseAudio's recorder (a stand-in on PATH): Linux, where Harbor doesn't record itself.
+const linuxTools = !osAudio.available();
 
 interface Rig {
   ctl: VoiceCtl;
@@ -165,7 +169,7 @@ describe("settings", () => {
   });
 });
 
-describe("the mic", () => {
+describe.if(linuxTools)("the mic", () => {
   let box: Sandbox;
   beforeEach(() => {
     box = sandbox();

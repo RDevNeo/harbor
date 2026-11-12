@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import * as clip from "../src/clipboard.ts";
+import { clipboard as osClipboard } from "@harbor/os";
+
+// The desktop tools (wl-copy, xclip) where the system has no clipboard Harbor talks to itself (Linux).
+const linuxTools = !osClipboard.available();
 
 let dir = "";
 const saved = { PATH: process.env.PATH, WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY, DISPLAY: process.env.DISPLAY };
@@ -46,7 +50,7 @@ echo "$t" > "${dir}/copied-type"; cat > "${dir}/copied-data"`,
   process.env.WAYLAND_DISPLAY = "wayland-test";
 }
 
-test("text wins over an image, then an image, then a uri list", async () => {
+test.if(linuxTools)("text wins over an image, then an image, then a uri list", async () => {
   fakeWayland("text/plain image/png", { "text/plain": "hello" });
   expect(await clip.read()).toEqual({ type: "text", text: "hello" });
   clip.resetBackend();
@@ -60,7 +64,7 @@ test("text wins over an image, then an image, then a uri list", async () => {
   expect(await clip.read()).toEqual({ type: "text", text: "file:///a\n" });
 });
 
-test("copies text and images through wl-copy, images as png", async () => {
+test.if(linuxTools)("copies text and images through wl-copy, images as png", async () => {
   fakeWayland("text/plain", {});
   await clip.copyText("héllo");
   expect(readFileSync(join(dir, "copied-data"), "utf8")).toBe("héllo");
@@ -72,14 +76,14 @@ test("copies text and images through wl-copy, images as png", async () => {
   expect(await clip.copyImage(Buffer.from("not an image"))).toBe(false);
 });
 
-test("nothing happens without a clipboard tool", async () => {
+test.if(linuxTools)("nothing happens without a clipboard tool", async () => {
   process.env.PATH = dir;
   delete process.env.WAYLAND_DISPLAY;
   delete process.env.DISPLAY;
   expect(await clip.read()).toBeNull();
 });
 
-test("a paste brings text with unix line ends or a decoded image", async () => {
+test.if(linuxTools)("a paste brings text with unix line ends or a decoded image", async () => {
   fakeWayland("text/plain", { "text/plain": "a\r\nb" });
   expect(await clip.readForPaste()).toEqual({ type: "text", text: "a\nb" });
   clip.resetBackend();

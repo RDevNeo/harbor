@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import sharp from "sharp";
 import { richOffers } from "../src/clipboard.ts";
 import { Args, events, request } from "../src/clipowner.ts";
+import { pathToFileURL } from "node:url";
 
 test("requests are laid out as the Wayland wire wants: header, uints, padded strings", () => {
   const r = request(5, 1, [7, "wl_seat", 2]);
@@ -45,7 +46,8 @@ test("a message with one image offers its text, HTML holding the image, the imag
   const get = (m: string) => new TextDecoder().decode(offers.find((o) => o.mime === m)?.data);
   expect(get("text/plain")).toBe("hi <b>\nthere");
   expect(get("text/html")).toStartWith('<meta charset="utf-8"><p>hi &lt;b&gt;<br>there</p><img src="data:image/jpeg;base64,');
-  expect(get("text/uri-list")).toBe("file:///x/a%20b.jpg\r\n");
+  // The file as a URL of this system ("/x" is on drive C: on Windows).
+  expect(get("text/uri-list")).toBe(`${pathToFileURL("/x/a b.jpg").href}\r\n`);
   const png = offers.find((o) => o.mime === "image/png")?.data ?? new Uint8Array();
   expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
 });

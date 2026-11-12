@@ -1,4 +1,4 @@
-import { isAbsolute, join, normalize } from "node:path";
+import { isAbsolute, join, normalize, parse as parsePath, sep } from "node:path";
 import { dataDir, home } from "./paths.ts";
 
 export { home };
@@ -14,13 +14,23 @@ export const KEY = "projects_dir";
 interface Kv {
   get(k: string): string | null;
 }
+/** "~/x", and on Windows "~\x" too. */
+/** "~/x", and on Windows "~\\x" too. */
+const underHome = (v: string): boolean => v.startsWith("~/") || (sep === "\\" && v.startsWith("~\\"));
+
+/** Normalized, without a trailing separator (either one on Windows), a root (/ or C:\) kept whole. */
+function clean(p: string): string {
+  const n = normalize(p);
+  const root = parsePath(n).root;
+  return n.length > root.length ? n.replace(sep === "\\" ? /[\\/]+$/ : /\/+$/, "") : n;
+}
 
 /** The folder the user picked ("~/x" taken as under the home folder), null when none is. */
 export function chosen(kv: Kv | null | undefined, h: string = home()): string | null {
   const v = (kv?.get(KEY) ?? "").trim();
   if (v === "") return null;
-  const p = v === "~" ? h : v.startsWith("~/") ? join(h, v.slice(2)) : v;
-  return isAbsolute(p) ? normalize(p).replace(/(.)\/+$/, "$1") : null;
+  const p = v === "~" ? h : underHome(v) ? join(h, v.slice(2)) : v;
+  return isAbsolute(p) ? clean(p) : null;
 }
 
 /** Where new projects and clones go. */
@@ -44,7 +54,7 @@ export function chatsDir(kv: Kv | null | undefined, h: string = home()): string 
 export function parse(input: string, h: string = home()): { dir: string } | { err: string } {
   const t = input.trim();
   if (t === "") return { err: "Pick a folder" };
-  const p = t === "~" ? h : t.startsWith("~/") ? join(h, t.slice(2)) : t;
+  const p = t === "~" ? h : underHome(t) ? join(h, t.slice(2)) : t;
   if (!isAbsolute(p)) return { err: "Use a full path, like ~/Projects" };
-  return { dir: normalize(p).replace(/(.)\/+$/, "$1") };
+  return { dir: clean(p) };
 }
