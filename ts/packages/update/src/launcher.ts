@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { defaultConfig, type RuntimeInfo, type UpdateConfig } from "./config.ts";
 import { updateCli } from "./commands.ts";
 import { alive, BUNDLE_FILE, isFile, read } from "./files.ts";
+import type { Addon } from "./native.ts";
 import { enabled, superseded } from "./preview.ts";
 import { forget, readMeta, SLOT } from "./previewmeta.ts";
 import { RELOADED_PID } from "./reload.ts";
@@ -98,6 +99,23 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
   if (cmd === "runtime-version") {
     out(base.runtime);
     return 0;
+  }
+  if (cmd === "warm-natives") {
+    // The runtime's native addons written out and loaded once, ahead of its first start: on Windows the
+    // virus scanner reads each new file first, which held a first start for half a minute (install.ps1 and
+    // the updater run this). Outside a compiled runtime there's nothing to write.
+    const h = (globalThis as unknown as { __harbor?: { addon?(name: Addon): unknown } }).__harbor;
+    if (h?.addon === undefined) return 0;
+    let failed = 0;
+    for (const a of ["sharp", "sherpa", "slint"] as const) {
+      try {
+        h.addon(a);
+      } catch (e) {
+        failed++;
+        err(`harbor: ${a}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return failed === 0 ? 0 : 1;
   }
   if (cmd === "smoke-bundle") {
     const path = rest[0];

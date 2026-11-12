@@ -35,7 +35,12 @@ export function extractNative(files: NativeFiles, base: string): string {
     if (!existsSync(join(dir, ".complete"))) throw new Error(`could not write ${dir}`);
   }
   for (const d of readdirSync(base)) {
-    if (d.startsWith("native-") && join(base, d) !== dir && !/\.\d+$/.test(d)) rmSync(join(base, d), { recursive: true, force: true });
+    if (!d.startsWith("native-") || join(base, d) === dir || /\.\d+$/.test(d)) continue;
+    try {
+      rmSync(join(base, d), { recursive: true, force: true });
+    } catch {
+      // still loaded by a running Harbor (Windows keeps those files): the next start clears it
+    }
   }
   return dir;
 }

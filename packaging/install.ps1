@@ -265,12 +265,16 @@ Copy-Item -Path "$Dir\install.ps1" -Destination `$s -Force
   }
   Set-UserPath $Dir $true
 
-  # Windows checks a new harbor.exe before its first start (20 s or so): done now, so the first open is quick.
+  # Windows checks a new harbor.exe, and then each native file it writes out, before their first use (half
+  # a minute or so): done now, so the first open is quick. --check-native writes and loads sharp, sherpa and
+  # Slint's addon where Harbor's start finds them.
   Say "Preparing Harbor's first start..."
-  try {
-    $warm = Start-Process -FilePath $exe -ArgumentList "runtime-version" -WindowStyle Hidden -PassThru
-    if (-not $warm.WaitForExit(180000)) { $warm.Kill() }
-  } catch {}
+  foreach ($a in @("runtime-version", "--check-native")) {
+    try {
+      $warm = Start-Process -FilePath $exe -ArgumentList $a -WindowStyle Hidden -PassThru
+      if (-not $warm.WaitForExit(180000)) { $warm.Kill() }
+    } catch {}
+  }
 
   Install-Deps
   Say "Harbor $ver is installed. Open it from the Start menu, or run: harbor"

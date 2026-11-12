@@ -114,6 +114,29 @@ test("runtime-version and smoke-bundle answer without starting the app", async (
   expect(await out(["smoke-bundle", junk])).toBe("");
 });
 
+test("warm-natives loads each addon the runtime carries, says which failed, and is a no-op outside a runtime", async () => {
+  const g = globalThis as unknown as { __harbor?: unknown };
+  const was = g.__harbor;
+  const cfg = configFor(null, { exe: join(tmp(), "harbor") });
+  const errs: string[] = [];
+  try {
+    g.__harbor = undefined;
+    expect(await launch(["warm-natives"], { cfg, err: (l) => void errs.push(l) })).toBe(0);
+    const loaded: string[] = [];
+    g.__harbor = {
+      addon: (a: string) => {
+        if (a === "sherpa") throw new Error("blocked");
+        loaded.push(a);
+      },
+    };
+    expect(await launch(["warm-natives"], { cfg, err: (l) => void errs.push(l) })).toBe(1);
+    expect(loaded).toEqual(["sharp", "slint"]);
+    expect(errs).toEqual(["harbor: sherpa: blocked"]);
+  } finally {
+    g.__harbor = was;
+  }
+});
+
 test("launch reports a file that is not a bundle and runs main with the arguments", async () => {
   const errs: string[] = [];
   const outs: string[] = [];

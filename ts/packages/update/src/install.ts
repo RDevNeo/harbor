@@ -118,6 +118,8 @@ export async function install(cfg: UpdateConfig, version: string): Promise<Insta
       runtimeStaged = await fetchSigned(cfg, manifest.runtime, runtimeAsset(cfg), stage);
       chmodSync(runtimeStaged, 0o755);
       await smokeRuntime(runtimeStaged, manifest.runtime);
+      // Windows scans a new runtime's native files on their first load (half a minute): done now, not at its start.
+      if (platform() === "win32") await runSmoke(runtimeStaged, ["warm-natives"]).catch(() => "");
     }
     const bundle = await fetchSigned(cfg, version, BUNDLE_FILE, stage);
     await smokeBundle(runtimeStaged ?? join(dir, RUNTIME_FILE), bundle, version);
