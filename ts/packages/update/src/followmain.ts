@@ -160,7 +160,9 @@ export function findCheckout(kv: Kv, repos: FollowDeps["repos"]): string | null 
   const set = kv.get(CHECKOUT_KEY)?.trim();
   if (set) return set;
   for (const r of repos()) if (isHarborRemote(r.remote) && isFile(join(r.local ?? r.path, ".git", "HEAD"))) return r.local ?? r.path;
-  for (const r of repos()) if (isHarborRemote(r.remote)) return r.local ?? r.path;
+  // A worktree's .git is a file. Never another PC's project: its path isn't a folder here (on macOS a /home path is
+  // the automounter's, and each look at it took milliseconds, hundreds of times at the start).
+  for (const r of repos()) if (isHarborRemote(r.remote) && exists(join(r.local ?? r.path, ".git"))) return r.local ?? r.path;
   return null;
 }
 

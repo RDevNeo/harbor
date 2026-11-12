@@ -350,7 +350,12 @@ test("follow-main is on by default where there's a Harbor checkout; off only whe
   expect(enabled(store)).toBe(true);
   // No checkout: releases only, and nothing to say about it.
   expect(fm.on()).toBe(false);
-  repos = [{ path: "/src/harbor", remote: "git@github.com:RDevNeo/harbor.git", local: null }];
+  // Another PC's Harbor project (its folder isn't here) is no checkout.
+  repos = [{ path: "/nonexistent/other-pc/harbor", remote: "git@github.com:RDevNeo/harbor.git", local: null }];
+  expect(fm.on()).toBe(false);
+  const co = tmp("hfm-co-");
+  mkdirSync(join(co, ".git"), { recursive: true });
+  repos = [{ path: co, remote: "git@github.com:RDevNeo/harbor.git", local: null }];
   expect(fm.on()).toBe(true);
   kv.set("follow_main", "0");
   expect(fm.on()).toBe(true);
