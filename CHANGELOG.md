@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.4] - 2026-11-11
+
+### Fixed
+- Switching chats no longer leaks: every image the window read (a logo, an owner photo, an image's
+  placeholder) left a reference behind in the JavaScript engine that was never let go, about a dozen
+  per switch. Images are now handed over in the form the window reads without one.
+
 ## [0.177.3] - 2026-11-11
 
 ### Fixed
