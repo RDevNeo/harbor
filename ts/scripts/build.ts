@@ -1,6 +1,10 @@
-import { basename, dirname } from "node:path";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { BunPlugin } from "bun";
-import { platform } from "../packages/os/src/index.ts";
+import { paths, platform } from "../packages/os/src/index.ts";
+import * as macho from "../packages/update/src/macho.ts";
+
+const cacheHome = (): string => paths.cacheHome();
 
 const noExtraBinaries: BunPlugin = {
   name: "no-extra-slint-binaries",
@@ -32,7 +36,7 @@ const bunTarget = (t: Target): Bun.Build.CompileTarget => `bun-${t.os}-${t.arch}
 /** Slint's addon package for the target (its JS loader asks for it by this name). */
 const slintPackage = (t: Target): string => `slint-ui-binary-${t.os}-${t.arch}${t.os === "linux" ? "-gnu" : ""}`;
 
-function nativeFiles(t: Target): Record<string, string> {
+async function nativeFiles(t: Target): Promise<Record<string, string>> {
   const { os, arch } = t;
   const lib = os === "darwin" ? "dylib" : "so";
   const root = new URL("../node_modules/.bun/", import.meta.url).pathname;
@@ -57,15 +61,63 @@ function nativeFiles(t: Target): Record<string, string> {
   if (![`sharp/@img/sharp-${os}`, "sherpa/", "slint/"].every((p) => Object.keys(out).some((k) => k.startsWith(p)))) {
     throw new Error(`sharp's, sherpa's or Slint's native files for ${os}-${arch} are not installed (bun install${os === platform() && arch === process.arch ? "" : ` --os ${os} --cpu ${arch}`})`);
   }
+  if (os === "darwin") Object.assign(out, await darwinIntl(out));
   return out;
+}
+
+/**
+ * slint-ui's macOS addon links Homebrew's libintl (/opt/homebrew/opt/gettext), which a Mac without Homebrew
+ * lacks: the addon gets its own copy beside it, from Homebrew's pinned package, and
+ * points at it. The patched files' signatures are stale until native.ts signs them on the Mac (ad hoc).
+ * gettext 0.26's build for macOS 13 (Ventura): Harbor's floor stays Bun's own (macOS 13), not 1.0's 15.
+ */
+const GETTEXT = {
+  blob: "sha256:c9cf89dc04f56eb4939b00eea3c0361cd4498f8237e527f2f741682bf7e6de61",
+  lib: "gettext/0.26/lib/libintl.8.dylib",
+};
+const HOMEBREW_INTL = "/opt/homebrew/opt/gettext/lib/libintl.8.dylib";
+
+async function darwinIntl(files: Record<string, string>): Promise<Record<string, string>> {
+  const key = Object.keys(files).find((k) => /^slint\/slint-ui\.darwin-[^/]+\.node$/.test(k));
+  const addon = key === undefined ? undefined : files[key];
+  if (key === undefined || addon === undefined) return {};
+  const node = Buffer.from(await Bun.file(addon).arrayBuffer());
+  if (!macho.links(node).includes(HOMEBREW_INTL)) return {};
+  const dir = join(cacheHome(), "harbor-build", "darwin-intl", GETTEXT.blob.slice(7, 23));
+  mkdirSync(dir, { recursive: true });
+  const intl = join(dir, "libintl.8.dylib");
+  if (!existsSync(intl)) {
+    const tok = ((await (await fetch("https://ghcr.io/token?scope=repository:homebrew/core/gettext:pull")).json()) as { token: string }).token;
+    const r = await fetch(`https://ghcr.io/v2/homebrew/core/gettext/blobs/${GETTEXT.blob}`, { headers: { Authorization: `Bearer ${tok}` } });
+    if (!r.ok) throw new Error(`gettext's package: ${r.status}`);
+    const tgz = Buffer.from(await r.arrayBuffer());
+    if (`sha256:${new Bun.CryptoHasher("sha256").update(tgz).digest("hex")}` !== GETTEXT.blob) throw new Error("gettext's package isn't the pinned one");
+    const tar = Bun.spawnSync(["tar", "-xzO", "-f", "-", GETTEXT.lib], { stdin: tgz, stdout: "pipe", stderr: "pipe" });
+    if (!tar.success) throw new Error(`gettext's package: ${tar.stderr.toString()}`);
+    const lib = Buffer.from(tar.stdout);
+    macho.changeId(lib, "@rpath/libintl.8.dylib");
+    writeFileSync(`${intl}.tmp`, lib);
+    renameSync(`${intl}.tmp`, intl);
+  }
+  if (macho.changeLink(node, HOMEBREW_INTL, "@loader_path/libintl.8.dylib") !== 1) throw new Error("the Slint addon's libintl link didn't change");
+  const patched = join(dir, basename(key));
+  writeFileSync(patched, node);
+  const notice = join(dir, "libintl-NOTICE.txt");
+  writeFileSync(
+    notice,
+    "libintl.8.dylib is GNU gettext's libintl 0.26 (LGPL-2.1-or-later), from Homebrew's gettext package for macOS 13 on Apple Silicon (ghcr.io/homebrew/core/gettext, blob " +
+      `${GETTEXT.blob}), with its install name changed. Source: https://ftp.gnu.org/gnu/gettext/gettext-0.26.tar.gz\n`,
+  );
+  console.log(`Slint addon: ${key} uses its own libintl (${intl})`);
+  return { [key]: patched, "slint/libintl.8.dylib": intl, "slint/libintl-NOTICE.txt": notice };
 }
 
 const nativeAddons = (t: Target): BunPlugin => ({
   name: "native-addons",
   setup(build) {
     build.onResolve({ filter: /^harbor:native$/ }, (a) => ({ path: a.path, namespace: "native" }));
-    build.onLoad({ filter: /.*/, namespace: "native" }, () => {
-      const files = Object.entries(nativeFiles(t));
+    build.onLoad({ filter: /.*/, namespace: "native" }, async () => {
+      const files = Object.entries(await nativeFiles(t));
       const imports = files.map(([, p], i) => `import f${i} from ${JSON.stringify(p)} with { type: "file" };`);
       return { contents: `${imports.join("\n")}\nexport const files = { ${files.map(([k], i) => `${JSON.stringify(k)}: f${i}`).join(", ")} };`, loader: "js" };
     });

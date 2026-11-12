@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { codesign } from "@harbor/os";
 
 export type NativeFiles = Readonly<Record<string, string>>;
 
@@ -21,6 +22,11 @@ export function extractNative(files: NativeFiles, base: string): string {
     const to = join(tmp, n);
     mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
     writeFileSync(to, readFileSync(files[n] ?? ""));
+  }
+  // macOS loads only signed native code: a library the build patched (macho.ts) is signed here, ad hoc.
+  if (codesign.required() && !codesign.adhoc(names.filter((n) => /\.(node|dylib)$/.test(n)).map((n) => join(tmp, n)))) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw new Error(`could not sign the native files in ${tmp}`);
   }
   writeFileSync(join(tmp, ".complete"), "");
   try {

@@ -110,14 +110,14 @@ test("harbor mcp answers the protocol itself and relays tool calls over the app'
   }
 });
 
-test("the runtime's own sharp and sherpa load by path from where it wrote them: an image, an svg and the speech engine", async () => {
+test("the runtime's own sharp, sherpa and Slint load by path from where it wrote them: an image, an svg, the speech engine and the window's addon", async () => {
   const cache = folder("cache-");
   const r = await run([join(dir, "harbor"), "--check-native"], true, { XDG_CACHE_HOME: cache });
   expect(r.err).toBe("");
-  expect(r.out).toMatch(/^sharp: ok, libvips \d+\.\d+\.\d+, a \d+ byte png, a \d+ byte png from an svg\nsherpa: ok$/);
+  expect(r.out).toMatch(/^sharp: ok, libvips \d+\.\d+\.\d+, a \d+ byte png, a \d+ byte png from an svg\nsherpa: ok\nslint: ok$/);
   expect(r.code).toBe(0);
   expect(readdirSync(join(cache, "harbor")).filter((d) => d.startsWith("native-"))).toHaveLength(1);
-});
+}, 30_000);
 
 test("harbor --speech-worker starts from the compiled binary with sherpa's libraries found, and answers a request it cannot serve", async () => {
   const cache = folder("cache-");

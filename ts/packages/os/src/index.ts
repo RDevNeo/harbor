@@ -10,5 +10,6 @@ export * as paths from "./paths.ts";
 export * as keychain from "./keychain.ts";
 export * as spawn from "./spawn.ts";
 export * as env from "./env.ts";
+export * as codesign from "./codesign.ts";
 export { platform, type Platform } from "./platform.ts";
 export * as stall from "./stall.ts";

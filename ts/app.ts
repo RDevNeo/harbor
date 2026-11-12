@@ -29,7 +29,10 @@ const commands: Record<string, Command> = {
     console.log(`sharp: ok, libvips ${sharp.versions.vips}, a ${png.length} byte png, a ${svg.length} byte png from an svg`);
     const sherpa = (await import("sherpa-onnx-node")).default;
     console.log(`sherpa: ${typeof sherpa.OfflineRecognizer === "function" ? "ok" : "no recognizer"}`);
-    return typeof sherpa.OfflineRecognizer === "function" ? 0 : 1;
+    // Slint's addon loads (with what it links) without starting a window.
+    const slint = (await import("slint-ui/rust-module.cjs")).default as { processEvents?: unknown };
+    console.log(`slint: ${typeof slint.processEvents === "function" ? "ok" : "no event loop"}`);
+    return typeof sherpa.OfflineRecognizer === "function" && typeof slint.processEvents === "function" ? 0 : 1;
   },
   "--version": () => {
     console.log(`harbor ${VERSION === DEV_VERSION ? `${pkg.version} (ts)` : versionLabel()}`);

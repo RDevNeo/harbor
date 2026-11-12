@@ -114,6 +114,7 @@
     "xdg": 1
   },
   "scripts/build.ts": {
+    "libc": 7,
     "xdg": 1
   },
   "services.ts": {
