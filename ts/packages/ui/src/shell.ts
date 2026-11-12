@@ -184,6 +184,8 @@ export function marksOf(dir: string | null, gone: boolean, pr: chatpr.ChatPr | n
 
 /** How often the icon of a project on another PC is asked for again. */
 const REMOTE_ICON_MS = 10 * 60_000;
+/** How soon it's asked again when no PC that may hold it was on (the mesh connects a few seconds after the start). */
+const REMOTE_ICON_RETRY_MS = 30_000;
 
 export class Shell {
   readonly win: AppWindow;
@@ -2295,7 +2297,9 @@ export class Shell {
       said.push(`${at}: ${res.status} ${typeof res.body === "object" && res.body !== null ? String((res.body as { error?: unknown }).error ?? "") : ""}`.trim());
     }
     if (typeof png !== "string" || png === "") {
-      console.error(`harbor: no icon for project ${r.name} from the PCs that may hold it (${said.join("; ")})`);
+      // Right after the start the other PCs aren't connected yet ("off"): asked again soon, not in 10 minutes.
+      if (said.every((x) => / (409|503) /.test(` ${x} `))) this.remoteAsked.set(repo, Date.now() - REMOTE_ICON_MS + REMOTE_ICON_RETRY_MS);
+      else console.error(`harbor: no icon for project ${r.name} from the PCs that may hold it (${said.join("; ")})`);
       return;
     }
     const bytes = new Uint8Array(Buffer.from(png, "base64"));
