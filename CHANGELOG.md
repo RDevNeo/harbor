@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.181.3] - 2026-11-12
+
+### Fixed
+- Windows 10 (and Windows 11 before 24H2): no console windows pop up beside Harbor for each git, shell or agent
+  it runs, as 0.181.1 did on newer Windows.
+
 ## [0.181.2] - 2026-11-12
 
 ### Fixed
