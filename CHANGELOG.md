@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.179.4] - 2026-11-12
+
+### Fixed
+- Two turns starting at the same moment (a lead starting its sub-agents, messages sent to several chats at
+  once) could end one of them at once with "The agent exited with an error": both wrote the same app file
+  through one shared temporary name, and the second write failed and took its turn's runner down. Every
+  writer now has its own temporary file.
+- A turn whose runner fails before the agent starts says why in its chat instead of failing with no reason.
+
 ## [0.179.3] - 2026-11-12
 
 ### Added
