@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.21] - 2026-11-12
+
+### Fixed
+- macOS: Harbor starts at login again after an update (macOS refused the first launch of the updated
+  program); its login item opens Harbor.app and is listed as Harbor. Older entries are fixed at the next start.
+
 ## [0.180.20] - 2026-11-12
 
 0.180.19 was tagged but never published (its build failed fetching the new Bun): its changes come with this one.
