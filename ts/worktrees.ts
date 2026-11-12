@@ -116,7 +116,7 @@ export class Worktrees {
   }
 
   make(repo: string, base: string, about: string): Promise<wt.Made> {
-    return wt.make(repo, base, about, this.namer(about, repo));
+    return wt.make(repo, base, about, this.namer(about, repo), wt.root(this.h.store));
   }
 
   attach(chat: number, made: wt.Made): void {
@@ -168,7 +168,7 @@ export class Worktrees {
     const about = this.e.chat(chat)?.title ?? "";
     let made: wt.Made;
     try {
-      made = await wt.make(info.repo, "", about, this.namer(about, info.repo));
+      made = await wt.make(info.repo, "", about, this.namer(about, info.repo), wt.root(this.h.store));
     } finally {
       this.busy = null;
     }

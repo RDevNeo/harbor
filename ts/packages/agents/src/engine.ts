@@ -1,8 +1,8 @@
 // Nothing else may hold running turns or queues: ui renders this, and mcp's control socket and
 // net's phone and mesh routes call into it.
-import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { type Chat, type CopyTurn, hot, type Item, limits, liveSince, type Mention, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { type Chat, type CopyTurn, hot, type Item, limits, liveSince, type Mention, projectsdir, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import { providerUpdates } from "./provupdate.ts";
 import * as compaction from "./compaction.ts";
@@ -412,14 +412,43 @@ export class Engine {
     return p === null || p === "" ? null : p;
   }
 
+  /** A project's folder; for no project, where a new chat without one runs (the Projects folder's `chats`, else home). */
   cwdOf(repo: number | null): string {
     const r = this.repo(repo);
-    return r ? (r.local ?? r.path) : home();
+    return r ? (r.local ?? r.path) : projectsdir.chatsDir(this.store, home());
   }
 
-  /** Where a chat's agent works: its worktree, else its project (or home). */
+  /**
+   * The folder a chat without a project runs in: the one its first turn ran in (kv `chat_dir:<lead>`);
+   * one that started before chats had their own folder stays in the home folder; a new one takes `cwdOf(null)`.
+   */
+  noProjectDir(c: Chat): string {
+    const id = c.role === "sub" ? (c.parent ?? c.id) : c.id;
+    const pinned = this.store.get(`chat_dir:${id}`) ?? "";
+    if (pinned !== "") return pinned;
+    const lead = id === c.id ? c : this.chat(id);
+    return (lead ?? c).started ? home() : this.cwdOf(null);
+  }
+
+  /** Keeps a chat without a project in the folder it starts in, made when it isn't there yet. */
+  private pinNoProjectDir(c: Chat): void {
+    if (c.repoId !== null || this.worktreeOf(c) !== null) return;
+    const id = c.role === "sub" ? (c.parent ?? c.id) : c.id;
+    const dir = this.noProjectDir(c);
+    if ((this.store.get(`chat_dir:${id}`) ?? "") === "" && dir !== home()) this.store.set(`chat_dir:${id}`, dir);
+    // Made in a Projects folder that's there; one Harbor saw before (foldertrack.ts `folder_id:`) moved: it's looked for, not made again.
+    if (!existsSync(dir) && existsSync(dirname(dir)) && this.store.get(`folder_id:${dir}`) === null) {
+      try {
+        mkdirSync(dir);
+      } catch {
+        // the turn says the folder isn't there
+      }
+    }
+  }
+
+  /** Where a chat's agent works: its worktree, else its project (or, without one, `noProjectDir`). */
   chatCwd(c: Chat): string {
-    return this.worktreeOf(c) ?? this.cwdOf(c.repoId);
+    return this.worktreeOf(c) ?? (c.repoId === null ? this.noProjectDir(c) : this.cwdOf(c.repoId));
   }
 
   /** The user trusts the project's own agent config (off for a cloned project until they say so). */
@@ -491,7 +520,7 @@ export class Engine {
   teamFor(c: Chat): agent.Team | null {
     const r = this.repo(c.repoId);
     const name = r ? r.name : "No project";
-    const path = r ? (r.local ?? r.path) : home();
+    const path = r ? (r.local ?? r.path) : this.noProjectDir(c);
     if (c.role === "lead") return { role: "lead", system: prompts.now.leadPrompt(name, path) };
     if (c.role === "sub") {
       const mates = c.parent === null ? [] : this.subsOf(c.parent).filter((x) => x.id !== c.id).map((x) => x.name);
@@ -550,6 +579,7 @@ export class Engine {
       this.persist(id);
       return;
     }
+    if (!remote || remote.workspace) this.pinNoProjectDir(chat);
     const missing = (): string | null => this.host.missingFolder?.(chat) ?? (!existsSync(this.chatCwd(chat)) ? `The project folder ${this.chatCwd(chat)} isn't on this PC.` : null);
     if ((!remote || remote.workspace) && missing() !== null) {
       if (this.host.holdForClone?.(chat, prompt, files)) {
@@ -1705,6 +1735,13 @@ export class Engine {
       if (!existsSync(r.local ?? r.path)) throw new Error(`${r.path} isn't on this PC`);
     }
     const cwd = this.cwdOf(repo);
+    if (repo === null && !existsSync(cwd)) {
+      try {
+        mkdirSync(cwd, { recursive: true });
+      } catch {
+        // its turn then says the folder isn't there
+      }
+    }
     for (const i of ids) {
       const c = this.chat(i);
       const acc = c ? this.account(c.account) : undefined;
@@ -1720,6 +1757,9 @@ export class Engine {
     for (const i of ids) {
       const c = this.chat(i);
       if (c) c.repoId = repo;
+      // Into no project: where its sessions were just brought; out of it, the pin goes.
+      if (repo === null && cwd !== home()) this.store.set(`chat_dir:${i}`, cwd);
+      else this.store.del(`chat_dir:${i}`);
       this.host.forgetWorkspace?.(i);
       this.persist(i);
     }

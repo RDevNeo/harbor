@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, renameSync, statSync, writeFile
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { outputWithin } from "./git.ts";
 import { dataDir, home, newUuid } from "./paths.ts";
+import { projectsdir } from "@harbor/store";
 import { childPath } from "./providers.ts";
 import { rankFiles } from "./rank.ts";
 import { askWithin, type Env } from "./recap.ts";
@@ -121,9 +122,9 @@ export async function create(dir: string, name: string): Promise<void> {
   await git(dir, ["switch", "-c", n]);
 }
 
-/** Where worktrees go: outside every project, in Harbor's data folder. */
-export function root(): string {
-  return join(dataDir(), "worktrees");
+/** Where worktrees go: outside every project, in the Projects folder's `.worktrees` once one is chosen (kv), else Harbor's data folder. */
+export function root(kv?: { get(k: string): string | null } | null): string {
+  return projectsdir.worktreesDir(kv, home(), dataDir());
 }
 
 /** Words that say little about what a chat is about, left out of its worktree's name (accents folded: "não" is "nao"). */
@@ -551,8 +552,8 @@ export function madeNotice(m: Made, what: string): [string, string] {
   return [text, detail];
 }
 
-export function make(repo: string, base: string, about: string, name: Namer | null): Promise<Made> {
-  return makeIn(root(), repo, base, about, name);
+export function make(repo: string, base: string, about: string, name: Namer | null, rootDir: string = root()): Promise<Made> {
+  return makeIn(rootDir, repo, base, about, name);
 }
 
 export async function makeIn(rootDir: string, repo: string, base: string, about: string, name: Namer | null): Promise<Made> {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fit, known, PRIMS_V1, row, type Screen } from "../packages/ui/src/logic/phoneui.ts";
 import { phoneSettings, phoneSettingsDo } from "../packages/ui/src/logic/settings-phone.ts";
@@ -47,4 +48,21 @@ test("the_phone_settings_say_what_the_app_said_before", () => {
   expect(phoneSettingsDo(k, "worktrees", { values: { auto_fix: true } })).toBe("");
   expect(k.o.auto_fix).toBeUndefined();
   expect(phoneSettingsDo(k, "nope", {})).toBeNull();
+});
+
+test("the phone sets the Projects folder from a list: the default, the current one, the PC's folders", () => {
+  const k = kv();
+  const s = phoneSettings(k, { dictionary: null, projects: { home: "/h", dirs: ["/h/Documents", "/h/Projects"] } });
+  expect(s.sections.map((x) => x.id)).toEqual(["projects", "worktrees"]);
+  const r = s.sections[0]?.rows[0];
+  expect(r).toMatchObject({ title: "Projects folder", sub: "~/Projects" });
+  const tap = r?.tap;
+  if (tap?.kind !== "pick") throw new Error("not a pick");
+  expect(tap.options.map((o) => o.label)).toEqual(["~/Projects", "~/Documents"]);
+  expect(tap.selected).toBe("/h/Projects");
+  const dir = join(mkdtempSync(join(tmpdir(), "hts-pdir-")), "work");
+  expect(phoneSettingsDo(k, "projects_dir", { value: dir })).toStartWith("Projects folder: ");
+  expect(k.o.projects_dir).toBe(dir);
+  expect(existsSync(dir)).toBe(true);
+  expect(phoneSettingsDo(k, "projects_dir", { value: "relative/x" })).toBeNull();
 });

@@ -13,6 +13,7 @@ export * as team from "./team.ts";
 export * as engine from "./engine.ts";
 export { Engine, type EngineHost, type Mode, type Queued, type SentBy, type Transcript } from "./engine.ts";
 export * as movechat from "./movechat.ts";
+export * as foldermove from "./foldermove.ts";
 export * as openchat from "./openchat.ts";
 export * as chatpr from "./chatpr.ts";
 export * as wtclean from "./wtclean.ts";

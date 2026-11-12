@@ -436,6 +436,14 @@ export class Store {
     this.db.query("UPDATE repos SET name=?2 WHERE id=?1").run(id, name);
   }
 
+  /** The project's folder moved (foldertrack.ts): false when another project has that path already. */
+  setRepoPath(id: number, path: string): boolean {
+    const taken = this.db.query("SELECT id FROM repos WHERE path=?1 AND id!=?2").get(path, id) as Row | null;
+    if (taken) return false;
+    this.db.query("UPDATE repos SET path=?2 WHERE id=?1").run(id, path);
+    return true;
+  }
+
   /** This PC's folder for a shared project (null: back to its own `path`). */
   setRepoLocal(id: number, local: string | null): void {
     this.db.query("UPDATE repos SET local=?2 WHERE id=?1").run(id, local ?? "");

@@ -201,19 +201,19 @@ test("the_phone_settings_screen_says_the_same_and_its_checklist_sets_the_toggles
   const [st, scr] = await json("POST", "/v1/ui/settings", { prims });
   expect(st).toBe(200);
   const secs = scr.sections as { id: string; title: string; rows: { id: string; sub: string; tap: { kind: string; items?: { key: string; on: boolean }[] } }[] }[];
-  expect(secs.map((s) => s.title)).toEqual(["Voice", "Worktrees"]);
-  const wt = secs[1]?.rows[0];
+  expect(secs.map((s) => s.title)).toEqual(["Voice", "Projects", "Worktrees"]);
+  const wt = secs[2]?.rows[0];
   expect(wt?.sub).toBe("Once a chat's PR is merged · their branches too");
   expect(wt?.tap.items?.map((i) => [i.key, i.on])).toEqual([["wt_clean_merged", true], ["wt_clean_branch", true], ["wt_clean_remote", false]]);
   const [st2, after] = await json("POST", "/v1/ui/settings/do", { prims, act: "worktrees", values: { wt_clean_remote: true, voice_cleanup: true } });
   expect(st2).toBe(200);
-  expect((after.sections as { rows: { sub: string }[] }[])[1]?.rows[0]?.sub).toBe("Once a chat's PR is merged · branches too, here and on GitHub");
+  expect((after.sections as { rows: { sub: string }[] }[])[2]?.rows[0]?.sub).toBe("Once a chat's PR is merged · branches too, here and on GitHub");
   expect(h.store.get("wt_clean_remote")).toBe("1");
   // Only the checklist's own keys.
   expect(h.store.get("voice_cleanup")).not.toBe("1");
   h.store.set("wt_clean_remote", "0");
   // A phone without the dictionary screen gets no Voice section; an unknown act is an error.
-  expect(((await json("POST", "/v1/ui/settings", { prims: prims.slice(0, 7) }))[1].sections as { id: string }[]).map((s) => s.id)).toEqual(["worktrees"]);
+  expect(((await json("POST", "/v1/ui/settings", { prims: prims.slice(0, 7) }))[1].sections as { id: string }[]).map((s) => s.id)).toEqual(["projects", "worktrees"]);
   expect((await json("POST", "/v1/ui/settings/do", { prims, act: "nope" }))[0]).toBe(400);
 });
 

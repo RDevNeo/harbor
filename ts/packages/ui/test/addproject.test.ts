@@ -25,6 +25,16 @@ describe("addproject.rs", () => {
     expect(ap.key("enter", ap.rows(new Set()))).toEqual({ kind: "step", step: "github" });
   });
 
+  test("new projects and clones go in the Projects folder setting when there is one", () => {
+    const ap = new AddProject({ ...disk, projects: "/h/Documents/work" }, new Map());
+    ap.go("new");
+    ap.query = "demo";
+    expect(ap.rows(new Set()).map((r) => r.detail)).toEqual(["git init in ~/Documents/work/demo", "Plain folder in ~/Documents/work/demo, no Git or GitHub"]);
+    ap.go("url");
+    ap.query = "https://example.com/me/tool.git";
+    expect(ap.rows(new Set())[0]?.detail).toBe("into ~/Documents/work/tool");
+  });
+
   test("new project offers Git and a plain folder under ~/Projects", () => {
     const ap = new AddProject(disk, new Map());
     ap.go("new");

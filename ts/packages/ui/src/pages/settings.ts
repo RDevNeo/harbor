@@ -1,12 +1,13 @@
 import { basename } from "node:path";
-import { type Store } from "@harbor/store";
-import { voiceCtl } from "@harbor/media";
+import { mkdirSync } from "node:fs";
+import { projectsdir, type Store } from "@harbor/store";
+import { picker, voiceCtl } from "@harbor/media";
 import { harborVersion, mcp } from "@harbor/mcp";
 import { providers } from "@harbor/agents";
 import { AUTOSTART_DEFAULT_KEY, autostart, installedLauncher, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
-import { generalSections, navTabs, setGeneral, type SettingSection } from "../logic/settings.ts";
+import { generalSections, navTabs, PROJECTS_DIR, setGeneral, type SettingSection } from "../logic/settings.ts";
 import { parseMode } from "../theme.ts";
 import { type Block } from "../logic/settings-blocks.ts";
 import { type IntData, type IntHost } from "../logic/settings-integrations.ts";
@@ -247,6 +248,26 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   };
   bus.pressed = (k) => {
     if (k === "voice:test") { void speech.testMicrophone(() => show()); return; }
+    if (k === PROJECTS_DIR.reset) {
+      store.del(projectsdir.KEY);
+      show();
+      return;
+    }
+    if (k === PROJECTS_DIR.change) {
+      void picker.pick({ title: "Projects folder", directory: true, dir: projectsdir.projectsDir(store) }).then(([dir]) => {
+        if (dir === undefined) return;
+        const p = projectsdir.parse(dir);
+        if ("err" in p) return picker.showToast(p.err);
+        try {
+          mkdirSync(p.dir, { recursive: true });
+        } catch (x) {
+          return picker.showToast(`Couldn't use ${dir}: ${x instanceof Error ? x.message : String(x)}`);
+        }
+        store.set(projectsdir.KEY, p.dir);
+        show();
+      });
+      return;
+    }
     notifyPressed(k, deps.notify);
     void voicePressed(speech, k).then(() => show());
   };

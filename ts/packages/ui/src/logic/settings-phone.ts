@@ -1,4 +1,7 @@
 import { ICONS } from "../icons.ts";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { projectsdir } from "@harbor/store";
 import { type Kv, setGeneral, worktreesSection } from "./settings.ts";
 import { type Row, row, type Screen, type Section } from "./phoneui.ts";
 
@@ -12,6 +15,27 @@ import { type Row, row, type Screen, type Section } from "./phoneui.ts";
 export interface PhoneSettingsFacts {
   /** The PC's dictionary's terms (dictate.ts), null on a PC without dictation. */
   dictionary: string[] | null;
+  /** The PC's home folder and the folders the Projects folder may be set to (pages/phone: its home's and Documents' folders); left out: no row. */
+  projects?: { home: string; dirs: string[] };
+}
+
+const tildeIn = (h: string, p: string): string => (p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p);
+
+/** Projects folder: one of a list (the phone can't browse the PC's disk): the default, the current one, then `dirs`. */
+function projectsRow(kv: Kv, p: { home: string; dirs: string[] }): Row {
+  const h = p.home;
+  const def = join(h, "Projects");
+  const cur = projectsdir.projectsDir(kv, h);
+  const ids = [...new Set([def, cur, ...p.dirs])];
+  const options = ids.map((d) => ({ id: d, label: tildeIn(h, d), ...(d === def ? { sub: "The default" } : {}) }));
+  return row({
+    id: "projects_dir",
+    glyph: ICONS.FOLDER,
+    title: "Projects folder",
+    sub: tildeIn(h, cur),
+    chevron: true,
+    tap: { kind: "pick", act: "projects_dir", title: "Projects folder", note: "New projects and clones go here, worktrees in its .worktrees folder and chats without a project in its chats folder.", options, selected: cur },
+  });
 }
 
 /** Voice: the dictionary, kept on the PC; the phone edits it on its own screen (`native:dictionary`). */
@@ -47,6 +71,7 @@ export function phoneSettings(kv: Kv, f: PhoneSettingsFacts): Screen {
   const sections: Section[] = [];
   const voice = voiceSection(f.dictionary);
   if (voice !== null) sections.push(voice);
+  if (f.projects) sections.push({ id: "projects", title: "Projects", rows: [projectsRow(kv, f.projects)] });
   sections.push({ id: "worktrees", title: "Worktrees", rows: [worktreesRow(kv)] });
   return { v: 1, sections };
 }
@@ -62,6 +87,18 @@ export function phoneSettingsDo(kv: Kv, act: string, b: { values?: unknown; valu
     if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
     for (const [k, on] of Object.entries(v)) if (keys.has(k) && typeof on === "boolean") setGeneral(kv, k, on);
     return "";
+  }
+  if (act === "projects_dir") {
+    const p = typeof b.value === "string" ? projectsdir.parse(b.value) : { err: "value: a folder" };
+    if ("err" in p) return null;
+    if (p.dir === join(projectsdir.home(), "Projects") && projectsdir.chosen(kv) === null) return "";
+    try {
+      mkdirSync(p.dir, { recursive: true });
+    } catch {
+      return null;
+    }
+    kv.set(projectsdir.KEY, p.dir);
+    return `Projects folder: ${tildeIn(projectsdir.home(), p.dir)}`;
   }
   return null;
 }

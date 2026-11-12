@@ -9,7 +9,7 @@ import { type Act, AddProject, type Disk, type GhList, nameProblem, type Row, ST
 import { cloneProject, createProject, ghRepos, localClones, realDisk } from "./packages/ui/src/addproject.ts";
 import { type ProjectAct, projectMenu } from "./packages/ui/src/logic/projectmenu.ts";
 import { parseSnooze } from "./packages/ui/src/logic/sidebar.ts";
-import { sidebartree } from "./packages/store/src/index.ts";
+import { projectsdir, sidebartree } from "./packages/store/src/index.ts";
 import { webUrl } from "./packages/agents/src/git.ts";
 import { githubRepo } from "./packages/agents/src/worktree.ts";
 import { choiceJson, shareJson, type WorkspaceMoves } from "./workspacemoves.ts";
@@ -167,7 +167,8 @@ export class ProjectsApi {
   }
 
   private disk(): Disk {
-    return this.h.disk?.() ?? realDisk();
+    const d = this.h.disk?.() ?? realDisk();
+    return { projects: projectsdir.projectsDir(this.h.store, d.home), ...d };
   }
 
   private pcName(): string {

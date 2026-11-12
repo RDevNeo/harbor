@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { git } from "@harbor/agents";
 import { addFolder, gitRemote } from "@harbor/net";
 import { homedir } from "node:os";
-import { home, repoDir, type Store } from "@harbor/store";
+import { home, projectsdir, repoDir, type Store } from "@harbor/store";
 import { type Act, AddProject, cloneCommand, cloneError, type Disk, githubSlug, nameProblem, type PaletteKey, parseGhList, type Row, STEP_LABEL, type StatusTone, untrustedKey } from "./logic/addproject.ts";
 import type { Pixels } from "./logos.ts";
 
@@ -111,7 +111,7 @@ export async function cloneProject(url: string, dir: string, github: boolean, pr
  * `done` closes it, `openUrl` shows a folder in the file manager.
  */
 export function attachAddProject(view: AddProjectView, store: Store, github: Pixels, hooks: { added(id: number): void; done(): void; openUrl(u: string): void }, disk = realDisk()) {
-  const ap = new AddProject(disk, localClones());
+  const ap = new AddProject({ projects: projectsdir.projectsDir(store, disk.home), ...disk }, localClones());
   let rows: Row[] = [];
   const known = () => new Set(store.repos().flatMap((r) => [r.path, repoDir(r)]));
 

@@ -100,6 +100,13 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["account_sync", D],
   ["account_sync_backup", D],
   ["worktree:", D],
+  // The Projects folder (projectsdir.ts) and the folder each chat without a project runs in.
+  ["projects_dir", D],
+  ["chat_dir:", D],
+  // Folders Harbor follows when they're moved or renamed (foldertrack.ts): what each is, by path.
+  ["folder_id:", D],
+  // A project's paths before its folder moved, told to other PCs (meshstore.ts `was`).
+  ["path_was:", D],
   // A project's Move to PC… (projectmove*.ts): where it went, how its move went, where one came from.
   ["project_moved:", D],
   ["move_project:", D],

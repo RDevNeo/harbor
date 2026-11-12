@@ -14,6 +14,11 @@ export function dataHome(env: Env = process.env): string {
   return env.XDG_DATA_HOME || join(home(env), ".local", "share");
 }
 
+/** The desktop's Trash (freedesktop.org: `files/` and `info/*.trashinfo` under the data folder). */
+export function trashHome(env: Env = process.env): string {
+  return join(dataHome(env), "Trash");
+}
+
 /** State worth keeping across restarts but not backing up (XDG_STATE_HOME). */
 export function stateHome(env: Env = process.env): string {
   return env.XDG_STATE_HOME || join(home(env), ".local", "state");

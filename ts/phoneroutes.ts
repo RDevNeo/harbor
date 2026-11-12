@@ -8,13 +8,13 @@ import { excerptOf, mentionAgent, mentionOf, mentionToJson, type MentionableItem
 import { parseSnooze, snoozePresets, snoozePreview } from "./packages/ui/src/logic/sidebar.ts";
 import { sidebartree } from "./packages/store/src/index.ts";
 import { composerRoutes } from "./phonecomposer.ts";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { patches, worktree as wt, wtclean } from "./packages/agents/src/index.ts";
 import type { ProjectClones } from "./projectclones.ts";
 import type { ProjectsApi } from "./projectsapi.ts";
 import type { WorkspaceMoves } from "./workspacemoves.ts";
 import type { Target, Worktrees } from "./worktrees.ts";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { commits } from "./packages/agents/src/index.ts";
 import { ghapi, prdetail } from "./packages/mcp/src/index.ts";
@@ -659,7 +659,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         if (r === null) return err(400, "Unknown setting: update Harbor on this PC");
         if (r !== "") say = r;
       }
-      const screen = fit(phoneSettings(h.store, { dictionary: dictate.dictionary().map((e) => e.term) }), known(b.prims));
+      const screen = fit(phoneSettings(h.store, { dictionary: dictate.dictionary().map((e) => e.term), projects: projectsChoices(homedir()) }), known(b.prims));
       return ok(plain(say === undefined ? screen : { ...screen, say }));
     }
     if (p.length !== 2) return null;
@@ -719,4 +719,17 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     }
     return null;
   };
+}
+
+/** Folders the phone may set the Projects folder to: those in the home folder and in ~/Documents (dot folders left out). */
+function projectsChoices(h: string): { home: string; dirs: string[] } {
+  const dirs: string[] = [];
+  for (const base of [h, join(h, "Documents")]) {
+    try {
+      for (const d of readdirSync(base, { withFileTypes: true })) if (d.isDirectory() && !d.name.startsWith(".")) dirs.push(join(base, d.name));
+    } catch {
+      // no such folder
+    }
+  }
+  return { home: h, dirs: dirs.sort().slice(0, 60) };
 }

@@ -12,6 +12,7 @@ import { placeOlderStarts, STARTS_PLACED, WorkspaceMoves } from "./workspacemove
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
 import { WorktreeCleaner } from "./worktreeclean.ts";
+import { FolderTracker } from "./foldertrack.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
@@ -519,6 +520,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   let busyIn: (dir: string) => string | null = () => null;
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
   // Delete merged worktrees: on this PC's own chats only, never on a copy of someone's data.
+  // Moved or renamed folders followed (foldertrack.ts): this PC's own Harbor only, never a rig on a copy of its data.
+  const folders = offline
+    ? null
+    : new FolderTracker({
+        store,
+        engine: () => eng(),
+        touch: () => hub.touch(null, true),
+        home: env.HOME ?? homedir(),
+        configs: () => [null, ...accounts.filter((a) => a.kind === "Claude").map((a) => a.configDir)],
+      });
   if (!offline) cleaner = new WorktreeCleaner({ store, engine: () => eng(), prs, worktrees, busyIn: (dir) => busyIn(dir), touch: () => hub.touch(null, true) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
@@ -1007,8 +1018,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
     hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
     // A chat of a project that moved to another PC doesn't run in the folder it left here.
-    missingFolder: (c) => projectMove?.movedLine(c) ?? projectClones.missingFolder(c),
-    holdForClone: (c, prompt, files) => (projectMove?.movedLine(c) ?? null) === null && projectClones.holdForClone(c, prompt, files),
+    missingFolder: (c) => projectMove?.movedLine(c) ?? folders?.goneLine(c) ?? projectClones.missingFolder(c),
+    // A folder Harbor knew that's gone from its path is looked for first (moved or renamed), then cloned.
+    holdForClone: (c, prompt, files) => (projectMove?.movedLine(c) ?? null) === null && ((folders?.hold(c, prompt, files) ?? false) || projectClones.holdForClone(c, prompt, files)),
   };
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
@@ -1085,7 +1097,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     accounts: moveAccounts,
     home: home(),
     uploadsDir,
-    worktreeRoot: worktree.root(),
+    get worktreeRoot() {
+      return worktree.root(store);
+    },
     overlays: () => overlays({ dataDir: dataDir(env) }),
     removeWorktree: (repo, dir) => worktree.remove(repo, dir),
     reindex: () => replica.reload(),
@@ -1345,6 +1359,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   voiceKv.unref();
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   if (signIn) account.start();
+  folders?.start();
   const tick = setInterval(() => {
     hub.enabled = true;
     if (!offline) providerUpdater.tick();
@@ -1422,6 +1437,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     stop: async () => {
       clearInterval(tick);
+      folders?.stop();
       // Pull request lookups still out (git, gh) would land on a closed store.
       prs.stop();
       // Turns still starting would land on a closed store: they're left to their runners, as the running ones below.

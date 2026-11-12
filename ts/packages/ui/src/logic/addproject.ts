@@ -8,7 +8,7 @@ export type Act =
   | { kind: "add"; dir: string }
   /** Browse this directory. */
   | { kind: "enter"; dir: string }
-  /** A new folder in ~/Projects: a Git repository (`git init`) or a plain folder. */
+  /** A new folder in the Projects folder: a Git repository (`git init`) or a plain folder. */
   | { kind: "create"; name: string; git: boolean }
   | { kind: "clone"; url: string; name: string };
 
@@ -24,6 +24,8 @@ export interface Row {
 /** What the palette reads from disk. */
 export interface Disk {
   home: string;
+  /** Where new projects and clones go (the Projects folder setting); left out: ~/Projects. */
+  projects?: string;
   /** Visible (non-dot) subdirectories, sorted by name. */
   subdirs(dir: string): string[];
   isDir(p: string): boolean;
@@ -71,7 +73,7 @@ export class AddProject {
   }
 
   projectsDir(): string {
-    return join(this.disk.home, "Projects");
+    return this.disk.projects ?? join(this.disk.home, "Projects");
   }
 
   tilde(p: string): string {

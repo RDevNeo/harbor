@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { home, projectsdir } from "@harbor/store";
 import { searchTabs, TAB_ORDER, TABS, type Tab } from "./pages.ts";
 
 /** One row of a settings card, as slint/settings.slint draws it (`SettingItem`). */
@@ -36,6 +38,26 @@ export interface GeneralEnv {
   autostart: boolean;
   /** This Harbor's version, "0.124.0". */
   version: string;
+  /** The home folder (paths show as ~/…); left out: this PC's. */
+  home?: string;
+}
+
+/** The Projects folder row's buttons (pages/settings.ts opens the folder picker for `change`). */
+export const PROJECTS_DIR = { change: "projects_dir:change", reset: "projects_dir:reset" } as const;
+
+const tildeIn = (h: string, p: string): string => (p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p);
+
+/** Projects: the folder new projects, clones, worktrees and chats without a project go in (projectsdir.ts). */
+export function projectsSection(kv: Kv, h: string): SettingSection {
+  const chosen = projectsdir.chosen(kv, h);
+  const dir = tildeIn(h, projectsdir.projectsDir(kv, h));
+  const desc =
+    chosen === null
+      ? `${dir}. New projects and clones go here. Pick a folder and worktrees go in its .worktrees folder too, and chats without a project in its chats folder.`
+      : `${dir}. New projects and clones go here, worktrees in its .worktrees folder and chats without a project in its chats folder.`;
+  const rows = [item({ kind: "button", key: PROJECTS_DIR.change, title: "Projects folder", desc, label: "Change…" })];
+  if (chosen !== null) rows.push(item({ kind: "button", key: PROJECTS_DIR.reset, title: `Back to ${tildeIn(h, join(h, "Projects"))}`, desc: "New worktrees go to Harbor's data folder again and new chats without a project run in your home folder. Nothing already made moves.", label: "Reset" }));
+  return { title: "Projects", rows };
 }
 
 /** The General tab: starting at login, automatic work and the version. The rest is fixed: Enter steers, threads continue after restarts, Harbor keeps running with the window closed, suggestions are on and updates install by themselves. */
@@ -62,6 +84,7 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
         ),
       ],
     },
+    projectsSection(kv, env.home ?? home()),
     worktreesSection(kv),
     { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Harbor ${env.version}` }), ] },
   ];
