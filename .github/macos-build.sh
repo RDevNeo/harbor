@@ -12,7 +12,9 @@ set -euo pipefail
 src=$(realpath "$1") out=$(realpath -m "$2")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-tar -C "$src" --exclude=node_modules --exclude=target --exclude=.git -cf - . | tar -C "$work" -xf -
+# Linux's build may be writing in SRC meanwhile (boat runs both side by side): tar's "file changed as we
+# read it" (exit 1) is expected there; anything worse fails.
+{ tar -C "$src" --exclude=node_modules --exclude=target --exclude=.git --warning=no-file-changed -cf - . || [ $? = 1 ]; } | tar -C "$work" -xf -
 cd "$work/ts"
 bun install --frozen-lockfile --os darwin --cpu arm64
 o=$out/harbor-macos
