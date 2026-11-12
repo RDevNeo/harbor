@@ -1,9 +1,9 @@
 // Starting Harbor at login: the system's own entry for it (Linux: an XDG autostart .desktop file; macOS:
 // a LaunchAgent in the user's session; Windows: a value under HKCU\…\Run). Harbor writes it; the system
 // runs `EXE ARG` at the next login.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { home } from "./paths.ts";
+import { home, stateHome } from "./paths.ts";
 import { platform } from "./platform.ts";
 
 type Env = Record<string, string | undefined>;
@@ -31,7 +31,55 @@ export function entryPath(env: Env = process.env): string {
 
 /** The entry that runs `exe arg` at login. */
 export function entry(exe: string, arg: string, env: Env = process.env): string {
-  return platform(env) === "darwin" ? launchAgent(exe, arg) : desktopEntry(exe, arg);
+  return platform(env) === "darwin" ? launchAgent(exe, arg, bundleOf(exe)) : desktopEntry(exe, arg);
+}
+
+/** The app bundle `exe` is (or leads to, ~/.local/bin/harbor being a link into it): …/Harbor.app; null when it's none. */
+export function bundleOf(exe: string): string | null {
+  let real = exe;
+  try {
+    real = realpathSync(exe);
+  } catch {
+    // not there (yet): its path as given
+  }
+  return /^(.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(real)?.[1] ?? null;
+}
+
+/**
+ * macOS: brings an older LaunchAgent of Harbor's up to date (Harbor checks at every start). One that ran
+ * Harbor's own executable directly fails the first login after each update: launchd pins the code hash of
+ * the program a LaunchAgent runs (its "LWCR"), an update changes it, and macOS kills that launch for a code
+ * signature that no longer matches (OS_REASON_CODESIGNING). The entry now runs Apple's `open`, which an
+ * update doesn't touch, on the bundle. True when it rewrote it (it takes effect at the next login).
+ */
+export function heal(arg: string, env: Env = process.env, exe: string = process.execPath): boolean {
+  if (platform(env) !== "darwin") return false;
+  // Registered from inside the bundle (SMAppService): macOS pins that program's code hash as well, so the
+  // first start after an update registers it again.
+  const b = bundleLogin(exe);
+  if (b && b.status() === "on" && registeredBinaryChanged(exe, env)) {
+    b.set(false);
+    b.set(true);
+    return true;
+  }
+  const path = entryPath(env);
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return false;
+  }
+  if (!text.includes(`<string>${APP_ID}</string>`) || !isOn(text, arg, env)) return false;
+  const list = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(text)?.[1] ?? "";
+  const args = [...list.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => (m[1] ?? "").replaceAll("&quot;", '"').replaceAll("&gt;", ">").replaceAll("&lt;", "<").replaceAll("&amp;", "&"));
+  const first = args[0];
+  if (first === undefined) return false;
+  // Already `open BUNDLE`: written again as today's (an older one lacks AssociatedBundleIdentifiers, which
+  // makes Login Items show it as Harbor rather than as `open`).
+  const next = first === "/usr/bin/open" ? (args[2] === undefined ? text : launchAgent(first, arg, args[2])) : entry(first, arg, env);
+  if (next === text) return false;
+  writeFileSync(path, next);
+  return true;
 }
 
 /** Whether `text` is Harbor's entry for `arg`, switched on. */
@@ -52,8 +100,46 @@ export function desktopEntry(exe: string, arg: string): string {
 
 const xml = (s: string): string => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
-/** A LaunchAgent that starts Harbor once at login, in the user's desktop session (where its window and menu bar are). */
-export function launchAgent(exe: string, arg: string): string {
+/** Where Harbor notes which executable its SMAppService login item was last registered from. */
+const registeredPath = (env: Env): string => join(stateHome(env), "harbor", "login-item-binary");
+
+/** The executable as a file (inode, size, time): an update replaces it, so all three change. */
+export function binaryIdentity(exe: string): string | null {
+  try {
+    const st = statSync(realpathSync(exe));
+    return `${st.ino}:${st.size}:${Math.round(st.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the executable changed since the login item was last registered (an update), noting it as
+ * registered now. A first look (nothing noted: registered by an older Harbor) counts as changed.
+ */
+export function registeredBinaryChanged(exe: string, env: Env = process.env): boolean {
+  const now = binaryIdentity(exe);
+  if (now === null) return false;
+  const path = registeredPath(env);
+  let was: string | null = null;
+  try {
+    was = readFileSync(path, "utf8").trim();
+  } catch {
+    // never noted
+  }
+  if (was === now) return false;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${now}\n`);
+  return true;
+}
+
+/**
+ * A LaunchAgent that starts Harbor once at login, in the user's desktop session (where its window and menu bar
+ * are). Harbor.app is opened with Apple's `open` (`bundle`), not run directly: launchd pins the code hash of the
+ * program it runs, and Harbor's changes with every update (see `heal`).
+ */
+export function launchAgent(exe: string, arg: string, bundle: string | null = null): string {
+  const program = bundle === null ? [exe, arg] : ["/usr/bin/open", "-g", bundle, "--args", arg];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -62,15 +148,22 @@ export function launchAgent(exe: string, arg: string): string {
   <string>${APP_ID}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${xml(exe)}</string>
-    <string>${xml(arg)}</string>
+${program.map((a) => `    <string>${xml(a)}</string>`).join("\n")}
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>LimitLoadToSessionType</key>
   <string>Aqua</string>
   <key>ProcessType</key>
-  <string>Interactive</string>
+  <string>Interactive</string>${
+    bundle === null
+      ? ""
+      : `
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>${APP_ID}</string>
+  </array>`
+  }
 </dict>
 </plist>
 `;
@@ -112,6 +205,7 @@ export function set(on: boolean, exe: string, arg: string, env: Env = process.en
     try {
       b.set(on);
       if (!on) rmSync(entryPath(env), { force: true });
+      else registeredBinaryChanged(exe, env);
       return;
     } catch {
       // macOS refused it (an unsigned bundle may be): the LaunchAgent file instead, as without a bundle.

@@ -22,7 +22,7 @@ import {
 } from "./packages/update/src/index.ts";
 import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
-import { autostartByDefault, keepsRunning } from "./packages/ui/src/background.ts";
+import { autostartByDefault, healAutostart, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
 import { env as osEnv, proc } from "./packages/os/src/index.ts";
 
@@ -196,6 +196,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   // Runs offline too (rigs): a checkout's main, or HARBOR_FOLLOW_REMOTE's.
   follow.start();
   autostartByDefault(store, updater.managed() && !cfg.preview && !offline);
+  if (!cfg.preview) healAutostart();
 
   // Offline rigs restore only their own restarts (a copied database may hold the real window's snapshot).
   const restore = offline && reloadedFrom === 0 ? null : takeSnapshot(run.store);

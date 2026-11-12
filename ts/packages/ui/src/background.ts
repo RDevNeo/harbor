@@ -245,6 +245,15 @@ export function autostartByDefault(kv: BackgroundKv, managed: boolean): void {
   }
 }
 
+/** At every start: an older login entry brought up to date (macOS: os autostart.heal), said in the log. */
+export function healAutostart(): void {
+  try {
+    if (osAutostart.heal(BACKGROUND_FLAG)) console.error(`harbor: start at login now opens Harbor.app (${osAutostart.entryPath()}): the next update won't stop it`);
+  } catch (e) {
+    console.error(`harbor: start at login: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /** Writes or removes the entry. Throws an Error whose message is for the person. */
 export function setAutostart(on: boolean, self: SelfInstall): void {
   const exe = on ? autostartLauncher(self) : (self.exe ?? process.execPath);

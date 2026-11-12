@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { autostart, clipboard, desktop, env, folders, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
@@ -405,10 +405,68 @@ describe("autostart", () => {
     expect(autostart.isOn(d, "--background", linux)).toBe(true);
     expect(autostart.isOn(`${d}Hidden=true\n`, "--background", linux)).toBe(false);
     const p = autostart.entry("/Applications/Harbor & Co.app/Contents/MacOS/harbor", "--background", mac);
-    expect(p).toContain("<string>/Applications/Harbor &amp; Co.app/Contents/MacOS/harbor</string>");
     expect(p).toContain("<key>RunAtLoad</key>\n  <true/>");
     expect(autostart.isOn(p, "--background", mac)).toBe(true);
     expect(autostart.isOn(p.replace("<key>RunAtLoad</key>", "<key>Disabled</key>\n  <true/>\n  <key>RunAtLoad</key>"), "--background", mac)).toBe(false);
+    // A bundle's executable is opened as the app with Apple's `open` (launchd pins the program's code hash,
+    // and an update changes Harbor's).
+    expect(p).toContain("<string>/usr/bin/open</string>\n    <string>-g</string>\n    <string>/Applications/Harbor &amp; Co.app</string>\n    <string>--args</string>\n    <string>--background</string>");
+    // …and Login Items show it as Harbor's (its bundle id), not as `open`.
+    expect(p).toContain("<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>dev.harbor.Harbor</string>\n  </array>");
+    expect(autostart.entry("/usr/local/bin/harbor-cli", "--background", mac)).toContain("<string>/usr/local/bin/harbor-cli</string>\n    <string>--background</string>");
+    expect(autostart.entry("/usr/local/bin/harbor-cli", "--background", mac)).not.toContain("AssociatedBundleIdentifiers");
+  });
+
+  test.if(process.platform !== "win32")("macOS: an older LaunchAgent that ran the bundle's executable is rewritten to open the app, once", () => {
+    const home = mkdtempSync(join(tmpdir(), "hautostart-"));
+    try {
+      const mac = { HARBOR_TEST_PLATFORM: "darwin", HOME: home };
+      const app = join(home, "Applications", "Harbor.app", "Contents", "MacOS");
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, "harbor"), "");
+      mkdirSync(join(home, ".local", "bin"), { recursive: true });
+      symlinkSync(join(app, "harbor"), join(home, ".local", "bin", "harbor"));
+      const path = autostart.entryPath(mac);
+      mkdirSync(dirname(path), { recursive: true });
+      const old = autostart.launchAgent(join(home, ".local", "bin", "harbor"), "--background");
+      writeFileSync(path, old);
+      expect(autostart.heal("--background", mac)).toBe(true);
+      const now = readFileSync(path, "utf8");
+      expect(now).toContain(`<string>/usr/bin/open</string>\n    <string>-g</string>\n    <string>${realpathSync(join(home, "Applications", "Harbor.app"))}</string>`);
+      expect(autostart.isOn(now, "--background", mac)).toBe(true);
+      expect(now).toContain("<key>AssociatedBundleIdentifiers</key>");
+      expect(autostart.heal("--background", mac)).toBe(false);
+      // An `open` one from before AssociatedBundleIdentifiers is written again with it.
+      writeFileSync(path, now.replace(/\n  <key>AssociatedBundleIdentifiers<\/key>\n  <array>\n    <string>dev.harbor.Harbor<\/string>\n  <\/array>/, ""));
+      expect(autostart.heal("--background", mac)).toBe(true);
+      expect(readFileSync(path, "utf8")).toBe(now);
+      // Turned off, or not Harbor's: left alone. Nothing on Linux.
+      writeFileSync(path, old.replace("<key>RunAtLoad</key>", "<key>Disabled</key>\n  <true/>\n  <key>RunAtLoad</key>"));
+      expect(autostart.heal("--background", mac)).toBe(false);
+      writeFileSync(path, old);
+      expect(autostart.heal("--background", { ...mac, HARBOR_TEST_PLATFORM: "linux" })).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("an SMAppService login item is registered again once its executable changed (an update)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hloginbin-"));
+    try {
+      const env = { XDG_STATE_HOME: join(dir, "state") };
+      const exe = join(dir, "harbor");
+      writeFileSync(exe, "one");
+      // Nothing noted yet (registered by an older Harbor): changed; then not until the file is replaced.
+      expect(autostart.registeredBinaryChanged(exe, env)).toBe(true);
+      expect(autostart.registeredBinaryChanged(exe, env)).toBe(false);
+      writeFileSync(join(dir, "new"), "two, longer");
+      renameSync(join(dir, "new"), exe);
+      expect(autostart.registeredBinaryChanged(exe, env)).toBe(true);
+      expect(autostart.registeredBinaryChanged(exe, env)).toBe(false);
+      expect(autostart.registeredBinaryChanged(join(dir, "missing"), env)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
