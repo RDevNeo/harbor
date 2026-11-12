@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.177.2] - 2026-11-11
+
+### Fixed
+- Images no longer flash gray when switching chats. Split panes and the usual view now share one store of
+  decoded images: a chat opened into a pane, moved to another pane or opened again finds its images
+  decoded (each pane used to decode its own and drop them when its chat changed).
+- A chat opened from the sidebar comes on screen once the images its first frame shows are decoded (off
+  the main thread, waiting 150 ms at most), and the images of the chats beside it in the sidebar are
+  decoded ahead once switching stops.
+
 ## [0.177.1] - 2026-11-11
 
 ### Changed
