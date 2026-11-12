@@ -2,7 +2,7 @@ import "./sandbox.ts";
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { GhApi, type Call, type GhDeps, type Reply } from "../src/ghapi.ts";
 import { GH_TIMEOUT, GhSpawnError, ghRun, realGh } from "../src/github/gh.ts";
 import { detailsPort } from "../src/github/details.ts";
@@ -75,7 +75,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   writeFileSync(log, "");
-  process.env.PATH = `${join(root, "bin")}:${saved.PATH ?? ""}`;
+  process.env.PATH = `${join(root, "bin")}${delimiter}${saved.PATH ?? ""}`;
   process.env.GH_TOKEN = "token-that-must-not-reach-gh";
 });
 

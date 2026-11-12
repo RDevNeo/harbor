@@ -14,7 +14,16 @@ import { newPeer } from "../src/shared.ts";
 import { generateIdentity } from "../src/tls.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-resume-"));
-afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+/** The test's folder gone; on Windows a store a test left open holds its file until this process ends (Windows clears its temp folder). */
+function rmTmp(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    if (process.platform !== "win32") throw e;
+  }
+}
+
+afterAll(() => rmTmp(tmp));
 
 type State = { running: boolean; held: boolean; queued: number; items: number; sent: string[]; resumed: number };
 

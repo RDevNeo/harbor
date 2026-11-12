@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Harbor runs on Bun 1.4.4 (was 1.4.3): on Windows Bun 1.4.3 could crash when a connection to another PC closed
+  while data was still coming (seen in the mesh's TLS and relay tests); 1.4.4 doesn't.
+
+### Fixed
+- Windows: this PC's own files open in the Files pane (it needed Python), and going up a folder works there.
+- Windows: Discord's shell gets what a Windows program needs to start; `gh` and a stand-in Electron that are
+  scripts run; an agent's `bash` tool keeps the folder it `cd`s into.
+- Windows: a project moved to or from another PC keeps its links, a project of another PC's home is recognised
+  (C:\Users\… too, and on Linux and macOS from a Windows PC), and device files over ssh don't ask for shared
+  connections Windows' ssh doesn't have.
+
 ## [0.180.18] - 2026-11-12
 
 ### Fixed

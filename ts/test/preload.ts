@@ -42,7 +42,14 @@ delete process.env.HARBOR_SOCK;
 // macOS keeps logins in the user's own keychain, which a sandboxed HOME doesn't reach: tests use files.
 process.env.HARBOR_NO_KEYCHAIN = "1";
 
-const clean = (): void => rmSync(dir, { recursive: true, force: true });
+const clean = (): void => {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    // Windows: a store or file a test left open holds it until this process ends; the next run's sweep above takes it.
+    if (process.platform !== "win32") throw e;
+  }
+};
 afterAll(clean);
 process.on("exit", clean);
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {

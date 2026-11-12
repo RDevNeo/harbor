@@ -9,7 +9,7 @@ import * as repair from "./discordrepair.ts";
 import { type Held, freeze as freezeTree, heldWord, killLeftOver, reclaim as reclaimMemory, thaw as thawHeld, type StopFlag } from "./discordfreeze.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
-import { lock, proc, sys } from "@harbor/os";
+import { env as osEnv, lock, proc, sys } from "@harbor/os";
 
 export { account, notice } from "./discordsetup.ts";
 export type { Account } from "./discordsetup.ts";
@@ -136,7 +136,8 @@ export class Electron implements Engine {
     // A window can only open on a real desktop, and only sign-in has one. The rest has no tie to
     // a compositor, so it survives one restarting and needs no session at all.
     const env: Record<string, string> = { XDG_RUNTIME_DIR: runtimeDir() };
-    for (const k of ["HOME", "PATH", "LANG", "TZ"]) {
+    // And what a Windows program can't start without (os env.essentialNames: nothing more elsewhere).
+    for (const k of ["HOME", "PATH", "LANG", "TZ", ...osEnv.essentialNames()]) {
       const val = process.env[k];
       if (val !== undefined) env[k] = val;
     }
@@ -163,7 +164,9 @@ export class Electron implements Engine {
     const log = openSync(join(setup.root(), mode === "scratch" ? "scratch.log" : "shell.log"), "w");
     let child: ChildProcess;
     try {
-      child = spawn(exe, argv, { env, detached: true, stdio: ["pipe", "pipe", log] });
+      // On Windows a script (a rig's stand-in Electron) runs as Git Bash would run it.
+      const [prog = exe, ...pre] = osEnv.argvOf(exe, env);
+      child = spawn(prog, [...pre, ...argv], { env, detached: true, stdio: ["pipe", "pipe", log] });
       await new Promise<void>((res, rej) => {
         child.once("spawn", () => res());
         child.once("error", rej);

@@ -26,6 +26,9 @@ import {
 import { sessionDir } from "../src/movepc.ts";
 import { newPeer } from "../src/shared.ts";
 
+// The device's side run here with sh (its scripts move sessions on Linux or macOS): not on this Windows PC.
+const deviceHere = process.platform !== "win32";
+
 function tmp(tag: string): string {
   return mkdtempSync(join(tmpdir(), `reloc-${tag}-`));
 }
@@ -45,7 +48,7 @@ describe("relocate", () => {
   });
 
   // The device side with a plain `sh` and a fake home: the newest copy in any profile is packed with its sidecar, unpacked where the turn's profile and folder say.
-  test("sessions_travel_through_the_device_scripts", async () => {
+  test.if(deviceHere)("sessions_travel_through_the_device_scripts", async () => {
     const dev = tmp("dev");
     const here = tmp("here");
     const other = tmp("other");
@@ -126,7 +129,7 @@ describe("relocate beyond the Rust tests", () => {
     };
   }
 
-  test("a session goes from a device to this PC and back to another device", async () => {
+  test.if(deviceHere)("a session goes from a device to this PC and back to another device", async () => {
     const root = tmp("run");
     try {
       const devA = join(root, "a");

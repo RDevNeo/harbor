@@ -23,6 +23,7 @@ import {
   type PrItem,
 } from "../src/notify.ts";
 import { wire } from "../src/wire.ts";
+import { notify as osNotify } from "@harbor/os";
 
 function note(kind: string, key: string, title: string) {
   return newNote({ kind, key, title });
@@ -350,7 +351,8 @@ describe("notify", () => {
   });
 });
 
-test("a notifier that isn't installed fails quietly: no unhandled error", async () => {
+// notify-send: where the system has no notifications Harbor posts itself (Linux).
+test.if(!osNotify.available())("a notifier that isn't installed fails quietly: no unhandled error", async () => {
   const { spawnNotifySend } = await import("../src/notify.ts");
   const saved = process.env.PATH;
   process.env.PATH = "/nonexistent";

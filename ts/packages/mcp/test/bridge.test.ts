@@ -101,6 +101,11 @@ function closeWait(bridgePort: number, peer: number): boolean {
     const ns = Bun.spawnSync(["netstat", "-an", "-p", "tcp"]).stdout.toString();
     return ns.split("\n").some((l) => l.trim().split(/\s+/).slice(3, 6).join(" ") === `127.0.0.1.${bridgePort} 127.0.0.1.${peer} CLOSE_WAIT`);
   }
+  if (process.platform === "win32") {
+    // Windows: netstat's rows read "TCP 127.0.0.1:<port> 127.0.0.1:<peer> CLOSE_WAIT".
+    const ns = Bun.spawnSync(["netstat", "-an", "-p", "tcp"]).stdout.toString();
+    return ns.split("\n").some((l) => l.trim().split(/\s+/).slice(1, 4).join(" ") === `127.0.0.1:${bridgePort} 127.0.0.1:${peer} CLOSE_WAIT`);
+  }
   const want = `0100007F:${bridgePort.toString(16).toUpperCase().padStart(4, "0")} 0100007F:${peer.toString(16).toUpperCase().padStart(4, "0")} 08`;
   return readFileSync("/proc/net/tcp", "utf8")
     .split("\n")

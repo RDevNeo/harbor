@@ -1,7 +1,8 @@
+import { platform } from "@harbor/os";
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, parse } from "node:path";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, parse, resolve, win32 } from "node:path";
 import { http as meshHttp, type Body } from "./client.ts";
 import { urlEncode, err, ok, type Reply } from "./http.ts";
 import { APP_INBOX, safeName, type Hub, type Parcel } from "./hub.ts";
@@ -26,7 +27,8 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 /** ssh's options and destination for a paired PC: one reused connection (Harbor's own socket), then what remote agents use (`harbor nc`, Settings > Devices' login and key). */
 export function deviceSshArgs(ctx: RemoteCtx, cfg: RemoteConfig, h: RemoteHost): string[] {
-  const v = ["-o", "ControlMaster=auto", "-o", `ControlPath=${ctx.home}/.ssh/harbor-%C`, "-o", "ControlPersist=120"];
+  // Windows' OpenSSH has no shared connections (ControlMaster): a connection a command there.
+  const v = platform() === "win32" ? [] : ["-o", "ControlMaster=auto", "-o", `ControlPath=${ctx.home}/.ssh/harbor-%C`, "-o", "ControlPersist=120"];
   // ssh takes an option's first value: the agents' "no reuse" ones are dropped.
   const opts = sshOpts(ctx, cfg, h);
   for (let i = 0; i < opts.length; i++) {
@@ -455,6 +457,27 @@ for e in os.scandir(p):
     out.append([e.name,d,st.st_size if st else 0,int(st.st_mtime) if st else 0])
 print(json.dumps({"path":p,"entries":out}))`;
 
+const winJoin = (dir: string, name: string): string => win32.join(dir, name);
+const winDirname = (p: string): string => win32.dirname(p);
+
+/** DEVICE_LS_PY's answer for a folder of this PC, read here: the same JSON, or its error as a failed run's. */
+export function localListing(path: string, home: string): { code: number; stdout: Uint8Array; stderr: string } {
+  const p = resolve(path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : path);
+  try {
+    const entries = readdirSync(p, { withFileTypes: true }).map((e) => {
+      try {
+        const st = statSync(join(p, e.name));
+        return [e.name, st.isDirectory(), st.size, Math.floor(st.mtimeMs / 1000)];
+      } catch {
+        return [e.name, false, 0, 0];
+      }
+    });
+    return { code: 0, stdout: Buffer.from(JSON.stringify({ path: p, entries })), stderr: "" };
+  } catch (e) {
+    return { code: 1, stdout: new Uint8Array(), stderr: `${p}: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 function byteCmp(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a), Buffer.from(b));
 }
@@ -579,8 +602,13 @@ export class FileBrowser {
     void p.finally(() => this.pending.delete(p));
   }
 
+  /** This PC's own files: no ssh, its sh runs the command as it is (deviceShCmd's python3 only gets past a remote login shell). */
+  private get here(): boolean {
+    return this.env.spawn === spawnLocal;
+  }
+
   private child(cmd: string, stdin: "ignore" | "pipe", stdout: "ignore" | "pipe"): ChildProcess {
-    return (this.env.spawn ?? spawnSsh)([...this.ssh, deviceShCmd(cmd)], stdin, stdout);
+    return (this.env.spawn ?? spawnSsh)([...this.ssh, this.here ? cmd : deviceShCmd(cmd)], stdin, stdout);
   }
 
   list(path: string): void {
@@ -590,7 +618,8 @@ export class FileBrowser {
 
   private async listing(path: string): Promise<void> {
     try {
-      const o = await collect(this.child(`python3 -c ${shQuote(DEVICE_LS_PY)} ${shQuote(path)}`, "ignore", "pipe"));
+      // This PC: read here (Windows has no python3); another: its python3 lists it.
+      const o = this.here ? localListing(path, this.env.home) : await collect(this.child(`python3 -c ${shQuote(DEVICE_LS_PY)} ${shQuote(path)}`, "ignore", "pipe"));
       if (o.code !== 0) {
         const last = lines(o.stderr).reverse().find((l) => l.trim() !== "")?.trim() ?? "can't list it";
         throw new Error(afterLastColon(last));
@@ -622,11 +651,21 @@ export class FileBrowser {
   }
 
   join(name: string): string {
+    if (this.windowsPath()) return winJoin(this.path, name);
     return this.path.endsWith("/") ? `${this.path}${name}` : `${this.path}/${name}`;
+  }
+
+  /** A Windows folder (C:\…, this PC's when it's Windows): its paths go by Windows' rules. */
+  private windowsPath(): boolean {
+    return /^[A-Za-z]:[\\/]/.test(this.path);
   }
 
   /** The folder above (null at the root). */
   parent(): string | null {
+    if (this.windowsPath()) {
+      const up = winDirname(this.path);
+      return up === this.path ? null : up;
+    }
     const p = this.path.replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
     if (p === "/") return null;
     const i = p.lastIndexOf("/");

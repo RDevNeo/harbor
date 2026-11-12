@@ -26,9 +26,18 @@ import { wire, type Json } from "../src/wire.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-phone-"));
 const stops: (() => void)[] = [];
+/** The test's folder gone; on Windows a store a test left open holds its file until this process ends (Windows clears its temp folder). */
+function rmTmp(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    if (process.platform !== "win32") throw e;
+  }
+}
+
 afterAll(() => {
   for (const s of stops) s();
-  rmSync(tmp, { recursive: true, force: true });
+  rmTmp(tmp);
 });
 
 const b64u = (b: Uint8Array | string) => Buffer.from(b).toString("base64url");

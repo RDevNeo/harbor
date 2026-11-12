@@ -86,7 +86,7 @@ describe("devices", () => {
     for (const k of ["/tmp/x", "../../x", "..", ".", "", "a/b\0c"]) {
       const d = deviceDirName(k);
       expect(!d.includes("/") && d !== "." && d !== ".." && d !== "").toBe(true);
-      expect(dirname(join("/c", d))).toBe("/c");
+      expect(dirname(join("/c", d))).toBe(join("/c"));
     }
   });
 
@@ -295,7 +295,7 @@ describe("devices beyond the Rust tests", () => {
     expect(() => deviceParseListing(Buffer.from("nope"))).toThrow("unexpected answer");
     expect(deviceParseListing(Buffer.from("{}"))).toEqual({ path: "/", entries: [] });
     const p = previewCachePath("/c", "pc:desk", "/x/Photo.PNG", 99);
-    expect(p).toMatch(/^\/c\/harbor\/devices\/pc_desk\/[0-9a-f]{16}\.png$/);
+    expect(p).toMatch(/^[\\/]c[\\/]harbor[\\/]devices[\\/]pc_desk[\\/][0-9a-f]{16}\.png$/);
     expect(previewCachePath("/c", "pc:desk", "/x/Photo.PNG", 99)).toBe(p);
     expect(previewCachePath("/c", "pc:desk", "/x/Photo.PNG", 100)).not.toBe(p);
   });
@@ -330,7 +330,8 @@ describe("devices beyond the Rust tests", () => {
     }
   });
 
-  test("the file browser lists, goes back on errors, downloads and uploads", async () => {
+  // The fake ssh runs the device's side here: a Linux or macOS device's sh and python3, which Windows hasn't.
+  test.if(process.platform !== "win32")("the file browser lists, goes back on errors, downloads and uploads", async () => {
     const root = tmp("fb");
     try {
       const remote = join(root, "remote");
@@ -352,7 +353,8 @@ describe("devices beyond the Rust tests", () => {
       expect([fb.path, fb.shown().map((e) => e.name)]).toEqual([remote, ["sub", "note.txt", "pic.png"]]);
       expect(f.ran[0]).toContain("python3 -c");
       expect(fb.parent()).toBe(root);
-      expect(fb.join("x")).toBe(`${remote}/x`);
+      // A Windows folder (the test's own temp folder there) joins by Windows' rules.
+      expect(fb.join("x")).toBe(/^[A-Za-z]:/.test(remote) ? join(remote, "x") : `${remote}/x`);
 
       fail = true;
       fb.go("/elsewhere");

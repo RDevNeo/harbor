@@ -2,7 +2,7 @@ import "./sandbox.ts";
 import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { Shared, newPeer } from "@harbor/net";
 import { createGhApi } from "../src/github/api.ts";
 
@@ -14,7 +14,7 @@ test("the wired GhApi lists pull requests through gh and answers 400 to a bad ad
   writeFileSync(gh, `#!/bin/sh\necho "$*" >> "${bin}/log"\ncat <<'EOF'\n${graphql}\nEOF\n`);
   chmodSync(gh, 0o755);
   const saved = process.env.PATH;
-  process.env.PATH = `${bin}:${saved ?? ""}`;
+  process.env.PATH = `${bin}${delimiter}${saved ?? ""}`;
   try {
     const shared = new Shared();
     shared.peers.set("p", newPeer({ id: "p", name: "Laptop", addr: "127.0.0.1:1", online: true }));

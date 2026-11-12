@@ -2,7 +2,7 @@ import "./sandbox.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type { Group, Issue, IssueFetched, IssueFilters, Source } from "../src/ghapi.ts";
 import { type GhOut, type GhRun, GhSpawnError } from "../src/github/gh.ts";
 import { stateOf } from "../src/github/issuedetail.ts";
@@ -338,7 +338,7 @@ beforeAll(() => {
   work = mkdtempSync(join(tmpdir(), "harbor-issues-"));
   pathBefore = process.env.PATH;
   tokenBefore = process.env.GH_TOKEN;
-  process.env.PATH = `${join(work, "bin")}:${pathBefore ?? ""}`;
+  process.env.PATH = `${join(work, "bin")}${delimiter}${pathBefore ?? ""}`;
   process.env.GH_TOKEN = "personal-token";
 });
 

@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { paths as osPaths } from "@harbor/os";
+import { basename, sep } from "node:path";
 import { statSync } from "node:fs";
 import { type Repo, repoDir, type Store } from "@harbor/store";
 import { cloneSame, homeRelative } from "./clone.ts";
@@ -39,7 +40,9 @@ export function gitRemote(dir: string): string {
 export function folderOf(away: Pick<Repo, "path" | "name" | "remote">, dir: string, remote: string, home: string): boolean {
   if (away.remote !== "" || remote !== "") return away.remote !== "" && remote !== "" && cloneSame(away.remote, remote);
   const base = basename(dir);
-  return base === away.name && homeRelative(away.path, home, away.name) === dir.replace(/\/+$/, "");
+  // As paths: on Windows either separator, any case, a trailing "\" or "/".
+  const here = dir.replace(sep === "\\" ? /[\\/]+$/ : /\/+$/, "");
+  return base === away.name && osPaths.under(homeRelative(away.path, home, away.name), here) === "";
 }
 
 /** Another PC's project known here only by its copies: its folder isn't on this PC and the mesh says whose it is. */

@@ -113,8 +113,11 @@ export function cloneGithubRepo(remote: string): string | null {
 
 /** Where this PC keeps a project the owner has at `owner`: the same place relative to home (`/home/<owner>/Documents/x/proj` becomes `<home>/Documents/x/proj`). A folder outside the owner's home goes straight under this home. */
 export function homeRelative(owner: string, home: string, name: string): string {
-  const segs = owner.split("/").filter((s) => s !== "" && s !== ".");
-  const parts = owner.startsWith("/") ? ["/", ...segs] : segs;
+  // Another PC's path: "/home/sam/…", "/Users/sam/…", or a Windows PC's "C:\Users\sam\…".
+  const all = owner.split(/[\\/]/).filter((s) => s !== "" && s !== ".");
+  const drive = /^[A-Za-z]:$/.test(all[0] ?? "");
+  const segs = drive ? all.slice(1) : all;
+  const parts = owner.startsWith("/") || drive ? ["/", ...segs] : segs;
   const second = parts[1] ?? "";
   let skip: number | null = null;
   if ((second === "home" || second === "Users") && parts.length > 3) skip = 3;

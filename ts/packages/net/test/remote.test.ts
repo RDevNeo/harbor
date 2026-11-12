@@ -62,6 +62,8 @@ import {
 } from "../src/index.ts";
 
 const HOME = "/home/user";
+// The device's side run here (its login shell, its scripts): a device is Linux or macOS, not this Windows PC.
+const deviceHere = process.platform !== "win32";
 
 function ctx(over: Partial<RemoteCtx> = {}): RemoteCtx {
   return { home: HOME, selfExe: () => null, sshConfig: () => [], probe: () => undefined, ...over };
@@ -193,7 +195,7 @@ describe("remote", () => {
     expect(remoteDir(HOME, newHost({ device_files: true }), HOME)).toBe("~");
   });
 
-  test("remote_command_runs_in_a_login_shell", async () => {
+  test.if(deviceHere)("remote_command_runs_in_a_login_shell", async () => {
     const c = remoteCommand("~/p", [], ["claude", "-p", "it's"]);
     expect(c.startsWith("if command -v bash")).toBe(true);
     expect(c).toContain("exec bash -lc '");
@@ -219,7 +221,7 @@ describe("remote", () => {
     expect(agentOut(out2.stdout, 0)).toBe('|1|{"n":1}\n');
   });
 
-  test("mcp_config_travels_on_stdin", async () => {
+  test.if(deviceHere)("mcp_config_travels_on_stdin", async () => {
     const setup: RemoteSetup[] = [{ kind: "token" }, { kind: "mcp" }];
     const argv = ["sh", "-c", `printf '%s|%s|%s|%s|' "$CLAUDE_CODE_OAUTH_TOKEN" "$1" "$(cat "$1")" "$(stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1")"; cat`, "sh", MCP_CONFIG_ARG];
     const script = remoteCommand("/", setup, argv);
@@ -234,7 +236,7 @@ describe("remote", () => {
     expect(file !== "" && !existsSync(file)).toBe(true);
   });
 
-  test("remote_command_finds_the_cli_off_the_login_path", async () => {
+  test.if(deviceHere)("remote_command_finds_the_cli_off_the_login_path", async () => {
     const home = tempDir("harbor-home-");
     try {
       mkdirSync(join(home, ".local/bin"), { recursive: true });
@@ -270,7 +272,7 @@ describe("remote", () => {
 
   // The Rust test is #[ignore] (it needs ssh to 127.0.0.1). The part it checks, that the agent goes
   // when the connection's process goes, is run here with a parent shell standing in for sshd's.
-  test(
+  test.if(deviceHere)(
     "agent_there_stops_with_ssh",
     async () => {
       const dir = tempDir("harbor-stop-");
@@ -543,7 +545,7 @@ describe("remote beyond the Rust tests", () => {
     expect(glyph(newHost({ icon: "bot" }))).toBe(icon("bot"));
     expect(glyph(newHost({ os: "macOS" }))).toBe(icon("laptop"));
     expect(glyph(newHost({ id: "ssh:1" }))).toBe(icon("terminal"));
-    expect(iconPath("/data", "ts:my pc")).toBe("/data/devices/ts_my_pc");
+    expect(iconPath("/data", "ts:my pc")).toBe(join("/data", "devices", "ts_my_pc"));
     expect(hostname(() => "desk\n")).toBe("desk");
     expect(hostname(() => null)).toBe("this PC");
   });
@@ -553,12 +555,12 @@ describe("remote beyond the Rust tests", () => {
     const c = ctx({ sshConfig: () => entries, selfExe: () => "/opt/h arbor/harbor" });
     const plain = sshOpts(c, newConfig(), newHost({ id: "ssh:1", host: "box" }));
     expect(plain.slice(0, 4)).toEqual(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]);
-    expect(plain.slice(-6)).toEqual(["-p", "2022", "-i", `${HOME}/.ssh/box`, "-l", "boxer"]);
-    expect(plain.join(" ")).toContain("-p 2022 -i /home/user/.ssh/box -l boxer");
+    expect(plain.slice(-6)).toEqual(["-p", "2022", "-i", join(HOME, ".ssh", "box"), "-l", "boxer"]);
+    expect(plain.join(" ")).toContain(`-p 2022 -i ${join(HOME, ".ssh", "box")} -l boxer`);
     expect(plain.join(" ")).not.toContain("ProxyCommand");
     const found = sshOpts(c, newConfig({ user: "root", key: "~/k", port: 22 }), newHost({ id: "pc:desk", host: "box" }));
     expect(found).toContain("ProxyCommand='/opt/h arbor/harbor' nc --device 'pc:desk' %h %p");
-    expect(found.join(" ")).toContain("-p 22 -i /home/user/k -o IdentitiesOnly=yes -l root");
+    expect(found.join(" ")).toContain(`-p 22 -i ${join(HOME, "k")} -o IdentitiesOnly=yes -l root`);
     expect(sshPort(c, newConfig(), newHost({ host: "box" }))).toBe(2022);
     expect(sshPort(c, newConfig({ port: 2201 }), newHost({ host: "box", port: 2300 }))).toBe(2300);
     expect(sshLogin(c, newConfig({ user: " me " }), newHost({ host: "box" }))).toEqual(["me", false]);
@@ -588,7 +590,7 @@ describe("remote beyond the Rust tests", () => {
       runner,
       which: (b) => (b === "tailscale" ? "/bin/tailscale" : null),
       mesh: () => ({ allowed: [allowed({ fp: "f", id: "pc:desk", name: "desk" })], peers: new Map() }),
-      readFile: (p) => (p === `${HOME}/.ssh/config` ? "Host mac\n  HostName mac.local\n  User me\n" : null),
+      readFile: (p) => (p.replaceAll("\\", "/") === `${HOME}/.ssh/config` ? "Host mac\n  HostName mac.local\n  User me\n" : null),
       onChange: () => void changes++,
     });
     expect(r.tailnet().peers).toEqual([]);
@@ -640,7 +642,7 @@ describe("remote beyond the Rust tests", () => {
     expect(profileSetup(HOME, null)).toEqual([]);
   });
 
-  test("remote_command hands every argument and the folder to the shell intact", async () => {
+  test.if(deviceHere)("remote_command hands every argument and the folder to the shell intact", async () => {
     const dir = tempDir("harbor-dir-");
     try {
       const folder = join(dir, "my work");

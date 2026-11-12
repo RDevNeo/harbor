@@ -1,3 +1,4 @@
+import { env as osEnv } from "@harbor/os";
 import { spawn } from "node:child_process";
 import type { Dest } from "../ghapi.ts";
 import { agentEnv } from "../mcp.ts";
@@ -45,7 +46,9 @@ export function realGh(timeoutMs: number = GH_TIMEOUT): GhRun {
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       let over = false;
-      const child = spawn(bin, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+      // A wrapper script of gh's (#!) runs on Windows too, as Git Bash would run it.
+      const [exe = bin, ...pre] = osEnv.argvOf(bin, env);
+      const child = spawn(exe, [...pre, ...args], { env, stdio: ["ignore", "pipe", "pipe"] });
       const timer = setTimeout(() => {
         over = true;
         child.kill("SIGKILL");

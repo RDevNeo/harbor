@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import type { Item } from "@harbor/store";
 import {
   CloneState,
@@ -21,6 +21,9 @@ import {
   type CloneRepo,
 } from "../src/clone.ts";
 import type { ProcOptions, ProcOutput, Spawner } from "../src/proc.ts";
+
+// A path as this system writes it ("\\" on Windows).
+const n = normalize;
 
 function tmp(tag: string): string {
   return mkdtempSync(join(tmpdir(), `clone-${tag}-`));
@@ -72,11 +75,14 @@ describe("clone", () => {
 
   test("maps_paths_relative_to_home", () => {
     const home = "/home/me";
-    expect(homeRelative("/home/owner/Documents/x/proj", home, "proj")).toBe("/home/me/Documents/x/proj");
-    expect(homeRelative("/Users/owner/code/proj", home, "proj")).toBe("/home/me/code/proj");
-    expect(homeRelative("/root/proj", home, "proj")).toBe("/home/me/proj");
-    expect(homeRelative("/srv/git/proj", home, "proj")).toBe("/home/me/proj");
-    expect(homeRelative("/home/owner", home, "proj")).toBe("/home/me/owner");
+    expect(homeRelative("/home/owner/Documents/x/proj", home, "proj")).toBe(n("/home/me/Documents/x/proj"));
+    expect(homeRelative("/Users/owner/code/proj", home, "proj")).toBe(n("/home/me/code/proj"));
+    expect(homeRelative("/root/proj", home, "proj")).toBe(n("/home/me/proj"));
+    expect(homeRelative("/srv/git/proj", home, "proj")).toBe(n("/home/me/proj"));
+    expect(homeRelative("/home/owner", home, "proj")).toBe(n("/home/me/owner"));
+    // A Windows PC's project, either separator.
+    expect(homeRelative("C:\\Users\\owner\\code\\proj", home, "proj")).toBe(n("/home/me/code/proj"));
+    expect(homeRelative("D:/work/proj", home, "proj")).toBe(n("/home/me/proj"));
   });
 
   test("finds_an_existing_clone", () => {
@@ -210,7 +216,7 @@ describe("clone beyond the Rust tests", () => {
       expect(st.forTurn({ ...turn, worktreeLost: false, repo: mine, repos: [mine, same] })).toEqual({ kind: "use", repo: 1, dir: d });
       expect(st.held.size).toBe(0);
       const start = st.forTurn({ ...turn, worktreeLost: false, repo: mine, repos: [mine] });
-      expect(start).toEqual({ kind: "start", repo: 1, want: "/home/me/code/p1" });
+      expect(start).toEqual({ kind: "start", repo: 1, want: n("/home/me/code/p1") });
       expect(st.begin(mine, "/home/me/code/p1", "/home/me")).toEqual({ text: "Cloning p1…", detail: "git@github.com:o/p.git into ~/code/p1" });
       expect(st.forTurn({ ...turn, chat: 11, worktreeLost: false, repo: mine, repos: [mine] })).toEqual({ kind: "wait" });
       expect(st.held.get(1)?.map((h) => h.chat)).toEqual([10, 11]);
@@ -266,7 +272,7 @@ describe("clone beyond the Rust tests", () => {
       const line = (owner: [string, string] | null) => st.folderLine({ chat: { foreign: false, device: "" }, repo: r, worktreeLost: false, owner, home: "/home/me" });
       expect(line(null)?.text).toBe("p1's folder (/home/owner/code/p1) isn't on this PC.");
       expect(line(["pc:o", "owner-pc"])?.text).toBe("p1 isn't on this PC: it's on owner-pc.");
-      expect(line(["pc:o", "owner-pc"])?.suggested).toBe("/home/me/code/p1");
+      expect(line(["pc:o", "owner-pc"])?.suggested).toBe(n("/home/me/code/p1"));
       const plain = { ...r, remote: "" };
       expect(st.folderLine({ chat: { foreign: false, device: "" }, repo: plain, worktreeLost: false, owner: ["pc:o", "owner-pc"], home: "/home/me" })?.text).toBe("p1 isn't on this PC: it's on owner-pc, without Git to clone it.");
       st.failed.set(1, "no access");

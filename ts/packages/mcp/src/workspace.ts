@@ -1,4 +1,4 @@
-import { paths as osPaths } from "@harbor/os";
+import { paths as osPaths, platform } from "@harbor/os";
 import { closeSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -401,7 +401,11 @@ async function bash(cwd: string, chatId: number, a: unknown): Promise<Called> {
     return text(true, `Started in the background (process group ${child.pid}); its output goes to ${log}. Read that file to follow it; stop it with \`kill -- -${child.pid}\`.`);
   }
   const pwd = join(tmpdir(), `harbor-pwd-${tag.slice(0, 12)}`);
-  const script = `trap 'pwd >| ${shQuote(pwd)} 2>/dev/null' EXIT\nexec 2>&1\n${command}`;
+  // Git Bash on Windows says where it is as /c/Users/…: `pwd -W` gives the folder Windows knows (C:/Users/…).
+  const where = platform() === "win32" ? "pwd -W" : "pwd";
+  // The trap's text is read again when it runs: a "\" in the file's path would be taken as an escape there.
+  const file = platform() === "win32" ? pwd.replaceAll("\\", "/") : pwd;
+  const script = `trap '${where} >| ${shQuote(file)} 2>/dev/null' EXIT\nexec 2>&1\n${command}`;
   const ms = Math.min(600_000, Math.max(1000, argUint(a, "timeout") ?? 120_000));
   const r = await shell(script, here, ms);
   try {

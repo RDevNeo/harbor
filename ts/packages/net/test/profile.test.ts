@@ -111,8 +111,9 @@ describe("profile", () => {
     home: "/h",
     user: "sam",
     hostname: "desk",
-    read: (p) => files[p] ?? "",
-    readDir: (p) => (p === "/h/.ssh" ? ["config", "id.pub", "authorized_keys"] : []),
+    // The made-up files by "/" paths, whatever this system's join writes.
+    read: (p) => files[p.replaceAll("\\", "/")] ?? "",
+    readDir: (p) => (p.replaceAll("\\", "/") === "/h/.ssh" ? ["config", "id.pub", "authorized_keys"] : []),
     git: (k) => (k === "user.name" ? "Sam Lee" : k === "user.email" ? "7+sam-lee@users.noreply.github.com" : ""),
     githubUser: () => "sam-app",
   };

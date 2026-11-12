@@ -79,7 +79,7 @@ describe("workspace", () => {
     expect(t(await call(dir, id, "read", { file_path: join(dir, "sub/f.txt") }))[1]).toBe("     1\thello\n     2\tworld\n");
     expect(t(await call(dir, id, "edit", { file_path: "sub/f.txt", old_string: "world", new_string: "there" }))[0]).toBe(true);
     expect(readFileSync(join(dir, "sub/f.txt"), "utf8")).toBe("hello\nthere\n");
-    expect(t(await call(dir, id, "glob", { pattern: "**/*.txt" }))[1].endsWith("sub/f.txt")).toBe(true);
+    expect(t(await call(dir, id, "glob", { pattern: "**/*.txt" }))[1].endsWith(join("sub", "f.txt"))).toBe(true);
     expect(t(await call(dir, id, "grep", { pattern: "th.re", output_mode: "content" }))[1]).toContain(":2:there");
     expect(t(await call(dir, id, "bash", { command: "cd sub" }))[0]).toBe(true);
     expect(t(await call(dir, id, "bash", { command: 'basename "$PWD"; ls' }))[1]).toBe("sub\nf.txt");

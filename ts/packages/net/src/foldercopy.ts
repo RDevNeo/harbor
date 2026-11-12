@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readlinkSync } from "node:fs";
 import { chmod, lstat, lutimes, mkdir, open, rm, symlink, utimes, type FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, sep } from "node:path";
 
 /**
  * A folder sent to another PC as a stream (Move to PC… of a whole project): its entries, each a
@@ -47,10 +47,23 @@ export function plainRel(rel: string): boolean {
   return rel.split("/").every((p) => p !== "" && p !== "." && p !== "..");
 }
 
+/**
+ * A link's target as it travels: a relative one with "/" between its parts (Windows reads its links back with
+ * "\", which a Linux or macOS PC would take as part of a name); an absolute one as it is.
+ */
+export function wireTarget(t: string): string {
+  return sep === "\\" && !isAbsolute(t) ? t.replaceAll("\\", "/") : t;
+}
+
+/** A link's target as this system writes it: a relative one with Windows' separator there. */
+export function localTarget(t: string): string {
+  return sep === "\\" && !isAbsolute(t) && !t.startsWith("/") ? t.replaceAll("/", "\\") : t;
+}
+
 function entryOf(abs: string, rel: string): Entry | null {
   const st = lstatSync(abs);
   const base = { rel, mode: st.mode & 0o7777, mtime: Math.trunc(st.mtimeMs) };
-  if (st.isSymbolicLink()) return { ...base, kind: "link", size: 0, target: readlinkSync(abs) };
+  if (st.isSymbolicLink()) return { ...base, kind: "link", size: 0, target: wireTarget(readlinkSync(abs)) };
   if (st.isDirectory()) return { ...base, kind: "dir", size: 0 };
   if (st.isFile()) return { ...base, kind: "file", size: st.size, src: abs };
   return null;
@@ -345,7 +358,7 @@ export class Unpacker {
       await this.dirsTo(this.parent(l.rel));
       const abs = join(this.root, l.rel);
       await rm(abs, { force: true, recursive: false }).catch(() => undefined);
-      await symlink(l.target ?? "", abs);
+      await symlink(localTarget(l.target ?? ""), abs);
       await lutimes(abs, l.mtime / 1000, l.mtime / 1000).catch(() => undefined);
     }
     // Deepest first, so a folder's time isn't changed again by what's made in it.

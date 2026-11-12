@@ -1,11 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { blankChat, repoDir, Store, type Chat, type Item, type Mention, type Repo } from "@harbor/store";
 import type { Call } from "../src/api.ts";
-import { pieces, scanFolder, Unpacker, plainRel, type Entry } from "../src/foldercopy.ts";
+import { pieces, scanFolder, Unpacker, plainRel, type Entry, wireTarget } from "../src/foldercopy.ts";
 import { MovePc, type MoveEngine, type MovePcAccount } from "../src/movepcrun.ts";
 import type { MoveSendDeps } from "../src/movepc.ts";
 import { checkProject, planDest, ProjectReceiver, parseCheck, type ProjectTargetApp } from "../src/projectmove.ts";
@@ -14,6 +14,14 @@ import { newPeer, Shared, type Dest } from "../src/shared.ts";
 import { MemKv } from "../src/kv.ts";
 import { text, user } from "./fixture.ts";
 import { expectPerm } from "../../../test/perm.ts";
+
+// A text file as written, line ends as LF: Git for Windows checks text out with CRLF (its core.autocrlf).
+const textOf = (p: string): string => readFileSync(p, "utf8").replaceAll("\r\n", "\n");
+
+// Paths as this system writes them ("\\" on Windows).
+const n = normalize;
+// Windows runs git and starts processes several times slower: its tests get the time (setDefaultTimeout holds per file).
+if (process.platform === "win32") setDefaultTimeout(30_000);
 
 const SID = "0b7c1a7e-1111-4222-8333-944455556666";
 const SUB_SID = "0b7c1a7e-9999-4222-8333-944455556666";
@@ -245,7 +253,7 @@ describe("foldercopy", () => {
       expectPerm(join(dst, "run.sh"), 0o755);
       expect(readFileSync(join(dst, "big.bin")).equals(Buffer.alloc(300_000, 7))).toBe(true);
       expect(readFileSync(join(dst, "zero"), "utf8")).toBe("");
-      expect(readlinkSync(join(dst, "link"))).toBe("a/b/c/deep.txt");
+      expect(wireTarget(readlinkSync(join(dst, "link")))).toBe("a/b/c/deep.txt");
       expect(statSync(join(dst, "empty")).isDirectory()).toBe(true);
       expect(manifestOf(scanFolder(dst))).toBe(manifestOf(scan));
     } finally {
@@ -301,12 +309,12 @@ describe("foldercopy", () => {
 
 describe("projectmove: the target's plan", () => {
   test("the same place under home when free, else the next free name", () => {
-    const taken = new Set(["/h/Documents/acme", "/h/Documents/acme-2"]);
-    expect(planDest("/h", "Documents/web", (p) => taken.has(p))).toBe("/h/Documents/web");
-    expect(planDest("/h", "Documents/acme", (p) => taken.has(p))).toBe("/h/Documents/acme-3");
-    expect(planDest("/h", "../../etc", (p) => taken.has(p))).toBe("/h/etc");
-    expect(planDest("/h", ".config/systemd/user/x.service.d", (p) => taken.has(p))).toBe("/h/x.service.d");
-    expect(planDest("/h", ".hidden", (p) => taken.has(p))).toBe("/h/hidden");
+    const taken = new Set([n("/h/Documents/acme"), n("/h/Documents/acme-2")]);
+    expect(planDest("/h", "Documents/web", (p) => taken.has(p))).toBe(n("/h/Documents/web"));
+    expect(planDest("/h", "Documents/acme", (p) => taken.has(p))).toBe(n("/h/Documents/acme-3"));
+    expect(planDest("/h", "../../etc", (p) => taken.has(p))).toBe(n("/h/etc"));
+    expect(planDest("/h", ".config/systemd/user/x.service.d", (p) => taken.has(p))).toBe(n("/h/x.service.d"));
+    expect(planDest("/h", ".hidden", (p) => taken.has(p))).toBe(n("/h/hidden"));
   });
 
   test("a project here with the same remote is used; a same-named one only with the same files", () => {
@@ -386,11 +394,11 @@ describe("projectmove: two PCs", () => {
       const there = join(b.home, "Documents/app");
       expect(git(there, "rev-parse", "HEAD")).toBe(head);
       expect(git(there, "symbolic-ref", "--short", "HEAD")).toBe("main");
-      expect(readFileSync(join(there, "README.md"), "utf8")).toBe("hello, changed\n");
-      expect(readFileSync(join(there, "local.txt"), "utf8")).toBe("only here\n");
-      expect(readFileSync(join(there, "new.txt"), "utf8")).toBe("untracked\n");
-      expect(readFileSync(join(there, ".env"), "utf8")).toBe("TOKEN=placeholder\n");
-      expect(readFileSync(join(there, "node_modules/x/index.js"), "utf8")).toContain("module.exports");
+      expect(textOf(join(there, "README.md"))).toBe("hello, changed\n");
+      expect(textOf(join(there, "local.txt"))).toBe("only here\n");
+      expect(textOf(join(there, "new.txt"))).toBe("untracked\n");
+      expect(textOf(join(there, ".env"))).toBe("TOKEN=placeholder\n");
+      expect(textOf(join(there, "node_modules/x/index.js"))).toContain("module.exports");
       expect(existsSync(join(there, "gone.txt"))).toBe(false);
       expect(git(there, "remote", "get-url", "origin")).toBe(remote);
       expect(git(there, "status", "--porcelain").split("\n").map((l) => l.trim()).sort()).toEqual(["?? new.txt", "D gone.txt", "M README.md"]);
@@ -411,7 +419,7 @@ describe("projectmove: two PCs", () => {
       const m = movedProject(a.store, repo);
       expect(m?.name).toBe("b");
       expect(m?.dir).toBe(there);
-      expect(readFileSync(join(app, ".env"), "utf8")).toBe("TOKEN=placeholder\n");
+      expect(textOf(join(app, ".env"))).toBe("TOKEN=placeholder\n");
       expect(a.project.movedLine({ ...lead, home: "" })).toContain("Its old folder is still on this PC at ~/Documents/app");
       expect(a.move.movingTo(lead.id)).toBeNull();
       // No hidden folder is left behind on b.
@@ -461,8 +469,8 @@ describe("projectmove: two PCs", () => {
       expect(st.state).toBe("done");
       const there = join(b.home, "notes-2");
       expect(readFileSync(join(there, "big.bin")).equals(Buffer.alloc(300_000, 3))).toBe(true);
-      expect(readFileSync(join(there, ".env"), "utf8")).toBe("X=1\n");
-      expect(readFileSync(join(b.home, "notes/other.md"), "utf8")).toBe("not the same\n");
+      expect(textOf(join(there, ".env"))).toBe("X=1\n");
+      expect(textOf(join(b.home, "notes/other.md"))).toBe("not the same\n");
       expect(b.store.repos().find((r) => repoDir(r) === there)?.name).toBe("notes");
       expect(a.store.chat(lead.id)?.home).toBe("pc:b");
     } finally {
@@ -541,8 +549,8 @@ describe("projectmove: two PCs", () => {
       const st = await finished(a, repo);
       expect(st.state).toBe("done");
       expect(st.result).toContain("moved-from-a/main");
-      expect(readFileSync(join(theirs, "a.txt"), "utf8")).toBe("1\n");
-      expect(readFileSync(join(theirs, "mine.txt"), "utf8")).toBe("b's own work\n");
+      expect(textOf(join(theirs, "a.txt"))).toBe("1\n");
+      expect(textOf(join(theirs, "mine.txt"))).toBe("b's own work\n");
       expect(git(theirs, "rev-parse", "moved-from-a/main")).toBe(two);
       expect(git(theirs, "show", "moved-from-a/uncommitted:a.txt")).toBe("3, not committed");
       expect(git(theirs, "rev-parse", "moved-from-a/uncommitted^")).toBe(two);
@@ -588,7 +596,7 @@ describe("projectmove: two PCs", () => {
       expect(there.startsWith(join(b.root, "worktrees"))).toBe(true);
       expect(git(there, "rev-parse", "HEAD")).toBe(tip);
       expect(git(there, "symbolic-ref", "--short", "HEAD")).toBe("harbor/abc123");
-      expect(readFileSync(join(there, "feature.txt"), "utf8")).toBe("on the branch\n");
+      expect(textOf(join(there, "feature.txt"))).toBe("on the branch\n");
       // The branch never went to the remote.
       expect(execFileSync("git", ["-C", remote, "branch", "--list", "harbor/*"], { encoding: "utf8" }).trim()).toBe("");
     } finally {

@@ -5,6 +5,7 @@ import { Display, Electron } from "../src/discordhost.ts";
 import type { Mode } from "../src/discordhost.ts";
 import * as setup from "../src/discordsetup.ts";
 import { fakeElectron, fakeLog, plan, repoDiscord, sandbox, until } from "./discordkit.ts";
+import { env as osEnv } from "@harbor/os";
 
 let box: ReturnType<typeof sandbox>;
 let root = "";
@@ -44,7 +45,10 @@ test("starts the shell with a clean environment and talks to it", async () => {
   const env = started?.env as string[];
   expect(env).toContain("HARBOR_DISCORD");
   expect(env).not.toContain("SECRET_FOR_AGENTS");
-  expect(env.filter((k) => !["HOME", "PATH", "LANG", "TZ", "XDG_RUNTIME_DIR", "HARBOR_DISCORD", "PWD", "SHLVL", "_", "OLDPWD", "BUN_INSTALL", "BUN_RUNTIME_TRANSPILER_CACHE_PATH"].includes(k))).toEqual([]);
+  // Windows: what any program there needs (os env.essentialNames), and what Git Bash's sh, running the fake, adds itself.
+  const win = process.platform === "win32";
+  const windows = win ? [...osEnv.essentialNames(), "EXEPATH", "MSYSTEM", "PLINK_PROTOCOL", "TERM", "ORIGINAL_PATH", "SHELL", "HOSTNAME", "MINGW_PREFIX", "MSYSTEM_CHOST", "MSYSTEM_CARCH", "MSYSTEM_PREFIX", "MANPATH", "INFOPATH", "ACLOCAL_PATH", "PKG_CONFIG_PATH", "CONFIG_SITE", "SSH_ASKPASS", "DISPLAY", "ORIGINAL_TEMP", "ORIGINAL_TMP", "LOGONSERVER", "PS1"].map((k) => k.toUpperCase()) : [];
+  expect(env.filter((k) => !["HOME", "PATH", "LANG", "TZ", "XDG_RUNTIME_DIR", "HARBOR_DISCORD", "PWD", "SHLVL", "_", "OLDPWD", "BUN_INSTALL", "BUN_RUNTIME_TRANSPILER_CACHE_PATH"].includes(k) && !windows.includes(k.toUpperCase()))).toEqual([]);
   expect(started?.argv).toEqual([repoDiscord, "--ozone-platform=headless", "--ozone-override-screen-size=1280,720"]);
   const cfg = started?.cfg as Record<string, unknown>;
   expect(cfg.mode).toBe("run");

@@ -181,3 +181,13 @@ export function defaultShell(env: Env = process.env): string[] {
   if (git !== null && existsSync(join(git, "bash.exe"))) return [join(git, "bash.exe"), "--login", "-i"];
   return [env.ComSpec ?? env.COMSPEC ?? "cmd.exe"];
 }
+
+/**
+ * What any program of the system needs from the environment to run at all, beyond HOME and PATH: on Windows
+ * its folders, temp folder and user (without SystemRoot even networking fails); nothing elsewhere. A child
+ * started with a clean environment (Discord's shell) keeps these. None is a secret.
+ */
+export function essentialNames(p = platform()): string[] {
+  if (p !== "win32") return [];
+  return ["SystemRoot", "SystemDrive", "windir", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles", "ComSpec", "PATHEXT", "HOMEDRIVE", "HOMEPATH", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS"];
+}
