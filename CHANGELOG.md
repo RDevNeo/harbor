@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.0] - 2026-11-12
+
+### Added
+- Harbor for Windows (x64, Windows 10 1809 or newer), a preview: `harbor-x86_64-windows.zip` and an installer,
+  `irm https://github.com/RDevNeo/harbor/releases/latest/download/install.ps1 | iex`. It installs Harbor for
+  your user (Start menu, Settings > Apps, `harbor` on PATH) and what Harbor needs when it's missing: Git for
+  Windows, Claude Code and Codex. Harbor updates itself afterwards, as on Linux and macOS.
+- On Windows: Harbor's icon by the clock with its menu, Windows' own notifications (a click opens the chat),
+  copy and paste with images and files, start at login, and the microphone for dictation.
+
 ## [0.179.5] - 2026-11-12
 
 ### Added
