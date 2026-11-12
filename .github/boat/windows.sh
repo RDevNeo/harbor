@@ -46,6 +46,10 @@ SSH_MSI=https://github.com/PowerShell/Win32-OpenSSH/releases/download/10.0.0.0p2
 SSH_SHA=ddec9c53864280759cf9f74791cefd387100e3946aa849a1c138a4ed1b96b7d9
 GIT_EXE=https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/Git-2.56.1-64-bit.exe
 GIT_SHA=c330c72e10b408cc39994bfefdb63542b0d93d21699325c3e0bd874af8a5a559
+# The Visual C++ runtime, for runs from source (bun install's Slint addon links it; Harbor's builds carry
+# their own copy, ts/scripts/vcruntime.ts, pinned to the same file).
+VC_EXE=https://download.visualstudio.microsoft.com/download/pr/e9604e21-4b79-4096-a4b3-1b63d4b55b4d/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe
+VC_SHA=cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b
 
 qemu_up() {  # qemu_up <disk> [extra qemu args…]: daemonized, QMP at run/qmp.sock
   local disk=$1; shift
@@ -66,7 +70,7 @@ qmp() { vm timeout 60 python3 /src/.github/boat/windows/qmp.py "$w/run/qmp.sock"
 ps_run() {
   local enc
   # Everything (errors too) as plain text on stdout: over SSH, PowerShell's stderr comes as CLIXML.
-  enc=$(printf '%s\n%s\n%s' '$ProgressPreference="SilentlyContinue"; $ErrorActionPreference="Stop"; $global:c = 0; & { try {' "$1" \
+  enc=$(printf '%s\n%s\n%s' '$ProgressPreference="SilentlyContinue"; $ErrorActionPreference="Continue"; $global:c = 0; & { try {' "$1" \
     '; $global:c = $LASTEXITCODE } catch { $_ | Out-String; $global:c = 1 } } *>&1 | Out-String -Stream -Width 250; exit $global:c' | iconv -t UTF-16LE | base64 -w0)
   vm ssh "${SSH_OPTS[@]}" harbor@127.0.0.1 "powershell -NoProfile -NonInteractive -EncodedCommand $enc"
 }
@@ -99,6 +103,7 @@ make_base() {
   fetch "$ISO_URL" "$dl/win.iso" "size:$ISO_SIZE"
   fetch "$SSH_MSI" "$dl/${SSH_MSI##*/}" "$SSH_SHA"
   fetch "$GIT_EXE" "$dl/${GIT_EXE##*/}" "$GIT_SHA"
+  fetch "$VC_EXE" "$dl/VC_redist.x64.exe" "$VC_SHA"
   v=$(bun_version)
   vm bash -euo pipefail -c "cd $w/dl && curl -fsSL --retry 3 -o bun-windows-x64.zip https://github.com/oven-sh/bun/releases/download/bun-v$v/bun-windows-x64.zip &&
     curl -fsSL --retry 3 https://github.com/oven-sh/bun/releases/download/bun-v$v/SHASUMS256.txt | grep ' bun-windows-x64.zip\$' | sha256sum -c -"
@@ -107,7 +112,7 @@ make_base() {
   rm -rf "$cfg" && mkdir -p "$cfg"
   cp .github/boat/windows/autounattend.xml .github/boat/windows/harbor-setup.ps1 .github/boat/windows/SetupComplete.cmd .github/boat/windows/screen.ps1 "$cfg/"
   cp "$wh/id_ed25519.pub" "$cfg/authorized_keys"
-  cp "$dl/${SSH_MSI##*/}" "$dl/${GIT_EXE##*/}" "$dl/bun-windows-x64.zip" "$cfg/"
+  cp "$dl/${SSH_MSI##*/}" "$dl/${GIT_EXE##*/}" "$dl/VC_redist.x64.exe" "$dl/bun-windows-x64.zip" "$cfg/"
   vm xorriso -as mkisofs -quiet -J -joliet-long -R -V HARBORCFG -o "$w/cfg.iso" "$w/cfg"
   rm -f "$wh/disk.qcow2"
   vm qemu-img create -q -f qcow2 "$w/disk.qcow2" 64G

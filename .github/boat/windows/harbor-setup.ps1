@@ -6,7 +6,8 @@
 #  - OpenSSH server (Win32-OpenSSH's MSI from the disc) with the sandbox's key, for every command;
 #  - a scheduled task "harbor-gui" that runs C:\rig\gui.cmd in the logged-on desktop session: what
 #    SSH starts can't show a window (it runs in no desktop), what this task starts can;
-#  - Git for Windows and Bun (the version ts/package.json pins), both from the disc: tests from source;
+#  - Git for Windows, the Visual C++ runtime and Bun (the version ts/package.json pins), from the disc:
+#    runs and tests from source;
 #  - no Windows Update, no sleep, no lock screen, no screen saver (a test VM that must stay the same
 #    between runs). Defender stays on: a script that turns it off is blocked as malware (AMSI), this one too.
 # Nothing else: Harbor itself, Claude Code and Codex are what the tests install or bring.
@@ -32,6 +33,9 @@ if (-not (Get-NetFirewallRule -Name 'sshd-harbor' -ErrorAction SilentlyContinue)
 Step 'Git for Windows'
 $git = Get-ChildItem $Disc -Filter 'Git-*-64-bit.exe' | Select-Object -First 1
 Start-Process $git.FullName -Wait -ArgumentList @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', '/SUPPRESSMSGBOXES')
+
+Step 'Visual C++ runtime'
+Start-Process (Join-Path $Disc 'VC_redist.x64.exe') -Wait -ArgumentList @('/install', '/quiet', '/norestart')
 
 Step 'Bun'
 New-Item -ItemType Directory -Force C:\Tools | Out-Null
