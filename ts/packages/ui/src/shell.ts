@@ -2284,8 +2284,14 @@ export class Shell {
       if (img) this.showAvatar(repo, img);
     }
     if (this.data.offline) return;
-    const res = await this.hub.call("POST", "v1/projects/icon", undefined, { pc, project: r.path, ...(refresh ? { refresh: true } : {}) }).catch(() => null);
-    const png = res !== null && res.status < 300 && typeof res.body === "object" && res.body !== null ? (res.body as { png?: unknown }).png : undefined;
+    // The PC its chats came from first; it may not hold the folder (a project of a third PC): then the others.
+    const others = [...this.workspaces().pcs.keys()].filter((id) => id !== "" && id !== pc && id !== this.shellMesh.me());
+    let png: unknown;
+    for (const at of [pc, ...new Set(others)]) {
+      const res = await this.hub.call("POST", "v1/projects/icon", undefined, { pc: at, project: r.path, ...(refresh ? { refresh: true } : {}) }).catch(() => null);
+      png = res !== null && res.status < 300 && typeof res.body === "object" && res.body !== null ? (res.body as { png?: unknown }).png : undefined;
+      if (typeof png === "string" && png !== "") break;
+    }
     if (typeof png !== "string" || png === "") return;
     const bytes = new Uint8Array(Buffer.from(png, "base64"));
     if (!favicon.keepRemote(repo, bytes) && this.avatars.get(repo)) return;
