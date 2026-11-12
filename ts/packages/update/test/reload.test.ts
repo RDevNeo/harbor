@@ -89,7 +89,7 @@ test("a run from source starts bun again on its entry script", async () => {
   const inst = makeInstall();
   const { r, spawned } = reloader({ cfg: { ...configFor(inst), script: "/src/ts/harbor.ts" }, hidden: () => true });
   expect(await r.now()).toBe(true);
-  expect(spawned[0]?.cmd).toEqual([join(inst.dir, "harbor"), "/src/ts/harbor.ts", "x", "--background"]);
+  expect(spawned[0]?.cmd).toEqual([inst.exe, "/src/ts/harbor.ts", "x", "--background"]);
 });
 
 test("a restart saves the screen first, starts the runtime again and then leaves", async () => {
@@ -104,7 +104,7 @@ test("a restart saves the screen first, starts the runtime again and then leaves
   }
   expect(calls).toEqual(["snapshot", "beforeExit", "release", "spawn", "exit 0"]);
   expect(JSON.parse(kv.get(STATE_KEY) ?? "{}")).toEqual({ drafts: { "5": "a draft" } });
-  expect(spawned[0]?.cmd).toEqual([join(inst.dir, "harbor"), "x"]);
+  expect(spawned[0]?.cmd).toEqual([inst.exe, "x"]);
   expect(spawned[0]?.env[RELOADED_PID]).toBe(String(process.pid));
   expect(spawned[0]?.env.HARBOR_VIEW).toBeUndefined();
   expect(spawned[0]?.env.HARBOR_POINTER).toBeUndefined();

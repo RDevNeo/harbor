@@ -155,8 +155,8 @@ test("a waiting preview is chosen only when previews are on, the slot is there a
 });
 
 test("a source build runs the bundle beside the executable without watching anything", () => {
-  const cfg = configFor(null, { exe: "/opt/x/harbor" });
-  expect(choose(cfg)).toMatchObject({ kind: "release", path: "/opt/x/harbor-app.js" });
+  const cfg = configFor(null, { exe: join("/opt/x", "harbor") });
+  expect(choose(cfg)).toMatchObject({ kind: "release", path: join("/opt/x", "harbor-app.js") });
 });
 
 test("harbor --update and --restore-previous see the installed version, not the runtime's", () => {

@@ -40,7 +40,7 @@ test("other dependencies and the lock file alone do not cause a runtime release"
 test("the list of runtime sources is exactly what the runtime entry imports", () => {
   const seen = new Set<string>();
   const walk = (file: string): void => {
-    const rel = file.slice(root.length + 1);
+    const rel = file.slice(root.length + 1).replaceAll("\\", "/");
     if (seen.has(rel)) return;
     seen.add(rel);
     for (const m of readFileSync(file, "utf8").matchAll(/(?:from|import) "(\.[^"]+\.ts)"/g)) walk(resolve(dirname(file), m[1] ?? ""));

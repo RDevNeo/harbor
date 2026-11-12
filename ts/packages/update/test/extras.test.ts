@@ -73,7 +73,8 @@ test("a release's extras are fetched with the update and a failed one does not h
     [APK]: "apk bytes",
   });
   const logs: string[] = [];
-  const cfg = host.config(inst, key, { log: (m) => void logs.push(m) });
+  // The video player is Linux's only (extras.ts): this release is for Linux whatever runs the test.
+  const cfg = host.config(inst, key, { os: "linux", log: (m) => void logs.push(m) });
   await install(cfg, "1.1.0");
   expect(existsSync(join(inst.dir, "harbor-browser"))).toBe(false);
   expect(readFileSync(join(inst.dir, APK), "utf8")).toBe("apk bytes");
@@ -91,7 +92,7 @@ test("an installed copy without its player fetches it by itself and retries late
   const work = tmp();
   writeFileSync(join(inst.dir, "manifest.json"), JSON.stringify({ version: "1.0.0", minRuntime: "1.0.0", runtime: "1.0.0", video: { id: "v1", release: "1.0.0" } }));
   let clock = 0;
-  const cfg = host.config(inst, key, { now: () => clock });
+  const cfg = host.config(inst, key, { os: "linux", now: () => clock });
   const u = new Updater(cfg);
   await u.autoExtras();
   expect(existsSync(join(inst.dir, VIDEO_LIB))).toBe(false);
@@ -110,7 +111,7 @@ test("an updated copy drops the old browser engine at its start", () => {
   writeFileSync(join(inst.dir, "harbor-browser"), "engine");
   writeFileSync(join(inst.dir, ".no-browser"), "");
   const logs: string[] = [];
-  const u = new Updater(configFor(inst, { log: (m) => void logs.push(m) }));
+  const u = new Updater(configFor(inst, { os: "linux", log: (m) => void logs.push(m) }));
   u.dropLeftovers();
   expect(existsSync(join(inst.dir, "harbor-browser"))).toBe(false);
   expect(existsSync(join(inst.dir, ".no-browser"))).toBe(false);

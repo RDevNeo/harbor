@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { BunPlugin } from "bun";
 import { paths, platform } from "../packages/os/src/index.ts";
 import * as macho from "../packages/update/src/macho.ts";
@@ -49,10 +50,14 @@ async function nativeFiles(t: Target): Promise<Record<string, string>> {
   const lib = os === "darwin" ? "dylib" : os === "win32" ? "dll" : "so";
   // sherpa-onnx names its Windows packages "win", not "win32".
   const sherpaOs = os === "win32" ? "win" : os;
-  const root = new URL("../node_modules/.bun/", import.meta.url).pathname;
+  const root = fileURLToPath(new URL("../node_modules/.bun/", import.meta.url));
   const out: Record<string, string> = {};
   const add = (pattern: string, key: (file: string) => string): void => {
-    for (const f of new Bun.Glob(pattern).scanSync({ cwd: root })) out[key(f)] = `${root}${f}`;
+    // Windows' glob gives back-slashed paths: the keys are the bundle's own "/" paths.
+    for (const g of new Bun.Glob(pattern).scanSync({ cwd: root })) {
+      const f = g.replaceAll("\\", "/");
+      out[key(f)] = `${root}${f}`;
+    }
   };
   const base = (f: string): string => f.slice(f.lastIndexOf("/") + 1);
   // Each library keeps its place next to the others: the addons find theirs through relative rpaths.
@@ -226,7 +231,7 @@ const google: Array<[string, string | undefined]> = ["HARBOR_GOOGLE_CLIENT_ID", 
 const r =
   kind === "app"
     ? await Bun.build({
-        entrypoints: [new URL("../app.ts", import.meta.url).pathname],
+        entrypoints: [fileURLToPath(new URL("../app.ts", import.meta.url))],
         plugins: [embedAssets, runtimeSlint, addonsFromRuntime],
         target: "bun",
         minify: true,
@@ -236,7 +241,7 @@ const r =
       })
     : kind === "single"
       ? await Bun.build({
-          entrypoints: [new URL("../single.ts", import.meta.url).pathname],
+          entrypoints: [fileURLToPath(new URL("../single.ts", import.meta.url))],
           plugins: [noExtraBinaries, slintAddon, nativeAddons(tgt), embedAssets, addonsFromRuntime],
           compile: compileOptions(outfile, tgt),
           minify: !rest.includes("--debug"),
@@ -244,7 +249,7 @@ const r =
           define: defines([["HARBOR_VERSION", version], ["HARBOR_RUNTIME_VERSION", version], ["HARBOR_MIN_RUNTIME", version], ["HARBOR_GIT_SHA", opt("--sha")], ...google]),
         })
       : await Bun.build({
-          entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
+          entrypoints: [fileURLToPath(new URL("../runtime.ts", import.meta.url))],
           plugins: [noExtraBinaries, slintAddon, nativeAddons(tgt)],
           compile: compileOptions(outfile, tgt),
           minify: !rest.includes("--debug"),

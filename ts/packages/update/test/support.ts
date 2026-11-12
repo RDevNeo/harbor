@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { UpdateConfig } from "../src/config.ts";
@@ -58,8 +58,90 @@ export async function cleanup(): Promise<void> {
 export const bundleSource = (version: string, body = "return 0;"): string =>
   `export const meta = { version: ${JSON.stringify(version)}, minRuntime: "0.1.0" };\nexport async function main(argv) { ${body} }\n`;
 
-export function fakeRuntimeScript(runtime: string, exe: string, extraEnv = ""): string {
-  return `#!/bin/sh\nFAKE_RUNTIME_VERSION=${runtime} FAKE_EXE=${JSON.stringify(exe)} ${extraEnv} exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_RUNTIME)} "$@"\n`;
+/** Windows starts only real programs: there the fake runtime is fake-runtime.ts built into an .exe. */
+export const WINDOWS = process.platform === "win32";
+/** The runtime's file in an install (update/src/files.ts RUNTIME_FILE). */
+export const RUNTIME = WINDOWS ? "harbor.exe" : "harbor";
+/** The release's runtime asset the tests' configs ask for (install.ts runtimeAsset). */
+export const RUNTIME_ASSET = WINDOWS ? "harbor-runtime-x86_64-windows.exe" : "harbor-runtime-x86_64";
+
+/**
+ * Windows: a small program built once per test run that does what the Linux script does (runs Bun on
+ * fake-runtime.ts with FAKE_RUNTIME_VERSION and FAKE_EXE set; a program built by Bun can't load the sources'
+ * workspace packages itself). A new 96 MB program's first start takes Windows over 10 s and a hard link to one
+ * that ran 0.1 s, so an install's runtime is a link to it and says the version in its folder's RUNTIME file; a
+ * downloaded one (no RUNTIME beside it) takes the last one published (FAKE_PUBLISHED).
+ */
+const shimSource = (bun: string, script: string): string => `import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+let version: string;
+try {
+  version = readFileSync(join(dirname(process.execPath), "RUNTIME"), "utf8").trim();
+} catch {
+  const s = JSON.parse(readFileSync(process.env.FAKE_PUBLISHED ?? "", "utf8"));
+  if (s.exit !== undefined) process.exit(s.exit);
+  version = s.runtime;
+}
+const p = Bun.spawn([${JSON.stringify(bun)}, ${JSON.stringify(script)}, ...process.argv.slice(2)], {
+  stdin: "inherit", stdout: "inherit", stderr: "inherit",
+  env: { ...process.env, FAKE_RUNTIME_VERSION: version, FAKE_EXE: process.execPath },
+});
+process.exit(await p.exited);
+`;
+let compiled: string | undefined;
+function fakeExe(): string {
+  if (compiled !== undefined) return compiled;
+  const dir = mkdtempSync(join(tmpdir(), "hupd-fake-"));
+  const out = join(dir, "fake-runtime.exe");
+  const entry = join(dir, "shim.ts");
+  writeFileSync(entry, shimSource(process.execPath, FAKE_RUNTIME));
+  const r = Bun.spawnSync([process.execPath, "build", "--compile", entry, "--outfile", out], { stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) throw new Error(`fake runtime didn't build: ${r.stderr.toString()}`);
+  process.env.FAKE_PUBLISHED = join(dir, "published.json");
+  writeFileSync(process.env.FAKE_PUBLISHED, JSON.stringify({ runtime: "0.0.0" }));
+  // Its first start, here: not inside a test's time.
+  Bun.spawnSync([out, "runtime-version"], { stdout: "ignore", stderr: "ignore" });
+  compiled = out;
+  return out;
+}
+// Built before any test (test/preload.ts gives Windows' tests more time: a downloaded runtime is a new copy).
+if (WINDOWS) fakeExe();
+
+/**
+ * A fake Harbor runtime that says it is `runtime` and runs the launcher for the install at `exe` ("$0": its own
+ * file); `exitCode` makes one that exits with it at once (one that doesn't run here). A `#!` script, or on Windows
+ * the built program's bytes ("$0" ones: the next runtime downloaded takes these settings).
+ */
+export function fakeRuntimeScript(runtime: string, exe: string, extraEnv = "", exitCode?: number): string | Uint8Array {
+  if (!WINDOWS) {
+    if (exitCode !== undefined) return `#!/bin/sh\nexit ${exitCode}\n`;
+    return `#!/bin/sh\nFAKE_RUNTIME_VERSION=${runtime} FAKE_EXE=${JSON.stringify(exe)} ${extraEnv} exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_RUNTIME)} "$@"\n`;
+  }
+  const out = fakeExe();
+  if (exe === "$0") writeFileSync(process.env.FAKE_PUBLISHED ?? "", JSON.stringify({ runtime, ...(exitCode === undefined ? {} : { exit: exitCode }) }));
+  return new Uint8Array(readFileSync(out));
+}
+
+/** An install's fake runtime at `exe`: a script, or on Windows a hard link to the built program. */
+function writeFakeRuntime(exe: string, runtime: string): void {
+  if (!WINDOWS) {
+    writeFileSync(exe, fakeRuntimeScript(runtime, exe));
+    chmodSync(exe, 0o755);
+    return;
+  }
+  linkSync(fakeExe(), exe);
+}
+
+/** A fake runtime's settings, as text ("FAKE_RUNTIME_VERSION=1.0.0 …"): its script, or on Windows what it reads. */
+export function runtimeText(path: string): string {
+  if (!WINDOWS) return readFileSync(path, "utf8");
+  let v = "";
+  try {
+    v = readFileSync(join(dirname(path), "RUNTIME"), "utf8").trim();
+  } catch {
+    v = (JSON.parse(readFileSync(process.env.FAKE_PUBLISHED ?? "", "utf8")) as { runtime: string }).runtime;
+  }
+  return `FAKE_RUNTIME_VERSION=${v}`;
 }
 
 export interface Install {
@@ -68,11 +150,10 @@ export interface Install {
 }
 export function makeInstall(opts: { version?: string; runtime?: string; bundle?: string } = {}): Install {
   const dir = tmp("hupd-install-");
-  const exe = join(dir, "harbor");
+  const exe = join(dir, RUNTIME);
   const version = opts.version ?? "1.0.0";
   writeFileSync(join(dir, ".managed"), "");
-  writeFileSync(exe, fakeRuntimeScript(opts.runtime ?? "1.0.0", exe));
-  chmodSync(exe, 0o755);
+  writeFakeRuntime(exe, opts.runtime ?? "1.0.0");
   writeFileSync(join(dir, "harbor-app.js"), opts.bundle ?? bundleSource(version));
   writeFileSync(join(dir, "VERSION"), version);
   writeFileSync(join(dir, "RUNTIME"), opts.runtime ?? "1.0.0");
@@ -96,6 +177,7 @@ export function configFor(inst: Install | null, over: Partial<UpdateConfig> = {}
     sleep,
     random: () => 0.5,
     exe: inst?.exe ?? "/nonexistent/harbor",
+    ...(WINDOWS ? { os: "windows" as const } : {}),
     glibc: () => [2, 40],
     ...over,
   };
@@ -180,7 +262,7 @@ export class FakeHost {
     await this.publish(key, version, files);
     if (o.runtimeFrom !== undefined) {
       const script = fakeRuntimeScript(runtime, "$0");
-      await this.publish(key, o.runtimeFrom, { "harbor-runtime-x86_64": script });
+      await this.publish(key, o.runtimeFrom, { [RUNTIME_ASSET]: script });
     }
     if (o.setLatest !== false) this.latest = version;
   }

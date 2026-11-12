@@ -1,7 +1,7 @@
 #!/bin/sh
 # Harbor installer for Linux and macOS (Apple Silicon, macOS 13+): per user. Harbor installs what it
-# needs beside itself when it's missing: Claude Code (Anthropic's installer), Codex (OpenAI's release)
-# and git (on macOS Apple's Command Line Tools ask once; on Linux the package manager asks for your
+# needs beside itself when it's missing: Claude Code (Anthropic's installer), Codex (OpenAI's release),
+# ripgrep (its release) and git (on macOS Apple's Command Line Tools ask once; on Linux the package manager asks for your
 # password once). HARBOR_NO_DEPS=1 leaves those out.
 #
 #   curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh
@@ -160,6 +160,32 @@ install_deps() {
         fi
       else
         say "Codex didn't download; install it later from https://github.com/openai/codex/releases"
+      fi
+    fi
+  fi
+  # ripgrep: the agents' file search runs it.
+  if ! command -v rg >/dev/null 2>&1 && [ ! -x "$BIN/rg" ]; then
+    case "$(uname -s)-$(uname -m)" in
+      Darwin-arm64) target=aarch64-apple-darwin ;;
+      Linux-x86_64|Linux-amd64) target=x86_64-unknown-linux-musl ;;
+      Linux-aarch64|Linux-arm64) target=aarch64-unknown-linux-musl ;;
+      *) target="" ;;
+    esac
+    if [ -n "$target" ]; then
+      say "Installing ripgrep (its GitHub release)…"
+      meta="$(curl -fsSL "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest" 2>/dev/null || true)"
+      url="$(printf '%s' "$meta" | tr ',' '\n' | grep '"browser_download_url"' | grep -- "-$target.tar.gz\"" | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
+      name="${url##*/}"
+      want="$(printf '%s' "$meta" | tr '{' '\n' | grep "\"name\": *\"$name\"" | head -1 | sed -n 's/.*"digest": *"sha256:\([0-9a-f]*\)".*/\1/p')"
+      if [ -n "$url" ] && curl -fsSL --retry 3 -o "$TMP/rg.tgz" "$url"; then
+        if [ -n "$want" ] && [ "$(sha256_of "$TMP/rg.tgz")" != "$want" ]; then
+          say "ripgrep's download doesn't match its checksum: left out."
+        else
+          mkdir -p "$TMP/rg" && tar -xzf "$TMP/rg.tgz" -C "$TMP/rg" \
+            && mv -f "$TMP/rg/${name%.tar.gz}/rg" "$BIN/rg" && chmod 755 "$BIN/rg" || say "ripgrep didn't install."
+        fi
+      else
+        say "ripgrep didn't download; install it with your package manager (ripgrep)."
       fi
     fi
   fi

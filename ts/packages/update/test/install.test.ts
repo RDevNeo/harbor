@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hasPrevious, install, onDisk, rollback, rolledBack, runtimeOnDisk, skipped } from "../src/install.ts";
-import { FakeHost, bundleSource, cleanup, configFor, makeInstall, makeKey } from "./support.ts";
+import { FakeHost, RUNTIME, RUNTIME_ASSET, bundleSource, cleanup, configFor, fakeRuntimeScript, makeInstall, makeKey, runtimeText } from "./support.ts";
 
 afterEach(cleanup);
 
@@ -12,14 +12,14 @@ test("a bundle-only release replaces the bundle, keeps the old one and leaves th
   const key = await makeKey();
   const host = new FakeHost();
   const inst = makeInstall();
-  const runtimeBefore = text(inst.dir, "harbor");
+  const runtimeBefore = runtimeText(join(inst.dir, RUNTIME));
   await host.publishTs(key, "1.1.0", { minRuntime: "1.0.0", runtime: "1.0.0" });
   const cfg = host.config(inst, key);
   const done = await install(cfg, "1.1.0");
   expect(done.runtimeUpdated).toBe(false);
   expect(text(inst.dir, "harbor-app.js")).toContain('"1.1.0"');
   expect(text(inst.dir, "VERSION")).toBe("1.1.0");
-  expect(text(inst.dir, "harbor")).toBe(runtimeBefore);
+  expect(runtimeText(join(inst.dir, RUNTIME))).toBe(runtimeBefore);
   expect(text(inst.dir, ".previous/harbor-app.js")).toContain('"1.0.0"');
   expect(text(inst.dir, ".previous/VERSION")).toBe("1.0.0");
   expect(JSON.parse(text(inst.dir, "manifest.json")).version).toBe("1.1.0");
@@ -39,12 +39,12 @@ test("a bundle that needs a newer runtime fetches the runtime first, from the re
   expect(done.runtimeUpdated).toBe(true);
   expect(runtimeOnDisk(cfg)).toBe("1.1.0");
   expect(text(inst.dir, "RUNTIME")).toBe("1.1.0");
-  expect(statSync(join(inst.dir, "harbor")).mode & 0o111).not.toBe(0);
+  if (process.platform !== "win32") expect(statSync(join(inst.dir, RUNTIME)).mode & 0o111).not.toBe(0);
   const order = host.hits.filter((h) => h.includes("/download/")).map((h) => h.split("/").pop());
-  expect(order.indexOf("harbor-runtime-x86_64")).toBeGreaterThan(-1);
-  expect(order.indexOf("harbor-runtime-x86_64")).toBeLessThan(order.indexOf("harbor-app.js"));
-  expect(text(inst.dir, ".previous/harbor")).toContain("FAKE_RUNTIME_VERSION=1.0.0");
-  expect(text(inst.dir, "harbor")).toContain("FAKE_RUNTIME_VERSION=1.1.0");
+  expect(order.indexOf(RUNTIME_ASSET)).toBeGreaterThan(-1);
+  expect(order.indexOf(RUNTIME_ASSET)).toBeLessThan(order.indexOf("harbor-app.js"));
+  expect(runtimeText(join(inst.dir, ".previous", RUNTIME))).toContain("FAKE_RUNTIME_VERSION=1.0.0");
+  expect(runtimeText(join(inst.dir, RUNTIME))).toContain("FAKE_RUNTIME_VERSION=1.1.0");
 });
 
 test("the runtime and the bundle are in place before VERSION changes, which a running Harbor reloads on", async () => {
@@ -63,8 +63,8 @@ test("the runtime and the bundle are in place before VERSION changes, which a ru
   } finally {
     w.close();
   }
-  expect(seen.indexOf("harbor")).toBeGreaterThan(-1);
-  expect(seen.indexOf("harbor")).toBeLessThan(seen.indexOf("VERSION"));
+  expect(seen.indexOf(RUNTIME)).toBeGreaterThan(-1);
+  expect(seen.indexOf(RUNTIME)).toBeLessThan(seen.indexOf("VERSION"));
   expect(seen.indexOf("harbor-app.js")).toBeLessThan(seen.indexOf("VERSION"));
   expect(seen.indexOf("harbor-app.js")).toBeGreaterThan(-1);
 });
@@ -143,9 +143,9 @@ test("a runtime that does not start here is not swapped in", async () => {
   const host = new FakeHost();
   const inst = makeInstall();
   await host.publishTs(key, "1.2.0", { minRuntime: "1.1.0", runtime: "1.1.0" });
-  await host.publish(key, "1.1.0", { "harbor-runtime-x86_64": "#!/bin/sh\nexit 3\n" });
+  await host.publish(key, "1.1.0", { [RUNTIME_ASSET]: fakeRuntimeScript("1.1.0", "$0", "", 3) });
   await expect(install(host.config(inst, key), "1.2.0")).rejects.toThrow("the new runtime it doesn't run here");
-  expect(text(inst.dir, "harbor")).toContain("FAKE_RUNTIME_VERSION=1.0.0");
+  expect(runtimeText(join(inst.dir, RUNTIME))).toContain("FAKE_RUNTIME_VERSION=1.0.0");
 });
 
 test("a runtime older than the bundle's minimum is refused", async () => {
@@ -194,7 +194,7 @@ test("rollback puts the previous files back, gives the version up and records wh
   expect(r).toEqual({ restored: "1.0.0", gaveUp: "1.2.0" });
   expect(text(inst.dir, "VERSION")).toBe("1.0.0");
   expect(text(inst.dir, "harbor-app.js")).toContain('"1.0.0"');
-  expect(text(inst.dir, "harbor")).toContain("FAKE_RUNTIME_VERSION=1.0.0");
+  expect(runtimeText(join(inst.dir, RUNTIME))).toContain("FAKE_RUNTIME_VERSION=1.0.0");
   expect(text(inst.dir, "RUNTIME")).toBe("1.0.0");
   expect(existsSync(join(inst.dir, ".previous"))).toBe(false);
   expect(existsSync(join(inst.dir, "manifest.json"))).toBe(false);

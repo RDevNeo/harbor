@@ -6,10 +6,16 @@ import { pendingExtras } from "./extras.ts";
 import { BUNDLE_FILE, fresh, isFile, read, remove, replace, RUNTIME_FILE, sweepAside, writeAtomic } from "./files.ts";
 import { MANIFEST, parseManifest, type Manifest } from "./manifest.ts";
 import { newer } from "./version.ts";
+import { platform } from "@harbor/os";
 
 export const PREVIOUS = ".previous";
 export const SKIP = ".skip";
-const SMOKE_MS = 10_000;
+/**
+ * How long a new runtime or bundle may take to answer. Windows checks a new 170 MB harbor.exe before its first
+ * start (measured 17-21 s, most of it Defender): that start happens here, in the background, so the person's next
+ * start of the same file (renamed into place, already checked) is quick.
+ */
+const SMOKE_MS = platform() === "win32" ? 180_000 : 10_000;
 
 export function dirOf(cfg: UpdateConfig): string {
   if (cfg.dir === null) throw new Error("not an installed copy");

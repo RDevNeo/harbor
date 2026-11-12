@@ -64,6 +64,7 @@ test("each addon is found by its place in the list, and a runtime without it say
 });
 
 test("the files go under the cache folder, not the runtime folder", () => {
-  expect(nativeBase({ XDG_CACHE_HOME: "/c", HOME: "/h" })).toBe("/c/harbor");
-  expect(nativeBase({ HOME: "/h" })).toBe("/h/.cache/harbor");
+  expect(nativeBase({ XDG_CACHE_HOME: "/c", HOME: "/h" })).toBe(join("/c", "harbor"));
+  if (process.platform !== "win32") expect(nativeBase({ HOME: "/h" })).toBe("/h/.cache/harbor");
+  else expect(nativeBase({ LOCALAPPDATA: "C:\\L" })).toBe("C:\\L\\Cache\\harbor");
 });

@@ -1,6 +1,7 @@
 # Harbor installer for Windows (x64, Windows 10 1809 or newer): per user, no administrator needed for Harbor
 # itself. Harbor installs what it needs beside itself when it's missing: Git for Windows (winget, or Git's own
-# installer; Windows may ask once), Claude Code (Anthropic's installer) and Codex (OpenAI's release).
+# installer; Windows may ask once), Claude Code (Anthropic's installer), Codex (OpenAI's release) and
+# ripgrep (its release).
 # $env:HARBOR_NO_DEPS = "1" leaves those out.
 #
 #   irm https://github.com/RDevNeo/harbor/releases/latest/download/install.ps1 | iex
@@ -14,7 +15,7 @@
 #
 # Layout: %LOCALAPPDATA%\Programs\Harbor\{harbor.exe,harbor.png,VERSION,.managed,uninstall.ps1}, a Start menu
 # entry "Harbor", Harbor in Settings > Apps, and that folder on your PATH (so `harbor` works in a terminal).
-# Claude Code and Codex go to %USERPROFILE%\.local\bin, also put on your PATH. Harbor updates itself afterwards.
+# Claude Code, Codex and ripgrep go to %USERPROFILE%\.local\bin, also put on your PATH. Harbor updates itself afterwards.
 param([switch]$Uninstall, [switch]$Purge, [string]$Version = "")
 
 $ErrorActionPreference = "Stop"
@@ -178,6 +179,27 @@ function Install-Deps {
       }
     } catch { Say "Codex didn't install; get it later from https://github.com/openai/codex/releases" }
   }
+  # ripgrep: the agents' file search runs it.
+  if (-not (Get-Command rg -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $Bin "rg.exe"))) {
+    Say "Installing ripgrep (its GitHub release)..."
+    $ok = $false
+    try {
+      $rel = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest"
+      $asset = $rel.assets | Where-Object { $_.name -match '^ripgrep-[\d.]+-x86_64-pc-windows-msvc\.zip$' } | Select-Object -First 1
+      $zip = Join-Path $Tmp "ripgrep.zip"
+      if ($asset -and (Get-File $asset.browser_download_url $zip)) {
+        if ($asset.digest -and ("sha256:" + (Sha256 $zip)) -ne $asset.digest) { throw "checksum" }
+        Expand-Archive -Path $zip -DestinationPath (Join-Path $Tmp "ripgrep") -Force
+        $rg = Get-ChildItem -Path (Join-Path $Tmp "ripgrep") -Recurse -Filter rg.exe | Select-Object -First 1
+        if ($rg) { Move-Item -Force $rg.FullName (Join-Path $Bin "rg.exe"); $ok = $true }
+      }
+    } catch {}
+    if (-not $ok -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+      & winget install --id BurntSushi.ripgrep.MSVC -e --source winget --scope user --silent --accept-package-agreements --accept-source-agreements | Out-Null
+      $ok = $LASTEXITCODE -eq 0
+    }
+    if (-not $ok) { Say "ripgrep didn't install; get it from https://github.com/BurntSushi/ripgrep/releases" }
+  }
 }
 
 try {
@@ -242,6 +264,13 @@ Copy-Item -Path "$Dir\install.ps1" -Destination `$s -Force
     New-ItemProperty -Path $UninstallKey -Name $k -Value $props[$k] -PropertyType $type -Force | Out-Null
   }
   Set-UserPath $Dir $true
+
+  # Windows checks a new harbor.exe before its first start (20 s or so): done now, so the first open is quick.
+  Say "Preparing Harbor's first start..."
+  try {
+    $warm = Start-Process -FilePath $exe -ArgumentList "runtime-version" -WindowStyle Hidden -PassThru
+    if (-not $warm.WaitForExit(180000)) { $warm.Kill() }
+  } catch {}
 
   Install-Deps
   Say "Harbor $ver is installed. Open it from the Start menu, or run: harbor"
