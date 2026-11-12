@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.18] - 2026-11-12
+
+### Fixed
+- Projects whose folder is on another PC show their icon from that PC soon after the start (they waited 10
+  minutes), and from whichever PC holds the folder.
+- A Next.js project's icon in a route group's folder (`app/(app)/icon.png`) is found.
+- macOS: the start no longer stalls on other PCs' paths under /home: follow-main takes only a checkout that's on
+  this PC, and missing project folders are looked for every 30 s.
+
 ## [0.180.17] - 2026-11-12
 
 ### Fixed
