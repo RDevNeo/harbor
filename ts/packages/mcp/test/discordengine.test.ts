@@ -59,7 +59,9 @@ test("starts the shell with a clean environment and talks to it", async () => {
   expect(await e.ask({ op: "state" }, 2000)).toEqual({ user: { id: "1" }, path: "/channels/@me" });
   const r = await e.ask({ op: "call", name: "discord_view", args: {} }, 2000);
   expect(r).toBe('{"channel":"c1"}');
-  await expect(e.ask({ op: "nope" }, 2000)).rejects.toThrow("no such op: nope");
+  // Taken with then: on Windows, Bun's expect().rejects waits without reading the shell's pipe, and the answer
+  // (here in 1-2 ms) only comes once its 2 s are up.
+  expect(await e.ask({ op: "nope" }, 2000).then(() => "answered", (x: unknown) => String(x))).toContain("no such op: nope");
   expect(events.some(([mode, m]) => mode === "run" && m.ev === "ready")).toBe(true);
 
   await e.stop();
