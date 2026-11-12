@@ -145,9 +145,12 @@ function filetime(dv: DataView, off: number): number {
 export function creationTime(h: number): number | null {
   const k = kernel32();
   if (k === null) return null;
-  const b = new Uint8Array(32);
-  if (!k.GetProcessTimes(h, ptr(b), ptr(b.subarray(8)), ptr(b.subarray(16)), ptr(b.subarray(24)))) return null;
-  return filetime(new DataView(b.buffer), 0);
+  // Four buffers of their own: ptr() of a subarray points at the start of its buffer, not the subarray's, so the
+  // last output (CPU time, ~0 for a new process) overwrote the creation time.
+  const created = new Uint8Array(8);
+  const [exited, kernel, user] = [new Uint8Array(8), new Uint8Array(8), new Uint8Array(8)];
+  if (!k.GetProcessTimes(h, ptr(created), ptr(exited), ptr(kernel), ptr(user))) return null;
+  return filetime(new DataView(created.buffer), 0);
 }
 
 /** The process hasn't exited (its exit code is STILL_ACTIVE). */

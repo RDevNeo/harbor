@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.8] - 2026-11-12
+
+### Fixed
+- Windows: Harbor knows when each process started, so a turn or process is told from another that later got its
+  number, and a turn picked up after a restart keeps its place in the chat and its agent (Codex too).
+
 ## [0.180.7] - 2026-11-12
 
 ### Fixed

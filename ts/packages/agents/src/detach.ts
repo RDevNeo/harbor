@@ -402,9 +402,11 @@ export function recover(dir: string, pid: number, chatId: number, userAt: UserTi
   let kind = "Claude";
   for (const c of pids()) {
     if (parentOf(c) !== pid) continue;
-    const exe = cmdline(c)?.[0];
-    if (exe === undefined) continue;
-    const k = KINDS.find((k) => bin(k) === basename(exe));
+    const args = cmdline(c);
+    if (args === undefined || args.length === 0) continue;
+    // Its program, or the script node runs (npm's Codex on Windows): codex.exe and codex.js are Codex.
+    const names = args.slice(0, 2).map((a) => basename(a.replaceAll("\\", "/")).replace(/\.(exe|js|cmd)$/i, ""));
+    const k = KINDS.find((k) => names.includes(bin(k)));
     if (k) {
       kind = k;
       break;
