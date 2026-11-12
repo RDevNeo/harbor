@@ -22,7 +22,10 @@ export interface ProjectPlace {
   online: boolean;
 }
 
+/** How long a folder found here is trusted; a missing one (another PC's path) is looked at less often: on macOS
+ * a path under /home is the automounter's, and each look takes it milliseconds. A clone that finishes forgets. */
 const HERE_MS = 3000;
+const MISSING_MS = 30_000;
 
 const say = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -68,11 +71,11 @@ export class ProjectClones {
     return { pc: o[0], name: o[1], online: this.h.hub.mesh.peer(o[0])?.online === true };
   }
 
-  /** Whether a folder is on this PC, looked at most every few seconds (the sidebar asks on each repaint). */
+  /** Whether a folder is on this PC, looked at most every few seconds, a missing one every 30 s (the sidebar asks on each repaint). */
   private here(dir: string): boolean {
     const t = Date.now();
     const k = this.seen.get(dir);
-    if (k && t - k.at < HERE_MS) return k.here;
+    if (k && t - k.at < (k.here ? HERE_MS : MISSING_MS)) return k.here;
     const here = isDir(dir);
     this.seen.set(dir, { at: t, here });
     return here;
@@ -129,6 +132,7 @@ export class ProjectClones {
   }
 
   private finished(repoId: number, result: { ok: true; dir: string } | { ok: false; error: string }): void {
+    this.seen.clear();
     const e = this.e;
     const out = this.state.finished({
       repo: this.repoOf(repoId),
