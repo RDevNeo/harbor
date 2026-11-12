@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.178.4] - 2026-11-11
+
+### Fixed
+- Harbor's log no longer starts with over a hundred "Warning: [object Object]" lines: Slint's compile
+  warnings stay out of it, and a test lists them readably instead.
+
 ## [0.178.3] - 2026-11-11
 
 ### Fixed
