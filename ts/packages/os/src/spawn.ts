@@ -20,7 +20,8 @@ export function startDetached(argv: readonly string[]): void {
     return;
   }
   // setsid() in the child: its own session and process group, so signals to Harbor's don't reach it.
-  const p = spawn(argv[0] as string, argv.slice(1), { detached: true, stdio: "ignore" });
+  // Windows: a process of its own with no console window (DETACHED_PROCESS, CREATE_NO_WINDOW).
+  const p = spawn(argv[0] as string, argv.slice(1), { detached: true, stdio: "ignore", windowsHide: true });
   p.on("error", () => {});
   if (p.pid === undefined) throw new Error(`couldn't start ${argv[0]}`);
   p.unref();

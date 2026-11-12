@@ -59,26 +59,27 @@ export function newUuid(): string {
  * `$XDG_RUNTIME_DIR/harbor` (else /dev/shm/harbor-<uid>), mode 0700.
  */
 export function runDir(env: Env = process.env): string {
-  const uid = process.getuid?.() ?? -1;
+  // No uid on Windows: its temp folder is the user's own already.
+  const uid = process.getuid?.();
   const rt = paths.runtimeDir(env);
   const runtime = rt !== undefined && existsSync(rt) ? rt : undefined;
   const base = runtime ?? paths.ramBase();
   const ours = (p: string): boolean => {
     try {
       const m = lstatSync(p);
-      return m.isDirectory() && m.uid === uid;
+      return m.isDirectory() && (uid === undefined || m.uid === uid);
     } catch {
       return false;
     }
   };
-  let dir = join(base, runtime ? "harbor" : `harbor-${uid}`);
+  let dir = join(base, runtime || uid === undefined ? "harbor" : `harbor-${uid}`);
   try {
     mkdirSync(dir, { mode: 0o700 });
   } catch {
     // exists already
   }
   for (let n = 0; !ours(dir) && n < 100; n++) {
-    dir = join(base, `harbor-${uid}-${randomHex(8)}`);
+    dir = join(base, `harbor-${uid ?? "u"}-${randomHex(8)}`);
     try {
       mkdirSync(dir, { mode: 0o700 });
     } catch {

@@ -1,12 +1,12 @@
 // One Harbor per session: an flock on `harbor.lock`, beside the control socket. The kernel
 // drops the lock when its holder dies, so a crash never blocks the next start.
 
-import { closeSync, ftruncateSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { runDir } from "./paths.ts";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { desktop, libc } from "@harbor/os";
+import { desktop, lock } from "@harbor/os";
 
 /** Set by a restart (reload.ts): the pid of the process that is leaving. The Rust app's exec keeps its pid; the runtime starts a new process. */
 export const RELOADED_PID = "HARBOR_RELOADED_PID";
@@ -19,36 +19,30 @@ export function socketPath(env: Record<string, string | undefined> = process.env
 
 export const lockPath = (env: Record<string, string | undefined> = process.env): string => socketPath(env).replace(/\.[^./]*$/, ".lock");
 
-let held: number | undefined;
+let held: lock.Held | undefined;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Takes the instance lock. False when another Harbor holds it. */
 export async function acquire(env: Record<string, string | undefined> = process.env, waitMs?: number): Promise<boolean> {
-  let fd: number;
-  try {
-    fd = openSync(lockPath(env), "a+", 0o600);
-  } catch {
-    // No lock file (read-only runtime dir?): don't keep Harbor from starting.
-    return true;
-  }
+  const path = lockPath(env);
   // After a restart the lock is released by the old process a moment from now.
   const reloaded = Number(env[RELOADED_PID]) > 0;
   const deadline = Date.now() + (waitMs ?? (reloaded ? 5000 : 0));
   for (;;) {
-    const got = libc.flock(fd, libc.LOCK_EX | libc.LOCK_NB);
-    // null: no libc to lock with; start, as without a lock file.
-    if (got === 0 || got === null) {
-      ftruncateSync(fd, 0);
-      writeSync(fd, `${process.pid}\n`, 0);
-      held = fd;
+    const got = lock.hold(path, false);
+    // undefined: no lock to take (no file locks, a read-only folder): start, as the only one.
+    if (got !== null) {
+      try {
+        writeFileSync(path, `${process.pid}\n`, { mode: 0o600 });
+      } catch {
+        // the pid is only a hint for people
+      }
+      held = got ?? { release() {} };
       if (env === process.env) delete process.env[RELOADED_PID];
       return true;
     }
-    if (Date.now() >= deadline) {
-      closeSync(fd);
-      return false;
-    }
+    if (Date.now() >= deadline) return false;
     await sleep(50);
   }
 }
@@ -58,7 +52,7 @@ export const holding = (): boolean => held !== undefined;
 
 /** Releases the lock (the process exit does it too). */
 export function release(): void {
-  if (held !== undefined) closeSync(held);
+  held?.release();
   held = undefined;
 }
 
@@ -86,6 +80,7 @@ function ask(path: string, line: string): Promise<boolean> {
 /** Asks the running Harbor to show itself; true when it answered. Retries for a few seconds, in case it is still starting. */
 export async function focusRunning(env: Record<string, string | undefined> = process.env): Promise<boolean> {
   const path = socketPath(env);
+  desktop.allowRaise();
   const deadline = Date.now() + 5000;
   for (;;) {
     if (await ask(path, JSON.stringify({ focus: true }))) return true;
@@ -116,20 +111,7 @@ export function socketListening(env: Record<string, string | undefined> = proces
 
 /** Whether a Harbor holds the instance lock now (without taking it). Null when that can't be told (no lock to test). */
 export function lockHeld(env: Record<string, string | undefined> = process.env): boolean | null {
-  let fd: number;
-  try {
-    fd = openSync(lockPath(env), "r");
-  } catch {
-    return false;
-  }
-  try {
-    const got = libc.flock(fd, libc.LOCK_EX | libc.LOCK_NB);
-    if (got === null) return null;
-    if (got === 0) libc.flock(fd, libc.LOCK_UN);
-    return got !== 0;
-  } finally {
-    closeSync(fd);
-  }
+  return lock.heldElsewhere(lockPath(env));
 }
 
 /** Raises this process's window through the compositor (Wayland clients can't raise themselves). False when there is no compositor IPC to ask. */

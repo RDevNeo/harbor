@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runDir } from "@harbor/store";
 
 export { dataDir, home, newUuid, now, privateDir, randomHex, runDir, stateDir, writePrivate } from "@harbor/store";
@@ -14,5 +15,5 @@ export function socketPath(): string {
 export function selfArgv(): string[] {
   const exe = process.execPath.replace(/ \(deleted\)$/, "");
   if (Bun.main.startsWith("/$bunfs/") || Bun.main.startsWith("B:/~BUN/")) return [exe];
-  return [exe, process.env.HARBOR_ENTRY ?? new URL("../../../harbor.ts", import.meta.url).pathname];
+  return [exe, process.env.HARBOR_ENTRY ?? fileURLToPath(new URL("../../../harbor.ts", import.meta.url))];
 }

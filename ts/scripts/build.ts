@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import type { BunPlugin } from "bun";
 import { paths, platform } from "../packages/os/src/index.ts";
 import * as macho from "../packages/update/src/macho.ts";
+import { vcRuntime } from "./vcruntime.ts";
 
 const cacheHome = (): string => paths.cacheHome();
 
@@ -18,27 +19,36 @@ const noExtraBinaries: BunPlugin = {
 };
 
 /** What a build is for: this PC by default, or `--target OS-ARCH` (whose addons `bun install --os OS --cpu ARCH` put in node_modules). */
-type Target = { os: "linux" | "darwin"; arch: "x64" | "arm64" };
+type Target = { os: "linux" | "darwin" | "win32"; arch: "x64" | "arm64" };
 
 function target(arg: string | undefined): Target {
   const t = arg ?? `${platform()}-${process.arch}`;
-  const m = /^(linux|darwin)-(x64|arm64)$/.exec(t);
+  const m = /^(linux|darwin|win32|windows)-(x64|arm64)$/.exec(t);
   if (!m) {
-    console.error(`build.ts: no build for ${t} (linux-x64, linux-arm64, darwin-arm64)`);
+    console.error(`build.ts: no build for ${t} (linux-x64, linux-arm64, darwin-arm64, windows-x64)`);
     process.exit(2);
   }
-  return { os: m[1] as Target["os"], arch: m[2] as Target["arch"] };
+  return { os: (m[1] === "windows" ? "win32" : m[1]) as Target["os"], arch: m[2] as Target["arch"] };
 }
 
+/**
+ * `compile` for Bun.build. Windows: a GUI program (no console window when started from the Start menu or
+ * Explorer); a terminal still gets its output, as the app attaches to its console (os win32 console.ts).
+ */
+const compileOptions = (outfile: string, t: Target): Bun.CompileBuildOptions =>
+  t.os === "win32" ? { outfile, target: bunTarget(t), windows: { hideConsole: true } } : { outfile, target: bunTarget(t) };
+
 /** Bun's name for the target, for `compile.target`. */
-const bunTarget = (t: Target): Bun.Build.CompileTarget => `bun-${t.os}-${t.arch}` as Bun.Build.CompileTarget;
+const bunTarget = (t: Target): Bun.Build.CompileTarget => `bun-${t.os === "win32" ? "windows" : t.os}-${t.arch}` as Bun.Build.CompileTarget;
 
 /** Slint's addon package for the target (its JS loader asks for it by this name). */
-const slintPackage = (t: Target): string => `slint-ui-binary-${t.os}-${t.arch}${t.os === "linux" ? "-gnu" : ""}`;
+const slintPackage = (t: Target): string => `slint-ui-binary-${t.os}-${t.arch}${t.os === "linux" ? "-gnu" : t.os === "win32" ? "-msvc" : ""}`;
 
 async function nativeFiles(t: Target): Promise<Record<string, string>> {
   const { os, arch } = t;
-  const lib = os === "darwin" ? "dylib" : "so";
+  const lib = os === "darwin" ? "dylib" : os === "win32" ? "dll" : "so";
+  // sherpa-onnx names its Windows packages "win", not "win32".
+  const sherpaOs = os === "win32" ? "win" : os;
   const root = new URL("../node_modules/.bun/", import.meta.url).pathname;
   const out: Record<string, string> = {};
   const add = (pattern: string, key: (file: string) => string): void => {
@@ -47,8 +57,10 @@ async function nativeFiles(t: Target): Promise<Record<string, string>> {
   const base = (f: string): string => f.slice(f.lastIndexOf("/") + 1);
   // Each library keeps its place next to the others: the addons find theirs through relative rpaths.
   add(`@img+sharp-${os}-${arch}@*/node_modules/@img/sharp-${os}-${arch}/lib/*.node`, (f) => `sharp/@img/sharp-${os}-${arch}/lib/${base(f)}`);
+  // Windows: libvips' DLLs sit beside sharp's addon, in its own package (Windows finds them there).
+  if (os === "win32") add(`@img+sharp-${os}-${arch}@*/node_modules/@img/sharp-${os}-${arch}/lib/*.dll`, (f) => `sharp/@img/sharp-${os}-${arch}/lib/${base(f)}`);
   add(`@img+sharp-libvips-${os}-${arch}@*/node_modules/@img/sharp-libvips-${os}-${arch}/lib/libvips-cpp.*${lib}*`, (f) => `sharp/@img/sharp-libvips-${os}-${arch}/lib/${base(f)}`);
-  add(`sherpa-onnx-${os}-${arch}@*/node_modules/sherpa-onnx-${os}-${arch}/*.{node,${lib}}`, (f) => `sherpa/${base(f)}`);
+  add(`sherpa-onnx-${sherpaOs}-${arch}@*/node_modules/sherpa-onnx-${sherpaOs}-${arch}/*.{node,${lib}}`, (f) => `sherpa/${base(f)}`);
   add(`@slint-ui+${slintPackage(t)}@*/node_modules/@slint-ui/${slintPackage(t)}/*.node`, (f) => `slint/${base(f)}`);
   // Harbor's own build of it (slint/: the compiler's state isn't kept), when the release brings one.
   const own = process.env.HARBOR_SLINT_ADDON;
@@ -62,6 +74,11 @@ async function nativeFiles(t: Target): Promise<Record<string, string>> {
     throw new Error(`sharp's, sherpa's or Slint's native files for ${os}-${arch} are not installed (bun install${os === platform() && arch === process.arch ? "" : ` --os ${os} --cpu ${arch}`})`);
   }
   if (os === "darwin") Object.assign(out, await darwinIntl(out));
+  // Windows: the Visual C++ runtime slint-ui's addon links, beside it (scripts/vcruntime.ts).
+  if (os === "win32") {
+    const dlls = await vcRuntime(join(cacheHome(), "harbor-build"));
+    for (const [name, path] of Object.entries(dlls)) out[`slint/${name}`] = path;
+  }
   return out;
 }
 
@@ -149,7 +166,7 @@ const addonsFromRuntime: BunPlugin = {
 const slintAddon: BunPlugin = {
   name: "slint-addon-on-disk",
   setup(build) {
-    build.onResolve({ filter: /^@slint-ui\/slint-ui-binary-(linux-(x64|arm64)-gnu|darwin-arm64)$/ }, () => ({ path: "slint", namespace: "slint-addon" }));
+    build.onResolve({ filter: /^@slint-ui\/slint-ui-binary-(linux-(x64|arm64)-gnu|darwin-arm64|win32-x64-msvc)$/ }, () => ({ path: "slint", namespace: "slint-addon" }));
     build.onLoad({ filter: /.*/, namespace: "slint-addon" }, () => ({ contents: `module.exports = globalThis.__harbor.addon("slint");`, loader: "js" }));
   },
 };
@@ -221,7 +238,7 @@ const r =
       ? await Bun.build({
           entrypoints: [new URL("../single.ts", import.meta.url).pathname],
           plugins: [noExtraBinaries, slintAddon, nativeAddons(tgt), embedAssets, addonsFromRuntime],
-          compile: { outfile, target: bunTarget(tgt) },
+          compile: compileOptions(outfile, tgt),
           minify: !rest.includes("--debug"),
           sourcemap: "none",
           define: defines([["HARBOR_VERSION", version], ["HARBOR_RUNTIME_VERSION", version], ["HARBOR_MIN_RUNTIME", version], ["HARBOR_GIT_SHA", opt("--sha")], ...google]),
@@ -229,7 +246,7 @@ const r =
       : await Bun.build({
           entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
           plugins: [noExtraBinaries, slintAddon, nativeAddons(tgt)],
-          compile: { outfile, target: bunTarget(tgt) },
+          compile: compileOptions(outfile, tgt),
           minify: !rest.includes("--debug"),
           sourcemap: "none",
           define: defines([["HARBOR_RUNTIME_VERSION", version]]),

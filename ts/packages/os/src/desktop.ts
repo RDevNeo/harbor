@@ -4,13 +4,15 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { platform } from "./platform.ts";
+import { win } from "./win32/load.ts";
 
 type Env = Record<string, string | undefined>;
 
 /** The program that opens a file or URL with the desktop's default app. */
 export function opener(p = platform()): string[] {
   if (p === "darwin") return ["open"];
-  if (p === "win32") return ["cmd", "/c", "start", ""];
+  // The shell's URL handler takes any URL as one argument (cmd's `start` would split it at `&`).
+  if (p === "win32") return ["rundll32", "url.dll,FileProtocolHandler"];
   return ["xdg-open"];
 }
 
@@ -52,6 +54,8 @@ export function raise(env: Env = process.env, pid: number = process.pid): boolea
     o.pool(() => o.callBool(o.call(o.cls("NSApplication"), "sharedApplication"), "activateIgnoringOtherApps:", true));
     return true;
   }
+  const w = win();
+  if (w) return w.desktop.raise(pid);
   if (platform() !== "linux") return false;
   if (env.HYPRLAND_INSTANCE_SIGNATURE) {
     const hypr = (args: string[]): boolean => {
@@ -70,4 +74,12 @@ export function raise(env: Env = process.env, pid: number = process.pid): boolea
 /** Whether the window runs under Hyprland (its own rules apply: placement, opacity). */
 export function hyprland(env: Env = process.env): boolean {
   return platform() === "linux" && !!env.HYPRLAND_INSTANCE_SIGNATURE;
+}
+
+/**
+ * Lets the running Harbor take the foreground when this process asks it to show itself: Windows gives the
+ * foreground only to the app the user is using (this one, just started). Nothing elsewhere.
+ */
+export function allowRaise(): void {
+  win()?.desktop.allowRaise();
 }

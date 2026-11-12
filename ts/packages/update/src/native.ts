@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { codesign } from "@harbor/os";
+import { codesign, paths } from "@harbor/os";
 
 export type NativeFiles = Readonly<Record<string, string>>;
 
 export function nativeBase(env: Record<string, string | undefined> = process.env): string {
-  return join(env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache"), "harbor");
+  return join(paths.cacheHome(env), "harbor");
 }
 
 // Executable files the compiled runtime carries (key: where it goes), written once next to each other so their $ORIGIN rpaths find the libraries.
@@ -44,9 +43,9 @@ export function extractNative(files: NativeFiles, base: string): string {
 export type Addon = "sharp" | "sherpa" | "slint";
 
 const ADDONS: Record<Addon, RegExp> = {
-  sharp: /^sharp\/@img\/sharp-(linux|darwin)[^/]*\/lib\/[^/]+\.node$/,
+  sharp: /^sharp\/@img\/sharp-(linux|darwin|win32)[^/]*\/lib\/[^/]+\.node$/,
   sherpa: /^sherpa\/sherpa-onnx\.node$/,
-  slint: /^slint\/slint-ui\.(linux|darwin)-[^/]+\.node$/,
+  slint: /^slint\/slint-ui\.(linux|darwin|win32)-[^/]+\.node$/,
 };
 
 export function addonPath(files: NativeFiles, addon: Addon): string | null {

@@ -4,6 +4,8 @@ import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { platform } from "./platform.ts";
+// Windows' reader (Toolhelp32 and process handles), loaded only there.
+import { win } from "./win32/load.ts";
 
 const procfs = (): boolean => platform() === "linux";
 
@@ -16,6 +18,8 @@ const mac = (): typeof import("./darwin.ts") | undefined =>
 const MAC_STATE: Record<number, string> = { 1: "D", 2: "R", 3: "S", 4: "T", 5: "Z" };
 
 export function pids(): number[] {
+  const w = win();
+  if (w) return w.proc.pids();
   const m = mac();
   if (m) return m.pids();
   if (!procfs()) return [];
@@ -65,6 +69,8 @@ export function parseStat(text: string): Stat | undefined {
 }
 
 export function stat(pid: number | "self"): Stat | undefined {
+  const w = win();
+  if (w) return w.proc.stat(pid === "self" ? process.pid : pid);
   const m = mac();
   if (m) {
     const b = m.bsdInfo(pid === "self" ? process.pid : pid);
@@ -79,6 +85,8 @@ export function stat(pid: number | "self"): Stat | undefined {
 
 /** Every process once, by pid. */
 export function table(): Map<number, Stat> {
+  const w = win();
+  if (w) return w.proc.table();
   const out = new Map<number, Stat>();
   for (const p of pids()) {
     const s = stat(p);
@@ -89,6 +97,8 @@ export function table(): Map<number, Stat> {
 
 /** When the process started, in clock ticks since boot. */
 export function procStart(pid: number | "self"): number | undefined {
+  const w = win();
+  if (w) return w.proc.startOfPid(pid === "self" ? process.pid : pid)?.start;
   const v = stat(pid)?.start;
   return v !== undefined && Number.isInteger(v) && v >= 0 ? v : undefined;
 }
@@ -102,24 +112,38 @@ const ended = (s: Stat): boolean => s.state === "Z" || s.state === "X";
 
 /** The process is still the one that started at `start` (and not a zombie). */
 export function alive(pid: number, start: number): boolean {
+  const w = win();
+  if (w) {
+    const s = w.proc.startOfPid(pid);
+    return s !== undefined && s.active && s.start === start;
+  }
   const s = stat(pid);
   return s !== undefined && !ended(s) && s.start === start;
 }
 
 /** When a process that hasn't ended started (clock ticks since boot); undefined for an ended one or none. */
 export function liveStart(pid: number | "self"): number | undefined {
+  const w = win();
+  if (w) {
+    const s = w.proc.startOfPid(pid === "self" ? process.pid : pid);
+    return s?.active ? s.start : undefined;
+  }
   const s = stat(pid);
   return s !== undefined && !ended(s) && Number.isInteger(s.start) && s.start >= 0 ? s.start : undefined;
 }
 
 /** `pid` names a process that hasn't ended (a zombie has). */
 export function running(pid: number): boolean {
+  const w = win();
+  if (w) return w.proc.startOfPid(pid)?.active === true;
   const s = stat(pid);
   return s !== undefined && !ended(s);
 }
 
 /** `pid` names a process, a zombie included. */
 export function exists(pid: number): boolean {
+  const w = win();
+  if (w) return w.proc.exists(pid);
   const m = mac();
   if (m) return m.bsdInfo(pid) !== undefined;
   if (!procfs()) return false;
@@ -136,6 +160,8 @@ export function startedAt(pid: number): number | undefined {
   const ticks = procStart(pid);
   if (ticks === undefined) return undefined;
   if (mac()) return Math.floor(ticks / 1_000_000);
+  const w = win();
+  if (w) return w.proc.startedAtFrom(ticks);
   const line = read("/proc/stat")?.split("\n").find((l) => l.startsWith("btime "));
   if (!line) return undefined;
   const btime = Number(line.slice(6).trim());
@@ -144,6 +170,8 @@ export function startedAt(pid: number): number | undefined {
 }
 
 export function cmdline(pid: number): string[] | undefined {
+  const w = win();
+  if (w) return w.proc.cmdline(pid);
   const m = mac();
   if (m) return m.args(pid);
   if (!procfs()) return undefined;
@@ -165,6 +193,8 @@ export function cmdline(pid: number): string[] | undefined {
 }
 
 export function ownerOf(pid: number): number | undefined {
+  const w = win();
+  if (w) return w.proc.ownerOf(pid);
   const m = mac();
   if (m) return m.bsdInfo(pid)?.uid;
   if (!procfs()) return undefined;
@@ -176,6 +206,8 @@ export function ownerOf(pid: number): number | undefined {
 }
 
 export function myUid(): number | undefined {
+  const w = win();
+  if (w) return w.proc.myUid();
   if (!procfs()) return process.getuid?.();
   try {
     return statSync("/proc/self").uid;
@@ -186,6 +218,8 @@ export function myUid(): number | undefined {
 
 /** `pid` and everything under it, by parent pid. */
 export function descendants(pid: number): number[] {
+  const w = win();
+  if (w) return w.proc.descendants(pid);
   const kids = new Map<number, number[]>();
   for (const [p, s] of table()) {
     const list = kids.get(s.ppid);
@@ -202,6 +236,8 @@ export function descendants(pid: number): number[] {
 
 /** The live processes of process group `pgid`. */
 export function group(pgid: number): number[] {
+  // Windows has no process groups: a "group" is the process itself (stat gives pgid = pid).
+  if (win()) return running(pgid) ? [pgid] : [];
   const out: number[] = [];
   for (const [p, s] of table()) if (s.state !== "Z" && s.pgid === pgid) out.push(p);
   return out;
@@ -219,6 +255,11 @@ function signal(sig: NodeJS.Signals, list: number[]): void {
 
 /** By parent pid, not process group: agents run Bash commands in their own sessions, which a group kill would miss. */
 export function killTree(pid: number): void {
+  const w = win();
+  if (w) {
+    w.proc.killTree(pid);
+    return;
+  }
   let tree = [pid];
   for (let i = 0; i < 8; i++) {
     signal("SIGSTOP", tree);
@@ -272,6 +313,7 @@ let pageBytes: number | null = null;
 
 /** The memory page size, for Stat.rssPages. */
 export function pageSize(): number {
+  if (pageBytes === null && win()) pageBytes = 4096;
   if (pageBytes === null) {
     const out = spawnSync("getconf", ["PAGESIZE"], { encoding: "utf8", timeout: 2000 }).stdout ?? "";
     pageBytes = /^\d+\s*$/.test(out) ? Number(out) : 4096;

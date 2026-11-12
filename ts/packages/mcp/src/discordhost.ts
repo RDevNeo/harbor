@@ -9,7 +9,7 @@ import * as repair from "./discordrepair.ts";
 import { type Held, freeze as freezeTree, heldWord, killLeftOver, reclaim as reclaimMemory, thaw as thawHeld, type StopFlag } from "./discordfreeze.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
-import { libc, proc, sys } from "@harbor/os";
+import { lock, proc, sys } from "@harbor/os";
 
 export { account, notice } from "./discordsetup.ts";
 export type { Account } from "./discordsetup.ts";
@@ -1843,18 +1843,14 @@ export function statusOffline(): Json {
 }
 
 
-/** The lock fd, or undefined when another host holds it for the next two seconds. */
-export async function takeLock(path: string): Promise<number | undefined> {
-  const fd = openSync(path, "a+", 0o600);
+/** The host's lock, or undefined when another host holds it for the next two seconds. */
+export async function takeLock(path: string): Promise<lock.Held | undefined> {
   const until = Date.now() + 2000;
   for (;;) {
-    const got = libc.flock(fd, libc.LOCK_EX | libc.LOCK_NB);
-    // null: no libc to lock with; one host is all there can be then.
-    if (got === 0 || got === null) return fd;
-    if (Date.now() > until) {
-      closeSync(fd);
-      return undefined;
-    }
+    const got = lock.hold(path, false);
+    // undefined: no lock to take here; one host is all there can be then.
+    if (got !== null) return got ?? { release() {} };
+    if (Date.now() > until) return undefined;
     await sleep(50);
   }
 }
@@ -1888,8 +1884,8 @@ function serveConn(h: Host, conn: Socket): void {
 /** Takes the host's lock and socket for `host`, and starts its clock. Undefined: another host has them. */
 export async function listen(host: Host, tickMs?: number): Promise<Running | undefined> {
   const root = setup.root();
-  const lock = await takeLock(join(root, "h.lock"));
-  if (lock === undefined) return undefined;
+  const lock_ = await takeLock(join(root, "h.lock"));
+  if (lock_ === undefined) return undefined;
   const sock = setup.socket();
   rmSync(sock, { force: true });
   const server: Server = createServer((c) => serveConn(host, c));
@@ -1897,7 +1893,7 @@ export async function listen(host: Host, tickMs?: number): Promise<Running | und
     server.once("error", rej);
     server.listen(sock, () => res());
   }).catch((e: unknown) => {
-    closeSync(lock);
+    lock_.release();
     throw e;
   });
   let end: (code: number) => void = () => {};
@@ -1929,7 +1925,7 @@ export async function listen(host: Host, tickMs?: number): Promise<Running | und
       await host.engine.stop();
       await host.scratch.stop();
       rmSync(sock, { force: true });
-      closeSync(lock);
+      lock_.release();
     })();
     return closed;
   };
@@ -1944,7 +1940,7 @@ export async function run(): Promise<number> {
   const sock = setup.socket();
   const probe = await takeLock(join(root, "h.lock"));
   if (probe === undefined) return 0;
-  closeSync(probe);
+  probe.release();
   if (Number.isFinite(pid) && (proc.cmdline(pid) ?? []).join("\0").includes(setup.shellDir())) killLeftOver(pid);
   rmSync(leftOverPath(), { force: true });
   rmSync(join(root, "scratch"), { recursive: true, force: true });

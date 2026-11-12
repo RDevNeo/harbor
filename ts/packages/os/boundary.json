@@ -102,9 +102,6 @@
     "libc": 1,
     "platform": 1
   },
-  "packages/update/src/native.ts": {
-    "xdg": 1
-  },
   "run.ts": {
     "desktop-tools": 1,
     "xdg": 1

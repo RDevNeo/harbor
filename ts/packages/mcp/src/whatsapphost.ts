@@ -615,7 +615,7 @@ export async function run(): Promise<number> {
     await host.engine.stop();
     rmSync(sock, { force: true });
     store.close();
-    closeSync(lock);
+    lock.release();
     end(0);
   };
   host.onStop = () => void close();

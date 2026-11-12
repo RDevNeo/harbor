@@ -3,6 +3,7 @@
 // rest of ts/ to that). Linux is the one implementation today; Windows and macOS get theirs behind the
 // same functions, so the features above stay one code path (docs: the Windows/macOS port plan).
 export * as libc from "./libc.ts";
+export * as lock from "./lock.ts";
 export * as proc from "./proc.ts";
 export * as sys from "./sys.ts";
 export * as desktop from "./desktop.ts";

@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
 import { dataDir, home, writePrivate } from "./paths.ts";
 import * as claudecreds from "./claudecreds.ts";
@@ -204,13 +204,13 @@ function m(id: string, label: string, more: boolean): Model {
 /** GUI launches often miss the shell's PATH additions; add the usual tool dirs. */
 export function childPath(): string {
   const h = home();
-  const dirs = (process.env.PATH ?? "").split(":");
+  const dirs = (process.env.PATH ?? "").split(delimiter);
   for (const extra of [".local/bin", ".local/share/mise/shims", ".cargo/bin", ".bun/bin", ".opencode/bin", ".npm-global/bin"]) {
     const p = join(h, extra);
     if (!dirs.includes(p)) dirs.push(p);
   }
   for (const p of osEnv.systemToolDirs()) if (!dirs.includes(p)) dirs.push(p);
-  return dirs.join(":");
+  return dirs.join(delimiter);
 }
 
 function isFile(p: string): boolean {
@@ -230,9 +230,9 @@ function isDir(p: string): boolean {
 }
 
 export function which(name: string): string | null {
-  for (const d of childPath().split(":")) {
-    const p = join(d, name);
-    if (isFile(p)) {
+  for (const d of childPath().split(delimiter)) {
+    const p = osEnv.execSuffixes().map((x) => join(d, name + x)).find(isFile);
+    if (p !== undefined) {
       // A GUI can inherit a versioned mise PATH. Stable shims let future turns pick up updates.
       if ((name === "claude" || name === "codex") && p.includes("/mise/installs/")) {
         const shim = p.slice(0, p.indexOf("/mise/installs/")) + `/mise/shims/${name}`;

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autostart, clipboard, desktop, env, keychain, libc, paths, platform, proc, spawn, sys } from "../src/index.ts";
+import { autostart, clipboard, desktop, env, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
 
@@ -147,7 +147,7 @@ describe("desktop", () => {
   test("the opener per OS", () => {
     expect(desktop.opener("linux")).toEqual(["xdg-open"]);
     expect(desktop.opener("darwin")).toEqual(["open"]);
-    expect(desktop.opener("win32")).toEqual(["cmd", "/c", "start", ""]);
+    expect(desktop.opener("win32")).toEqual(["rundll32", "url.dll,FileProtocolHandler"]);
   });
 
   test("no compositor to ask: nothing raised", () => {
@@ -327,5 +327,25 @@ describe("autostart", () => {
     expect(p).toContain("<key>RunAtLoad</key>\n  <true/>");
     expect(autostart.isOn(p, "--background", mac)).toBe(true);
     expect(autostart.isOn(p.replace("<key>RunAtLoad</key>", "<key>Disabled</key>\n  <true/>\n  <key>RunAtLoad</key>"), "--background", mac)).toBe(false);
+  });
+});
+
+describe("lock", () => {
+  test("one holder at a time, by path, and free again once released", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hlock-"));
+    try {
+      const path = join(dir, "x.lock");
+      const a = lock.hold(path, false);
+      expect(a).toBeTruthy();
+      expect(lock.hold(path, false)).toBeNull();
+      expect(lock.heldElsewhere(path)).toBe(true);
+      a?.release();
+      expect(lock.heldElsewhere(path)).toBe(false);
+      const b = lock.hold(path, true);
+      expect(b).toBeTruthy();
+      b?.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

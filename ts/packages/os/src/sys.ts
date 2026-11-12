@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { platform } from "./platform.ts";
+import { win } from "./win32/load.ts";
 
 const procfs = (): boolean => platform() === "linux";
 
@@ -63,6 +64,8 @@ export function parseDarwinMemory(text: string): Memory | null {
 
 /** This PC's memory; null when it can't be read. */
 export function memory(): Memory | null {
+  const w = win();
+  if (w) return w.sys.memory();
   const m = mac();
   if (m) return parseDarwinMemory(m.memoryText());
   if (!procfs()) return null;
@@ -80,6 +83,8 @@ export function memAvailableMb(env: Record<string, string | undefined> = process
 
 /** Changes at every boot, the same until the next; "" when unknown. */
 export function bootId(): string {
+  const w = win();
+  if (w) return w.sys.bootId();
   const m = mac();
   if (m) return m.bootTime();
   if (!procfs()) return "";

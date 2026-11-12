@@ -3,6 +3,7 @@
 // glibc. Each returns null (or false) where the call doesn't exist, so callers fall back instead of failing.
 import { dlopen, FFIType } from "bun:ffi";
 import { platform } from "./platform.ts";
+import { win } from "./win32/load.ts";
 
 export const LOCK_EX = 2;
 export const LOCK_NB = 4;
@@ -52,6 +53,8 @@ export function flock(fd: number, op: number): number | null {
  * reach. An existing value is kept unless `overwrite`. False when it couldn't be set.
  */
 export function setenv(name: string, value: string, overwrite = false): boolean {
+  const w = win();
+  if (w) return w.libc.setenv(name, value, overwrite);
   const l = lib();
   return l !== null && l.setenv(Buffer.from(`${name}\0`), Buffer.from(`${value}\0`), overwrite ? 1 : 0) === 0;
 }
