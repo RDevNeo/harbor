@@ -40,7 +40,7 @@ test("fresh_token_is_used_as_is", () => {
   // A credentials file in seconds (older CLIs) means the same.
   expect(oauth.tokenAt(creds(d, (NOW + 3_600_000) / 1000), NOW, () => null)).toBe("sk-ant-oat01-old");
   expect(oauth.credentialsPath(null)).toBe(join(home(), ".claude/.credentials.json"));
-  expect(oauth.credentialsPath("/x/.claude2")).toBe("/x/.claude2/.credentials.json");
+  expect(oauth.credentialsPath("/x/.claude2")).toBe(join("/x/.claude2", ".credentials.json"));
 });
 
 test("expiring_token_is_refreshed_and_written_back", () => {

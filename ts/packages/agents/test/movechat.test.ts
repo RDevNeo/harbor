@@ -10,7 +10,7 @@ afterAll(() => rmSync(base, { recursive: true, force: true }));
 test("folders_map_like_claude_code", () => {
   expect(mc.projectSlug("/nonexistent/u/Projects/harbor")).toBe("-nonexistent-u-Projects-harbor");
   expect(mc.projectSlug("/nonexistent/a.b/my work_1")).toBe("-nonexistent-a-b-my-work-1");
-  expect(mc.sessionDir("/x/.claude2", "/nonexistent/p")).toBe("/x/.claude2/projects/-nonexistent-p");
+  expect(mc.sessionDir("/x/.claude2", "/nonexistent/p")).toBe(join("/x/.claude2", "projects", "-nonexistent-p"));
   // A symlinked folder is its real path, as `pwd -P`.
   const real = join(base, "real");
   mkdirSync(real);

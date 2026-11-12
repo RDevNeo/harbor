@@ -236,8 +236,9 @@ export function descendants(pid: number): number[] {
 
 /** The live processes of process group `pgid`. */
 export function group(pgid: number): number[] {
-  // Windows has no process groups: a "group" is the process itself (stat gives pgid = pid).
-  if (win()) return running(pgid) ? [pgid] : [];
+  // Windows has no process groups: a "group" is the process and what it started, by their parents.
+  const w = win();
+  if (w) return running(pgid) ? w.proc.descendants(pgid).filter((p) => running(p)) : [];
   const out: number[] = [];
   for (const [p, s] of table()) if (s.state !== "Z" && s.pgid === pgid) out.push(p);
   return out;

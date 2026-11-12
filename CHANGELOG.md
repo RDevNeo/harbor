@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.9] - 2026-11-12
+
+### Fixed
+- Windows: Stop on a process an agent started (a dev server, a watcher) stops it and what it started; it kept
+  running before.
+
 ## [0.180.8] - 2026-11-12
 
 ### Fixed

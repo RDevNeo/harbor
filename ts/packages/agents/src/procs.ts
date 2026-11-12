@@ -6,7 +6,7 @@ import { basename, dirname, join } from "node:path";
 import type { ProcRow, Store } from "@harbor/store";
 import * as detach from "./detach.ts";
 import { stateDir } from "./paths.ts";
-import { proc } from "@harbor/os";
+import { platform, proc } from "@harbor/os";
 import { procStart } from "./procfs.ts";
 import { childPath } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
@@ -60,6 +60,11 @@ export class Proc {
 }
 
 export function signalGroup(sig: NodeJS.Signals, pgid: number): void {
+  // Windows: no groups and no TERM for a program without a window: the tree ends at once.
+  if (platform() === "win32") {
+    proc.killTree(pgid);
+    return;
+  }
   try {
     process.kill(-pgid, sig);
   } catch {

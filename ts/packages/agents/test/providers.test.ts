@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import * as p from "../src/providers.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-prov-"));
@@ -42,7 +42,7 @@ test("accounts from a home folder: one per Claude profile, then Codex and OpenCo
       ["PATH", p.childPath()],
       ["CLAUDE_CONFIG_DIR", join(h, ".claude2")],
     ]);
-    expect(p.childPath().split(":").slice(0, 2)).toEqual(["/nonexistent", join(h, ".local/bin")]);
+    expect(p.childPath().split(delimiter).slice(0, 2)).toEqual(["/nonexistent", join(h, ".local/bin")]);
   } finally {
     process.env.HOME = was.HOME;
     process.env.PATH = was.PATH;
