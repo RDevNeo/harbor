@@ -41,7 +41,7 @@ as() { su tester -s /bin/sh -c "cd && $*"; }
 step "Install (as an ordinary user)"
 insecure=1
 [ -f /dist/SHA256SUMS.minisig ] && insecure=0
-as "HARBOR_FROM=/dist HARBOR_INSECURE=$insecure sh /src/packaging/install.sh" || fail "install.sh failed"
+as "HARBOR_FROM=/dist HARBOR_INSECURE=$insecure HARBOR_NO_DEPS=1 sh /src/packaging/install.sh" || fail "install.sh failed"
 end
 
 step "Files"

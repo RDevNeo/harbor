@@ -89,6 +89,11 @@ export interface Installed {
 }
 
 // Runtime first, bundle last: whoever watches the bundle file sees one change.
+/** The release's runtime for this system: `harbor-runtime-<arch>` on Linux, `harbor-runtime-<arch>-macos` on macOS. */
+export function runtimeAsset(cfg: Pick<UpdateConfig, "arch" | "os">): string {
+  return cfg.os === "macos" ? `harbor-runtime-${cfg.arch}-macos` : `harbor-runtime-${cfg.arch}`;
+}
+
 export async function install(cfg: UpdateConfig, version: string): Promise<Installed> {
   const dir = dirOf(cfg);
   const stage = fresh(join(dir, ".staging"));
@@ -98,7 +103,7 @@ export async function install(cfg: UpdateConfig, version: string): Promise<Insta
     const have = runtimeOnDisk(cfg);
     if (newer(manifest.minRuntime, have)) {
       if (newer(manifest.minRuntime, manifest.runtime)) throw new Error(`the bundle needs runtime ${manifest.minRuntime} but the release names ${manifest.runtime}`);
-      runtimeStaged = await fetchSigned(cfg, manifest.runtime, `harbor-runtime-${cfg.arch}`, stage);
+      runtimeStaged = await fetchSigned(cfg, manifest.runtime, runtimeAsset(cfg), stage);
       chmodSync(runtimeStaged, 0o755);
       await smokeRuntime(runtimeStaged, manifest.runtime);
     }

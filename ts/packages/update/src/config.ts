@@ -2,6 +2,7 @@ import { PUBKEY, parsePublicKey, type PublicKey } from "./minisign.ts";
 import { installDir } from "./files.ts";
 import { parseGlibc, RUNTIME_VERSION, VERSION } from "./version.ts";
 import { libc } from "@harbor/os";
+import { platform } from "@harbor/os";
 
 export type Arch = "x86_64" | "aarch64";
 
@@ -25,8 +26,17 @@ export function runtimeInfo(): RuntimeInfo | undefined {
   return globalThis.__harbor?.runtime;
 }
 
+/** The system releases are built for: Linux's assets keep their old names, macOS's say so. */
+export type ReleaseOs = "linux" | "macos";
+
+export function currentOs(): ReleaseOs {
+  return platform() === "darwin" ? "macos" : "linux";
+}
+
 export interface UpdateConfig {
   dir: string | null;
+  /** Linux when absent. */
+  os?: ReleaseOs;
   version: string;
   runtime: string;
   preview: boolean;
@@ -71,6 +81,7 @@ export function defaultConfig(env: Record<string, string | undefined> = process.
     runtime: rt?.version ?? RUNTIME_VERSION,
     preview: rt?.preview ?? false,
     arch: currentArch(),
+    os: currentOs(),
     repo: REPO,
     github: GITHUB,
     worker: env.HARBOR_UPDATE_WORKER === "off" ? null : (env.HARBOR_UPDATE_WORKER ?? WORKER),

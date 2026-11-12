@@ -237,3 +237,10 @@ test("version_on_disk: the version on disk is the installed one when it isn't th
   expect(onDisk(cfg)).toBeNull();
 });
 
+
+test("the runtime's asset per system: Linux's old names, macOS's own", async () => {
+  const { runtimeAsset } = await import("../src/install.ts");
+  expect(runtimeAsset({ arch: "x86_64" })).toBe("harbor-runtime-x86_64");
+  expect(runtimeAsset({ arch: "aarch64", os: "linux" })).toBe("harbor-runtime-aarch64");
+  expect(runtimeAsset({ arch: "aarch64", os: "macos" })).toBe("harbor-runtime-aarch64-macos");
+});
