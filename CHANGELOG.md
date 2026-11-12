@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.181.2] - 2026-11-12
+
+### Fixed
+- Windows: updates, `harbor restart` and Follow main keep the new Harbor: Windows ended it together with the old
+  one, so every update rolled back ("it exited while starting"). A Windows Harbor on 0.181.1 or older can't
+  update itself to this one: run the install line again once.
+
 ## [0.181.1] - 2026-11-12
 
 ### Fixed

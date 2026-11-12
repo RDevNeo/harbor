@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync, rmSync, statSync } from "node:fs";
 import type { UpdateConfig } from "./config.ts";
 import { isFile } from "./files.ts";
 import { fail, readMeta } from "./previewmeta.ts";
+import { platform } from "@harbor/os";
 
 export const STATE_KEY = "reload_state";
 export const RELOADED_PID = "HARBOR_RELOADED_PID";
@@ -81,7 +82,9 @@ export interface Spawned {
 }
 
 function spawnDetached(cmd: string[], env: Record<string, string | undefined>): Spawned {
-  const p = Bun.spawn(cmd, { env, stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+  // Windows: a child that isn't detached is in Bun's kill-on-close job and dies with this process, which leaves
+  // once the new one shows: every restart and update rolled back ("it exited while starting").
+  const p = Bun.spawn(cmd, { env, stdin: "ignore", stdout: "inherit", stderr: "inherit", detached: platform() === "win32" });
   p.unref();
   return { exited: p.exited };
 }
