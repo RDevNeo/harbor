@@ -1,6 +1,7 @@
 import pkg from "./package.json";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { env as osEnv } from "./packages/os/src/index.ts";
 import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, repoRef, updateCommands, versionLabel } from "./packages/update/src/index.ts";
 
 declare const HARBOR_MIN_RUNTIME: string | undefined;
@@ -190,6 +191,8 @@ const commands: Record<string, Command> = {
 commands["-V"] = commands["--version"] as Command;
 
 export async function main(argv: string[]): Promise<number> {
+  // Windows: PATH by its usual name, Git Bash and the agents' folders on it (nothing elsewhere).
+  osEnv.normalize();
   const [name, ...rest] = argv;
   if (name === undefined) return (await import("./run.ts")).runApp({ window: true, argv: [], version });
   const cmd = commands[name];

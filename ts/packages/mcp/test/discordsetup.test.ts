@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { ELECTRON, Vencords, electronBin, addEdit, applyEdits, baseScript, checkVencord, download, ensureElectron, ensureShell, ensureVencord, fileSha256, liveScript, loadOverride, profile, root, shellDir, shellFiles, socket, unzip, vencordDir, writeLiveScript } from "../src/discordsetup.ts";
 import type { Edit } from "../src/discordsetup.ts";
 import { sandbox, zip } from "./discordkit.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const repoDiscord = join(import.meta.dir, "../../../../discord");
 let box: ReturnType<typeof sandbox>;
@@ -72,7 +73,7 @@ test("vencord.json round-trips and survives a bad file", () => {
   expect(Vencords.load()).toEqual(v);
   writeFileSync(join(root(), "vencord.json"), "not json");
   expect(Vencords.load()).toEqual(new Vencords());
-  expect(statSync(join(root(), "vencord.json")).mode & 0o777).toBe(0o600);
+  expectPerm(join(root(), "vencord.json"), 0o600);
 });
 
 const edit = (old: string, nw: string): Edit => ({ old, new: nw, why: "" });
@@ -96,7 +97,7 @@ test("unzip_keeps_modes_and_refuses_escapes: unzip keeps modes and refuses escap
   writeFileSync(p, zip([{ name: "bin/run", data: "hello", mode: 0o100755 }]));
   await unzip(p, join(d, "out"));
   expect(readFileSync(join(d, "out/bin/run"), "utf8")).toBe("hello");
-  expect(statSync(join(d, "out/bin/run")).mode & 0o777).toBe(0o755);
+  expectPerm(join(d, "out/bin/run"), 0o755);
   writeFileSync(p, zip([{ name: "../evil", data: "x" }]));
   await expect(unzip(p, join(d, "out2"))).rejects.toThrow("damaged");
   writeFileSync(p, zip([{ name: "/abs", data: "x" }]));
@@ -145,7 +146,7 @@ test("the paths live under the private store", () => {
   expect(root()).toBe(join(box.dir, "data/harbor/apps/discord"));
   expect(profile()).toBe(join(root(), "profile"));
   expect(socket()).toBe(join(root(), "h.sock"));
-  expect(statSync(root()).mode & 0o777).toBe(0o700);
+  expectPerm(root(), 0o700);
 });
 
 test("Electron is checked against its pinned hash before it is unpacked", async () => {
@@ -160,7 +161,7 @@ test("Electron is checked against its pinned hash before it is unpacked", async 
 
   const sums = { x64: createHash("sha256").update(archive).digest("hex"), arm64: createHash("sha256").update(archive).digest("hex") };
   await ensureElectron((s) => notes.push(s), sums);
-  expect(statSync(join(root(), `electron-${ELECTRON}/electron`)).mode & 0o777).toBe(0o755);
+  expectPerm(join(root(), `electron-${ELECTRON}/electron`), 0o755);
   expect(notes).toContain("Unpacking…");
   hits.length = 0;
   await ensureElectron(() => {}, sums);

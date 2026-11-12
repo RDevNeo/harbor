@@ -15,7 +15,7 @@ import {
   watch,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { compactFirst } from "./compaction.ts";
 import { arr, at, compact, isNull, optStr, parse } from "./json.ts";
 import { lend, token, unlend } from "./oauth.ts";
@@ -661,7 +661,7 @@ export async function run(args: readonly string[]): Promise<void> {
   const remote = basename(program) === "ssh";
   const device = varOf(DEVICE);
   delete env[DEVICE];
-  const resolved = program.includes("/") ? program : which_(program, env.PATH);
+  const resolved = program.includes("/") || isAbsolute(program) ? program : which_(program, env.PATH);
   // A long Claude session is compacted before the turn loads it (not one on another device: its file is there).
   const session = optStr(at(spec, "compact"));
   if (!remote && session !== undefined && resolved !== null) {

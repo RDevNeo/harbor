@@ -6,6 +6,7 @@ import * as detach from "../src/detach.ts";
 import { compact } from "../src/json.ts";
 import { procStart } from "../src/procfs.ts";
 import { reap } from "./reap.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-detach-"));
 const saved = { ...detach.timing };
@@ -341,8 +342,8 @@ describe("harbor turn", () => {
     expect(meta.pid).toBeGreaterThan(0);
     expect(meta.pid_start).toBe(procStart(meta.pid) ?? -1);
     expect(detach.readMeta(readFileSync(join(dir, "meta.json"), "utf8"))).toEqual(meta);
-    expect(statSync(join(dir, "cmd.json")).mode & 0o777).toBe(0o600);
-    expect(statSync(join(dir, "in")).mode & 0o777).toBe(0o600);
+    expectPerm(join(dir, "cmd.json"), 0o600);
+    expectPerm(join(dir, "in"), 0o600);
     expect(detach.inputOpen(dir)).toBe(true);
     expect(detach.runners(root).map((r) => r[0])).toEqual([3]);
     const out: string[] = [];
@@ -354,7 +355,7 @@ describe("harbor turn", () => {
     expect(await done).toBe(true);
     expect(out).toEqual(["1:first", "2:second"]);
     expect(err).toEqual(["warn"]);
-    expect(statSync(join(dir, "out")).mode & 0o777).toBe(0o600);
+    expectPerm(join(dir, "out"), 0o600);
     expect(detach.leftovers(root).map((l) => l[0])).toEqual([dir]);
   });
 

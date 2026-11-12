@@ -37,6 +37,7 @@ import {
   WRONG_KEY,
   type Conn,
 } from "../src/tls.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const srv = generateIdentity();
 const cli = generateIdentity();
@@ -120,7 +121,7 @@ describe("identity (tls.rs)", () => {
       const a = loadOrCreate(dir);
       const b = loadOrCreate(dir);
       expect(a.fp).toBe(b.fp);
-      expect(statSync(join(dir, "identity.pem")).mode & 0o777).toBe(0o600);
+      expectPerm(join(dir, "identity.pem"), 0o600);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

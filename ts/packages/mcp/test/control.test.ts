@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Hook, HOOK_RATE_LIMIT, type Incoming, Rate, funnelHooksPort, serveHook, signatureOk, startHooks, startSocket } from "../src/control.ts";
 import { askSocket } from "../src/mcpshim.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 let root: string;
 
@@ -54,7 +55,7 @@ test("the socket is private and relays a tool call, a focus request and a previe
     },
   });
   expect(l).toBeDefined();
-  expect(statSync(path).mode & 0o777).toBe(0o600);
+  expectPerm(path, 0o600);
   expect(JSON.parse(await askSocket(path, JSON.stringify({ chat: 7, tool: "ok", args: { a: 1 } })))).toEqual({ ok: true, text: '7:{"a":1}' });
   expect(JSON.parse(await askSocket(path, JSON.stringify({ chat: 7, tool: "no", args: null })))).toEqual({ ok: false, text: "7:null" });
   expect(JSON.parse(await askSocket(path, JSON.stringify({ focus: true })))).toEqual({ ok: true });

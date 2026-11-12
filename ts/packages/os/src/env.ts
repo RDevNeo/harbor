@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { setenv } from "./libc.ts";
 import { platform } from "./platform.ts";
 
 type Env = Record<string, string | undefined>;
@@ -73,4 +74,63 @@ function windowsDefaults(env: Env): Record<string, string> {
   if (add.length + after.length > 0) out.PATH = [...add, path, ...after].filter((x) => x !== "").join(delimiter);
   if (!env.HOME) out.HOME = env.USERPROFILE || homedir();
   return out;
+}
+
+/**
+ * Windows: this process's environment as Harbor's code expects it, before anything reads it. The variable
+ * is called "Path" there, and a copy of process.env (`{ ...process.env, PATH: … }`, as many spawns make) would
+ * hand a child both "Path" and "PATH": it's renamed PATH (Windows' names ignore case, so nothing else changes).
+ * Then the tool folders and HOME (childDefaults), for every Harbor process: the app, its turn runners, its MCP
+ * servers. Nothing elsewhere.
+ */
+export function normalize(env: NodeJS.ProcessEnv = process.env): void {
+  if (platform(env) !== "win32") return;
+  const path = env.PATH;
+  if (path !== undefined && !Object.keys(env).includes("PATH")) {
+    delete env.PATH;
+    env.PATH = path;
+  }
+  const add = windowsDefaults(env);
+  Object.assign(env, add);
+  // Bun looks programs up (Bun.spawn without env, Bun.which) in the process's own environment block, which
+  // assignments to process.env don't reach on Windows: PATH goes there too.
+  if (env === process.env && add.PATH !== undefined) setenv("PATH", add.PATH, true);
+  if (env === process.env) currentEnvForBun();
+}
+
+let wrapped = false;
+
+/**
+ * Windows: Bun.spawn, Bun.spawnSync and Bun.which without an `env` look programs up in Bun's copy of the
+ * environment from the process's start, not in process.env as it is now (node:child_process uses the current
+ * one). They're given the current one, so what normalize() added (Git Bash's tools) is found by every spawn.
+ */
+function currentEnvForBun(): void {
+  if (wrapped || typeof Bun === "undefined") return;
+  wrapped = true;
+  type Spawn = (...a: unknown[]) => unknown;
+  const b = Bun as unknown as Record<"spawn" | "spawnSync" | "which", Spawn>;
+  const withEnv = (f: Spawn): Spawn =>
+    function (this: unknown, ...a: unknown[]): unknown {
+      const [first, second] = a;
+      if (Array.isArray(first)) {
+        const o = (second ?? {}) as { env?: unknown };
+        return f.call(this, first, o.env === undefined ? { ...o, env: process.env } : o, ...a.slice(2));
+      }
+      if (first !== null && typeof first === "object" && (first as { env?: unknown }).env === undefined) {
+        return f.call(this, { ...(first as object), env: process.env }, ...a.slice(1));
+      }
+      return f.apply(this, a);
+    };
+  const which = b.which;
+  try {
+    b.spawn = withEnv(b.spawn);
+    b.spawnSync = withEnv(b.spawnSync);
+    b.which = function (this: unknown, name: unknown, opts?: unknown): unknown {
+      const o = (opts ?? {}) as { PATH?: string };
+      return which.call(this, name, o.PATH === undefined ? { ...o, PATH: process.env.PATH ?? "" } : o);
+    };
+  } catch {
+    // Bun's own functions can't be replaced: programs are then found on the start PATH only
+  }
 }

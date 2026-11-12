@@ -34,6 +34,7 @@ import { Vault } from "../src/vault.ts";
 import * as vaultcrypto from "../src/vaultcrypto.ts";
 import { MemKv } from "../src/kv.ts";
 import { generateIdentity } from "../src/tls.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const pair = () => generateKeyPairSync("ed25519");
 type Pair = ReturnType<typeof pair>;
@@ -500,8 +501,8 @@ describe("sign-in through Clerk", () => {
     expect(r.svc.takeEnable()).toBe(false);
 
     const file = join(r.stateDir, "account.json");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
-    expect(statSync(r.stateDir).mode & 0o777).toBe(0o700);
+    expectPerm(file, 0o600);
+    expectPerm(r.stateDir, 0o700);
     expect(Object.keys(secrets(r))).toEqual(["access", "refresh", "access_exp", "token", "token_exp", "token_at"]);
     expect(secrets(r)).toMatchObject({ access: "clerk-access-1", refresh: "refresh-1" });
     expect(r.kv.get("account")).not.toContain("clerk-access");

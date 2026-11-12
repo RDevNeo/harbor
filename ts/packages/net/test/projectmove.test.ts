@@ -13,6 +13,7 @@ import { manifestOf, movedProject, ProjectMove } from "../src/projectmoverun.ts"
 import { newPeer, Shared, type Dest } from "../src/shared.ts";
 import { MemKv } from "../src/kv.ts";
 import { text, user } from "./fixture.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const SID = "0b7c1a7e-1111-4222-8333-944455556666";
 const SUB_SID = "0b7c1a7e-9999-4222-8333-944455556666";
@@ -241,7 +242,7 @@ describe("foldercopy", () => {
       await u.finish();
       expect(readFileSync(join(dst, "a/b/c/deep.txt"), "utf8")).toBe("deep");
       expect(readFileSync(join(dst, ".env"), "utf8")).toBe("SECRET=1\n");
-      expect(statSync(join(dst, "run.sh")).mode & 0o777).toBe(0o755);
+      expectPerm(join(dst, "run.sh"), 0o755);
       expect(readFileSync(join(dst, "big.bin")).equals(Buffer.alloc(300_000, 7))).toBe(true);
       expect(readFileSync(join(dst, "zero"), "utf8")).toBe("");
       expect(readlinkSync(join(dst, "link"))).toBe("a/b/c/deep.txt");

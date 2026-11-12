@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as sec from "../src/secrets.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -90,7 +91,7 @@ test("stores_values_owner_only", () => {
   const all = sec.load(p);
   expect(all.length).toBe(1);
   expect([all[0]?.value, all[0]?.description]).toEqual(["boat_654321", "Boat CLI"]);
-  expect(statSync(p).mode & 0o777).toBe(0o600);
+  expectPerm(p, 0o600);
   expect(sec.names(p)[0]?.value).toBe("");
   sec.remove("BOAT_API_KEY", p);
   expect(sec.load(p)).toEqual([]);
@@ -165,7 +166,7 @@ test("env_files_stay_in_the_project", () => {
   sec.writeEnv(p, "STRIPE_KEY", "sk_test_1");
   sec.writeEnv(p, "STRIPE_KEY", "sk test 2");
   expect(readFileSync(p, "utf8")).toBe("STRIPE_KEY='sk test 2'\n");
-  expect(statSync(p).mode & 0o777).toBe(0o600);
+  expectPerm(p, 0o600);
 });
 
 test("checks_and_fixes_gitignore", () => {

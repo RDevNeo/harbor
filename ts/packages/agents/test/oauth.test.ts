@@ -6,6 +6,7 @@ import { compact, parse } from "../src/json.ts";
 import * as oauth from "../src/oauth.ts";
 import { home } from "../src/paths.ts";
 import { installHint, installScript } from "../src/providers.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-oauth-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
@@ -59,7 +60,7 @@ test("expiring_token_is_refreshed_and_written_back", () => {
   // The rest of the file survives the rewrite.
   expect(login.subscriptionType).toBe("max");
   expect(typeof v.mcpOAuth).toBe("object");
-  expect(statSync(p).mode & 0o777).toBe(0o600);
+  expectPerm(p, 0o600);
   expect(existsSync(join(d, ".credentials.json.lock"))).toBe(true);
   expect(existsSync(join(d, ".credentials.json.tmp"))).toBe(false);
   // Written as serde's pretty printer does: keys sorted, two spaces, a newline at the end.
@@ -123,7 +124,7 @@ test("a_lent_login_is_the_access_token_alone", () => {
   expect(login.expiresAt).toBe(1_700_003_600_000);
   expect(login.scopes).toEqual(["user:inference"]);
   expect(login.subscriptionType).toBe("max");
-  expect(statSync(p).mode & 0o777).toBe(0o600);
+  expectPerm(p, 0o600);
   // A token that isn't the file's (refreshed meanwhile): its expiry and kind aren't known.
   oauth.lend(overlay, acct, "sk-ant-oat01-other");
   login = read(p).claudeAiOauth ?? {};

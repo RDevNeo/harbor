@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { home } from "@harbor/store";
 import { forAccess, forget, note, numbered, replace, resolve, TOOLS, tools, call } from "../src/workspace.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 describe("workspace", () => {
   test("replaces_like_claude_edit: replaces like claude edit", () => {
@@ -99,7 +100,7 @@ describe("workspace", () => {
     expect(ok).toBe(true);
     const log = /goes to (\S+)\./.exec(msg)?.[1] ?? "";
     expect(msg).toContain("kill -- -");
-    expect(statSync(log).mode & 0o777).toBe(0o600);
+    expectPerm(log, 0o600);
     for (let i = 0; i < 100 && !readFileSync(log, "utf8").includes("background"); i++) await Bun.sleep(50);
     expect(readFileSync(log, "utf8")).toBe("from the background\n");
     rmSync(log);

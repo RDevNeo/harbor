@@ -10,6 +10,7 @@ import { generateIdentity, MemKv } from "@harbor/net";
 import type { Hook } from "../src/control.ts";
 import { Account, b64u, type Challenge, challengeCert, clientHello, Hooks, obtain, type Options, sslipName } from "../src/hookcert.ts";
 import type { Json } from "../src/json.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 let dir = "";
 beforeEach(() => {
@@ -60,7 +61,7 @@ test("jws_and_thumbprint: jws and thumbprint", () => {
 
 test("the account key is made once, owner-only, and read back", () => {
   const a = Account.loadOrCreate(dir);
-  expect(statSync(join(dir, "acme-account.pem")).mode & 0o777).toBe(0o600);
+  expectPerm(join(dir, "acme-account.pem"), 0o600);
   expect(Account.loadOrCreate(dir).jwk()).toBe(a.jwk());
 });
 
@@ -415,7 +416,7 @@ describe("rounds", () => {
       const st = l.hooks.status();
       expect(st.error).toBe("");
       expect(st).toMatchObject({ name: "hooks.example.org", base: "https://hooks.example.org/hooks", expires: 1_000_000 + 90 * 86400, route: expect.stringContaining("Your router didn't open port 443 (no router)") });
-      for (const f of ["hooks-cert.pem", "hooks-key.pem", "hooks-cert.json", "acme-account.pem"]) expect(statSync(join(dir, f)).mode & 0o777).toBe(0o600);
+      for (const f of ["hooks-cert.pem", "hooks-key.pem", "hooks-cert.json", "acme-account.pem"]) expectPerm(join(dir, f), 0o600);
       expect(JSON.parse(readFileSync(join(dir, "hooks-cert.json"), "utf8"))).toEqual({ name: "hooks.example.org", expires: 1_000_000 + 90 * 86400 });
       // Fresh: the next look orders nothing.
       const orders = acme.log.filter((x) => x === "POST /order").length;

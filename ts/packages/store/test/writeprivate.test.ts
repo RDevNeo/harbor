@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writePrivate } from "../src/paths.ts";
+import { expectPerm } from "../../../test/perm.ts";
 
 // Turns that start together each write the same app files (GitHub's signed-out hosts.yml): with one shared
 // temporary name, one writer renamed the other's file away and the other's rename threw, killing its turn.
@@ -17,7 +18,7 @@ for (let i = 0; i < 300; i++) writePrivate(${JSON.stringify(file)}, "github.com:
     const ends = await Promise.all(ps.map(async (p) => [await p.exited, await new Response(p.stderr).text()] as const));
     expect(ends.filter(([code]) => code !== 0)).toEqual([]);
     expect(readFileSync(file, "utf8")).toBe("github.com:\n    user: harbor\n".repeat(50));
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectPerm(file, 0o600);
     expect(readdirSync(dir)).toEqual(["hosts.yml"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
