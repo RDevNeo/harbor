@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.178.2] - 2026-11-11
+
+### Changed
+- macOS groundwork, nothing changes on Linux: copy with images on macOS's pasteboard, Harbor's icon in the
+  menu bar, start at login as a LaunchAgent, and the microphone for dictation (`harbor record-mic`).
+
 ## [0.178.1] - 2026-11-11
 
 ### Changed
