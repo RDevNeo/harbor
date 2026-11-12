@@ -23,7 +23,8 @@ test("a_cgroup_with_anyone_else_in_it_isnt_ours: a cgroup with anyone else in it
 
 const state = (p: number): string => proc.stat(p)?.state ?? "";
 
-test("signals_hold_a_tree_and_let_it_go: signals hold a tree and let it go", async () => {
+// Linux and macOS: SIGSTOP and the T state (Windows suspends threads: os.test.ts).
+test.if(process.platform !== "win32")("signals_hold_a_tree_and_let_it_go: signals hold a tree and let it go", async () => {
   const saved = process.env.HARBOR_DISCORD_NO_CGROUP;
   process.env.HARBOR_DISCORD_NO_CGROUP = "1";
   const c = spawn("sh", ["-c", "sleep 30 & wait"], { detached: true, stdio: "ignore" });

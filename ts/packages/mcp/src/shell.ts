@@ -2,6 +2,7 @@ import { type ChildProcess, spawn, type StdioOptions } from "node:child_process"
 import { providers } from "@harbor/agents";
 import { randomHex } from "@harbor/store";
 import { agentEnv } from "./mcp.ts";
+import { platform, proc } from "@harbor/os";
 
 export const OUTPUT_MAX = 40_000;
 
@@ -47,6 +48,11 @@ export async function shellCommand(script: string, cwd: string, stdio: StdioOpti
 
 export function killGroup(pid: number | undefined): void {
   if (pid === undefined) return;
+  // Windows has no process groups: the tree by its parents.
+  if (platform() === "win32") {
+    proc.killTree(pid);
+    return;
+  }
   try {
     process.kill(-pid, "SIGKILL");
   } catch {

@@ -1,6 +1,7 @@
 import { realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { paths as osPaths } from "@harbor/os";
 import { type Body, type Dest, dest, hostname, http as meshHttp, jsonBody, type Kv, type Me, type Peer, shQuote } from "@harbor/net";
 import { home, privateDir, randomHex } from "@harbor/store";
 import { argStr, argStrings, argUint } from "./args.ts";
@@ -189,7 +190,9 @@ export function chatKey(peer: string, chat: string): number {
 
 /** Whether `p` (absolute) is inside one of `roots`, symlinks resolved: its nearest existing folder is resolved and the rest may not climb out. */
 export function inside(p: string, roots: readonly string[]): boolean {
-  if (!p.startsWith("/") || p.split("/").includes("..")) return false;
+  // Windows: C:\… paths, either separator.
+  const win = sep === "\\";
+  if (!isAbsolute(p) || p.split(win ? /[\\/]/ : "/").includes("..")) return false;
   let base = p;
   const rest: string[] = [];
   let real: string;
@@ -204,11 +207,11 @@ export function inside(p: string, roots: readonly string[]): boolean {
       base = up;
     }
   }
-  for (const c of rest.reverse()) real = real === "/" ? `/${c}` : `${real}/${c}`;
+  for (const c of rest.reverse()) real = win ? join(real, c) : real === "/" ? `/${c}` : `${real}/${c}`;
   return roots.some((r) => {
     try {
       const root = realpathSync(r);
-      return real === root || real.startsWith(root === "/" ? "/" : `${root}/`);
+      return root === "/" || osPaths.under(real, root) !== null;
     } catch {
       return false;
     }

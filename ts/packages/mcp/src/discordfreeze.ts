@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { proc } from "@harbor/os";
+import { platform, proc } from "@harbor/os";
 
 /** Reclaimed a little at a time: a tool call shouldn't wait for it, and all at once is hard on a PC. */
 const STEP = "32M";
@@ -109,6 +109,11 @@ async function byCgroups(pids: number[]): Promise<Held | undefined> {
 }
 
 export function signal(pids: number[], sig: "SIGSTOP" | "SIGCONT" | "SIGKILL"): void {
+  // Through @harbor/os: Windows has no such signals (it suspends threads, and a kill there ends the tree).
+  if (sig !== "SIGKILL") {
+    proc.pause(pids, sig === "SIGSTOP");
+    return;
+  }
   for (const p of pids) {
     try {
       process.kill(p, sig);
@@ -168,6 +173,10 @@ export function killLeftOver(leader: number): void {
   const pids = tree(leader);
   thaw({ kind: "cgroups", paths: cgroups(pids).filter((c) => ours(c, pids)) });
   signal(pids, "SIGCONT");
+  if (platform() === "win32") {
+    proc.killTree(leader);
+    return;
+  }
   try {
     process.kill(-leader, "SIGKILL");
   } catch {

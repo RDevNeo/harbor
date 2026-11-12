@@ -6,11 +6,13 @@ import type { Stat } from "../proc.ts";
 import {
   EPOCH_DIFF_S,
   PROCESS_QUERY_LIMITED_INFORMATION,
+  PROCESS_SUSPEND_RESUME,
   PROCESS_TERMINATE,
   commandLine,
   creationTime,
   entries,
   kernel32,
+  ntdll,
   sessionOf,
   splitCommandLine,
   stillActive,
@@ -123,4 +125,11 @@ export function terminate(pid: number, code = 1): boolean {
 /** The tree from the top down (a parent can't start new children once it's gone), twice for what started meanwhile. */
 export function killTree(pid: number): void {
   for (let pass = 0; pass < 2; pass++) for (const p of descendants(pid)) terminate(p);
+}
+
+/** Stops every thread of the process (`on`) or lets it run again: Windows' SIGSTOP and SIGCONT. */
+export function pause(pid: number, on: boolean): boolean {
+  const nt = ntdll();
+  if (nt === null) return false;
+  return withProcess(pid, PROCESS_SUSPEND_RESUME, (h) => (on ? nt.NtSuspendProcess(h) : nt.NtResumeProcess(h)) === 0) ?? false;
 }

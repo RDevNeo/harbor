@@ -2,7 +2,7 @@ import { paths as osPaths } from "@harbor/os";
 import { closeSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, extname, join } from "node:path";
+import { dirname, extname, isAbsolute, join, sep } from "node:path";
 import { home } from "@harbor/store";
 import { argBool, argStr, argUint } from "./args.ts";
 import type { Json } from "./json.ts";
@@ -85,13 +85,14 @@ export function resolve(cwd: string, p: string): string {
   p = p.trim();
   if (p === "") return cwd;
   if (p === "~") return home();
-  if (p.startsWith("~/")) return joined(home(), p.slice(2));
-  return p.startsWith("/") ? p : joined(cwd, p);
+  if (p.startsWith("~/") || (sep === "\\" && p.startsWith("~\\"))) return joined(home(), p.slice(2));
+  // Windows: C:\… and \\server\… are full paths too.
+  return p.startsWith("/") || isAbsolute(p) ? p : joined(cwd, p);
 }
 
 /** Path::join: no normalizing, so a `..` after a symlink means what the system says. */
 function joined(base: string, rest: string): string {
-  return base.endsWith("/") ? base + rest : `${base}/${rest}`;
+  return base.endsWith("/") || base.endsWith(sep) ? base + rest : `${base}${sep}${rest}`;
 }
 
 /** `old` must occur once unless `all`; an empty `old` writes a new or empty file; a CRLF file matches an `old` written with LF. */

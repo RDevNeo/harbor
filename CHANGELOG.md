@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.10] - 2026-11-12
+
+### Fixed
+- Windows: the Discord app's idle freeze suspends its shell and lets it go again (it signalled processes Windows
+  can't signal), and a command Harbor runs for an agent is stopped with what it started.
+- Windows: other PCs' agents can read and edit this PC's project files at the level you gave them (Windows
+  paths were refused), and file tools take `C:\…` paths.
+
 ## [0.180.9] - 2026-11-12
 
 ### Fixed

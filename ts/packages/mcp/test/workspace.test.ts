@@ -2,7 +2,7 @@ import "./sandbox.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { home } from "@harbor/store";
 import { forAccess, forget, note, numbered, replace, resolve, TOOLS, tools, call } from "../src/workspace.ts";
 import { expectPerm } from "../../../test/perm.ts";
@@ -27,7 +27,8 @@ describe("workspace", () => {
   test("paths_and_numbering: paths and numbering", () => {
     const cwd = "/p/proj";
     expect(resolve(cwd, "")).toBe(cwd);
-    expect(resolve(cwd, "src/a.rs")).toBe("/p/proj/src/a.rs");
+    // Not normalized (a `..` after a link means what the system says): the system's separator after the folder.
+    expect(resolve(cwd, "src/a.rs")).toBe(`${cwd}${sep}src/a.rs`);
     expect(resolve(cwd, "/etc/x")).toBe("/etc/x");
     expect(resolve(cwd, "~/x")).toBe(join(home(), "x"));
     expect(resolve(cwd, "~")).toBe(home());

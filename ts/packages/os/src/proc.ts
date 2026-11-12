@@ -321,3 +321,19 @@ export function pageSize(): number {
   }
   return pageBytes;
 }
+
+/** Stops the processes (`on`: SIGSTOP; Windows suspends their threads) or lets them run again (SIGCONT). */
+export function pause(pids: readonly number[], on: boolean): void {
+  const w = win();
+  for (const p of pids) {
+    if (w) {
+      w.proc.pause(p, on);
+      continue;
+    }
+    try {
+      process.kill(p, on ? "SIGSTOP" : "SIGCONT");
+    } catch {
+      // the process ended meanwhile
+    }
+  }
+}

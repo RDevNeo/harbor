@@ -153,6 +153,16 @@ describe("paths", () => {
 
 describe("paths: ~ and folders", () => {
   test("tilde and under, as Linux and macOS write paths", () => {
+    const was = process.env.HARBOR_TEST_PLATFORM;
+    process.env.HARBOR_TEST_PLATFORM = "linux";
+    try {
+      linuxPaths();
+    } finally {
+      if (was === undefined) delete process.env.HARBOR_TEST_PLATFORM;
+      else process.env.HARBOR_TEST_PLATFORM = was;
+    }
+  });
+  const linuxPaths = (): void => {
     expect(paths.tilde("/h", "/h")).toBe("~");
     expect(paths.tilde("/h/x/y", "/h/")).toBe("~/x/y");
     expect(paths.tilde("/hx/y", "/h")).toBe("/hx/y");
@@ -161,7 +171,7 @@ describe("paths: ~ and folders", () => {
     expect(paths.under("/h", "/h")).toBe("");
     expect(paths.under("/hx", "/h")).toBeNull();
     expect(paths.under("/H/x", "/h")).toBeNull();
-  });
+  };
   test("on Windows: either separator, any case", () => {
     const was = process.env.HARBOR_TEST_PLATFORM;
     process.env.HARBOR_TEST_PLATFORM = "win32";
@@ -277,6 +287,29 @@ describe.if(process.platform === "darwin")("macOS", () => {
     } finally {
       expect(keychain.remove(svc)).toBe(true);
       process.env.HARBOR_NO_KEYCHAIN = "1";
+    }
+  });
+});
+
+describe("proc.pause", () => {
+  test.if(process.platform === "win32")("Windows: a paused process stops, and runs on when let go", async () => {
+    const d = mkdtempSync(join(tmpdir(), "hos-pause-"));
+    const f = join(d, "ticks");
+    const p = Bun.spawn([process.execPath, "-e", `const fs = require("fs"); setInterval(() => fs.appendFileSync(${JSON.stringify(f)}, "x"), 20);`]);
+    try {
+      await Bun.sleep(400);
+      proc.pause([p.pid], true);
+      await Bun.sleep(100);
+      const held = Bun.file(f).size;
+      await Bun.sleep(300);
+      expect(Bun.file(f).size).toBe(held);
+      proc.pause([p.pid], false);
+      await Bun.sleep(300);
+      expect(Bun.file(f).size).toBeGreaterThan(held);
+    } finally {
+      p.kill();
+      await p.exited;
+      rmSync(d, { recursive: true, force: true });
     }
   });
 });
