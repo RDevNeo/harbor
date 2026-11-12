@@ -2,7 +2,7 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { setenv } from "./libc.ts";
 import { platform } from "./platform.ts";
 
@@ -104,25 +104,52 @@ let wrapped = false;
  * Windows: Bun.spawn, Bun.spawnSync and Bun.which without an `env` look programs up in Bun's copy of the
  * environment from the process's start, not in process.env as it is now (node:child_process uses the current
  * one). They're given the current one, so what normalize() added (Git Bash's tools) is found by every spawn.
+ * And a command that is a `#!` script or an npm .cmd shim runs as argvOf says (its interpreter, node and the
+ * script): Windows can't start the one, and the other can't take a quote or `&` in an argument.
  */
 function currentEnvForBun(): void {
   if (wrapped || typeof Bun === "undefined") return;
   wrapped = true;
   type Spawn = (...a: unknown[]) => unknown;
   const b = Bun as unknown as Record<"spawn" | "spawnSync" | "which", Spawn>;
+  const which = b.which;
+  const findIn = (name: string, env: Env): string | null => which.call(Bun, name, { PATH: env.PATH ?? env.Path ?? "" }) as string | null;
+  const runnable = (cmd: unknown, env: Env): unknown => {
+    if (!Array.isArray(cmd) || typeof cmd[0] !== "string" || cmd[0] === "") return cmd;
+    const first = cmd[0];
+    let path = first;
+    if (!isAbsolute(first)) {
+      // A bare name: only an npm shim needs a change (Bun runs a .cmd through cmd.exe).
+      if (/[\\/]/.test(first)) return cmd;
+      const found = findIn(first, env);
+      if (found === null || !/\.(cmd|bat)$/i.test(found)) return cmd;
+      path = found;
+    } else if (/\.(exe|com)$/i.test(first)) {
+      return cmd;
+    }
+    let line: string[];
+    try {
+      line = argvOf(path, env);
+    } catch {
+      return cmd;
+    }
+    return line.length === 1 && line[0] === path ? cmd : [...line, ...cmd.slice(1)];
+  };
   const withEnv = (f: Spawn): Spawn =>
     function (this: unknown, ...a: unknown[]): unknown {
       const [first, second] = a;
       if (Array.isArray(first)) {
-        const o = (second ?? {}) as { env?: unknown };
-        return f.call(this, first, o.env === undefined ? { ...o, env: process.env } : o, ...a.slice(2));
+        const o = (second ?? {}) as { env?: Env };
+        const env = o.env ?? process.env;
+        return f.call(this, runnable(first, env), o.env === undefined ? { ...o, env: process.env } : o, ...a.slice(2));
       }
-      if (first !== null && typeof first === "object" && (first as { env?: unknown }).env === undefined) {
-        return f.call(this, { ...(first as object), env: process.env }, ...a.slice(1));
+      if (first !== null && typeof first === "object") {
+        const o = first as { env?: Env; cmd?: unknown };
+        const env = o.env ?? process.env;
+        return f.call(this, { ...o, cmd: runnable(o.cmd, env), env }, ...a.slice(1));
       }
       return f.apply(this, a);
     };
-  const which = b.which;
   try {
     b.spawn = withEnv(b.spawn);
     b.spawnSync = withEnv(b.spawnSync);
@@ -144,5 +171,5 @@ function currentEnvForBun(): void {
 export function argvOf(program: string, env: Env = process.env): string[] {
   if (platform() !== "win32") return [program];
   const { argvOf: shim } = require("./win32/shim.ts") as typeof import("./win32/shim.ts");
-  return shim(program, (name) => Bun.which(name, { PATH: env.PATH ?? env.Path ?? "" }), gitBashDir(env));
+  return shim(program, (name) => Bun.which(name, { PATH: env.PATH ?? env.Path ?? "" }) as string | null, gitBashDir(env));
 }

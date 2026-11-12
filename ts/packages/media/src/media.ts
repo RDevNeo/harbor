@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, sep, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { dataDir, home } from "@harbor/store";
 import { sharpLib } from "./sharplib.ts";
 import type { Image, Paragraph, Parent, PhrasingContent, Root, RootContent } from "mdast";
@@ -17,6 +18,12 @@ export const MAX_VIDEO = 200 * 2 ** 20;
 const MAX_PER_TEXT = 8;
 const PRIVATE = [".ssh", ".gnupg", ".password-store", ".aws", ".kube", ".docker", ".netrc"];
 
+/** Windows: paths there are `C:\…` (and `\\server\…`); a `/…` path is another PC's, kept as it is. */
+const WIN = sep === "\\";
+const winPath = (p: string): boolean => WIN && /^(?:[A-Za-z]:[\\/]|\\\\)/.test(p);
+/** A full path: `/…`, or on Windows one with a drive letter (or a share). */
+const absolute = (p: string): boolean => p.startsWith("/") || winPath(p);
+
 export interface Media {
   path: string;
   caption: string;
@@ -28,7 +35,7 @@ export interface Media {
 export function mediaName(m: Media): string {
   const src = m.url ?? m.path;
   const bare = src.split(/[?#]/)[0] ?? src;
-  return bare.split("/").reverse().find((s) => s !== "") ?? bare;
+  return bare.split(WIN ? /[\\/]/ : "/").reverse().find((s) => s !== "") ?? bare;
 }
 
 function ext(path: string): string {
@@ -153,6 +160,10 @@ function pctDecode(s: string): string {
 }
 
 export function normalize(p: string): string {
+  if (winPath(p)) {
+    const n = win32.normalize(p);
+    return n.length > 3 ? n.replace(/\\+$/, "") : n;
+  }
   const abs = p.startsWith("/");
   const stack: string[] = [];
   for (const c of p.split("/")) {
@@ -163,7 +174,14 @@ export function normalize(p: string): string {
   return abs ? `/${stack.join("/")}` : stack.join("/");
 }
 
-const startsWithPath = (p: string, base: string): boolean => p === base || p.startsWith(base.endsWith("/") ? base : `${base}/`);
+const startsWithPath = (p: string, base: string): boolean => {
+  if (winPath(base)) {
+    // Windows' paths: either separator, any case.
+    const [a, b] = [p.replaceAll("/", "\\").toLowerCase(), base.replaceAll("/", "\\").toLowerCase()];
+    return a === b || a.startsWith(b.endsWith("\\") ? b : `${b}\\`);
+  }
+  return p === base || p.startsWith(base.endsWith("/") ? base : `${base}/`);
+};
 
 function canon(p: string): string | null {
   try {
@@ -182,10 +200,10 @@ export function resolve(target: string, cwd: string | null): [string, string | n
   if (t.startsWith("file://")) {
     let rest = t.slice("file://".length);
     if (rest.startsWith("localhost")) rest = rest.slice("localhost".length);
-    path = pctDecode(rest);
+    path = WIN && /^\/[A-Za-z]:\//.test(rest) ? fileURLToPath(`file://${rest}`) : pctDecode(rest);
   } else if (t.startsWith("~/")) {
     path = join(home(), t.slice(2));
-  } else if (t.startsWith("/")) {
+  } else if (absolute(t)) {
     path = t;
   } else {
     if (cwd === null) return null;
@@ -195,7 +213,7 @@ export function resolve(target: string, cwd: string | null): [string, string | n
     if (!inside) return null;
     path = joined;
   }
-  if (!path.startsWith("/")) return null;
+  if (!absolute(path)) return null;
   path = normalize(path);
   return allowed(path) ? [path, null] : null;
 }
@@ -205,7 +223,7 @@ export function localVideo(target: string): string | null {
   return r && r[1] === null && isVideo(r[0]) ? r[0] : null;
 }
 
-const isPrivate = (p: string): boolean => p.split("/").some((c) => PRIVATE.includes(c)) || ["/proc", "/sys", "/dev"].some((d) => startsWithPath(p, d));
+const isPrivate = (p: string): boolean => p.split(/[\\/]/).some((c) => PRIVATE.includes(c)) || ["/proc", "/sys", "/dev"].some((d) => startsWithPath(p, d));
 
 export function allowed(p: string): boolean {
   if (kind(p) === null || isPrivate(p)) return false;
@@ -235,13 +253,14 @@ export function find(md: string, cwd: string | null): Media[] {
   const lower = md.toLowerCase();
   if (![...IMAGE_EXTS, ...VIDEO_EXTS].some((e) => lower.includes(`.${e}`))) return out;
   let named = 0;
-  for (const raw of md.split(/[\s"'`()<>[\],=\\|*]/)) {
+  // Windows: "\\" is a path's own separator there, not a break between words.
+  for (const raw of md.split(WIN ? /[\s"'`()<>[\],=|*]/ : /[\s"'`()<>[\],=\\|*]/)) {
     let tok = raw.replace(/[.:;!?]+$/, "");
     if (tok.startsWith("file://")) tok = tok.slice("file://".length);
     if (kind(tok) === null) continue;
     let path: string;
     if (tok.startsWith("~/")) path = join(home(), tok.slice(2));
-    else if (tok.startsWith("/")) path = tok;
+    else if (absolute(tok)) path = tok;
     else continue;
     if (!out.some((m) => m.path === path) && isFile(located(path)) && allowed(path)) {
       out.push({ video: isVideo(path), path, caption: "", shown: false, url: null });
@@ -268,7 +287,7 @@ const bad = (error: string): Check => ({ ok: false, error });
 
 export function check(path: string): Check {
   if (kind(path) === null) return bad("not an image or video");
-  if (!path.startsWith("/") || !allowed(path)) return bad("not a file Harbor shows");
+  if (!absolute(path) || !allowed(path)) return bad("not a file Harbor shows");
   return checkFile(path, located(path));
 }
 
@@ -332,12 +351,12 @@ export function remotePath(path: string): string {
  * the path isn't under another home.
  */
 export function underThisHome(path: string, here: string = home()): string | null {
-  const m = /^\/(?:home|Users)\/[^/]+\/(.+)$/.exec(path);
+  const m = /^(?:\/(?:home|Users)\/[^/]+\/|[A-Za-z]:[\\/]Users[\\/][^\\/]+[\\/])(.+)$/.exec(path);
   if (!m?.[1]) return null;
-  const mine = here.replace(/\/+$/, "");
-  if (path === mine || path.startsWith(`${mine}/`)) return null;
-  const to = normalize(`${mine}/${m[1]}`);
-  return to.startsWith(`${mine}/`) ? to : null;
+  const mine = here.replace(/[\\/]+$/, "");
+  if (startsWithPath(path, mine)) return null;
+  const to = normalize(WIN ? join(mine, m[1]) : `${mine}/${m[1]}`);
+  return to !== mine && startsWithPath(to, mine) ? to : null;
 }
 
 /**
@@ -345,7 +364,7 @@ export function underThisHome(path: string, here: string = home()): string | nul
  * PC's home (`underThisHome`), else the copy fetched from the chat's PC (`remotePath`).
  */
 export function located(path: string): string {
-  if (existsSync(path) || !path.startsWith("/") || kind(path) === null) return path;
+  if (existsSync(path) || !absolute(path) || kind(path) === null) return path;
   const k = keptPath(path);
   if (isFile(k)) return k;
   const here = underThisHome(path);

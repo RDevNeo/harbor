@@ -32,6 +32,7 @@ let v: Int32Array | null = null;
 let wbytes: Uint8Array | null = null;
 let whatBytes: Uint8Array | null = null;
 let worker: Worker | null = null;
+let stallLimit = Number.POSITIVE_INFINITY;
 const labels: string[] = [""];
 const codes = new Map<string, number>();
 
@@ -72,11 +73,15 @@ function code(name: string): number {
 export function within<T>(name: string, f: () => T): T {
   if (v === null) return f();
   const prev = v[LABEL] ?? 0;
-  Atomics.store(v, LABEL, code(name));
+  const c = code(name);
+  Atomics.store(v, LABEL, c);
+  // No sampler (Windows, macOS): the label notes itself when it held the thread past a stall, the innermost first.
+  const t = worker === null ? performance.now() : 0;
   try {
     return f();
   } finally {
     Atomics.store(v, LABEL, prev);
+    if (worker === null && performance.now() - t >= stallLimit && Atomics.load(v, SEEN) === 0) Atomics.store(v, SEEN, c);
   }
 }
 
@@ -142,6 +147,7 @@ export function hookSqlite(): void {
 export function start(log: (line: string) => void = (l) => console.error(l), o: { stallMs?: number; beatMs?: number; quietMs?: number } = {}): () => void {
   if (v !== null) return () => {};
   const stallMs = o.stallMs ?? STALL_MS;
+  stallLimit = stallMs;
   const beatMs = o.beatMs ?? BEAT_MS;
   // HARBOR_STALL_QUIET_MS=0 (rigs): every stall gets its line.
   const quietEnv = Number(process.env.HARBOR_STALL_QUIET_MS ?? "");

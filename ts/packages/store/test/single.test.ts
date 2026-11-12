@@ -8,10 +8,10 @@ test("a second instance on the same socket is refused until the first lets go", 
   const dir = mkdtempSync(join(tmpdir(), "hsingle-"));
   const env = { HARBOR_SOCK: join(dir, "harbor.sock") };
   expect(await acquire(env)).toBe(true);
-  const other = Bun.spawnSync([process.execPath, "-e", `import { acquire } from "${join(import.meta.dir, "../src/single.ts")}"; process.exit((await acquire(${JSON.stringify(env)})) ? 0 : 3);`]);
+  const other = Bun.spawnSync([process.execPath, "-e", `import { acquire } from ${JSON.stringify(join(import.meta.dir, "../src/single.ts"))}; process.exit((await acquire(${JSON.stringify(env)})) ? 0 : 3);`]);
   expect(other.exitCode).toBe(3);
   release();
-  const after = Bun.spawnSync([process.execPath, "-e", `import { acquire } from "${join(import.meta.dir, "../src/single.ts")}"; process.exit((await acquire(${JSON.stringify(env)})) ? 0 : 3);`]);
+  const after = Bun.spawnSync([process.execPath, "-e", `import { acquire } from ${JSON.stringify(join(import.meta.dir, "../src/single.ts"))}; process.exit((await acquire(${JSON.stringify(env)})) ? 0 : 3);`]);
   expect(after.exitCode).toBe(0);
   rmSync(dir, { recursive: true, force: true });
 });

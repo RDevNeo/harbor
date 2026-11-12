@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, realpathSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { Store } from "@harbor/store";
 import type { Fetch, VideoHooks } from "./images.ts";
 import {
@@ -368,7 +369,7 @@ export function playable(path: string): Playable {
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   }
-  return file.startsWith("/") ? { ok: true, file } : fail("not a file Harbor shows");
+  return isAbsolute(file) ? { ok: true, file } : fail("not a file Harbor shows");
 }
 
 export async function fileOf(key: string, fetch?: Fetch): Promise<Playable> {

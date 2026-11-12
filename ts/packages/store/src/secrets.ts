@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, sep as pathSep } from "n
 import { dataDir, now, privateDir, writePrivate } from "./paths.ts";
 import type { Store } from "./store.ts";
 import { clipMiddle } from "./text.ts";
+import { platform, proc as osProc } from "@harbor/os";
 
 /** Shorter values would hide common words in every output. */
 export const MIN_LEN = 4;
@@ -560,7 +561,9 @@ export async function run(
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    spawnSync("kill", ["-KILL", "--", `-${proc.pid}`], { stdio: "ignore" });
+    // Windows has no process groups: the tree by its parents (Git Bash's sleep, a server it started).
+    if (platform() === "win32") osProc.killTree(proc.pid);
+    else spawnSync("kill", ["-KILL", "--", `-${proc.pid}`], { stdio: "ignore" });
     proc.kill("SIGKILL");
   }, timeoutMs);
   await proc.exited;

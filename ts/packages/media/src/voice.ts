@@ -5,7 +5,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { dataDir, newUuid } from "@harbor/store";
 import * as parakeet from "./parakeet.ts";
-import { audio as osAudio, spawn as osSpawn } from "@harbor/os";
+import { audio as osAudio, platform, proc as osProc, spawn as osSpawn } from "@harbor/os";
 
 export const RATE = parakeet.RATE;
 const MAX_SECS = 600;
@@ -414,6 +414,8 @@ export async function outputWithin(bin: string, args: readonly string[], limitMs
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
+    // Windows: a kill ends that one process, not what it started (which keeps the pipes open).
+    if (platform() === "win32") osProc.killTree(proc.pid);
     proc.kill();
   }, limitMs);
   try {

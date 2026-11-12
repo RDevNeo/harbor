@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Store } from "@harbor/store";
 import { LibmpvUnavailable } from "../src/libmpv.ts";
 import * as v from "../src/video.ts";
@@ -82,7 +82,7 @@ test("plays_only_what_media_allows_as_an_absolute_path", () => {
   const ok = v.playable(join(d, "clip.mp4"));
   expect(ok.ok && ok.file).toBe(realpathSync(join(d, "clip.mp4")));
   const odd = v.playable(join(d, "--script=x.mp4"));
-  expect(odd.ok && odd.file.startsWith("/")).toBe(true);
+  expect(odd.ok && isAbsolute(odd.file)).toBe(true);
   for (const bad of [join(d, ".ssh/key.mp4"), join(d, "fake.mp4"), join(d, "pic.png"), join(d, "missing.mp4"), "clip.mp4", "https://example.com/a.mp4"]) {
     expect(v.playable(bad).ok).toBe(false);
   }
@@ -98,7 +98,7 @@ test("a_video_of_another_pc_is_saved_here_before_it_plays", async () => {
   const got = await v.fileOf(key, fetch);
   expect(got.ok).toBe(true);
   if (!got.ok) return;
-  expect(got.file.startsWith("/") && got.file.endsWith(".mp4")).toBe(true);
+  expect(isAbsolute(got.file) && got.file.endsWith(".mp4")).toBe(true);
   expect(asked).toBe(1);
   rmSync(got.file);
   const off = await v.fileOf(key, async () => null);

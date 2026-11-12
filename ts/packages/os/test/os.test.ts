@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { autostart, clipboard, desktop, env, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
@@ -254,6 +254,18 @@ describe.if(process.platform === "darwin")("macOS", () => {
 });
 
 describe("env", () => {
+  // test/preload.ts ran env.normalize(): on Windows, Bun.spawn runs #! scripts with their interpreter.
+  test.if(process.platform === "win32")("Windows: Bun.spawn runs a #! script, arguments as they are", () => {
+    const d = mkdtempSync(join(tmpdir(), "hos-shebang-"));
+    try {
+      writeFileSync(join(d, "tool"), `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)))\n`);
+      const r = Bun.spawnSync([join(d, "tool"), 'a"b', "x&y", "%PATH%"]);
+      expect(JSON.parse(r.stdout.toString())).toEqual(['a"b', "x&y", "%PATH%"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   test("macOS children get a UTF-8 locale when none is set", () => {
     expect(env.childDefaults({ HARBOR_TEST_PLATFORM: "darwin" })).toEqual({ LANG: "en_US.UTF-8" });
     expect(env.childDefaults({ HARBOR_TEST_PLATFORM: "darwin", LC_CTYPE: "UTF-8" })).toEqual({});

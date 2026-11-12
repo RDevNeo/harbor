@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { paths } from "@harbor/os";
+import { paths, platform } from "@harbor/os";
 
 type Env = Record<string, string | undefined>;
 
@@ -35,10 +35,28 @@ export function writePrivate(p: string, data: string): void {
   try {
     writeFileSync(tmp, data, { mode: 0o600 });
     chmodSync(tmp, 0o600);
-    renameSync(tmp, p);
+    renameInto(tmp, p);
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;
+  }
+}
+
+/**
+ * rename(2) over `to`. Windows refuses (EPERM, EACCES, EBUSY) while another process is replacing or reading
+ * that file at the same moment: tried again for up to a quarter second, as the other is done by then.
+ */
+function renameInto(from: string, to: string): void {
+  const retry = platform() === "win32";
+  for (let i = 0; ; i++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (!retry || i >= 50 || (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY")) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
   }
 }
 

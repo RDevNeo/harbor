@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import * as m from "../src/media.ts";
 
 const dirs: string[] = [];
@@ -114,9 +114,9 @@ test("a_file_named_under_another_persons_home_is_found_under_this_pcs_or_as_fetc
   process.env.HOME = here;
   try {
     // A chat that moved here from another PC names its project's images by that PC's home.
-    expect(m.underThisHome("/home/sam/Documents/game/a.png", here)).toBe(`${here}/Documents/game/a.png`);
-    expect(m.underThisHome("/Users/sam/Documents/game/a.png", here)).toBe(`${here}/Documents/game/a.png`);
-    expect(m.underThisHome(`${here}/Documents/a.png`, here)).toBeNull();
+    expect(m.underThisHome("/home/sam/Documents/game/a.png", here)).toBe(join(here, "Documents/game/a.png"));
+    expect(m.underThisHome("/Users/sam/Documents/game/a.png", here)).toBe(join(here, "Documents/game/a.png"));
+    expect(m.underThisHome(join(here, "Documents/a.png"), here)).toBeNull();
     expect(m.underThisHome("/srv/game/a.png", here)).toBeNull();
     expect(m.underThisHome("/home/sam/../../etc/a.png", here)).toBeNull();
     const theirs = "/home/sam-nobody/Documents/game/previews/church.png";
@@ -187,8 +187,8 @@ test("a_replys_own_images_are_kept_in_its_chats_uploads_by_their_contents_and_na
   const found = m.find(out, proj).filter((x) => x.shown);
   expect(found.map((x) => x.caption)).toEqual(["Login page", "Weekly chart", "A clip", "web", "gone", "fake"]);
   const [a, b, c] = found.map((x) => x.path);
-  for (const p of [a, b, c]) expect(p?.startsWith(`${up}/`)).toBe(true);
-  expect(a).toMatch(/\/[0-9a-f]{20}\.png$/);
+  for (const p of [a, b, c]) expect(p?.startsWith(`${up}${sep}`)).toBe(true);
+  expect(a).toMatch(/[\\/][0-9a-f]{20}\.png$/);
   expect(c).toMatch(/\.mp4$/);
   expect(readFileSync(a ?? "")).toEqual(PNG);
   // What isn't a file here that Harbor shows is left as written; so is code.

@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.5] - 2026-11-12
+
+### Fixed
+- Windows: images and videos an agent names in its reply show in the chat (`C:\…` paths, `file:///C:/…` links,
+  paths in the text); a chat moved from another PC finds its images under this PC's profile.
+- Windows: any program Harbor starts that is a `#!` script or an npm `.cmd` runs as it would in Git Bash, with
+  its arguments as they are.
+- Windows: two turns starting at once no longer fail writing the same file; a secret-holding command that runs
+  too long is stopped with everything it started, as is a transcription; stall log lines name what was running.
+
 ## [0.180.4] - 2026-11-12
 
 ### Fixed
