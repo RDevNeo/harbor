@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { Pixels } from "./logos.ts";
 import { isImage } from "./logic/images.ts";
 import { type FileItem, noPixels } from "./window.ts";
@@ -23,7 +24,7 @@ export class AttachThumbs {
     let tiles = 0;
     let chips = 0;
     return files.map((p) => {
-      const name = p.slice(p.lastIndexOf("/") + 1);
+      const name = basename(p);
       if (!isImage(p)) return { name, image: false, tile: false, thumb: noPixels, number: 0, slot: chips++ };
       n++;
       const t = this.thumb(p);

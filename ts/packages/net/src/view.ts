@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { Item, Mention, SentVia } from "@harbor/store";
 import { shownTo, type Viewer } from "./senders.ts";
 
@@ -76,7 +77,7 @@ export const CHAT_LINK = "harbor:gid/";
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 
 export function isImage(path: string): boolean {
-  const base = path.split("/").pop() ?? "";
+  const base = basename(path);
   const i = base.lastIndexOf(".");
   return i > 0 && IMAGE_EXTS.includes(base.slice(i + 1).toLowerCase());
 }

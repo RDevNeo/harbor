@@ -4,6 +4,7 @@
  * names the PC that holds it, so two projects with one name are told apart, and a new chat in
  * it starts there. The phone shows the same from `/v1/state` (`here`, `pc`, `pc_name`).
  */
+import { dirname } from "node:path";
 
 /** A project's folder isn't on this PC: the PC that holds it (`pc` "" when none is known). */
 export interface Place {
@@ -21,8 +22,8 @@ export function placeName(p: Place): string {
 export function placeHint(place: Place | null, dir: string, clash: boolean): string {
   if (place !== null) return place.name !== "" ? place.name : "not on this PC";
   if (!clash) return "";
-  const cut = dir.lastIndexOf("/");
-  return cut > 0 ? dir.slice(0, cut) : dir;
+  const up = dirname(dir);
+  return up !== "." && up !== dir && up !== "/" ? up : dir;
 }
 
 /** A project's tooltip or palette line: its folder, with where it is when it isn't here. */

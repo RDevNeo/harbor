@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-const here = dirname(new URL(import.meta.url).pathname);
+const here = import.meta.dir;
 const script = resolve(here, "..", "..", "..", "scripts", "build.ts");
 const scratch = resolve(here, "..", ".tmp");
 const folders: string[] = [];

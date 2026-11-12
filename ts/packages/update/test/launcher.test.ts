@@ -9,7 +9,7 @@ import { cleanup, configFor, makeInstall, tmp, wait, type Install } from "./supp
 
 afterEach(cleanup);
 
-const src = join(dirname(new URL(import.meta.url).pathname), "..", "src");
+const src = join(import.meta.dir, "..", "src");
 
 const goodBundle = (version: string, marker: string): string => `import { writeFileSync } from "node:fs";
 import { defaultConfig } from ${JSON.stringify(join(src, "config.ts"))};

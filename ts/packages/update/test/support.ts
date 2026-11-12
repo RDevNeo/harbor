@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import type { UpdateConfig } from "../src/config.ts";
 import { sleep } from "../src/config.ts";
 
-const here = dirname(new URL(import.meta.url).pathname);
+const here = import.meta.dir;
 export const FAKE_RUNTIME = join(here, "fake-runtime.ts");
 
 export interface TestKey {

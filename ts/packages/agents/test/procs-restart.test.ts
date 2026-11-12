@@ -32,8 +32,8 @@ async function restart(scoped: boolean, finishWhileAway: boolean): Promise<void>
   const command = `echo before; echo error-output >&2; while [ ! -f '${gate}' ]; do sleep 0.02; done; echo after; exit ${code}`;
   writeFileSync(helper, `
 import { writeFileSync } from "node:fs";
-import { Store } from ${JSON.stringify(new URL("../../store/src/index.ts", import.meta.url).pathname)};
-import * as procs from ${JSON.stringify(new URL("../src/procs.ts", import.meta.url).pathname)};
+import { Store } from ${JSON.stringify(join(import.meta.dir, "../../store/src/index.ts"))};
+import * as procs from ${JSON.stringify(join(import.meta.dir, "../src/procs.ts"))};
 const store = Store.openAt(${JSON.stringify(db)});
 const blank = { id: 0, repoId: null, title: "process restart", sessionId: "s", started: false, account: "test", model: "", effort: "", access: "full" as const, settled: false, updated: 0, parent: null, name: "", device: "", gid: "", home: "", homeId: 0, retired: false };
 const lead = store.createChat({ ...blank, role: "lead" });
@@ -45,7 +45,7 @@ setInterval(() => {}, 1000);
   const unit = `harbor-process-test-${crypto.randomUUID()}.scope`;
   const argv = scoped ? ["systemd-run", "--user", "--scope", "--quiet", "--collect", `--unit=${unit}`, "--", process.execPath, helper] : [process.execPath, helper];
   const controller = Bun.spawn(argv, {
-    env: { ...process.env, XDG_STATE_HOME: join(dir, "state"), XDG_DATA_HOME: join(dir, "data"), XDG_RUNTIME_DIR: scoped ? `/run/user/${process.getuid?.()}` : process.env.XDG_RUNTIME_DIR, HARBOR_TURN_SCOPE: scoped ? "1" : "0", HARBOR_ENTRY: new URL("../../../harbor.ts", import.meta.url).pathname, GITHUB_TOKEN: "not-for-cmd-json" },
+    env: { ...process.env, XDG_STATE_HOME: join(dir, "state"), XDG_DATA_HOME: join(dir, "data"), XDG_RUNTIME_DIR: scoped ? `/run/user/${process.getuid?.()}` : process.env.XDG_RUNTIME_DIR, HARBOR_TURN_SCOPE: scoped ? "1" : "0", HARBOR_ENTRY: join(import.meta.dir, "../../../harbor.ts"), GITHUB_TOKEN: "not-for-cmd-json" },
     stdin: "ignore", stdout: "ignore", stderr: "ignore",
   });
   let store: Store | undefined;

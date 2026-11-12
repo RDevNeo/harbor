@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { Chat, Repo } from "@harbor/store";
 import { clip } from "./team.ts";
 
@@ -21,7 +22,7 @@ export function findProject(repos: readonly Repo[], want: string): number | null
   const lower = w.toLowerCase();
   const byPath = repos.find((r) => [r.path, r.local ?? r.path].some((p) => p.replace(/\/+$/, "") === w));
   const byName = repos.find((r) => r.name.toLowerCase() === lower);
-  const byFolder = repos.find((r) => (r.path.replace(/\/+$/, "").split("/").pop() ?? "").toLowerCase() === lower);
+  const byFolder = repos.find((r) => basename(r.path).toLowerCase() === lower);
   return (byPath ?? byName ?? byFolder)?.id ?? null;
 }
 

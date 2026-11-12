@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, basename } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep as pathSep } from "node:path";
 import { dataDir, now, privateDir, writePrivate } from "./paths.ts";
 import type { Store } from "./store.ts";
 import { clipMiddle } from "./text.ts";
@@ -288,11 +288,17 @@ export function envVarName(s: string): string | null {
 }
 
 /** Where Harbor may write a key for `file`: a file named `.env` or `.env.*`, in a folder that exists inside `root` (symlinks resolved), and not itself a symlink. */
+/** Whether `path` is `dir` or under it (Windows' separators and drive letters too). */
+function within(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${pathSep}`) && !isAbsolute(rel));
+}
+
 export function envPath(root: string, file: string): string {
   const f = file.trim();
   const name = basename(f);
   if (name !== ".env" && !(name.startsWith(".env.") && name.length > 5)) throw new Error(`'${f}' isn't a .env file: only files named .env or .env.something`);
-  if (f.split("/").includes("..")) throw new Error(`'${f}' goes outside the project`);
+  if (f.split(/[\\/]/).includes("..")) throw new Error(`'${f}' goes outside the project`);
   let real: string;
   try {
     real = realpathSync(root);
@@ -300,14 +306,14 @@ export function envPath(root: string, file: string): string {
     throw new Error(`can't open the project folder ${root}: ${e instanceof Error ? e.message : String(e)}`);
   }
   const full = isAbsolute(f) ? f : join(real, f);
-  const parent = full.slice(0, Math.max(full.lastIndexOf("/"), 0)) || real;
+  const parent = dirname(full);
   let dir: string;
   try {
     dir = realpathSync(parent);
   } catch {
     throw new Error(`the folder of '${f}' doesn't exist`);
   }
-  if (dir !== real && !dir.startsWith(`${real}/`)) throw new Error(`'${f}' is outside the project (${real})`);
+  if (!within(real, dir)) throw new Error(`'${f}' is outside the project (${real})`);
   const target = join(dir, name);
   let m: ReturnType<typeof lstatSync> | undefined;
   try {
@@ -391,8 +397,9 @@ export function addToGitignore(root: string, path: string): void {
   const top = git(root, ["rev-parse", "--show-toplevel"]);
   if (!top?.ok) throw new Error("not a git project");
   const dir = realpathSync(top.out.trim());
-  if (!path.startsWith(`${dir}/`)) throw new Error("the file is outside the git project");
-  const rel = path.slice(dir.length + 1);
+  if (!within(dir, path) || relative(dir, path) === "") throw new Error("the file is outside the git project");
+  // .gitignore takes "/" whatever the system's separator.
+  const rel = relative(dir, path).split(pathSep).join("/");
   const file = join(dir, ".gitignore");
   const old = existsSync(file) ? readFileSync(file, "utf8") : "";
   const sep = old === "" || old.endsWith("\n") ? "" : "\n";

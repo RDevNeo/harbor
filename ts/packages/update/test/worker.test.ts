@@ -317,7 +317,7 @@ test("the Durable Object only answers its two paths", async () => {
 });
 
 test("the worker routes the two endpoints and leaves the rest alone", async () => {
-  const path = resolve(dirname(new URL(import.meta.url).pathname), "../../../../worker/src/index.js");
+  const path = resolve(import.meta.dir, "../../../../worker/src/index.js");
   const mod: unknown = await import(path);
   const worker = (mod as { default: { fetch: (req: Request, env: ReleaseEnv) => Promise<Response> }; ReleaseHub: unknown }).default;
   expect((mod as { ReleaseHub: unknown }).ReleaseHub).toBe(ReleaseHub);
@@ -396,7 +396,7 @@ test("a signed push to main wakes every PC waiting on main; anything else is tur
 });
 
 test("the worker routes the webhook and main's wait", async () => {
-  const path = resolve(dirname(new URL(import.meta.url).pathname), "../../../../worker/src/index.js");
+  const path = resolve(import.meta.dir, "../../../../worker/src/index.js");
   const worker = ((await import(path)) as { default: { fetch: (req: Request, env: ReleaseEnv) => Promise<Response> } }).default;
   const { hub: h } = hub();
   const e = { ...routed(h), RELEASE_REPO: "o/r", GITHUB_WEBHOOK_SECRET: SECRET };
@@ -452,7 +452,7 @@ test("a PC's nudge is never believed: main becomes what GitHub says, read again 
 });
 
 test("POST /v1/main needs a Harbor token", async () => {
-  const path = resolve(dirname(new URL(import.meta.url).pathname), "../../../../worker/src/index.js");
+  const path = resolve(import.meta.dir, "../../../../worker/src/index.js");
   const worker = ((await import(path)) as { default: { fetch: (req: Request, env: ReleaseEnv) => Promise<Response> } }).default;
   const { hub: h } = hub();
   const r = await worker.fetch(new Request("https://w/v1/main", { method: "POST", body: JSON.stringify({ sha: A }) }), { ...routed(h), RELEASE_REPO: "o/r" });

@@ -5,7 +5,7 @@ import { RUNTIME_SOURCES, buildManifest, dependencyChanges, lane } from "../src/
 import { parseManifest } from "../src/manifest.ts";
 import { releaseCli, type ReleaseDeps } from "../src/release-cli.ts";
 
-const here = dirname(new URL(import.meta.url).pathname);
+const here = import.meta.dir;
 const root = resolve(here, "..", "..", "..", "..");
 
 const pkg = (over: Record<string, unknown> = {}, deps: Record<string, string> = {}): string =>

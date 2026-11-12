@@ -1,5 +1,5 @@
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Mention } from "@harbor/store";
 import { http as meshHttp } from "./client.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
@@ -408,7 +408,7 @@ export async function fetchWorktree(env: WorktreeEnv, repo: string, branch: stri
       throw new Error(`couldn't fetch ${branch}: ${msg(e)}`);
     }
   }
-  const base = repo.replace(/\/+$/, "").split("/").pop();
+  const base = basename(repo);
   const project = [...(base ?? "") === "" ? "project" : (base ?? "")].map((c) => (/^[A-Za-z0-9._-]$/.test(c) ? c : "-")).join("");
   mkdirSync(env.root, { recursive: true });
   const tailMatch = /^harbor\/([A-Za-z0-9]*)$/.exec(branch);

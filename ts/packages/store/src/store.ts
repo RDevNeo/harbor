@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, openSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type Item, digest, digestOf, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
 import { dataDir, newUuid, now, privateDir } from "./paths.ts";
 import { changed as settingChanged } from "./settingsync.ts";
@@ -244,6 +244,8 @@ function migrate(db: Database): void {
     const ids = db.query("SELECT id FROM chats WHERE gid=''").all() as Row[];
     const set = db.prepare("UPDATE chats SET gid=?2 WHERE id=?1");
     for (const r of ids) set.run(num(r.id), newUuid());
+    // A prepared statement left open keeps the database file open after close (Windows can't delete it then).
+    set.finalize();
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS chats_gid ON chats(gid);");
   }
   if (v < 7) {
@@ -386,7 +388,7 @@ export class Store {
   }
 
   addRepo(path: string): number {
-    const name = path.replace(/\/+$/, "").split("/").pop() ?? "";
+    const name = basename(path);
     this.db
       .query("INSERT OR IGNORE INTO repos(path, name, sort) VALUES(?1, ?2, (SELECT COALESCE(MAX(sort), 0) + 1 FROM repos))")
       .run(path, name);

@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { statSync } from "node:fs";
 import { type Repo, repoDir, type Store } from "@harbor/store";
 import { cloneSame, homeRelative } from "./clone.ts";
@@ -37,7 +38,7 @@ export function gitRemote(dir: string): string {
 /** Whether this PC's folder `dir` (Git remote `remote`, "" none) is a folder of project `away`, another PC's. */
 export function folderOf(away: Pick<Repo, "path" | "name" | "remote">, dir: string, remote: string, home: string): boolean {
   if (away.remote !== "" || remote !== "") return away.remote !== "" && remote !== "" && cloneSame(away.remote, remote);
-  const base = dir.replace(/\/+$/, "").split("/").pop() ?? "";
+  const base = basename(dir);
   return base === away.name && homeRelative(away.path, home, away.name) === dir.replace(/\/+$/, "");
 }
 

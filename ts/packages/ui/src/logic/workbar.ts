@@ -1,3 +1,4 @@
+import { basename, dirname } from "node:path";
 import { ICONS } from "../icons.ts";
 import { richTip } from "./tips.ts";
 
@@ -104,7 +105,7 @@ export function workBar(info: WsInfo | null, o: { draft: boolean; marker: WsMark
 /** A folder outside Git: its name, its path (and the PC it's on) in the tip. */
 export function folderChip(path: string, home: string, homeDir = process.env.HOME ?? ""): BarChip {
   const trimmed = path.replace(/\/+$/, "");
-  const name = homeDir !== "" && trimmed === homeDir.replace(/\/+$/, "") ? "~" : trimmed.slice(trimmed.lastIndexOf("/") + 1) || trimmed || "/";
+  const name = homeDir !== "" && trimmed === homeDir.replace(/\/+$/, "") ? "~" : basename(trimmed) || trimmed || "/";
   return { icon: ICONS.FOLDER, text: `Folder · ${name}`, tone: "", tip: home === "" ? path : `${path}\non ${home}` };
 }
 
@@ -132,8 +133,8 @@ export function renameBranchNote(info: WsInfo): string {
 /** The note under "Rename worktree" (WorkBar.renameFolder). */
 export function renameFolderNote(info: WsInfo): string {
   const path = info.path ?? "";
-  const cut = path.lastIndexOf("/");
-  const where = cut > 0 ? path.slice(0, cut) : "the same folder";
+  const up = dirname(path);
+  const where = path !== "" && up !== path && up !== "." && up !== "/" ? up : "the same folder";
   const to = info.folder_to ?? "";
   return `${to === "" ? "" : `Becomes ${to} once nothing works in it. `}Stays in ${where}; renaming the branch leaves it be from now on. It's renamed once nothing works in it, and removed with the thread unless it has uncommitted changes.`;
 }

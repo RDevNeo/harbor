@@ -11,7 +11,7 @@ test("processes writing the same file at once all succeed, and leave only the wh
   const dir = mkdtempSync(join(tmpdir(), "hts-writeprivate-"));
   try {
     const file = join(dir, "hosts.yml");
-    const paths = new URL("../src/paths.ts", import.meta.url).pathname;
+    const paths = join(import.meta.dir, "../src/paths.ts");
     const script = `const { writePrivate } = await import(${JSON.stringify(paths)});
 for (let i = 0; i < 300; i++) writePrivate(${JSON.stringify(file)}, "github.com:\\n    user: harbor\\n".repeat(50));`;
     const ps = Array.from({ length: 6 }, () => Bun.spawn([process.execPath, "-e", script], { stdout: "ignore", stderr: "pipe" }));

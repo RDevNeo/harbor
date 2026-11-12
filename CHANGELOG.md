@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.3] - 2026-11-12
+
+### Fixed
+- Windows: a `.env` file Harbor writes for an agent must be inside the project. The check read only "/", so
+  any path was taken as the project's top folder (a `.env` in a linked folder outside the project passed,
+  and `apps/web/.env` was written at the top). Adding it to `.gitignore` works there too.
+- Windows: project names, folder chips, attachment names and image checks read Windows paths (a project was
+  named by its whole path).
+- Windows: Harbor's database file is let go when it closes (a statement of an old migration held it).
+
 ## [0.180.2] - 2026-11-12
 
 ### Fixed

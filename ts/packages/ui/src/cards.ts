@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import * as slint from "slint-ui";
 import { actions, type Card, CHAT_SCHEME, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer } from "@harbor/net";
 import { clock } from "./logic/team.ts";
@@ -227,8 +228,7 @@ function senderLine(c: Extract<Card, { kind: "user" }>): { sender: string; icon:
 }
 
 function base(name: string): string {
-  const i = name.lastIndexOf("/");
-  return i < 0 ? name : name.slice(i + 1);
+  return basename(name);
 }
 
 /** An image drawn under the reply leaves its markdown reference out of the text (media.rs `strip_refs`). */
