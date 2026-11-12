@@ -1,0 +1,234 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF2'
+Usage: scripts/boat/windows COMMAND [args]
+
+A Windows test VM on boat.dev: Windows 11 Enterprise 26H2 (evaluation licence) under QEMU/KVM on a
+`large` sandbox started from the newest snapshot `harbor-windows-<date>` (harbor-build plus the VM), driven
+over SSH (PowerShell) and QMP (screen, keys, mouse) by .github/boat/windows.sh. Nothing runs on this PC
+but this script. The VM boots from a throwaway layer each time: nothing a session does stays.
+The sandbox also has everything scripts/boat/check has (Bun, the build images): build Harbor for
+Windows there (`build`) and copy it into the VM (`vmput`).
+
+A session keeps its sandbox and VM between commands (one per name, default "default"; another with
+--session NAME or WINDOWS_SESSION=NAME). It lives 3 hours unless `up --hours N`; `down` ends it.
+  up [--hours N] [--from NAME]   start the sandbox and the VM, copy this working tree to ~/src there
+                                 (2-6 minutes; again on a running session: the tree again, the TTL)
+  sync                           copy this working tree to ~/src again
+  ps 'SCRIPT'                    PowerShell in the VM as the administrator "harbor" (stdout/stderr here,
+                                 its exit code). Windows' own SSH session: no desktop, windows don't show
+  gui 'CMDLINE'                  start a cmd.exe line in the logged-on desktop (where windows show); its
+                                 output goes to C:\rig\gui.log (ps 'Get-Content C:\rig\gui.log')
+  build                          cross-build Harbor for Windows x64 from the synced tree to the sandbox's
+                                 ~/out/harbor.exe (then: vmput out/harbor.exe C:/rig/harbor.exe)
+  sh 'BASH'                      bash on the sandbox in ~/src (the Linux side)
+  put LOCAL VMPATH               a file or folder from this PC into the VM (VMPATH like C:/rig/x.exe;
+                                 a folder lands as VMPATH/<its name>)
+  vmput SANDBOXPATH VMPATH       from the sandbox (e.g. ~/out/harbor.exe, a build's output) into the VM
+  get VMPATH LOCAL               from the VM to this PC
+  shot [NAME]                    the VM's screen as a PNG (1920x1080), path printed:
+                                 ~/.cache/harbor-shots/windows-<session>/NAME.png
+  key K [K…]                     keys, QEMU names, chords with "-": ctrl-c ret meta_l alt-f4
+  type 'TEXT'                    typed text (US layout, ASCII)
+  click X Y [left|right] [N]     mouse click at the screen's pixel X,Y (N: 2 for a double click)
+  move X Y | scroll X Y N        pointer only; wheel N notches (N>0 down)
+  down                           delete the session's sandbox (the VM with it)
+  list                           this PC's sessions
+One-shot commands (their sandbox is deleted at the end):
+  --save-snapshot                make `harbor-windows-<date>` from harbor-build (older ones go once it's saved): downloads Microsoft's
+                                 evaluation ISO, installs it unattended (windows/autounattend.xml,
+                                 windows/harbor-setup.ps1: OpenSSH, Git for Windows, Bun, the desktop
+                                 task), checks it boots, saves. 30-60 minutes; screens of the install
+                                 come back to ~/.cache/harbor-shots/windows-make-<time>/. Needed when the
+                                 evaluation runs out (90 days from the snapshot's date) or harbor-build's
+                                 images changed a lot
+  --resume-snapshot ID           finish a --save-snapshot whose script here was killed (a restart, a
+                                 closed terminal) while its sandbox ID goes on: waits for its install,
+                                 then checks, saves and deletes as --save-snapshot does. Rename the sandbox
+                                 out of dev-harbor-* first, or the next boat script here sweeps it
+  probe                          what a sandbox offers a VM (KVM, CPUs, memory, disk, download speed)
+
+Example:
+  scripts/boat/windows up
+  scripts/boat/windows build
+  scripts/boat/windows vmput out/harbor.exe C:/rig/harbor.exe
+  scripts/boat/windows gui 'C:\rig\harbor.exe'
+  scripts/boat/windows shot first
+  scripts/boat/windows down
+Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar). Cost: a large sandbox,
+about $0.07/hour; `down` when done (a forgotten session is deleted by the next `up` after its hours).
+EOF2
+}
+session=${WINDOWS_SESSION:-default}
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session) session=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) break ;;
+  esac
+done
+cmd=${1:-}; [ $# = 0 ] || shift
+[ -n "$cmd" ] || { usage; exit 2; }
+[[ $session =~ ^[a-z0-9-]+$ ]] || { echo "--session: lowercase letters, digits and '-' only" >&2; exit 2; }
+state=$HOME/.cache/harbor-windows
+mkdir -p "$state"
+
+case "$cmd" in
+  --save-snapshot|--resume-snapshot|probe)
+    snapshot=harbor-build
+    . "$(dirname "$0")/lib.sh"
+    dest=$HOME/.cache/harbor-shots/windows-make-$(date +%Y%m%d-%H%M%S)
+    if [ "$cmd" = --resume-snapshot ]; then
+      id=${1:?--resume-snapshot needs the sandbox id}
+      say "waiting for $id's install to end"
+      while :; do
+        st=$("$boat" history "$id" --mode detached --json | jq -r '[.commands[] | select(.command | test("windows.sh make"))][0] | "\(.status) \(.exitCode)"')
+        case "$st" in running*) sleep 30 ;; *) break ;; esac
+      done
+      code=${st#* }; [ "$code" != null ] || code=1
+      "$boat" history "$id" "$("$boat" history "$id" --mode detached --json | jq -r '[.commands[] | select(.command | test("windows.sh make"))][0].commandId')" 2>/dev/null |
+        jq -r '.data // empty' | tail -n 40 > "$log" || true
+      cat "$log"
+    else
+      sandbox; upload
+      if [ "$cmd" = probe ]; then remote -- bash .github/boat/windows/probe.sh; exit; fi
+      set +e
+      remote -- bash .github/boat/windows.sh make
+      code=$?
+      set -e
+    fi
+    mkdir -p "$dest"
+    "$boat" exec "$id" -- bash -c 'tar -czf out/shots.tgz -C out shots' >/dev/null 2>&1 &&
+      "$boat" scp "$id:/home/user/out/shots.tgz" "$dest/shots.tgz" >/dev/null 2>&1 &&
+      tar -xzf "$dest/shots.tgz" -C "$dest" && rm "$dest/shots.tgz" && say "install screens: $dest/shots"
+    [ "$code" = 0 ] || exit "$code"
+    remote -- bash .github/boat/windows.sh prep
+    "$boat" exec "$id" -- bash -c 'rm -rf src out' >/dev/null
+    # A new name each time: the sessions keep the old snapshot until the new one is saved.
+    snap=harbor-windows-$(date +%Y%m%d-%H%M)
+    # boat's archival of a big new layer has failed once ("did not complete"): try again on the same
+    # sandbox before giving it up.
+    for try in 1 2 3; do
+      say "saving the sandbox as $snap (try $try)"
+      "$boat" snapshot "$id" "$snap" --json > "$work/save.json" 2>&1 || true
+      st=$("$boat" snapshots --json | jq -r --arg n "$snap" '.named[]? | select(.name == $n) | "\(.status) \(.error // "")"')
+      [ "${st%% *}" != ready ] || break
+      say "the save failed: $st"
+      "$boat" snapshot rm "$snap" --json >/dev/null 2>&1 || true
+      [ "$try" = 3 ] && exit 1
+      sleep 60
+    done
+    say "saved $snap ($("$boat" snapshots --json | jq -r --arg n "$snap" '.named[]? | select(.name == $n) | .sizeBytes / 1e9 * 10 | round / 10') GB)"
+    for old in $("$boat" snapshots --json | jq -r --arg n "$snap" '.named[]? | select((.name | startswith("harbor-windows")) and .name != $n) | .name'); do
+      "$boat" snapshot rm "$old" --json >/dev/null 2>&1 && say "removed the older $old"
+    done
+    exit 0 ;;
+esac
+
+# Session commands: the sandbox outlives this script, so lib.sh's cleanup is off once it is up.
+. "$(dirname "$0")/lib.sh"
+trap - EXIT INT TERM
+rm -rf "$work"
+work=$(mktemp -d) log="$work/log"
+trap 'rm -rf "$work"' EXIT
+name="dev-harborwin-$user-$host-$session"
+idfile=$state/$session.id
+quiet=""
+cur() { [ -f "$idfile" ] && cat "$idfile"; }
+need() {
+  id=$(cur || true)
+  [ -n "$id" ] || { echo "no Windows session \"$session\": scripts/boat/windows up" >&2; exit 1; }
+}
+win() { remote -- bash .github/boat/windows.sh "$@"; }
+# Sessions of this PC whose hours are up, and their sandboxes (boat only stops them at the TTL).
+sweep_sessions() {
+  local now; now=$(date +%s)
+  "$boat" list --all --json | jq -r --arg p "dev-harborwin-$user-$host-" '.sandboxes[] | select(.name | startswith($p)) | "\(.id) \(.name)"' |
+  while read -r sid sname; do
+    local s=${sname#dev-harborwin-$user-$host-} until
+    until=$(cat "$state/$s.until" 2>/dev/null || echo 0)
+    if [ "$now" -gt "$until" ]; then
+      say "deleting the expired session $s ($sid)"
+      "$boat" delete "$sid" --yes --json >/dev/null 2>&1 || true
+      rm -f "$state/$s.id" "$state/$s.until"
+    fi
+  done || true
+}
+
+case "$cmd" in
+  up)
+    hours=3 from=$("$boat" snapshots --json | jq -r '[.named[]? | select((.name | startswith("harbor-windows")) and .status == "ready")] | sort_by(.createdAt) | last | .name // empty')
+    [ -n "$from" ] || { echo "no harbor-windows snapshot: scripts/boat/windows --save-snapshot makes one" >&2; exit 1; }
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --hours) hours=$2; shift 2 ;;
+        --from) from=$2; shift 2 ;;
+        *) echo "up: unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    sweep_sessions
+    id=$(cur || true)
+    if [ -n "$id" ] && "$boat" exec "$id" --timeout 30 -- true >/dev/null 2>&1; then
+      say "session $session: sandbox $id is up"
+    else
+      rm -f "$idfile"
+      snapshot=$from
+      trap 'c=$?; [ $c = 0 ] || { [ -z "$id" ] || "$boat" delete "$id" --yes --json >/dev/null 2>&1; rm -f "$idfile"; say "up failed: sandbox deleted"; }; rm -rf "$work"' EXIT
+      sandbox
+      echo "$id" > "$idfile"
+    fi
+    "$boat" extend "$id" --hours "$hours" --json >/dev/null
+    echo $(( $(date +%s) + hours * 3600 )) > "$state/$session.until"
+    upload
+    s=$SECONDS
+    win up
+    say "session $session ready (sandbox $id, ${hours}h; VM up in $((SECONDS - s))s)" ;;
+  sync) need; upload ;;
+  ps|gui) need; win "$cmd" "$1" ;;
+  build) need; win build ;;
+  sh) need; remote -- bash -c "$1" ;;
+  put)
+    need
+    src=$1 dst=$2 base=$(basename "$1")
+    [ -e "$src" ] || { echo "no $src" >&2; exit 1; }
+    "$boat" exec "$id" -- mkdir -p out/xfer >/dev/null
+    if [ -d "$src" ]; then
+      tar -czf "$work/x.tgz" -C "$(dirname "$src")" "$base"
+      "$boat" scp "$work/x.tgz" "$id:/home/user/out/xfer/x.tgz" >/dev/null
+      win put /out/xfer/x.tgz C:/rig/x.tgz
+      win ps "New-Item -ItemType Directory -Force '$dst' | Out-Null; tar.exe -xzf C:/rig/x.tgz -C '$dst'; Remove-Item C:/rig/x.tgz"
+    else
+      "$boat" scp "$src" "$id:/home/user/out/xfer/$base" >/dev/null
+      win put "/out/xfer/$base" "$dst"
+    fi ;;
+  vmput)
+    need
+    p=${1#\~/}; p=${p#/home/user/}
+    case "$p" in out/*) win put "/$p" "$2" ;; src/*) win put "/$p" "$2" ;; cache/*) win put "/c/${p#cache/}" "$2" ;;
+      *) echo "vmput: a path under ~/out, ~/src or ~/cache on the sandbox" >&2; exit 2 ;; esac ;;
+  get)
+    need
+    base=$(basename "$1")
+    "$boat" exec "$id" -- mkdir -p out/xfer >/dev/null
+    win get "$1" "/out/xfer/$base"
+    "$boat" scp -r "$id:/home/user/out/xfer/$base" "$2" >/dev/null ;;
+  shot)
+    need
+    n=${1:-shot-$(date +%H%M%S)}
+    dir=$HOME/.cache/harbor-shots/windows-$session
+    mkdir -p "$dir"
+    win shot "/out/shots/$n.png"
+    "$boat" scp "$id:/home/user/out/shots/$n.png" "$dir/$n.png" >/dev/null
+    echo "$dir/$n.png" ;;
+  key|type|click|move|scroll) need; win "$cmd" "$@" ;;
+  down)
+    id=$(cur || true)
+    [ -n "$id" ] || { echo "no session $session"; exit 0; }
+    "$boat" delete "$id" --yes --json >/dev/null || say "could not delete $id: $boat delete $id --yes"
+    rm -f "$idfile" "$state/$session.until"
+    say "session $session: sandbox $id deleted" ;;
+  list)
+    for f in "$state"/*.id; do [ -e "$f" ] || continue; s=$(basename "$f" .id); echo "$s $(cat "$f") until $(date -d @"$(cat "$state/$s.until" 2>/dev/null || echo 0)" +%H:%M)"; done ;;
+  *) echo "unknown command: $cmd (see --help)" >&2; exit 2 ;;
+esac

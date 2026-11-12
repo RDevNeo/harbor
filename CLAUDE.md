@@ -130,6 +130,15 @@ the video player, the Slint addon and releases build on boat).
   - `scripts/boat/phoneshot`: screenshots of the phone app on an emulator (`.github/boat/phoneshot.sh`),
     from the snapshot `harbor-phone` (emulator installed, phone booted once); `--save-snapshot`
     remakes it from harbor-build, `--rm-snapshot` drops it.
+  - `scripts/boat/windows`: a Windows 11 VM (evaluation licence, QEMU/KVM) on a boat sandbox from the
+    newest snapshot `harbor-windows-<date>`, for running and testing Harbor on Windows (never on anyone's PC). A
+    session keeps its sandbox between commands: `up`, then `build` (cross-builds `harbor.exe` from the
+    synced tree), `vmput out/harbor.exe C:/rig/harbor.exe`, `ps 'POWERSHELL'` (over SSH, no desktop),
+    `gui 'CMDLINE'` (in the logged-on desktop, where windows show), `shot NAME` (PNG path printed),
+    `key`/`type`/`click`, `put`/`get`, `sync`, and `down` when done (a session lives 3 h; `--session
+    NAME` for another). The VM boots from a throwaway layer each time. `--save-snapshot` remakes the
+    snapshot from Microsoft's ISO (`.github/boat/windows.sh`, `windows/autounattend.xml`,
+    `windows/harbor-setup.ps1`; ~40 min): when the evaluation's 90 days run out. `--help` for the rest.
   - `scripts/boat/snapshot`: what a saved snapshot's ~/cache really holds (`--from NAME`), and
     the release's build and save steps on a copy of it (`--build --save NAME`, `--rm NAME`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
@@ -157,7 +166,7 @@ the video player, the Slint addon and releases build on boat).
   - `.github/boat/smoke.sh`: the install tests on clean distro images (smoke.yml).
   - `.github/boat/run.sh`: runs a command on a sandbox and follows it; a lost connection to boat
     doesn't fail it.
-- Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-phone`) and are deleted when the job ends.
+- Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-phone`, `harbor-windows-<date>`) and are deleted when the job ends.
 - A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
   30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).
