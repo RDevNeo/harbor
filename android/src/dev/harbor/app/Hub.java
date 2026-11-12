@@ -549,9 +549,15 @@ final class Hub {
 
     private static String platform;
 
-    /** What this phone is (Engine.platform), worked out once per process. */
+    /** What this phone is, for the PCs (X-Harbor-Platform), worked out once per process:
+     *  "Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a, armeabi". */
     static String platform() {
-        if (platform == null) platform = Engine.platform(Ui.app);
+        if (platform == null) {
+            String make = android.os.Build.MANUFACTURER == null || android.os.Build.MANUFACTURER.isEmpty() ? ""
+                    : android.os.Build.MANUFACTURER.substring(0, 1).toUpperCase() + android.os.Build.MANUFACTURER.substring(1);
+            platform = (make + " " + android.os.Build.MODEL).trim() + ", Android " + android.os.Build.VERSION.RELEASE
+                    + " (SDK " + android.os.Build.VERSION.SDK_INT + "), ABIs " + String.join(", ", android.os.Build.SUPPORTED_ABIS);
+        }
         return platform.replaceAll("[\\r\\n]", " ");
     }
 

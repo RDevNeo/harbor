@@ -2,8 +2,7 @@
 
 Harbor is TypeScript on Bun, with a Slint window (`ts/`; Bun's version is pinned in
 `ts/package.json`). The Rust app was retired after 0.109.0; its sources are in git history only.
-The phone app is Java (`android/`); the built-in browser's engine is Servo, a Rust crate of its own
-(`browser/`); the video player is libmpv (`video/`); Slint's native module is Harbor's own build of
+The phone app is Java (`android/`); the video player is libmpv (`video/`); Slint's native module is Harbor's own build of
 slint-ui's, patched so a compiled UI doesn't keep the compiler's state (`slint/`).
 
 ## TypeScript checks run on the PC
@@ -93,7 +92,7 @@ signed in `package` as before. Runtime releases' desktop builds, every other wor
 build for development stay on boat (`scripts/boat/android` for the APK).
 
 A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor (the APK,
-the browser engine, the video player and releases build on boat).
+the video player, the Slint addon and releases build on boat).
 
 - What a PC needs: the boat CLI (`curl -fsSL https://boat.dev/install | sh`) logged in to the
   account that holds the snapshot `harbor-build` (`boat login`, or `boat login --key-stdin` with an
@@ -123,15 +122,10 @@ the browser engine, the video player and releases build on boat).
     also the app bundle `harbor-app.js`. Installed copies update from the bundle, the runtime only
     when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A bundle-only
     release skips the install tests (package checks the bundle on the runtime PCs have) and, when
-    `android/` and `browser/` didn't change, reattaches the latest release's signed APK instead of
-    building one; such a release builds on the GitHub runners, not boat (the exception above).
-    Servo itself is compiled only when `browser/` changes (browser.yml, by its tree id). A release
-    is the `v*` tag alone: a push to main builds nothing, and running release.yml by hand on main
+    `android/` didn't change, reattaches the latest release's signed APK instead of building one;
+    such a release builds on the GitHub runners, not boat (the exception above). A release is the
+    `v*` tag alone: a push to main builds nothing, and running release.yml by hand on main
     is the dry run (signs and publishes nothing, saves the snapshot).
-  - `.github/boat/browser.sh`: the Servo engine for x86_64, or (`browser.sh aarch64`) cross-compiled
-    for aarch64 (browser.yml).
-  - `.github/boat/browser-android.sh`: the phone app's Servo engine, arm64-v8a and armeabi-v7a, with
-    the NDK (browser.yml).
   - `.github/boat/video.sh`: Harbor's video player, libmpv and FFmpeg as one library for x86_64 and
     aarch64 (video/build.sh, video.yml). `scripts/boat/video` runs it on the working tree.
   - `.github/boat/slint.sh`: Harbor's Slint addon, slint-ui's native module with
@@ -143,9 +137,7 @@ the browser engine, the video player and releases build on boat).
   - `.github/boat/smoke.sh`: the install tests on clean distro images (smoke.yml).
   - `.github/boat/run.sh`: runs a command on a sandbox and follows it; a lost connection to boat
     doesn't fail it.
-  - `.github/workflows/prune.yml`: by hand, drops other engines' caches from `harbor-browser`.
-- Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
-  `harbor-browser-aarch64`, `harbor-browser-android`, `harbor-phone`) and are deleted when the job ends.
+- Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-phone`) and are deleted when the job ends.
 - A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
   30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).

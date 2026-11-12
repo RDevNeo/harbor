@@ -55,7 +55,6 @@
     <li><b>Your Harbor account and its vault.</b> When you sign in to Harbor with Google, Harbor's account service (harbor-accounts.rdevneo.workers.dev, on Cloudflare) keeps your account's workspaces, PCs and settings. Your integrations' sign-ins, the keys you saved for agents and your WhatsApp and Discord sessions go there too, in your account's vault, so that any PC you sign in on gets them on its own, even with your other PCs off. Your PC encrypts them (AES-256) before sending them, with a key that belongs to your account. The account service keeps that key, itself encrypted with a secret only the service has, and gives it only to PCs signed in to your account. This is not end-to-end encryption: the service (and so whoever runs it) could technically decrypt your vault, though Harbor's code decrypts it only on your PCs. Signing out of a PC removes those sign-ins from it; they stay in the vault for your other PCs.</li>
     <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex, Gmail, Discord and WhatsApp are used only after you sign in to (or link) them in Harbor. They are reached directly with your own sign-in. For Discord and WhatsApp, see <a href="#discord">below</a>.</li>
     <li><b>Project icons.</b> To show a project's icon, Harbor may fetch the favicon from that project's own website.</li>
-    <li><b>The optional browser panel</b> loads the pages you open in it, like any browser.</li>
   </ul>
 
   <h3>This website</h3>
@@ -144,7 +143,7 @@
 </main>
 
 <footer class="wrap">
-  <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>; the browser helper is <a href="https://github.com/RDevNeo/harbor/tree/main/browser">MIT</a> (it links Servo, MPL-2.0).
+  <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>.
   Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
   <p>No cookies, no analytics. <a href="/privacy">Privacy</a> · <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
 </footer>

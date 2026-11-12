@@ -1,8 +1,7 @@
 #!/bin/bash
 # Run by release.yml's job android on the GitHub runner itself (ubuntu-22.04, which ships a JDK and
 # the Android SDK): the phone app, unsigned, as boat built it before (`.github/boat/build.sh
-# android`), with the browser engine at $SERVO_LIBS (browser.yml's harbor-servo-android;
-# SERVO_REQUIRED=1 fails without it). The job signs it next. An exception to "every build runs on
+# android`). The job signs it next. An exception to "every build runs on
 # boat" (CLAUDE.md): on a sandbox the 0.148.0 APK took 193 s, nearly all of it the lazy disk
 # loading the SDK (iowait 80 %, user 4 %).
 #

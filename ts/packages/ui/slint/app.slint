@@ -9,7 +9,6 @@ import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
 import { ListData, ListRow } from "patchlist.slint";
 import { DeviceRow, TransferRow } from "devices.slint";
 import { FilesData, FileRow } from "files.slint";
-import { BrowserData } from "browser.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
 import { CaptchaView, CaptchaPill, CaptchaData, ChatCaptchaData } from "captcha.slint";
 import { VideoView, VideoData } from "video.slint";
@@ -487,21 +486,11 @@ export component AppWindow inherits Window {
     in property <bool> bottom-file-clearable;
     callback files-act(string, string, int);
     callback files-go(string, string);
-    in property <BrowserData> right-browser;
-    in property <BrowserData> bottom-browser;
     in property <ListData> right-list;
     in property <[ListRow]> right-list-rows;
     in property <ListData> bottom-list;
     in property <[ListRow]> bottom-list-rows;
     callback list-act(string, string, int);
-    in property <[string]> browser-servers;
-    callback browser-nav(string, string);
-    callback browser-go(string, string);
-    callback browser-missing(string);
-    callback browser-resized(string, float, float);
-    callback browser-pointer(string, string, float, float, int);
-    callback browser-wheel(string, float, float, float, float);
-    callback browser-key(string, string, bool, bool, bool, bool, bool);
     callback settings();
     callback leave-page();
     callback refresh();
@@ -868,7 +857,6 @@ export component AppWindow inherits Window {
     callback pane-max-toggle(string);
     callback pane-hide(string);
     callback pane-pick(string, string);
-    callback pane-recent(string, length, length);
     callback term-key(string, TermKey, string, bool, bool, bool);
     callback term-paste(string);
     callback term-wheel(string, int);
@@ -1631,9 +1619,6 @@ export component AppWindow inherits Window {
             pick(k) => {
                 root.pane-pick("right", k);
             }
-            recent(x, y) => {
-                root.pane-recent("right", x, y);
-            }
             term-key(k, t, c, a, sh) => {
                 root.term-key("right", k, t, c, a, sh);
             }
@@ -1676,29 +1661,6 @@ export component AppWindow inherits Window {
             list-rows: root.right-list-rows;
             list-act(a, i) => {
                 root.list-act("right", a, i);
-            }
-            browser: root.right-browser;
-            servers: root.browser-servers;
-            browser-nav(a) => {
-                root.browser-nav("right", a);
-            }
-            browser-go(u) => {
-                root.browser-go("right", u);
-            }
-            browser-missing => {
-                root.browser-missing("right");
-            }
-            browser-resized(w, h) => {
-                root.browser-resized("right", w, h);
-            }
-            browser-pointer(k, x, y, b) => {
-                root.browser-pointer("right", k, x, y, b);
-            }
-            browser-wheel(x, y, dx, dy) => {
-                root.browser-wheel("right", x, y, dx, dy);
-            }
-            browser-key(t, d, c, sh, a, m) => {
-                root.browser-key("right", t, d, c, sh, a, m);
             }
             term-resized(w, h) => {
                 root.term-resized("right", w, h, self.cell-w, self.cell-h);
@@ -1749,9 +1711,6 @@ export component AppWindow inherits Window {
             pick(k) => {
                 root.pane-pick("bottom", k);
             }
-            recent(x, y) => {
-                root.pane-recent("bottom", x, y);
-            }
             term-key(k, t, c, a, sh) => {
                 root.term-key("bottom", k, t, c, a, sh);
             }
@@ -1794,29 +1753,6 @@ export component AppWindow inherits Window {
             list-rows: root.bottom-list-rows;
             list-act(a, i) => {
                 root.list-act("bottom", a, i);
-            }
-            browser: root.bottom-browser;
-            servers: root.browser-servers;
-            browser-nav(a) => {
-                root.browser-nav("bottom", a);
-            }
-            browser-go(u) => {
-                root.browser-go("bottom", u);
-            }
-            browser-missing => {
-                root.browser-missing("bottom");
-            }
-            browser-resized(w, h) => {
-                root.browser-resized("bottom", w, h);
-            }
-            browser-pointer(k, x, y, b) => {
-                root.browser-pointer("bottom", k, x, y, b);
-            }
-            browser-wheel(x, y, dx, dy) => {
-                root.browser-wheel("bottom", x, y, dx, dy);
-            }
-            browser-key(t, d, c, sh, a, m) => {
-                root.browser-key("bottom", t, d, c, sh, a, m);
             }
             term-resized(w, h) => {
                 root.term-resized("bottom", w, h, self.cell-w, self.cell-h);

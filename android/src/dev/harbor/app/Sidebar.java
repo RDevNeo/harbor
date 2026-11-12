@@ -251,7 +251,7 @@ final class Sidebar {
         // Their Update buttons need the PC: not while it doesn't answer.
         if (offTitle == null) banners(st);
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
-        // No Browser row (a link in a chat opens it), no PCs row (Settings lists the workspace's PCs), and no
+        // No PCs row (Settings lists the workspace's PCs), and no
         // Pull requests or Issues rows (the search's pages and a project's sheet open them).
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
         // A newer app on GitHub: a sheet says so, once per version (Update.prompt); Settings › App keeps it.

@@ -6,7 +6,7 @@ import { parse } from "./version.ts";
 
 /** What a release ships beyond the app bundle: a change here since the soaked commit wasn't soaked. */
 export function ships(path: string): boolean {
-  return shipsInApp(path) || /^(android|browser|video|slint|packaging|discord|whatsapp)\//.test(path);
+  return shipsInApp(path) || /^(android|video|slint|packaging|discord|whatsapp)\//.test(path);
 }
 
 export interface Candidate {

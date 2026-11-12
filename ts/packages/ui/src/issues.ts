@@ -201,8 +201,6 @@ export function attachIssues(view: IssuesView, host: IssuesHost, hooks: { close(
     switch (a) {
       case "open":
         return page.open(url);
-      case "browse":
-        return host.browse(url);
       case "github":
         return host.openUrl(url);
       case "copy":

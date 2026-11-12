@@ -178,8 +178,8 @@ describe("listdetail.rs menu keys on the page's menus", () => {
 describe("prs.rs row menu", () => {
   test("a PR in a project offers check out and review; an open one offers merge", () => {
     const labels = (inProject: boolean, p = pr(1)) => rowActions(p, inProject, "Claude", "not a project").map((a) => `${a.sep ? "|" : ""}${a.label}${a.enabled ? "" : "!"}`);
-    expect(labels(true)).toEqual(["Open in side panel", "Open in Harbor's browser", "Open on GitHub", "Copy link", "|Check out", "Review with an agent", "Merge with Claude", "Merge with instructions…"]);
-    expect(labels(false)).toEqual(["Open in side panel", "Open in Harbor's browser", "Open on GitHub", "Copy link", "|Merge with Claude!", "Merge with instructions…!"]);
+    expect(labels(true)).toEqual(["Open in side panel", "Open on GitHub", "Copy link", "|Check out", "Review with an agent", "Merge with Claude", "Merge with instructions…"]);
+    expect(labels(false)).toEqual(["Open in side panel", "Open on GitHub", "Copy link", "|Merge with Claude!", "Merge with instructions…!"]);
     expect(labels(true, pr(1, { state: "merged" })).at(-1)).toBe("Review with an agent");
     expect(rowActions(pr(1), false, "Claude", "not a project").at(-1)?.tip).toBe("not a project");
   });

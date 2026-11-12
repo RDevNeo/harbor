@@ -34,7 +34,7 @@ export interface BackgroundHost {
 
 /** What the loop ticks while there is no window. */
 export interface HiddenApp {
-  /** The window closed: stop what only a window needs (browser engines; their URL survives). */
+  /** The window closed: stop what only a window needs. */
   windowClosed(): void;
   /** One pass of the App's logic (phone API, mesh, queue, auto-work, wakes, webhooks, updates), reported as minimized, unfocused and occluded. */
   tick(): void;

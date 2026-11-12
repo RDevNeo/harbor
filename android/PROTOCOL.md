@@ -31,9 +31,9 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   version across restarts (kv `phones_seen`) and agents read them (`GET /v1/versions`, the
   `machines` `list` tool, the who-is-who note).
   From app 0.84, `X-Harbor-Platform: <what the phone is>` (free text, at most 240 characters:
-  maker and model, Android version and SDK, ABIs, and whether the built-in browser runs, e.g.
-  `Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a, armeabi, browser: no (32-bit
-  Android)`): kept with the phone like its version, shared with the mesh (`/mesh/v1/phones`
+  maker and model, Android version and SDK and ABIs, e.g. `Samsung SM-A135M, Android 12 (SDK 31),
+  ABIs armeabi-v7a, armeabi`; apps 0.79 to 0.176 also said whether their built-in browser ran,
+  `, browser: no (32-bit Android)`): kept with the phone like its version, shared with the mesh (`/mesh/v1/phones`
   `platform`) and shown in `GET /v1/versions` (`phones[].platform`, appended to `line`).
 - **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale

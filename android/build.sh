@@ -118,24 +118,6 @@ fetch https://dl.google.com/android/maven2/androidx/collection/collection/1.1.0/
 LIBS+=("$DEPS/collection-1.1.0.jar")
 LIBCP=$(IFS=:; echo "${LIBS[*]}")
 
-# The built-in browser's engine (android/servo: Servo as libharborservo.so), built separately with
-# the NDK (android/servo/build.sh, or CI's cached build): $SERVO_LIBS/<abi>/libharborservo.so
-# with its libc++_shared.so,
-# default android/servo/out. Packaged for each of ANDROID_ABIS it exists for (arm64-v8a and
-# armeabi-v7a in releases; each ABI folder must hold every library: Android installs one).
-# SERVO_REQUIRED=1 (releases) fails without one of them. Its id ($SERVO_LIBS/servo.id, browser.yml)
-# goes in as assets/servo.id: the next release reuses the engine from this APK.
-SERVO_LIBS=${SERVO_LIBS:-$HERE/servo/out}
-SERVO_ABIS=()
-for abi in $ABIS; do
-  if [ -f "$SERVO_LIBS/$abi/libharborservo.so" ]; then
-    SERVO_ABIS+=("$abi")
-  elif [ -n "${SERVO_REQUIRED:-}" ]; then
-    echo "no browser engine at $SERVO_LIBS/$abi/libharborservo.so" >&2; exit 1
-  fi
-done
-[ ${#SERVO_ABIS[@]} = 0 ] || [ ! -f "$SERVO_LIBS/servo.id" ] || cp "$SERVO_LIBS/servo.id" "$W/assets/servo.id"
-
 # Where the app signs in (Config.java): RDevNeo's Clerk app and account service by default.
 CLERK_URL=${HARBOR_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
 CLERK_CLIENT=${HARBOR_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}
@@ -183,11 +165,10 @@ esac
 "$BT/aapt2" link -I "$JAR" --manifest "$HERE/AndroidManifest.xml" -o "$W/base.apk" "$W/res.zip" \
   -A "$W/assets" --java "$W/gen" --min-sdk-version 26 --target-sdk-version 34 \
   --version-code "$CODE" --version-name "$VER"
-# The native libraries (sherpa-onnx's, the browser engine's: 230 MB to deflate) go into the APK
-# in the background, beside compiling, the tests and dexing.
+# The native libraries (sherpa-onnx's) go into the APK in the background, beside compiling, the
+# tests and dexing.
 (
   sherpa_libs
-  for abi in "${SERVO_ABIS[@]}"; do cp "$SERVO_LIBS/$abi/libharborservo.so" "$SERVO_LIBS/$abi/libc++_shared.so" "$W/lib/$abi/"; done
   cd "$W" && zip -qr base.apk lib
 ) & libs=$!
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR:$LIBCP" -d "$W/classes" \

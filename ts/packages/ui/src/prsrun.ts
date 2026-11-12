@@ -37,7 +37,6 @@ const handle = mountPrs(bus, {
   accounts: () => [{ id: "claude", label: "Claude", current: true }, { id: "codex", label: "Codex", current: false }],
   pickAccount: () => {},
   openUrl: git.openUrl,
-  openBrowser: () => {},
   copy: () => {},
   checkout: () => {},
   review: () => {},

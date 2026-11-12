@@ -80,13 +80,12 @@ export async function releaseCli(argv: string[], d: ReleaseDeps = nodeDeps()): P
       version,
       lane: chosen,
       previous,
-      ...(o.has("browser-id") ? { browser: { id: o.get("browser-id") ?? "" } } : {}),
       ...(o.has("video-id") ? { video: { id: o.get("video-id") ?? "" } } : {}),
       ...(code === undefined ? {} : { apk: { code: Number(code) } }),
     });
     d.writeFile(out, JSON.stringify(manifest));
     return 0;
   }
-  d.err("usage: release.ts lane --base REF [--force LANE] [--first] | manifest --version V --lane LANE --out FILE [--previous FILE] [--browser-id ID] [--video-id ID] [--apk-code N]");
+  d.err("usage: release.ts lane --base REF [--force LANE] [--first] | manifest --version V --lane LANE --out FILE [--previous FILE] [--video-id ID] [--apk-code N]");
   return 2;
 }

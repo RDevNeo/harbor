@@ -473,7 +473,6 @@ export function rowActions(p: Pr, inProject: boolean, agent: string, notProject:
   const a = (id: RowAction["id"], icon: string, label: string, o: Partial<RowAction> = {}): RowAction => ({ id, icon, label, enabled: true, tip: "", sep: false, ...o });
   const out = [
     a("panel", ICONS.PANEL_RIGHT, "Open in side panel"),
-    a("browser", ICONS.GLOBE, "Open in Harbor's browser"),
     a("github", ICONS.EXTERNAL, "Open on GitHub"),
     a("copy", ICONS.COPY, "Copy link"),
   ];

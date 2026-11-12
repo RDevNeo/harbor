@@ -43,7 +43,7 @@
           <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
           <button type="button" id="copy" aria-label="Copy install command">Copy</button>
         </div>
-        <p class="small">Installs into <code>~/.local</code> without sudo, with the built-in browser's engine where it runs (glibc 2.39+). Add <code>sh -s -- --no-browser</code> to leave it out.</p>
+        <p class="small">Installs into <code>~/.local</code> without sudo.</p>
       </div>
       <div class="card">
         <p class="label">Manual install</p>
@@ -107,7 +107,7 @@
           </div>
         </div>
         <div class="panel">
-          <div class="tabs"><span class="on">Terminal</span><span>Browser</span><span>Devices</span></div>
+          <div class="tabs"><span class="on">Terminal</span><span>Devices</span></div>
           <pre><span class="g">$</span> npm test -- login
 <span class="g">✓</span> redirects to /login when expired
 <span class="g">✓</span> keeps valid sessions on /home
@@ -139,10 +139,6 @@
         <p>Turns run outside the window, so an agent keeps working if you close Harbor, restart it or update it, and the chat picks up where it is.</p>
       </article>
       <article>
-        <h3>Browser only when you want it</h3>
-        <p>The browser panel uses Servo in a separate helper process. It only runs while that panel is open, and <code>--no-browser</code> leaves it out entirely.</p>
-      </article>
-      <article>
         <h3>Updates itself</h3>
         <p>New versions are checked against their signatures and swapped in place. Most updates are only the app bundle, a few megabytes; running agents carry on.</p>
       </article>
@@ -166,8 +162,8 @@
         <p>A lead agent splits the work and hands it to sub-agents that message each other, while you follow every step.</p>
       </article>
       <article>
-        <h3>Terminal, browser, devices</h3>
-        <p>A built-in panel with a real terminal, a browser and your paired PCs and phones, right next to the chat.</p>
+        <h3>Terminal and devices</h3>
+        <p>A built-in panel with a real terminal and your paired PCs and phones, right next to the chat. Links open in your own browser.</p>
       </article>
       <article>
         <h3>Usage limits handled</h3>
@@ -186,7 +182,7 @@
 </main>
 
 <footer class="wrap">
-  <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>; the browser helper is <a href="https://github.com/RDevNeo/harbor/tree/main/browser">MIT</a> (it links Servo, MPL-2.0).
+  <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>.
   Made with <a href="https://slint.dev">Slint</a> and <a href="https://bun.sh">Bun</a>. Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
   <p>No cookies, no analytics. <a href="/privacy">Privacy</a> · <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
 </footer>

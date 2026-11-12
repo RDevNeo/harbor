@@ -23,7 +23,6 @@ export interface PrsHost {
   accounts(): { id: string; label: string; current: boolean }[];
   pickAccount(id: string): void;
   openUrl(url: string): void;
-  openBrowser(url: string): void;
   copy(text: string): void;
   checkout(project: number, number: number): void;
   review(project: number, prompt: string): void;
@@ -353,9 +352,6 @@ export function attachPrs(view: PrsView, ports: PrsPorts, host: PrsHost, opts: {
       case "web":
         host.openUrl(url);
         break;
-      case "pane":
-        host.openBrowser(url);
-        break;
       case "copy_link":
         host.copy(url);
         break;
@@ -661,9 +657,6 @@ export function attachPrs(view: PrsView, ports: PrsPorts, host: PrsHost, opts: {
       switch (item.id) {
         case "panel":
           open(rowUrl);
-          break;
-        case "browser":
-          host.openBrowser(p.url);
           break;
         case "github":
           host.openUrl(p.url);

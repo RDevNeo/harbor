@@ -49,7 +49,6 @@ const page = mountIssues(bus, {
   pickAgent: () => {},
   fix: (project, issue, ask) => console.error(`fix ${issue.url} in ${project} ask=${ask}`),
   openUrl: git.openUrl,
-  browse: git.openUrl,
   copy: (text) => {
     const p = Bun.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
     p.stdin.write(text);

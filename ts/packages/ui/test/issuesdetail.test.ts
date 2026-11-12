@@ -49,7 +49,6 @@ function setup(f: ghapi.IssueFull, projects: { id: number; name: string; repo: s
     pickAgent: () => {},
     fix: (p, i, ask) => log.fix.push([p, i.number, ask]),
     openUrl: (u) => log.opened.push(u),
-    browse: (u) => log.opened.push(`browse ${u}`),
     copy: (t) => log.copied.push(t),
     avatar: () => Promise.resolve(null),
     now: () => 1000,
@@ -134,8 +133,8 @@ describe("issuedetail.rs panel", () => {
     page.open(URL);
     detailView(page, URL);
     await settle();
-    for (const a of ["copy-link", "copy-number", "open-web", "open-pane"] as const) detailAct(page, URL, a);
-    expect([log.copied, log.opened]).toEqual([[URL, "3"], [URL, `browse ${URL}`]]);
+    for (const a of ["copy-link", "copy-number", "open-web"] as const) detailAct(page, URL, a);
+    expect([log.copied, log.opened]).toEqual([[URL, "3"], [URL]]);
   });
 
   test("the sections fold", async () => {

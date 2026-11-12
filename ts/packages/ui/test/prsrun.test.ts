@@ -62,7 +62,6 @@ function setup(items: ghapi.Pr[], o: { fail?: string; diff?: string } = {}) {
     accounts: () => [{ id: "claude", label: "Claude", current: true }],
     pickAccount: (id) => calls.push(`account ${id}`),
     openUrl: (u) => calls.push(`open ${u}`),
-    openBrowser: (u) => calls.push(`browser ${u}`),
     copy: (t) => calls.push(`copy ${t}`),
     checkout: (id, n) => calls.push(`checkout ${id} ${n}`),
     review: (id, p) => calls.push(`review ${id} ${p.slice(0, 15)}`),
@@ -171,9 +170,9 @@ describe("prs.rs page", () => {
     await handle.idle();
     view.row_open("https://github.com/o/r/pull/1");
     await handle.idle();
-    for (const a of ["copy_link", "copy_number", "copy_checkout", "copy_branch", "web", "pane", "checkout", "merge", "merge_ask", "review"]) view.detail_act(a);
+    for (const a of ["copy_link", "copy_number", "copy_checkout", "copy_branch", "web", "checkout", "merge", "merge_ask", "review"]) view.detail_act(a);
     expect(calls.slice(1)).toEqual([
-      "copy https://github.com/o/r/pull/1", "copy 1", "copy gh pr checkout 1", "copy feat", "open https://github.com/o/r/pull/1", "browser https://github.com/o/r/pull/1", "checkout 4 1", "merge 4 1 false", "merge 4 1 true",
+      "copy https://github.com/o/r/pull/1", "copy 1", "copy gh pr checkout 1", "copy feat", "open https://github.com/o/r/pull/1", "checkout 4 1", "merge 4 1 false", "merge 4 1 true",
       "review 4 Review PR #1 (P",
     ]);
     view.detail_act("ready");
@@ -205,7 +204,7 @@ describe("prs.rs page", () => {
     await handle.idle();
     view.row_menu("https://github.com/o/r/pull/1");
     expect([view.popup_kind, view.popup_items.map((i) => i.label).slice(-2)]).toEqual(["row", ["Merge with Claude", "Merge with instructions…"]]);
-    view.popup_pick(3);
+    view.popup_pick(2);
     expect([calls.at(-1), view.popup_kind]).toEqual(["copy https://github.com/o/r/pull/1", ""]);
     view.row_menu("https://github.com/o/r/pull/1");
     view.popup_pick(0);

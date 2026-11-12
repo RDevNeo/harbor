@@ -53,9 +53,9 @@ export interface DetailView {
   agents: AgentRow[];
 }
 
-export type DetailAct = "open-web" | "open-pane" | "copy-link" | "copy-number" | "refresh" | "close" | "reopen" | "fix" | "fix-ask" | "toggle-desc" | "toggle-comments" | `agent:${string}`;
+export type DetailAct = "open-web" | "copy-link" | "copy-number" | "refresh" | "close" | "reopen" | "fix" | "fix-ask" | "toggle-desc" | "toggle-comments" | `agent:${string}`;
 
-const DETAIL_ACTS = ["open-web", "open-pane", "copy-link", "copy-number", "refresh", "close", "reopen", "fix", "fix-ask", "toggle-desc", "toggle-comments"] as const satisfies readonly DetailAct[];
+const DETAIL_ACTS = ["open-web", "copy-link", "copy-number", "refresh", "close", "reopen", "fix", "fix-ask", "toggle-desc", "toggle-comments"] as const satisfies readonly DetailAct[];
 
 /** The panel's action named by the view, or null for a name it doesn't have. */
 export function detailActOf(s: string): DetailAct | null {
@@ -211,8 +211,6 @@ export function detailAct(page: IssuesPage, url: string, act: DetailAct): void {
   switch (act) {
     case "open-web":
       return page.host.openUrl(url);
-    case "open-pane":
-      return page.host.browse(url);
     case "copy-link":
       return page.host.copy(full?.url ?? url);
     case "copy-number":

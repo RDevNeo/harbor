@@ -7,7 +7,7 @@ import type { Pixels } from "../logos.ts";
 export type { IssuesView };
 
 /** What the page asks of its host beyond GitHub: the projects, the agent a fix runs with, the system and the page's way out. */
-export type IssuesDeps = Pick<IssuesHost, "projects" | "agentLabel" | "agents" | "pickAgent" | "fix" | "openUrl" | "browse" | "copy"> & {
+export type IssuesDeps = Pick<IssuesHost, "projects" | "agentLabel" | "agents" | "pickAgent" | "fix" | "openUrl" | "copy"> & {
   close: () => void;
   keys: Keys;
   github: Pixels;

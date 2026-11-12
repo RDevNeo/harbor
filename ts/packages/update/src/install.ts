@@ -110,7 +110,7 @@ export async function install(cfg: UpdateConfig, version: string): Promise<Insta
     writeFileSync(join(prev, "RUNTIME"), runtimeOnDisk(cfg));
     if (isFile(join(dir, "manifest.json"))) copyFileSync(join(dir, "manifest.json"), join(prev, "manifest.json"));
     // The extras first: they can take minutes, and nothing that runs Harbor itself has changed yet.
-    for (const job of pendingExtras(cfg, dir, manifest, prev)) {
+    for (const job of pendingExtras(cfg, dir, manifest)) {
       await job.run().catch((e: Error) => cfg.log(`${job.name} not updated: ${e.message}`));
     }
     // Then runtime and bundle back to back, and VERSION last: a running Harbor reloads when VERSION
@@ -136,10 +136,6 @@ export function rollback(cfg: UpdateConfig, why?: string, log?: string): { resto
   const restored = read(join(prev, "VERSION"));
   const gaveUp = read(join(dir, "VERSION")) || cfg.version;
   writeFileSync(join(dir, SKIP), gaveUp);
-  if (isFile(join(prev, "harbor-browser"))) {
-    replace(join(prev, "harbor-browser"), join(dir, "harbor-browser"));
-    remove(join(dir, "browser.installed"));
-  }
   if (isFile(join(prev, RUNTIME_FILE))) {
     replace(join(prev, RUNTIME_FILE), join(dir, RUNTIME_FILE));
     const rt = read(join(prev, "RUNTIME"));

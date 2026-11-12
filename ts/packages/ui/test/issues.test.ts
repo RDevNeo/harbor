@@ -34,7 +34,6 @@ function host(items: ghapi.Issue[], projects: { id: number; name: string; repo: 
     pickAgent: () => {},
     fix: () => {},
     openUrl: () => {},
-    browse: () => {},
     copy: () => {},
     avatar: () => Promise.resolve(null),
     now: () => 1000,

@@ -9,8 +9,7 @@
 #
 # The same steps as .github/boat/build.sh's build_ts, minus the runtime alone (a bundle-only release
 # ships none): OUT/harbor-<arch>/harbor, and on x86_64 also OUT/harbor-x86_64/harbor-app.js and
-# OUT/extra (the npm notices, the 256 px icon and the browser engine's licence report, which is the
-# latest release's: browser/ didn't change). Harbor's Slint addon, when slint/out/<arch> holds it.
+# OUT/extra (the npm notices and the 256 px icon). Harbor's Slint addon, when slint/out/<arch> holds it.
 # HARBOR_VERSION, HARBOR_MIN_RUNTIME, HARBOR_GIT_SHA and the HARBOR_GOOGLE_* clients come from the
 # environment, as on boat.
 set -euo pipefail
@@ -60,11 +59,4 @@ else
   SVG="$root/packaging/harbor.svg" PNG="$out/extra/harbor-256.png" bun -e '
     const sharp = (await import("sharp")).default;
     await sharp(process.env.SVG, { density: 384 }).resize(256, 256).png().toFile(process.env.PNG);'
-fi
-if [ -n "${PREVIOUS:-}" ] && gh release download "$PREVIOUS" -p harbor-browser-x86_64-linux.tar.gz -D "$tmp" 2>/dev/null; then
-  tar -xzf "$tmp/harbor-browser-x86_64-linux.tar.gz" -C "$tmp" --wildcards '*/licenses/third-party-harbor-browser.html' 2>/dev/null \
-    && cp "$tmp"/harbor-browser-x86_64-linux/licenses/third-party-harbor-browser.html "$out/extra/lic/harbor-browser.html" \
-    || echo "::warning::$PREVIOUS's browser engine has no licence report"
-else
-  echo "::warning::could not fetch ${PREVIOUS:-the latest release}'s browser engine for its licence report"
 fi

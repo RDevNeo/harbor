@@ -21,7 +21,7 @@ import org.json.JSONObject;
  *  Light or dark is the drawer's sun/moon (Ui.flipTheme). Settings that were dropped keep a
  *  fixed value in code: rows are the comfortable ones (no Density), updates install by
  *  themselves (Update), sending while
- *  the agent works steers (Chat.FOLLOW_UP), web links open in the built-in browser, dictation
+ *  the agent works steers (Chat.FOLLOW_UP), web links open in the phone's browser, dictation
  *  detects the language and takes spoken commands (Voice), the PCs transcribe every dictation
  *  (Asr keeps no model), and notifications are instant (Listen) and come whether or not you're
  *  at that PC (Notes). */

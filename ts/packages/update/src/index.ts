@@ -4,7 +4,7 @@ export { defaultConfig, runtimeInfo, type Arch, type RuntimeInfo, type UpdateCon
 export { parseManifest, MANIFEST, type Manifest } from "./manifest.ts";
 export { install, rollback, rolledBack, onDisk, current, hasPrevious, skipped, type RolledBack } from "./install.ts";
 export { Updater, backoffMs, installDue, news, type State, type UpdateInfo } from "./delivery.ts";
-export { apk, putApk, APK, NO_BROWSER, VIDEO_LIB, engineStale, videoStale, browserUnsupported, retryAfter } from "./extras.ts";
+export { apk, putApk, APK, VIDEO_LIB, videoStale, retryAfter } from "./extras.ts";
 export { confirmStart, recoverUnconfirmed, failedStart, readAttempt, START_LIMIT_MS, SETTLE_MS } from "./startup.ts";
 export { Reloader, takeSnapshot, draftsOf, draftsFrom, watchFiles, handoverSaid, handoverSay, HANDOVER, STATE_KEY, RELOADED_PID, type Snapshot, type Kv, type Spawned } from "./reload.ts";
 export * as preview from "./preview.ts";

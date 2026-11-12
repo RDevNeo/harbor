@@ -8,8 +8,8 @@ Builds the unsigned APK from this working tree (tracked files with their uncommi
 plus new files git does not ignore) with android/build.sh, which also runs the Android unit tests
 (android/test), on a fresh `large` boat.dev sandbox from the snapshot `harbor-build`, in the
 release build's Android image and SDK (.github/boat/apk.sh). Output streams here; exits non-zero
-when the build or a test fails. The APK carries no built-in browser engine (android/servo: that
-is browser.yml's job) and is unsigned: install it only where no signed Harbor app is installed.
+when the build or a test fails. The APK is unsigned: install it only where no signed Harbor app
+is installed.
 The sandbox is always deleted, also on error, Ctrl+C or kill (see scripts/boat/check --help).
 
 Options:

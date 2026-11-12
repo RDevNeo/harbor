@@ -31,8 +31,7 @@ export type Act =
   | { kind: "fast"; on: boolean }
   | { kind: "check_updates" }
   | { kind: "toggle_sidebar" }
-  | { kind: "toggle_terminal" }
-  | { kind: "toggle_browser" };
+  | { kind: "toggle_terminal" };
 
 export interface Item {
   /** Stable across lists ("chat:12"): what the recent picks remember. */
@@ -192,7 +191,6 @@ export function paletteItems(p: PaletteInput): Item[] {
   v.push(paletteItem("act:updates", "actions", ICONS.REFRESH, "refresh", "Check for updates", "Harbor's latest release", { kind: "check_updates" }, "upgrade version release"));
   v.push(paletteItem("act:sidebar", "actions", ICONS.PANEL_LEFT, "panel", "Show or hide the sidebar", "", { kind: "toggle_sidebar" }, "toggle"));
   v.push(paletteItem("act:terminal", "actions", ICONS.TERMINAL, "terminal", "Open or close the terminal", "", { kind: "toggle_terminal" }, "toggle shell console"));
-  v.push(paletteItem("act:browser", "actions", ICONS.GLOBE, "globe", "Open or close the browser", "", { kind: "toggle_browser" }, "toggle web"));
   for (const r of p.repos) v.push(paletteItem(`new:${r.id}`, "actions", ICONS.COMPOSE, "compose", `New chat in ${r.name}`, r.dir, { kind: "new_chat", repo: r.id }, "thread start create"));
   for (const r of p.repos) v.push(paletteItem(`project:${r.id}`, "projects", ICONS.FOLDER, "folder", r.name, r.dir, { kind: "project", id: r.id }, "project folder repo"));
   for (const c of p.chats) {

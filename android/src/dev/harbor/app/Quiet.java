@@ -13,7 +13,7 @@ final class Quiet {
     /** How long Harbor has to be out of sight (with the screen on) before an update installs. */
     static final long GRACE_MS = 10_000;
 
-    /** seen: a Harbor screen is on screen (Base.started, or the browser's process in front);
+    /** seen: a Harbor screen is on screen (Base.started, or another of its processes in front);
      *  interactive: the screen is on; locked: the lock screen is up; awayMs: since the last
      *  Harbor screen went out of sight. */
     static boolean now(boolean seen, boolean interactive, boolean locked, long awayMs) {

@@ -1610,10 +1610,7 @@ public class Chat extends Base implements Images.Gallery {
         pp.gravity = Gravity.CENTER_HORIZONTAL;
         wrap.addView(pill, pp);
         if (!url.isEmpty()) {
-            pill.setOnClickListener(v -> {
-                if (Render.web(url)) Browser.open(this, url);
-                else try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (Exception e) { Ui.copy(this, url); }
-            });
+            pill.setOnClickListener(v -> Ui.openUrl(this, url));
         } else if (expandable) {
             final View[] body = {null};
             Runnable show = () -> {

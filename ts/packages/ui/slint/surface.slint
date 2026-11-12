@@ -4,7 +4,6 @@ import { Btn, Glyph, KeyCap, TipArea } from "widgets.slint";
 import { TerminalView, TermLine, TermKey } from "terminal.slint";
 import { DevicesView, DeviceRow, TransferRow } from "devices.slint";
 import { FilesView, FilesData, FileRow } from "files.slint";
-import { BrowserView, BrowserData } from "browser.slint";
 import { PatchListView, ListData, ListRow } from "patchlist.slint";
 
 export struct SurfaceTab {
@@ -26,7 +25,7 @@ component PaneTab inherits TouchArea {
     in property <bool> active;
     callback open();
     callback close();
-    property <string> icon: tab.kind == "terminal" ? Icons.terminal : tab.kind == "browser" ? Icons.globe : tab.kind == "devices" ? Icons.smartphone : tab.kind == "files" ? Icons.folder : tab.kind == "list" ? Icons.list-checks : Icons.plus;
+    property <string> icon: tab.kind == "terminal" ? Icons.terminal : tab.kind == "devices" ? Icons.smartphone : tab.kind == "files" ? Icons.folder : tab.kind == "list" ? Icons.list-checks : Icons.plus;
     property <bool> lit: root.active || root.has-hover || x-area.has-hover;
     width: label.preferred-width + 58px;
     height: 28px;
@@ -76,7 +75,6 @@ component PaneTab inherits TouchArea {
 // surface.rs `chooser`
 component Chooser inherits Rectangle {
     callback pick(string);
-    callback recent(length, length);
     public function grab() {
         keys.focus();
     }
@@ -85,10 +83,6 @@ component Chooser inherits Rectangle {
         key-pressed(e) => {
             if e.modifiers.control || e.modifiers.alt || e.modifiers.meta {
                 return reject;
-            }
-            if e.text == "b" || e.text == "B" {
-                root.pick("B");
-                return accept;
             }
             if e.text == "t" || e.text == "T" {
                 root.pick("T");
@@ -115,12 +109,12 @@ component Chooser inherits Rectangle {
         Rectangle {
             height: 2px;
         }
-        for row in [{ key: "B", label: "Browser" }, { key: "T", label: "Terminal" }, { key: "M", label: "Devices" }]: HorizontalLayout {
+        for row in [{ key: "T", label: "Terminal" }, { key: "M", label: "Devices" }]: HorizontalLayout {
             alignment: center;
             Rectangle {
                 width: root.w;
                 height: 38px;
-                property <string> icon: row.key == "B" ? Icons.globe : row.key == "T" ? Icons.terminal : Icons.smartphone;
+                property <string> icon: row.key == "T" ? Icons.terminal : Icons.smartphone;
                 Rectangle {
                     background: area.has-hover ? Theme.gray-100 : transparent;
                     border-radius: Theme.radius-md;
@@ -145,25 +139,6 @@ component Chooser inherits Rectangle {
                     color: Theme.fg;
                     vertical-alignment: center;
                 }
-                if row.key == "B": TipArea {
-                    x: parent.width - 59px;
-                    y: 6px;
-                    width: 26px;
-                    height: 26px;
-                    tip: "Dev servers and recent pages";
-                    clicked => {
-                        root.recent(self.absolute-position.x, self.absolute-position.y + self.height);
-                    }
-                    Rectangle {
-                        background: parent.has-hover ? Theme.gray-200 : transparent;
-                        border-radius: 4px;
-                    }
-                    Glyph {
-                        icon: Icons.down;
-                        size: 14px;
-                        color: Theme.subtle;
-                    }
-                }
                 KeyCap {
                     x: parent.width - 4px - self.width;
                     y: 8px;
@@ -185,7 +160,6 @@ export component SurfacePane inherits Rectangle {
     callback maximize();
     callback hide();
     callback pick(string);
-    callback recent(length, length);
     callback term-key(TermKey, string, bool, bool, bool);
     callback term-paste();
     callback term-wheel(int);
@@ -205,15 +179,6 @@ export component SurfacePane inherits Rectangle {
     in property <bool> file-clearable;
     callback files-act(string, int);
     callback files-go(string);
-    in property <BrowserData> browser;
-    in property <[string]> servers;
-    callback browser-nav(string);
-    callback browser-go(string);
-    callback browser-missing();
-    callback browser-resized(float, float);
-    callback browser-pointer(string, float, float, int);
-    callback browser-wheel(float, float, float, float);
-    callback browser-key(string, bool, bool, bool, bool, bool);
     in property <ListData> list;
     in property <[ListRow]> list-rows;
     callback list-act(string, int);
@@ -293,9 +258,6 @@ export component SurfacePane inherits Rectangle {
         visible: root.kind == "chooser";
         pick(k) => {
             root.pick(k);
-        }
-        recent(x, y) => {
-            root.recent(x, y);
         }
     }
     term := TerminalView {
@@ -391,36 +353,6 @@ export component SurfacePane inherits Rectangle {
         }
         open(i) => {
             root.list-act("open", i);
-        }
-    }
-    if root.kind == "browser": BrowserView {
-        y: root.top;
-        height: root.height - self.y;
-        data: root.browser;
-        servers: root.servers;
-        nav(a) => {
-            root.browser-nav(a);
-        }
-        go(u) => {
-            root.browser-go(u);
-        }
-        missing-act => {
-            root.browser-missing();
-        }
-        close => {
-            root.close(root.active);
-        }
-        page-resized(w, h) => {
-            root.browser-resized(w, h);
-        }
-        pointer(k, x, y, b) => {
-            root.browser-pointer(k, x, y, b);
-        }
-        wheel(x, y, dx, dy) => {
-            root.browser-wheel(x, y, dx, dy);
-        }
-        key(t, d, c, s, a, m) => {
-            root.browser-key(t, d, c, s, a, m);
         }
     }
 }

@@ -60,26 +60,9 @@ aarch64() {
     ubuntu:22.04 bash -euo pipefail -c "$build_ts"
 }
 
-# The licence reports: the browser engine's crates (cargo-about), which only change with its
-# dependencies or the template, and the app's npm packages (their LICENSE files, from x86_64's
-# node_modules: run after it). A failure never stops a release: the last good report is used, or none.
+# The 256 px icon (the npm packages' licence notices are npm_notices', after x86_64's build).
 licences() {
-  strip() { sed '/^name = "harbor[^"]*"$/{n;d}' "$1"; }
-  local key
-  key=$( (strip browser/Cargo.lock; cat packaging/about.toml packaging/about.hbs) | sha256sum | cut -c1-32)
-  if [ "$(cat "$cache/lic/key" 2>/dev/null)" != "$key" ]; then
-    toolchain "$core"
-    run_in "$core" "${rust[@]}" -e CARGO_TARGET_DIR=/c/target-tools -- bash -euo pipefail -c '
-      command -v cargo-about >/dev/null || { timeout 600 cargo install --locked -q --features cli cargo-about; rm -rf /c/target-tools; }
-      fetch() { for i in 1 2; do timeout 120 cargo fetch --locked "$@" && return 0; sleep 5; done; return 1; }
-      cd browser && fetch
-      rm -rf /c/lic.new && mkdir -p /c/lic.new
-      timeout 420 cargo about generate --frozen -c ../packaging/about.toml ../packaging/about.hbs -o /c/lic.new/harbor-browser.html' \
-      && echo "$key" > "$cache/lic.new/key" && rm -rf "$cache/lic" && mv "$cache/lic.new" "$cache/lic" \
-      || echo "::warning::the browser's licence report failed; using the last good one, if any"
-  fi
   mkdir -p "$HOME/out/extra/lic"
-  cp "$cache"/lic/*.html "$HOME/out/extra/lic/" 2>/dev/null || true
   rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$HOME/out/extra/harbor-256.png"
 }
 npm_notices() {

@@ -152,7 +152,6 @@ export interface IssuesHost {
   /** `project` 0: the thread starts on `peer`'s PC. */
   fix(project: number, issue: Issue, ask: boolean): void;
   openUrl(url: string): void;
-  browse(url: string): void;
   copy(text: string): void;
   avatar(login: string, url: string): Promise<Pixels | null>;
   now(): number;

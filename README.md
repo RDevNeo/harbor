@@ -22,7 +22,7 @@ behind the window. Linux only (x86_64 and aarch64, glibc 2.35+).
   PCs of its own workspace: there is no pairing. PCs find each other on
   the network, ask the router to open Harbor's port (UPnP, NAT-PMP, PCP; or use a port forward you
   set: `harbor net forward <port>`, `harbor net name <ddns name>`; `harbor net` shows the result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
-  or other software. The phone has the same built-in browser (Servo) for links in chats.
+  or other software.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks (public over
   HTTPS with a Let's Encrypt certificate Harbor gets itself, `/hooks/<token>` only).
@@ -32,8 +32,8 @@ behind the window. Linux only (x86_64 and aarch64, glibc 2.35+).
   They stay on this PC (`secrets.json`, 0600), never in chats or the mesh. On request Harbor also
   writes one to the project's `.env` file, which is plain text the agent's own tools can read.
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
-- **Side panes**: a browser (Servo, in its own `harbor-browser` process from `browser/`; no Chromium, Electron or system WebView), terminals, and Devices (your paired
-  PCs and phones: send them text, images and files).
+- **Side panes**: terminals, and Devices (your paired PCs and phones: send them text, images and
+  files). Links open in your system's browser (`xdg-open`), on the phone in its own.
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
   integrations, secrets, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
 - **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex, Gmail, Discord presets plus custom
@@ -48,17 +48,13 @@ installed per user into `~/.local` without sudo:
 curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh
 ```
 
-- The built-in browser's engine (Servo, about 45 MB) comes with it on x86_64 and aarch64 with glibc
-  2.39+ (Ubuntu 24.04+, Debian 13+, Fedora 40+, Arch); on older systems Harbor installs without it.
-  `… | sh -s -- --no-browser` leaves it out (`--with-browser` adds it back). Copies installed
-  before it came by default fetch it by themselves.
 - `… | sh -s -- --uninstall` removes Harbor and keeps your chats (`--uninstall --purge` deletes them).
 - Offline: download `harbor-x86_64-linux.tar.gz` or `harbor-aarch64-linux.tar.gz` (and
-  `harbor-browser-<arch>-linux.tar.gz` beside it for the browser engine, else it's downloaded), extract it and run `./install.sh` in that folder; it installs those files after checking them
+  `harbor-video-<arch>-linux.tar.gz` beside it for the video player, else Harbor fetches it later), extract it and run `./install.sh` in that folder; it installs those files after checking them
   against the signed `SHA256SUMS` inside.
 - install.sh checks every download against the release's minisign signature, fetching a pinned static
   minisign when none is installed; `HARBOR_INSECURE=1` installs without that check.
-- Files: `~/.local/lib/harbor/` (`harbor`, `harbor-browser`), `~/.local/bin/harbor`, a desktop entry
+- Files: `~/.local/lib/harbor/` (`harbor`, `libmpv-harbor.so`), `~/.local/bin/harbor`, a desktop entry
   and icons.
 
 ### What a fresh PC needs
@@ -82,7 +78,6 @@ Optional (only that feature is off without it):
 | `notify-send`, `xdg-open` | notifications, opening links and files |
 | `ssh` | terminals, files and agents on your other PCs |
 | `rg` | the grep tool for agents on other PCs working on this PC's files |
-| `fontconfig` (glibc 2.39+) | the built-in browser's engine (every desktop has it) |
 | `rsvg-convert` or `magick` | SVG project favicons |
 | `npx` | Convex login |
 | Hyprland or Sway | raising the open window when you launch Harbor again |
@@ -107,9 +102,7 @@ bun harbor.ts                                     # run it from source
 bun scripts/build.ts single harbor --version dev  # one executable, as releases ship it
 ```
 
-`./run.sh` in `ts/` starts it on a throwaway copy of this PC's Harbor data, offline. The browser
-pane's engine (Servo, `browser/`) is a separate Rust program, built separately:
-`cd browser && cargo build --release` (or the pane's "Build engine"). Releases ship it prebuilt.
+`./run.sh` in `ts/` starts it on a throwaway copy of this PC's Harbor data, offline.
 
 **Devices** (a side pane) lists what is paired with this Harbor: your other PCs (Settings › Devices)
 and phones running Harbor for Android (Settings › Phones), online or not. Send puts text or an image
@@ -196,8 +189,6 @@ page by name too (`general|appearance|keybindings|providers|limits|integrations|
 
   **Bun** (the runtime, in the executable): MIT. The other npm packages
   the executable carries, with their licences: `licenses/third-party-harbor.txt` in the release archive.
-- **Browser helper** (`browser/`): MIT, see [browser/LICENSE](browser/LICENSE). It links
-  [Servo](https://servo.org), which is MPL-2.0.
 - **Fonts**: [Geist and Geist Mono](https://vercel.com/font) (SIL OFL 1.1, `assets/fonts/OFL.txt`) and a
   subset of [Lucide](https://lucide.dev) icons (ISC, `assets/fonts/LUCIDE-LICENSE.txt`).
 - **Logos**: integration marks from [Simple Icons](https://simpleicons.org) (CC0,

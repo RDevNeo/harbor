@@ -53,7 +53,7 @@ apppid() { on "$1" bash "$ONE" status | sed -n 's/^running: *//p' | awk '{print 
 
 install_rust() { # name port id
   mkdir -p "$T/$1/rel"; cp -a "$REL" "$T/$1/rel/"
-  on "$1" HARBOR_INSECURE=1 sh "$T/$1/rel/$(basename "$REL")/install.sh" --no-browser > "$T/$1/install.log" 2>&1 || { bad "install.sh on $1"; cat "$T/$1/install.log"; }
+  on "$1" HARBOR_INSECURE=1 sh "$T/$1/rel/$(basename "$REL")/install.sh" > "$T/$1/install.log" 2>&1 || { bad "install.sh on $1"; cat "$T/$1/install.log"; }
   printf 'PK\003\004%s' "$(head -c 4096 /dev/urandom | base64 -w0)" > "$(lib "$1")/harbor-android.apk"
   printf '109000' > "$(lib "$1")/harbor-android.version"
   mkdir -p "$(dirname "$(db "$1")")"

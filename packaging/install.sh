@@ -2,18 +2,11 @@
 # Harbor installer: per user, no sudo.
 #
 #   curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh
-#   curl -fsSL …/install.sh | sh -s -- --no-browser       # without the built-in browser's engine
 #   curl -fsSL …/install.sh | sh -s -- --uninstall        # remove Harbor (keeps your chats)
 #   curl -fsSL …/install.sh | sh -s -- --uninstall --purge  # …and its data
 #
 # Offline: run ./install.sh from an extracted harbor-<arch>-linux.tar.gz (x86_64 or aarch64). It installs the files
 # next to it, checked against the SHA256SUMS and its signature in that folder.
-# The browser engine then comes from an extracted harbor-browser-<arch>-linux folder (or its
-# .tar.gz) beside it, and is downloaded only if there is neither.
-#
-# The built-in browser's engine (Servo, harbor-browser, about 45 MB) is installed by default where
-# it runs: x86_64 or aarch64 with glibc 2.39+. --no-browser leaves it out (and Harbor doesn't
-# fetch it later); --with-browser, the old way to ask for it, turns that back on.
 #
 # The video player (libmpv-harbor.so, about 5 MB) comes along too; without it Harbor fetches it later.
 #
@@ -21,7 +14,7 @@
 # the static minisign pinned below is fetched (and checked against its SHA-256) for that. To install
 # without a signature check anyway: HARBOR_INSECURE=1.
 #
-# Layout: ~/.local/lib/harbor/{harbor,harbor-browser,libmpv-harbor.so,harbor-android.apk}, ~/.local/bin/harbor (link),
+# Layout: ~/.local/lib/harbor/{harbor,libmpv-harbor.so,harbor-android.apk}, ~/.local/bin/harbor (link),
 # ~/.local/share/applications/harbor.desktop, ~/.local/share/icons/hicolor/…/harbor.{svg,png}.
 # Harbor updates itself afterwards (Settings › General).
 set -eu
@@ -33,9 +26,6 @@ MINISIGN_URL="https://github.com/jedisct1/minisign/releases/download/0.12/minisi
 MINISIGN_SHA256="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
 INSECURE="${HARBOR_INSECURE:-0}"
 VERSION="${HARBOR_VERSION:-latest}"
-BROWSER=1
-# on / off: asked for with --with-browser / --no-browser; "": the default (or the last choice).
-BROWSER_ASK=""
 UNINSTALL=0
 PURGE=0
 # A local folder with the release files (for testing): HARBOR_FROM=/path/to/dist
@@ -43,12 +33,12 @@ FROM="${HARBOR_FROM:-}"
 
 for a in "$@"; do
   case "$a" in
-    --with-browser) BROWSER_ASK=on ;;
-    --no-browser) BROWSER_ASK=off ;;
+    # Harbor has no built-in browser since 0.177: its options are taken and do nothing.
+    --with-browser|--no-browser) ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
     --version=*) VERSION="${a#--version=}" ;;
-    -h|--help) sed -n '2,24p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "harbor install: unknown option $a" >&2; exit 2 ;;
   esac
 done
@@ -180,60 +170,15 @@ check_folder() { # dir name
   fi
 }
 
-# The browser engine: by default, unless turned off (now or by an earlier --no-browser) or this
-# system can't run it (Servo is built on Ubuntu 24.04: glibc 2.39+).
-glibc_ok() {
-  v="$(getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc //p')"
-  [ -n "$v" ] || v="$(ldd --version 2>/dev/null | head -1 | grep -o '[0-9][0-9]*\.[0-9][0-9]*$' || true)"
-  [ -n "$v" ] || return 1
-  GLIBC="$v"
-  [ "${v%%.*}" -gt 2 ] || { [ "${v%%.*}" -eq 2 ] && [ "${v#*.}" -ge 39 ]; }
-}
-GLIBC=""
-if [ "$BROWSER_ASK" = off ] || { [ -z "$BROWSER_ASK" ] && [ -f "$LIB/.no-browser" ]; }; then
-  BROWSER=0
-  BROWSER_ASK=off
-elif ! glibc_ok; then
-  BROWSER=0
-  say "Note: skipping the built-in browser's engine: it needs glibc 2.39 or newer${GLIBC:+ (this system has $GLIBC)}."
-fi
-BSRC=""
 if [ -n "$HERE" ]; then
   SRC="$HERE"
   say "Installing Harbor $(cat "$SRC/VERSION") from $SRC…"
   check_folder "$SRC" "harbor-$ARCH-linux"
-  if [ "$BROWSER" = 1 ]; then
-    side="$(dirname -- "$HERE")"
-    if [ -x "$side/harbor-browser-$ARCH-linux/harbor-browser" ]; then
-      BSRC="$side/harbor-browser-$ARCH-linux"
-    elif [ -f "$side/harbor-browser-$ARCH-linux.tar.gz" ]; then
-      mkdir -p "$TMP/browser"
-      tar -xzf "$side/harbor-browser-$ARCH-linux.tar.gz" -C "$TMP/browser"
-      BSRC="$TMP/browser/harbor-browser-$ARCH-linux"
-    fi
-    if [ -n "$BSRC" ]; then
-      check_folder "$BSRC" "harbor-browser-$ARCH-linux"
-      [ "$(cat "$BSRC/browser.id" 2>/dev/null)" = "$(cat "$SRC/browser.id" 2>/dev/null)" ] || \
-        say "Note: that browser engine is from another release; Harbor's updater replaces it later."
-    else
-      # Only the engine needs the network; Harbor itself came from this folder.
-      VERSION="$(cat "$SRC/VERSION")"
-      BASE="https://github.com/$REPO/releases/download/v$VERSION"
-    fi
-  fi
 fi
 
 if [ -z "$HERE" ]; then
   [ -n "$FROM" ] || command -v curl >/dev/null 2>&1 || die "curl is required."
   fetch SHA256SUMS || die "could not reach the release ($BASE)."
-elif [ "$BROWSER" = 1 ] && [ -z "$BSRC" ]; then
-  # Harbor itself is here; without the network, skip just the engine.
-  if ! command -v curl >/dev/null 2>&1 || ! fetch SHA256SUMS 2>/dev/null; then
-    say "Note: the browser engine needs a download ($BASE), which failed; installing Harbor without it."
-    BROWSER=0
-  fi
-fi
-if [ -z "$HERE" ]; then
   say "Downloading Harbor ($VERSION)…"
   CORE="harbor-$ARCH-linux.tar.gz"
   fetch "$CORE" || die "could not download $CORE"
@@ -250,20 +195,6 @@ if [ -z "$HERE" ] && grep -q "  harbor-android.apk\$" "$TMP/SHA256SUMS" 2>/dev/n
   if fetch harbor-android.apk; then
     verify harbor-android.apk
     APK="$TMP/harbor-android.apk"
-  fi
-fi
-
-if [ "$BROWSER" = 1 ] && [ -z "$BSRC" ]; then
-  BR="harbor-browser-$ARCH-linux.tar.gz"
-  say "Downloading the browser engine…"
-  if fetch "$BR"; then
-    verify "$BR"
-    mkdir -p "$TMP/browser"
-    tar -xzf "$TMP/$BR" -C "$TMP/browser"
-    BSRC="$TMP/browser/harbor-browser-$ARCH-linux"
-  else
-    say "Note: this release has no browser engine for $ARCH; skipping it (Harbor fetches it later when there is one)."
-    BROWSER=0
   fi
 fi
 
@@ -297,17 +228,12 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -p "$SRC/harbor" "$STAGE/"
 cp -p "$SRC/VERSION" "$STAGE/VERSION"
-[ -f "$SRC/browser.id" ] && cp -p "$SRC/browser.id" "$STAGE/browser.id"
 [ -f "$SRC/video.id" ] && cp -p "$SRC/video.id" "$STAGE/video.id"
 cp -rp "$SRC/licenses" "$STAGE/licenses"
 if [ -n "$APK" ]; then
   cp -p "$APK" "$STAGE/harbor-android.apk"
   # Its Android versionCode: 0.7.0 -> 7000 (the release workflow builds it so).
   sed 's/^v//; s/-.*//' "$SRC/VERSION" | awk -F. '{ print $1 * 1000000 + $2 * 1000 + ($3 + 0) }' > "$STAGE/harbor-android.version"
-fi
-if [ "$BROWSER" = 1 ] && [ -n "$BSRC" ]; then
-  cp -p "$BSRC/harbor-browser" "$STAGE/"
-  cp -p "$BSRC/browser.id" "$STAGE/browser.installed"
 fi
 if [ -n "$VSRC" ]; then
   cp -p "$VSRC/libmpv-harbor.so" "$STAGE/"
@@ -319,16 +245,11 @@ fi
 # version (rename is atomic; running processes keep the old file).
 # (harbor-stream, the screen viewer, is gone since 0.18)
 rm -f "$LIB/harbor-stream"
-for f in harbor-browser libmpv-harbor.so harbor-android.apk harbor-android.version VERSION browser.id browser.installed video.id video.installed; do
+for f in libmpv-harbor.so harbor-android.apk harbor-android.version VERSION video.id video.installed; do
   [ -e "$STAGE/$f" ] && mv -f "$STAGE/$f" "$LIB/$f"
 done
-# --no-browser: no engine, now or from Harbor's own updates (the panel's "Install engine" undoes it).
-if [ "$BROWSER_ASK" = off ]; then
-  : > "$LIB/.no-browser"
-  rm -f "$LIB/harbor-browser" "$LIB/browser.installed"
-else
-  rm -f "$LIB/.no-browser"
-fi
+# What the built-in browser left (removed after 0.176): its Servo engine, its id and the --no-browser mark.
+rm -rf "$LIB/harbor-browser" "$LIB/browser.id" "$LIB/browser.installed" "$LIB/.no-browser" "$LIB/.staging-browser" "$LIB/.previous/harbor-browser"
 rm -rf "$LIB/licenses"
 mv "$STAGE/licenses" "$LIB/licenses"
 mv -f "$STAGE/harbor" "$LIB/harbor"
@@ -348,11 +269,6 @@ case ":$PATH:" in
   *) say "Run it from your app launcher, or $BIN/harbor (add $BIN to your PATH to type just 'harbor')." ;;
 esac
 
-if [ "$BROWSER_ASK" = off ]; then
-  say "Without the built-in browser's engine (--no-browser); rerun with --with-browser to add it."
-elif [ -x "$LIB/harbor-browser" ]; then
-  say "The built-in browser's engine (Servo) is installed."
-fi
 command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1 || \
   say "Harbor drives coding-agent CLIs: install Claude Code (https://claude.ai/install.sh), Codex (it needs Node.js) or OpenCode (https://opencode.ai)."
 # Optional programs (the README lists what each one is for).

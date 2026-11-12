@@ -87,9 +87,9 @@ describe("prdetail.rs timeline and code", () => {
   });
 
   test("the more menu offers review only for projects, and separates the open and copy actions", () => {
-    expect(moreMenu(false).map((m) => m.act)).toEqual(["refresh", "pane", "web", "copy_link", "copy_number", "copy_checkout"]);
+    expect(moreMenu(false).map((m) => m.act)).toEqual(["refresh", "web", "copy_link", "copy_number", "copy_checkout"]);
     expect(moreMenu(true).map((m) => m.act)[1]).toBe("review");
-    expect(moreMenu(true).filter((m) => m.sep).map((m) => m.act)).toEqual(["pane"]);
+    expect(moreMenu(true).filter((m) => m.sep).map((m) => m.act)).toEqual(["web"]);
     expect(LINK_MENU.map((m) => m.label)).toEqual(["Copy link", "Open on GitHub"]);
   });
 });

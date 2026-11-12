@@ -209,7 +209,6 @@ export class PageHost {
         accounts: () => this.agents(),
         pickAccount: (id) => s.data.store.set("gh_agent_account", id),
         openUrl: git.openUrl,
-        openBrowser: (url) => s.openExternal(url),
         copy: (text) => s.win.copy_text(text),
         checkout: (id, n) => {
           const dir = s.projectDir(id);
@@ -244,7 +243,6 @@ export class PageHost {
           else this.job("Fix", `#${issue.number} ${issue.title}`, ask, (extra) => s.work().fixIssue(id, issue, extra, s.composer()));
         },
         openUrl: git.openUrl,
-        browse: (url) => s.openExternal(url),
         copy: (text) => s.win.copy_text(text),
         close: () => s.leave(),
         keys: s.keys,

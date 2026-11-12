@@ -4,7 +4,7 @@ Phase 6. Rewritten for the plan's Architecture (runtime + app bundle), not porte
 
 | Rust module | State | Rust tests ported |
 | --- | --- | --- |
-| update.rs | done, redesigned: minisign check, manifest, runtime-then-bundle install, long-poll + GitHub + mesh delivery, rollback, browser/video/phone-app extras, `--update`, `--restore-previous` | 10 of 11 |
+| update.rs | done, redesigned: minisign check, manifest, runtime-then-bundle install, long-poll + GitHub + mesh delivery, rollback, video/phone-app extras (the browser engine too, until it was removed after 0.176), `--update`, `--restore-previous` | 10 of 11 |
 | reload.rs | done as `reload.ts`: snapshot, restart through the runtime, file watcher. The idle wait is gone by design | 0 of 1 |
 | preview.rs | done as `preview.ts` + `previewmeta.ts`; previews are bundles, not binaries | 7 of 7 |
 | notices.rs | done as a UI-free model (`notices.ts`): toast texts, dismissals, the phone banner; the drawing belongs to `ui` | 0 of 0 (12 new) |
@@ -29,7 +29,7 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
   update replaced), `.skip` (a version this PC gave up on), `starting.json` (the start being tried), `rolled-back.json`.
 - **Release assets**: `harbor-app.js`, `harbor-app.json`, `harbor-runtime-{x86_64,aarch64}` (runtime lane), each with `.minisig`
   whose trusted comment is `harbor v<release> <asset name>` (checked, so an old signed file can't pass as a newer one).
-  `harbor-app.json` = `{version, minRuntime, runtime, browser?, video?, apk?}`: `runtime` is the release whose assets hold the
+  `harbor-app.json` = `{version, minRuntime, runtime, video?, apk?}` (older ones also named `browser`, now ignored): `runtime` is the release whose assets hold the
   newest runtime, so a bundle release needs no runtime asset; the extras say which release carries them.
 - **Bundle contract**: `harbor-app.js` exports `meta = {version, minRuntime}` and `main(argv)`; loading it starts nothing. The
   runtime refuses a bundle whose `minRuntime` is newer than itself (also in `smoke-bundle`, which the installer runs on the new
@@ -102,7 +102,7 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
 - The bundle gets Slint from the runtime (`globalThis.__harbor`, plugin in `scripts/build.ts`, as Phase 0 found). `sherpa-onnx-node` is
   not wired the same way yet: `media` and the runtime entry have to agree (libs on `LD_LIBRARY_PATH`).
 - `HARBOR_UPDATE_WORKER` overrides the worker's address (`off`: GitHub only), for tests and rigs.
-- Extras (browser engine, video player, phone app) that a release changes are fetched before the swap, as in the Rust app, so on
+- Extras (video player, phone app) that a release changes are fetched before the swap, as in the Rust app, so on
   those rare releases the swap waits for the download; a failed extra never holds the update back and is retried in the background.
 - A second Harbor started while one runs, and a restart's replacement, are told apart for the start check: only the first, or
   the process started with `HARBOR_RELOADED_PID` of the one it replaces, writes `starting.json`.
@@ -116,7 +116,7 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
 - **One executable**: `scripts/build.ts single OUT --version V --sha S` compiles `ts/single.ts`: the runtime with the bundle inside
   (182 MB on x86_64). It sits where the Rust `harbor` sits (`~/.local/lib/harbor/harbor`, `.managed` beside it) and needs no Rust
   change. It runs the bundle it carries, unless an update put a newer `harbor-app.js` (by `VERSION`) beside it (`useEmbedded`).
-  `--version`, `runtime-version`, `--check-native` (sharp and sherpa), `turn`, `mcp`, `app`, `nc`, `mesh` work from it; the browser engine,
+  `--version`, `runtime-version`, `--check-native` (sharp and sherpa), `turn`, `mcp`, `app`, `nc`, `mesh` work from it;
   libmpv, the APK and its version file are read from the install folder as before.
 - **Version**: this build is `0.109.1-ts`, above Rust 0.109.0 for both apps. To peers, phones, the account directory and discovery it
   says `0.109.0.ts` (`advertised`, `RUST_PARITY`): Rust's `parse`, the phone's `Update.code` and this app all read it as 0.109.0, so a

@@ -62,16 +62,9 @@ ldd "$H/.local/lib/harbor/harbor"
 as ".local/bin/harbor --version" || fail "harbor --version failed"
 end
 
-# The browser engine comes by default where glibc is 2.39+; its desktop libraries (fontconfig, EGL…)
-# are often missing from these bare images, so that's only a warning.
-step "Browser engine"
-if [ -x "$H/.local/lib/harbor/harbor-browser" ]; then
-  [ -f "$H/.local/lib/harbor/browser.installed" ] || fail "harbor-browser without browser.installed"
-  missing="$(ldd "$H/.local/lib/harbor/harbor-browser" | grep "not found" || true)"
-  [ -z "$missing" ] || echo "::warning::harbor-browser needs libraries this image doesn't have: $missing"
-else
-  echo "no engine installed here ($(getconf GNU_LIBC_VERSION 2>/dev/null || echo 'no glibc'))"
-fi
+# Harbor has no built-in browser any more: nothing of its engine is installed.
+step "No browser engine"
+[ ! -e "$H/.local/lib/harbor/harbor-browser" ] || fail "an install still has harbor-browser"
 end
 
 # The video player, on an image with no mpv and none of the libraries it can use if they're there:
@@ -103,7 +96,7 @@ cat /tmp/harbor.log
 [ "$code" = 124 ] || fail "harbor exited with $code within 10 s"
 end
 
-# What Harbor started may outlive it (an unpack of the video player or browser engine into
+# What Harbor started may outlive it (an unpack of the video player into
 # ~/.local/lib/harbor): stopped here, or --uninstall's rm races it ("Directory not empty").
 # By /proc: the bare images have no pkill.
 uid=$(id -u tester)

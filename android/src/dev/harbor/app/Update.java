@@ -329,8 +329,8 @@ public class Update extends BroadcastReceiver {
     }
 
     /** A Harbor screen is on screen: one of this process's (Base.started), the user is in another
-     *  app Harbor asked for an answer (a photo, a file: Base.outFor, given 10 minutes), or the
-     *  browser's own process (Browser) is in front. */
+     *  app Harbor asked for an answer (a photo, a file: Base.outFor, given 10 minutes), or another
+     *  of the app's processes is in front. */
     static boolean seen(Context c) {
         if (Base.started > 0) return true;
         long out = Base.outFor;

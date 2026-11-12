@@ -1,11 +1,11 @@
 import * as switchTrace from "./switchtrace.ts";
 import { deviceWorkspace } from "./logic/devices.ts";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
-import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, runDir, secrets } from "@harbor/store";
+import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, secrets } from "@harbor/store";
 import { accountOn, chatOwner, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
@@ -42,11 +42,10 @@ import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
 import { control } from "@harbor/mcp";
 import { Data, mentionOf as fromStore } from "./data.ts";
-import { web } from "./logic/browser.ts";
-import { BrowserEngine, clearCrashes, crashing, helperPath, hostOf, keyMessages, sourceDir } from "./browser.ts";
+import { web } from "./logic/weburl.ts";
 import { gridSize } from "./logic/terminal.ts";
 import { linkAt, selectionAt } from "./markdown.ts";
-import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
+import { type Dock, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ModalOpacity } from "./modalopacity.ts";
@@ -68,7 +67,7 @@ import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, ra
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type BrowserData, type WorkChip, type WorkBarData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type WorkChip, type WorkBarData } from "./window.ts";
 
 /** The transcript's cards, swapped by dev hot reload (hotdev.ts). */
 const transcript = hot.unit("cards", "packages/ui/src/cards.ts", cardsModule);
@@ -445,9 +444,6 @@ export class Shell {
     size: (p) => 64 + (p ? p.width * p.height * 4 : 0),
     pinned: (_, p) => p === null,
   });
-  private readonly servers = new slint.ArrayModel<string>([]);
-  private engines = 0;
-  private browserQueued = false;
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -510,7 +506,7 @@ export class Shell {
       runCommand: (title, cwd, command) => this.surfaces.openTerminal(title, cwd, ["bash", "-lc", runScript(title, command)], "bottom"),
       sendPrompt: (text) => this.sendCanned(text),
       openUrl: (url) => this.openExternal(url),
-      openPage: (url) => this.surfaces.openBrowser(url, "right"),
+      openPage: (url) => this.openExternal(url),
       openList: (list) => this.surfaces.openList(list, "right"),
       listsChanged: () => this.refreshPanes(),
       popup: (id, x, y, items) => this.popup(id, x, y, items, 320),
@@ -746,22 +742,6 @@ export class Shell {
     w.bottom_file_rows = this.fileRows.bottom;
     w.right_file_transfers = this.fileTransfers.right;
     w.bottom_file_transfers = this.fileTransfers.bottom;
-    w.browser_servers = this.servers;
-    w.browser_nav = (d, a) => this.browserNav(dock(d), a);
-    w.browser_go = (d, u) => this.browserGo(dock(d), u);
-    w.browser_missing = (d) => this.browserMissing(dock(d));
-    w.browser_resized = (d, pw, ph) => this.engineOf(dock(d))?.resize(Math.round(pw), Math.round(ph));
-    w.browser_pointer = (d, kind, x, y, button) => {
-      const e = this.engineOf(dock(d));
-      if (kind === "move") e?.send({ t: "move", x, y });
-      else e?.send({ t: "button", x, y, button, down: kind === "down" });
-      if (kind === "down") e?.send({ t: "focus", on: true });
-    };
-    w.browser_wheel = (d, x, y, dx, dy) => this.engineOf(dock(d))?.send({ t: "wheel", x, y, dx, dy });
-    w.browser_key = (d, text, down, ctrl, shift, alt, meta) => {
-      const e = this.engineOf(dock(d));
-      for (const m of keyMessages(text, down, { ctrl, shift, alt, meta })) e?.send(m);
-    };
     w.files_act = (d, a, i) => this.filesAct(d === "right" ? "right" : "bottom", a, i);
     w.patch_chips = this.patchChips;
     w.patch_chip = (i, x, y) => this.patchBar.click(i, x, y);
@@ -864,7 +844,6 @@ export class Shell {
     w.pane_max_toggle = (d) => this.surfaces.toggleMax(dock(d));
     w.pane_hide = (d) => this.surfaces.hide(dock(d));
     w.pane_pick = (d, k) => this.pickSurface(dock(d), k);
-    w.pane_recent = (d, x, y) => this.browserMenu(dock(d), x, y);
     w.term_key = (d, k, text, ctrl, alt, shift) => this.termOf(dock(d))?.key(k === "none" ? { text } : k, { ctrl, alt, shift });
     w.term_paste = (d) => {
       const p = Bun.spawnSync(["wl-paste", "-n"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
@@ -1246,7 +1225,6 @@ export class Shell {
       let t: PaneTab | null = null;
       if (s.kind === "chooser" || s.kind === "devices") t = { kind: s.kind };
       else if (s.kind === "terminal") t = s.term.shell && s.term.alive ? { kind: "shell", title: s.term.title, cwd: s.term.cwd } : null;
-      else if (s.kind === "browser") t = { kind: "browser", url: s.url };
       else if (s.kind === "files" && s.files instanceof FileBrowser) t = { kind: "files", device: s.files.dev.key, path: s.files.path };
       else if (s.kind === "list") t = { kind: "list", id: s.list.id, title: s.list.title };
       if (t === null) return;
@@ -1265,7 +1243,6 @@ export class Shell {
       if (pane.surfaces.length > 0 || snap.tabs.length === 0) continue;
       for (const t of snap.tabs) {
         if (t.kind === "chooser" || t.kind === "devices") pane.surfaces.push({ kind: t.kind });
-        else if (t.kind === "browser") pane.surfaces.push({ kind: "browser", url: t.url });
         else if (t.kind === "list") pane.surfaces.push({ kind: "list", list: { id: t.id, title: t.title } });
         else if (t.kind === "shell") {
           if (!existsSync(t.cwd)) continue;
@@ -2893,10 +2870,6 @@ export class Shell {
       this.surfaces.toggleTerminal(this.cwdHere());
       return true;
     }
-    if (this.keys.matches("toggle_browser", p)) {
-      this.surfaces.toggleBrowser(this.browserUrl());
-      return true;
-    }
     if (p.key === "Escape" && w.pop_id !== "") {
       this.closePopup();
       this.popEsc.closed();
@@ -3670,7 +3643,6 @@ export class Shell {
     for (const d of ["right", "bottom"] as const) {
       const fb = this.filesOf(d);
       if (fb) this.refreshBrowsed(d, fb);
-      this.refreshBrowser(d);
     }
     for (const d of ["right", "bottom"] as const) {
       const p = this.surfaces.panes[d];
@@ -3744,44 +3716,11 @@ export class Shell {
     return r ? (r.local ?? r.path) : homedir();
   }
 
-  private browserUrl(): string {
-    return this.data.store.get("browser_last") ?? "localhost:3000";
-  }
-
   private pickSurface(d: Dock, key: string): void {
-    if (key === "B") this.surfaces.openBrowser(this.browserUrl(), d);
-    else if (key === "T") {
+    if (key === "T") {
       const cwd = this.cwdHere();
       this.surfaces.openTerminal(basename(cwd) || "~", cwd, [], d);
     } else if (key === "M") this.surfaces.openDevices(d);
-  }
-
-  /** surface.rs: the chooser's menu of dev servers and recent pages. */
-  private browserMenu(d: Dock, x: number, y: number): void {
-    const read = (f: string) => {
-      try {
-        return readFileSync(f, "utf8");
-      } catch {
-        return "";
-      }
-    };
-    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], this.engine.hookPort);
-    let recent: string[] = [];
-    try {
-      const v: unknown = JSON.parse(this.data.store.get("browser_recent") ?? "[]");
-      if (Array.isArray(v)) recent = v.filter((u): u is string => typeof u === "string");
-    } catch {
-      // nothing recent yet
-    }
-    const open = (u: string) => () => this.surfaces.openBrowser(u, d);
-    const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Dev servers"), kind: "caption" }];
-    if (ports.length === 0) items.push({ ...this.label("Nothing listening on localhost"), kind: "caption" });
-    for (const p of ports) items.push(this.item(`localhost:${p}`, open(`localhost:${p}`), { icon: ICONS.GLOBE }));
-    if (recent.length > 0) {
-      items.push(this.separator(), { ...this.label("Recent"), kind: "caption" });
-      for (const u of recent) items.push(this.item([...u.replace(/^https?:\/\//, "")].slice(0, 40).join(""), open(u), { icon: ICONS.GLOBE }));
-    }
-    this.popup("browser-menu", x, y, items, 260);
   }
 
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
@@ -4891,106 +4830,6 @@ export class Shell {
     this.refreshPanes();
   }
 
-  private engineOf(d: Dock): BrowserEngine | null {
-    const s = this.surfaces.showing(d);
-    return s?.kind === "browser" && s.engine instanceof BrowserEngine ? s.engine : null;
-  }
-
-  /** Local servers worth offering when a page can't be reached: Harbor's own processes, then anything listening. */
-  private devServers(): string[] {
-    const read = (f: string) => {
-      try {
-        return readFileSync(f, "utf8");
-      } catch {
-        return "";
-      }
-    };
-    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], this.engine.hookPort);
-    return ports.map((p) => `localhost:${p}`);
-  }
-
-  /** surface.rs `pane_ui`'s browser: its engine starts when the tab shows, and its state is drawn. */
-  private refreshBrowser(d: Dock): void {
-    const s = this.surfaces.showing(d);
-    if (s?.kind !== "browser") return;
-    if (s.engine instanceof BrowserEngine && !s.engine.alive) this.surfaces.stopEngine(s);
-    const helper = helperPath();
-    if (!s.engine && helper !== null && crashing() === null) {
-      s.engine = new BrowserEngine(helper, join(runDir(), `browser-${process.pid}-${++this.engines}`), s.url, () => this.browserWake());
-    }
-    const e = s.engine instanceof BrowserEngine ? s.engine : null;
-    let data: BrowserData;
-    if (e) {
-      const st = e.state;
-      if (st.url !== "" && st.url !== s.url) {
-        s.url = st.url;
-        this.rememberUrl(st.url);
-      }
-      e.took();
-      const failed = st.title === "Error loading page";
-      const host = hostOf(st.url);
-      data = { state: "page", url: st.url, loading: st.loading, back: st.back, forward: st.forward, external: e.external !== null, has_frame: st.frame !== null, frame: st.frame ?? noPixels, cursor: st.cursor, error_host: failed ? host : "", error_local: host.startsWith("localhost") || host.startsWith("127."), why: "" };
-    } else {
-      const why = crashing();
-      const state = why !== null ? "stopped" : helper !== null ? "starting" : sourceDir() !== null ? "build" : "absent";
-      data = { state, url: s.url, loading: false, back: false, forward: false, external: false, has_frame: false, frame: noPixels, cursor: "default", error_host: "", error_local: false, why: why ?? "" };
-    }
-    if (d === "right") this.win.right_browser = data;
-    else this.win.bottom_browser = data;
-    if (data.error_host !== "") sync(this.servers, this.devServers(), (a, b) => a === b);
-  }
-
-  /** A frame or a change from an engine redraws at most every 16ms. */
-  private browserWake(): void {
-    if (this.browserQueued) return;
-    this.browserQueued = true;
-    setTimeout(() => {
-      this.browserQueued = false;
-      this.refreshPanes();
-    }, 16);
-  }
-
-  private rememberUrl(url: string): void {
-    if (url === "" || url === "about:blank") return;
-    const st = this.data.store;
-    st.set("browser_last", url);
-    let recent: string[] = [];
-    try {
-      const v: unknown = JSON.parse(st.get("browser_recent") ?? "[]");
-      if (Array.isArray(v)) recent = v.filter((u): u is string => typeof u === "string");
-    } catch {
-      // nothing recent yet
-    }
-    st.set("browser_recent", JSON.stringify([url, ...recent.filter((u) => u !== url)].slice(0, 8)));
-  }
-
-  private browserNav(d: Dock, a: string): void {
-    const e = this.engineOf(d);
-    if (!e) return;
-    if (a === "external") {
-      if (e.external !== null) this.openExternal(e.external);
-    } else e.send({ t: a });
-  }
-
-  private browserGo(d: Dock, url: string): void {
-    const u = url.trim();
-    const s = this.surfaces.showing(d);
-    if (u === "" || s?.kind !== "browser") return;
-    s.url = u;
-    this.engineOf(d)?.load(u);
-    this.refreshPanes();
-  }
-
-  /** The "engine missing" screen's button: Try again after crashes, or build it from this checkout. */
-  private browserMissing(d: Dock): void {
-    if (crashing() !== null) clearCrashes();
-    else {
-      const dir = sourceDir();
-      if (dir !== null) this.surfaces.openTerminal("Build browser", dir, ["bash", "-lc", "mise exec rust -- cargo build --release 2>/dev/null || cargo build --release; echo; echo 'Done: switch back to the Browser tab.'"], d);
-    }
-    this.refreshPanes();
-  }
-
   /** surface.rs: a terminal on a paired PC, ssh into it. */
   private deviceTerminal(d: Dock, key: string): void {
     const dev = this.paired.find((p) => p.key === key);
@@ -5170,9 +5009,6 @@ export class Shell {
         break;
       case "toggle_terminal":
         this.surfaces.toggleTerminal(this.cwdHere());
-        break;
-      case "toggle_browser":
-        this.surfaces.toggleBrowser(this.browserUrl());
         break;
     }
   }

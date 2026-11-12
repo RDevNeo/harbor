@@ -141,7 +141,7 @@ export interface MdBlockData {
 }
 
 export interface SurfaceTab {
-  kind: "chooser" | "terminal" | "browser" | "devices";
+  kind: "chooser" | "terminal" | "devices";
   title: string;
 }
 
@@ -356,21 +356,6 @@ export interface TransferRow {
   state: "run" | "wait" | "done" | "error";
   line: string;
   frac: number;
-}
-
-export interface BrowserData {
-  state: "page" | "stopped" | "starting" | "build" | "absent";
-  url: string;
-  loading: boolean;
-  back: boolean;
-  forward: boolean;
-  external: boolean;
-  has_frame: boolean;
-  frame: Pixels;
-  cursor: string;
-  error_host: string;
-  error_local: boolean;
-  why: string;
 }
 
 export interface FilesData {
@@ -656,7 +641,6 @@ export interface AppWindow extends slint.ComponentHandle {
   pane_max_toggle: (d: string) => void;
   pane_hide: (d: string) => void;
   pane_pick: (d: string, key: string) => void;
-  pane_recent: (d: string, x: number, y: number) => void;
   term_key: (d: string, k: TermKey | "none", text: string, ctrl: boolean, alt: boolean, shift: boolean) => void;
   term_paste: (d: string) => void;
   term_wheel: (d: string, lines: number) => void;
@@ -681,21 +665,11 @@ export interface AppWindow extends slint.ComponentHandle {
   bottom_file_clearable: boolean;
   files_act: (d: string, action: string, i: number) => void;
   files_go: (d: string, path: string) => void;
-  right_browser: BrowserData;
-  bottom_browser: BrowserData;
   right_list: ListData;
   right_list_rows: slint.Model<ListRow>;
   bottom_list: ListData;
   bottom_list_rows: slint.Model<ListRow>;
   list_act: (d: string, action: string, i: number) => void;
-  browser_servers: slint.Model<string>;
-  browser_nav: (d: string, action: string) => void;
-  browser_go: (d: string, url: string) => void;
-  browser_missing: (d: string) => void;
-  browser_resized: (d: string, w: number, h: number) => void;
-  browser_pointer: (d: string, kind: string, x: number, y: number, button: number) => void;
-  browser_wheel: (d: string, x: number, y: number, dx: number, dy: number) => void;
-  browser_key: (d: string, text: string, down: boolean, ctrl: boolean, shift: boolean, alt: boolean, meta: boolean) => void;
   open_media: (path: string) => void;
 
   draft: string;

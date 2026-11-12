@@ -168,6 +168,15 @@ final class Ui {
         toast(c, "Copied");
     }
 
+    /** A link in the phone's own browser (or the app that takes it); copied when nothing can open it. */
+    static void openUrl(Context c, String url) {
+        try {
+            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+            if (!(c instanceof Activity)) i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(i);
+        } catch (Exception e) { copy(c, url); }
+    }
+
     // ---- drawables ----
 
     static GradientDrawable round(int fill, int stroke, float radius) {

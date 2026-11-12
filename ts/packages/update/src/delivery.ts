@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
-import { apk, browserUnsupported, engineStale, fetchApk, NO_BROWSER, pendingExtras, retryAfter, VIDEO_LIB, type ExtraWork } from "./extras.ts";
-import { exists, fresh, isFile, read, readJson, remove } from "./files.ts";
-import { current, hasPrevious, install, NoBuild, onDisk, rollback, rolledBack, skipped, type RolledBack } from "./install.ts";
+import { apk, dropBrowser, fetchApk, pendingExtras, retryAfter, VIDEO_LIB, type ExtraWork } from "./extras.ts";
+import { fresh, isFile, read, readJson, remove } from "./files.ts";
+import { current, hasPrevious, install, NoBuild, onDisk, PREVIOUS, rollback, rolledBack, skipped, type RolledBack } from "./install.ts";
 import { parseManifest, type Manifest } from "./manifest.ts";
 import { previewInfo } from "./preview.ts";
 import { newer, tagged, versionCode } from "./version.ts";
@@ -86,7 +86,6 @@ export class Updater {
   private failed: { version: string; at: number; n: number } | null = null;
   private extraRetry = new Map<string, { n: number; at: number }>();
   private extraRunning = new Set<string>();
-  private browserOutcome: { ok: true } | { ok: false; error: string } | null = null;
   private asking = false;
   private noBuild = new Map<string, number>();
 
@@ -387,23 +386,14 @@ export class Updater {
     return this.extraRunning.has("video");
   }
 
-  browserInstalling(): boolean {
-    return this.extraRunning.has("browser");
-  }
-
-  browserResult(): { ok: true } | { ok: false; error: string } | null {
-    return this.browserOutcome;
-  }
-
   asked(): boolean {
     return this.asking;
   }
 
-  async installBrowser(): Promise<void> {
-    if (this.cfg.dir !== null) remove(join(this.cfg.dir, NO_BROWSER));
-    this.browserOutcome = null;
-    this.extraRetry.delete("browser");
-    await this.autoExtras("browser", true);
+  /** Harbor no longer has a built-in browser: its engine and marks go from an installed copy (once: then there are none). */
+  dropLeftovers(): void {
+    const dir = this.cfg.dir;
+    if (dir !== null && dropBrowser(dir, join(dir, PREVIOUS))) this.cfg.log("removed the old built-in browser's engine");
   }
 
   async autoExtras(only?: ExtraWork["name"], asked = false): Promise<void> {
@@ -426,26 +416,16 @@ export class Updater {
       try {
         await w.run();
         this.extraRetry.delete(w.name);
-        if (w.name === "browser") this.browserOutcome = { ok: true };
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         const n = (r?.n ?? 0) + 1;
         this.extraRetry.set(w.name, { n, at: this.cfg.now() + retryAfter(n) });
         this.cfg.log(`${w.name} download failed: ${error}`);
-        if (w.name === "browser") this.browserOutcome = { ok: false, error };
       } finally {
         this.extraRunning.delete(w.name);
         this.deps.changed?.();
       }
     }
-  }
-
-  browserNeeded(): "ok" | "off" | "unsupported" | "missing" {
-    const dir = this.cfg.dir;
-    if (dir === null) return "unsupported";
-    if (exists(join(dir, NO_BROWSER))) return "off";
-    if (browserUnsupported(this.cfg) !== null) return "unsupported";
-    return engineStale(this.cfg, dir, "") ? "missing" : "ok";
   }
 
   apk(): { path: string; code: number } | null {

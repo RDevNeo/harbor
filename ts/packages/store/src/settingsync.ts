@@ -82,9 +82,6 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["draft_main", D],
   ["snoozed", D],
   ["palette_recent", D],
-  ["browser_last", D],
-  // The built-in browser's recent pages, the video volume, the team view: preferences, not this PC's state.
-  ["browser_recent", A],
   ["reload_state", D],
   ["bg_explained", D],
   ["bg_update_noticed", D],

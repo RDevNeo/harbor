@@ -46,7 +46,6 @@ jobs:
           mkdir -p dist
           gh release download --repo "$GITHUB_REPOSITORY" --dir dist \
             --pattern 'harbor-*-linux.tar.gz*' --pattern 'SHA256SUMS*' || true
-          rm -f dist/harbor-browser-*
           ls -la dist
       - uses: ./.github/actions/boat
         id: boat

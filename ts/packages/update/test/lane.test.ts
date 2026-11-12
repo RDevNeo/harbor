@@ -55,10 +55,10 @@ test("a manifest for the runtime lane names itself as the runtime", () => {
   expect(parseManifest(JSON.stringify(m))).toEqual(m);
 });
 
-test("a manifest for the bundle lane keeps the runtime and the extras of the release before", () => {
-  const previous = parseManifest(JSON.stringify({ version: "1.2.0", minRuntime: "1.1.0", runtime: "1.2.0", browser: { id: "b", release: "1.0.0" }, apk: { code: 1002000, release: "1.2.0" } }));
+test("a manifest for the bundle lane keeps the runtime and the extras of the release before (not the old browser engine)", () => {
+  const previous = parseManifest(JSON.stringify({ version: "1.2.0", minRuntime: "1.1.0", runtime: "1.2.0", browser: { id: "b", release: "1.0.0" }, video: { id: "v", release: "1.0.0" }, apk: { code: 1002000, release: "1.2.0" } }));
   const m = buildManifest({ version: "1.2.1", lane: "bundle", previous });
-  expect(m).toEqual({ version: "1.2.1", minRuntime: "1.1.0", runtime: "1.2.0", browser: { id: "b", release: "1.0.0" }, apk: { code: 1002000, release: "1.2.0" } });
+  expect(m).toEqual({ version: "1.2.1", minRuntime: "1.1.0", runtime: "1.2.0", video: { id: "v", release: "1.0.0" }, apk: { code: 1002000, release: "1.2.0" } });
   const n = buildManifest({ version: "1.2.1", lane: "bundle", previous, video: { id: "v" }, apk: { code: 1002001 } });
   expect(n.video).toEqual({ id: "v", release: "1.2.1" });
   expect(n.apk).toEqual({ code: 1002001, release: "1.2.1" });
@@ -126,7 +126,7 @@ test("a base without ts/package.json counts as a runtime change", async () => {
 test("the manifest command writes harbor-app.json", async () => {
   const prev = JSON.stringify({ version: "1.0.0", minRuntime: "1.0.0", runtime: "1.0.0" });
   const a = deps({ "prev.json": prev }, {});
-  expect(await releaseCli(["manifest", "--version", "1.0.1", "--lane", "bundle", "--previous", "prev.json", "--out", "m.json", "--apk-code", "1000001", "--browser-id", "b2"], a.d)).toBe(0);
-  expect(JSON.parse(a.written["m.json"] ?? "")).toEqual({ version: "1.0.1", minRuntime: "1.0.0", runtime: "1.0.0", browser: { id: "b2", release: "1.0.1" }, apk: { code: 1000001, release: "1.0.1" } });
+  expect(await releaseCli(["manifest", "--version", "1.0.1", "--lane", "bundle", "--previous", "prev.json", "--out", "m.json", "--apk-code", "1000001", "--video-id", "v2"], a.d)).toBe(0);
+  expect(JSON.parse(a.written["m.json"] ?? "")).toEqual({ version: "1.0.1", minRuntime: "1.0.0", runtime: "1.0.0", video: { id: "v2", release: "1.0.1" }, apk: { code: 1000001, release: "1.0.1" } });
   expect(await releaseCli(["manifest", "--version", "1.0.1"], a.d)).toBe(2);
 });

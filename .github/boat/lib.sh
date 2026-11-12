@@ -131,14 +131,8 @@ bun_get() {
   echo "/c/bun/$v-$arch"
 }
 
-# The Rust toolchain for the browser engine (browser.sh, browser-android.sh), kept in ~/cache: run_in <image> "${rust[@]}" … -- cargo …
+# The Rust toolchain for Harbor's Slint addon (slint.sh), kept in ~/cache: run_in <image> "${rust[@]}" … -- cargo …
 rust=(-e RUSTUP_HOME=/c/rustup -e CARGO_HOME=/c/cargo -e PATH=/c/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
-# And for aarch64, after those: run_in <image> "${rust[@]}" "${cross[@]}" … -- cargo …
-cross=(-e CARGO_TARGET_DIR=/c/target-aarch64 -e CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu
-  -e CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-  -e CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc -e CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-  -e AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar -e PKG_CONFIG_ALLOW_CROSS=1
-  -e PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig)
 # toolchain <image> [rustup toolchain install options]: stable, installed or brought up to date.
 # Asks the network once a week: /c/rustup/synced lists the options done since.
 toolchain() {

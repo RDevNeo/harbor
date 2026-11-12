@@ -32,7 +32,7 @@ export default {
     { title: "Dashboard", url: "https://example.com/dashboard" }, // opens the page
   ],
   panels: [
-    { title: "App", url: "http://localhost:3000" },              // a page in Harbor's browser
+    { title: "App", url: "http://localhost:3000" },              // opens the page in the user's browser
     {
       title: "Worktrees",                                         // a list, drawn by Harbor
       items: async ({ sh }) =>
@@ -50,7 +50,8 @@ export default {
   - `url`: an `http(s)` page, opened in the user's browser; nothing goes into the chat. Use it
     rather than `run: "xdg-open …"`. These are the buttons the phone app shows too.
 - A panel has a `title` and either:
-  - `url`: a page shown in Harbor's own browser, in the right-hand pane (`localhost:3000` works);
+  - `url`: a page, opened in the user's browser when the panel's button is clicked (`localhost:3000`
+    works);
   - `items({ cwd, root, sh })`: returns (or resolves to) rows `{ title, detail?, section?,
     trailing?, url? }`, at most 500. `cwd` is the chat's folder, `root` the folder holding the
     patch's `.harbor/`, and `sh(command)` runs a command in `root` and resolves with its output (it

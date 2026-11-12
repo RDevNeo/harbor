@@ -14,7 +14,6 @@ export interface Manifest {
   version: string;
   minRuntime: string;
   runtime: string;
-  browser?: Extra;
   video?: Extra;
   apk?: ApkExtra;
 }
@@ -47,9 +46,7 @@ export function parseManifest(text: string): Manifest {
   const o = record(raw);
   if (o === null) throw new Error(`${MANIFEST}: unreadable`);
   const m: Manifest = { version: version(o, "version"), minRuntime: version(o, "minRuntime"), runtime: version(o, "runtime") };
-  const browser = extra(o, "browser");
   const video = extra(o, "video");
-  if (browser !== undefined) m.browser = browser;
   if (video !== undefined) m.video = video;
   const apk = record(o.apk);
   if (apk !== null && typeof apk.code === "number" && Number.isInteger(apk.code)) m.apk = { code: apk.code, release: version(apk, "release") };

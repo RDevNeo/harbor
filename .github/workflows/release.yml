@@ -9,7 +9,7 @@
 #
 # Harbor is TypeScript on Bun (ts/); build.sh compiles it into one executable per architecture.
 #
-# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), harbor-slint-{x86_64,aarch64}-linux.tar.gz (Harbor's Slint addon, built into harbor; kept for the next release to reuse) with harbor-slint-source.tar.gz (its sources, which its licence asks for), install.sh,
+# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-slint-{x86_64,aarch64}-linux.tar.gz (Harbor's Slint addon, built into harbor; kept for the next release to reuse) with harbor-slint-source.tar.gz (its sources, which its licence asks for), install.sh,
 # harbor-android.apk (the phone app), what an installed Harbor updates from (harbor-app.json, the
 # manifest; harbor-app.js, the app bundle; harbor-runtime-{x86_64,aarch64} when the runtime changed),
 # SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with the
@@ -27,8 +27,8 @@ name: release
 
 # A release is a v* tag: one run, one sandbox per target, of which x86_64's also saves the boat
 # snapshot `harbor-build` for the next one. A push to main builds nothing (scripts/boat/check tests a change before it lands).
-# Run by hand on main it builds everything except Servo (see browser.yml), signs and releases
-# nothing and saves the snapshot: a dry run of the pipeline.
+# Run by hand on main it builds everything, signs and releases nothing and saves the snapshot: a dry
+# run of the pipeline.
 on:
   push:
     tags: ["v*"]
@@ -60,7 +60,7 @@ jobs:
   # The version, and what installed Harbors update from: the bundle alone when the runtime (Bun,
   # the native packages, the updater) didn't change since the latest release, both otherwise
   # (ts/scripts/release.ts: plain file reading, nothing installed or built). The manifest also
-  # names the browser engine, video player and phone app of this release.
+  # names the video player and phone app of this release.
   plan:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
@@ -102,7 +102,7 @@ jobs:
             lane=runtime
           fi
           # The phone app is rebuilt only when what goes into the APK changed since the latest
-          # release: android/, browser/ (its Servo engine) and the fonts and logos android/build.sh
+          # release: android/ and the fonts and logos android/build.sh
           # copies in. The desktop runtime isn't in it, so the lane doesn't matter. Otherwise that
           # release's signed APK is attached again and the manifest keeps naming it (apk {code,
           # release} carried over), so phones don't download and install the same app again. A run
@@ -112,7 +112,7 @@ jobs:
           auto=false
           if [[ "$GITHUB_REF" == refs/tags/v* ]] || [ "${{ inputs.apk }}" = auto ]; then auto=true; fi
           if [ "$auto" = true ] && [ -n "$prev" ] && jq -e '.apk.code' prev/harbor-app.json >/dev/null \
-            && git diff --quiet "$tag" HEAD -- android/ browser/ assets/fonts/ assets/logos/; then
+            && git diff --quiet "$tag" HEAD -- android/ assets/fonts/ assets/logos/; then
             apk=keep
           else
             IFS=.- read -r ma mi pa _ <<< "$ver"
@@ -125,7 +125,7 @@ jobs:
           where=boat
           if [ "$lane" = bundle ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then where=runner; fi
           bun ts/scripts/release.ts manifest --version "$ver" --lane "$lane" --out manifest/harbor-app.json $prev \
-            --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" "${apkcode[@]}"
+            --video-id "$(git rev-parse HEAD:video)" "${apkcode[@]}"
           cat manifest/harbor-app.json
           echo "phone app: $apk (latest release $tag)"
           { echo "version=$ver"; echo "lane=$lane"; echo "min=$(jq -r .minRuntime manifest/harbor-app.json)"
@@ -249,8 +249,6 @@ jobs:
           path: slint/out
       - name: Build (on this runner)
         env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIOUS: ${{ needs.plan.outputs.previous }}
           HARBOR_VERSION: ${{ needs.plan.outputs.version }}
           HARBOR_MIN_RUNTIME: ${{ needs.plan.outputs.min }}
           HARBOR_GIT_SHA: ${{ github.sha }}
@@ -297,10 +295,9 @@ jobs:
           path: out/harbor-aarch64/
 
   # The phone app, when plan says it changed, on the runner beside the desktop builds
-  # (.github/runner/android.sh): with the browser engine (browser.yml's harbor-servo-android) and
-  # signed here, so package only attaches it. The engine's job ends about when plan does.
+  # (.github/runner/android.sh), signed here, so package only attaches it.
   android:
-    needs: [plan, browser]
+    needs: [plan]
     if: needs.plan.outputs.apk == 'build'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -315,21 +312,10 @@ jobs:
         with:
           path: ~/.cache/harbor-android-deps
           key: ${{ steps.deps.outputs.key }}
-      - uses: actions/download-artifact@v8
-        if: needs.browser.outputs.found-android == 'true'
-        with:
-          name: harbor-servo-android
-          path: servo
-      # A release needs the engine for both ABIs (each ABI's folder must hold every library the app
-      # loads on it: Android installs one); a run by hand goes without when there is none.
       - name: Build the APK (on this runner)
         env:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
-          SERVO_LIBS: ${{ github.workspace }}/servo
-          SERVO_REQUIRED: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '' }}
-        run: |
-          [ -f servo/arm64-v8a/libharborservo.so ] || echo "::warning::no Android browser engine in this APK"
-          .github/runner/android.sh out/harbor-android-unsigned.apk
+        run: .github/runner/android.sh out/harbor-android-unsigned.apk
       # Runs by hand without the signing secrets sign with a throwaway key, only to prove it signs.
       - name: Sign the APK
         env:
@@ -389,14 +375,6 @@ jobs:
         if: always()
         run: .github/boat/cleanup.sh
 
-  # Never compiles Servo on a run by hand (no engine found = no browser in that run's package).
-  # A tag compiles it only when browser/ changed and nobody ran the browser workflow on main.
-  browser:
-    uses: ./.github/workflows/browser.yml
-    secrets: inherit
-    with:
-      build: ${{ startsWith(github.ref, 'refs/tags/v') }}
-
   # The video player, rebuilt only when video/ changed (video.yml).
   video:
     uses: ./.github/workflows/video.yml
@@ -414,17 +392,15 @@ jobs:
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the archives and
   # their checksum lists, and the attestations (job android signs the APK).
   package:
-    needs: [plan, build, build-aarch64, quick, quick-aarch64, android, browser, video, slint]
+    needs: [plan, build, build-aarch64, quick, quick-aarch64, android, video, slint]
     # One pair of desktop builds runs (plan's where), the other is skipped; android only with a new APK.
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      # All but the phone's browser engine: job android already put it into the APK.
       - uses: actions/download-artifact@v8
         with:
           path: art
-          pattern: '!harbor-servo-android'
       # The phone app didn't change since the latest release (plan): that release's signed APK again.
       - name: The latest release's APK
         if: needs.plan.outputs.apk == 'keep'
@@ -471,8 +447,6 @@ jobs:
             cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
             cp art/harbor-extra/harbor-256.png "$d/harbor-256.png"
             echo "$ver" > "$d/VERSION"
-            # The engine's id, also when this run has no engine (only runs by hand; tags always do).
-            git rev-parse HEAD:browser > "$d/browser.id"
             git rev-parse HEAD:video > "$d/video.id"
             cp LICENSE "$d/licenses/Harbor-MIT.txt"
             cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
@@ -491,25 +465,6 @@ jobs:
             for arch in x86_64 aarch64; do install -m755 "art/harbor-$arch/harbor-runtime-$arch" "dist/harbor-runtime-$arch"; done
           fi
 
-          # The browser engine per arch (artifact harbor-browser is x86_64). A release must ship the
-          # x86_64 one; aarch64's build may fail without holding it back (browser.yml).
-          for arch in x86_64 aarch64; do
-            a=art/harbor-browser; found="${{ needs.browser.outputs.found }}"
-            [ "$arch" = x86_64 ] || { a=art/harbor-browser-aarch64; found="${{ needs.browser.outputs.found-aarch64 }}"; }
-            b=pkg/harbor-browser-$arch-linux
-            if [ "$found" = "true" ] && [ -f "$a/harbor-browser" ]; then
-              mkdir -p "$b/licenses"
-              install -m755 "$a/harbor-browser" "$b/harbor-browser"
-              cp "$a/browser.id" "$b/browser.id"
-              cp browser/LICENSE "$b/licenses/harbor-browser-MIT.txt"
-              [ ! -f art/harbor-extra/lic/harbor-browser.html ] || cp art/harbor-extra/lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
-              echo "harbor-browser is MIT; it links Servo (MPL-2.0), whose source is at https://github.com/servo/servo" > "$b/licenses/README.txt"
-            elif [ "$arch" = x86_64 ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
-              echo "::error::a release needs the browser engine"; exit 1
-            else
-              echo "::warning::no $arch browser engine in this package"
-            fi
-          done
           # The video player per arch, and its sources beside it, as its licence asks.
           if [ "${{ needs.video.outputs.found }}" = "true" ]; then
             for arch in x86_64 aarch64; do
@@ -571,7 +526,6 @@ jobs:
           tar -C pkg -I "$z" -cf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
           tar -C pkg -I "$z" -cf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
           for arch in x86_64 aarch64; do
-            [ ! -d pkg/harbor-browser-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-browser-$arch-linux.tar.gz harbor-browser-$arch-linux
             [ ! -d pkg/harbor-video-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-video-$arch-linux.tar.gz harbor-video-$arch-linux
             [ ! -d pkg/harbor-slint-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-slint-$arch-linux.tar.gz harbor-slint-$arch-linux
           done

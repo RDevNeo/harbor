@@ -241,13 +241,6 @@ export component IssueDetail inherits Rectangle {
                                 }
                             }
                             MenuItem {
-                                icon: Icons.globe;
-                                label: "Open in the side browser";
-                                clicked => {
-                                    root.act("open-pane");
-                                }
-                            }
-                            MenuItem {
                                 icon: Icons.external;
                                 label: "Open on GitHub";
                                 clicked => {
@@ -572,15 +565,6 @@ export component IssueDetail inherits Rectangle {
                         size: BtnSize.xs;
                         clicked => {
                             root.act("open-web");
-                        }
-                    }
-                    Btn {
-                        icon: Icons.globe;
-                        text: "Open in Harbor's browser";
-                        variant: Variant.outline;
-                        size: BtnSize.xs;
-                        clicked => {
-                            root.act("open-pane");
                         }
                     }
                 }

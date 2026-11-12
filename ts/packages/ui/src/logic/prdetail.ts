@@ -272,7 +272,7 @@ export function codeState(d: DetailState): CodeState {
   return d.diff.length === 0 ? { kind: "empty" } : { kind: "lines", lines: codeLines(d.diff) };
 }
 
-const DETAIL_ACTS = ["web", "pane", "copy_link", "copy_number", "copy_checkout", "refresh", "ready", "checkout", "merge", "merge_ask", "review", "copy_branch"] as const;
+const DETAIL_ACTS = ["web", "copy_link", "copy_number", "copy_checkout", "refresh", "ready", "checkout", "merge", "merge_ask", "review", "copy_branch"] as const;
 export type DetailAct = (typeof DETAIL_ACTS)[number];
 
 export const detailActOf = (s: string): DetailAct | null => DETAIL_ACTS.find((a) => a === s) ?? null;
@@ -282,8 +282,7 @@ export function moreMenu(inProject: boolean): { act: DetailAct; icon: string; la
   const out: { act: DetailAct; icon: string; label: string; sep: boolean }[] = [{ act: "refresh", icon: ICONS.REFRESH, label: "Refresh", sep: false }];
   if (inProject) out.push({ act: "review", icon: ICONS.SPARKLES, label: "Review with an agent", sep: false });
   out.push(
-    { act: "pane", icon: ICONS.GLOBE, label: "Open in the side browser", sep: true },
-    { act: "web", icon: ICONS.EXTERNAL, label: "Open on GitHub", sep: false },
+    { act: "web", icon: ICONS.EXTERNAL, label: "Open on GitHub", sep: true },
     { act: "copy_link", icon: ICONS.LINK, label: "Copy link   Ctrl+Shift+C", sep: false },
     { act: "copy_number", icon: ICONS.COPY, label: "Copy PR number   Ctrl+Shift+K", sep: false },
     { act: "copy_checkout", icon: ICONS.TERMINAL, label: "Copy checkout command", sep: false },

@@ -25,7 +25,7 @@ export interface PhoneVersion {
   seen: number;
   /** The PC it was last seen at ("" for this one). */
   via: string;
-  /** What the phone says it is (model, Android, ABIs, built-in browser; "" when unknown). */
+  /** What the phone says it is (model, Android, ABIs; "" when unknown). */
   platform: string;
 }
 

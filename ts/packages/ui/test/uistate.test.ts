@@ -38,7 +38,7 @@ test("a snapshot goes through JSON and back whole", () => {
     transcript: { chat: 7, limit: 30, follow: false, fromEnd: 1400, groups: [5], cards: [9] },
     sideQuery: "harb",
     sideScroll: -180,
-    panes: { right: { open: true, active: 1, tabs: [{ kind: "devices" }, { kind: "browser", url: "localhost:3000" }] }, bottom: { open: false, active: 0, tabs: [{ kind: "shell", title: "wt", cwd: "/tmp" }] }, max: "right" },
+    panes: { right: { open: true, active: 1, tabs: [{ kind: "devices" }, { kind: "chooser" }] }, bottom: { open: false, active: 0, tabs: [{ kind: "shell", title: "wt", cwd: "/tmp" }] }, max: "right" },
     dialog: { kind: "rename-chat", id: 7, input: "A better tit" },
     revs: [[7, 1234]],
   };
@@ -49,7 +49,7 @@ test("a snapshot goes through JSON and back whole", () => {
 });
 
 test("junk in a snapshot is dropped, not trusted", () => {
-  const s = parseSnapshot({ at: 5, view: { t: "chat", id: "7" }, composers: { "1": { text: 3 }, x: { text: "a" }, "2": "plain" }, panes: { right: { open: true, active: 9, tabs: [{ kind: "shell" }, { kind: "browser", url: "" }, { kind: "nope" }, { kind: "files", device: "pc#a" }] }, bottom: null, max: "left" }, page: { kind: "settings" }, transcript: { chat: 1.5 }, dialog: { kind: "rename-chat" } });
+  const s = parseSnapshot({ at: 5, view: { t: "chat", id: "7" }, composers: { "1": { text: 3 }, x: { text: "a" }, "2": "plain" }, panes: { right: { open: true, active: 9, tabs: [{ kind: "shell" }, { kind: "browser", url: "localhost:3000" }, { kind: "nope" }, { kind: "files", device: "pc#a" }] }, bottom: null, max: "left" }, page: { kind: "settings" }, transcript: { chat: 1.5 }, dialog: { kind: "rename-chat" } });
   expect(s?.view).toEqual({ t: "draft" });
   expect(s?.composers.get(1)).toEqual(entry(""));
   expect(s?.composers.get(2)).toEqual(entry("plain"));

@@ -28,7 +28,6 @@ export type Composers = Map<number, ComposerEntry>;
 export type PaneTab =
   | { kind: "chooser" }
   | { kind: "shell"; title: string; cwd: string }
-  | { kind: "browser"; url: string }
   | { kind: "devices" }
   | { kind: "files"; device: string; path: string }
   | { kind: "list"; id: string; title: string };
@@ -165,8 +164,6 @@ function paneTab(v: unknown): PaneTab | null {
       return { kind: o.kind };
     case "shell":
       return typeof o.cwd === "string" && o.cwd !== "" ? { kind: "shell", title: str(o.title, "~"), cwd: o.cwd } : null;
-    case "browser":
-      return typeof o.url === "string" && o.url !== "" ? { kind: "browser", url: o.url } : null;
     case "files":
       return typeof o.device === "string" && o.device !== "" ? { kind: "files", device: o.device, path: str(o.path, "~") } : null;
     case "list":

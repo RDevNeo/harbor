@@ -5,11 +5,9 @@ import { fetchSigned } from "./download.ts";
 import { ensureDir, exists, fresh, isFile, read, remove, replace } from "./files.ts";
 import type { Manifest } from "./manifest.ts";
 
-export const NO_BROWSER = ".no-browser";
 export const VIDEO_LIB = "libmpv-harbor.so";
 export const APK = "harbor-android.apk";
 export const APK_VERSION = "harbor-android.version";
-export const BROWSER_GLIBC: readonly [number, number] = [2, 39];
 
 const RETRY_MS = 5 * 60 * 1000;
 const RETRY_MAX_MS = 6 * 3600 * 1000;
@@ -18,19 +16,22 @@ export function retryAfter(n: number): number {
   return Math.min(RETRY_MS * 2 ** Math.min(Math.max(n - 1, 0), 10), RETRY_MAX_MS);
 }
 
-// Servo is built on Ubuntu 24.04.
-export function browserUnsupported(cfg: UpdateConfig): string | null {
-  const g = cfg.glibc();
-  if (g === null) return "The browser engine (Servo) needs a glibc-based system (glibc 2.39 or newer).";
-  if (g[0] > BROWSER_GLIBC[0] || (g[0] === BROWSER_GLIBC[0] && g[1] >= BROWSER_GLIBC[1])) return null;
-  return `The browser engine (Servo) needs glibc 2.39 or newer; this system has ${g[0]}.${g[1]}.`;
-}
+/** What Harbor's built-in browser left in the install folder (it was removed after 0.176): its Servo
+ * engine, the engine's id, the --no-browser mark and a half-done download; the copy kept for a rollback too. */
+const BROWSER_LEFTOVERS = ["harbor-browser", "browser.installed", "browser.id", ".no-browser", ".staging-browser"];
 
-export function engineStale(cfg: UpdateConfig, dir: string, id: string): boolean {
-  if (exists(join(dir, NO_BROWSER)) || browserUnsupported(cfg) !== null) return false;
-  if (!isFile(join(dir, "harbor-browser"))) return true;
-  const installed = read(join(dir, "browser.installed"));
-  return installed !== "" && id !== "" && installed !== id;
+/** Removes the browser's leftovers from `dir` (and `prev`, the rolled-back-to copy); true when something was there. */
+export function dropBrowser(dir: string, prev?: string): boolean {
+  let found = false;
+  for (const d of prev === undefined ? [dir] : [dir, prev]) {
+    for (const f of BROWSER_LEFTOVERS) {
+      const p = join(d, f);
+      if (!exists(p)) continue;
+      found = true;
+      remove(p);
+    }
+  }
+  return found;
 }
 
 export function videoStale(dir: string, id: string): boolean {
@@ -42,12 +43,6 @@ async function unpack(cfg: UpdateConfig, release: string, name: string, stage: s
   const p = Bun.spawn(["tar", "-xzf", file, "-C", stage], { stdout: "ignore", stderr: "ignore" });
   if ((await p.exited) !== 0) throw new Error(`${name}: could not unpack`);
   return join(stage, name);
-}
-
-export async function fetchBrowser(cfg: UpdateConfig, release: string, id: string, dir: string, stage: string, prev?: string): Promise<void> {
-  const from = await unpack(cfg, release, `harbor-browser-${cfg.arch}-linux`, stage);
-  replace(join(from, "harbor-browser"), join(dir, "harbor-browser"), prev);
-  writeFileSync(join(dir, "browser.installed"), id);
 }
 
 export async function fetchVideo(cfg: UpdateConfig, release: string, id: string, dir: string, stage: string): Promise<void> {
@@ -88,11 +83,11 @@ export function putApk(dir: string, bytes: Uint8Array, code: number): void {
 }
 
 export interface ExtraWork {
-  name: "browser" | "video" | "apk";
+  name: "video" | "apk";
   run: () => Promise<void>;
 }
 
-export function pendingExtras(cfg: UpdateConfig, dir: string, m: Manifest, prev?: string): ExtraWork[] {
+export function pendingExtras(cfg: UpdateConfig, dir: string, m: Manifest): ExtraWork[] {
   const work: ExtraWork[] = [];
   const stage = (n: string): string => fresh(join(dir, `.staging-${n}`));
   const staged = (n: string, job: (s: string) => Promise<void>) => async (): Promise<void> => {
@@ -103,8 +98,7 @@ export function pendingExtras(cfg: UpdateConfig, dir: string, m: Manifest, prev?
       remove(s);
     }
   };
-  const { browser, video, apk: phone } = m;
-  if (browser !== undefined && engineStale(cfg, dir, browser.id)) work.push({ name: "browser", run: staged("browser", (s) => fetchBrowser(cfg, browser.release, browser.id, dir, s, prev)) });
+  const { video, apk: phone } = m;
   if (video !== undefined && videoStale(dir, video.id)) work.push({ name: "video", run: staged("video", (s) => fetchVideo(cfg, video.release, video.id, dir, s)) });
   if (phone !== undefined && (apk(dir)?.code ?? -1) < phone.code) work.push({ name: "apk", run: staged("apk", (s) => fetchApk(cfg, phone.release, phone.code, dir, s)) });
   return work;

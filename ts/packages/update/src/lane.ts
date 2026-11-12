@@ -73,7 +73,6 @@ export interface ManifestInput {
   version: string;
   lane: Lane;
   previous: Manifest | null;
-  browser?: { id: string; release?: string };
   video?: { id: string; release?: string };
   apk?: { code: number; release?: string };
 }
@@ -82,10 +81,8 @@ export function buildManifest(input: ManifestInput): Manifest {
   const { version, previous } = input;
   if (input.lane === "bundle" && previous === null) throw new Error("a bundle-only release needs the previous release's manifest to take its runtime from");
   const m: Manifest = input.lane === "runtime" ? { version, minRuntime: version, runtime: version } : { version, minRuntime: (previous as Manifest).minRuntime, runtime: (previous as Manifest).runtime };
-  const browser = input.browser === undefined ? previous?.browser : { id: input.browser.id, release: input.browser.release ?? version };
   const video = input.video === undefined ? previous?.video : { id: input.video.id, release: input.video.release ?? version };
   const apk = input.apk === undefined ? previous?.apk : { code: input.apk.code, release: input.apk.release ?? version };
-  if (browser !== undefined) m.browser = browser;
   if (video !== undefined) m.video = video;
   if (apk !== undefined) m.apk = apk;
   return m;

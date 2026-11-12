@@ -15,7 +15,6 @@ import chat from "../slint/chat.slint" with { type: "file" };
 import composer from "../slint/composer.slint" with { type: "file" };
 import devices from "../slint/devices.slint" with { type: "file" };
 import files from "../slint/files.slint" with { type: "file" };
-import browser from "../slint/browser.slint" with { type: "file" };
 import gallery from "../slint/gallery.slint" with { type: "file" };
 import icons from "../slint/icons.slint" with { type: "file" };
 import issuedetail from "../slint/issuedetail.slint" with { type: "file" };
@@ -79,7 +78,6 @@ export const FILES: Readonly<Record<string, string>> = {
   "surface.slint": surface,
   "devices.slint": devices,
   "files.slint": files,
-  "browser.slint": browser,
   "memory.slint": memory,
   "team.slint": team,
   "terminal.slint": terminal,

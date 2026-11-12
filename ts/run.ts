@@ -62,6 +62,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   let reloader: Reloader | null = null;
   let follow: FollowMain | null = null;
   const updater = new Updater(cfg, { swap: () => void reloader?.now(), advertise: advertised, keep: (v) => follow?.keeps(v) ?? false });
+  updater.dropLeftovers();
   const store = Store.open(dataDir());
   const offline = isOffline();
   // Builds of Harbor's main, seconds after each push (followmain.ts): the public repository's main, or a

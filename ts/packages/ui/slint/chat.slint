@@ -448,7 +448,7 @@ component NoticePill {
                 }
             }
             TipArea {
-                tip: root.card.url != "" ? "Open in Harbor's browser" : "";
+                tip: root.card.url != "" ? "Open in your browser" : "";
                 mouse-cursor: root.card.expandable || root.card.url != "" ? pointer : default;
                 clicked => {
                     root.act();
