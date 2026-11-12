@@ -33,7 +33,10 @@ const KERNEL32 = {
   TerminateJobObject: { args: [H, FFIType.u32], returns: FFIType.i32 },
   QueryInformationJobObject: { args: [H, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
   GenerateConsoleCtrlEvent: { args: [FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+  GetConsoleWindow: { args: [], returns: H },
 } as const;
+/** Windows 11 24H2 and newer only: a library of its own, so its absence elsewhere costs nothing else. */
+const CONSOLE_OPTIONS = { AllocConsoleWithOptions: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } } as const;
 const NTDLL = {
   NtQueryInformationProcess: { args: [H, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
   NtQuerySystemInformation: { args: [FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
@@ -66,6 +69,31 @@ export const kernel32 = opener("kernel32.dll", KERNEL32);
 export const ntdll = opener("ntdll.dll", NTDLL);
 export const shell32 = opener("shell32.dll", SHELL32);
 const kfree = opener("kernel32.dll", KERNELBASE_FREE);
+const consoleOptions = opener("kernel32.dll", CONSOLE_OPTIONS);
+
+/**
+ * A process without a console (Harbor started from the Start menu or by the updater: a GUI program) gets one
+ * with no window. Otherwise every console program it starts (git, cmd, a shell) opens a console window of its
+ * own on the desktop; with this they share the hidden one. True when there's one now. Where Windows is older
+ * than 11 24H2 nothing changes.
+ */
+export function hiddenConsole(): boolean {
+  const k = kernel32();
+  if (k === null) return false;
+  if (!badHandle(k.GetConsoleWindow())) return true;
+  const c = consoleOptions();
+  if (c === null) return false;
+  // ALLOC_CONSOLE_OPTIONS { mode: ALLOC_CONSOLE_MODE_NO_WINDOW (2), useShowWindow: 0, showWindow: 0 }
+  const options = new Uint8Array(12);
+  new DataView(options.buffer).setInt32(0, 2, true);
+  const result = new Uint8Array(4);
+  // The new console takes over the standard handles: those already set (start.log, startlog.ts) are kept.
+  const std = [-10, -11, -12].map((n) => [n, k.GetStdHandle(n >>> 0)] as const);
+  // S_OK: ALLOC_CONSOLE_RESULT_NEW_CONSOLE (1) or _EXISTING_CONSOLE (2), a console either way.
+  const ok = c.AllocConsoleWithOptions(ptr(options), ptr(result)) === 0 && new DataView(result.buffer).getInt32(0, true) !== 0;
+  for (const [n, h] of std) if (!badHandle(h)) k.SetStdHandle(n >>> 0, h);
+  return ok;
+}
 
 export const INVALID_HANDLE = 0xffffffffffffffff;
 

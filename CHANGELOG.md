@@ -5,6 +5,21 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.181.1] - 2026-11-12
+
+### Fixed
+- Windows: no console windows pop up beside Harbor for each git, shell or agent it runs (closing one stopped
+  that agent's turn). Windows 11 24H2 and newer.
+- Windows: the first start after installing shows Harbor even when Windows takes long scanning it: with nothing
+  to go back to, a slow start is no longer stopped; the installer has Windows scan Harbor's native parts up front.
+- Windows: the Discord app starts and reaches its sign-in (its host was started with a wrong command, it fetched Electron
+  for Linux, and its shell quit at once: Electron's stdin ends at once there). Its sign-in window opens on the
+  desktop. Dictation on this PC starts its speech worker.
+- Windows: Harbor's native parts are scanned by Windows while installing and before a runtime update is
+  swapped in, not at the first start.
+- Windows: Add project › Local folder no longer lists Windows' old junctions ("Application Data", "Cookies"…),
+  which can't be opened.
+
 ## [0.181.0] - 2026-11-12
 
 ### Added

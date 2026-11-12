@@ -177,6 +177,28 @@ test("the watchdog kills a start that shows no frame in time and starts the prev
   expect(skipped(cfg, "1.1.0")).toBe(true);
 });
 
+test("with nothing to go back to, the watchdog leaves a slow start running", async () => {
+  const inst = makeInstall({ version: "1.1.0" });
+  let clock = 0;
+  const logs: string[] = [];
+  const cfg = configFor(inst, {
+    version: "1.1.0",
+    now: () => clock,
+    log: (l: string) => void logs.push(l),
+    sleep: async (ms) => {
+      clock += ms === 200 ? START_LIMIT_MS / 100 : ms;
+    },
+  });
+  beginAttempt(cfg, attempt(process.pid));
+  const started: string[][] = [];
+  let kills = 0;
+  expect(await watch(cfg, process.pid, { relaunch: (a) => void started.push(a), kill: () => void kills++ })).toBe(0);
+  expect(kills).toBe(0);
+  expect(started).toEqual([]);
+  expect(readAttempt(inst.dir)?.stage).toBe("trying");
+  expect(logs.join("\n")).toContain("slow to show its window");
+});
+
 test("a watchdog for an attempt that was replaced does nothing", async () => {
   const inst = makeInstall();
   withPrevious(inst);

@@ -95,7 +95,11 @@ export function normalize(env: NodeJS.ProcessEnv = process.env): void {
   // Bun looks programs up (Bun.spawn without env, Bun.which) in the process's own environment block, which
   // assignments to process.env don't reach on Windows: PATH goes there too.
   if (env === process.env && add.PATH !== undefined) setenv("PATH", add.PATH, true);
-  if (env === process.env) currentEnvForBun();
+  if (env === process.env) {
+    currentEnvForBun();
+    // No console windows popping up for each git or shell this process runs (k32.hiddenConsole).
+    (require("./win32/k32.ts") as typeof import("./win32/k32.ts")).hiddenConsole();
+  }
 }
 
 let wrapped = false;

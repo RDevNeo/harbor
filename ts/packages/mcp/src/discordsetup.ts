@@ -8,7 +8,7 @@ import { dataDir, now, privateDir, writePrivate } from "@harbor/store";
 import { isObj, message, sleep } from "./discordjson.ts";
 import { selfExe } from "./sys.ts";
 import SHELL_SUMS from "../../../../discord/SHA256SUMS" with { type: "text" };
-import { platform } from "@harbor/os";
+import { platform, spawn as osSpawn } from "@harbor/os";
 
 export const ELECTRON = "45.1.0";
 /** From the release's SHASUMS256.txt. */
@@ -16,6 +16,8 @@ export const ELECTRON_SUMS: Record<string, string> = {
   x64: "9dafab2c57ce209f8f716f8f3e4fddd8ffe0820e2455bfbbfc00b0fc13e03a3b",
   arm64: "64b78d93d1129ab805cdc0f2710f446716afbe814a1d08e639dab3175d2285a1",
   "darwin-arm64": "002b71efcf90e247317d3da486f2d4e51860e9c2889d49f33e229ab2268b0f3b",
+  "win32-x64": "55eaba17abff7b5bba6c3bbc85068967379024fe742fe9c7fdba9118922ccbe2",
+  "win32-arm64": "c0adce10031826896060bba848777bf9f059bfe4a2f7f9d4795008498eeeb248",
 };
 const VENCORD_URL = "https://github.com/Vendicated/Vencord/releases/download/devbuild";
 export const VENCORD_FILES = ["vencordDesktopMain.js", "vencordDesktopPreload.js", "vencordDesktopRenderer.js", "vencordDesktopRenderer.css"];
@@ -50,7 +52,7 @@ export interface Ports {
 
 function defaultCommand(): string[] {
   if (process.env.HARBOR_EXE) return [selfExe()];
-  return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
+  return osSpawn.compiled() ? [process.execPath] : [process.execPath, Bun.main];
 }
 
 let ports: Ports = { selfCommand: defaultCommand, version: () => "0.0.0", shellRef: () => undefined, bundle: () => undefined, claude: () => undefined };
@@ -157,22 +159,25 @@ function arch(): string {
   }
 }
 
-/** Electron's builds by system: Linux's (the key is the arch alone, as before) and macOS's. */
+/** Electron's builds by system: Linux's (the key is the arch alone, as before), macOS's and Windows'. */
 const mac = (): boolean => platform() === "darwin";
+const win = (): boolean => platform() === "win32";
+/** Electron's name for this system in its downloads and in ELECTRON_SUMS ("" for Linux's key). */
+const system = (): string => (mac() ? "darwin" : win() ? "win32" : "");
 
 /** The Electron binary; `HARBOR_DISCORD_ELECTRON` points a test rig at its own. */
 export function electronBin(): string {
   const dir = join(root(), `electron-${ELECTRON}`);
-  return process.env.HARBOR_DISCORD_ELECTRON ?? (mac() ? join(dir, "Electron.app", "Contents", "MacOS", "Electron") : join(dir, "electron"));
+  return process.env.HARBOR_DISCORD_ELECTRON ?? (mac() ? join(dir, "Electron.app", "Contents", "MacOS", "Electron") : join(dir, win() ? "electron.exe" : "electron"));
 }
 
 /** Downloads and unpacks Electron once. */
 export async function ensureElectron(say: Say, sums: Record<string, string> = ELECTRON_SUMS): Promise<void> {
   if (existsSync(electronBin())) return;
   const a = arch();
-  const want = sums[mac() ? `darwin-${a}` : a];
+  const want = sums[system() === "" ? a : `${system()}-${a}`];
   if (want === undefined) throw new Error("no pinned Electron");
-  const name = `electron-v${ELECTRON}-${mac() ? "darwin" : "linux"}-${a}.zip`;
+  const name = `electron-v${ELECTRON}-${system() || "linux"}-${a}.zip`;
   const zip = join(root(), `${name}.part`);
   const override = process.env.HARBOR_DISCORD_ELECTRON_URL;
   const url = override !== undefined ? `${override}/${name}` : `https://github.com/electron/electron/releases/download/v${ELECTRON}/${name}`;

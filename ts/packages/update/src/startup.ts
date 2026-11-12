@@ -4,9 +4,11 @@ import { alive, readJson, remove, writeAtomic } from "./files.ts";
 import { dirOf, hasPrevious, rollback } from "./install.ts";
 import { fail, readMeta, writeMeta } from "./previewmeta.ts";
 import { keepFailedLog } from "./startlog.ts";
+import { platform } from "@harbor/os";
 
 export const ATTEMPT = "starting.json";
-export const START_LIMIT_MS = 30_000;
+// Windows scans a new program's files (Defender) as they're first loaded: a first start there can wait for that.
+export const START_LIMIT_MS = platform() === "win32" ? 120_000 : 30_000;
 export const SETTLE_MS = 2_000;
 const LOOK_MS = 200;
 
@@ -105,6 +107,11 @@ export async function watch(cfg: UpdateConfig, pid: number, deps: WatchDeps): Pr
       break;
     }
     if (cfg.now() - began > START_LIMIT_MS) {
+      // Nothing to go back to (a first install): a slow start is still better than none.
+      if (!hasPrevious(cfg)) {
+        cfg.log(`${readAttempt(dir)?.version ?? "this version"} is slow to show its window; nothing to go back to, so it's left to finish`);
+        return 0;
+      }
       deps.kill(pid);
       for (let i = 0; i < 100 && alive(pid); i++) await cfg.sleep(50);
       why = "it showed no frame in time";

@@ -28,10 +28,15 @@ export function startDetached(argv: readonly string[]): void {
   p.unref();
 }
 
+/** A compiled Harbor (one executable), not Bun on its sources: the bundle's own path is Bun's virtual one. */
+export function compiled(): boolean {
+  return Bun.main.startsWith("/$bunfs/") || Bun.main.startsWith("B:/~BUN/");
+}
+
 /** How to start this program again: the executable, and from source its entry script. */
 export function selfArgv(): string[] {
   const exe = process.execPath.replace(/ \(deleted\)$/, "");
-  if (Bun.main.startsWith("/$bunfs/") || Bun.main.startsWith("B:/~BUN/")) return [exe];
+  if (compiled()) return [exe];
   return [exe, process.env.HARBOR_ENTRY ?? Bun.main];
 }
 

@@ -47,18 +47,21 @@ export class Display {
     readonly wayland = "",
     readonly x11 = "",
     readonly runtime = "",
+    /** Windows' or macOS's own desktop: a window just opens there, no display to name. */
+    readonly native = false,
   ) {}
 
   static here(): Display {
-    return new Display(process.env.WAYLAND_DISPLAY ?? "", process.env.DISPLAY ?? "", process.env.XDG_RUNTIME_DIR ?? "");
+    const native = platform() === "win32" || platform() === "darwin";
+    return new Display(process.env.WAYLAND_DISPLAY ?? "", process.env.DISPLAY ?? "", process.env.XDG_RUNTIME_DIR ?? "", native);
   }
 
   static from(v: Json): Display {
-    return new Display(str(get(v, "wayland")) ?? "", str(get(v, "x11")) ?? "", str(get(v, "runtime")) ?? "");
+    return new Display(str(get(v, "wayland")) ?? "", str(get(v, "x11")) ?? "", str(get(v, "runtime")) ?? "", get(v, "native") === true);
   }
 
   any(): boolean {
-    return this.wayland !== "" || this.x11 !== "";
+    return this.native || this.wayland !== "" || this.x11 !== "";
   }
 }
 
@@ -147,7 +150,9 @@ export class Electron implements Engine {
     env.HARBOR_DISCORD = JSON.stringify(cfg);
     if (mode === "signin" && display.any()) {
       if (display.runtime !== "") env.XDG_RUNTIME_DIR = display.runtime;
-      if (display.wayland !== "") {
+      if (display.native) {
+        // Windows' and macOS's Electron opens its window on the desktop: no ozone to pick.
+      } else if (display.wayland !== "") {
         env.WAYLAND_DISPLAY = display.wayland;
         args.push("--ozone-platform=wayland");
       } else {

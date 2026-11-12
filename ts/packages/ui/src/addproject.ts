@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, opendirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "@harbor/agents";
 import { addFolder, gitRemote } from "@harbor/net";
@@ -31,7 +31,7 @@ export const realDisk = (): Disk => ({
   subdirs(dir) {
     try {
       return readdirSync(dir, { withFileTypes: true })
-        .filter((e) => !e.name.startsWith(".") && (e.isDirectory() || (e.isSymbolicLink() && isDir(join(dir, e.name)))))
+        .filter((e) => !e.name.startsWith(".") && (e.isDirectory() || (e.isSymbolicLink() && isDir(join(dir, e.name)) && listable(join(dir, e.name)))))
         .map((e) => join(dir, e.name))
         .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     } catch {
@@ -41,6 +41,16 @@ export const realDisk = (): Disk => ({
   isDir,
   exists: existsSync,
 });
+
+/** A folder that can be opened: not one of Windows' old junctions ("Application Data", "Cookies"…), which refuse it. */
+function listable(p: string): boolean {
+  try {
+    opendirSync(p).closeSync();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function isDir(p: string): boolean {
   try {

@@ -3,7 +3,7 @@ import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { dataDir } from "@harbor/store";
 import type { Part } from "./voice.ts";
-import { sys } from "@harbor/os";
+import { spawn as osSpawn, sys } from "@harbor/os";
 
 export const RATE = 16_000;
 
@@ -355,7 +355,7 @@ export function setWorkerCommand(cmd: string[] | null): void {
   workerCmd = cmd;
 }
 
-export const compiled = (): boolean => Bun.main.startsWith("/$bunfs/");
+export const compiled = (): boolean => osSpawn.compiled();
 
 export function useOwnBinaryForWorker(): void {
   if (compiled()) setWorkerCommand([process.execPath, "--speech-worker"]);

@@ -424,8 +424,11 @@ const ops = {
 };
 
 let buf = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", d => {
+// Electron's process.stdin ends at once on Windows even when Harbor holds the pipe open; the pipe
+// itself (fd 0) reads fine there.
+const input = process.platform === "win32" ? fs.createReadStream(null, { fd: 0, encoding: "utf8" }) : process.stdin;
+if (input === process.stdin) process.stdin.setEncoding("utf8");
+input.on("data", d => {
     buf += d;
     let i;
     while ((i = buf.indexOf("\n")) >= 0) {
@@ -435,7 +438,7 @@ process.stdin.on("data", d => {
     }
 });
 // Harbor went away: nobody can use this page any more.
-process.stdin.on("end", quit);
+input.on("end", quit);
 
 async function handle(m) {
     try {
