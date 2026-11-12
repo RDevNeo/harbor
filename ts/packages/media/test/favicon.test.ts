@@ -78,6 +78,13 @@ test("a project's icon comes from its files, best first", async () => {
   expect(f.changed(1, Date.now() + 10_000) || true).toBe(true);
 });
 
+test("a Next.js app's icon in a route group's folder counts", async () => {
+  const root = tmp("routegroup");
+  mkdirSync(join(root, "app", "(app)"), { recursive: true });
+  writeFileSync(join(root, "app/(app)/icon.png"), await png(48, 48, "#f00"));
+  expect((await f.localCandidates(root, "x"))[0]).toBe(join(root, "app/(app)/icon.png"));
+});
+
 test("a custom icon wins and can be cleared", async () => {
   const root = tmp("custom");
   const file = join(root, "mine.png");

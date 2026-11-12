@@ -175,7 +175,11 @@ export async function localCandidates(root: string, name: string): Promise<strin
   const out: string[] = [];
   for (const r of roots(root)) {
     const tier: string[] = [];
-    for (const app of ["app", "src/app"]) for (const stem of ["icon", "favicon", "apple-icon"]) for (const ext of EXTS) tier.push(join(r, app, `${stem}.${ext}`));
+    for (const app of ["app", "src/app"]) {
+      // Next.js: the app folder's icon, or one in a route group's folder ("app/(app)/icon.png").
+      const groups = glob(join(r, app), (n) => n.startsWith("(") && n.endsWith(")"));
+      for (const dir of [join(r, app), ...groups]) for (const stem of ["icon", "favicon", "apple-icon"]) for (const ext of EXTS) tier.push(join(dir, `${stem}.${ext}`));
+    }
     for (const dir of ["public", "static", "src/assets", "assets", ""]) {
       const d = join(r, dir);
       for (const f of ["favicon.svg", "favicon.png", "icon.svg", "icon.png", "apple-touch-icon.png", "favicon.ico"]) tier.push(join(d, f));
