@@ -44,6 +44,11 @@ export interface SocketOptions<A, M, O> {
   previewReceived?(v: Json): { here: boolean; offer: O } | string | Promise<{ here: boolean; offer: O } | string>;
   raise?(): boolean;
   path?: string;
+  /**
+   * `harbor api`: a call to this Harbor's own API (`/v1/…` as a phone makes them, with this PC's rights: the socket
+   * is its owner's only), or a recording (`wav`, base64) to transcribe as this PC dictates.
+   */
+  api?(method: string, path: string, body: Json, wav: Uint8Array | null): Promise<{ status: number; body: unknown }>;
 }
 
 export interface Listener {
@@ -81,6 +86,16 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
     if (v.restart === true) {
       opts.send({ kind: "restart" });
       return reply(socket, { ok: true });
+    }
+    if (isObject(v.api) && opts.api) {
+      const a = v.api;
+      const method = typeof a.method === "string" ? a.method.toUpperCase() : "GET";
+      const path = typeof a.path === "string" ? a.path : "";
+      const wav = typeof a.wav === "string" ? new Uint8Array(Buffer.from(a.wav, "base64")) : null;
+      return void opts.api(method, path, (a.body ?? null) as Json, wav).then(
+        (r) => reply(socket, { ok: r.status < 300, status: r.status, body: r.body as Json }),
+        (e: unknown) => reply(socket, { ok: false, status: 500, body: { error: e instanceof Error ? e.message : String(e) } }),
+      );
     }
     if (v.quit === true) {
       opts.send({ kind: "quit" });

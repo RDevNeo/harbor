@@ -124,6 +124,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     // The new Harbor of a restart asks the running one to show itself when it can't start: that isn't the user.
     raise: () => (reloader?.handingOver ? true : single.raise()),
     previewReceived: (v) => preview.received(cfg, v as Partial<preview.PushRequest>),
+    api: (method, path, body, wav) => (wav !== null ? run.transcribe(wav) : run.call(method, path.replace(/^\/+/, ""), undefined, body)),
     send: (i) => {
       if (i.kind === "tool") {
         engine.tool(i.call.chatId, i.call.tool, i.call.args).then(

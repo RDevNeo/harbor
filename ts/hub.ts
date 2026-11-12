@@ -222,6 +222,8 @@ export interface RunningHub {
   projectPlace(repo: number): ProjectPlace | null;
   /** A call to this PC's own API routes, as a phone's would be answered (the window's worktree bar uses the phone's). */
   call(method: string, path: string, query?: Record<string, string>, body?: unknown): Promise<Reply>;
+  /** A recording (WAV) to text as this PC dictates, through its voice host (`/v1/transcribe`'s, for `harbor api`). */
+  transcribe(wav: Uint8Array, query?: Record<string, string>): Promise<Reply>;
   /** A new chat's own worktree (as `POST /v1/chats` with `worktree`): made for project `repo`, then given to the chat. */
   newWorktree: { make(repo: number, base: string, about: string): Promise<unknown>; attach(chat: number, made: unknown): void; discard(repo: number, made: unknown): void };
   stop(): Promise<void>;
@@ -1298,6 +1300,22 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   phoneRoute = route;
   const apk = () => apkInfo()?.path ?? null;
+  // A recording to text the way this PC dictates (its voice host, cleanup and commands): a phone's, or `harbor api`'s.
+  const transcribeHere = async (wav: Uint8Array, q: [string, string][], from: string): Promise<Reply> => {
+    const get = (k: string) => q.find(([x]) => x === k)?.[1] ?? null;
+    const langQ = get("lang");
+    const lang = langQ === null || langQ === "" || langQ === "default" ? voice.config()[0] : langQ;
+    try {
+      const d = await dictate.transcribe(voicePeers, voice.wavSamples(wav), lang, { cleanup: get("cleanup") === "1" || (get("cleanup") !== "0" && dictate.cleanupOn()), commands: get("commands") === "1", localOnly: get("local") === "1", from });
+      const v: Record<string, string | boolean> = { text: d.text, host: d.host };
+      if (d.send) v.send = true;
+      if (d.raw !== null) v.raw = d.raw;
+      if (d.warn !== undefined) v.warn = d.warn;
+      return ok(v);
+    } catch (e) {
+      return err(409, e instanceof Error ? e.message : String(e));
+    }
+  };
   api = new Api({
     hub,
     id: () => id,
@@ -1323,21 +1341,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mime: (path) => media.mime(path),
     located: (path) => media.located(path),
     mediaWait: (path) => media.waitFor(path, 20_000),
-    transcribe: async (wav, q) => {
-      const get = (k: string) => q.find(([x]) => x === k)?.[1] ?? null;
-      const langQ = get("lang");
-      const lang = langQ === null || langQ === "" || langQ === "default" ? voice.config()[0] : langQ;
-      try {
-        const d = await dictate.transcribe(voicePeers, voice.wavSamples(wav), lang, { cleanup: get("cleanup") === "1" || (get("cleanup") !== "0" && dictate.cleanupOn()), commands: get("commands") === "1", localOnly: get("local") === "1", from: "a phone" });
-        const v: Record<string, string | boolean> = { text: d.text, host: d.host };
-        if (d.send) v.send = true;
-        if (d.raw !== null) v.raw = d.raw;
-        if (d.warn !== undefined) v.warn = d.warn;
-        return ok(v);
-      } catch (e) {
-        return err(409, e instanceof Error ? e.message : String(e));
-      }
-    },
+    transcribe: (wav, q) => transcribeHere(wav, q, "a phone"),
     reached: (ip) => portmap.reached(ip),
     env,
   });
@@ -1430,6 +1434,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     services,
     projectPlace: (repo) => projectClones.place(repo),
     call: (method, path, query = {}, body = null) => route({ method, path: path.split("/").filter((x) => x !== ""), query: Object.entries(query), body, token: "", device: "", global: false }),
+    transcribe: (wav, query = {}) => transcribeHere(wav, Object.entries(query), "harbor api"),
     newWorktree: {
       make: (repo, base, about) => newWorktree.make(repo, base, about),
       attach: (chat, made) => newWorktree.attach(chat, made),

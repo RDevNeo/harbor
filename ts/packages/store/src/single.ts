@@ -99,6 +99,28 @@ export function quitRunning(env: Record<string, string | undefined> = process.en
   return ask(socketPath(env), JSON.stringify({ quit: true }));
 }
 
+/** `harbor api`: a call to the running Harbor's own API; its answer, or null when no Harbor answered. */
+export function apiCall(req: { method: string; path: string; body?: unknown; wav?: string }, env: Record<string, string | undefined> = process.env, timeoutMs = 120_000): Promise<{ ok: boolean; status: number; body: unknown } | null> {
+  return new Promise((resolve) => {
+    const s = createConnection(socketPath(env));
+    let buf = "";
+    s.setTimeout(timeoutMs, () => (s.destroy(), resolve(null)));
+    s.on("connect", () => s.write(`${JSON.stringify({ api: req })}\n`));
+    s.on("data", (d) => {
+      buf += d.toString();
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      s.destroy();
+      try {
+        resolve(JSON.parse(buf.slice(0, nl)) as { ok: boolean; status: number; body: unknown });
+      } catch {
+        resolve(null);
+      }
+    });
+    s.on("error", () => resolve(null));
+  });
+}
+
 /** Whether something listens on the control socket (connects, says nothing). */
 export function socketListening(env: Record<string, string | undefined> = process.env): Promise<boolean> {
   return new Promise((resolve) => {

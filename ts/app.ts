@@ -118,6 +118,34 @@ const commands: Record<string, Command> = {
     console.error("harbor: no running Harbor answered");
     return 1;
   },
+  // A call to the running Harbor's own API, as a phone makes them, with this PC's rights (the control socket is
+  // its owner's only): `harbor api PATCH v1/chats/12 '{"device":"pc:Mac"}'`, `harbor api transcribe clip.wav`.
+  api: async (args) => {
+    const { single } = await import("./packages/store/src/index.ts");
+    const [first, second, third] = args;
+    if (first === undefined || second === undefined) {
+      console.error("usage: harbor api METHOD PATH [JSON] | harbor api transcribe FILE.wav");
+      return 2;
+    }
+    let req: { method: string; path: string; body?: unknown; wav?: string };
+    if (first === "transcribe") req = { method: "POST", path: "v1/transcribe", wav: Buffer.from(await Bun.file(second).arrayBuffer()).toString("base64") };
+    else {
+      let body: unknown = null;
+      if (third !== undefined) {
+        try {
+          body = JSON.parse(third);
+        } catch (e) {
+          console.error(`harbor api: the body isn't JSON: ${e instanceof Error ? e.message : String(e)}`);
+          return 2;
+        }
+      }
+      req = { method: first, path: second, body };
+    }
+    const r = await single.apiCall(req);
+    if (r === null) return (console.error("harbor: no running Harbor answered"), 1);
+    console.log(JSON.stringify(r.body, null, 2));
+    return r.ok ? 0 : 1;
+  },
   // Quits the running Harbor as its tray's Quit does, and waits until it's gone (installers, before replacing it).
   quit: async () => {
     const { single } = await import("./packages/store/src/index.ts");

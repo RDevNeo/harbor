@@ -168,3 +168,23 @@ test("harbor quit: asks the running Harbor, then sees its lock and socket go", a
   expect(lockHeld(env)).toBe(false);
   expect(await socketListening(env)).toBe(false);
 });
+
+test("harbor api: a call reaches the running Harbor's own API and its answer comes back; a recording goes as wav", async () => {
+  const { apiCall } = await import("../../store/src/single.ts");
+  const env = { HARBOR_SOCK: join(root, "api.sock") };
+  const seen: unknown[] = [];
+  const l = startSocket({
+    path: env.HARBOR_SOCK,
+    send: () => undefined,
+    api: async (method, path, body, wav) => {
+      seen.push([method, path, body, wav === null ? null : wav.length]);
+      return path === "v1/missing" ? { status: 404, body: { error: "no such call" } } : { status: 200, body: { echo: path } };
+    },
+  });
+  expect(await apiCall({ method: "patch", path: "v1/chats/3", body: { device: "pc:x" } }, env)).toEqual({ ok: true, status: 200, body: { echo: "v1/chats/3" } });
+  expect(await apiCall({ method: "GET", path: "v1/missing" }, env)).toEqual({ ok: false, status: 404, body: { error: "no such call" } });
+  expect(await apiCall({ method: "POST", path: "v1/transcribe", wav: Buffer.from("RIFF1234").toString("base64") }, env)).toMatchObject({ ok: true });
+  expect(seen).toEqual([["PATCH", "v1/chats/3", { device: "pc:x" }, null], ["GET", "v1/missing", null, null], ["POST", "v1/transcribe", null, 8]]);
+  l?.stop();
+  expect(await apiCall({ method: "GET", path: "v1/state" }, env, 2000)).toBeNull();
+});
