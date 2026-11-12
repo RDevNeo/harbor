@@ -1483,6 +1483,14 @@ export class Shell {
     switchTrace.end();
   }
 
+  /** A chat started (or joined) from the draft screen comes on screen: with split panes, in the focused pane, as a
+   * chat clicked in the sidebar does (the other panes keep theirs). */
+  private showSent(id: number): void {
+    this.view = "chat";
+    this.chatId = id;
+    this.split.opened(id);
+  }
+
   /** The shown composer is left: its text and cursor stay with its key. */
   private leaveComposer(): void {
     const k = this.key();
@@ -3131,8 +3139,7 @@ export class Shell {
     if (mainCopy !== undefined && this.meshChat.foreign(mainCopy)) {
       clear();
       this.meshChat.send(mainCopy, text, files, mentions, mode);
-      this.view = "chat";
-      this.chatId = mainCopy.id;
+      this.showSent(mainCopy.id);
       this.data.store.set("last_chat", String(mainCopy.id));
       this.refreshAll();
       return;
@@ -3202,8 +3209,7 @@ export class Shell {
           if (made !== null) nw.attach(t.id, made);
           if (auto) this.hub.auto?.mark(t.gid, sel.device);
           if (this.view !== "chat" && this.draftRepo === repo) {
-            this.view = "chat";
-            this.chatId = t.id;
+            this.showSent(t.id);
             this.data.store.set("last_chat", String(t.id));
           }
           this.engine.send(t.id, text, { files: keep.files, mentions: keep.mentions, mode });
@@ -3233,8 +3239,7 @@ export class Shell {
         if (fo !== null && fo.to === "") this.hub.failover?.startedNotice(made.id, fo.off);
       } else id = joins;
       if (this.draftMain && this.draftRepo !== null && joins === null) this.data.store.setMainChat(this.draftRepo, id);
-      this.view = "chat";
-      this.chatId = id;
+      this.showSent(id);
       this.data.store.set("last_chat", String(id));
     }
     if (from !== DRAFT) this.draftSync.sent(from, 0);

@@ -14,7 +14,7 @@ function rig() {
     return c;
   };
   const built: number[] = [];
-  let shown = 1;
+  let shown: number | null = 1;
   const win = {} as AppWindow;
   const host: SplitHost = {
     win,
@@ -42,6 +42,7 @@ function rig() {
   const split = new SplitPanes(host);
   /** The shell building the open chat: into the focused pane's models. */
   const shell = () => {
+    if (shown === null) throw new Error("no chat shown");
     const t = split.target(shown);
     if (!t) throw new Error("no target");
     const next = cardsOf(shown);
@@ -56,7 +57,7 @@ function rig() {
     split.render();
     return shell();
   };
-  const show = (chat: number) => {
+  const show = (chat: number | null) => {
     shown = chat;
     split.render();
   };
@@ -109,4 +110,30 @@ test("a maximized pane is the usual single-chat view; the title bar's button sho
   expect(w.split_maxed).toBe(false);
   expect(w.split_count).toBe(2);
   expect(r.split.target(2)).not.toBeNull();
+});
+
+test("a chat no pane holds shows as the usual view, never as blank panes; panes come back filled after another page", () => {
+  const r = rig();
+  r.render();
+  r.shell();
+  const heads = () => r.win.split_heads as unknown as slint.ArrayModel<unknown>;
+  // A chat put on screen without going into a pane: the usual view, no pane headers over it.
+  r.show(9);
+  expect(r.win.split_count).toBe(1);
+  r.split.refreshHeads();
+  expect(heads().rowCount()).toBe(0);
+  // Another page (the draft screen): the panes let their transcripts go...
+  r.show(null);
+  expect([0, 1].map((i) => r.bodies().rowData(i)?.cards.rowCount())).toEqual([0, 0]);
+  // ...and coming back to a pane's chat builds both again.
+  r.built.length = 0;
+  r.focus(1);
+  expect(r.win.split_count).toBe(2);
+  expect(r.built).toEqual([2]);
+  expect([0, 1].map((i) => r.bodies().rowData(i)?.cards.rowCount())).toEqual([3, 3]);
+  expect(heads().rowCount()).toBe(2);
+  // A chat started from the draft screen goes into the focused pane; the other keeps its chat.
+  r.focus(7);
+  expect(r.win.split_count).toBe(2);
+  expect([0, 1].map((i) => r.bodies().rowData(i)?.cards.rowCount())).toEqual([3, 3]);
 });

@@ -91,7 +91,7 @@ function sync<T>(model: slint.ArrayModel<T>, next: readonly T[], same: (a: T, b:
 
 const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringify(b);
 
-const NO_PIXELS: Pixels = { width: 1, height: 1, data: new Uint8Array(4) };
+const NO_PIXELS: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 
 /** Images by identity (a logo or photo is the same object while it's the same), the rest by value. */
 const withoutImages = (h: PaneHead): unknown => ({ ...h, logo: 0, badge_photo: 0 });
@@ -294,7 +294,9 @@ export class SplitPanes {
     const maxed = split && s !== null && s.max !== null;
     if (w.split_maxed !== maxed) w.split_maxed = maxed;
     if (!split || s === null || maxed) {
-      const n = maxed ? 1 : (s?.chats.length ?? 1);
+      // A chat on screen that no pane holds (one opened some other way) shows as the usual view: the panes, empty while
+      // they're off screen, never stand in its place.
+      const n = maxed || shown !== null ? 1 : (s?.chats.length ?? 1);
       if (w.split_count !== n) w.split_count = n;
       for (const slot of this.slots) this.empty(slot);
       // Off screen, the panes keep only their chats (and come back with them).
@@ -328,7 +330,8 @@ export class SplitPanes {
   /** The headers: titles, statuses, drafts (the sidebar refreshes them). */
   refreshHeads(): void {
     const s = this.state;
-    if (s === null || this.slots.length !== s.chats.length || this.host.shown() === null || s.chats.length < 2) return;
+    // Off screen (another page, a chat no pane holds, maximized): no headers.
+    if (s === null || this.slots.length !== s.chats.length || this.onScreen() === null) return;
     const all = rects(s);
     sync(
       this.heads,
