@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { blankChat, digest, githead, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
@@ -458,7 +459,7 @@ export class StoreReplica implements MeshApp {
       worktree: wt === "" ? null : wt,
       branch: s(m, "branch"),
       pr: (m.pr ?? null) as Json,
-      cwd: cwd.startsWith("/") ? cwd : null,
+      cwd: isAbsolute(cwd) ? cwd : null,
     });
     this.o.hub.touch(id, true);
     return id;

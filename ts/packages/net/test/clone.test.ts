@@ -289,7 +289,7 @@ describe("clone beyond the Rust tests", () => {
         text: "p1 isn't on this PC: it's on owner-pc.",
         cloning: false,
         owner: { id: "pc:o", name: "owner-pc" },
-        suggested: "/home/me/code/p1",
+        suggested: n("/home/me/code/p1"),
         action: "Clone here",
         action_note: "The project is cloned into this folder on the PC, or used from it when it's already there.",
       });

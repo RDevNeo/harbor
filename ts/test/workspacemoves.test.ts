@@ -7,7 +7,15 @@ import { blankChat, type Item, Store } from "../packages/store/src/index.ts";
 import { placeOlderStarts, WorkspaceMoves } from "../workspacemoves.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-wsmove-"));
-afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+/** The test's folder gone; on Windows a store a test left open holds its file until this process ends (Windows clears its temp folder). */
+function rmTmp(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    if (process.platform !== "win32") throw e;
+  }
+}
+afterAll(() => rmTmp(tmp));
 
 // A sandbox whose disk loads on first touch takes seconds to open a store: past bun's 5 s default.
 const SLOW = 30_000;

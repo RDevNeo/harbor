@@ -208,7 +208,7 @@ describe("remote", () => {
     expect([failing.code, agentOut(failing.stdout, 5)]).toEqual([5, ""]);
   });
 
-  test("token_setup_takes_the_first_stdin_line", async () => {
+  test.if(deviceHere)("token_setup_takes_the_first_stdin_line", async () => {
     const setup: RemoteSetup[] = [{ kind: "token" }, { kind: "sh", line: "export X=1" }];
     const agent = ["sh", "-c", `printf '%s|%s|' "$CLAUDE_CODE_OAUTH_TOKEN" "$X"; cat`];
     const script = remoteCommand("/", setup, agent);

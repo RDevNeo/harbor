@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import type { AppWindow, VideoData } from "./window.ts";
 import { noPixels } from "./window.ts";
@@ -176,7 +177,7 @@ export class VideoPane {
       clock: s === null ? "" : `${clock(shown)} / ${clock(s.dur)}`,
       show: this.viewer.controlsVisible(this.overBar),
       full: w.window.fullscreen,
-      path: key.startsWith("/"),
+      path: isAbsolute(key),
       name: this.d.pkg.images.imageName(key),
       index: view?.index ?? 0,
       count: view?.gallery.length ?? 1,

@@ -62,7 +62,8 @@ test("remote_turn_sends_the_login_on_stdin through net's launcher and mcp's brid
   expect(cmd.args.some((a) => a.includes("CLAUDE_CODE_OAUTH_TOKEN"))).toBe(false);
 });
 
-test("resumed_sessions_follow_the_folder", () => {
+// The line a POSIX device runs (remote.ts remoteCommand), run here with sh: Linux and macOS, not Windows.
+test.if(process.platform !== "win32")("resumed_sessions_follow_the_folder", () => {
   const root = mkdtempSync(join(tmpdir(), "hts-sess-"));
   try {
     const cfg = join(root, "cfg");

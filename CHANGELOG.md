@@ -10,6 +10,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   watched those folders, and Windows won't move a folder being watched; a moved worktree or chats folder is
   followed there too.
 - Windows: a script on PATH without an extension (a `gh` or `claude` wrapper) runs, as in Git Bash.
+- Windows: "Clone here" takes a Windows folder, a process an agent starts in a folder of its own starts there,
+  a chat's folder is told to other PCs, and a video file of this PC plays as a file.
 
 ## [0.180.19] - 2026-11-12
 

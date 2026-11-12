@@ -3,7 +3,7 @@ import { deviceWorkspace } from "./logic/devices.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { desktop as osDesktop } from "@harbor/os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
 import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, secrets } from "@harbor/store";
@@ -3712,7 +3712,7 @@ export class Shell {
       error: shown ? "" : failed,
       index: v.index,
       count: v.gallery.length,
-      path: v.key.startsWith("/"),
+      path: isAbsolute(v.key),
     };
     w.lb_open = true;
   }

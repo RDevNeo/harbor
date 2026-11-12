@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { Item } from "@harbor/store";
 import { gitText, tildeOf } from "./movepc.ts";
 import { outputWithin, type Spawner } from "./proc.ts";
@@ -338,7 +338,7 @@ export class CloneState {
     if (r === null) return { ok: false, error: "this chat has no project" };
     if (isDir(r.dir)) return { ok: false, error: `${r.name} is already on this PC` };
     if (this.running.has(r.id)) return { ok: false, error: `${r.name} is being cloned already` };
-    if (!i.picked.startsWith("/")) return { ok: false, error: "give a full path" };
+    if (!isAbsolute(i.picked)) return { ok: false, error: "give a full path" };
     this.failed.delete(r.id);
     return { ok: true, repo: r };
   }

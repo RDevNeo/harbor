@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { type Chat, secrets, usageCtl } from "@harbor/store";
 import type { Delivery, Engine } from "./engine.ts";
 import * as oc from "./openchat.ts";
@@ -78,7 +78,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       const lead = e.chat(leadId);
       const base = lead ? e.chatCwd(lead) : e.cwdOf(repoId);
       const c = arg(a, "cwd");
-      const cwd = c === "" ? base : c.startsWith("/") ? c : join(base, c);
+      const cwd = c === "" ? base : isAbsolute(c) ? c : join(base, c);
       const p = await procs.spawn(e.store, { name, cmd, cwd, repoId, lead: leadId, owner: me.id }, (ev) => e.onProcEvent(ev));
       e.procs = e.procs.filter((x) => !(x.lead === leadId && x.name === name));
       e.dropEnded(leadId, name);

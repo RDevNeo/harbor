@@ -1,11 +1,14 @@
 import "./sandbox.ts";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { home } from "@harbor/store";
 import { forAccess, forget, note, numbered, replace, resolve, TOOLS, tools, call } from "../src/workspace.ts";
 import { expectPerm } from "../../../test/perm.ts";
+
+// Windows starts Git Bash several times slower: its tests get the time (setDefaultTimeout holds per file).
+if (process.platform === "win32") setDefaultTimeout(30_000);
 
 describe("workspace", () => {
   test("replaces_like_claude_edit: replaces like claude edit", () => {
