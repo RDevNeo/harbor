@@ -6,7 +6,8 @@ set -eu
 ver="${GITHUB_REF_NAME#v}"
 # This version's CHANGELOG section, then GitHub's generated notes.
 awk -v v="$ver" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} on && /^## / {exit} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-printf '\n**Install:** `curl -fsSL https://github.com/%s/releases/latest/download/install.sh | sh`\n' "$GITHUB_REPOSITORY" >> "$RUNNER_TEMP/notes.md"
+printf '\n**Install (Linux, macOS):** `curl -fsSL https://github.com/%s/releases/latest/download/install.sh | sh`\n' "$GITHUB_REPOSITORY" >> "$RUNNER_TEMP/notes.md"
+printf '\n**Install (Windows, PowerShell):** `irm https://github.com/%s/releases/latest/download/install.ps1 | iex`\n' "$GITHUB_REPOSITORY" >> "$RUNNER_TEMP/notes.md"
 printf '\n**Android:** download `harbor-android.apk` below, or scan the install QR code in Harbor › Settings › Phones.\n' >> "$RUNNER_TEMP/notes.md"
 pre=""
 case "$ver" in *-*) pre="--prerelease" ;; esac
