@@ -1,19 +1,21 @@
 #!/bin/bash
 # Run by smoke.yml on a boat.dev sandbox, with the release files in ~/dist: .github/smoke-install.sh
-# in a container of each distro, all at once; aarch64 under qemu (binfmt in lib.sh). SMOKE_ARCH
-# picks one architecture.
+# in a container of each distro, all at once, and .github/smoke-deb.sh (the .deb packages, "deb:" runs)
+# beside; aarch64 under qemu (binfmt in lib.sh). SMOKE_ARCH picks one architecture.
 . "$(dirname "$0")/lib.sh"
 cpu_mark
 [ "${SMOKE_ARCH:-}" = x86_64 ] || binfmt
 runs=()
-[ "${SMOKE_ARCH:-}" = aarch64 ] || runs+=("ubuntu:22.04 x86_64" "debian:12 x86_64" "fedora:latest x86_64" "archlinux:latest x86_64")
-[ "${SMOKE_ARCH:-}" = x86_64 ] || runs+=("ubuntu:22.04 aarch64" "debian:12 aarch64")
+[ "${SMOKE_ARCH:-}" = aarch64 ] || runs+=("ubuntu:22.04 x86_64" "debian:12 x86_64" "fedora:latest x86_64" "archlinux:latest x86_64" "deb:ubuntu:24.04 x86_64" "deb:debian:12 x86_64")
+[ "${SMOKE_ARCH:-}" = x86_64 ] || runs+=("ubuntu:22.04 aarch64" "debian:12 aarch64" "deb:debian:12 aarch64")
 pids=()
 for r in "${runs[@]}"; do
   read -r img arch <<< "$r"
-  log="$HOME/out/smoke-${img/:/-}-$arch.log"
-  if [ ! -f "$HOME/dist/harbor-$arch-linux.tar.gz" ]; then
-    echo "no harbor-$arch-linux.tar.gz to test" > "$log"; pids+=(""); continue
+  log="$HOME/out/smoke-${img//:/-}-$arch.log"
+  test=smoke-install.sh want=harbor-$arch-linux.tar.gz
+  case "$img" in deb:*) img=${img#deb:} test=smoke-deb.sh want=harbor-$arch-linux.deb ;; esac
+  if [ ! -f "$HOME/dist/$want" ]; then
+    echo "no $want to test" > "$log"; pids+=(""); continue
   fi
   platform=linux/amd64; [ "$arch" = aarch64 ] && platform=linux/arm64
   # Getting the image is the network's business, not Harbor's: 3 tries, and a run docker itself
@@ -22,7 +24,7 @@ for r in "${runs[@]}"; do
     for try in 1 2 3; do docker pull -q --platform "$platform" "$img" >/dev/null && break; sleep 10; done; p=$((SECONDS - s))
     for try in 1 2; do
       docker run --rm --platform "$platform" -v "$PWD:/src:ro" -v "$HOME/dist:/dist:ro" "$img" \
-        sh /src/.github/smoke-install.sh; c=$?
+        sh "/src/.github/$test"; c=$?
       [ "$c" = 125 ] && [ "$try" = 1 ] || break
       echo "::warning::docker could not run $img; once more"; sleep 10; docker pull -q --platform "$platform" "$img" >/dev/null
     done
@@ -35,9 +37,9 @@ for i in "${!runs[@]}"; do
 done
 for r in "${runs[@]}"; do
   read -r img arch <<< "$r"
-  echo "=== $img $arch ==="; cat "$HOME/out/smoke-${img/:/-}-$arch.log"
+  echo "=== $img $arch ==="; cat "$HOME/out/smoke-${img//:/-}-$arch.log"
 done
-for r in "${runs[@]}"; do read -r img arch <<< "$r"; tail -1 "$HOME/out/smoke-${img/:/-}-$arch.log"; done
+for r in "${runs[@]}"; do read -r img arch <<< "$r"; tail -1 "$HOME/out/smoke-${img//:/-}-$arch.log"; done
 cpu_report
 [ ${#failed[@]} = 0 ] || { echo "::error::smoke test failed on: ${failed[*]}"; exit 1; }
 echo "all passed"

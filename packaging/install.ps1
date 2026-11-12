@@ -8,6 +8,8 @@
 #   $env:HARBOR_UNINSTALL = "1"; irm .../install.ps1 | iex      # remove Harbor (keeps your chats)
 #   (also add $env:HARBOR_PURGE = "1" to delete its data)
 #   or from a file: powershell -ExecutionPolicy Bypass -File install.ps1 [-Uninstall] [-Purge] [-Version 0.180.0]
+#   -Source DIR: install the files in DIR (what harbor-x86_64-windows.zip holds) instead of downloading them;
+#   Harbor's setup (harbor-x86_64-windows-setup.exe, packaging/windows/setup.nsi) runs it so.
 #
 # Every download is checked against the release's SHA256SUMS and its minisign signature (minisign's own
 # Windows build, pinned below, does the check). To install without the signature check anyway:
@@ -16,7 +18,7 @@
 # Layout: %LOCALAPPDATA%\Programs\Harbor\{harbor.exe,harbor.png,VERSION,.managed,uninstall.ps1}, a Start menu
 # entry "Harbor", Harbor in Settings > Apps, and that folder on your PATH (so `harbor` works in a terminal).
 # Claude Code, Codex and ripgrep go to %USERPROFILE%\.local\bin, also put on your PATH. Harbor updates itself afterwards.
-param([switch]$Uninstall, [switch]$Purge, [string]$Version = "")
+param([switch]$Uninstall, [switch]$Purge, [string]$Version = "", [string]$Source = "")
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -41,6 +43,8 @@ $Dir = Join-Path $env:LOCALAPPDATA "Programs\Harbor"
 $Bin = Join-Path $env:USERPROFILE ".local\bin"
 $Data = Join-Path $env:APPDATA "harbor"
 $Menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Harbor.lnk"
+# The setup's optional desktop shortcut.
+$DesktopLink = Join-Path ([Environment]::GetFolderPath("Desktop")) "Harbor.lnk"
 $UninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Harbor"
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -83,6 +87,9 @@ if ($Uninstall) {
   Remove-Item -Path $UninstallKey -Recurse -ErrorAction SilentlyContinue
   Remove-Item -Path "HKCU:\Software\Classes\AppUserModelId\$AppId" -Recurse -ErrorAction SilentlyContinue
   Remove-Item -Path $Menu -ErrorAction SilentlyContinue
+  if (Test-Path $DesktopLink) {
+    try { if ((New-Object -ComObject WScript.Shell).CreateShortcut($DesktopLink).TargetPath -like "$Dir\*") { Remove-Item -Path $DesktopLink -ErrorAction SilentlyContinue } } catch {}
+  }
   Set-UserPath $Dir $false
   Remove-Item -Path $Dir -Recurse -Force -ErrorAction SilentlyContinue
   if ($Purge) {
@@ -161,8 +168,11 @@ function Install-Deps {
   }
   if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $Bin "claude.exe"))) {
     Say "Installing Claude Code (Anthropic's installer)..."
-    try { Invoke-RestMethod -UseBasicParsing -Uri "https://claude.ai/install.ps1" | Invoke-Expression | Out-Null }
-    catch { Say "Claude Code didn't install; get it from https://claude.ai/install.ps1" }
+    # In a PowerShell of its own: its `exit` and Set-StrictMode would otherwise end or change this script.
+    $ps = (Get-Process -Id $PID).Path
+    if ($ps -notmatch '\\(powershell|pwsh)\.exe$') { $ps = "powershell.exe" }
+    try { & $ps -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" | Out-Null } catch {}
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $Bin "claude.exe"))) { Say "Claude Code didn't install; get it from https://claude.ai/install.ps1" }
   }
   if (-not (Get-Command codex -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $Bin "codex.exe"))) {
     Say "Installing Codex (OpenAI's release)..."
@@ -203,6 +213,12 @@ function Install-Deps {
 }
 
 try {
+ if ($Source) {
+  # The setup's own files, unpacked by it: they came inside the setup, nothing to download.
+  $unpacked = $Source
+  if (-not (Test-Path (Join-Path $unpacked "harbor.exe"))) { Die "no harbor.exe in $Source." }
+  Say "Installing Harbor from the setup..."
+ } else {
   if (-not (Fetch "SHA256SUMS")) { Die "could not reach the release ($Base)." }
   Say "Downloading Harbor ($Version)..."
   if (-not (Fetch $Core)) { Die "could not download $Core" }
@@ -220,6 +236,7 @@ try {
   $unpacked = Join-Path $Tmp "core"
   Expand-Archive -Path (Join-Path $Tmp $Core) -DestinationPath $unpacked -Force
   if (-not (Test-Path (Join-Path $unpacked "harbor.exe"))) { Die "no harbor.exe in $Core." }
+ }
 
   New-Item -ItemType Directory -Path $Dir -Force | Out-Null
   # A running harbor.exe can't be deleted or overwritten but can be renamed: then it goes aside, deleted next time.
@@ -238,7 +255,9 @@ try {
 Copy-Item -Path "$Dir\install.ps1" -Destination `$s -Force
 & powershell -NoProfile -ExecutionPolicy Bypass -File `$s -Uninstall
 "@ | Set-Content -Path $un
-  if ($PSCommandPath) { Copy-Item -Path $PSCommandPath -Destination (Join-Path $Dir "install.ps1") -Force }
+  # (a setup's files hold install.ps1 already)
+  if ($Source) {}
+  elseif ($PSCommandPath) { Copy-Item -Path $PSCommandPath -Destination (Join-Path $Dir "install.ps1") -Force }
   elseif (Fetch "install.ps1") { Copy-Item -Path (Join-Path $Tmp "install.ps1") -Destination (Join-Path $Dir "install.ps1") -Force }
 
   # The Start menu entry.

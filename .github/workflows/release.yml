@@ -12,7 +12,8 @@
 # Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-slint-{x86_64,aarch64}-linux.tar.gz (Harbor's Slint addon, built into harbor; kept for the next release to reuse) with harbor-slint-source.tar.gz (its sources, which its licence asks for), install.sh,
 # harbor-android.apk (the phone app), what an installed Harbor updates from (harbor-app.json, the
 # manifest; harbor-app.js, the app bundle; harbor-runtime-{x86_64,aarch64} when the runtime changed),
-# SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with the
+# the double-click installs (harbor-x86_64-windows-setup.exe, harbor-{x86_64,aarch64}-linux.deb, beside
+# harbor-aarch64-macos.dmg), SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with the
 # public key in ts/packages/update/src/minisign.ts (packaging/minisign.pub).
 #
 # Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents);
@@ -588,6 +589,12 @@ jobs:
           done
           # Windows' zip: the files at its top, as install.ps1 expects them.
           [ ! -d pkg/harbor-x86_64-windows ] || (cd pkg/harbor-x86_64-windows && zip -q -9 -r ../../dist/harbor-x86_64-windows.zip .)
+          # The double-click installs, from the same folders (the website links them by these names, under
+          # releases/latest/download/): Windows' setup (NSIS, per user, runs the folder's install.ps1) and
+          # Linux's .deb packages (each user's copy updates itself, packaging/deb/harbor).
+          ver="${{ needs.plan.outputs.version }}"
+          [ ! -d pkg/harbor-x86_64-windows ] || bash .github/windows-setup.sh pkg/harbor-x86_64-windows art/harbor-windows "$ver" dist/harbor-x86_64-windows-setup.exe
+          for arch in x86_64 aarch64; do bash .github/deb.sh "pkg/harbor-$arch-linux" "$arch" "$ver" "dist/harbor-$arch-linux.deb"; done
           cp packaging/install.sh dist/install.sh
           cp packaging/install.ps1 dist/install.ps1
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
@@ -602,7 +609,7 @@ jobs:
           set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for f in dist/*.tar.gz dist/*.dmg dist/*.zip dist/install.sh dist/install.ps1 dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
+          for f in dist/*.tar.gz dist/*.dmg dist/*.zip dist/*.deb dist/*.exe dist/install.sh dist/install.ps1 dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
             [ -f "$f" ] || continue
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
           done
@@ -616,6 +623,8 @@ jobs:
             dist/*.tar.gz
             dist/*.dmg
             dist/*.zip
+            dist/*.deb
+            dist/*.exe
             dist/install.sh
             dist/install.ps1
             dist/harbor-android.apk
@@ -634,13 +643,22 @@ jobs:
           name: dist
           path: dist/
           compression-level: 0
-      # The disk image alone too, for checking a dry run's on a Mac without fetching every file.
+      # The disk image alone too, for checking a dry run's on a Mac without fetching every file; the
+      # Windows setup and the .deb packages likewise.
       - uses: actions/upload-artifact@v7
         if: hashFiles('dist/harbor-aarch64-macos.dmg') != ''
         with:
           name: harbor-dmg
           path: dist/harbor-aarch64-macos.dmg
           compression-level: 0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-installers
+          path: |
+            dist/harbor-x86_64-windows-setup.exe
+            dist/*.deb
+          compression-level: 0
+          if-no-files-found: ignore
 
   # The install tests run when the runtime or the packaging changed (the runtime lane: packaging/
   # counts as runtime, ts/packages/update/src/lane.ts). A bundle-only release changes neither, and

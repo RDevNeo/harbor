@@ -5,7 +5,8 @@
 #   windows-build.sh SRC OUT
 #
 # SRC is the checkout (left untouched: its node_modules are Linux's, and another build may be using them),
-# OUT gets harbor-windows/harbor.exe, harbor-windows/harbor.png and harbor-windows/harbor-runtime-x86_64-windows.exe.
+# OUT gets harbor-windows/harbor.exe, harbor-windows/harbor.png, harbor-windows/harbor-runtime-x86_64-windows.exe and
+# harbor-windows/harbor.ico with harbor-setup.bmp (the setup's icon and side image: .github/windows-setup.sh).
 # V (the version), SHA and the HARBOR_GOOGLE_* clients come from the environment, as for Linux's builds.
 # Bun can't set a Windows executable's icon and version when it builds elsewhere: scripts/winicon.ts stamps them.
 set -euo pipefail
@@ -25,7 +26,6 @@ bun scripts/build.ts runtime "$o/harbor-runtime-x86_64-windows.exe" --target win
 bun install --frozen-lockfile
 bun scripts/winicon.ts "$o" --stamp "$o/harbor.exe" --version "$V"
 bun scripts/winicon.ts "$o" --stamp "$o/harbor-runtime-x86_64-windows.exe" --version "$V"
-rm -f "$o/harbor.ico"
 # What runs on Windows can't run here: that both are PE executables ("MZ") is what's checked.
 for f in "$o/harbor.exe" "$o/harbor-runtime-x86_64-windows.exe"; do
   [ "$(od -An -c -N2 "$f" | tr -d ' ')" = MZ ] || { echo "$f is no Windows executable"; exit 1; }

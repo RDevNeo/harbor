@@ -1,6 +1,7 @@
 // Harbor's icon for Windows from packaging/harbor.svg: harbor.ico (16 to 256 px, PNG entries, for the
 // executable and the Start menu) and harbor.png (256 px, the toasts' app icon, install.ps1 puts it beside
-// harbor.exe); with --stamp, harbor.exe gets that icon and its version information (name, version) in its
+// harbor.exe), harbor-setup.bmp (the side image of the setup's welcome and finish pages,
+// packaging/windows/setup.nsi); with --stamp, harbor.exe gets that icon and its version information (name, version) in its
 // resources, which Bun can't set when it builds for Windows elsewhere:
 //   bun scripts/winicon.ts OUTDIR [--stamp EXE --version V]
 import { readFileSync, writeFileSync } from "node:fs";
@@ -42,7 +43,39 @@ export async function writeIcons(svgPath: string, out: string): Promise<{ ico: s
   const pngPath = join(out, "harbor.png");
   writeFileSync(icoPath, ico(images));
   writeFileSync(pngPath, images[images.length - 1]?.png ?? Buffer.alloc(0));
+  writeFileSync(join(out, "harbor-setup.bmp"), await setupBitmap(svg));
   return { ico: icoPath, png: pngPath };
+}
+
+/** The setup's side image (NSIS's 164x314): Harbor's icon on its own dark colour, as a 24-bit BMP. */
+export async function setupBitmap(svg: Uint8Array, w = 164, h = 314): Promise<Buffer> {
+  const icon = await png(svg, 112);
+  const { data } = await sharp({ create: { width: w, height: h, channels: 3, background: "#111111" } })
+    .composite([{ input: icon, left: (w - 112) >> 1, top: 72 }])
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const row = (w * 3 + 3) & ~3;
+  const bmp = Buffer.alloc(54 + row * h);
+  bmp.write("BM", 0, "ascii");
+  bmp.writeUInt32LE(bmp.length, 2);
+  bmp.writeUInt32LE(54, 10);
+  bmp.writeUInt32LE(40, 14);
+  bmp.writeInt32LE(w, 18);
+  bmp.writeInt32LE(h, 22); // bottom-up
+  bmp.writeUInt16LE(1, 26);
+  bmp.writeUInt16LE(24, 28);
+  bmp.writeUInt32LE(row * h, 34);
+  for (let y = 0; y < h; y++) {
+    const o = 54 + (h - 1 - y) * row;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 3;
+      bmp[o + x * 3] = data[i + 2] ?? 0;
+      bmp[o + x * 3 + 1] = data[i + 1] ?? 0;
+      bmp[o + x * 3 + 2] = data[i] ?? 0;
+    }
+  }
+  return bmp;
 }
 
 const EN_US = 1033;

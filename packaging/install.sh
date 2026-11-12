@@ -11,6 +11,10 @@
 # Offline: run ./install.sh from an extracted harbor-<arch>-linux.tar.gz (x86_64 or aarch64). It installs the files
 # next to it, checked against the SHA256SUMS and its signature in that folder.
 #
+# Harbor's .deb runs it too, from /usr/lib/harbor (packaging/deb/harbor, its /usr/bin/harbor): --from-package
+# copies the package's files to ~/.local/lib/harbor, where Harbor updates itself, and leaves the menu entry,
+# icons and the `harbor` command to the package; --deps installs only what Harbor needs beside itself.
+#
 # The video player (libmpv-harbor.so, about 5 MB) comes along too; without it Harbor fetches it later.
 #
 # Every download is checked against the release's minisign signature. Without minisign installed,
@@ -35,6 +39,8 @@ INSECURE="${HARBOR_INSECURE:-0}"
 VERSION="${HARBOR_VERSION:-latest}"
 UNINSTALL=0
 PURGE=0
+PACKAGE=0
+DEPS_ONLY=0
 # A local folder with the release files (for testing): HARBOR_FROM=/path/to/dist
 FROM="${HARBOR_FROM:-}"
 
@@ -44,8 +50,10 @@ for a in "$@"; do
     --with-browser|--no-browser) ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
+    --from-package) PACKAGE=1 ;;
+    --deps) DEPS_ONLY=1 ;;
     --version=*) VERSION="${a#--version=}" ;;
-    -h|--help) sed -n '2,24p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "harbor install: unknown option $a" >&2; exit 2 ;;
   esac
 done
@@ -193,6 +201,13 @@ install_deps() {
 
 sha256_of() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
+if [ "$DEPS_ONLY" = 1 ]; then
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT INT TERM
+  install_deps
+  exit 0
+fi
+
 if [ "$(uname -s)" = Darwin ]; then
   [ "$(uname -m)" = arm64 ] || die "Harbor for macOS runs on Apple Silicon (M1 or newer)."
   major="$(sw_vers -productVersion | cut -d. -f1)"
@@ -251,6 +266,7 @@ if [ -z "$FROM" ] && [ "$(basename -- "$0")" = install.sh ]; then
   HERE="$(cd "$(dirname -- "$0")" && pwd)"
   [ -x "$HERE/harbor" ] && [ -f "$HERE/VERSION" ] || HERE=""
 fi
+[ "$PACKAGE" = 0 ] || [ -n "$HERE" ] || die "--from-package runs from the package's folder (/usr/lib/harbor/install.sh)."
 
 if [ "$VERSION" = latest ]; then
   BASE="https://github.com/$REPO/releases/latest/download"
@@ -310,7 +326,10 @@ verify() {
 check_folder() { # dir name
   [ -f "$1/SHA256SUMS" ] || { unchecked "$2 has no SHA256SUMS to check its files against"; return 0; }
   (cd "$1" && sha256sum -c --quiet SHA256SUMS) || die "$2: files don't match its SHA256SUMS."
-  if [ ! -f "$1/SHA256SUMS.minisig" ]; then
+  # A package's files came through the package manager, owned by root: their checksums are enough.
+  if [ "$PACKAGE" = 1 ]; then
+    say "$2: checksums verified."
+  elif [ ! -f "$1/SHA256SUMS.minisig" ]; then
     unchecked "$2 has no signature (SHA256SUMS.minisig)"
   elif get_minisign; then
     "$MINISIGN" -Vqm "$1/SHA256SUMS" -P "$PUBKEY" || die "$2: bad signature on SHA256SUMS."
@@ -405,6 +424,12 @@ mv "$STAGE/licenses" "$LIB/licenses"
 mv -f "$STAGE/harbor" "$LIB/harbor"
 rmdir "$STAGE" 2>/dev/null || true
 # Marks a per-user install the in-app updater may manage.
+if [ "$PACKAGE" = 1 ]; then
+  # The package's own launcher, menu entry and icons start this copy: nothing of them here.
+  echo "deb" > "$LIB/.managed"
+  say "Harbor $(cat "$LIB/VERSION") installed in $LIB."
+  exit 0
+fi
 echo "install.sh" > "$LIB/.managed"
 
 ln -sfn "$LIB/harbor" "$BIN/harbor"

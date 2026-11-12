@@ -1,0 +1,28 @@
+#!/bin/sh
+# /usr/bin/harbor of Harbor's .deb (.github/deb.sh). Harbor updates itself, and the package's own files
+# are root's: so each user runs their own copy in ~/.local/lib/harbor (install.sh's layout, which
+# Harbor's updater manages), copied from /usr/lib/harbor on the first start and whenever the package
+# is newer than that copy. The first copy also installs what Harbor needs beside itself (Claude Code,
+# Codex, ripgrep: install.sh --deps) in the background, so the window doesn't wait for it.
+# HARBOR_NO_DEPS=1 leaves those out.
+set -eu
+SYS=/usr/lib/harbor
+LIB="$HOME/.local/lib/harbor"
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/harbor"
+
+want="$(cat "$SYS/VERSION")"
+have="$(cat "$LIB/VERSION" 2>/dev/null || true)"
+# Copied when there's no copy, or the package is newer than it (sort -V: 0.9.0 < 0.10.0).
+if [ ! -x "$LIB/harbor" ] || [ ! -f "$LIB/.managed" ] \
+  || { [ "$want" != "$have" ] && [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | tail -1)" = "$want" ]; }; then
+  mkdir -p "$LOG"
+  if ! sh "$SYS/install.sh" --from-package >>"$LOG/package.log" 2>&1; then
+    echo "harbor: couldn't copy Harbor to $LIB (see $LOG/package.log); running the package's copy, which doesn't update itself" >&2
+    exec "$SYS/harbor" "$@"
+  fi
+  if [ "${HARBOR_NO_DEPS:-}" != 1 ]; then
+    # Detached: the window opens meanwhile, and the agents are there once it's done (a minute or so).
+    nohup sh "$SYS/install.sh" --deps >>"$LOG/package.log" 2>&1 </dev/null &
+  fi
+fi
+exec "$LIB/harbor" "$@"

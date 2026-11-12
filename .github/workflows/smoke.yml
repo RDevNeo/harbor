@@ -1,6 +1,6 @@
 # Installs Harbor with packaging/install.sh on clean distro images and starts it (see
 # .github/smoke-install.sh): no sudo, every library found, the window comes up under Xvfb,
-# --uninstall keeps the data folder.
+# --uninstall keeps the data folder; and the .deb packages (.github/smoke-deb.sh) on Debian and Ubuntu.
 #   - release.yml calls it with this run's `dist` artifact, once per architecture: x86_64 before
 #     anything is published, aarch64 beside the publishing (it takes minutes under qemu).
 #   - Changing install.sh on a branch, or running it by hand, tests both against the latest release.
@@ -18,9 +18,14 @@ on:
         type: string
         default: ""
   workflow_dispatch:
+    inputs:
+      run:
+        description: "Test this release.yml run's `dist` artifact (its run id; a dry run's) instead of the latest release"
+        type: string
+        default: ""
   push:
     branches-ignore: [main]
-    paths: [packaging/install.sh, .github/smoke-install.sh, .github/workflows/smoke.yml, .github/boat/smoke.sh, .github/boat/run.sh, .github/actions/boat/action.yml]
+    paths: [packaging/install.sh, packaging/deb/**, .github/deb.sh, .github/smoke-deb.sh, .github/smoke-install.sh, .github/workflows/smoke.yml, .github/boat/smoke.sh, .github/boat/run.sh, .github/actions/boat/action.yml]
 
 permissions:
   contents: read
@@ -38,14 +43,21 @@ jobs:
         with:
           name: dist
           path: dist
+      - name: Another run's release files
+        if: ${{ !inputs.dist && inputs.run != '' && inputs.run != null }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.run }}" --repo "$GITHUB_REPOSITORY" --name dist --dir dist
+          ls -la dist
       - name: The latest release
-        if: ${{ !inputs.dist }}
+        if: ${{ !inputs.dist && (inputs.run == '' || inputs.run == null) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist
           gh release download --repo "$GITHUB_REPOSITORY" --dir dist \
-            --pattern 'harbor-*-linux.tar.gz*' --pattern 'SHA256SUMS*' || true
+            --pattern 'harbor-*-linux.tar.gz*' --pattern 'harbor-*-linux.deb' --pattern 'SHA256SUMS*' || true
           ls -la dist
       - uses: ./.github/actions/boat
         id: boat
