@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.181.0] - 2026-11-12
+
+### Added
+- Double-click installs on every release, linked from the website: `harbor-x86_64-windows-setup.exe` (Windows:
+  for your user, no administrator; Start menu, optional desktop shortcut, uninstall in Settings › Apps) and
+  `harbor-x86_64-linux.deb` / `harbor-aarch64-linux.deb` (Debian, Ubuntu: each user runs their own copy, which
+  updates itself), beside the macOS `.dmg` and the Android `.apk`. Both also install Git, Claude Code, Codex and
+  ripgrep when they're missing.
+
+### Fixed
+- Windows: install.ps1 runs Claude Code's installer in a PowerShell of its own, so a failure there can't end
+  Harbor's install.
+- A worktree cleanup test that sometimes failed (it raced the cleanup's own retry).
+
 ## [0.180.21] - 2026-11-12
 
 ### Fixed
