@@ -2287,12 +2287,17 @@ export class Shell {
     // The PC its chats came from first; it may not hold the folder (a project of a third PC): then the others.
     const others = [...this.workspaces().pcs.keys()].filter((id) => id !== "" && id !== pc && id !== this.shellMesh.me());
     let png: unknown;
+    const said: string[] = [];
     for (const at of [pc, ...new Set(others)]) {
-      const res = await this.hub.call("POST", "v1/projects/icon", undefined, { pc: at, project: r.path, ...(refresh ? { refresh: true } : {}) }).catch(() => null);
-      png = res !== null && res.status < 300 && typeof res.body === "object" && res.body !== null ? (res.body as { png?: unknown }).png : undefined;
+      const res = await this.hub.call("POST", "v1/projects/icon", undefined, { pc: at, project: r.path, ...(refresh ? { refresh: true } : {}) }).catch((e: unknown) => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } }));
+      png = res.status < 300 && typeof res.body === "object" && res.body !== null ? (res.body as { png?: unknown }).png : undefined;
       if (typeof png === "string" && png !== "") break;
+      said.push(`${at}: ${res.status} ${typeof res.body === "object" && res.body !== null ? String((res.body as { error?: unknown }).error ?? "") : ""}`.trim());
     }
-    if (typeof png !== "string" || png === "") return;
+    if (typeof png !== "string" || png === "") {
+      console.error(`harbor: no icon for project ${r.name} from the PCs that may hold it (${said.join("; ")})`);
+      return;
+    }
     const bytes = new Uint8Array(Buffer.from(png, "base64"));
     if (!favicon.keepRemote(repo, bytes) && this.avatars.get(repo)) return;
     const img = await favicon.decodeIcon(bytes).catch(() => null);
