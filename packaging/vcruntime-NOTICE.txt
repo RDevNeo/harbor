@@ -1,0 +1,12 @@
+Microsoft Visual C++ runtime (Windows build of Harbor)
+
+harbor.exe for Windows carries three files of Microsoft's Visual C++ 2015-2022 Redistributable (x64),
+version 14.44.35211: msvcp140.dll, vcruntime140.dll and vcruntime140_1.dll. Slint's Windows addon needs
+them, and a new Windows doesn't have them. Harbor places them beside that addon when it starts, for its
+own use only ("app-local").
+
+They are Copyright (c) Microsoft Corporation and are redistributed unchanged, as the Distributable Code
+terms of Microsoft's Visual Studio licence allow. They are not covered by Harbor's licence. They come from
+Microsoft's own installer, VC_redist.x64.exe, checked by its SHA-256
+(cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b), from:
+https://download.visualstudio.microsoft.com/download/pr/e9604e21-4b79-4096-a4b3-1b63d4b55b4d/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe

@@ -5,7 +5,7 @@
 # exceptions to "every build runs on boat" (CLAUDE.md): Bun bundles and compiles JavaScript in seconds, while a
 # boat sandbox costs a minute or more to start, fill and fetch from.
 #
-#   build.sh x86_64|aarch64|macos OUT
+#   build.sh x86_64|aarch64|macos|windows OUT
 #
 # The same steps as .github/boat/build.sh's build_ts, minus the runtime alone (a bundle-only release
 # ships none): OUT/harbor-<arch>/harbor, and on x86_64 also OUT/harbor-x86_64/harbor-app.js and
@@ -34,6 +34,11 @@ bun --version
 # macOS (Apple Silicon), cross-built from a copy of the tree: OUT/harbor-macos.
 if [ "$arch" = macos ]; then
   V=$V SHA=$SHA bash "$root/.github/macos-build.sh" "$root" "$out"
+  exit 0
+fi
+# Windows (x64), the same way: OUT/harbor-windows.
+if [ "$arch" = windows ]; then
+  V=$V SHA=$SHA bash "$root/.github/windows-build.sh" "$root" "$out"
   exit 0
 fi
 

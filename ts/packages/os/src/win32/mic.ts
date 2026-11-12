@@ -40,7 +40,9 @@ export function record(sink: (samples: Uint8Array) => void): () => void {
   const fmt = format();
   const handle = new BigUint64Array(1);
   const err = winmm.waveInOpen(ptr(handle), WAVE_MAPPER, ptr(fmt), null, null, 0);
-  if (err !== 0) throw new Error(`the microphone can't be opened (waveIn ${err}; Settings › Privacy › Microphone may block desktop apps)`);
+  // MMSYSERR_BADDEVICEID / MMSYSERR_NODRIVER: no microphone at all; else most often Windows' privacy switch.
+  if (err === 2 || err === 6) throw new Error(`no microphone found (waveIn ${err})`);
+  if (err !== 0) throw new Error(`the microphone can't be opened (waveIn ${err}); Windows Settings > Privacy > Microphone may keep desktop apps from it`);
   const h = Number(handle[0]) as Pointer;
   const bufs: { data: Uint8Array; hdr: Uint8Array; view: DataView }[] = [];
   for (let i = 0; i < BUFFERS; i++) {

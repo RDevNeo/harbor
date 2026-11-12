@@ -4,7 +4,7 @@
 # $env:HARBOR_NO_DEPS = "1" leaves those out.
 #
 #   irm https://github.com/RDevNeo/harbor/releases/latest/download/install.ps1 | iex
-#   $env:HARBOR_UNINSTALL = "1"; irm …/install.ps1 | iex      # remove Harbor (keeps your chats)
+#   $env:HARBOR_UNINSTALL = "1"; irm .../install.ps1 | iex      # remove Harbor (keeps your chats)
 #   (also add $env:HARBOR_PURGE = "1" to delete its data)
 #   or from a file: powershell -ExecutionPolicy Bypass -File install.ps1 [-Uninstall] [-Purge] [-Version 0.180.0]
 #
@@ -13,7 +13,7 @@
 # $env:HARBOR_INSECURE = "1".
 #
 # Layout: %LOCALAPPDATA%\Programs\Harbor\{harbor.exe,harbor.png,VERSION,.managed,uninstall.ps1}, a Start menu
-# entry "Harbor", Harbor in Settings › Apps, and that folder on your PATH (so `harbor` works in a terminal).
+# entry "Harbor", Harbor in Settings > Apps, and that folder on your PATH (so `harbor` works in a terminal).
 # Claude Code and Codex go to %USERPROFILE%\.local\bin, also put on your PATH. Harbor updates itself afterwards.
 param([switch]$Uninstall, [switch]$Purge, [string]$Version = "")
 
@@ -44,20 +44,21 @@ $UninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Harbo
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
 function Say([string]$m) { Write-Host $m }
-function Die([string]$m) { Write-Host "harbor install: $m" -ForegroundColor Red; throw "harbor install: $m" }
+# Stops the install (a throw, not exit: `irm | iex` runs in the person's own PowerShell window).
+function Die([string]$m) { Write-Host "harbor install: $m" -ForegroundColor Red; throw "Harbor was not installed." }
 function Unchecked([string]$m) {
   if ($Insecure) { Write-Host "harbor install: WARNING: $m. Installing it anyway (HARBOR_INSECURE=1)." -ForegroundColor Yellow }
   else { Die "$m. Set `$env:HARBOR_INSECURE = `"1`" to install without the check." }
 }
 
 # The user's PATH (not the machine's), with `dir` added or taken out.
-function Set-UserPath([string]$dir, [bool]$on) {
+function Set-UserPath([string]$folder, [bool]$on) {
   $now = [Environment]::GetEnvironmentVariable("Path", "User")
   $parts = @()
-  if ($now) { $parts = $now.Split(";") | Where-Object { $_ -ne "" -and $_.TrimEnd("\") -ne $dir.TrimEnd("\") } }
-  if ($on) { $parts = @($parts) + $dir }
+  if ($now) { $parts = $now.Split(";") | Where-Object { $_ -ne "" -and $_.TrimEnd("\") -ne $folder.TrimEnd("\") } }
+  if ($on) { $parts = @($parts) + $folder }
   [Environment]::SetEnvironmentVariable("Path", ($parts -join ";"), "User")
-  if ($on -and -not (($env:Path.Split(";")) -contains $dir)) { $env:Path = "$env:Path;$dir" }
+  if ($on -and -not (($env:Path.Split(";")) -contains $folder)) { $env:Path = "$env:Path;$folder" }
 }
 
 # Harbor stops before its folder goes (uninstall): Windows won't delete the files of a running program. Asked
@@ -131,7 +132,7 @@ function Install-Deps {
   New-Item -ItemType Directory -Path $Bin -Force | Out-Null
   Set-UserPath $Bin $true
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Say "Harbor needs Git for Windows, which isn't installed. Installing it (Windows may ask you to allow it once)…"
+    Say "Harbor needs Git for Windows, which isn't installed. Installing it (Windows may ask you to allow it once)..."
     $ok = $false
     if (Get-Command winget -ErrorAction SilentlyContinue) {
       & winget install --id Git.Git -e --source winget --scope user --silent --accept-package-agreements --accept-source-agreements | Out-Null
@@ -158,12 +159,12 @@ function Install-Deps {
     if (-not $ok) { Say "Git didn't install: get it from https://git-scm.com/download/win, then run Harbor." }
   }
   if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $Bin "claude.exe"))) {
-    Say "Installing Claude Code (Anthropic's installer)…"
+    Say "Installing Claude Code (Anthropic's installer)..."
     try { Invoke-RestMethod -UseBasicParsing -Uri "https://claude.ai/install.ps1" | Invoke-Expression | Out-Null }
     catch { Say "Claude Code didn't install; get it from https://claude.ai/install.ps1" }
   }
   if (-not (Get-Command codex -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $Bin "codex.exe"))) {
-    Say "Installing Codex (OpenAI's release)…"
+    Say "Installing Codex (OpenAI's release)..."
     try {
       $rel = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/openai/codex/releases/latest"
       # codex.exe and the two helpers it runs beside itself on Windows (its sandbox).
@@ -181,7 +182,7 @@ function Install-Deps {
 
 try {
   if (-not (Fetch "SHA256SUMS")) { Die "could not reach the release ($Base)." }
-  Say "Downloading Harbor ($Version)…"
+  Say "Downloading Harbor ($Version)..."
   if (-not (Fetch $Core)) { Die "could not download $Core" }
   $want = (Get-Content (Join-Path $Tmp "SHA256SUMS") | Where-Object { $_ -match "  $([regex]::Escape($Core))$" } | Select-Object -First 1)
   if (-not $want) { Die "$Core is not listed in SHA256SUMS." }
@@ -194,19 +195,20 @@ try {
       if ($LASTEXITCODE -ne 0) { Die "${Core}: bad signature." }
     } else { Unchecked "${Core}: its signature can't be checked (minisign couldn't be downloaded)" }
   }
-  $core = Join-Path $Tmp "core"
-  Expand-Archive -Path (Join-Path $Tmp $Core) -DestinationPath $core -Force
-  if (-not (Test-Path (Join-Path $core "harbor.exe"))) { Die "no harbor.exe in $Core." }
+  $unpacked = Join-Path $Tmp "core"
+  Expand-Archive -Path (Join-Path $Tmp $Core) -DestinationPath $unpacked -Force
+  if (-not (Test-Path (Join-Path $unpacked "harbor.exe"))) { Die "no harbor.exe in $Core." }
 
   New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-  # A running harbor.exe can't be overwritten but can be renamed: the old one goes aside, deleted next time.
+  # A running harbor.exe can't be deleted or overwritten but can be renamed: then it goes aside, deleted next time.
   Get-ChildItem -Path $Dir -Filter "*.old-*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
   $exe = Join-Path $Dir "harbor.exe"
+  if (Test-Path $exe) { Remove-Item -Path $exe -Force -ErrorAction SilentlyContinue }
   if (Test-Path $exe) { Rename-Item -Path $exe -NewName ("harbor.exe.old-" + [DateTime]::UtcNow.Ticks) -ErrorAction SilentlyContinue }
-  Copy-Item -Path (Join-Path $core "*") -Destination $Dir -Recurse -Force
+  Copy-Item -Path (Join-Path $unpacked "*") -Destination $Dir -Recurse -Force
   # Marks a per-user install the in-app updater may manage.
   Set-Content -Path (Join-Path $Dir ".managed") -Value "install.ps1" -NoNewline
-  # This installer's own uninstall, for Settings › Apps.
+  # This installer's own uninstall, for Settings > Apps.
   $un = Join-Path $Dir "uninstall.ps1"
   @"
 `$env:HARBOR_UNINSTALL = "1"

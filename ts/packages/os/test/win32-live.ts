@@ -110,7 +110,11 @@ await check("tray: the icon goes up and comes down", async () => {
 
 await check("microphone: record-mic gives samples or says why not", async () => {
   expect(audio.available(), "not available");
-  const self = [process.execPath, ...(process.execPath.toLowerCase().endsWith("harbor.exe") ? [] : [new URL("../../../app.ts", import.meta.url).pathname.replace(/^\//, "")])];
+  // Harbor's exe records with `harbor record-mic`; under Bun, the same through this package directly.
+  const index = new URL("../src/index.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const self = process.execPath.toLowerCase().endsWith("harbor.exe")
+    ? [process.execPath]
+    : [process.execPath, "-e", `const { audio } = await import(${JSON.stringify(index)}); process.exit(await audio.recordToStdout());`];
   const r = audio.recorder(self);
   expect(r !== null, "no recorder");
   const p = Bun.spawn([r?.bin ?? "", ...(r?.args ?? [])], { stdout: "pipe", stderr: "pipe", env: { ...process.env, BUN_BE_BUN: undefined } });

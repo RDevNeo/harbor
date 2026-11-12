@@ -165,7 +165,7 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences macos
+        run: RUN_RETRY=1 .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences macos windows
       - name: Fetch the results
         run: |
           set -eu
@@ -190,6 +190,10 @@ jobs:
         with:
           name: harbor-macos
           path: out/harbor-macos/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-windows
+          path: out/harbor-windows/
 
   # aarch64 on a sandbox of its own, from the same snapshot, which it doesn't save: Bun builds it
   # under qemu (build.sh), which would slow x86_64's build beside it.
@@ -260,7 +264,7 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/runner/build.sh x86_64 out && .github/runner/build.sh macos out
+        run: .github/runner/build.sh x86_64 out && .github/runner/build.sh macos out && .github/runner/build.sh windows out
       - run: ldd out/harbor-x86_64/harbor
       - uses: actions/upload-artifact@v7
         with:
@@ -274,6 +278,10 @@ jobs:
         with:
           name: harbor-macos
           path: out/harbor-macos/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-windows
+          path: out/harbor-windows/
 
   quick-aarch64:
     needs: [plan, slint]
@@ -479,12 +487,27 @@ jobs:
             echo "::error::a release needs the macOS build"; exit 1
           fi
 
+          # Windows (x64): harbor.exe with the same licences, zipped below (install.ps1 unpacks it). It carries
+          # Microsoft's C++ runtime DLLs for Slint's addon: their notice goes with the licences.
+          if [ -f art/harbor-windows/harbor.exe ]; then
+            w=pkg/harbor-x86_64-windows
+            mkdir -p "$w/licenses"
+            cp art/harbor-windows/harbor.exe art/harbor-windows/harbor.png "$w/"
+            cp packaging/install.ps1 README.md CHANGELOG.md "$w/"
+            echo "$ver" > "$w/VERSION"
+            cp -r pkg/harbor-x86_64-linux/licenses/. "$w/licenses/"
+            cp packaging/vcruntime-NOTICE.txt "$w/licenses/"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::a release needs the Windows build"; exit 1
+          fi
+
           # What installed Harbors update from (plan): the manifest and bundle always, the runtimes
           # when the lane says the runtime changed.
           cp art/harbor-manifest/harbor-app.json art/harbor-x86_64/harbor-app.js dist/
           if [ "${{ needs.plan.outputs.lane }}" = runtime ]; then
             for arch in x86_64 aarch64; do install -m755 "art/harbor-$arch/harbor-runtime-$arch" "dist/harbor-runtime-$arch"; done
             [ ! -f art/harbor-macos/harbor-runtime-aarch64-macos ] || install -m755 art/harbor-macos/harbor-runtime-aarch64-macos dist/harbor-runtime-aarch64-macos
+            [ ! -f art/harbor-windows/harbor-runtime-x86_64-windows.exe ] || install -m755 art/harbor-windows/harbor-runtime-x86_64-windows.exe dist/harbor-runtime-x86_64-windows.exe
           fi
 
           # The video player per arch, and its sources beside it, as its licence asks.
@@ -563,7 +586,10 @@ jobs:
             [ ! -d pkg/harbor-video-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-video-$arch-linux.tar.gz harbor-video-$arch-linux
             [ ! -d pkg/harbor-slint-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-slint-$arch-linux.tar.gz harbor-slint-$arch-linux
           done
+          # Windows' zip: the files at its top, as install.ps1 expects them.
+          [ ! -d pkg/harbor-x86_64-windows ] || (cd pkg/harbor-x86_64-windows && zip -q -9 -r ../../dist/harbor-x86_64-windows.zip .)
           cp packaging/install.sh dist/install.sh
+          cp packaging/install.ps1 dist/install.ps1
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
           (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
           ls -la dist
@@ -576,7 +602,7 @@ jobs:
           set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for f in dist/*.tar.gz dist/*.dmg dist/install.sh dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
+          for f in dist/*.tar.gz dist/*.dmg dist/*.zip dist/install.sh dist/install.ps1 dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
             [ -f "$f" ] || continue
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
           done
@@ -589,7 +615,9 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.dmg
+            dist/*.zip
             dist/install.sh
+            dist/install.ps1
             dist/harbor-android.apk
             dist/harbor-app.js
             dist/harbor-app.json
