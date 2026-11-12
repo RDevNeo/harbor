@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.179.5] - 2026-11-12
+
+### Added
+- Harbor builds for Windows x64 (`ts/scripts/build.ts --target windows-x64`) and starts there: its window,
+  the native modules (images, local transcription, the UI) with the Visual C++ runtime they need, processes,
+  file locks and Windows' own folders. A preview for developers; there's no Windows download yet.
+- `scripts/boat/windows`: a Windows 11 VM on boat.dev for building, running and testing Harbor on Windows.
+
+### Changed
+- File locks (one Harbor per session, the Discord and WhatsApp hosts, Claude Code's credentials) are taken
+  by path; nothing changes on Linux or macOS.
+
 ## [0.179.4] - 2026-11-12
 
 ### Fixed
