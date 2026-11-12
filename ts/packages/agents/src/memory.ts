@@ -56,21 +56,8 @@ export function parseDeviceProcs(text: string): Map<string, number> {
 export function parseDeviceRam(text: string): Ram | null {
   const linux = parseMeminfo(text);
   if (linux) return linux;
-  const total = Number(text.match(/^hw\.memsize:\s*(\d+)/m)?.[1] ?? NaN);
-  const page = Number(text.match(/page size of (\d+) bytes/)?.[1] ?? NaN);
-  if (!(total > 0) || !(page > 0)) return null;
-  const pages = (name: string): number | null => {
-    const m = text.match(new RegExp(`^${name}:\\s+(\\d+)`, "m"));
-    return m?.[1] === undefined ? null : Number(m[1]);
-  };
-  const anon = pages("Anonymous pages");
-  const app = anon !== null ? Math.max(0, anon - (pages("Pages purgeable") ?? 0)) : (pages("Pages active") ?? 0);
-  const used = (app + (pages("Pages wired down") ?? 0) + (pages("Pages occupied by compressor") ?? 0)) * page;
-  const mb = (k: string): number => {
-    const m = text.match(new RegExp(`vm\\.swapusage:.*?${k} = ([\\d.]+)([KMG])`));
-    return m?.[1] === undefined ? 0 : Number(m[1]) * 1024 ** ({ K: 1, M: 2, G: 3 }[m[2] as "K" | "M" | "G"] ?? 2);
-  };
-  return { total, used: Math.min(total, used), swapTotal: mb("total"), swapUsed: mb("used") };
+  const m = sys.parseDarwinMemory(text);
+  return m === null ? null : ramOf(m);
 }
 
 export function ram(): Ram | null {

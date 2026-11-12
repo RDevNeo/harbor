@@ -98,7 +98,7 @@ function backendFd(): number | null {
 let touched: (() => void) | null = null;
 
 /** How the running loop is woken, and how many times the display's fd woke it. */
-export const loopState: { kind: "node" | "fixed" | "woken" | null; wakes: number } = { kind: null, wakes: 0 };
+export const loopState: { kind: "node" | "fixed" | "paced" | "woken" | null; wakes: number } = { kind: null, wakes: 0 };
 let hooked = false;
 
 /** Every change JavaScript makes to a window (properties, models, functions) asks for a turn of Slint's loop. */
@@ -125,10 +125,13 @@ export function runLoop(tickMs: number = TICK_MS): Promise<void> {
     return slint.runEventLoop().then(() => undefined);
   }
   setQuitOnLastWindowClosed(true);
-  const fd = process.env.HARBOR_FIXED_TICK ? null : backendFd();
-  loopState.kind = fd === null ? "fixed" : "woken";
-  if (fd === null) return fixed(tickMs);
-  return woken(fd, tickMs);
+  if (process.env.HARBOR_FIXED_TICK) {
+    loopState.kind = "fixed";
+    return fixed(tickMs);
+  }
+  const fd = backendFd();
+  loopState.kind = fd === null ? "paced" : "woken";
+  return fd === null ? paced(tickMs) : woken(fd, tickMs);
 }
 
 function fixed(tickMs: number): Promise<void> {
@@ -147,6 +150,69 @@ function fixed(tickMs: number): Promise<void> {
         resolve();
       }
     }, tickMs);
+  });
+}
+
+/** The longest a paced loop waits between turns while nothing happens: the most input waits for its first frame. */
+export const PACED_IDLE_MS = 33;
+
+/** A turn that took this long drew or handled something: the next ones come at the frame rate again. */
+const BUSY_TURN_MS = 0.5;
+
+/** How long a paced loop stays at the frame rate after the last busy turn (short: a text cursor's blink is busy every 500 ms). */
+const BUSY_HOLD_MS = 250;
+
+/**
+ * Where the window backend has no fd to wait on (macOS's and Windows' message queues belong to the
+ * main thread): Slint's loop runs every frame while it draws or JavaScript changes the window, and
+ * eases off to PACED_IDLE_MS when nothing happens, instead of 60 empty turns a second (Slint's own timers,
+ * a cursor's blink, are seen as busy turns when they draw).
+ */
+function paced(tickMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let due = Number.POSITIVE_INFINITY;
+    let busyAt = performance.now();
+    let done = false;
+    const at = (ms: number) => {
+      const t = performance.now() + ms;
+      if (timer !== null && due <= t) return;
+      if (timer !== null) clearTimeout(timer);
+      due = t;
+      timer = setTimeout(pump, ms);
+    };
+    const pump = () => {
+      timer = null;
+      due = Number.POSITIVE_INFINITY;
+      if (done) return;
+      let r: ProcessEventsResult;
+      const t0 = performance.now();
+      try {
+        r = processEvents();
+      } catch (e) {
+        r = ProcessEventsResult.Exited;
+        reject(e);
+      }
+      const t1 = performance.now();
+      switchTrace.turn(t0);
+      if (r === ProcessEventsResult.Exited) {
+        done = true;
+        touched = null;
+        resolve();
+        return;
+      }
+      loopState.wakes++;
+      if (t1 - t0 >= BUSY_TURN_MS) busyAt = t1;
+      const idle = t1 - busyAt;
+      // At the frame rate while busy, then a little slower each turn up to PACED_IDLE_MS.
+      at(idle < BUSY_HOLD_MS ? tickMs : Math.min(PACED_IDLE_MS, tickMs + (idle - BUSY_HOLD_MS) / 10));
+    };
+    hookChanges();
+    touched = () => {
+      busyAt = performance.now();
+      at(0);
+    };
+    pump();
   });
 }
 

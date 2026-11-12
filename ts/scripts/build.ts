@@ -1,5 +1,6 @@
 import { basename, dirname } from "node:path";
 import type { BunPlugin } from "bun";
+import { platform } from "../packages/os/src/index.ts";
 
 const noExtraBinaries: BunPlugin = {
   name: "no-extra-slint-binaries",
@@ -12,43 +13,64 @@ const noExtraBinaries: BunPlugin = {
   },
 };
 
-function nativeFiles(): Record<string, string> {
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
+/** What a build is for: this PC by default, or `--target OS-ARCH` (whose addons `bun install --os OS --cpu ARCH` put in node_modules). */
+type Target = { os: "linux" | "darwin"; arch: "x64" | "arm64" };
+
+function target(arg: string | undefined): Target {
+  const t = arg ?? `${platform()}-${process.arch}`;
+  const m = /^(linux|darwin)-(x64|arm64)$/.exec(t);
+  if (!m) {
+    console.error(`build.ts: no build for ${t} (linux-x64, linux-arm64, darwin-arm64)`);
+    process.exit(2);
+  }
+  return { os: m[1] as Target["os"], arch: m[2] as Target["arch"] };
+}
+
+/** Bun's name for the target, for `compile.target`. */
+const bunTarget = (t: Target): Bun.Build.CompileTarget => `bun-${t.os}-${t.arch}` as Bun.Build.CompileTarget;
+
+/** Slint's addon package for the target (its JS loader asks for it by this name). */
+const slintPackage = (t: Target): string => `slint-ui-binary-${t.os}-${t.arch}${t.os === "linux" ? "-gnu" : ""}`;
+
+function nativeFiles(t: Target): Record<string, string> {
+  const { os, arch } = t;
+  const lib = os === "darwin" ? "dylib" : "so";
   const root = new URL("../node_modules/.bun/", import.meta.url).pathname;
   const out: Record<string, string> = {};
   const add = (pattern: string, key: (file: string) => string): void => {
     for (const f of new Bun.Glob(pattern).scanSync({ cwd: root })) out[key(f)] = `${root}${f}`;
   };
   const base = (f: string): string => f.slice(f.lastIndexOf("/") + 1);
-  add(`@img+sharp-linux-${arch}@*/node_modules/@img/sharp-linux-${arch}/lib/*.node`, (f) => `sharp/@img/sharp-linux-${arch}/lib/${base(f)}`);
-  add(`@img+sharp-libvips-linux-${arch}@*/node_modules/@img/sharp-libvips-linux-${arch}/lib/libvips-cpp.so.*`, (f) => `sharp/@img/sharp-libvips-linux-${arch}/lib/${base(f)}`);
-  add(`sherpa-onnx-linux-${arch}@*/node_modules/sherpa-onnx-linux-${arch}/*.{node,so}`, (f) => `sherpa/${base(f)}`);
-  add(`@slint-ui+slint-ui-binary-linux-${arch}-gnu@*/node_modules/@slint-ui/slint-ui-binary-linux-${arch}-gnu/*.node`, (f) => `slint/${base(f)}`);
+  // Each library keeps its place next to the others: the addons find theirs through relative rpaths.
+  add(`@img+sharp-${os}-${arch}@*/node_modules/@img/sharp-${os}-${arch}/lib/*.node`, (f) => `sharp/@img/sharp-${os}-${arch}/lib/${base(f)}`);
+  add(`@img+sharp-libvips-${os}-${arch}@*/node_modules/@img/sharp-libvips-${os}-${arch}/lib/libvips-cpp.*${lib}*`, (f) => `sharp/@img/sharp-libvips-${os}-${arch}/lib/${base(f)}`);
+  add(`sherpa-onnx-${os}-${arch}@*/node_modules/sherpa-onnx-${os}-${arch}/*.{node,${lib}}`, (f) => `sherpa/${base(f)}`);
+  add(`@slint-ui+${slintPackage(t)}@*/node_modules/@slint-ui/${slintPackage(t)}/*.node`, (f) => `slint/${base(f)}`);
   // Harbor's own build of it (slint/: the compiler's state isn't kept), when the release brings one.
   const own = process.env.HARBOR_SLINT_ADDON;
   if (own) {
-    const key = `slint/slint-ui.linux-${arch}-gnu.node`;
-    if (!(key in out) || !Bun.file(own).size) throw new Error(`HARBOR_SLINT_ADDON: ${own} is not this architecture's Slint addon`);
+    const key = `slint/slint-ui.${slintPackage(t).replace("slint-ui-binary-", "")}.node`;
+    if (!(key in out) || !Bun.file(own).size) throw new Error(`HARBOR_SLINT_ADDON: ${own} is not this target's Slint addon`);
     out[key] = own;
     console.log(`Slint addon: ${own}`);
   }
-  if (!["sharp/@img/sharp-linux", "sherpa/", "slint/"].every((p) => Object.keys(out).some((k) => k.startsWith(p)))) {
-    throw new Error("sharp's, sherpa's or Slint's native files for this architecture are not installed (bun install)");
+  if (![`sharp/@img/sharp-${os}`, "sherpa/", "slint/"].every((p) => Object.keys(out).some((k) => k.startsWith(p)))) {
+    throw new Error(`sharp's, sherpa's or Slint's native files for ${os}-${arch} are not installed (bun install${os === platform() && arch === process.arch ? "" : ` --os ${os} --cpu ${arch}`})`);
   }
   return out;
 }
 
-const nativeAddons: BunPlugin = {
+const nativeAddons = (t: Target): BunPlugin => ({
   name: "native-addons",
   setup(build) {
     build.onResolve({ filter: /^harbor:native$/ }, (a) => ({ path: a.path, namespace: "native" }));
     build.onLoad({ filter: /.*/, namespace: "native" }, () => {
-      const files = Object.entries(nativeFiles());
+      const files = Object.entries(nativeFiles(t));
       const imports = files.map(([, p], i) => `import f${i} from ${JSON.stringify(p)} with { type: "file" };`);
       return { contents: `${imports.join("\n")}\nexport const files = { ${files.map(([k], i) => `${JSON.stringify(k)}: f${i}`).join(", ")} };`, loader: "js" };
     });
   },
-};
+});
 
 const addonsFromRuntime: BunPlugin = {
   name: "addons-from-runtime",
@@ -75,7 +97,7 @@ const addonsFromRuntime: BunPlugin = {
 const slintAddon: BunPlugin = {
   name: "slint-addon-on-disk",
   setup(build) {
-    build.onResolve({ filter: /^@slint-ui\/slint-ui-binary-linux-(x64|arm64)-gnu$/ }, () => ({ path: "slint", namespace: "slint-addon" }));
+    build.onResolve({ filter: /^@slint-ui\/slint-ui-binary-(linux-(x64|arm64)-gnu|darwin-arm64)$/ }, () => ({ path: "slint", namespace: "slint-addon" }));
     build.onLoad({ filter: /.*/, namespace: "slint-addon" }, () => ({ contents: `module.exports = globalThis.__harbor.addon("slint");`, loader: "js" }));
   },
 };
@@ -122,11 +144,12 @@ const defines = (pairs: Array<[string, string | undefined]>): Record<string, str
   Object.fromEntries(pairs.filter((p): p is [string, string] => p[1] !== undefined).map(([k, v]) => [k, JSON.stringify(v)]));
 
 if ((kind !== "app" && kind !== "runtime" && kind !== "single") || outfile === undefined) {
-  console.error("usage: build.ts app|runtime|single OUTFILE [--version V] [--min-runtime V] [--sha SHA]");
+  console.error("usage: build.ts app|runtime|single OUTFILE [--target OS-ARCH] [--version V] [--min-runtime V] [--sha SHA]");
   process.exit(2);
 }
 
 const version = opt("--version");
+const tgt = target(opt("--target"));
 // Harbor's Google OAuth clients (packages/mcp/src/apps.ts), from the build's environment when set:
 // release.yml passes its secrets by name, so the values never show on a command line.
 const google: Array<[string, string | undefined]> = ["HARBOR_GOOGLE_CLIENT_ID", "HARBOR_GOOGLE_CLIENT_SECRET", "HARBOR_GOOGLE_WEB_CLIENT_ID", "HARBOR_GOOGLE_WEB_CLIENT_SECRET"].map((k) => [k, process.env[k] || undefined]);
@@ -145,16 +168,16 @@ const r =
     : kind === "single"
       ? await Bun.build({
           entrypoints: [new URL("../single.ts", import.meta.url).pathname],
-          plugins: [noExtraBinaries, slintAddon, nativeAddons, embedAssets, addonsFromRuntime],
-          compile: { outfile },
+          plugins: [noExtraBinaries, slintAddon, nativeAddons(tgt), embedAssets, addonsFromRuntime],
+          compile: { outfile, target: bunTarget(tgt) },
           minify: !rest.includes("--debug"),
           sourcemap: "none",
           define: defines([["HARBOR_VERSION", version], ["HARBOR_RUNTIME_VERSION", version], ["HARBOR_MIN_RUNTIME", version], ["HARBOR_GIT_SHA", opt("--sha")], ...google]),
         })
       : await Bun.build({
           entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
-          plugins: [noExtraBinaries, slintAddon, nativeAddons],
-          compile: { outfile },
+          plugins: [noExtraBinaries, slintAddon, nativeAddons(tgt)],
+          compile: { outfile, target: bunTarget(tgt) },
           minify: !rest.includes("--debug"),
           sourcemap: "none",
           define: defines([["HARBOR_RUNTIME_VERSION", version]]),

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { desktop, libc, paths, platform, proc, sys } from "../src/index.ts";
+import { desktop, env, keychain, libc, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
 
@@ -159,5 +159,128 @@ describe("desktop", () => {
     const d = desktop.downloadsDir({ HOME: "/nowhere-home" });
     expect(d.startsWith("/")).toBe(true);
     expect(d === "/nowhere-home/Downloads" || d !== "/nowhere-home").toBe(true);
+  });
+});
+
+describe("keychain", () => {
+  test("only macOS has one: elsewhere every call answers nothing", () => {
+    if (process.platform === "darwin") return;
+    expect(keychain.available()).toBe(false);
+    expect(keychain.read("harbor-test")).toBeNull();
+    expect(keychain.has("harbor-test")).toBe(false);
+    expect(keychain.write("harbor-test", "x")).toBe(false);
+    expect(keychain.account({ USER: "sam" })).toBe("sam");
+  });
+});
+
+describe.if(process.platform === "darwin")("macOS", () => {
+  test("proc: this process, a child's group, one that ended", async () => {
+    const s = proc.stat(process.pid);
+    expect(s?.ppid).toBe(process.ppid);
+    const start = proc.procStart(process.pid) as number;
+    expect(proc.alive(process.pid, start)).toBe(true);
+    expect(Math.abs((proc.startedAt(process.pid) as number) - Date.now() / 1000)).toBeLessThan(3600);
+    expect(proc.cmdline(process.pid)?.length).toBeGreaterThan(0);
+    expect(proc.ownerOf(process.pid)).toBe(process.getuid?.() as number);
+    expect(proc.pids()).toContain(process.pid);
+    expect((proc.stat(process.pid)?.rssPages ?? 0) * proc.pageSize()).toBeGreaterThan(1 << 20);
+    const child = Bun.spawn(["sleep", "30"], { stdio: ["ignore", "ignore", "ignore"] });
+    expect(proc.parentOf(child.pid)).toBe(process.pid);
+    expect(proc.cmdline(child.pid)).toEqual(["sleep", "30"]);
+    expect(proc.group(proc.stat(child.pid)?.pgid as number)).toContain(child.pid);
+    expect(proc.descendants(process.pid)).toContain(child.pid);
+    child.kill("SIGKILL");
+    await child.exited;
+    expect(proc.running(child.pid)).toBe(false);
+  });
+
+  test("sys: memory and boot", () => {
+    const m = sys.memory();
+    expect(m?.total).toBeGreaterThan(1 << 30);
+    expect(m?.available).toBeGreaterThan(0);
+    expect(m?.available).toBeLessThan(m?.total as number);
+    expect(sys.bootId()).toMatch(/^\d+\.\d+$/);
+    expect(sys.netTable("tcp")).toBeNull();
+  });
+
+  test("libc and the detached start", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hos-"));
+    try {
+      const a = openSync(join(dir, "l"), "a+");
+      const b = openSync(join(dir, "l"), "a+");
+      expect(libc.flock(a, libc.LOCK_EX | libc.LOCK_NB)).toBe(0);
+      expect(libc.flock(b, libc.LOCK_EX | libc.LOCK_NB)).not.toBe(0);
+      closeSync(a);
+      closeSync(b);
+      expect(spawn.detachedArgv(["x"])).toBeNull();
+      spawn.startDetached(["sh", "-c", `echo $$ > ${join(dir, "pid")}`]);
+      for (let i = 0; i < 100 && !existsSync(join(dir, "pid")); i++) await Bun.sleep(20);
+      expect(existsSync(join(dir, "pid"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keychain: a missing item reads as none", () => {
+    expect(keychain.available()).toBe(false);
+    expect(keychain.available({ ...process.env, HARBOR_NO_KEYCHAIN: "" })).toBe(true);
+    delete process.env.HARBOR_NO_KEYCHAIN;
+    expect(keychain.read(`harbor-test-missing-${process.pid}`)).toBeNull();
+    expect(keychain.has(`harbor-test-missing-${process.pid}`)).toBe(false);
+  });
+
+  // Over SSH the login keychain takes no writes ("User interaction is not allowed"): only in a desktop session.
+  test.skipIf(!!process.env.SSH_CONNECTION)("keychain: an item written, read back and removed", () => {
+    const svc = `harbor-test-${process.pid}`;
+    try {
+      expect(keychain.write(svc, '{"a":"b \\" c"}')).toBe(true);
+      expect(keychain.has(svc)).toBe(true);
+      expect(keychain.read(svc)).toBe('{"a":"b \\" c"}');
+      expect(keychain.write(svc, "second")).toBe(true);
+      expect(keychain.read(svc)).toBe("second");
+    } finally {
+      expect(keychain.remove(svc)).toBe(true);
+      process.env.HARBOR_NO_KEYCHAIN = "1";
+    }
+  });
+});
+
+describe("env", () => {
+  test("macOS children get a UTF-8 locale when none is set", () => {
+    expect(env.childDefaults({ HARBOR_TEST_PLATFORM: "darwin" })).toEqual({ LANG: "en_US.UTF-8" });
+    expect(env.childDefaults({ HARBOR_TEST_PLATFORM: "darwin", LC_CTYPE: "UTF-8" })).toEqual({});
+    expect(env.childDefaults({ HARBOR_TEST_PLATFORM: "linux" })).toEqual({});
+  });
+});
+
+describe("tcp listeners", () => {
+  test("Linux's tables and macOS's netstat", () => {
+    const tcp = [
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+      "   0: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 1",
+      "   1: 0100007F:1F90 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1000        0 2 1",
+    ].join("\n");
+    expect(sys.parseProcTcp(tcp)).toEqual([{ port: 3000, uid: 1000 }]);
+    const ns = [
+      "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat          process:pid    state",
+      "tcp4       0      0  *.3002                 *.*                    LISTEN                 0            0  131072  131072             node:17555  00100",
+      "tcp6       0      0  ::1.8788               *.*                    LISTEN                 0            0  131072  131072              bun:9  00100",
+      "tcp4       0      0  10.0.0.2.51000         10.0.0.9.443           ESTABLISHED            0            0  131072  131072              bun:9  00100",
+    ].join("\n");
+    expect(sys.parseNetstat(ns, (pid) => (pid === 9 ? 501 : undefined))).toEqual([
+      { port: 3002, uid: null },
+      { port: 8788, uid: 501 },
+    ]);
+  });
+
+  test.if(process.platform === "linux" || process.platform === "darwin")("this process's server is found, as its own", async () => {
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    try {
+      const mine = sys.tcpListeners()?.filter((l) => l.port === server.port) ?? [];
+      expect(mine.length).toBeGreaterThan(0);
+      expect(mine.every((l) => l.uid === process.getuid?.())).toBe(true);
+    } finally {
+      server.stop(true);
+    }
   });
 });

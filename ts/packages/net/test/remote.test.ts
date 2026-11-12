@@ -221,7 +221,7 @@ describe("remote", () => {
 
   test("mcp_config_travels_on_stdin", async () => {
     const setup: RemoteSetup[] = [{ kind: "token" }, { kind: "mcp" }];
-    const argv = ["sh", "-c", `printf '%s|%s|%s|%s|' "$CLAUDE_CODE_OAUTH_TOKEN" "$1" "$(cat "$1")" "$(stat -c %a "$1")"; cat`, "sh", MCP_CONFIG_ARG];
+    const argv = ["sh", "-c", `printf '%s|%s|%s|%s|' "$CLAUDE_CODE_OAUTH_TOKEN" "$1" "$(cat "$1")" "$(stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1")"; cat`, "sh", MCP_CONFIG_ARG];
     const script = remoteCommand("/", setup, argv);
     expect(script).not.toContain("secret-grant");
     const out = await sh(script, 'sk-ant-oat01-abc\n{"url":"http://127.0.0.1:1/secret-grant/origin"}\n{"type":"user"}\n');
@@ -647,7 +647,10 @@ describe("remote beyond the Rust tests", () => {
       mkdirSync(folder);
       const script = remoteCommand(folder, [], ["sh", "-c", 'printf "%s|%s" "$1" "$(pwd)"', "sh", "a'b \"c\" $HOME"]);
       const out = await sh(script, null);
-      expect(agentOut(out.stdout, 0)).toBe(`a'b "c" $HOME|${realpathSync(folder)}`);
+      const [arg, pwd] = agentOut(out.stdout, 0).split("|");
+      expect(arg).toBe(`a'b "c" $HOME`);
+      // Real paths: macOS's temp folder is /var/..., a link to /private/var/....
+      expect(realpathSync(pwd ?? "")).toBe(realpathSync(folder));
       const missing = await sh(remoteCommand(join(dir, "nope"), [], ["true"]), null);
       expect(missing.code).toBe(97);
       expect(missing.stderr).toContain("doesn't exist on");

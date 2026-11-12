@@ -138,7 +138,7 @@ function flakySsh(root: string, ok: number, fail: string): [string, string] {
   const t = join(root, "tries");
   writeFileSync(
     ssh,
-    `#!/bin/sh\necho x >> '${t}'\nn=$(wc -l < '${t}')\nif [ "$n" != ${ok} ]; then echo '${fail}' >&2; exit 255; fi\nread -r first\necho "$first" > '${t}.in'\necho 'Warning: Permanently added box' >&2\nprintf '%s\\n' '{"type":"result","subtype":"success","duration_ms":5,"num_turns":1}'\nexit 0\n`,
+    `#!/bin/sh\necho x >> '${t}'\nn=$(wc -l < '${t}' | tr -d ' ')\nif [ "$n" != ${ok} ]; then echo '${fail}' >&2; exit 255; fi\nread -r first\necho "$first" > '${t}.in'\necho 'Warning: Permanently added box' >&2\nprintf '%s\\n' '{"type":"result","subtype":"success","duration_ms":5,"num_turns":1}'\nexit 0\n`,
   );
   chmodSync(ssh, 0o755);
   writeFileSync(join(dir, "cmd.json"), compact({ program: ssh, args: ["box", "cmd"], input: true, env: [[detach.DEVICE, "Studio-Mac"]] }));
@@ -192,7 +192,7 @@ test("a_guest_turns_commands_run_as_its_account", async () => {
   writeFileSync(join(acct, ".credentials.json"), login);
   // The agent, and a command it runs: Claude Code keeps the token from that one, which has only the overlay to sign in from.
   const agent =
-    'printf \'token=%s login=%s\\n\' "$CLAUDE_CODE_OAUTH_TOKEN" "${HARBOR_GUEST_LOGIN-none}"; env -u CLAUDE_CODE_OAUTH_TOKEN sh -c \'cat "$CLAUDE_CONFIG_DIR/.credentials.json"; stat -c " mode=%a" "$CLAUDE_CONFIG_DIR/.credentials.json"\'';
+    'printf \'token=%s login=%s\\n\' "$CLAUDE_CODE_OAUTH_TOKEN" "${HARBOR_GUEST_LOGIN-none}"; env -u CLAUDE_CODE_OAUTH_TOKEN sh -c \'cat "$CLAUDE_CONFIG_DIR/.credentials.json"; { stat -c " mode=%a" "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null || stat -f " mode=%Lp" "$CLAUDE_CONFIG_DIR/.credentials.json"; }\'';
   const turn = async (dir: string): Promise<string> => {
     const env = [["CLAUDE_CONFIG_DIR", overlay], [detach.GUEST_LOGIN, acct], ["CLAUDE_CODE_OAUTH_TOKEN", null]];
     writeFileSync(join(dir, "cmd.json"), compact({ program: "sh", args: ["-c", agent], env, input: false }));
@@ -339,7 +339,8 @@ describe("harbor turn", () => {
     expect(readFileSync(join(dir, "err"), "utf8")).toBe("/nonexistent/agent: No such file or directory (os error 2)\n");
   });
 
-  test("a deleted folder's output is still read through the runner's open files", async () => {
+  // Linux only: a process's open files are readable through /proc after they're deleted; elsewhere the output is gone.
+  test.if(process.platform === "linux")("a deleted folder's output is still read through the runner's open files", async () => {
     const root = fresh("gone");
     const c = detach.command("sh");
     c.args.push("-c", "echo before; sleep 0.6; echo after");

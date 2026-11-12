@@ -12,7 +12,7 @@
  * - `@harbor/*` packages and `slint-ui`: the running app's, with the exports of the package's files that
  *   changed since then (and aren't pinned) taken from the checkout.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import * as slint from "slint-ui";
 import * as agents from "@harbor/agents";
@@ -87,9 +87,28 @@ export function tsRoot(dir: string): string | null {
   return null;
 }
 
+function realOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/** When the file was last written; null once it's gone (its deletion is a change). */
+function mtimeOf(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 export class HotDev {
   readonly ts: string;
   private watcher: FSWatcher | null = null;
+  /** Each watched file's modification time at its last event. */
+  private seen = new Map<string, number>();
   /** Files (relative to ts/) saved since hot reload started. */
   private readonly changed = new Set<string>();
   /** Per unit: the files its last build read, and the packages it took from the app. */
@@ -109,7 +128,9 @@ export class HotDev {
     /** Only these units (tests); every registered one when absent. */
     private readonly only?: readonly string[],
   ) {
-    this.ts = ts;
+    // Its real path: the bundler resolves imports to real paths, so a checkout reached through a link
+    // (macOS's /var is /private/var) would otherwise look outside itself.
+    this.ts = realOr(ts);
     this.out = privateDir(join(runDir(), "hot"));
   }
 
@@ -117,13 +138,21 @@ export class HotDev {
   async start(): Promise<void> {
     rmSync(this.out, { recursive: true, force: true });
     mkdirSync(this.out, { recursive: true, mode: 0o700 });
+    // Files written before the first build below are built from disk, so their events (FSEvents replays them) don't count.
+    let since = Number.POSITIVE_INFINITY;
     this.watcher = watch(join(this.ts, "packages"), { recursive: true }, (_ev, file) => {
       if (typeof file !== "string" || !file.endsWith(".ts") || file.endsWith(".test.ts") || file.endsWith(".d.ts") || file.includes("/test/") || file.includes("node_modules")) return;
       const rel = `packages/${file}`;
+      // macOS's FSEvents also reports writes from just before the watch began, and may report one save twice:
+      // only saves made since count, each once (by the file's modification time).
+      const at = mtimeOf(join(this.ts, rel));
+      if (at !== null && (at < since || this.seen.get(rel) === at)) return;
+      if (at !== null) this.seen.set(rel, at);
       if (!this.pending.has(rel)) this.pending.set(rel, Date.now());
       if (this.timer) clearTimeout(this.timer);
       this.timer = setTimeout(() => this.flush(), 25);
     });
+    since = Date.now();
     const ok: string[] = [];
     for (const u of this.units()) if (await this.reload(u.name, null, Date.now())) ok.push(u.name);
     this.host.log(`hot: following ${this.ts} (${ok.join(", ") || "no units"})`);

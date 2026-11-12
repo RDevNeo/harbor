@@ -1,10 +1,11 @@
 // Only the access token may leave this PC: the CLI rotates the refresh token on every refresh, so
 // a copy used elsewhere would sign this PC out.
-import { readFileSync, renameSync, rmSync } from "node:fs";
+import { readFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
+import * as creds from "./claudecreds.ts";
 import { lockFile } from "./flock.ts";
 import { at, compact, f64, obj, optStr, parse, pretty } from "./json.ts";
-import { home, writePrivate } from "./paths.ts";
+import { writePrivate } from "./paths.ts";
 
 const SKEW_MS = 5 * 60 * 1000;
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -12,24 +13,39 @@ const TOKEN_URLS = ["https://platform.claude.com/v1/oauth/token", "https://api.a
 const DEFAULT_EXPIRES_S = 28_800;
 
 /** The credentials file of a Claude profile (null: the default, ~/.claude). */
-export function credentialsPath(configDir: string | null): string {
-  return join(configDir ?? join(home(), ".claude"), ".credentials.json");
+export const credentialsPath = creds.credentialsPath;
+
+/** Where a login is read from and written back to: Claude Code's store (claudecreds.ts), or one file (tests). */
+interface Login {
+  read(): string | null;
+  write(text: string): void;
 }
 
 /** A failed refresh returns the stale token on purpose: the CLI then reports the error instead of the turn running as another account. */
 export function token(configDir: string | null): string | null {
-  return tokenAt(credentialsPath(configDir), Date.now(), requestRefresh);
+  const store: Login = { read: () => creds.read(configDir), write: (t) => creds.write(configDir, t) };
+  return tokenOf(store, credentialsPath(configDir), Date.now(), requestRefresh);
 }
 
 export function tokenAt(path: string, nowMs: number, refresh: (rt: string) => unknown): string | null {
+  const store: Login = {
+    read: () => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    write: (t) => write(path, t),
+  };
+  return tokenOf(store, path, nowMs, refresh);
+}
+
+function tokenOf(store: Login, path: string, nowMs: number, refresh: (rt: string) => unknown): string | null {
   const unlock = lock(path);
   try {
-    let text: string;
-    try {
-      text = readFileSync(path, "utf8");
-    } catch {
-      return null;
-    }
+    const text = store.read();
+    if (text === null) return null;
     const data = parse(text);
     if (data === undefined) return null;
     const login = at(data, "claudeAiOauth");
@@ -48,7 +64,7 @@ export function tokenAt(path: string, nowMs: number, refresh: (rt: string) => un
     const fresh = apply(root, payload, nowMs);
     if (fresh === null) return access;
     try {
-      write(path, root);
+      store.write(pretty(root) + "\n");
     } catch {
       // the new token works for this turn; the CLI refreshes again next time
     }
@@ -97,9 +113,9 @@ export function apply(data: Record<string, unknown>, payload: unknown, nowMs: nu
   return access;
 }
 
-function write(path: string, data: unknown): void {
+function write(path: string, text: string): void {
   const tmp = join(dirname(path), ".credentials.json.tmp");
-  writePrivate(tmp, pretty(data) + "\n");
+  writePrivate(tmp, text);
   renameSync(tmp, path);
 }
 
@@ -109,12 +125,9 @@ function lock(path: string): (() => void) | null {
 
 /** A guest chat's login for the commands it runs: Claude Code keeps `CLAUDE_CODE_OAUTH_TOKEN` from them. */
 export function lend(overlay: string, configDir: string | null, tok: string): void {
-  let src: unknown;
-  try {
-    src = parse(readFileSync(credentialsPath(configDir), "utf8"));
-  } catch {
-    // the account has no login file: the lent login has only the token
-  }
+  // No login for the account here: the lent login has only the token.
+  const text = creds.read(configDir);
+  const src: unknown = text === null ? undefined : parse(text);
   const from = at(src, "claudeAiOauth");
   const login: Record<string, unknown> = { accessToken: tok, scopes: ["user:inference"] };
   if (optStr(at(from, "accessToken")) === tok) {
@@ -123,20 +136,18 @@ export function lend(overlay: string, configDir: string | null, tok: string): vo
       if (v !== null) login[k] = v;
     }
   }
-  const path = credentialsPath(overlay);
-  const unlock = lock(path);
+  const unlock = lock(credentialsPath(overlay));
   try {
-    write(path, { claudeAiOauth: login });
+    creds.write(overlay, pretty({ claudeAiOauth: login }) + "\n");
   } finally {
     unlock?.();
   }
 }
 
 export function unlend(overlay: string): void {
-  const path = credentialsPath(overlay);
-  const unlock = lock(path);
+  const unlock = lock(credentialsPath(overlay));
   try {
-    rmSync(path, { force: true });
+    creds.remove(overlay);
   } catch {
     // never lent
   } finally {

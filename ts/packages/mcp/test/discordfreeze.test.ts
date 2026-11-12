@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cgroupIn, freeze, heldWord, killLeftOver, only, reclaim, signal, thaw, tree } from "../src/discordfreeze.ts";
+import { proc } from "@harbor/os";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const root = "/sys/fs/cgroup";
@@ -20,10 +21,7 @@ test("a_cgroup_with_anyone_else_in_it_isnt_ours: a cgroup with anyone else in it
   expect(only("10\n99\n", [10, 11])).toBe(false);
 });
 
-const state = (p: number): string => {
-  const st = readFileSync(`/proc/${p}/stat`, "utf8");
-  return st.slice(st.lastIndexOf(")") + 1).trim().split(/\s+/)[0] ?? "";
-};
+const state = (p: number): string => proc.stat(p)?.state ?? "";
 
 test("signals_hold_a_tree_and_let_it_go: signals hold a tree and let it go", async () => {
   const saved = process.env.HARBOR_DISCORD_NO_CGROUP;

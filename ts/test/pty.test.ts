@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { type Shell, startShell } from "../proto/pty.ts";
+import { env as osEnv } from "../packages/os/src/index.ts";
 
 let sh: Shell | null = null;
 
 function shell(cols = 80, rows = 24): Shell {
-  sh = startShell({ argv: ["bash", "--norc", "--noprofile"], cwd: tmpdir(), cols, rows, env: { PS1: "$ ", HISTFILE: "/dev/null" } });
+  sh = startShell({ argv: ["bash", "--norc", "--noprofile"], cwd: tmpdir(), cols, rows, env: { ...osEnv.childDefaults(), PS1: "$ ", HISTFILE: "/dev/null" } });
   return sh;
 }
 

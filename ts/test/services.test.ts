@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine, type providers } from "../packages/agents/src/index.ts";
@@ -147,8 +147,9 @@ test("a peer's project with no folder here is not shared, and a call in its name
       expect(body.ok).toBe(true);
       return body.content.map((c) => c.text).join("").trim();
     };
-    expect(await pwd("not-on-this-pc")).toBe(process.env.HOME ?? "");
-    expect(await pwd("own")).toBe(own);
+    // Real paths: macOS's temp folder is /var/..., a link to /private/var/....
+    expect(realpathSync(await pwd("not-on-this-pc"))).toBe(realpathSync(process.env.HOME ?? ""));
+    expect(realpathSync(await pwd("own"))).toBe(realpathSync(own));
   } finally {
     store.removeRepo(ownId);
     engine.reload();

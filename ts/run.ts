@@ -24,7 +24,7 @@ import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
 import { autostartByDefault, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
-import { proc } from "./packages/os/src/index.ts";
+import { env as osEnv, proc } from "./packages/os/src/index.ts";
 
 export interface RunOptions {
   window: boolean;
@@ -37,6 +37,8 @@ export async function runApp(o: RunOptions): Promise<number> {
   const cfg = defaultConfig();
   // Before the native libraries start work on Bun's threads: each would get an arena of its own.
   malloc.capArenas();
+  // What every program Harbor starts expects (macOS: a locale, which apps from the Dock lack).
+  Object.assign(process.env, osEnv.childDefaults());
   // A restart (reload.ts): the old process, its pid; with a window, the file this one tells it it's ready in.
   const reloadedFrom = Number(process.env.HARBOR_RELOADED_PID) || 0;
   const handover = o.window ? (process.env[HANDOVER] ?? null) : null;

@@ -20,7 +20,7 @@ import { compactFirst } from "./compaction.ts";
 import { arr, at, compact, isNull, optStr, parse } from "./json.ts";
 import { lend, token, unlend } from "./oauth.ts";
 import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from "./paths.ts";
-import { proc } from "@harbor/os";
+import { proc, spawn as osSpawn } from "@harbor/os";
 import { alive, cmdline, myUid, ownerOf, parentOf, pids, procStart, startedAt } from "./procfs.ts";
 import { bin, KINDS, which } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
@@ -184,13 +184,11 @@ export async function spawn(cmd: Cmd, input: string | null, keepInput: boolean, 
     writePrivate(join(dir, "in"), input);
     if (!keepInput) writeFileSync(join(dir, "in.closed"), "");
   }
-  // setsid -f: the runner gets its own session and isn't Harbor's child, so neither a reload
-  // nor Harbor exiting reaches it. Where systemd --user runs, in a scope of its own (turnscope.ts).
-  const runner = ["setsid", "-f", ...selfArgv(), "turn", dir];
-  if (!(await turnscope.start(runner, dir, meta.chat_id))) {
-    const r = Bun.spawnSync(runner, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-    if (r.exitCode === null) throw new Error("couldn't start setsid");
-  }
+  // The runner gets its own session and isn't Harbor's child, so neither a reload nor Harbor exiting
+  // reaches it. Where systemd --user runs, in a scope of its own (turnscope.ts).
+  const argv = [...selfArgv(), "turn", dir];
+  const runner = osSpawn.detachedArgv(argv);
+  if (runner === null || !(await turnscope.start(runner, dir, meta.chat_id))) osSpawn.startDetached(argv);
   const t = Date.now();
   let pid: number | undefined;
   for (;;) {

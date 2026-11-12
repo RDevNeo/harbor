@@ -335,3 +335,18 @@ test("a chat on an account turned off moves to the default one, never to another
   expect(h.notices.at(-1)).toContain("Turn it back on or pick another account");
   expect(h.pending.get(d.id)).toBeUndefined();
 });
+
+test("reset times are read without GNU date (macOS, Windows)", async () => {
+  const { parseWhen } = await import("../src/limits.ts");
+  const at = Date.UTC(2026, 10, 11, 12, 0) / 1000; // 2026-11-11 12:00 UTC
+  expect(parseWhen("12am", "America/Sao_Paulo", at)).toBe(Date.UTC(2026, 10, 11, 3, 0) / 1000);
+  expect(parseWhen("3:30pm", "Europe/London", at)).toBe(Date.UTC(2026, 10, 11, 15, 30) / 1000);
+  expect(parseWhen("Oct 30 5pm", "UTC", at)).toBe(Date.UTC(2026, 9, 30, 17, 0) / 1000);
+  expect(parseWhen("Nov 3rd 2027 9:00 AM", "UTC", at)).toBe(Date.UTC(2027, 10, 3, 9, 0) / 1000);
+  expect(parseWhen("tomorrow 00:00", "America/Los_Angeles", at)).toBe(Date.UTC(2026, 10, 12, 8, 0) / 1000);
+  // Across a DST change: 2 am in New York on 2026-03-09 is EDT (UTC-4).
+  expect(parseWhen("Mar 9 2026 2:00 PM", "America/New_York", at)).toBe(Date.UTC(2026, 2, 9, 18, 0) / 1000);
+  expect(parseWhen("soon", "UTC", at)).toBeNull();
+  expect(parseWhen("13pm", "UTC", at)).toBeNull();
+  expect(parseWhen("5", "UTC", at)).toBeNull();
+});

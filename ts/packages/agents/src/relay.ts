@@ -58,26 +58,13 @@ export function writerAlive(o: PortOwner): boolean {
   }
 }
 
-/** Loopback listeners (the kernel's tcp tables): whether every one on `port` is this user's (null: there are no tables to ask). */
+/** Listeners on `port`: whether every one is this user's (null: there's nothing to ask, or no listener's owner is known). */
 export function listenerIsMine(port: number): boolean | null {
   const uid = process.getuid?.();
-  let rows = 0;
-  let mine = 0;
-  let read = false;
-  for (const f of ["tcp", "tcp6"] as const) {
-    const text = sys.netTable(f);
-    if (text === null) continue;
-    read = true;
-    for (const line of text.split("\n").slice(1)) {
-      const c = line.trim().split(/\s+/);
-      // sl local rem st queues timer retrnsmt uid …; st 0A is LISTEN.
-      if (c.length < 8 || c[3] !== "0A" || Number.parseInt(c[1]?.split(":")[1] ?? "", 16) !== port) continue;
-      rows++;
-      if (Number(c[7]) === uid) mine++;
-    }
-  }
-  if (!read || uid === undefined) return null;
-  return rows > 0 && rows === mine;
+  const all = sys.tcpListeners();
+  if (all === null || uid === undefined) return null;
+  const on = all.filter((l) => l.port === port);
+  return on.length > 0 && on.every((l) => l.uid === uid);
 }
 
 /**

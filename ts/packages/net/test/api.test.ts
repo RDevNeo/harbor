@@ -75,7 +75,8 @@ function call(port: number, raw: string): Promise<[number, unknown, string]> {
     c.on("data", (d: Buffer) => {
       out = Buffer.concat([out, d]);
     });
-    c.on("error", reject);
+    // A connection closed before its request was read is reset, not ended, on macOS: no answer either way.
+    c.on("error", (e: NodeJS.ErrnoException) => (e.code === "ECONNRESET" && out.length === 0 ? resolve([0, null, ""]) : reject(e)));
     c.on("close", () => {
       const t = out.toString();
       const i = t.indexOf("\r\n\r\n");

@@ -1,4 +1,5 @@
 import { CFunction, CString, dlopen, FFIType, JSCallback, type Pointer, read, toArrayBuffer } from "bun:ffi";
+import { libc as osLibc } from "@harbor/os";
 
 export class LibmpvUnavailable extends Error {
   constructor(readonly tried: readonly string[]) {
@@ -24,12 +25,21 @@ const EVENT_PROPERTY_CHANGE = 22;
 export const RTLD_NOW = 2;
 export const RTLD_GLOBAL = 0x100;
 
-const libc = dlopen("libc.so.6", {
+const LIBC = {
   calloc: { args: [FFIType.u64, FFIType.u64], returns: FFIType.ptr },
   free: { args: [FFIType.ptr], returns: FFIType.void },
   dlopen: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
   dlsym: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
-}).symbols;
+} as const;
+
+let libcSyms: ReturnType<typeof dlopen<typeof LIBC>>["symbols"] | undefined;
+
+/** The C library's allocator and loader, opened when the player is first used (importing this starts nothing). */
+function libc(): ReturnType<typeof dlopen<typeof LIBC>>["symbols"] {
+  const name = osLibc.libcNames()[0];
+  if (name === undefined) throw new Error("no C library to load the video player with");
+  return (libcSyms ??= dlopen(name, LIBC).symbols);
+}
 
 function pointer(v: bigint | Pointer | null): Pointer | null {
   return typeof v === "bigint" ? (Number(v) as Pointer) : v;
@@ -51,7 +61,7 @@ export class Native {
   }
 
   static alloc(size: number): Native {
-    const addr = pointer(libc.calloc(1, Math.max(size, 1)));
+    const addr = pointer(libc().calloc(1, Math.max(size, 1)));
     if (!addr) throw new Error(`out of memory (${size} bytes)`);
     return new Native(addr, size);
   }
@@ -66,7 +76,7 @@ export class Native {
   free(): void {
     if (this.freed) return;
     this.freed = true;
-    libc.free(this.addr);
+    libc().free(this.addr);
   }
 }
 
@@ -77,7 +87,7 @@ function addrOf(n: Native, offset = 0): bigint {
 export function globalLibrary(name: string): boolean {
   const n = Native.text(name);
   try {
-    return pointer(libc.dlopen(n.addr, RTLD_NOW | RTLD_GLOBAL)) !== null;
+    return pointer(libc().dlopen(n.addr, RTLD_NOW | RTLD_GLOBAL)) !== null;
   } finally {
     n.free();
   }
@@ -86,7 +96,7 @@ export function globalLibrary(name: string): boolean {
 export function hasSymbol(name: string): boolean {
   const n = Native.text(name);
   try {
-    return pointer(libc.dlsym(null, n.addr)) !== null;
+    return pointer(libc().dlsym(null, n.addr)) !== null;
   } finally {
     n.free();
   }
@@ -95,7 +105,7 @@ export function hasSymbol(name: string): boolean {
 export function pipewireVersion(): string | null {
   const n = Native.text("pw_get_library_version");
   try {
-    const f = pointer(libc.dlsym(null, n.addr));
+    const f = pointer(libc().dlsym(null, n.addr));
     if (!f) return null;
     const version = pointer(CFunction({ ptr: f, args: [], returns: FFIType.ptr })());
     return version ? new CString(version).toString() : null;

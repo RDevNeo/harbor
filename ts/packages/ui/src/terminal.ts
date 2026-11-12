@@ -1,6 +1,7 @@
 import { type IBufferCell, Terminal as Xterm } from "@xterm/headless";
 import { ansiPalette, fade, idxColor, keyBytes, type Mods, pasteBytes, rgb, type TermKey } from "./logic/terminal.ts";
 import { token } from "./theme.ts";
+import { env as osEnv } from "@harbor/os";
 
 /** A run of cells with one style, as terminal.slint draws it. */
 export interface TermRun {
@@ -51,7 +52,7 @@ export class Terminal {
     this.term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (p) => this.dectcem(p, false));
     this.term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (p) => this.dectcem(p, true));
     const vars: Record<string, string> = {};
-    for (const [k, v] of Object.entries({ ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor", ...env })) if (typeof v === "string") vars[k] = v;
+    for (const [k, v] of Object.entries({ ...process.env, ...osEnv.childDefaults(), TERM: "xterm-256color", COLORTERM: "truecolor", ...env })) if (typeof v === "string") vars[k] = v;
     this.proc = Bun.spawn(argv.length > 0 ? argv : [process.env.SHELL ?? "/bin/bash"], {
       cwd,
       env: vars,

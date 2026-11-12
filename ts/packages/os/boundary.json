@@ -1,7 +1,6 @@
 {
   "packages/agents/src/detach.ts": {
-    "linux-paths": 1,
-    "session": 1
+    "linux-paths": 1
   },
   "packages/agents/src/paths.ts": {
     "xdg": 1
@@ -43,8 +42,7 @@
     "libc": 1
   },
   "packages/media/src/libmpv.ts": {
-    "ffi": 1,
-    "libc": 1
+    "ffi": 1
   },
   "packages/media/src/videoworker.ts": {
     "ffi": 1,

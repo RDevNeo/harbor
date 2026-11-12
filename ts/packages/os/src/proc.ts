@@ -7,7 +7,17 @@ import { platform } from "./platform.ts";
 
 const procfs = (): boolean => platform() === "linux";
 
+let darwinLib: typeof import("./darwin.ts") | undefined;
+/** macOS's reader (libproc), loaded only there. */
+const mac = (): typeof import("./darwin.ts") | undefined =>
+  platform() === "darwin" ? (darwinLib ??= require("./darwin.ts") as typeof import("./darwin.ts")) : undefined;
+
+/** macOS's process states as /proc's letters. */
+const MAC_STATE: Record<number, string> = { 1: "D", 2: "R", 3: "S", 4: "T", 5: "Z" };
+
 export function pids(): number[] {
+  const m = mac();
+  if (m) return m.pids();
   if (!procfs()) return [];
   let names: string[];
   try {
@@ -35,7 +45,10 @@ export interface Stat {
   ppid: number;
   /** Its process group. */
   pgid: number;
-  /** When it started, in clock ticks since boot: with the pid, it names one process (pids are reused). */
+  /**
+   * When it started, as a number that, with the pid, names one process (pids are reused): clock ticks
+   * since boot on Linux, microseconds since the epoch on macOS. Only compared with this system's own.
+   */
   start: number;
   /** Resident memory in pages (pageSize() bytes each). */
   rssPages: number;
@@ -52,6 +65,13 @@ export function parseStat(text: string): Stat | undefined {
 }
 
 export function stat(pid: number | "self"): Stat | undefined {
+  const m = mac();
+  if (m) {
+    const b = m.bsdInfo(pid === "self" ? process.pid : pid);
+    if (b === undefined) return undefined;
+    const rss = m.residentBytes(pid === "self" ? process.pid : pid);
+    return { state: MAC_STATE[b.status] ?? "S", ppid: b.ppid, pgid: b.pgid, start: b.start, rssPages: rss === undefined ? Number.NaN : Math.round(rss / pageSize()) };
+  }
   if (!procfs()) return undefined;
   const t = read(`/proc/${pid}/stat`);
   return t === undefined ? undefined : parseStat(t);
@@ -100,6 +120,8 @@ export function running(pid: number): boolean {
 
 /** `pid` names a process, a zombie included. */
 export function exists(pid: number): boolean {
+  const m = mac();
+  if (m) return m.bsdInfo(pid) !== undefined;
   if (!procfs()) return false;
   try {
     statSync(`/proc/${pid}`);
@@ -113,6 +135,7 @@ export function exists(pid: number): boolean {
 export function startedAt(pid: number): number | undefined {
   const ticks = procStart(pid);
   if (ticks === undefined) return undefined;
+  if (mac()) return Math.floor(ticks / 1_000_000);
   const line = read("/proc/stat")?.split("\n").find((l) => l.startsWith("btime "));
   if (!line) return undefined;
   const btime = Number(line.slice(6).trim());
@@ -121,6 +144,8 @@ export function startedAt(pid: number): number | undefined {
 }
 
 export function cmdline(pid: number): string[] | undefined {
+  const m = mac();
+  if (m) return m.args(pid);
   if (!procfs()) return undefined;
   let raw: Buffer;
   try {
@@ -140,6 +165,8 @@ export function cmdline(pid: number): string[] | undefined {
 }
 
 export function ownerOf(pid: number): number | undefined {
+  const m = mac();
+  if (m) return m.bsdInfo(pid)?.uid;
   if (!procfs()) return undefined;
   try {
     return statSync(`/proc/${pid}`).uid;

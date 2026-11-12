@@ -96,6 +96,11 @@ const parse = (s: string): { [k: string]: Json } => JSON.parse(s) as { [k: strin
 
 /** Whether the bridge's end of the connection from local port `peer` sits in CLOSE_WAIT: the agent left and the bridge never closed (what kept a device's ssh open). */
 function closeWait(bridgePort: number, peer: number): boolean {
+  if (process.platform === "darwin") {
+    // macOS: netstat's rows read "127.0.0.1.<port> 127.0.0.1.<peer> CLOSE_WAIT".
+    const ns = Bun.spawnSync(["netstat", "-an", "-p", "tcp"]).stdout.toString();
+    return ns.split("\n").some((l) => l.trim().split(/\s+/).slice(3, 6).join(" ") === `127.0.0.1.${bridgePort} 127.0.0.1.${peer} CLOSE_WAIT`);
+  }
   const want = `0100007F:${bridgePort.toString(16).toUpperCase().padStart(4, "0")} 0100007F:${peer.toString(16).toUpperCase().padStart(4, "0")} 08`;
   return readFileSync("/proc/net/tcp", "utf8")
     .split("\n")

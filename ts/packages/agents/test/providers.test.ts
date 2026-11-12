@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as p from "../src/providers.ts";
@@ -297,7 +297,7 @@ test("Claude's models are read from the CLI's bundle in pieces, entries across p
   writeFileSync(fake, buf);
   await p.scanClaudeModels(fake);
   const saved = JSON.parse(readFileSync(p.claudeCachePath(), "utf8")) as { key: string; models: { id: string }[] };
-  expect(saved.key.startsWith(fake)).toBe(true);
+  expect(saved.key.startsWith(realpathSync(fake))).toBe(true);
   expect(saved.models.map((x) => x.id).sort()).toEqual(["claude-fable-5-1", "claude-fable-5-2", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]);
   expect(p.claudeModels(false).map((x) => [x.label, x.more])).toEqual([
     ["Opus 5.5", false],

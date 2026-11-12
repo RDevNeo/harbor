@@ -155,8 +155,67 @@ export function minutesText(secs: number): string {
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
+const MONTH_OF: Record<string, number> = Object.fromEntries(MONTHS.map((m, i) => [m.toLowerCase(), i]));
+
+/** The wall clock in `tz` (undefined: local) at unix time `t`. */
+function wallIn(t: number, tz?: string): { y: number; mo: number; d: number; h: number; mi: number } {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" });
+  const p = Object.fromEntries(f.formatToParts(new Date(t * 1000)).map((x) => [x.type, x.value]));
+  return { y: Number(p.year), mo: Number(p.month) - 1, d: Number(p.day), h: Number(p.hour) % 24, mi: Number(p.minute) };
+}
+
+/** Unix time of a wall-clock time in `tz` (undefined: local); null for a zone this system doesn't know. */
+function zoned(y: number, mo: number, d: number, h: number, mi: number, tz?: string): number | null {
+  try {
+    const want = Date.UTC(y, mo, d, h, mi) / 1000;
+    let t = want;
+    // The zone's offset at the guess, twice: once more lands right across a DST change.
+    for (let i = 0; i < 2; i++) {
+      const w = wallIn(t, tz);
+      t += want - Date.UTC(w.y, w.mo, w.d, w.h, w.mi) / 1000;
+    }
+    return Math.round(t);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Unix time for the dates limit messages use ("12am", "3:30pm", "Oct 30 5pm", "Nov 3, 2026 9:00 AM",
+ * "tomorrow 00:00"), in the given zone (undefined: local); null for anything else. A time alone is today's.
+ */
+export function parseWhen(expr: string, tz?: string, at: number = unixNow()): number | null {
+  const t = expr.trim().toLowerCase().replace(/,/g, " ").replace(/\s+/g, " ");
+  const m = /^(?:(tomorrow) )?(?:([a-z]{3})[a-z]* (\d{1,2})(?:st|nd|rd|th)?(?: (\d{4}))? )?(\d{1,2})(?::(\d{2}))?(?::\d{2})? ?(am|pm)?$/.exec(t);
+  if (!m) return null;
+  let h = Number(m[5]);
+  const mi = m[6] === undefined ? 0 : Number(m[6]);
+  if (m[7] !== undefined) {
+    if (h < 1 || h > 12) return null;
+    h = (h % 12) + (m[7] === "pm" ? 12 : 0);
+  } else if (m[6] === undefined) return null;
+  if (h > 23 || mi > 59) return null;
+  const today = wallIn(at, tz);
+  let y = today.y;
+  let mo = today.mo;
+  let d = today.d;
+  if (m[2] !== undefined) {
+    const month = MONTH_OF[m[2]];
+    if (month === undefined) return null;
+    mo = month;
+    d = Number(m[3]);
+    if (m[4] !== undefined) y = Number(m[4]);
+  }
+  const base = zoned(y, mo, d, h, mi, tz);
+  return base === null ? null : base + (m[1] !== undefined ? 24 * 3600 : 0);
+}
+
 /** Unix time for a date(1) expression, in the given zone (undefined: local). */
 function date(expr: string, tz?: string): number | null {
+  const own = parseWhen(expr, tz);
+  if (own !== null) return own;
+  // GNU date reads more wordings, where there is one (not on macOS or Windows).
+  if (process.env.HARBOR_NO_GNU_DATE) return null;
   const env = tz === undefined ? process.env : { ...process.env, TZ: tz };
   const r = spawnSync("date", ["-d", expr, "+%s"], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   if (r.error) return null;

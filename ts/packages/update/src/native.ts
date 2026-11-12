@@ -38,9 +38,9 @@ export function extractNative(files: NativeFiles, base: string): string {
 export type Addon = "sharp" | "sherpa" | "slint";
 
 const ADDONS: Record<Addon, RegExp> = {
-  sharp: /^sharp\/@img\/sharp-linux[^/]*\/lib\/[^/]+\.node$/,
+  sharp: /^sharp\/@img\/sharp-(linux|darwin)[^/]*\/lib\/[^/]+\.node$/,
   sherpa: /^sherpa\/sherpa-onnx\.node$/,
-  slint: /^slint\/slint-ui\.linux-[^/]+\.node$/,
+  slint: /^slint\/slint-ui\.(linux|darwin)-[^/]+\.node$/,
 };
 
 export function addonPath(files: NativeFiles, addon: Addon): string | null {

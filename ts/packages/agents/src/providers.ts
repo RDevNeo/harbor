@@ -2,6 +2,8 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
 import { dataDir, home, writePrivate } from "./paths.ts";
+import * as claudecreds from "./claudecreds.ts";
+import { env as osEnv } from "@harbor/os";
 
 export const KINDS = ["Claude", "Codex", "OpenCode"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -207,6 +209,7 @@ export function childPath(): string {
     const p = join(h, extra);
     if (!dirs.includes(p)) dirs.push(p);
   }
+  for (const p of osEnv.systemToolDirs()) if (!dirs.includes(p)) dirs.push(p);
   return dirs.join(":");
 }
 
@@ -274,8 +277,14 @@ function claudeAccount(id: string, dir: string, json: string, n: number): Accoun
   const email = str(at(oauth, "emailAddress"));
   const display = str(at(oauth, "displayName"));
   const name = display !== "" ? display : n === 1 ? "Claude" : `Claude ${n}`;
-  const creds = readJson(join(dir, ".credentials.json"));
-  const login = at(creds, "claudeAiOauth");
+  const profile = n > 1 ? dir : null;
+  const text = claudecreds.read(profile);
+  let login: unknown = null;
+  try {
+    login = text === null ? null : at(JSON.parse(text), "claudeAiOauth");
+  } catch {
+    // a broken file: no plan to show
+  }
   return {
     id,
     kind: "Claude",
@@ -285,7 +294,7 @@ function claudeAccount(id: string, dir: string, json: string, n: number): Accoun
     plan: claudePlan(login),
     configDir: n > 1 ? dir : null,
     bin: which("claude"),
-    loggedIn: existsSync(join(dir, ".credentials.json")) || oauth !== null,
+    loggedIn: text !== null || oauth !== null,
     usage: [],
   };
 }

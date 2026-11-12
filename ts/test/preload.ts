@@ -35,6 +35,8 @@ for (const [k, sub] of [["HOME", "home"], ["XDG_DATA_HOME", "data"], ["XDG_STATE
   mkdirSync(process.env[k] ?? "", { recursive: true, mode: 0o700 });
 }
 delete process.env.HARBOR_SOCK;
+// macOS keeps logins in the user's own keychain, which a sandboxed HOME doesn't reach: tests use files.
+process.env.HARBOR_NO_KEYCHAIN = "1";
 
 const clean = (): void => rmSync(dir, { recursive: true, force: true });
 afterAll(clean);
