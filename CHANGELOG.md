@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.180.2] - 2026-11-12
+
+### Fixed
+- Windows: Codex (and Claude Code) installed with npm run their turns: npm's `codex.cmd` can't take an argument
+  with a quote, `&` or `%` (a prompt, a JSON config), so Harbor runs the node script behind it directly.
+- Windows and macOS: opening a file, a link, a non-image attachment or a voice recording from Harbor's window
+  uses the system's own opener (it called `xdg-open`, Linux's), and pasting into a terminal pane reads the
+  system's clipboard.
+
 ## [0.180.1] - 2026-11-12
 
 ### Fixed

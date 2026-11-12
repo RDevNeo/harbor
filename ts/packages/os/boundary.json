@@ -86,10 +86,6 @@
     "compositor": 5,
     "platform": 1
   },
-  "packages/ui/src/shell.ts": {
-    "compositor": 1,
-    "desktop-tools": 4
-  },
   "packages/ui/src/termrun.ts": {
     "compositor": 1
   },

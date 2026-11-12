@@ -3,6 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Item } from "@harbor/store";
+import { env as osEnv } from "@harbor/os";
 import { at, optStr, parse } from "./json.ts";
 import { dataDir } from "./paths.ts";
 
@@ -246,7 +247,7 @@ export async function askWithin(bin: string, env: Env, system: string, prompt: s
     else e[k] = v;
   }
   const p = Bun.spawn(
-    [bin, "-p", "--model", model, "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--setting-sources", "user", "--settings", '{"disableAllHooks":true}', "--system-prompt", system],
+    [...osEnv.argvOf(bin, e), "-p", "--model", model, "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--setting-sources", "user", "--settings", '{"disableAllHooks":true}', "--system-prompt", system],
     { cwd: dir, env: e, stdin: "pipe", stdout: "pipe", stderr: "ignore" },
   );
   try {

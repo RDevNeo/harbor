@@ -134,3 +134,14 @@ function currentEnvForBun(): void {
     // Bun's own functions can't be replaced: programs are then found on the start PATH only
   }
 }
+
+/**
+ * The command line that runs `program` (a resolved path): itself, except on Windows for npm's .cmd shims (Codex,
+ * Claude Code from npm), which become node and the package's script, so arguments with quotes, `&` or `%` (a
+ * prompt, a JSON config) reach the program as they are. Spawn `[...argvOf(p), ...args]`.
+ */
+export function argvOf(program: string, env: Env = process.env): string[] {
+  if (platform() !== "win32") return [program];
+  const { argvOf: shim } = require("./win32/shim.ts") as typeof import("./win32/shim.ts");
+  return shim(program, (name) => Bun.which(name, { PATH: env.PATH ?? env.Path ?? "" }));
+}

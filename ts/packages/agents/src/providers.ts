@@ -647,7 +647,7 @@ export function refreshOpencodeModels(binPath: string | null = which(bin("OpenCo
   }
   ocFetching = (async () => {
     try {
-      const p = Bun.spawn([binPath, "models"], { env: { ...process.env, PATH: childPath() }, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const p = Bun.spawn([...osEnv.argvOf(binPath), "models"], { env: { ...process.env, PATH: childPath() }, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
       const timer = setTimeout(() => p.kill("SIGKILL"), 60_000);
       const text = await new Response(p.stdout).text();
       await p.exited;

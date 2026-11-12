@@ -20,7 +20,7 @@ import { compactFirst } from "./compaction.ts";
 import { arr, at, compact, isNull, optStr, parse } from "./json.ts";
 import { lend, token, unlend } from "./oauth.ts";
 import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from "./paths.ts";
-import { proc, spawn as osSpawn } from "@harbor/os";
+import { env as osEnv, proc, spawn as osSpawn } from "@harbor/os";
 import { alive, cmdline, myUid, ownerOf, parentOf, pids, procStart, startedAt } from "./procfs.ts";
 import { bin, KINDS, which } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
@@ -661,11 +661,15 @@ export async function run(args: readonly string[]): Promise<void> {
   const remote = basename(program) === "ssh";
   const device = varOf(DEVICE);
   delete env[DEVICE];
-  const resolved = program.includes("/") || isAbsolute(program) ? program : which_(program, env.PATH);
+  const found = program.includes("/") || isAbsolute(program) ? program : which_(program, env.PATH);
+  // Windows: an npm shim (codex.cmd) runs as node and its script, so no argument goes through cmd.exe.
+  const line = found === null ? null : osEnv.argvOf(found, env);
+  const resolved = line?.[0] ?? null;
+  const pre = line?.slice(1) ?? [];
   // A long Claude session is compacted before the turn loads it (not one on another device: its file is there).
   const session = optStr(at(spec, "compact"));
   if (!remote && session !== undefined && resolved !== null) {
-    await compactFirst(dir, session, { program: resolved, argv, cwd: cwd ?? process.cwd(), env }, (l) => {
+    await compactFirst(dir, session, { program: resolved, argv: [...pre, ...argv], cwd: cwd ?? process.cwd(), env }, (l) => {
       try {
         appendFileSync(join(dir, "out"), l, { mode: 0o600 });
       } catch {
@@ -698,9 +702,9 @@ export async function run(args: readonly string[]): Promise<void> {
         stdin: input ? "pipe" : "ignore",
         stdout: outFd,
         stderr: remote ? "pipe" : errFd,
-        argv0: program,
+        ...(pre.length === 0 ? { argv0: program } : {}),
       };
-      child = Bun.spawn([resolved, ...argv], opts as SpawnOpts) as unknown as Child;
+      child = Bun.spawn([resolved, ...pre, ...argv], opts as SpawnOpts) as unknown as Child;
     } catch (e) {
       appendTo(join(dir, "err"), `${program}: ${ioText(e)}\n`);
       giveBack();

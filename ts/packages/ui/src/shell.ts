@@ -283,7 +283,7 @@ export class Shell {
       images: this.images,
       store: this.data.store,
       toast: (m) => this.toast(m),
-      open: (file) => void Bun.spawn(["xdg-open", file], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+      open: (file) => osDesktop.open(file),
       ...(this.hub.player ? { source: this.hub.player } : {}),
     });
     this.voice = new pkg.voiceCtl.VoiceCtl({
@@ -522,7 +522,7 @@ export class Shell {
       label: (text) => this.label(text),
       separator: () => this.separator(),
       toast: (text) => this.toast(text),
-      openFile: (path) => void Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+      openFile: (path) => osDesktop.open(path),
     });
     this.meshChat = new MeshChat(hub.mesh ?? solo, {
       restore: (chat, text, mentions, append) => this.restoreSend(chat, text, mentions, append),
@@ -854,8 +854,10 @@ export class Shell {
     w.pane_pick = (d, k) => this.pickSurface(dock(d), k);
     w.term_key = (d, k, text, ctrl, alt, shift) => this.termOf(dock(d))?.key(k === "none" ? { text } : k, { ctrl, alt, shift });
     w.term_paste = (d) => {
-      const p = Bun.spawnSync(["wl-paste", "-n"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-      if (p.exitCode === 0) this.termOf(dock(d))?.paste(p.stdout.toString());
+      // The desktop's clipboard (wl-paste, xclip, Windows' or macOS' own), its text only.
+      void this.media?.clipboard.read().then((c) => {
+        if (c?.type === "text") this.termOf(dock(d))?.paste(c.text);
+      });
     };
     w.term_wheel = (d, n) => {
       this.termOf(dock(d))?.wheel(n);
@@ -3569,7 +3571,7 @@ export class Shell {
     if (!img || !media) return;
     const shows = (p: string): boolean => media.images.isImage(p) || media.media.isVideo(p);
     if (!shows(path)) {
-      Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      osDesktop.open(path);
       return;
     }
     let group: string[] = [path];
@@ -5229,7 +5231,7 @@ export class Shell {
 
   private openExternal(url: string): void {
     if (!web(url) && !/^mailto:/i.test(url)) return;
-    Bun.spawn(["xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    osDesktop.open(url);
   }
 }
 

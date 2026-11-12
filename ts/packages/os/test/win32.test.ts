@@ -1,10 +1,14 @@
 // Windows' pieces that are plain code (formats, layouts, registry values), checked on any system.
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 import { decodeCfHtml, decodeDib, decodeHdrop, decodePng, encodeCfHtml, encodeDib, encodeHdrop, encodePng, pathsOfUriList, uriListOfPaths } from "../src/win32/formats.ts";
 import { plan } from "../src/win32/clipboard.ts";
 import { command, isOn } from "../src/win32/login.ts";
 import { toastXml } from "../src/win32/notify.ts";
 import { fitRect } from "../src/win32/desktop.ts";
+import { argvOf, shimTarget } from "../src/win32/shim.ts";
 import { menuLabel, notifyIconData } from "../src/win32/tray.ts";
 import { guid } from "../src/win32/gui.ts";
 
@@ -174,5 +178,53 @@ describe("fitRect", () => {
     const r = fitRect({ left: 1920, top: 0, right: 4020, bottom: 1350 }, { left: 1920, top: 0, right: 3840, bottom: 1080 });
     expect(r?.left).toBeGreaterThanOrEqual(1920);
     expect(r?.right).toBeLessThanOrEqual(3840);
+  });
+});
+
+describe("npm shims", () => {
+  // cmd-shim's output for a package's bin (npm 10), as codex.cmd has it.
+  const NODE_SHIM = [
+    "@ECHO off",
+    "GOTO start",
+    ":find_dp0",
+    "SET dp0=%~dp0",
+    "EXIT /b",
+    ":start",
+    "SETLOCAL",
+    "CALL :find_dp0",
+    "",
+    'IF EXIST "%dp0%\\node.exe" (',
+    '  SET "_prog=%dp0%\\node.exe"',
+    ") ELSE (",
+    '  SET "_prog=node"',
+    "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+    ")",
+    "",
+    'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+    "",
+  ].join("\r\n");
+  test("a node script's shim names the script", () => {
+    expect(shimTarget(NODE_SHIM)).toEqual({ target: "node_modules\\@openai\\codex\\bin\\codex.js", node: true });
+  });
+  test("a program's shim names the program", () => {
+    expect(shimTarget('@ECHO off\r\n"%~dp0\\..\\tool\\bin\\tool.exe"   %*\r\n')).toEqual({ target: "..\\tool\\bin\\tool.exe", node: false });
+  });
+  test("anything else is no shim", () => {
+    expect(shimTarget("@echo off\r\necho hi\r\n")).toBeNull();
+  });
+  test("argvOf: node and the script, or the program as it was", () => {
+    const d = mkdtempSync(join(tmpdir(), "shim-"));
+    try {
+      mkdirSync(join(d, "node_modules", "@openai", "codex", "bin"), { recursive: true });
+      writeFileSync(join(d, "node_modules", "@openai", "codex", "bin", "codex.js"), "");
+      // Windows' separators in the shim; this test runs anywhere, so its own separator is used.
+      writeFileSync(join(d, "codex.cmd"), NODE_SHIM.replaceAll("\\node_modules\\@openai\\codex\\bin\\", `\\node_modules${sep}@openai${sep}codex${sep}bin${sep}`));
+      const target = join(d, "node_modules", "@openai", "codex", "bin", "codex.js");
+      expect(argvOf(join(d, "codex.cmd"), () => "/x/node")).toEqual(["/x/node", target]);
+      expect(argvOf(join(d, "codex.cmd"), () => null)).toEqual([join(d, "codex.cmd")]);
+      expect(argvOf(join(d, "codex.exe"), () => "/x/node")).toEqual([join(d, "codex.exe")]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
