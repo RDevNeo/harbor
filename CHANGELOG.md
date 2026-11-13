@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.183.0] - 2026-11-13
+
+### Added
+- Run anywhere: a chat of any PC of your workspaces runs on the PC you type in it on. It comes with its agent
+  session and its unpushed work; the PC it was on keeps a copy. While it runs on another PC, your message goes to
+  that run; Runs on picks another PC for it.
+
+### Changed
+- A chat whose PC is off simply goes on on the PC you type on, with no line or notice about it.
+- Messages show who wrote them, not a PC's host name.
+
 ## [0.182.2] - 2026-11-13
 
 ### Fixed
