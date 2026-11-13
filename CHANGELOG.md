@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.182.0] - 2026-11-13
+
 ### Added
 - Chats and projects follow the account and its workspaces: each PC keeps its chats (title, project, transcript)
   and projects encrypted in the account service, with one key per workspace that only its members' PCs get. A
