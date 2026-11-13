@@ -22,9 +22,14 @@ go down (`bun packages/os/test/boundary.ts --write` lowers them after you move s
 
 ## Follow main and soaked releases
 
-A PC with Follow main on (`ts/packages/update/src/followmain.ts`) builds and runs every main commit that
-changes the app bundle within seconds, from its own clone, so a push from your worktree goes live there:
-keep main working. `harbor follow-main status` says what it's doing. To release only what has run there
+A PC with Follow main on (`ts/packages/update/src/followmain.ts`) runs every main commit that changes the
+app bundle within seconds, so a push from your worktree goes live there: keep main working. Each push is
+built once on GitHub (`.github/workflows/main.yml`: tsc, the bundle, signed, on the rolling prerelease
+`main-build`); a PC downloads that when it's there, waits for it when building itself would be slow (no
+packages installed for that lockfile yet), and otherwise builds from its own clone (skipping `bun install`
+when the lockfile is the one installed). `harbor follow-main status` says what it's doing;
+`bun ts/rig/followmain-dry.ts --runtime PATH` runs the whole thing beside the running Harbor (throwaway
+installs) and prints the timings. To release only what has run there
 for hours without a crash: `bun ts/scripts/soaked.ts status`, then `bun ts/scripts/soaked.ts release`
 (`--dry-run`, `--minor`, `--note TEXT`); `gate [COMMIT]` is the check alone. Manual tagging still works.
 Every restart (follow-main, release, `harbor restart`) hands over: the new process builds its window first,
@@ -109,7 +114,8 @@ then sign, attest and publish. Two exceptions in release.yml, approved by the us
 release tag (plan says `where=runner`) builds its JavaScript on the GitHub runners themselves
 (`.github/runner/build.sh`, x86_64 and an arm64 runner) and publishes from `package`; and the
 release's unsigned phone app always builds on a runner (`.github/runner/android.sh`, job `android`),
-signed in `package` as before. Runtime releases' desktop builds, every other workflow and every
+signed in `package` as before. Likewise main.yml builds each push to main's app bundle (JavaScript
+only) on a runner for the PCs following main. Runtime releases' desktop builds, every other workflow and every
 build for development stay on boat (`scripts/boat/android` for the APK).
 
 A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor (the APK,
@@ -154,7 +160,7 @@ the video player, the Slint addon and releases build on boat).
     release skips the install tests (package checks the bundle on the runtime PCs have) and, when
     `android/` didn't change, reattaches the latest release's signed APK instead of building one;
     such a release builds on the GitHub runners, not boat (the exception above). A release is the
-    `v*` tag alone: a push to main builds nothing, and running release.yml by hand on main
+    `v*` tag alone: a push to main builds no release (main.yml only its app bundle, for follow-main), and running release.yml by hand on main
     is the dry run (signs and publishes nothing, saves the snapshot).
   - `.github/boat/video.sh`: Harbor's video player, libmpv and FFmpeg as one library for x86_64 and
     aarch64 (video/build.sh, video.yml). `scripts/boat/video` runs it on the working tree.
