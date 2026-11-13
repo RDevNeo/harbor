@@ -107,6 +107,20 @@ test("calls reach the app over its socket", async () => {
   l?.stop();
 });
 
+test("a screenshot comes over the socket as MCP content", async () => {
+  const path = join(root, "c.sock");
+  // A screenshot's worth of base64 on one line.
+  const image = { type: "image", data: Buffer.alloc(600_000, 7).toString("base64"), mimeType: "image/png" };
+  const l = startSocket({
+    path,
+    send: (i) => {
+      if (i.kind === "tool") i.call.reply(true, "Screen", [{ type: "text", text: "Screen" }, image]);
+    },
+  });
+  expect(await callApp(5, "computer", { action: "screenshot" }, { path })).toEqual([true, "Screen", [{ type: "text", text: "Screen" }, image]]);
+  l?.stop();
+});
+
 test("a missing socket reports that Harbor is not running", async () => {
   expect(await callApp(1, "x", {}, { path: join(root, "none.sock"), waitMs: 300 })).toEqual([false, "Harbor is not running"]);
 });
