@@ -20,3 +20,4 @@ export * as tray from "./tray.ts";
 export * as autostart from "./autostart.ts";
 export * as audio from "./audio.ts";
 export * as notify from "./notify.ts";
+export * as screen from "./screen/index.ts";

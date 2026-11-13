@@ -14,7 +14,8 @@ export interface ToolCall {
   chatId: number;
   tool: string;
   args: Json;
-  reply(ok: boolean, text: string): void;
+  /** `content`: the MCP content, when the answer has more than text (a screenshot). */
+  reply(ok: boolean, text: string, content?: Json[]): void;
 }
 
 export interface Hook {
@@ -107,11 +108,11 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
     }
     let answered = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const done = (ok: boolean, text: string): void => {
+    const done = (ok: boolean, text: string, content?: Json[]): void => {
       if (answered) return;
       answered = true;
       if (timer) clearTimeout(timer);
-      reply(socket, { ok, text });
+      reply(socket, content === undefined ? { ok, text } : { ok, text, content });
     };
     timer = setTimeout(() => done(false, "Harbor did not answer"), TOOL_WAIT_MS);
     const call: ToolCall = {

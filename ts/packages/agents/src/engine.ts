@@ -104,6 +104,8 @@ export interface EngineHost {
   restoreDraft?(chatId: number, text: string, files: string[], mentions: Mention[]): void;
   /** Tools other packages answer (secrets, chats across PCs, open_chat); undefined: not theirs. */
   tool?(chat: Chat, name: string, args: unknown): Promise<string> | undefined;
+  /** The `computer` tool (mcp's computer.ts): its MCP content (text and screenshots), ok or not. */
+  computer?(chat: Chat, args: unknown): Promise<{ ok: boolean; content: unknown[] }>;
   /** Running on a copy of someone's data (ts/run.sh): only a message the person sends starts a turn. No timer,
    *  usage-limit wait, recap or turn left running by the copy's Harbor acts on its own. */
   offline?: boolean;
@@ -1777,6 +1779,15 @@ export class Engine {
     if (other !== undefined) return other;
     if (name === "retire_agent") return tools.now.retireCall(this, me, args);
     return tools.now.teamTool(this, me, name, args);
+  }
+
+  /** The `computer` tool (`harbor mcp`): MCP content, as screenshots don't fit in a text answer. */
+  async computer(chatId: number, args: unknown): Promise<{ ok: boolean; content: unknown[] }> {
+    const me = this.chat(chatId);
+    if (!me) throw new Error("unknown agent");
+    if (me.retired) throw new Error("this agent was retired");
+    if (!this.host.computer) throw new Error("computer use isn't part of this Harbor");
+    return this.host.computer(me, args);
   }
 
   /** Moves a chat (a lead's subagent, from switch_agent_account or the Agents panel) to another account, keeping its

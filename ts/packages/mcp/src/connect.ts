@@ -1,5 +1,6 @@
 import { type Engine, team } from "@harbor/agents";
-import { type Hook, type Incoming, type Listener, type SocketOptions, startHooks, startSocket } from "./control.ts";
+import { type Hook, type Incoming, type Listener, type SocketOptions, startHooks, startSocket, type ToolCall } from "./control.ts";
+import { isObject, type Json } from "./json.ts";
 
 
 export interface ConnectOptions<A, M, O> {
@@ -35,14 +36,25 @@ export function deliverHook(engine: Engine, h: Hook, ensureLead?: (repo: number)
   return true;
 }
 
+/** Answers a team tool call from the control socket (`harbor mcp`); `computer` answers with MCP content (screenshots). */
+export function answerTool(engine: Engine, call: ToolCall): void {
+  const { chatId, tool, args, reply } = call;
+  const failed = (e: unknown): void => reply(false, e instanceof Error ? e.message : String(e));
+  if (tool === "computer") {
+    engine.computer(chatId, args).then((r) => {
+      const content = r.content as Json[];
+      const text = content.map((c) => (isObject(c) && typeof c.text === "string" ? c.text : "")).join("\n");
+      reply(r.ok, text, content);
+    }, failed);
+    return;
+  }
+  engine.tool(chatId, tool, args).then((text) => reply(true, text), failed);
+}
+
 export function connect<A = never, M = never, O = never>(o: ConnectOptions<A, M, O>): Connected {
   const send = (i: Incoming<A, M, O>): void => {
     if (i.kind === "tool") {
-      const { chatId, tool, args, reply } = i.call;
-      o.engine.tool(chatId, tool, args).then(
-        (text) => reply(true, text),
-        (e: unknown) => reply(false, e instanceof Error ? e.message : String(e)),
-      );
+      answerTool(o.engine, i.call);
     } else if (i.kind === "hook") {
       deliverHook(o.engine, i.hook, o.ensureLead);
     } else o.other?.(i);

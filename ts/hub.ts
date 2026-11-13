@@ -16,7 +16,7 @@ import { FolderTracker } from "./foldertrack.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
-import { discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
+import { computer, discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
   Vault,
@@ -148,7 +148,7 @@ import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
 import { chatCloud } from "./cloudsync.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer">;
 
 export interface HubOptions {
   /** What peers and phones compare (advertised: older ones read only the first three numbers). */
@@ -1021,7 +1021,30 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (!engine) throw new Error("the engine isn't started");
     return engine;
   };
+  // Computer use: the user's switches in Settings › General, a notification when an agent starts using the screen,
+  // and calls for another PC's screen through the mesh.
+  computer.setHost({
+    on: () => store.get(computer.ON_KEY) === "1",
+    peers: () => store.get(computer.PEERS_KEY) === "1",
+    started: (who, here) =>
+      eng().host.notify?.(
+        "computer",
+        "computer-use",
+        here ? `${who} is using your screen` : `${who} is using this PC's screen`,
+        "An agent moves the mouse and types here (computer use). Move the pointer into the screen's top-left corner to stop it; turn it off in Settings › General.",
+      ),
+    remote: (m, args, ctx) => machines.remoteComputer(m, args, ctx),
+  });
   const host: HubHost = {
+    computer: (chat, args) =>
+      computer.call(args, {
+        chatId: chat.id,
+        title: chat.role === "sub" && chat.name !== "" ? chat.name : chat.title,
+        access: chat.access,
+        chatGid: chat.gid,
+        project: chat.repoId === null ? "" : (eng().repo(chat.repoId)?.name ?? ""),
+        notice: (t) => eng().notice(chat.id, "monitor", t),
+      }),
     // A window's Engine shares the hub's accounts: one list, read again every minute and when usage is asked for.
     accounts: () => accounts,
     rediscover,

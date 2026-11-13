@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { mkdirSync } from "node:fs";
 import { projectsdir, type Store } from "@harbor/store";
 import { picker, voiceCtl } from "@harbor/media";
-import { harborVersion, mcp } from "@harbor/mcp";
+import { computer, harborVersion, mcp } from "@harbor/mcp";
 import { providers } from "@harbor/agents";
 import { AUTOSTART_DEFAULT_KEY, autostart, installedLauncher, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
@@ -126,7 +126,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const blocks = await blockTabs(store, () => show(), deps.copy, deps.runtime);
 
   function sections(t: Tab): SettingSection[] {
-    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion() });
+    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion(), computer: computer.statusLine() });
     return [];
   }
 
