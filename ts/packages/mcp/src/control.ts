@@ -56,9 +56,20 @@ export interface Listener {
   stop(): void;
 }
 
-function reply(socket: { write(d: string): number; end(): void }, v: Json): void {
-  socket.write(`${JSON.stringify(v)}\n`);
-  socket.end();
+/** What a reply still has to write (a big one, such as a screenshot, doesn't go in one write): sent on `drain`, then the socket ends. */
+const unsent = new WeakMap<object, Buffer>();
+
+/** Writes `data` and ends the socket once all of it went (the rest waits for `drain`). */
+function writeAll(socket: { write(d: string | Buffer): number; end(): void }, data: Buffer): void {
+  const n = socket.write(data);
+  if (n >= data.length) {
+    unsent.delete(socket);
+    socket.end();
+  } else unsent.set(socket, data.subarray(Math.max(0, n)));
+}
+
+function reply(socket: { write(d: string | Buffer): number; end(): void }, v: Json): void {
+  writeAll(socket, Buffer.from(`${JSON.stringify(v)}\n`));
 }
 
 export function startSocket<A = never, M = never, O = never>(opts: SocketOptions<A, M, O>): Listener | undefined {
@@ -66,7 +77,7 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
   rmSync(path, { force: true });
   const buffers = new WeakMap<object, { text: string; timer: ReturnType<typeof setTimeout>; done: boolean }>();
   const raise = opts.raise ?? ((): boolean => single.raise());
-  const dispatch = (socket: { write(d: string): number; end(): void }, v: Json): void => {
+  const dispatch = (socket: { write(d: string | Buffer): number; end(): void }, v: Json): void => {
     if (!isObject(v)) return socket.end();
     if (v.focus === true) {
       const raised = raise();
@@ -151,9 +162,14 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
           }
           dispatch(socket, v);
         },
+        drain(socket) {
+          const rest = unsent.get(socket);
+          if (rest) writeAll(socket, rest);
+        },
         close(socket) {
           const b = buffers.get(socket);
           if (b) clearTimeout(b.timer);
+          unsent.delete(socket);
         },
         error() {},
       },
