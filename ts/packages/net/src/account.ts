@@ -7,6 +7,7 @@ import { loadRemote, newHost, saveRemote } from "./remote.ts";
 import { peerDevices, type Allowed, type Me, type PeerDevice } from "./shared.ts";
 import { sha256Hex, short, signWith, spkiOf, type Identity } from "./tls.ts";
 import type { Vault } from "./vault.ts";
+import type { ChatCloud } from "./chatcloud.ts";
 import { wire, type Json } from "./wire.ts";
 import { desktop } from "@harbor/os";
 
@@ -41,6 +42,9 @@ const SYNC_EVERY = 60_000;
 const VAULT_EVERY = 20_000;
 const KEYS_EVERY = 6 * 3600_000;
 const HTTP_TIMEOUT = 20_000;
+/** A vault round the loop waits for at most: one that hangs (a single-host check that never answers) runs on by itself,
+ * and the loop goes on fetching the directory, the settings and the rest. */
+const VAULT_WAIT = 60_000;
 
 export type AccountRole = "owner" | "member";
 
@@ -775,6 +779,10 @@ export interface AccountOptions {
   settings?: AccountSettingsSync | undefined;
   /** The account vault (vault.ts): synced on each turn of the loop while signed in, handed back on a sign-out. */
   vault?: Vault | undefined;
+  /** The workspace cloud (chatcloud.ts): this PC's chats and projects up, the workspaces' down; a round each turn, never waited for. */
+  cloud?: ChatCloud | undefined;
+  /** Tests: how long a turn waits for the vault's round (VAULT_WAIT). */
+  vaultWaitMs?: number | undefined;
   env?: Record<string, string | undefined> | undefined;
   /** Keys shipped in this build; defaults to `ACCOUNT_KEYS`. */
   keys?: readonly (readonly [string, string])[] | undefined;
@@ -1519,6 +1527,7 @@ export class AccountService {
   signOut(): void {
     // The vault takes what changed here and this PC's copies go (it holds the token it was last given).
     void this.o.vault?.leave();
+    this.o.cloud?.leave();
     rmSync(this.secretsPath(), { force: true });
     this.hangUp();
     this.setAccount(null, null);
@@ -1845,7 +1854,10 @@ export class AccountService {
     if ((this.acct?.id ?? null) !== (next?.id ?? null)) {
       this.hangUp();
       // Signed out from a terminal (`harbor account logout`): the vault is handed back as on the button.
-      if (this.acct !== null) void this.o.vault?.leave();
+      if (this.acct !== null) {
+        void this.o.vault?.leave();
+        this.o.cloud?.leave();
+      }
     }
     const came = next !== null && !this.signedIn();
     this.acct = next;
@@ -1960,7 +1972,16 @@ export class AccountService {
     if (vault && who !== "" && (this.vaultDue || this.due(this.vaultAt, VAULT_EVERY))) {
       this.vaultDue = false;
       this.vaultAt = this.nowMs();
-      await vault.sync(who, (method, path, body) => this.service(method, path, token, body));
+      const round = vault.sync(who, (method, path, body) => this.service(method, path, token, body));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = await Promise.race([round.then(() => false), new Promise<boolean>((r) => (timer = setTimeout(() => r(true), this.o.vaultWaitMs ?? VAULT_WAIT)))]);
+      clearTimeout(timer);
+      if (late) this.log(() => "the vault's round is taking long: the loop goes on without it");
+    }
+    const cloud = this.o.cloud;
+    if (cloud && who !== "") {
+      const workspaces = this.dir.workspaces.map((w) => w.id);
+      void cloud.sync({ account: who, mine: this.ws, workspaces, call: (method, path, body) => this.service(method, path, token, body) });
     }
   }
 

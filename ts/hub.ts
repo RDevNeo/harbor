@@ -145,6 +145,7 @@ import { type Chat, dataDir, home, repoDir, secrets, settingsync, stateDir, Stor
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
+import { chatCloud } from "./cloudsync.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
 export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover">;
@@ -362,6 +363,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     log: vaultLog,
   });
   single.attach();
+  // The workspace cloud: this PC's chats and projects follow the account and its workspaces to PCs that are on while this one is off (cloudsync.ts).
+  const cloud = chatCloud({
+    stateDir: state,
+    fp: () => id.fp,
+    store,
+    hub,
+    replica: () => replica,
+    directory: () => account.directory(),
+    running: (chat) => engine?.runningSince(chat) != null,
+    copied: (chat) => engine?.storeChanged(chat),
+    log: env.HARBOR_ACCOUNT_LOG === "1" ? (line: string) => process.stderr.write(`cloud: ${line}\n`) : undefined,
+  });
   const account = new AccountService({
     kv: store,
     stateDir: state,
@@ -371,6 +384,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     version: o.version,
     env,
     vault,
+    cloud,
     // The account's settings (settingsync KEYS of class account): pulled each minute, sent shortly after a change here.
     settings: {
       load: () => settingsync.load(store),

@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Chats and projects follow the account and its workspaces: each PC keeps its chats (title, project, transcript)
+  and projects encrypted in the account service, with one key per workspace that only its members' PCs get. A
+  new PC, or one whose sibling is off, lists every chat of the workspaces' PCs and opens them read-only; a message
+  sent to one carries it on here, as with a PC that went off. Projects without a folder here offer to clone.
+  The account service needs its new `/v1/cloud` endpoints (migration 0008); until they're deployed, chats sync
+  over the mesh only, as before.
+
+### Fixed
+- The account loop no longer stops when the vault's round hangs (on Windows a check of a WhatsApp or Discord host
+  could wait forever): Settings › Workspace no longer stays on "Fetching the workspace…", and the directory,
+  settings and invitations keep coming.
+
 ## [0.181.5] - 2026-11-12
 
 ### Fixed

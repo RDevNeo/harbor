@@ -280,3 +280,24 @@ export async function putVault(req, env, p, tell) {
   if (loud) await tell([p.sub]);
   return { now: Date.now(), results };
 }
+
+/** Seals `bytes` with the Worker secret, bound to `aad` (the workspace cloud's keys, src/cloud.js). */
+export async function sealSecret(env, aad, bytes) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: te.encode(aad) }, await sealKey(env), bytes));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv);
+  out.set(ct, 12);
+  return b64(out);
+}
+
+/** What `sealSecret` sealed, or null when it doesn't open (the secret changed). */
+export async function openSecret(env, aad, text) {
+  try {
+    const box = unb64(text);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: box.subarray(0, 12), additionalData: te.encode(aad) }, await sealKey(env), box.subarray(12)));
+  } catch (e) {
+    if (e instanceof VaultError) throw e;
+    return null;
+  }
+}

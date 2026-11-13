@@ -178,14 +178,25 @@ export interface SingleApp {
   gapMs: number;
 }
 
-const canConnect = (sock: string): Promise<boolean> =>
+/** Whether a host listens on `sock`. Bounded: on Windows a connect to a socket path nobody serves can stay pending
+ * with neither "connect" nor "error", and the vault's round (and with it the account loop) waited for it forever. */
+export const canConnect = (sock: string, waitMs = 3000): Promise<boolean> =>
   new Promise((resolve) => {
-    const s = createConnection({ path: sock });
-    s.once("connect", () => {
-      s.destroy();
-      resolve(true);
-    });
-    s.once("error", () => resolve(false));
+    let s: ReturnType<typeof createConnection> | null = null;
+    const done = (v: boolean) => {
+      clearTimeout(timer);
+      s?.destroy();
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(false), waitMs);
+    try {
+      s = createConnection({ path: sock });
+    } catch {
+      done(false);
+      return;
+    }
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
   });
 
 export function whatsappApp(): SingleApp {
