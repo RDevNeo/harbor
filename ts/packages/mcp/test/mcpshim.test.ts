@@ -38,12 +38,12 @@ test("subs get the team tools and everyone the shared ones", () => {
   expect(names("sub")).toContain("send_message");
   expect(names("sub")).toContain("read_messages");
   expect(names("lead")).not.toContain("send_message");
-  expect(names("lead")).toHaveLength(27);
+  expect(names("lead")).toHaveLength(28);
   // Only the lead moves agents between accounts.
   expect(names("lead")).toContain("switch_agent_account");
   expect(names("sub")).not.toContain("switch_agent_account");
-  expect(names("sub")).toHaveLength(13);
-  for (const t of ["list_processes", "start_process", "list_secrets", "run_with_secrets", "find_chats"]) expect(names("sub")).toContain(t);
+  expect(names("sub")).toHaveLength(14);
+  for (const t of ["list_processes", "start_process", "list_secrets", "run_with_secrets", "find_chats", "computer"]) expect(names("sub")).toContain(t);
 });
 
 test("leads steer or queue their messages and take queued ones back", () => {

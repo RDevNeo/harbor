@@ -125,7 +125,7 @@ export function resize(img: Image, w: number, h: number): Image {
   const out = new Uint8Array(w * h * 4);
   const sx = img.w / w;
   const sy = img.h / h;
-  if (sx <= 1 || sy <= 1) {
+  if (sx < 1 || sy < 1) {
     for (let y = 0; y < h; y++) {
       const yy = Math.min(img.h - 1, Math.floor((y + 0.5) * sy));
       for (let x = 0; x < w; x++) {

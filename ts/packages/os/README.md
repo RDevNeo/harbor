@@ -15,6 +15,7 @@ bun:ffi), loaded only there through `win32/load.ts`.
 | `paths` | home, data/state/cache/config/runtime folders (XDG; Windows: %APPDATA%, %LOCALAPPDATA%, %LOCALAPPDATA%\Cache), a RAM folder |
 | `platform` | which OS (`HARBOR_TEST_PLATFORM` stands in for another in tests) |
 | `stall` | the Worker that samples a stuck main thread (state, wchan, syscall and its file), PSI, own RSS/fds/threads |
+| `screen` | computer use: screenshots and mouse/keyboard input. Windows: GDI and SendInput (per-monitor DPI aware on the calling thread); macOS: `screencapture` and CoreGraphics events (Screen Recording and Accessibility permissions); Linux: grim with hyprctl or swaymsg plus wtype/ydotool/wlrctl on Wayland compositors, gnome-screenshot or spectacle plus ydotool on GNOME and KDE, xdotool plus ImageMagick/maim/scrot on X11. `probe()` says what's missing |
 
 Every function answers "nothing" (undefined, null, false, an empty list) where it has no
 implementation yet, so callers fall back instead of failing.

@@ -51,14 +51,23 @@ export function scaled(w: number, h: number): { w: number; h: number } {
 
 /** A point of the shown picture (`view`) on the screen (`real`), clamped inside it. */
 export function toScreen(p: Point, view: { w: number; h: number }, real: { w: number; h: number }): Point {
-  const x = Math.round(((p[0] + 0.5) * real.w) / view.w - 0.5);
-  const y = Math.round(((p[1] + 0.5) * real.h) / view.h - 0.5);
+  const x = Math.round((p[0] * real.w) / view.w);
+  const y = Math.round((p[1] * real.h) / view.h);
   return [Math.max(0, Math.min(real.w - 1, x)), Math.max(0, Math.min(real.h - 1, y))];
 }
 
 /** A screen point in the shown picture's pixels. */
 export function toView(p: Point, view: { w: number; h: number }, real: { w: number; h: number }): Point {
-  return [Math.max(0, Math.min(view.w - 1, Math.round(((p[0] + 0.5) * view.w) / real.w - 0.5))), Math.max(0, Math.min(view.h - 1, Math.round(((p[1] + 0.5) * view.h) / real.h - 0.5)))];
+  return [Math.max(0, Math.min(view.w - 1, Math.round((p[0] * view.w) / real.w))), Math.max(0, Math.min(view.h - 1, Math.round((p[1] * view.h) / real.h)))];
+}
+
+/** A zoom region of the shown picture ([x0, y0, x1, y1], edges) as screen pixels: its edges scaled, outward. */
+export function zoomRegion(r: readonly [number, number, number, number], view: { w: number; h: number }, real: { w: number; h: number }): { x: number; y: number; w: number; h: number } {
+  const x = Math.max(0, Math.floor((r[0] * real.w) / view.w));
+  const y = Math.max(0, Math.floor((r[1] * real.h) / view.h));
+  const x1 = Math.min(real.w, Math.ceil((r[2] * real.w) / view.w));
+  const y1 = Math.min(real.h, Math.ceil((r[3] * real.h) / view.h));
+  return { x, y, w: Math.max(1, x1 - x), h: Math.max(1, y1 - y) };
 }
 
 /** The size a zoomed region is shown at: fitted into the screenshot's size, at most 4 times its own. */
@@ -219,9 +228,7 @@ export async function act(a: Action, opts: { after?: boolean; backend?: screen.B
     case "screenshot":
       return { ok: true, content: [{ type: "text", text: `Screen of ${hostname()}: ${real.w}x${real.h}, shown at ${view.w}x${view.h}. Coordinates are in this picture's pixels.` }, await shot(b, real, view)] };
     case "zoom": {
-      const [x0, y0] = at([a.region[0], a.region[1]]);
-      const [x1, y1] = at([a.region[2] - 1, a.region[3] - 1]);
-      const region = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+      const region = zoomRegion(a.region, view, real);
       return { ok: true, content: [{ type: "text", text: `Region [${a.region.join(", ")}] (${region.w}x${region.h} screen pixels). Coordinates stay those of the full screenshot.` }, await shot(b, real, view, region)] };
     }
     case "cursor_position": {
