@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.182.2] - 2026-11-13
+
+### Fixed
+- A chat made on one PC shows on the account's other PCs within seconds, also when the PC goes off (or boots into
+  its other OS) right after: a change goes up to the workspace cloud 1.5 s later instead of at the end of a slow
+  account round, and the other PCs read it at once (the account service tells them) or within 15 s.
+
 ## [0.182.1] - 2026-11-13
 
 ### Fixed
