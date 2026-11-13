@@ -919,6 +919,38 @@ describe("phone: the mesh's shared accounts", () => {
   });
 });
 
+describe("phone: someone else's phone (guest.ts)", () => {
+  test("its state says whether it may start chats here, and its new chats run within that", async () => {
+    const store = Store.openAt(join(tmp, "guest.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.me = { id: "ts:mac", name: "mac" };
+    hub.tokens.push({ token: "igor-phone", name: "A13", created: 0, group: "g-igor", fp: "g-igor", account: "u_igor", account_name: "Igor" });
+    hub.tokens.push({ token: "fagner-phone", name: "Pixel", created: 0, group: "g-fagner", fp: "g-fagner", account: "u_fagner", account_name: "Fagner" });
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const acct = (id: string, kind: string): CatalogAccount => ({ id, kind, name: id, badge: "FS", bin: "/bin/true", loggedIn: true, usage: [] });
+    const catalog = catalogOf(providers, () => [acct("claude", "Claude")], store);
+    let level = "full";
+    const guest = { level: (a: string) => (a === "u_fagner" || a === "" ? null : level), owner: () => "Fagner" };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog, guest });
+    const state = async (token: string) => (await routes.route({ method: "GET", path: ["v1", "state"], query: [], body: null, token, device: "", global: true })).body as { guest: Json };
+    // The owner's phone: no limit, as before.
+    expect((await state("fagner-phone")).guest).toBeNull();
+    expect((await state("igor-phone")).guest).toEqual({ level: "full", start: true, why: null });
+    level = "read";
+    expect((await state("igor-phone")).guest).toMatchObject({ level: "read", start: true });
+    const create = (token: string) => routes.route({ method: "POST", path: ["v1", "chats"], query: [], body: { account: "claude", access: "full", text: "" }, token, device: "", global: true });
+    const made = await create("igor-phone");
+    expect(made.status).toBe(200);
+    expect(store.chats().find((c) => c.gid === (made.body as { gid: string }).gid)?.access).toBe("plan");
+    const own = await create("fagner-phone");
+    expect(store.chats().find((c) => c.gid === (own.body as { gid: string }).gid)?.access).toBe("full");
+    level = "off";
+    expect((await state("igor-phone")).guest).toMatchObject({ level: "off", start: false });
+    expect(await create("igor-phone")).toMatchObject({ status: 403, body: { error: "Fagner doesn't let your PCs' chats use mac (Settings › Workspace there)" } });
+    store.close();
+  });
+});
+
 describe("phone: a chat with no project someone else starts here", () => {
   test("goes in their workspace (placeNew), a project's chat and the owner's own stay", async () => {
     const store = Store.openAt(join(tmp, "started-by.db"));

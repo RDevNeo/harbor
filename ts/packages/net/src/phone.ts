@@ -23,6 +23,7 @@ import { actions, cardMedia, groups, project, type Media, type Shown } from "./v
 import { captchaRoles } from "./captchanote.ts";
 import { cardLook } from "./look.ts";
 import { pcOwner, phoneDev, type Viewer } from "./senders.ts";
+import { guestAccess, guestJson } from "./guest.ts";
 import { RESUME_TEXT, resumeNow } from "./resume.ts";
 
 const CLIP = 16 << 10;
@@ -198,6 +199,9 @@ export interface PhoneDeps {
   dropChat?: (chat: Chat) => void;
   /** The "Auto" pick of where a new chat runs (runon.ts): the PC with the most free memory. */
   auto?: PhoneAuto;
+  /** Someone else's phone here (guest.ts): the level that applies to a phone signed in as `account` (null: this PC's
+   *  owner's, or one from before accounts: no limit), and the owner's name; absent: no limit. */
+  guest?: { level(account: string): string | null; owner(): string };
 }
 
 /** runon.ts's Auto for the phone's calls. */
@@ -687,7 +691,7 @@ export class PhoneRoutes {
     return m;
   }
 
-  state(you: string, global: boolean): Json {
+  state(you: string, global: boolean, caller = ""): Json {
     const hub = this.d.hub;
     const chats = this.chats();
     const repos = this.repos();
@@ -817,7 +821,23 @@ export class PhoneRoutes {
       hub_update: updates.hub_update,
       profile_check: this.d.profileCheck?.() ?? null,
       voice: this.d.voice?.() ?? { transcribe: false, why: "voice isn't in this build yet", lang: "auto" },
+      // Someone else's phone: what this PC's owner lets it do here (guest.ts); null for the owner's own.
+      guest: this.guestState(caller, here),
     };
+  }
+
+  /** `guest` in `/v1/state` for a phone signed in as `caller` (guest.ts), null when no limit applies. */
+  private guestState(caller: string, here: string): Json {
+    const level = this.d.guest?.level(caller) ?? null;
+    if (level === null) return null;
+    const cat = this.d.catalog;
+    const local = cat
+      ? cat
+          .accounts()
+          .filter((a) => a.bin !== null && a.off !== true && a.loggedIn !== false)
+          .map((a) => ({ kind: a.kind, access: cat.access(a.kind).map((c) => c[0]) }))
+      : [{ kind: "Claude", access: ["plan", "edits", "full"] }];
+    return guestJson(level, this.d.guest?.owner() ?? "", here, local);
   }
 
   /** A phone looking at `c` (senders.ts Viewer): its own messages show no sender row, the home PC's its owner. */
@@ -915,7 +935,7 @@ export class PhoneRoutes {
     const who: Who = call.from
       ? { who: call.from.who, via: call.from.via, dev: call.from.dev, account: call.from.acct ?? "", pc: call.from.via === "pc" ? call.from.peer : "" }
       : { who: this.d.hub.callerWho(call.token), via: "phone", dev: phoneDev(this.d.hub.groupOf(call.token)), account: this.d.hub.callerAccount(call.token), pc: "" };
-    if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global));
+    if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global, call.from ? "" : who.account));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
     const c = this.chatOf(p[2] ?? "");
@@ -1278,6 +1298,14 @@ export class PhoneRoutes {
     if (from !== null && body.shared_account === true) {
       const me = this.d.hub.mesh.me.name === "" ? hostname() : this.d.hub.mesh.me.name;
       const r = sharedAccess(this.d.shareLevel?.(from.peer) ?? "full", access, (cat?.access(kind) ?? []).map((a) => a[0]), { me, kind: kind.toLowerCase() });
+      if ("why" in r) return err(403, r.why);
+      access = r.access;
+    }
+    // Someone else's phone: at most what this PC's owner lets that person's chats do here (guest.ts).
+    const guest = from === null ? (this.d.guest?.level(who.account) ?? null) : null;
+    if (guest !== null) {
+      const me = this.d.hub.mesh.me.name === "" ? hostname() : this.d.hub.mesh.me.name;
+      const r = guestAccess(guest, access, cat ? cat.access(kind).map((a) => a[0]) : ["plan", "edits", "full"], { me, owner: this.d.guest?.owner() ?? "" });
       if ("why" in r) return err(403, r.why);
       access = r.access;
     }
