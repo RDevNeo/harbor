@@ -191,3 +191,47 @@ describe("a phone on a copy of another PC's chat", () => {
   });
 });
 
+
+describe("a phone on a copy whose PC is off", () => {
+  test("settle, rename and delete: the chat becomes this PC's and the change is made here", async () => {
+    const pc = copyPc("off");
+    const home = pc.hub.mesh.peers.get("pc:home");
+    if (home) home.online = false;
+    const adopted: number[] = [];
+    pc.routes.d.failover = {
+      line: () => null,
+      send: async () => ({ status: 200, body: {} }),
+      draft: () => null,
+      startedNotice: () => {},
+      adopt: (c) => {
+        adopted.push(c.id);
+        pc.store.setHome(c.id, "", 0);
+        return pc.store.chat(c.id) ?? c;
+      },
+    };
+    let forwarded = 0;
+    pc.mesh.forward = async () => (forwarded++, { status: 200, body: {} });
+    // A stop has nothing to stop there: answered, nothing taken.
+    expect((await pc.phone("POST", ["stop"], { hold: true })).status).toBe(200);
+    expect(adopted).toEqual([]);
+    const settled = await pc.phone("PATCH", [], { settled: true });
+    expect(settled.status).toBe(200);
+    expect(pc.store.chat(pc.copy.id)).toMatchObject({ home: "", settled: true });
+    const renamed = await pc.phone("PATCH", [], { title: "Mine now" });
+    expect(renamed.status).toBe(200);
+    expect(pc.store.chat(pc.copy.id)?.title).toBe("Mine now");
+    expect((await pc.phone("DELETE", [])).status).toBe(200);
+    expect(pc.store.chat(pc.copy.id)).toBeUndefined();
+    expect(adopted).toEqual([pc.copy.id]);
+    expect(forwarded).toBe(0);
+  });
+
+  test("a PC this account can't take it to says why, never that the chat is read-only", async () => {
+    const pc = copyPc("off-refused");
+    const home = pc.hub.mesh.peers.get("pc:home");
+    if (home) home.online = false;
+    pc.routes.d.failover = { line: () => null, send: async () => ({ status: 200, body: {} }), draft: () => null, startedNotice: () => {}, adopt: () => "home-pc is off, and it isn't one of the PCs this account uses" };
+    const r = await pc.phone("PATCH", [], { settled: true });
+    expect(r).toEqual({ status: 409, body: { error: "home-pc is off, and it isn't one of the PCs this account uses" } });
+  });
+});

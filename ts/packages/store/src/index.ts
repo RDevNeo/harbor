@@ -1,6 +1,7 @@
 export * from "./item.ts";
 export * from "./paths.ts";
 export * from "./store.ts";
+export * from "./dropped.ts";
 export * from "./text.ts";
 export * from "./live.ts";
 export * as cost from "./cost.ts";

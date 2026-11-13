@@ -27,6 +27,9 @@ export interface MovesHost {
   forward(peer: string, method: string, path: string[], body: Record<string, unknown>): Promise<Reply>;
   /** Peers, phones and the window hear chat `chat` changed (null: the list). */
   touch(chat: number | null): void;
+  /** A copy whose PC is off becomes this PC's, so the change is made here (failover.ts `adopt`): the chat, or why
+   *  not; null: its PC is on (the change goes there). */
+  adoptOff?(c: Chat): Chat | string | null;
 }
 
 export interface MoveChoice {
@@ -118,6 +121,9 @@ export class WorkspaceMoves {
     const ws = this.check(wsIn, forwarded);
     if (typeof ws !== "string") return ws;
     if (c.role === "sub") return err(409, "a sub-agent is where its lead is: move its lead");
+    const own = c.home === "" ? null : (this.h.adoptOff?.(c) ?? null);
+    if (typeof own === "string") return err(409, own);
+    if (own !== null) c = own;
     if (c.home !== "") {
       const r = await this.h.forward(c.home, "POST", ["v1", "chats", String(c.homeId), "workspace"], { workspace: ws });
       if (older(r)) return err(409, `${this.h.pcName(c.home)} runs an older Harbor that can't move chats to a workspace: update it there first`);
@@ -194,6 +200,9 @@ export class WorkspaceMoves {
     if (typeof ws !== "string") return ws;
     if (c.role === "sub") return err(409, "a sub-agent is shared where its lead is: share its lead");
     if (!forwarded && on === true && ws === this.chatIn(c)) return err(409, "it's already in that workspace");
+    const own = c.home === "" ? null : (this.h.adoptOff?.(c) ?? null);
+    if (typeof own === "string") return err(409, own);
+    if (own !== null) c = own;
     if (c.home !== "") {
       const r = await this.h.forward(c.home, "POST", ["v1", "chats", String(c.homeId), "share"], { workspace: ws, on });
       if (older(r)) return err(409, `${this.h.pcName(c.home)} runs an older Harbor that can't share chats with a workspace: update it there first`);

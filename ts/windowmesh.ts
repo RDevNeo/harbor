@@ -1,7 +1,7 @@
 import { linkSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import { hostname } from "node:os";
-import { dest, draftEmpty, draftFileOf, err, POLL, resolveUpload, safeName, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
+import { dest, draftEmpty, draftFileOf, err, ok, POLL, resolveUpload, safeName, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
 import type { Chat } from "./packages/store/src/index.ts";
 import type { DeviceMem, DeviceMemory } from "./devicemem.ts";
 import { memory } from "./packages/agents/src/index.ts";
@@ -27,6 +27,8 @@ export interface WindowMeshDeps {
     claim?(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }): Promise<Reply | null>;
     /** The PC the user picked for the copy in Runs on (null: the one it's typed on). */
     picked?(c: Chat): string | null;
+    /** Any change but a message to a copy whose PC is off: the chat becomes this PC's (failover.ts `adopt`). */
+    adopt?(c: Chat): Chat | string;
   };
 }
 
@@ -187,6 +189,11 @@ export class WindowMesh {
     return this.d.failover?.line(c) ?? null;
   }
 
+  /** Any change but a message to a copy whose PC is off: the chat becomes this PC's (failover.ts `adopt`); or why not. */
+  adopt(c: Chat): Chat | string {
+    return this.d.failover?.adopt?.(c) ?? `${this.d.hub.mesh.nameOf(c.home)} is off`;
+  }
+
   /** This window looking at a copy: its own messages carry this PC's device id (or, from before, its label). */
   viewer(c: Chat): Viewer | null {
     if (c.home === "") return null;
@@ -220,7 +227,13 @@ export class WindowMesh {
       const r = await this.d.failover.claim(c, { text: typeof b.text === "string" ? b.text : "", files: [...files], mentions: Array.isArray(b.mentions) ? b.mentions : [] });
       if (r !== null) return r;
     }
-    if (!peer?.online || !this.d.hub.mesh.on) return err(409, `${name} is off, so this chat is read-only until it's back`);
+    if (!peer?.online || !this.d.hub.mesh.on) {
+      // Its PC is off: nothing of it runs (a stop has nothing to do); any other change makes it this PC's, made here.
+      if (method === "POST" && tail.length === 1 && tail[0] === "stop") return ok({ ok: true, returned: [], held: false });
+      const own = this.d.failover?.adopt?.(c) ?? `${name} is off`;
+      if (typeof own === "string") return err(409, own);
+      return this.d.phone.route({ method, path: ["v1", "chats", String(own.id), ...tail], query: [], body, token: "", device: "", global: false });
+    }
     let attached: { name: string; data: Uint8Array }[];
     try {
       attached = this.files(files);

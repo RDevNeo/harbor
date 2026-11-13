@@ -4108,8 +4108,7 @@ export class Shell {
   private switchShared(c: Chat, account: string, model: string): void {
     const label = this.shared().find((x) => x.id === account)?.label ?? account;
     const id = c.id;
-    if (this.meshChat.foreign(c)) {
-      this.meshChat.patch(c, { account, model });
+    if (this.meshChat.patch(c, { account, model })) {
       this.toast(`Switching to ${label}…`);
       return;
     }
@@ -4556,10 +4555,13 @@ export class Shell {
     }
     if (c.role !== "sub") {
       let why = "";
-      try {
-        this.engine.movable(id);
-      } catch (e) {
-        why = e instanceof Error ? e.message : String(e);
+      // A copy whose PC is off becomes this PC's when it's moved (MeshChat.takeOver).
+      if (!this.meshChat.offCopy(c)) {
+        try {
+          this.engine.movable(id);
+        } catch (e) {
+          why = e instanceof Error ? e.message : String(e);
+        }
       }
       items.push(why === "" ? { ...native("Move to project…", () => {}, { badge: "submenu" }), sub: () => this.moveMenu(id) } : native("Move to project…", () => {}, { enabled: false, desc: why }));
       // movepc.rs `move_pc_menu`: greyed out with why when the chat can't go to any PC.
@@ -4654,6 +4656,7 @@ export class Shell {
     const c = this.data.chat(id);
     if (!c) return null;
     const move = (repo: number | null) => () => {
+      if (!this.meshChat.takeOver(this.data.chat(id), "move the chat")) return;
       try {
         this.engine.moveChat(id, repo);
       } catch (e) {
@@ -5087,6 +5090,8 @@ export class Shell {
     if (!c) return;
     this.dialog("Rename chat", "", "Save changes", false, c.title, (ok, title) => {
       if (!ok || title.trim() === "") return;
+      // Another PC's chat: renamed there (its copies follow), or here when that PC is off (it becomes this PC's).
+      if (this.meshChat.rename(c, title.trim())) return;
       c.title = title.trim();
       this.data.saveChat(c);
       this.refreshAll();
@@ -5099,7 +5104,11 @@ export class Shell {
     if (!c) return;
     this.dialog("Delete chat?", "The transcript is removed from Harbor. The provider's session stays on disk.", "Delete", true, null, (ok) => {
       if (!ok) return;
-      this.data.deleteChat(id);
+      // Another PC's chat: deleted there (its copies go with it), or here when that PC is off (it hears of it when back).
+      if (!this.meshChat.remove(c)) {
+        this.data.deleteChat(id);
+        this.hub.deleted?.(id);
+      }
       if (this.view === "chat" && this.chatId === id) this.newDraft(c.repoId);
       else this.refreshAll();
     });
@@ -5411,6 +5420,8 @@ function transferRow(x: DeviceTransfer): TransferRow {
 
 /** What the window takes from the running hub. */
 export interface ShellHub extends PageHub {
+  /** One of this PC's chats was deleted in the window: the other PCs and phones hear of it now. */
+  deleted?: (chatId: number) => void;
   /** The composer's "Runs on" menu for a chat (null: the draft) whose device is `current`. */
   runOnRows: (chatId: number | null, current: string, kind: string) => { id: string; name: string; glyph: string; desc: string; online: boolean | null; current: boolean; enabled: boolean }[];
   /** This PC's and the mesh's agent accounts, each sign-in once (meshaccounts.ts); absent: this PC's alone. */

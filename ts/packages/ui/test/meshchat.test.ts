@@ -38,7 +38,7 @@ function rig(o: { online?: boolean; answer?: { status: number; body: unknown }; 
   const tick = (ms: number) => {
     clock += ms;
   };
-  return { mc, calls, created, leases, restored, opened, tick };
+  return { mc, calls, created, leases, restored, opened, tick, m };
 }
 
 const copy: Chat = blankChat({ id: 7, home: "pc:laptop", homeId: 70, title: "Laptop's chat" });
@@ -84,7 +84,40 @@ test("with the home PC off nothing goes out: the composer gets the text and its 
   await flush();
   expect(calls).toEqual([]);
   expect(restored).toEqual([{ chat: 7, text: "hello", mentions: [mention], append: true }]);
-  expect(mc.error(7)).toBe("Couldn't send: laptop is off, so this chat is read-only until it's back");
+  expect(mc.error(7)).toBe("Couldn't send: laptop is off");
+});
+
+test("with the home PC off, a change makes the chat this PC's and is made here; a stop has nothing to do", async () => {
+  const { mc, calls, m } = rig({ online: false });
+  const adopted: number[] = [];
+  m.adopt = (c) => {
+    adopted.push(c.id);
+    return { ...c, home: "", homeId: 0, account: "claude2" };
+  };
+  m.failover = () => null;
+  const c = { ...copy };
+  expect(mc.writable(c)).toBe(true);
+  expect(mc.readOnly(c)).toBeNull();
+  expect(mc.stop(c)).toBe(true);
+  expect(adopted).toEqual([]);
+  // false: the caller settles it as one of its own; the window's object is this PC's chat now.
+  expect(mc.patch(c, { settled: true })).toBe(false);
+  expect(adopted).toEqual([7]);
+  expect(c.home).toBe("");
+  expect(c.account).toBe("claude2");
+  expect(mc.rename(c, "New name")).toBe(false);
+  await flush();
+  expect(calls).toEqual([]);
+  expect(mc.error(7)).toBe("");
+});
+
+test("with the home PC off, a change this PC can't take says why", async () => {
+  const { mc, m } = rig({ online: false });
+  m.adopt = () => "laptop is off, and it isn't one of the PCs this account uses";
+  const c = { ...copy };
+  expect(mc.remove(c)).toBe(true);
+  expect(c.home).toBe("pc:laptop");
+  expect(mc.error(7)).toBe("Couldn't delete the chat: laptop is off, and it isn't one of the PCs this account uses");
 });
 
 test("a send the home PC refuses comes back into an empty composer, and its error line goes after 12 s", async () => {

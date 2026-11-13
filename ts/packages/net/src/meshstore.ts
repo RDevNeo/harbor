@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { blankChat, digest, githead, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
+import { blankChat, digest, DROPPED_KEY, type Dropped, githead, parseDropped, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, type Reply } from "./http.ts";
 import { draftFromJson, draftJson, previewTail, type Hub, type SharedDraft } from "./hub.ts";
@@ -78,6 +78,11 @@ export interface StoreReplicaOptions {
   release?: (own: Chat, peer: string, hid: number, count: number) => boolean | "split";
   /** Where a chat's agent works (its worktree, else its project); null: the project's folder. */
   cwd?: (chat: Chat) => string | null;
+  /**
+   * `by` deleted the chat it had taken over from this PC while this PC was off, at `count` items (dropped.ts): this PC's
+   * own `own` goes too (true), or stays because someone wrote in it here since (false; it's given a gid of its own).
+   */
+  dropOwn?: (own: Chat, by: string, count: number) => boolean;
   /** Whether project `repo`'s row here opens the main chat `peer` names for it (projectfold.ts `takesMainFrom`); absent: never. */
   mainFrom?: (repo: number, peer: string) => boolean;
 }
@@ -309,7 +314,7 @@ export class StoreReplica implements MeshApp {
     return t === null ? {} : { failover_from: t.from, failover_count: t.count };
   }
 
-  async chats(since: number, full: boolean): Promise<{ chats: Json[]; update: Json }> {
+  async chats(since: number, full: boolean): Promise<{ chats: Json[]; update: Json; dropped?: Json[] }> {
     this.reload();
     const own = this.list
       .filter((c) => c.home === "")
@@ -322,7 +327,45 @@ export class StoreReplica implements MeshApp {
       out.push(this.chatJson(c, full, mains));
       await turn();
     }
-    return { chats: out, update: this.o.update?.() ?? null };
+    const dropped = this.dropped();
+    return { chats: out, update: this.o.update?.() ?? null, ...(dropped.length > 0 ? { dropped: dropped.map((d) => ({ ...d })) } : {}) };
+  }
+
+  /** The chats this PC deleted after taking them over from a PC that was off (dropped.ts): that PC deletes its own. */
+  dropped(): Dropped[] {
+    return parseDropped(this.o.store.get(DROPPED_KEY));
+  }
+
+  /**
+   * Deletes `peer` told of (dropped.ts): this PC's own chat it had taken over goes (as `dropOwn` decides), and the
+   * copies of it here, made from its old PC or from `peer`, go too.
+   */
+  applyDropped(peer: string, list: readonly Dropped[]): void {
+    if (list.length === 0) return;
+    this.reload();
+    const me = this.o.hub.mesh.me.id;
+    let changed = false;
+    for (const d of list) {
+      const c = this.list.find((x) => x.gid === d.gid);
+      if (!c) continue;
+      if (c.home === "") {
+        if (d.from !== me) continue;
+        if (this.o.dropOwn) changed = this.o.dropOwn(c, peer, d.count) || changed;
+        else if (!this.o.store.items(c.id).slice(d.count).some((i) => i.kind === "user")) {
+          this.o.store.deleteChat(c.id);
+          this.o.hub.mesh.gone.push([this.o.hub.touch(null, true), c.id]);
+          changed = true;
+        }
+        continue;
+      }
+      if (c.home !== d.from && c.home !== peer) continue;
+      this.o.store.deleteChat(c.id);
+      this.remote.delete(c.id);
+      changed = true;
+    }
+    if (!changed) return;
+    this.reload();
+    this.o.copied?.(null);
   }
 
   items(chat: number, since: number): Json | null {
@@ -416,6 +459,14 @@ export class StoreReplica implements MeshApp {
     const mesh = this.o.hub.mesh;
     let existingId = mesh.localId(peer, hid) ?? this.list.find((c) => gid !== "" && c.gid === gid)?.id ?? null;
     let existing = existingId === null ? null : (this.list.find((c) => c.id === existingId) ?? null);
+    // A chat this PC took over from `peer` and deleted: it doesn't come back while `peer` still lists it (dropped.ts).
+    if (gid !== "" && (existing === null || existing.home !== "") && this.droppedNow.some((d) => d.gid === gid && d.from === peer)) {
+      if (existing) {
+        this.o.store.deleteChat(existing.id);
+        this.remote.delete(existing.id);
+      }
+      return null;
+    }
     // This PC's own chat: unless `peer` took it over while this PC was off and nothing happened here since (failover.ts).
     if (existing && existing.home === "") {
       const count = int(m.failover_count);
@@ -531,8 +582,12 @@ export class StoreReplica implements MeshApp {
     return id;
   }
 
+  /** This PC's deletes of chats it took over, while a list is applied. */
+  private droppedNow: Dropped[] = [];
+
   async applyChats(peer: string, epoch: number, body: Record<string, unknown>): Promise<[number, number][]> {
     this.reload();
+    this.droppedNow = this.dropped();
     const turn = yielder();
     const full = body.full === true;
     const wants: [number, number][] = [];
@@ -576,6 +631,8 @@ export class StoreReplica implements MeshApp {
     this.reload();
     this.takeMains(peer, mains);
     this.o.copied?.(null);
+    // What `peer` deleted of the chats it took over from this PC (older PCs send none).
+    if (Array.isArray(body.dropped)) this.applyDropped(peer, parseDropped(body.dropped));
     return wants;
   }
 

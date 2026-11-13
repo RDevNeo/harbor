@@ -3,6 +3,7 @@ import { chmodSync, closeSync, existsSync, openSync, readdirSync, rmSync } from 
 import { basename, join } from "node:path";
 import { type Item, digest, digestOf, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
 import { dataDir, newUuid, now, privateDir } from "./paths.ts";
+import { DROPPED_KEY, parseDropped, takenKey, withDropped } from "./dropped.ts";
 import { changed as settingChanged } from "./settingsync.ts";
 import { SHARED, changed as sharedChanged } from "./wssettings.ts";
 
@@ -762,6 +763,23 @@ export class Store {
   }
 
   deleteChat(id: number): void {
+    // A chat taken over from a PC that was off: that PC deletes its own too when it's back (dropped.ts).
+    const gid = (this.db.query("SELECT gid FROM chats WHERE id=?1 AND home=''").get(id) as Row | null)?.gid;
+    if (typeof gid === "string" && gid !== "") {
+      const took = this.get(takenKey(gid)) ?? "";
+      if (took !== "") {
+        try {
+          const t = JSON.parse(took) as { from?: unknown; count?: unknown };
+          if (typeof t.from === "string" && t.from !== "") {
+            const d = { gid, from: t.from, count: typeof t.count === "number" ? t.count : 0, at: Date.now() };
+            this.set(DROPPED_KEY, JSON.stringify(withDropped(parseDropped(this.get(DROPPED_KEY)), d, Date.now())));
+          }
+        } catch {
+          // not one
+        }
+        this.set(takenKey(gid), "");
+      }
+    }
     this.db.query("DELETE FROM chats WHERE id=?1").run(id);
     // Nor be a project's main chat: the next one is started fresh.
     this.db.query("UPDATE repos SET main_chat=0 WHERE main_chat=?1").run(id);

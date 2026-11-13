@@ -103,6 +103,9 @@ export interface MovePcDeps {
   run?: Spawner;
   send?: MoveSendDeps;
   now?: () => number;
+  /** A copy whose PC is off becomes this PC's, and moves from here (failover.ts `adopt`): the chat, or why not; null:
+   *  its PC is on (that PC moves it). */
+  adoptOff?(c: Chat): Chat | string | null;
 }
 
 /** What "Move to PC…" shows: the PCs, and why the chat can't move at all (then each carries it). */
@@ -196,7 +199,8 @@ export class MovePc {
     if (!c) return null;
     const team = c.role === "sub" ? [c] : [c, ...this.subs(chatId)];
     return movePcBlocker({
-      foreignHome: c.home !== "" ? this.d.mesh.nameOf(c.home) : null,
+      // A copy whose PC is off moves from here (it becomes this PC's first).
+      foreignHome: c.home !== "" && !this.offCopy(c) ? this.d.mesh.nameOf(c.home) : null,
       isSub: c.role === "sub",
       meshOn: this.d.mesh.on,
       movingTo: this.movingTo(chatId, ownProject),
@@ -240,7 +244,7 @@ export class MovePc {
   /** The PCs for the desktop's menu, without waiting: the code's state and a copy's answer come from the last read, and a new one starts. */
   targetsNow(chatId: number): MoveTargets {
     const c = this.chat(chatId);
-    if (c && c.home !== "") return this.askedFor(c);
+    if (c && c.home !== "" && !this.offCopy(c)) return this.askedFor(c);
     const { blocker, targets } = this.plainTargets(chatId);
     return withCode(blocker, targets, blocker === null && c ? this.cachedCodeError(c) : null);
   }
@@ -248,7 +252,7 @@ export class MovePc {
   /** `GET /v1/chats/{id}/move_targets`: with the code's state read now. A copy's are its home PC's. */
   async targets(chatId: number): Promise<MoveTargets> {
     const c = this.chat(chatId);
-    if (c && c.home !== "") return this.askHome(c);
+    if (c && c.home !== "" && !this.offCopy(c)) return this.askHome(c);
     const { blocker, targets } = this.plainTargets(chatId);
     return withCode(blocker, targets, blocker === null && c ? await this.codeError(c) : null);
   }
@@ -282,9 +286,21 @@ export class MovePc {
   /** Starts handing `chatId` (and its sub-agents) over to PC `pc`. Resolves with the PC's name; the outcome comes later (a notice in the chat; the chat turns into a copy of that PC's).
    * `auto`: Runs on › Auto chose `pc`; the target remembers that too (move.json `auto_placed`). `want`: the chat switched
    * to one of `pc`'s accounts (meshaccounts.ts): it goes on there with that one, whatever provider it ran on here. */
+  /** A copy whose PC is off, which this PC can take (it moves from here then). */
+  private offCopy(c: Chat): boolean {
+    if (!this.d.adoptOff) return false;
+    const peer = this.d.mesh.peer(c.home);
+    return !peer?.online;
+  }
+
   async movePc(chatId: number, pc: string, auto = false, want: MoveWant | null = null): Promise<string> {
-    const c = this.chat(chatId);
-    if (c && c.home !== "") return this.moveFromHome(c, pc, want);
+    let c = this.chat(chatId);
+    if (c && c.home !== "") {
+      const own = this.d.adoptOff?.(c) ?? null;
+      if (own === null) return this.moveFromHome(c, pc, want);
+      if (typeof own === "string") throw new Error(own);
+      c = own;
+    }
     const { blocker, targets } = this.plainTargets(chatId, want !== null);
     if (blocker !== null) throw new Error(blocker);
     const t = targets.find((x) => x.id === pc);
@@ -410,7 +426,7 @@ export class MovePc {
   private async moveFromHome(c: Chat, pc: string, want: MoveWant | null = null): Promise<string> {
     const peer = this.d.mesh.peer(c.home);
     const name = this.homeName(c);
-    if (!peer?.online) throw new Error(`${name} is off: this chat is read-only until it's back`);
+    if (!peer?.online) throw new Error(`${name} is off: it moves the chat`);
     if (!peer.moves) throw new Error(`${name} runs an older Harbor that can't move chats: update it first`);
     if (want !== null && !peer.accountMoves) throw new Error(`${name} runs an older Harbor: update it to switch this chat to another PC's account`);
     this.asked.delete(c.id);

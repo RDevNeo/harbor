@@ -503,6 +503,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       if (!p.online) return Promise.resolve(err(409, `${p.name} is off: try again when it's back`));
       return mesh.forward(dest(p), p.name, method, path, body, [], [hub.mesh.me.name, ""], null);
     },
+    adoptOff: (c) => (hub.mesh.on && hub.mesh.peer(c.home)?.online === true ? null : failover.adopt(c)),
     touch: (chat) => {
       if (chat === null) {
         hub.touch(null, true);
@@ -728,6 +729,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     copied: (chat) => engine?.storeChanged(chat),
     took: (gid) => failover.took(gid),
     release: (own, peer, hid, count) => failover.release(own, peer, hid, count),
+    dropOwn: (own, by, count) => failover.dropOwn(own, by, count),
     cwd: (c) => engine?.chatCwd(c) ?? null,
     // A project's main chat is its owner's: another PC's project, or one shared or moved here by that PC (projectfold.ts).
     mainFrom: (repo, peer) => {
@@ -1067,7 +1069,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     ownerName: () => account.ownerName(),
     ctx: ctxFor,
     uploadsDir,
-    failover: { line: (c) => failover.line(c), send: (c, msg) => failover.send(c, msg), claim: (c, msg) => failover.claim(c, msg), picked: (c) => failover.picked(c) },
+    failover: { line: (c) => failover.line(c), send: (c, msg) => failover.send(c, msg), claim: (c, msg) => failover.claim(c, msg), picked: (c) => failover.picked(c), adopt: (c) => failover.adopt(c) },
   });
   // The hooks below run once the engine exists.
   const eng = (): Engine => {
@@ -1209,6 +1211,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     overlays: () => overlays({ dataDir: dataDir(env) }),
     removeWorktree: (repo, dir) => worktree.remove(repo, dir),
     reindex: () => replica.reload(),
+    adoptOff: (c) => (hub.mesh.on && hub.mesh.peer(c.home)?.online === true ? null : failover.adopt(c)),
     forget: (chat) => live.host.forgetWorkspace?.(chat),
     shareLevel: (peer) => machines.levelFor(store, peer),
     accessOf: (kind) => {
@@ -1323,6 +1326,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     claim: (c, msg, sendHere) => failover.claim(c, msg, sendHere),
     draft: (repo) => failover.draft(repo),
     startedNotice: (chat, off) => failover.startedNotice(chat, off),
+    adopt: (c) => failover.adopt(c),
   };
   // Run anywhere: another of this account's PCs takes one of this PC's chats. Not while it runs, waits or has messages
   // queued here (those go on here, and the other PC sends its message here); else its session and work go up first.

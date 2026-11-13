@@ -12,7 +12,7 @@ import { carrySource, ContinueHere } from "../continuehere.ts";
 import { Failover } from "../failover.ts";
 import { Engine, movechat, type providers } from "../packages/agents/src/index.ts";
 import { type AccountDirectory, type ChatCloud, type CloudContext, findRollout, Hub, StoreReplica } from "../packages/net/src/index.ts";
-import { blankChat, type Chat, type Item, Store } from "../packages/store/src/index.ts";
+import { blankChat, type Chat, type Item, newUuid, Store } from "../packages/store/src/index.ts";
 import { service } from "./cloudrig.ts";
 
 const root = mkdtempSync(join(tmpdir(), "hcontinue-"));
@@ -75,6 +75,7 @@ interface Pc {
   store: Store;
   hub: Hub;
   cloud: ChatCloud;
+  replica: StoreReplica;
   engine: Engine;
   failover: Failover;
   ch: ContinueHere;
@@ -89,7 +90,7 @@ interface Pc {
   busy: Set<number>;
 }
 
-function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: string, kind: "Claude" | "Codex"): Pc {
+function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: string, kind: "Claude" | "Codex", carries = true): Pc {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
   const store = Store.openAt(join(dir, "harbor.db"));
@@ -119,7 +120,7 @@ function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: strin
     refresh: () => cloud.refresh(),
     carryNow: (hid, ms) => cloud.carryNow(hid, ms),
   });
-  const replica = new StoreReplica({ store, hub, version: "t", took: (gid) => failover.took(gid), release: (o, peer, h, n) => failover.release(o, peer, h, n) });
+  const replica = new StoreReplica({ store, hub, version: "t", took: (gid) => failover.took(gid), release: (o, peer, h, n) => failover.release(o, peer, h, n), dropOwn: (o, by, n) => failover.dropOwn(o, by, n) });
   const cloud = chatCloud({
     stateDir: dir,
     fp: () => fp,
@@ -129,7 +130,7 @@ function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: strin
     directory: () => directory,
     running: () => false,
     copied: () => p.engine.reload(),
-    carry: carrySource({ store, engine: () => p.engine, accounts, scratch }),
+    carry: carries ? carrySource({ store, engine: () => p.engine, accounts, scratch }) : undefined,
     // Each round is a minute later (the cloud reads the workspaces at most every 45 s).
     clock: () => Date.now() + skew,
     log: process.env.CARRY_LOG ? (l: string) => console.log(`${name}: ${l}`) : undefined,
@@ -146,7 +147,7 @@ function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: strin
     if (ch.preparing(c) || ch.waiting(c)) return start(c, prompt, [...files]);
     turns.push([c, prompt]);
   };
-  p = { name, store, hub, cloud, engine, failover, ch, account, turns, call: svc.callAs("u1", fp, ["W1"]), codexHome: join(dir, ".codex"), mesh: null, busy: new Set() };
+  p = { name, store, hub, cloud, replica, engine, failover, ch, account, turns, call: svc.callAs("u1", fp, ["W1"]), codexHome: join(dir, ".codex"), mesh: null, busy: new Set() };
   return p;
 }
 
@@ -391,5 +392,96 @@ describe("continue anywhere", () => {
     await round(A);
     expect(A.store.chat(chat.id)?.home).toBe("pc:windows");
     for (const p of [A, B]) p.store.close();
+  }, 60_000);
+
+  test("its PC off with nothing carried: another PC sends, settles, renames and deletes; back, the PC agrees", async () => {
+    const svc = service();
+    // Windows never sent a session up (an older Harbor, or it was switched off first): no carry rows at all.
+    const W = pc(svc, "Dual-Windows", "fpB", "pc:windows", "Claude", false);
+    const O = pc(svc, "Dual-Omarchy", "fpA", "ts:omarchy", "Claude");
+    const at = Math.floor(Date.now() / 1000) - 600;
+    const mk = (title: string) => {
+      const c = W.store.createChat(blankChat({ title, account: "claude", started: true, sessionId: newUuid(), updated: at }));
+      W.store.saveItems(c.id, [user(`${title}?`), text("ok")]);
+      return c;
+    };
+    const hi = mk("Hi");
+    const settle = mk("Settle me");
+    const rename = mk("Rename me");
+    const drop = mk("Delete me");
+    const keep = mk("Deleted there, written here");
+    W.engine.reload();
+    await round(W);
+    expect(W.cloud.internals.pub.carry?.chats ?? {}).toEqual({});
+    await round(O);
+    const copy = (c: Chat) => {
+      const x = O.store.chats().find((k) => k.home === "pc:windows" && k.homeId === c.id);
+      if (!x) throw new Error(`no copy of ${c.title}`);
+      return x;
+    };
+    // Windows is off (never in O's mesh): every chat of it can be used here.
+    const hiCopy = copy(hi);
+    const prompt = await sendTo(O, hiCopy, "still there?");
+    const hiHere = O.engine.chat(hiCopy.id);
+    expect(hiHere?.home).toBe("");
+    // A new session with the conversation so far, and a short notice that its own session stayed behind.
+    expect(prompt).toContain("This conversation started on");
+    expect(prompt).toContain("Hi?");
+    expect(prompt).toContain("still there?");
+    expect(notices(O, hiHere?.id ?? -1).map((n) => (n.kind === "notice" ? n.text : ""))).toEqual(["New session here, with the conversation so far"]);
+
+    // Settle, rename, delete: the chat becomes Omarchy's (nothing carried, nothing cloned), the change is made here.
+    const s1 = O.failover.adopt(copy(settle));
+    if (typeof s1 === "string") throw new Error(s1);
+    O.store.saveChat({ ...s1, settled: true });
+    const r1 = O.failover.adopt(copy(rename));
+    if (typeof r1 === "string") throw new Error(r1);
+    O.store.saveChat({ ...r1, title: "Renamed on Omarchy" });
+    const dropHere = copy(drop);
+    const d1 = O.failover.adopt(dropHere);
+    if (typeof d1 === "string") throw new Error(d1);
+    O.store.deleteChat(d1.id);
+    const keepHere = copy(keep);
+    const k1 = O.failover.adopt(keepHere);
+    if (typeof k1 === "string") throw new Error(k1);
+    O.store.deleteChat(k1.id);
+    O.engine.reload();
+    expect(O.turns.length).toBe(1);
+    expect(O.store.chat(s1.id)?.home).toBe("");
+    expect(O.store.chat(s1.id)?.settled).toBe(true);
+    expect(O.replica.dropped().map((d) => [d.gid, d.from])).toEqual([
+      [drop.gid, "pc:windows"],
+      [keep.gid, "pc:windows"],
+    ]);
+    // On Omarchy the deleted chats stay gone while Windows' old listing still names them.
+    await O.replica.applyChats("pc:windows", 9, { full: true, chats: (await W.replica.chats(0, true)).chats });
+    expect(O.store.chats().filter((c) => c.gid === drop.gid || c.gid === keep.gid)).toEqual([]);
+    expect(O.store.chat(s1.id)?.home).toBe("");
+    await round(O);
+    // The mesh's list says the same to Windows when both are on.
+    expect(((await O.replica.chats(0, true)).dropped ?? []).length).toBe(2);
+
+    // Windows, meanwhile (both apart): someone wrote in one of them there.
+    W.store.saveItems(keep.id, [...W.store.items(keep.id), user("written on Windows")]);
+    // Back on Windows (Omarchy off): one owner per chat, the changes made, nothing lost.
+    await round(W);
+    const w = (c: Chat) => W.store.chats().find((k) => k.id === c.id);
+    for (const c of [hi, settle, rename]) expect([c.title, w(c)?.home]).toEqual([c.title, "ts:omarchy"]);
+    expect(w(settle)?.settled).toBe(true);
+    expect(w(rename)?.title).toBe("Renamed on Omarchy");
+    expect(w(hi)?.sessionId).toBe("");
+    expect(w(drop)).toBeUndefined();
+    // Written there after Omarchy took it: kept, as a chat of its own (a new gid the delete doesn't match).
+    expect(w(keep)?.home).toBe("");
+    expect(w(keep)?.gid).not.toBe(keep.gid);
+
+    // Omarchy again: its chats stay its own, the deleted one stays gone, Windows' kept one comes as a copy.
+    await round(W);
+    await round(O);
+    const own = O.store.chats().filter((c) => c.home === "").map((c) => c.title).sort();
+    expect(own).toEqual(["Hi", "Renamed on Omarchy", "Settle me"]);
+    expect(O.store.chats().filter((c) => c.gid === drop.gid)).toEqual([]);
+    expect(O.store.chats().find((c) => c.home === "pc:windows")?.title).toBe("Deleted there, written here");
+    for (const p of [W, O]) p.store.close();
   }, 60_000);
 });

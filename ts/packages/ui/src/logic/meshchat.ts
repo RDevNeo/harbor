@@ -25,6 +25,9 @@ export interface ShellMesh {
   draft?(id: number): DraftIn | null;
   /** A message went out of the window's composer: the chat's draft empties everywhere. */
   sent?(id: number): void;
+  /** Any change but a message to a copy whose PC is off: the chat becomes this PC's (failover.ts `adopt`): the chat, now
+   *  this PC's, or why not. */
+  adopt?(c: Chat): Chat | string;
   /** A chat whose PC is off: the line saying where the next message goes or that it waits (failover.ts); null: its PC is on. */
   failover?(c: Chat): { text: string; warn: boolean } | null;
   /** The other PCs and their memory (windowmesh.ts `memory`). */
@@ -71,7 +74,25 @@ export class MeshChat {
   }
 
   writable(c: Chat): boolean {
-    return !c.retired && (c.home === "" || this.m.home(c)?.online === true || this.m.failover !== undefined);
+    return !c.retired && (c.home === "" || this.m.home(c)?.online === true || this.m.failover !== undefined || this.m.adopt !== undefined);
+  }
+
+  /** A copy whose PC is off, which a change made here makes this PC's (`adopt`). */
+  offCopy(c: Chat | undefined): c is Chat {
+    return this.foreign(c) && !c.retired && this.m.home(c)?.online !== true && this.m.adopt !== undefined;
+  }
+
+  /** Before a change made here (a move to another project…): a copy whose PC is off becomes this PC's (`c` updated in
+   *  place). True when the chat is this PC's now; false (and the composer says why) when it isn't. */
+  takeOver(c: Chat | undefined, what: string): boolean {
+    if (c === undefined || !this.foreign(c)) return c !== undefined;
+    const own = this.offCopy(c) ? (this.m.adopt?.(c) ?? "") : `${this.homeName(c)} has it: change it there`;
+    if (typeof own === "string") {
+      this.fail(c.id, `Couldn't ${what}: ${own}`);
+      return false;
+    }
+    Object.assign(c, own);
+    return true;
   }
 
   /** The line over the composer of a chat whose PC is off (failover.ts); null: it's on, or this PC's chat. */
@@ -121,14 +142,24 @@ export class MeshChat {
     this.h.changed(chat);
   }
 
-  /** A call about a copy at its home PC; false for this PC's own chats. */
+  /**
+   * A call about a copy at its home PC; false for this PC's own chats. A copy whose PC is off: a message goes on on
+   * another PC or waits (windowmesh.ts → failover.ts); a stop has nothing to stop; any other change makes the chat this
+   * PC's (`adopt`, `c` is updated in place) and false is answered, so the caller makes the change here as for its own.
+   */
   call(c: Chat | undefined, what: string, method: string, tail: string[], body: Record<string, unknown>, files: readonly string[] = [], restore: { text: string; mentions: Mention[] } | null = null): boolean {
     if (!this.foreign(c)) return false;
     const home = this.m.home(c);
-    // A message to a chat whose PC is off goes on on another PC, or waits (windowmesh.ts → failover.ts).
     const failover = what === "send" && this.m.failover !== undefined;
     if (home?.online !== true && !failover) {
-      this.fail(c.id, `Couldn't ${what}: ${home?.name ?? c.home} is off, so this chat is read-only until it's back`);
+      if (what === "stop") return true;
+      const off = `${home?.name ?? c.home} is off`;
+      const own = what === "send" ? off : (this.m.adopt?.(c) ?? off);
+      if (typeof own !== "string") {
+        Object.assign(c, own);
+        return false;
+      }
+      this.fail(c.id, `Couldn't ${what}: ${own}`);
       if (restore) this.h.restore(c.id, restore.text, restore.mentions, true);
       return true;
     }
@@ -163,6 +194,15 @@ export class MeshChat {
 
   fork(c: Chat | undefined, seq: number): boolean {
     return this.call(c, "fork the chat", "POST", ["fork"], { seq });
+  }
+
+  rename(c: Chat | undefined, title: string): boolean {
+    return this.call(c, "rename the chat", "PATCH", [], { title });
+  }
+
+  /** Deleted at its home PC (its copies everywhere go with it). */
+  remove(c: Chat | undefined): boolean {
+    return this.call(c, "delete the chat", "DELETE", [], {});
   }
 
   /** mesh.rs `mesh_create`: the draft's first message starts the chat on PC `peer`; its copy here opens once it arrives. */

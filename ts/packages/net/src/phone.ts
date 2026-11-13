@@ -190,6 +190,9 @@ export interface PhoneDeps {
     /** A new chat in a project whose folder's PC is off: where it starts ("" here, null nowhere now). */
     draft(repo: number): { to: string | null; line: string; off: string } | null;
     startedNotice(chat: number, off: string): void;
+    /** Any change but a message to a copy whose PC is off: the chat becomes this PC's, and the change is made here
+     *  (failover.ts `adopt`). The chat, now this PC's, or why not. */
+    adopt?(c: Chat): Chat | string;
   };
   /** Run anywhere: another PC takes this PC's chat `c` (its session and work go up first); 409 while it runs here. */
   handoff?: (c: Chat, to: string) => Promise<Reply>;
@@ -942,13 +945,14 @@ export class PhoneRoutes {
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global, call.from ? "" : who.account));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
-    const c = this.chatOf(p[2] ?? "");
-    if (!c) return err(404, "no such chat");
+    const found = this.chatOf(p[2] ?? "");
+    if (!found) return err(404, "no such chat");
+    let c: Chat = found;
     // A send the phone repeats (it never got the answer) is answered, not run again; a copy's
     // send goes on to its home PC with the same client id, which does the same there.
     if (m === "POST" && p.length === 4 && p[3] === "send") {
       const key = sendKey(c.gid === "" ? String(c.id) : c.gid, body);
-      const run = () => (c.home !== "" ? this.forward(c, m, p, body, sender, call.global, who) : this.send(c, body, sender, device, by, who));
+      const run = () => (found.home !== "" ? this.forward(found, m, p, body, sender, call.global, who) : this.send(found, body, sender, device, by, who));
       if (key !== null) return this.sends.run(key, run);
     }
     // Run anywhere: another of the account's PCs takes this chat (only a PC of the mesh asks; never phones).
@@ -958,7 +962,20 @@ export class PhoneRoutes {
       if (!this.d.handoff) return err(404, "no such call");
       return this.d.handoff(c, typeof body.to === "string" ? body.to : call.from.peer);
     }
-    if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global, who);
+    if (c.home !== "" && forHome(m, p)) {
+      // Its PC is off: a message goes on through failover (in `forward`); any other change makes the chat this PC's
+      // and is made here (a stop has nothing to stop: nothing of it runs anywhere).
+      const off = !this.d.hub.mesh.on || this.d.hub.mesh.peer(c.home)?.online !== true;
+      const sending = m === "POST" && p.length === 4 && p[3] === "send";
+      if (!off || sending || !this.d.failover?.adopt) return this.forward(c, m, p, body, sender, call.global, who);
+      if (m === "POST" && p.length === 4 && p[3] === "stop") return ok({ ok: true, returned: [], held: false });
+      // A question (the PCs it can move to, its slash commands…) is answered here without taking it.
+      if (m !== "GET") {
+        const own = this.d.failover.adopt(c);
+        if (typeof own === "string") return err(409, own);
+        c = own;
+      }
+    }
     if (m === "GET" && p.length === 4 && p[3] === "items") {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");
       return ok(this.items(c, Number.isFinite(since) ? since : 0, call.from ? null : this.viewer(c, call.token, call.device), call.global));
@@ -1400,7 +1417,7 @@ export class PhoneRoutes {
       if (r !== null) return r;
       delete body.claim_to;
     }
-    if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off: the chat is read-only until it's back`);
+    if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off`);
     // Moving is its home's to do; a home before it would only say "unknown call".
     if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Harbor that can't move chats: update it first`);
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];

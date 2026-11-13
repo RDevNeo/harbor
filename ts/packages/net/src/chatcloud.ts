@@ -58,6 +58,8 @@ export interface CloudSource {
   carry?(): CarryChat[];
   /** A snapshot of a folder's work (carry.ts `gitSnapshot`/`packFolder`, with the folder's chain). */
   snapshot?(folder: CarryFolder): Promise<Snap | null>;
+  /** Chats this PC took over from a PC that was off and then deleted (dropped.ts): that PC deletes its own when back. */
+  dropped?(): Json[];
 }
 
 /** A chat's folder, as carried. */
@@ -125,6 +127,8 @@ export interface CloudSink {
   items(pc: string, hid: number, count: number, items: ReadonlyMap<number, Item>): void;
   /** Projects of PC `pc` (made here when missing, remembered as that PC's). */
   projects(pc: CloudPc, list: CloudProject[]): void;
+  /** What PC `pc` deleted of the chats it took over from PCs that were off (dropped.ts). */
+  dropped?(pc: CloudPc, list: Json[]): void | Promise<void>;
 }
 
 export type CloudCall = (method: "GET" | "PUT" | "POST", path: string, body?: Json) => Promise<unknown>;
@@ -341,6 +345,8 @@ interface WsState {
   projects: Record<string, KnownProject>;
   /** Carried sessions and work of other PCs' chats, by row. */
   carry?: Record<string, { by: string; index: CarryIndex }>;
+  /** Each PC's deletes of chats it took over (dropped.ts), by row. */
+  dropped?: Record<string, { by: string; pc: string; list: Json[]; h: string }>;
 }
 
 /** What this PC published of its chats' sessions and work. */
@@ -363,7 +369,7 @@ interface Saved {
   account: string;
   keys: Record<string, WsKey>;
   /** What this PC published: in which workspace (and its key's epoch), by chat id and project path. */
-  pub: { ws: string; epoch: string; chats: Record<string, PubChat>; projects: Record<string, string>; carry?: PubCarry };
+  pub: { ws: string; epoch: string; chats: Record<string, PubChat>; projects: Record<string, string>; carry?: PubCarry; dropped?: string };
   read: Record<string, WsState>;
   /** What was applied here of each copy (by "pc\0hid"), and of each project row. */
   applied: Record<string, Applied>;
@@ -683,6 +689,16 @@ export class ChatCloud {
         add(g, cloudRowId(key, "p", `${fp}\0${path}`), null);
         dones.set(g, () => delete p.projects[path]);
       }
+    }
+    // The chats this PC took over and deleted: one row, whenever the list changed.
+    const dropped = this.o.source.dropped?.() ?? [];
+    const dplain = JSON.stringify({ pc: me, dropped: 1, list: dropped });
+    const dh = dropped.length === 0 ? "" : sha(dplain);
+    if ((p.dropped ?? "") !== dh) {
+      const id = cloudRowId(key, "p", `${fp}\0dropped`);
+      const g = ++group;
+      add(g, id, dh === "" ? null : seal(id, dplain));
+      dones.set(g, () => (p.dropped = dh));
     }
     // Chats: the most recently changed first; a running one at most every RUNNING_GAP_MS.
     let deferred = false;
@@ -1115,6 +1131,7 @@ export class ChatCloud {
     if (row.v === null) {
       delete st.projects[row.id];
       if (st.carry) delete st.carry[row.id];
+      if (st.dropped) delete st.dropped[row.id];
       return;
     }
     const b = cloudOpen(k.key, ws, k.epoch, row.id, row.v);
@@ -1126,6 +1143,11 @@ export class ChatCloud {
     }
     if (isObj(v) && v.carry === 1 && typeof v.pc === "string") {
       this.takeCarry(st, row, v);
+      return;
+    }
+    if (isObj(v) && v.dropped === 1 && typeof v.pc === "string") {
+      st.dropped ??= {};
+      st.dropped[row.id] = { by: row.by, pc: v.pc, list: Array.isArray(v.list) ? (v.list as Json[]) : [], h: sha(row.v) };
       return;
     }
     if (!isObj(v) || typeof v.pc !== "string" || typeof v.path !== "string") return;
@@ -1175,6 +1197,14 @@ export class ChatCloud {
       for (const e of byPc.values()) {
         sink.projects(e.pc, e.list);
         for (const [id, h] of e.rows) this.saved.appliedProjects[id] = h;
+      }
+      // Deletes of chats taken over from PCs that were off (this PC's among them, when it was one of those).
+      for (const [id, d] of Object.entries(st.dropped ?? {})) {
+        if (this.saved.appliedProjects[id] === d.h || !sink.dropped) continue;
+        const pc = sink.pcOf(d.by);
+        if (!pc || pc.id !== d.pc || pc.id === me) continue;
+        await sink.dropped(pc, d.list);
+        this.saved.appliedProjects[id] = d.h;
       }
       // Chats.
       // Parents before their sub-agents (a copy names its parent by the copy made of it).

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { type AccountDirectory, type CarryChat, type CarryFolder, ChatCloud, type CloudOwnChat, type CloudProject, type CloudSink, type CloudSource, type Hub, type Snap, type StoreReplica } from "./packages/net/src/index.ts";
-import { githead, itemJson, repoDir, type Store } from "./packages/store/src/index.ts";
+import { githead, itemJson, parseDropped, repoDir, type Store } from "./packages/store/src/index.ts";
 
 /** The epoch copies made from the workspace cloud are noted under: never a PC's, so the mesh fetches a copy's items afresh once its PC is back. */
 export const CLOUD_EPOCH = -1;
@@ -67,6 +67,7 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
       projects = { at: now, list };
       return list;
     },
+    dropped: () => h.replica().dropped().map((d) => ({ ...d })),
     ...(h.carry ? { carry: () => h.carry?.carry() ?? [], snapshot: (f: CarryFolder) => h.carry?.snapshot(f) ?? Promise.resolve(null) } : {}),
   };
   const sink: CloudSink = {
@@ -94,6 +95,10 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
     projects: (pc, list) => {
       const r = h.replica();
       for (const p of list) r.applyProject(pc.id, p);
+      h.copied(null);
+    },
+    dropped: (pc, list) => {
+      h.replica().applyDropped(pc.id, parseDropped(list));
       h.copied(null);
     },
   };

@@ -60,6 +60,11 @@ export interface FailoverHost {
   carryNow?: (hid: number, limitMs: number) => Promise<boolean>;
 }
 
+/** The short notice of a chat that came here without its agent session (it stayed on `off`). */
+export function lostNotice(off: string): { text: string; detail: string } {
+  return { text: "New session here, with the conversation so far", detail: `Its agent session stayed on ${off}: the agent here gets the conversation so far, not its tool history.` };
+}
+
 /** kv: where the user picked a chat to run ("runs_on:<gid>" → a PC's mesh id); none: the PC it's typed on. */
 export const runsOnKey = (gid: string): string => `runs_on:${gid}`;
 
@@ -281,7 +286,7 @@ export class Failover {
    * Codex). The session and work the cloud carries come before its next turn (continuehere.ts); without them, a new
    * session with the conversation so far. A notice says where it went. Null, or why it can't.
    */
-  takeHere(c: Chat, off: string, quiet = false): string | null {
+  takeHere(c: Chat, off: string, quiet = false, agent = true): string | null {
     const e = this.h.engine();
     if (!e) return "the engine isn't started";
     const from = c.home;
@@ -296,9 +301,11 @@ export class Failover {
     const claude = on.filter((a) => a.kind === "Claude");
     const pool = same.length > 0 ? same : claude.length > 0 ? claude : on;
     const account = pool.find((a) => a.id === c.account) ?? pool.find((a) => a.id === want) ?? pool[0];
-    if (!account) return "this PC has no Claude or Codex account";
+    // A change that runs nothing (settle, rename…) takes it without an agent here: it keeps its account.
+    if (!account && agent) return "this PC has no Claude or Codex account";
     const count = this.h.store.items(c.id).length;
-    this.h.store.saveChat({ ...c, account: account.id, device: "" });
+    // Newer than its old PC's listing of it: the workspace cloud's other readers take this PC's.
+    this.h.store.saveChat({ ...c, account: account?.id ?? c.account, device: "", updated: Math.max(c.updated, Math.floor(Date.now() / 1000)) });
     this.h.store.setHome(c.id, "", 0);
     this.mesh.foreign.delete(c.id);
     this.mesh.homes.delete(c.id);
@@ -307,19 +314,60 @@ export class Failover {
     this.h.store.set(takenKey(c.gid), JSON.stringify({ from, name: off, count }));
     e.reload();
     // Its session and work from the cloud, on the same provider: the next turn waits for them and resumes.
-    if (carried !== null && account.kind === kind && this.h.carry?.begin(c.id, from, hid, off, quiet)) {
+    if (account !== undefined && carried !== null && account.kind === kind && this.h.carry?.begin(c.id, from, hid, off, quiet)) {
       this.h.touch(c.id);
       this.h.touch(null);
       return null;
     }
     // A copy with messages is a conversation that goes on (its PC may not have said it started). Run anywhere says
-    // nothing of PCs: the session goes on with the conversation so far, quietly.
-    const n = quiet ? { text: "", detail: "" } : switchedNotice(off, this.here(), c.started || count > 0);
-    if (!e.handOver(c.id, `${kind} on ${off}`, quiet ? null : { icon: "monitor", ...n }) && !quiet) e.notice(c.id, "monitor", n.text, n.detail);
+    // nothing of PCs, unless the agent's own context stayed behind: then a short notice says the session is new.
+    const lost = c.started || count > 0;
+    const n = quiet ? lostNotice(off) : switchedNotice(off, this.here(), lost);
+    if (!e.handOver(c.id, `${kind} on ${off}`, quiet && !lost ? null : { icon: "monitor", ...n }) && !quiet) e.notice(c.id, "monitor", n.text, n.detail);
     freshSession(this.h.store, e, c.id);
     this.h.touch(c.id);
     this.h.touch(null);
     return null;
+  }
+
+  /**
+   * Any change to copy `c` but a message (settle, rename, delete, a model or access pick, a move…) while its PC is off:
+   * the chat becomes this PC's, as a message would make it, and the change is made here. Nothing is carried or cloned
+   * for it (a later turn brings the session and work). One PC writes a chat: its old PC, back, becomes a copy of this
+   * one's (`release`), or deletes its own when this PC deleted it (dropped.ts). The chat, now this PC's; or why not.
+   */
+  adopt(c: Chat): Chat | string {
+    if (c.home === "") return c;
+    const off = this.mesh.nameOf(c.home);
+    if (c.retired) return "this agent was retired";
+    if (this.mesh.on && this.mesh.online(c.home)) return `${off} is on: the change goes there`;
+    const why = this.takeHere(c, off, this.h.mine?.(c.home) !== false, false);
+    if (why !== null) return why;
+    return this.h.engine()?.chat(c.id) ?? this.h.store.chat(c.id) ?? c;
+  }
+
+  /**
+   * PC `by` had taken this PC's chat `own` over while this PC was off and deleted it there, at `count` items: it goes
+   * here too (true). When someone wrote in it here since, it stays, as a chat of its own (a new gid, so the delete
+   * doesn't match it again); while it runs, later.
+   */
+  dropOwn(own: Chat, by: string, count: number): boolean {
+    const e = this.h.engine();
+    if (e?.running(own.id)) return false;
+    if (this.h.store.items(own.id).slice(count).some((i) => i.kind === "user")) {
+      this.h.store.set(takenKey(own.gid), "");
+      this.h.store.setGid(own.id, newUuid());
+      e?.reload();
+      this.h.touch(own.id);
+      return false;
+    }
+    e?.stop(own.id);
+    this.h.store.deleteChat(own.id);
+    e?.transcripts.delete(own.id);
+    this.mesh.gone.push([this.h.hub.touch(null, true), own.id]);
+    e?.reload();
+    console.error(`harbor: chat ${own.id} was deleted on ${this.mesh.nameOf(by)}, which had taken it over while this PC was off`);
+    return true;
   }
 
   /** What waits goes out once the chat's PC, or another usable one, is back (checked every 15 s while anything waits). */

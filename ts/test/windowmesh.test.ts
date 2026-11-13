@@ -160,3 +160,56 @@ describe("run anywhere: the window's message for a copy", () => {
     expect(r.calls.map((c) => [c.to, c.path, c.body.claim_to])).toEqual([["Laptop", "v1/chats/g-2/send", "pc:laptop"]]);
   });
 });
+
+describe("a copy whose PC is off", () => {
+  function offRig(adopt: (c: Chat) => Chat | string) {
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.peers.set("pc:home", { id: "pc:home", name: "Home", online: false, addr: "", fp: "" } as never);
+    const forwarded: string[] = [];
+    const routed: { method: string; path: string; body: unknown }[] = [];
+    const adopted: number[] = [];
+    const w = new WindowMesh({
+      hub,
+      mesh: { forward: async (_d: unknown, _n: string, _m: string, path: string[]) => (forwarded.push(path.join("/")), { status: 200, body: {} }) } as unknown as Mesh,
+      replica: { remote: new Map() } as unknown as StoreReplica,
+      phone: { route: async (call: { method: string; path: string[]; body: unknown }) => (routed.push({ method: call.method, path: call.path.join("/"), body: call.body }), { status: 200, body: { ok: true } }) } as unknown as PhoneRoutes,
+      chat: () => undefined,
+      ctx: () => null,
+      ownerName: () => null,
+      env: { HARBOR_MESH_ID: "desk" },
+      failover: {
+        line: () => null,
+        send: async () => ({ status: 200, body: { ok: true, failover: "Desk" } }),
+        adopt: (c) => (adopted.push(c.id), adopt(c)),
+      },
+    });
+    return { w, forwarded, routed, adopted };
+  }
+  const copy = chat(2, "pc:home");
+
+  test("settle, rename and delete become this PC's and are made here; never the read-only refusal", async () => {
+    const r = offRig((c) => ({ ...c, home: "", homeId: 0 }) as Chat);
+    for (const [m, body] of [["PATCH", { settled: true }], ["PATCH", { title: "New" }], ["DELETE", {}]] as const) {
+      const out = await r.w.forward(copy, m, [], body);
+      expect(out.status).toBe(200);
+    }
+    expect(r.routed.map((x) => [x.method, x.path])).toEqual([
+      ["PATCH", "v1/chats/2"],
+      ["PATCH", "v1/chats/2"],
+      ["DELETE", "v1/chats/2"],
+    ]);
+    expect(r.forwarded).toEqual([]);
+    // A stop has nothing to stop; a message goes through failover.
+    expect((await r.w.forward(copy, "POST", ["stop"], { hold: true })).status).toBe(200);
+    expect((await r.w.forward(copy, "POST", ["send"], { text: "hi" })).body).toEqual({ ok: true, failover: "Desk" });
+    expect(r.adopted).toEqual([2, 2, 2]);
+  });
+
+  test("a change this PC can't take says why", async () => {
+    const r = offRig(() => "Home is off, and it isn't one of the PCs this account uses");
+    const out = await r.w.forward(copy, "PATCH", [], { settled: true });
+    expect(out).toEqual({ status: 409, body: { error: "Home is off, and it isn't one of the PCs this account uses" } });
+    expect(JSON.stringify(out)).not.toContain("read-only");
+  });
+});

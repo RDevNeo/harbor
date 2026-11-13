@@ -30,7 +30,7 @@ export interface MeshApp {
   /** What `hello` says beyond id, name, epoch, keys and addresses (to `peer`: its accounts are what this PC shares with it). */
   helloExtra(peer?: string): { version: string; accounts: Json[]; update: Json; owner: string; github: string; owner_suggested: boolean };
   /** `GET /mesh/v1/chats`: this PC's own chats changed after `since` (all when `full`). */
-  chats(since: number, full: boolean): { chats: Json[]; update: Json } | Promise<{ chats: Json[]; update: Json }>;
+  chats(since: number, full: boolean): { chats: Json[]; update: Json; dropped?: Json[] } | Promise<{ chats: Json[]; update: Json; dropped?: Json[] }>;
   /** `GET /mesh/v1/chats/{id}/items`; null: not one of this PC's own chats. */
   items(chat: number, since: number): Json | null;
   /** A peer's chats list: copies made or updated; returns [home id, since] of those whose items to fetch. */
@@ -348,9 +348,10 @@ export class Mesh {
       const since = uint(query(req, "since"));
       const full = since === 0 || uint(query(req, "epoch")) !== hub.epoch;
       const rev = hub.rev();
-      const { chats, update } = await this.d.app.chats(since, full);
+      const { chats, update, dropped } = await this.d.app.chats(since, full);
       const gone = full ? [] : shared.gone.filter(([g]) => g > since).map(([, id]) => id);
-      return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update, ram: this.d.ram?.() ?? null, shared: this.d.shared?.snapshot() ?? null });
+      // `dropped`: chats this PC took over from a PC that was off and then deleted (dropped.ts); that PC deletes its own.
+      return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update, ram: this.d.ram?.() ?? null, shared: this.d.shared?.snapshot() ?? null, ...(dropped ? { dropped } : {}) });
     }
     if (req.method === "GET" && segs.length === 5 && segs[0] === "mesh" && segs[1] === "v1" && segs[2] === "chats" && segs[4] === "items") {
       const c = segs[3] ?? "";
@@ -765,7 +766,7 @@ export class Mesh {
 
   /** A call forwarded to a chat's home PC: its files first (uploads there), then the call. */
   async forward(d: Dest, name: string, method: string, path: string[], body: Record<string, unknown>, files: { name: string; data: Uint8Array }[], sender: Sender, ctx: Json): Promise<Reply> {
-    const off = err(503, `${name} is off or unreachable: the chat is read-only until it's back`);
+    const off = err(503, `${name} is off or out of reach: try again in a moment`);
     const ids: Json[] = [];
     for (const f of files) {
       try {

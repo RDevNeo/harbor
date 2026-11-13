@@ -103,8 +103,8 @@ export function heldNotice(off: string, why: string): string {
   return `${off} is off and no PC can run this (${why}). Messages wait until one is back.`;
 }
 
-/** kv: a chat this PC took over from its PC while that was off ({from, name, count}), to settle with it when it's back. */
-export const takenKey = (gid: string): string => `failover_took:${gid}`;
+/** kv: a chat this PC took over from its PC while that was off ({from, name, count}) (`@harbor/store`'s dropped.ts). */
+export { takenKey } from "@harbor/store";
 
 /** kv: messages waiting for a usable PC (JSON list of {text, mentions, files}). */
 export const heldKey = (gid: string): string => `failover_held:${gid}`;
