@@ -111,7 +111,7 @@ export function signIn(id: string, changed: () => void = () => undefined): void 
       case "convex":
         return deviceLogin(id, flow, convexLoginCmd(), update);
       case "oauth":
-        if (a.mcp.kind === "http") return oauthLogin(id, a.mcp.url, flow.abort.signal, update);
+        if (a.mcp.kind === "http") return oauthLogin(id, a.mcp.url, flow.abort.signal, update, a.scopes === "all");
         throw new Error("This app signs in with a key.");
       case "google":
         return googleLogin(id, a.auth.scope, flow.abort.signal, update);
@@ -244,16 +244,21 @@ async function firstJson(urls: string[]): Promise<Record<string, Json> | undefin
   return undefined;
 }
 
-export async function oauthLogin(id: string, url: string, signal: AbortSignal, update: (p: Pending) => void): Promise<void> {
+/** A metadata document's `scopes_supported`, space-separated ("" if none). */
+export function scopeList(v: Json | undefined): string {
+  return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string").join(" ") : "";
+}
+
+/** `allScopes`: ask for every scope the authorization server lists (apps.ts `scopes: "all"`), else the resource's. */
+export async function oauthLogin(id: string, url: string, signal: AbortSignal, update: (p: Pending) => void, allScopes = false): Promise<void> {
   const rm = (await firstJson(wellKnown(url, "oauth-protected-resource"))) ?? {};
   const servers = rm.authorization_servers;
   const first = Array.isArray(servers) ? servers[0] : undefined;
   const issuer = typeof first === "string" ? first : originAndPath(url)[0];
   const resource = typeof rm.resource === "string" ? rm.resource : url;
-  const scopes = rm.scopes_supported;
-  const scope = Array.isArray(scopes) ? scopes.filter((s): s is string => typeof s === "string").join(" ") : "";
   const meta = await firstJson([...wellKnown(issuer, "oauth-authorization-server"), ...wellKnown(issuer, "openid-configuration")]);
   if (!meta) throw new Error("The service has no OAuth metadata.");
+  const scope = (allScopes ? scopeList(meta.scopes_supported) : "") || scopeList(rm.scopes_supported);
   const authorize = text(meta.authorization_endpoint);
   const tokenEp = text(meta.token_endpoint);
   const register = text(meta.registration_endpoint);

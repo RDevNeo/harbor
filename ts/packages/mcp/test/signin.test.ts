@@ -76,6 +76,40 @@ test("an MCP OAuth sign-in discovers, registers, follows the redirect and saves 
   void server.stop(true);
 });
 
+test("Cloudflare signs in with OAuth on its API server and asks for every scope its consent screen can narrow", async () => {
+  const cf = mcp.app("cloudflare");
+  expect(cf).toMatchObject({ label: "Cloudflare", auth: { kind: "oauth" }, mcp: { kind: "http", url: "https://mcp.cloudflare.com/mcp" }, scopes: "all" });
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const u = new URL(req.url);
+      const base = u.origin;
+      if (u.pathname.startsWith("/.well-known/oauth-protected-resource")) return Response.json({ authorization_servers: [base], resource: `${base}/mcp`, scopes_supported: ["user:read", "account:read"] });
+      if (u.pathname.startsWith("/.well-known/oauth-authorization-server")) {
+        return Response.json({
+          authorization_endpoint: `${base}/authorize`,
+          token_endpoint: `${base}/token`,
+          registration_endpoint: `${base}/register`,
+          scopes_supported: ["offline_access", "user:read", "account:read", "d1.write", "workers-observability.read"],
+        });
+      }
+      if (u.pathname === "/register") return Response.json({ client_id: "cid-cf" });
+      if (u.pathname === "/token") return Response.json({ access_token: "at-cf", refresh_token: "rt-cf", expires_in: 3600 });
+      return new Response(null, { status: 404 });
+    },
+  });
+  let scope = "";
+  await mcp.oauthLogin("cloudflare", `http://127.0.0.1:${server.port}/mcp`, new AbortController().signal, (p) => {
+    const q = new URL(p.url ?? "").searchParams;
+    scope = q.get("scope") ?? "";
+    void fetch(`${q.get("redirect_uri")}?code=c&state=${q.get("state")}`);
+  }, true);
+  expect(scope).toBe("offline_access user:read account:read d1.write workers-observability.read");
+  expect(mcp.signedIn("cloudflare")).toBe(true);
+  void server.stop(true);
+});
+
 test("an expiring OAuth token is refreshed and the new one saved", async () => {
   const server = Bun.serve({
     port: 0,

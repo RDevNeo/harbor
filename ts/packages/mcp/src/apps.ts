@@ -34,11 +34,15 @@ export interface App {
   about: string;
   auth: Auth;
   mcp: Transport;
+  /** OAuth: `"all"` asks for every scope the authorization server lists, not only the resource's minimal ones
+   * (Cloudflare's consent screen can only narrow what was asked; it offers Read only and Full access there). */
+  scopes?: "all";
 }
 
 export const GMAIL = "gmail";
 export const DISCORD = "discord";
 export const WHATSAPP = "whatsapp";
+export const CLOUDFLARE = "cloudflare";
 
 export const APPS: readonly App[] = [
   { id: "github", label: "GitHub", about: "Repos, issues, PRs; gh and git push", auth: { kind: "github" }, mcp: { kind: "http", url: "https://api.githubcopilot.com/mcp/" } },
@@ -46,6 +50,17 @@ export const APPS: readonly App[] = [
   { id: "linear", label: "Linear", about: "Issues, projects, cycles", auth: { kind: "oauth" }, mcp: { kind: "http", url: "https://mcp.linear.app/mcp" } },
   { id: "sentry", label: "Sentry", about: "Errors, traces, releases", auth: { kind: "oauth" }, mcp: { kind: "http", url: "https://mcp.sentry.dev/mcp" } },
   { id: "supabase", label: "Supabase", about: "Database, auth, edge functions", auth: { kind: "oauth" }, mcp: { kind: "http", url: "https://mcp.supabase.com/mcp" } },
+  {
+    id: CLOUDFLARE,
+    label: "Cloudflare",
+    about: "Workers, D1, KV, R2, logs; read-only unless you OK it",
+    auth: { kind: "oauth" },
+    // Cloudflare's API server (Code Mode): search and execute over its whole v4 API, so Workers, D1, KV, R2,
+    // Observability and Builds in one server; the per-product ones (bindings., observability., builds.) are deprecated.
+    mcp: { kind: "http", url: "https://mcp.cloudflare.com/mcp" },
+    // What agents keep to with it is in their prompts (agents/src/team.ts `CLOUDFLARE_RULE`).
+    scopes: "all",
+  },
   {
     id: "context7",
     label: "Context7",

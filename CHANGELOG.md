@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.186.0] - 2026-11-13
+
+### Added
+- Cloudflare integration in Settings › Integrations: one-click OAuth sign-in to Cloudflare's API MCP server
+  (`mcp.cloudflare.com/mcp`, Code Mode: Workers, D1, KV, R2, logs and builds in one), which follows the account to
+  every PC like the other apps. Cloudflare's consent screen lets you pick Read only or Full access. Agents are told
+  to keep it read-only, ask before deploying, deleting or writing data, and never print secrets.
+
 ## [0.185.0] - 2026-11-13
 
 ### Added

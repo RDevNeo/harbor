@@ -1,4 +1,5 @@
 import blender from "../../../../assets/logos/blender.a8" with { type: "file" };
+import cloudflare from "../../../../assets/logos/cloudflare.a8" with { type: "file" };
 import convex from "../../../../assets/logos/convex.a8" with { type: "file" };
 import discord from "../../../../assets/logos/discord.a8" with { type: "file" };
 import github from "../../../../assets/logos/github.a8" with { type: "file" };
@@ -30,6 +31,7 @@ const MARKS: [string, Mark][] = [
   ["linear", { mask: linear, brand: 0x5e6ad2 }],
   ["sentry", { mask: sentry, brand: 0x362d59 }],
   ["supabase", { mask: supabase, brand: 0x3fcf8e }],
+  ["cloudflare", { mask: cloudflare, brand: 0xf38020 }],
   ["convex", { mask: convex, brand: 0xee342f }],
   ["discord", { mask: discord, brand: 0x5865f2 }],
   ["blender", { mask: blender, brand: 0xe87d0d }],

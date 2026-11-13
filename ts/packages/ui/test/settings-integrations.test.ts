@@ -34,9 +34,10 @@ test("integrations lists every app two to a row, the last alone", () => {
   expect(d.rows.map((r) => [r.left.id, r.has_right ? r.right.id : null])).toEqual([
     ["github", "vercel"],
     ["linear", "sentry"],
-    ["supabase", "context7"],
-    ["convex", "gmail"],
-    ["discord", "whatsapp"],
+    ["supabase", "cloudflare"],
+    ["context7", "convex"],
+    ["gmail", "discord"],
+    ["whatsapp", null],
   ]);
   expect(find(d, "github")).toMatchObject({ sub: "Repos, issues, PRs; gh and git push", action: "signin", action_text: "Sign in", action_primary: true, form: "" });
 });
