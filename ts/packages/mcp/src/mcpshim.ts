@@ -1,5 +1,6 @@
 import { writeSync } from "node:fs";
 import { type Json, type JsonObject, isObject, parseJson, sleep } from "./json.ts";
+import { toolDef as computerTool } from "./computerdef.ts";
 import { socketPath } from "./control.ts";
 import { harborVersion } from "./version.ts";
 
@@ -86,6 +87,7 @@ export function tools(role: string): JsonObject[] {
       },
       ["command", "secrets"],
     ),
+    computerTool(true),
   ];
   if (role === "lead") {
     v.push(
@@ -227,7 +229,10 @@ export interface CallOptions {
   waitMs?: number;
 }
 
-export async function callApp(chat: number, name: string, args: Json, opts: CallOptions = {}): Promise<[boolean, string]> {
+/** A tool's answer: ok, its text, and its MCP content when it has more than text (a screenshot). */
+export type Answer = [ok: boolean, text: string, content?: Json[]];
+
+export async function callApp(chat: number, name: string, args: Json, opts: CallOptions = {}): Promise<Answer> {
   const path = opts.path ?? process.env.HARBOR_SOCK ?? socketPath();
   const waitMs = opts.waitMs ?? 30_000;
   const started = Date.now();
@@ -245,7 +250,8 @@ export async function callApp(chat: number, name: string, args: Json, opts: Call
   if (answer.trim() === "") return [false, "Harbor restarted before answering. Check whether it took effect (list_agents, list_processes…) before trying again."];
   const v = parseJson(answer);
   const o = isObject(v) ? v : {};
-  return [o.ok === true, typeof o.text === "string" ? o.text : "no reply"];
+  const text = typeof o.text === "string" ? o.text : "no reply";
+  return Array.isArray(o.content) ? [o.ok === true, text, o.content] : [o.ok === true, text];
 }
 
 export interface Io {
@@ -285,7 +291,7 @@ function stdoutWrite(line: string): boolean {
 export interface RunOptions {
   io?: Io;
   version?: string;
-  call?: (chat: number, name: string, args: Json) => Promise<[boolean, string]>;
+  call?: (chat: number, name: string, args: Json) => Promise<Answer>;
 }
 
 export async function run(args: string[], opts: RunOptions = {}): Promise<void> {
@@ -309,7 +315,7 @@ export async function run(args: string[], opts: RunOptions = {}): Promise<void> 
 }
 
 /** The team server's answer to one message (null for a notification): `harbor mcp` over stdio, and the bridge without a process. */
-export async function answer(req: JsonObject, chat: number, role: string, call: (chat: number, name: string, args: Json) => Promise<[boolean, string]>, version: string): Promise<Json | null> {
+export async function answer(req: JsonObject, chat: number, role: string, call: (chat: number, name: string, args: Json) => Promise<Answer>, version: string): Promise<Json | null> {
   if (!("id" in req)) return null;
   const id = req.id as Json;
   const params = isObject(req.params) ? req.params : {};
@@ -326,8 +332,8 @@ export async function answer(req: JsonObject, chat: number, role: string, call: 
       result = { tools: tools(role) };
       break;
     case "tools/call": {
-      const [ok, text] = await call(chat, typeof params.name === "string" ? params.name : "", params.arguments ?? null);
-      result = { content: [{ type: "text", text }], isError: !ok };
+      const [ok, text, content] = await call(chat, typeof params.name === "string" ? params.name : "", params.arguments ?? null);
+      result = { content: content ?? [{ type: "text", text }], isError: !ok };
       break;
     }
     case "ping":

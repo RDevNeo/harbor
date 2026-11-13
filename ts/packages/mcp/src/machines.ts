@@ -5,6 +5,7 @@ import { folders, paths as osPaths } from "@harbor/os";
 import { type Body, type Dest, dest, hostname, http as meshHttp, jsonBody, type Kv, type Me, type Peer, shQuote } from "@harbor/net";
 import { home, privateDir, randomHex } from "@harbor/store";
 import { argStr, argStrings, argUint } from "./args.ts";
+import * as computer from "./computer.ts";
 import { isObject, type Json } from "./json.ts";
 import { signedIn } from "./mcp.ts";
 import { shell } from "./shell.ts";
@@ -153,6 +154,11 @@ export async function serveTool(peer: string, body: unknown): Promise<Reply> {
     if (!(level === "full" || (SHARE.github && proven))) return no(`${me} doesn't let this PC's chats use its GitHub login (its owner can allow it in Settings › Workspace)`);
     const r = await gh(args, level === "full");
     return ok({ ok: r.ok, content: [{ type: "text", text: r.text }] });
+  }
+  if (tool === "computer") {
+    const name = hub?.peers().find((p) => p.id === peer)?.name ?? peer;
+    const r = await computer.served(name, level === "full", args);
+    return ok({ ok: r.ok, content: r.content });
   }
   if (!TOOLS.includes(tool)) return err(400, "no such tool");
   if (!allows(level, tool)) {
@@ -426,6 +432,24 @@ async function callTool(g: Grant, cwd: string, chatId: number, name: string, a: 
     return text(false, `${peer.name} answered ${status}: ${argStr(v, "error") ?? ""}`);
   } catch (e) {
     return text(false, `${peer.name} didn't answer: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** The `computer` tool on another PC of the mesh (`want`, its name or id), through `/mesh/v1/tool`; null when there's no such PC. */
+export async function remoteComputer(want: string, args: Obj, g: { chat: string; project: string }): Promise<computer.Result | null> {
+  if (!hub) return null;
+  const peer = hub.peers().find((x) => x.name.toLowerCase() === want.toLowerCase() || x.id === want);
+  if (!peer) return null;
+  const no = (t: string): computer.Result => ({ ok: false, content: [{ type: "text", text: t }] });
+  if (!peer.online) return no(`${peer.name} is off or unreachable right now`);
+  const wait = (computer.MAX_WAIT_S + 60) * 1000;
+  try {
+    const [status, v] = await (hub.http ?? meshHttp)(dest(peer), "POST", "/mesh/v1/tool", jsonBody({ tool: "computer", args, project: g.project, chat: g.chat, memory_id: "" }), wait);
+    if (status === 200 && isObject(v) && Array.isArray(v.content)) return { ok: v.ok === true, content: v.content };
+    if (status === 400 || status === 404) return no(`${peer.name} runs an older Harbor without computer use`);
+    return no(`${peer.name} answered ${status}: ${argStr(v, "error") ?? ""}`);
+  } catch (e) {
+    return no(`${peer.name} didn't answer: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

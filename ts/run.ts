@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { turnscope } from "./packages/agents/src/index.ts";
-import { apps, control, setHarborVersion } from "./packages/mcp/src/index.ts";
+import { apps, connect, control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview, newNote, scopeHas } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, malloc, runDir, single, stallwatch, Store } from "./packages/store/src/index.ts";
 import {
@@ -127,10 +127,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     api: (method, path, body, wav) => (wav !== null ? run.transcribe(wav) : run.call(method, path.replace(/^\/+/, ""), undefined, body)),
     send: (i) => {
       if (i.kind === "tool") {
-        engine.tool(i.call.chatId, i.call.tool, i.call.args).then(
-          (text) => i.call.reply(true, text),
-          (e: unknown) => i.call.reply(false, e instanceof Error ? e.message : String(e)),
-        );
+        connect.answerTool(engine, i.call);
       } else if (i.kind === "preview") {
         const { offer, here } = i;
         void (async () => {
