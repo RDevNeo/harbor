@@ -69,6 +69,8 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["ctx_memory", D],
   ["ctx_guests", D],
   ["move_pc", D],
+  // Run anywhere: the PC a chat of another PC was picked to run on (failover.ts runsOnKey), this PC's own choice.
+  ["runs_on:", D],
   ["project_moves_open", D],
   ["sidebar_open", D],
   ["sidebar_width", D],

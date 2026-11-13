@@ -83,6 +83,10 @@ interface Pc {
   turns: [number, string][];
   call: CloudContext["call"];
   codexHome: string;
+  /** The mesh as failover sees it (run anywhere's handoff goes through `forward`); null: none. */
+  mesh: { forward: (...a: never[]) => Promise<{ status: number; body: unknown }> } | null;
+  /** Copies running at their PC now (failover's `busy`). */
+  busy: Set<number>;
 }
 
 function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: string, kind: "Claude" | "Codex"): Pc {
@@ -103,13 +107,17 @@ function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: strin
     store,
     engine: () => p.engine,
     hub,
-    mesh: () => null,
+    mesh: () => p.mesh as never,
     accounts,
     ram: () => 1000,
     forgetCopy: () => {},
     place: () => null,
     touch: () => {},
-    carry: { of: (x, h) => p.ch.of(x, h), begin: (c, f, h, off) => p.ch.begin(c, f, h, off) },
+    carry: { of: (x, h) => p.ch.of(x, h), begin: (c, f, h, off, quiet) => p.ch.begin(c, f, h, off, quiet) },
+    mine: () => true,
+    busy: (id) => p.busy.has(id),
+    refresh: () => cloud.refresh(),
+    carryNow: (hid, ms) => cloud.carryNow(hid, ms),
   });
   const replica = new StoreReplica({ store, hub, version: "t", took: (gid) => failover.took(gid), release: (o, peer, h, n) => failover.release(o, peer, h, n) });
   const cloud = chatCloud({
@@ -138,7 +146,7 @@ function pc(svc: ReturnType<typeof service>, name: string, fp: string, id: strin
     if (ch.preparing(c) || ch.waiting(c)) return start(c, prompt, [...files]);
     turns.push([c, prompt]);
   };
-  p = { name, store, hub, cloud, engine, failover, ch, account, turns, call: svc.callAs("u1", fp, ["W1"]), codexHome: join(dir, ".codex") };
+  p = { name, store, hub, cloud, engine, failover, ch, account, turns, call: svc.callAs("u1", fp, ["W1"]), codexHome: join(dir, ".codex"), mesh: null, busy: new Set() };
   return p;
 }
 
@@ -198,7 +206,8 @@ describe("continue anywhere", () => {
     const copy = B.store.chats().find((c) => c.home === "ts:omarchy" && c.homeId === chat.id);
     if (!copy) throw new Error("no copy on B");
     expect(copy.repoId).toBe(repoB);
-    expect(B.failover.line(copy)?.text).toBe("omarchy is off. Next message runs on Windows.");
+    // It runs here, as any chat typed here does (run anywhere): no line over the composer.
+    expect(B.failover.line(copy)).toBeNull();
 
     // A is off: a message on B takes the chat over and resumes A's session in B's folder.
     const prompt = await sendTo(B, copy, "now the tests");
@@ -215,9 +224,8 @@ describe("continue anywhere", () => {
     expect(git(dirB, "rev-parse", "HEAD")).toBe(git(dirA, "rev-parse", "HEAD"));
     expect(read(join(dirB, "a.txt"))).toBe("three\n");
     expect(read(join(dirB, "new.txt"))).toBe("new on A\n");
-    const n = notices(B, copy.id).at(-1);
-    expect(n?.kind === "notice" && n.text).toBe("Continued on Windows — omarchy is off");
-    expect(n?.kind === "notice" && n.detail).toContain("1 unpushed commit and uncommitted changes came from omarchy.");
+    // The account's own PC's chat: it simply goes on here, with no notice naming PCs.
+    expect(notices(B, copy.id)).toEqual([]);
 
     // B goes on: its session grows, it commits and changes more; then it's off too.
     appendFileSync(sessB, `${JSON.stringify({ type: "assistant", cwd: dirB, message: { content: [{ type: "text", text: `wrote ${join(dirB, "test.txt")}` }] } })}\n`);
@@ -245,10 +253,8 @@ describe("continue anywhere", () => {
     const linesA = read(sessA).trim().split("\n").map((l) => JSON.parse(l));
     expect(linesA.length).toBe(3);
     expect(linesA[2].message.content[0].text).toBe(`wrote ${join(dirA, "test.txt")}`);
-    const n2 = notices(A, chat.id).at(-1);
-    expect(n2?.kind === "notice" && n2.text).toBe("Continued on Omarchy — windows is off");
-    // The folder moved on in place: A's own changes were the state B's work came from.
-    expect(n2?.kind === "notice" && n2.detail).not.toContain("worktree");
+    // The folder moved on in place (A's own changes were the state B's work came from): nothing to say.
+    expect(notices(A, chat.id)).toEqual([]);
     for (const p of [A, B]) p.store.close();
   }, 60_000);
 
@@ -310,6 +316,80 @@ describe("continue anywhere", () => {
     expect(A.store.items(chat.id).map((i) => (i.kind === "user" || i.kind === "notice" ? i.text : i.kind))).toContain("on A");
     const n = A.engine.transcript(chat.id).items.filter((i) => i.kind === "notice").at(-1);
     expect(n?.kind === "notice" && n.text).toBe("windows went on with this chat too: this is Tower's, kept as its own chat");
+    for (const p of [A, B]) p.store.close();
+  }, 60_000);
+
+  test("run anywhere: a message typed on B brings A's chat to B while A is on, with its session and work; A's becomes a copy", async () => {
+    const svc = service();
+    const bare = origin("app3");
+    const A = pc(svc, "Tower", "fpA", "ts:omarchy", "Claude");
+    const B = pc(svc, "Desk", "fpB", "pc:windows", "Claude");
+    const dirA = join(root, "Tower", "Projects", "app3");
+    execFileSync("git", ["clone", "-q", bare, dirA], { stdio: "ignore" });
+    writeFileSync(join(dirA, "a.txt"), "edited on the Tower\n");
+    const repoA = A.store.addRepo(dirA);
+    A.store.setRepoRemote(repoA, REMOTE);
+    const sid = "22222222-3333-4444-5555-666666666666";
+    const chat = A.store.createChat(blankChat({ repoId: repoA, title: "Old chat", account: "claude", started: true, sessionId: sid }));
+    A.store.saveItems(chat.id, [user("start"), text("ok")]);
+    // Three weeks old: past what goes up by itself; the handoff sends it anyway.
+    A.store.saveChat({ ...(A.store.chat(chat.id) as Chat), updated: Math.floor(Date.now() / 1000) - 21 * 86_400 });
+    const sessA = join(movechat.sessionDir(A.account.configDir, dirA), `${sid}.jsonl`);
+    mkdirSync(dirname(sessA), { recursive: true });
+    writeFileSync(sessA, `${JSON.stringify({ type: "user", cwd: dirA, sessionId: sid, message: { content: "start" } })}\n`);
+    A.engine.reload();
+    await round(A);
+    expect(A.cloud.internals.pub.carry?.chats[String(chat.id)]).toBeUndefined();
+    const dirB = join(root, "Desk", "code", "app3");
+    execFileSync("git", ["clone", "-q", bare, dirB], { stdio: "ignore" });
+    const repoB = B.store.addRepo(dirB);
+    B.store.setRepoRemote(repoB, REMOTE);
+    await round(B);
+    const copy = B.store.chats().find((c) => c.home === "ts:omarchy" && c.homeId === chat.id);
+    if (!copy) throw new Error("no copy on B");
+
+    // A is on: B reaches it over the mesh, and its handoff route is A's failover.
+    B.hub.mesh.peers.set("ts:omarchy", { id: "ts:omarchy", name: "omarchy", online: true, addr: "", fp: "fpA" } as never);
+    const asked: string[] = [];
+    B.mesh = {
+      forward: (async (_d: unknown, _n: string, method: string, path: string[], body: Record<string, unknown>) => {
+        asked.push(`${method} ${path.join("/")}`);
+        const own = A.store.chat(Number(path[2]));
+        if (!own) return { status: 404, body: {} };
+        return A.failover.handoff(own, String(body.to));
+      }) as never,
+    };
+    // While it runs there, its messages go to that run: it stays.
+    B.busy.add(copy.id);
+    expect(B.failover.whyNotHere(copy)).toBe("it runs there now");
+    expect(await B.failover.claim(copy, { text: "x", files: [], mentions: [] })).toBeNull();
+    B.busy.delete(copy.id);
+    // Picked to run on A: it stays too.
+    B.failover.pickRunsOn(copy, "ts:omarchy");
+    expect(B.failover.whyNotHere(copy)).toBe("picked to run there");
+    B.failover.pickRunsOn(copy, "");
+    expect(B.failover.whyNotHere(copy)).toBeNull();
+
+    process.env.CODEX_HOME = B.codexHome;
+    const n = B.turns.length;
+    const r = await B.failover.claim(copy, { text: "go on here", files: [], mentions: [] });
+    expect(r?.status).toBe(200);
+    expect(asked).toEqual([`POST v1/chats/${chat.id}/handoff`]);
+    await until("B's turn", () => B.turns.length > n);
+    expect(B.turns[n]?.[1]).toContain("go on here");
+    const own = B.engine.chat(copy.id);
+    expect(own?.home).toBe("");
+    expect(own?.sessionId).toBe(sid);
+    expect(read(join(dirB, "a.txt"))).toBe("edited on the Tower\n");
+    const lines = read(join(movechat.sessionDir(B.account.configDir, dirB), `${sid}.jsonl`)).trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines[0].cwd).toBe(dirB);
+    // Quietly: no notice naming a PC.
+    expect(notices(B, copy.id)).toEqual([]);
+
+    // A sees B's chat (here through the cloud; the mesh does the same): A's own becomes a copy of B's.
+    await round(B);
+    await round(A);
+    expect(A.store.chat(chat.id)?.home).toBe("pc:windows");
     for (const p of [A, B]) p.store.close();
   }, 60_000);
 });

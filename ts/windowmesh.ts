@@ -23,6 +23,10 @@ export interface WindowMeshDeps {
   failover?: {
     line(c: Chat): { text: string; warn: boolean } | null;
     send(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }): Promise<Reply>;
+    /** Run anywhere: the copy comes here and the message runs here (null: it stays where it is). */
+    claim?(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }): Promise<Reply | null>;
+    /** The PC the user picked for the copy in Runs on (null: the one it's typed on). */
+    picked?(c: Chat): string | null;
   };
 }
 
@@ -187,7 +191,7 @@ export class WindowMesh {
   viewer(c: Chat): Viewer | null {
     if (c.home === "") return null;
     const p = this.d.hub.mesh.peer(c.home);
-    return { dev: this.me(), label: this.sender()[0], home: { name: p?.name ?? this.d.hub.mesh.nameOf(c.home), owner: p?.owner ?? "" } };
+    return { dev: this.me(), label: this.sender()[0], home: { name: this.d.hub.mesh.nameOf(c.home), owner: this.d.hub.mesh.ownerOf(c.home) } };
   }
 
   private sender(): Sender {
@@ -209,6 +213,13 @@ export class WindowMesh {
       const b = body as { text?: unknown; mentions?: unknown };
       return this.d.failover.send(c, { text: typeof b.text === "string" ? b.text : "", files: [...files], mentions: Array.isArray(b.mentions) ? b.mentions : [] });
     }
+    const sending = method === "POST" && tail.length === 1 && tail[0] === "send";
+    // Run anywhere: the chat comes to this PC and runs here, unless it runs there now or the user picked a PC for it.
+    if (sending && peer?.online && this.d.failover?.claim) {
+      const b = body as { text?: unknown; mentions?: unknown };
+      const r = await this.d.failover.claim(c, { text: typeof b.text === "string" ? b.text : "", files: [...files], mentions: Array.isArray(b.mentions) ? b.mentions : [] });
+      if (r !== null) return r;
+    }
     if (!peer?.online || !this.d.hub.mesh.on) return err(409, `${name} is off, so this chat is read-only until it's back`);
     let attached: { name: string; data: Uint8Array }[];
     try {
@@ -217,6 +228,13 @@ export class WindowMesh {
       return err(400, e instanceof Error ? e.message : String(e));
     }
     const ctx = startsTurn(method, tail) ? this.d.ctx(c.repoId) : null;
+    // Picked to run on a third PC: that PC takes it (it asks the chat's PC for it), else its PC runs it.
+    const pick = sending ? (this.d.failover?.picked?.(c) ?? null) : null;
+    const to = pick !== null && pick !== c.home && pick !== this.d.hub.mesh.me.id ? this.d.hub.mesh.peer(pick) : undefined;
+    if (to?.online) {
+      const r = await this.d.mesh.forward(dest(to), to.name, method, ["v1", "chats", c.gid, ...tail], { ...body, claim_to: to.id }, attached, this.sender(), ctx);
+      if (r.status < 300) return r;
+    }
     return this.d.mesh.forward(dest(peer), name, method, ["v1", "chats", String(c.homeId), ...tail], body, attached, this.sender(), ctx);
   }
 

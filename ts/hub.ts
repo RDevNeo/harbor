@@ -422,6 +422,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
   });
   settingsync.onChanged(() => account.pokeSync());
+  hub.mesh.dirName = (pc) => {
+    const d = account.directory();
+    for (const p of [...d.workspaces.flatMap((w) => w.pcs), ...d.peers]) if (p.id === pc && p.name !== "") return p.name;
+    return null;
+  };
+  hub.mesh.dirOwner = (pc) => {
+    const d = account.directory();
+    for (const p of [...d.workspaces.flatMap((w) => w.pcs), ...d.peers]) if (p.id === pc && p.owner_name !== "") return p.owner_name;
+    return null;
+  };
   account.load();
   // Copies of this owner's other PCs' chats follow their project's move and shares; other people's don't.
   let matesAt: [unknown, string, string, ReadonlySet<string>] | null = null;
@@ -451,7 +461,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }
   // Messages saved before 0.115 have only their sender's label: the bubbles match it with these.
   knowDevices({
-    pcs: () => [[hub.mesh.me.name, account.ownerName() ?? ""], ...[...hub.mesh.peers.values()].map((p) => [p.name, p.owner] as const)],
+    pcs: () => {
+      const d = account.directory();
+      return [[hub.mesh.me.name, account.ownerName() ?? ""], ...[...hub.mesh.peers.values()].map((p) => [p.name, p.owner] as const), ...[...d.workspaces.flatMap((w) => w.pcs), ...d.peers].map((p) => [p.name, p.owner_name] as const)];
+    },
     phones: () => hub.localPhones().map((p) => [p.name, p.owner] as const),
   });
   let services: Services | null = null;
@@ -797,7 +810,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     place: (repo) => projectClones.place(repo),
     touch: (chat) => hub.touch(chat, true),
     scope: (pc) => scopeHas(account.scope(), pc),
-    carry: { of: (pc, hid) => continueHere.of(pc, hid), begin: (chat, from, hid, off) => continueHere.begin(chat, from, hid, off) },
+    carry: { of: (pc, hid) => continueHere.of(pc, hid), begin: (chat, from, hid, off, quiet) => continueHere.begin(chat, from, hid, off, quiet) },
+    // Run anywhere: the chats of every PC of the account's workspaces come to the PC they're typed on, unless they run
+    // where they are now (the PCs this account uses: account.ts `pcScope`).
+    mine: (pc) => account.account() !== null && scopeHas(account.scope(), pc),
+    busy: (chat) => {
+      const r = replica.remote.get(chat);
+      const st = r?.status;
+      const waiting = typeof st === "object" && st !== null && !Array.isArray(st) && (st as { waiting?: unknown }).waiting != null;
+      return r !== undefined && (r.running || r.queued > 0 || waiting);
+    },
+    refresh: () => cloud.refresh(),
+    carryNow: (hid, limitMs) => cloud.carryNow(hid, limitMs),
   });
   ramMeter.start();
   const mesh = new Mesh({
@@ -1037,7 +1061,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     ownerName: () => account.ownerName(),
     ctx: ctxFor,
     uploadsDir,
-    failover: { line: (c) => failover.line(c), send: (c, msg) => failover.send(c, msg) },
+    failover: { line: (c) => failover.line(c), send: (c, msg) => failover.send(c, msg), claim: (c, msg) => failover.claim(c, msg), picked: (c) => failover.picked(c) },
   });
   // The hooks below run once the engine exists.
   const eng = (): Engine => {
@@ -1287,7 +1311,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   mover.relocate = (chat, pc, auto) => runOn.relocate(chat, pc, auto);
   phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };
   phone.d.auto = { pick: (kind) => runOn.autoPick(kind), resolve: (device, kind) => runOn.resolve(device, kind), mark: (gid, place) => runOn.markAuto(gid, place), label: (c, here) => runOn.autoLabel(c, here), relocate: (chatId, kind) => runOn.relocateAuto(chatId, kind), why: (chatId, kind) => runOn.autoWhy(chatId, kind) };
-  phone.d.failover = { line: (c) => failover.line(c), send: (c, msg, to, sendHere) => failover.send(c, msg, to, sendHere), draft: (repo) => failover.draft(repo), startedNotice: (chat, off) => failover.startedNotice(chat, off) };
+  phone.d.failover = {
+    line: (c) => failover.line(c),
+    send: (c, msg, to, sendHere) => failover.send(c, msg, to, sendHere),
+    claim: (c, msg, sendHere) => failover.claim(c, msg, sendHere),
+    draft: (repo) => failover.draft(repo),
+    startedNotice: (chat, off) => failover.startedNotice(chat, off),
+  };
+  // Run anywhere: another of this account's PCs takes one of this PC's chats. Not while it runs, waits or has messages
+  // queued here (those go on here, and the other PC sends its message here); else its session and work go up first.
+  phone.d.handoff = (c, to) => failover.handoff(c, to);
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc, want) => mover.movePc(chat, pc, false, want ?? null) };
   phone.d.engine = {
     running: (id) => live.running(id),

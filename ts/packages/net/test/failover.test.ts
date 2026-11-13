@@ -42,3 +42,12 @@ describe("failover (failover.ts)", () => {
     expect(parseHeld(JSON.stringify([{ text: "hi", files: ["/a"], mentions: [] }, { x: 1 }]))).toEqual([{ text: "hi", files: ["/a"], mentions: [] }]);
   });
 });
+
+test("run anywhere: this account's own chat goes to the PC it's typed on when that PC can run it", () => {
+  const here = { id: "", name: "Desk", ram: 500, hasProject: false, canClone: true, claude: true, codex: false };
+  const big = { id: "pc:laptop", name: "Laptop", ram: 9000, hasProject: true, canClone: true, claude: true, codex: false };
+  expect(pickFailover([here, big]).to?.id).toBe("pc:laptop");
+  expect(pickFailover([here, big], "Claude", true).to?.id).toBe("");
+  // This PC can't (no account): the others as before.
+  expect(pickFailover([{ ...here, claude: false }, big], "Claude", true).to?.id).toBe("pc:laptop");
+});

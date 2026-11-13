@@ -471,6 +471,57 @@ export class ChatCloud {
     this.soon(wait);
   }
 
+  /** Chats whose session and work go up on the next round whatever their age (`carryNow`). */
+  private readonly forced = new Set<number>();
+
+  /**
+   * Run anywhere: chat `hid`'s metadata, transcript, session and work go up now, whatever its age (another PC takes it
+   * over). True once they're up (within `limitMs`).
+   */
+  async carryNow(hid: number, limitMs: number): Promise<boolean> {
+    const ctx = this.ctx;
+    if (ctx === null) return false;
+    this.forced.add(hid);
+    this.dirty = true;
+    const end = this.now() + limitMs;
+    try {
+      for (let i = 0; i < 6 && this.now() < end; i++) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const round = (async () => {
+          await (this.running ?? Promise.resolve()).catch(() => undefined);
+          await this.sync(this.ctx ?? ctx);
+        })();
+        const late = await Promise.race([round.then(() => false), new Promise<boolean>((r) => (timer = setTimeout(() => r(true), Math.max(0, end - this.now()))))]);
+        clearTimeout(timer);
+        if (late) return false;
+        // Up, or nothing of it to carry (never started, a sub-agent): its transcript went up with the round.
+        if (this.carried.has(hid) || !(this.o.source.carry?.() ?? []).some((c) => c.hid === hid)) return true;
+      }
+      return false;
+    } finally {
+      this.forced.delete(hid);
+      this.carried.delete(hid);
+    }
+  }
+
+  /** Forced chats whose index went up on the last round. */
+  private readonly carried = new Set<number>();
+
+  /** Reads every workspace again now (a PC has just sent a chat's session and work up for this one). */
+  async refresh(): Promise<void> {
+    const ctx = this.ctx;
+    if (ctx === null) return;
+    for (const ws of ctx.workspaces) {
+      try {
+        await this.pull(ctx, ws);
+      } catch (e) {
+        this.log(`reading ${ws}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    this.pulledAt = this.now();
+    this.save();
+  }
+
   /** The service says a workspace changed (a push): its rows are read on a round now. */
   pullSoon(): void {
     this.pulledAt = 0;
@@ -712,9 +763,11 @@ export class ChatCloud {
     const all = src.carry?.() ?? [];
     // The recent chats: running ones keep what they had (a session is sent whole only between turns).
     const recent = all
-      .filter((c) => now - c.updated < CARRY_DAYS_MS)
+      .filter((c) => now - c.updated < CARRY_DAYS_MS && !this.forced.has(c.hid))
       .sort((a, b) => b.updated - a.updated)
       .slice(0, CARRY_CHATS);
+    // A chat another PC takes over now goes first, whatever its age.
+    recent.unshift(...all.filter((c) => this.forced.has(c.hid)));
     const seal = (row: string, plain: Uint8Array | string) => cloudSeal(key, ws, epoch, row, typeof plain === "string" ? Buffer.from(plain) : plain);
     const sid = (id: string, i: number) => cloudRowId(key, "k", `${fp}\0s\0${id}\0${i}`);
     const wid = (h: string, i: number) => cloudRowId(key, "k", `${fp}\0w\0${h}\0${i}`);
@@ -817,15 +870,25 @@ export class ChatCloud {
           budget += w.index.size;
         }
       }
-      if (session === null && work === null) continue;
+      if (session === null && work === null) {
+        if (this.forced.has(c.hid) && !left) this.carried.add(c.hid);
+        continue;
+      }
       keepC.add(k);
       const index: CarryIndex = { pc: me, carry: 1, hid: c.hid, gid: c.gid, at: c.updated, kind: c.kind, space: c.space, session, work };
       const plain = JSON.stringify(index);
       const h = sha(plain);
-      if (had === h) continue;
+      const forced = this.forced.has(c.hid);
+      if (had === h) {
+        if (forced) this.carried.add(c.hid);
+        continue;
+      }
       const id = cloudRowId(key, "p", `${fp}\0carry\0${c.hid}`);
       indexes.push({ g: 0, id, v: seal(id, plain) });
-      after.push(() => (pc.chats[k] = h));
+      after.push(() => {
+        pc.chats[k] = h;
+        if (forced) this.carried.add(c.hid);
+      });
     }
     // What's no longer carried goes.
     for (const k of Object.keys(pc.chats)) {

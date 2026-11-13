@@ -427,6 +427,9 @@ export class StoreReplica implements MeshApp {
         existingId = null;
       }
     }
+    // Another PC's chat that went to a third PC (run anywhere, failover): the PC it left still lists it until it sees
+    // that, with an older time; the copy stays the newer PC's (it doesn't flip back and forth, nor go as "gone").
+    if (existing && existing.home !== "" && existing.home !== peer && (int(m.updated) ?? 0) < existing.updated && mesh.online(existing.home)) return existing.id;
     const repo = m.project === null || m.project === undefined ? null : this.repoFor(obj(m.project));
     if (repo !== null) this.rememberPc(repo, peer, s(obj(m.project), "path"));
     const parentHid = int(m.parent);
@@ -478,6 +481,10 @@ export class StoreReplica implements MeshApp {
       this.o.store.setCarriedShares(id, carriedShares);
       this.place = this.o.store.placement();
     }
+    // The chat went to another PC (run anywhere, failover): its old PC's id for it no longer names it here, so that PC
+    // listing it as gone (now a copy there) doesn't take this one away.
+    const was = mesh.homes.get(id);
+    if (was !== undefined && (was[0] !== peer || was[1] !== hid) && mesh.ids.get(`${was[0]}\0${was[1]}`) === id) mesh.ids.delete(`${was[0]}\0${was[1]}`);
     mesh.ids.set(`${peer}\0${hid}`, id);
     mesh.foreign.add(id);
     mesh.homes.set(id, [peer, hid]);

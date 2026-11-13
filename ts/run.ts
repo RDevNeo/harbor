@@ -258,6 +258,10 @@ export async function runApp(o: RunOptions): Promise<number> {
       failover: {
         draft: (repo: number) => run.failover.draft(repo),
         startedNotice: (chat: number, off: string) => run.failover.startedNotice(chat, off),
+        whyNotHere: (c: Chat) => run.failover.whyNotHere(c),
+        picked: (c: Chat) => run.failover.picked(c),
+        pick: (c: Chat, pc: string) => run.failover.pickRunsOn(c, pc),
+        pcs: () => run.failover.pcs(),
       },
       auto: {
         pick: (kind: string) => run.runOn.autoPick(kind),

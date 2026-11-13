@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { draftFileOf, Hub, type Mesh, type PhoneRoutes, type RemoteState, type SharedDraft, type StoreReplica } from "../packages/net/src/index.ts";
+import { draftFileOf, Hub, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type SharedDraft, type StoreReplica } from "../packages/net/src/index.ts";
 import type { Chat } from "../packages/store/src/index.ts";
 import { WindowMesh } from "../windowmesh.ts";
 
@@ -100,5 +100,63 @@ describe("the window's shared draft", () => {
     r.hub.report(1, "tok:1", "phone", "Galaxy", true, { text: "hello", files: [], mentions: [] }, () => null);
     for (let i = 0; i < 50 && got.length === 0; i++) await Bun.sleep(10);
     expect(got.flat()).toContain(1);
+  });
+});
+
+describe("run anywhere: the window's message for a copy", () => {
+  function sendRig(claim: Reply | null, picked: string | null) {
+    const hub = new Hub([], 0);
+    hub.mesh.me = { id: "pc:desk", name: "Desk" };
+    hub.mesh.on = true;
+    for (const [id, name] of [["pc:home", "Home"], ["pc:laptop", "Laptop"]] as const) hub.mesh.peers.set(id, { id, name, online: true, addr: "", fp: "", via: undefined } as never);
+    const calls: { to: string; path: string; body: Record<string, unknown> }[] = [];
+    const mesh = {
+      forward: async (d: { addr: string }, name: string, _m: string, path: string[], body: Record<string, unknown>) => {
+        calls.push({ to: name, path: path.join("/"), body });
+        return { status: 200, body: { ok: true } };
+      },
+    } as unknown as Mesh;
+    const claims: number[] = [];
+    const w = new WindowMesh({
+      hub,
+      mesh,
+      replica: { remote: new Map() } as unknown as StoreReplica,
+      phone: {} as PhoneRoutes,
+      chat: () => undefined,
+      ctx: () => null,
+      ownerName: () => null,
+      env: { HARBOR_MESH_ID: "desk" },
+      failover: {
+        line: () => null,
+        send: async () => ({ status: 200, body: {} }),
+        claim: async (c) => {
+          claims.push(c.id);
+          return claim;
+        },
+        picked: () => picked,
+      },
+    });
+    const copy = { ...chat(2, "pc:home"), gid: "g-2" } as Chat;
+    return { w, calls, claims, copy };
+  }
+
+  test("it comes here: the window doesn't send it to the chat's PC", async () => {
+    const r = sendRig({ status: 200, body: { ok: true, here: true } }, null);
+    const out = await r.w.forward(r.copy, "POST", ["send"], { text: "hi" });
+    expect(out.status).toBe(200);
+    expect(r.claims).toEqual([2]);
+    expect(r.calls).toEqual([]);
+  });
+
+  test("it stays (runs there now): the message goes to its PC", async () => {
+    const r = sendRig(null, null);
+    await r.w.forward(r.copy, "POST", ["send"], { text: "hi" });
+    expect(r.calls.map((c) => [c.to, c.path])).toEqual([["Home", "v1/chats/72/send"]]);
+  });
+
+  test("picked to run on a third PC: that PC is asked to take it", async () => {
+    const r = sendRig(null, "pc:laptop");
+    await r.w.forward(r.copy, "POST", ["send"], { text: "hi" });
+    expect(r.calls.map((c) => [c.to, c.path, c.body.claim_to])).toEqual([["Laptop", "v1/chats/g-2/send", "pc:laptop"]]);
   });
 });

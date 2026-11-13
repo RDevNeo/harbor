@@ -250,7 +250,21 @@ export class Shared {
 
   nameOf(id: string): string {
     const n = this.peer(id)?.name ?? "";
-    return n !== "" ? n : label(id);
+    if (n !== "") return n;
+    // A PC this one never reached (its chats came through the cloud): its name in the account's directory.
+    const d = this.dirName?.(id) ?? "";
+    return d !== "" ? d : label(id);
+  }
+
+  /** A PC's name as the account's directory lists it (set by the hub); null: not known there. */
+  dirName: ((id: string) => string | null) | null = null;
+  /** A PC's owner's name as the account's directory lists it (set by the hub); null: not known there. */
+  dirOwner: ((id: string) => string | null) | null = null;
+
+  /** A PC's owner's name: as it said in its hello, else as the directory lists it ("" not known). */
+  ownerOf(id: string): string {
+    const o = this.peer(id)?.owner ?? "";
+    return o !== "" ? o : (this.dirOwner?.(id) ?? "");
   }
 
   /** The store's lookup for a gid the maps don't hold yet (a chat made since the last re-index, such as a sub-agent just spawned). */

@@ -42,9 +42,12 @@ const runs = (c: FailoverPc, kind?: "Claude" | "Codex"): boolean => (kind === "C
  * Ranks the usable PCs: one with the project's folder, then one with the chat's own provider (`kind`: its session
  * resumes there), then the most free memory, then the name (every PC picks the same).
  */
-export function pickFailover(cands: readonly FailoverPc[], kind?: "Claude" | "Codex"): FailoverPick {
+export function pickFailover(cands: readonly FailoverPc[], kind?: "Claude" | "Codex", preferHere = false): FailoverPick {
   const usable = cands.filter((c) => runs(c) && (c.hasProject || c.canClone));
   if (usable.length === 0) return { to: null, why: noneWhy(cands) };
+  // Run anywhere: a chat of the account's workspaces runs on the PC it's typed on, when that PC can (its folder there or cloned).
+  const here = preferHere ? usable.find((c) => c.id === "") : undefined;
+  if (here) return { to: here };
   const ram = (c: FailoverPc) => c.ram ?? -1;
   const best = [...usable].sort(
     (a, b) =>

@@ -185,10 +185,14 @@ export interface PhoneDeps {
   failover?: {
     line(c: Chat): { text: string; warn: boolean } | null;
     send(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }, to: string | null, sendHere: (own: Chat) => Promise<Reply>): Promise<Reply>;
+    /** Run anywhere: the copy comes to this PC and the message runs here (null: it stays where it is). */
+    claim?(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }, sendHere: (own: Chat) => Promise<Reply>): Promise<Reply | null>;
     /** A new chat in a project whose folder's PC is off: where it starts ("" here, null nowhere now). */
     draft(repo: number): { to: string | null; line: string; off: string } | null;
     startedNotice(chat: number, off: string): void;
   };
+  /** Run anywhere: another PC takes this PC's chat `c` (its session and work go up first); 409 while it runs here. */
+  handoff?: (c: Chat, to: string) => Promise<Reply>;
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
   worktrees?: {
     make(repo: number | null, base: string, about: string): Promise<unknown>;
@@ -858,7 +862,7 @@ export class PhoneRoutes {
     const hub = this.d.hub;
     const peer = c.home === "" ? null : hub.mesh.peer(c.home);
     const me = hub.mesh.me.name;
-    const home = c.home === "" ? { name: me === "" ? hostname() : me, owner: pcOwner(me) } : { name: peer?.name ?? hub.mesh.nameOf(c.home), owner: peer?.owner ?? "" };
+    const home = c.home === "" ? { name: me === "" ? hostname() : me, owner: pcOwner(me) } : { name: hub.mesh.nameOf(c.home), owner: hub.mesh.ownerOf(c.home) };
     return { dev: phoneDev(hub.groupOf(token)), label: hub.callerLabel(token, device), home };
   }
 
@@ -946,6 +950,13 @@ export class PhoneRoutes {
       const key = sendKey(c.gid === "" ? String(c.id) : c.gid, body);
       const run = () => (c.home !== "" ? this.forward(c, m, p, body, sender, call.global, who) : this.send(c, body, sender, device, by, who));
       if (key !== null) return this.sends.run(key, run);
+    }
+    // Run anywhere: another of the account's PCs takes this chat (only a PC of the mesh asks; never phones).
+    if (m === "POST" && p.length === 4 && p[3] === "handoff") {
+      if (!call.from) return err(403, "only another PC takes a chat over");
+      if (c.home !== "") return err(409, "this chat runs on another PC now");
+      if (!this.d.handoff) return err(404, "no such call");
+      return this.d.handoff(c, typeof body.to === "string" ? body.to : call.from.peer);
     }
     if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global, who);
     if (m === "GET" && p.length === 4 && p[3] === "items") {
@@ -1380,6 +1391,14 @@ export class PhoneRoutes {
       const to = typeof body.failover_to === "string" ? body.failover_to : null;
       const { failover_to: _, ...rest } = body;
       return this.d.failover.send(c, { text: typeof body.text === "string" ? body.text : "", files, mentions: Array.isArray(body.mentions) ? body.mentions : [] }, to, (own) => this.send(own, rest, sender, "", null, who));
+    }
+    // Run anywhere: another PC sent the message here to run it here (picked in its Runs on).
+    if (method === "POST" && p.length === 4 && p[3] === "send" && typeof body.claim_to === "string" && body.claim_to === this.d.hub.mesh.me.id && this.d.failover?.claim) {
+      const { claim_to: _c, ...rest } = body;
+      const files = (Array.isArray(body.files) ? body.files : []).map((f) => (this.d.uploadsDir && typeof f === "string" ? resolveUpload(this.d.uploadsDir, f) : null)).filter((x): x is string => x !== null);
+      const r = await this.d.failover.claim(c, { text: typeof body.text === "string" ? body.text : "", files, mentions: Array.isArray(body.mentions) ? body.mentions : [] }, (own) => this.send(own, rest, sender, "", null, who));
+      if (r !== null) return r;
+      delete body.claim_to;
     }
     if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off: the chat is read-only until it's back`);
     // Moving is its home's to do; a home before it would only say "unknown call".

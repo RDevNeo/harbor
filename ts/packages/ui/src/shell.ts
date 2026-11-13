@@ -4312,13 +4312,32 @@ export class Shell {
     return p.pc;
   }
 
+  /**
+   * Run anywhere: where a copy runs, as its Runs on chip says it. `free`: a chat of the account's workspaces, which comes
+   * to the PC it's typed on (else it runs at its PC). `id` "" is this PC; `running`: it runs at `id` now.
+   */
+  private copyRunsOn(c: Chat): { id: string; label: string; running: boolean; free: boolean } {
+    const fo = this.hub.failover;
+    const why = fo?.whyNotHere ? fo.whyNotHere(c) : "not known";
+    const running = why === "it runs there now";
+    const free = why === null || running || why === "picked to run there";
+    if (!free) return { id: c.home, label: this.meshChat.homeName(c), running: false, free };
+    if (running) return { id: c.home, label: this.meshChat.homeName(c), running, free };
+    const pick = fo?.picked?.(c) ?? null;
+    if (pick !== null && pick !== c.home) {
+      const p = fo?.pcs?.().find((x) => x.id === pick);
+      if (p) return { id: p.id, label: p.name, running: false, free };
+    } else if (pick === c.home) return { id: c.home, label: this.meshChat.homeName(c), running: false, free };
+    return { id: "", label: "This PC", running: false, free };
+  }
+
   private deviceLabel(kind: string, of?: Chat): string {
     const [chat, current] = of ? [of.id, of.device] : this.deviceOf();
     // Another PC's chat: its device is that PC's ("" is that PC itself, not this one).
     const open = chat === null ? undefined : this.data.chat(chat);
     const placed = open === undefined ? null : (this.hub.auto?.label(open) ?? null);
     if (placed !== null) return placed;
-    if (this.meshChat.foreign(open)) return this.meshChat.homeName(open);
+    if (this.meshChat.foreign(open)) return this.copyRunsOn(open).label;
     if (current === "") return "This PC";
     if (current === AUTO_DEVICE) {
       // Where it would go now; decided at the first message.
@@ -4332,12 +4351,26 @@ export class Shell {
   private runOnMenu(kind: string, x: number, y: number): void {
     const [chat, current] = this.deviceOf();
     const open = chat === null ? undefined : this.data.chat(chat);
+    if (this.meshChat.foreign(open) && this.hub.failover?.whyNotHere !== undefined && this.copyRunsOn(open).free) {
+      // Run anywhere: the PC it's typed on runs it, unless another is picked; it stays where it runs while it runs.
+      const fo = this.hub.failover;
+      const at = this.copyRunsOn(open);
+      const pickPc = (id: string) => () => {
+        fo.pick?.(open, id);
+        this.refreshComposer();
+      };
+      const rows: PopRow[] = [{ ...this.label("Runs on"), kind: "caption" }];
+      rows.push(this.item("This PC", pickPc(""), { icon: ICONS.MONITOR, desc: "Runs here, with its session and work", checked: at.id === "" }));
+      for (const p of fo.pcs?.() ?? []) rows.push(this.item(p.name, pickPc(p.id), { icon: ICONS.MONITOR, desc: at.running && at.id === p.id ? "Runs there now: messages go to that run" : "Runs there, with its session and work", checked: at.id === p.id }));
+      this.popup("device", x, y, rows, 300, true);
+      return;
+    }
     if (this.meshChat.foreign(open)) {
-      // Another PC's chat runs there: that PC is the place, not this one's list.
+      // Another person's chat (or a sub-agent, a device's chat) runs at its PC: that PC is the place, not this one's list.
       const auto = this.hub.auto?.label(open) ?? null;
       // Auto's chat: its PC by the name the composer's "Auto → <PC>" gives it.
       const home = auto !== null && open !== undefined ? (this.hub.auto?.name?.(open.home) ?? this.meshChat.homeName(open)) : this.meshChat.homeName(open);
-      this.popup("device", x, y, [{ ...this.label("Runs on"), kind: "caption" }, this.item(home, () => {}, { icon: ICONS.HOUSE, desc: auto !== null ? "Auto put it there (most free memory): it runs there" : "This chat's PC: it runs there", checked: true })], 300, true);
+      this.popup("device", x, y, [{ ...this.label("Runs on"), kind: "caption" }, this.item(home, () => {}, { icon: ICONS.MONITOR, desc: auto !== null ? "Auto put it there (most free memory): it runs there" : "It runs there", checked: true })], 300, true);
       return;
     }
     const started = chat !== null && this.data.chat(chat)?.started === true;
@@ -5388,6 +5421,14 @@ export interface ShellHub extends PageHub {
   failover?: {
     draft(repo: number): { to: string | null; line: string; off: string } | null;
     startedNotice(chat: number, off: string): void;
+    /** Run anywhere: why a message typed here for copy `c` doesn't bring it here (null: it does). */
+    whyNotHere?(c: Chat): string | null;
+    /** The PC picked for copy `c` in Runs on (a mesh id; null: the PC it's typed on). */
+    picked?(c: Chat): string | null;
+    /** Picks where copy `c` runs ("" the PC it's typed on). */
+    pick?(c: Chat, pc: string): void;
+    /** This account's PCs that are on, besides this one (Runs on's rows for another PC's chat). */
+    pcs?(): { id: string; name: string }[];
   };
   auto?: {
     pick: (kind: string) => { id: string; name: string; ram: number | null } | null;

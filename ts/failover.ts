@@ -46,11 +46,25 @@ export interface FailoverHost {
   carry?: {
     of(pc: string, hid: number): { kind: "Claude" | "Codex"; files: boolean } | null;
     /** The chat (now this PC's) resumes its session with its work on its next turn; false: nothing carried. */
-    begin(chat: number, from: string, hid: number, off: string): boolean;
+    begin(chat: number, from: string, hid: number, off: string, quiet?: boolean): boolean;
   };
   /** A chat's notice (split: it went its own way). */
   notice?: (chat: number, icon: string, text: string, detail: string) => void;
+  /** Run anywhere: the PC is in one of this account's workspaces (its chats come to the PC they're typed on). */
+  mine?: (pc: string) => boolean;
+  /** A copy's turn runs or waits at its PC now (its messages go there, to that run). */
+  busy?: (chat: number) => boolean;
+  /** Reads the workspace cloud now (a PC has just sent a chat's session and work up). */
+  refresh?: () => Promise<void>;
+  /** Sends this PC's chat `hid` up with its session and work now (chatcloud.ts `carryNow`): true once they're up. */
+  carryNow?: (hid: number, limitMs: number) => Promise<boolean>;
 }
+
+/** kv: where the user picked a chat to run ("runs_on:<gid>" → a PC's mesh id); none: the PC it's typed on. */
+export const runsOnKey = (gid: string): string => `runs_on:${gid}`;
+
+/** How long a chat's PC takes at most to send its session and work up for another PC that takes the chat (`/handoff`). */
+export const HANDOFF_MS = 30_000;
 
 /** The provider an account id belongs to ("claude2" → Claude). */
 export function kindOfAccount(id: string): "Claude" | "Codex" | undefined {
@@ -102,7 +116,7 @@ export class Failover {
 
   pick(c: Chat): FailoverPick {
     const carried = c.home === "" || this.h.scope?.(c.home) === false ? null : (this.h.carry?.of(c.home, c.homeId) ?? null);
-    return pickFailover(this.candidates(c.repoId, c.home, carried?.files === true), carried?.kind ?? kindOfAccount(c.account));
+    return pickFailover(this.candidates(c.repoId, c.home, carried?.files === true), carried?.kind ?? kindOfAccount(c.account), this.h.mine?.(c.home) === true);
   }
 
   held(c: Chat): WaitingMessage[] {
@@ -113,6 +127,8 @@ export class Failover {
   line(c: Chat | undefined | null): { text: string; warn: boolean } | null {
     if (!this.away(c)) return null;
     const pick = this.pick(c);
+    // It runs here, as any chat typed here does (run anywhere): nothing to say.
+    if (pick.to !== null && pick.to.id === "" && this.held(c).length === 0) return null;
     return { text: failoverLine(this.mesh.nameOf(c.home), pick, this.held(c).length), warn: pick.to === null };
   }
 
@@ -146,7 +162,8 @@ export class Failover {
     }
     if (pick.to === null) return this.hold(c, msg, off, pick.why);
     if (pick.to.id === "") {
-      const why = this.takeHere(c, off);
+      // A chat of the account's workspaces goes on here quietly (run anywhere); one from outside says where it came from.
+      const why = this.takeHere(c, off, this.h.mine?.(c.home) === true);
       if (why !== null) return err(409, why);
       const own = this.h.store.chat(c.id) ?? c;
       if (sendHere !== null) return sendHere(own);
@@ -159,6 +176,95 @@ export class Failover {
     const r = await m.forward(dest(peer), peer.name, "POST", ["v1", "chats", c.gid, "send"], { text: msg.text, mentions: msg.mentions as never, failover_to: peer.id }, [], [this.here(), ""], null);
     if (r.status >= 300) return this.hold(c, msg, off, `${peer.name}: ${String((r.body as { error?: unknown } | null)?.error ?? "no answer")}`);
     return ok({ ok: true, failover: peer.name });
+  }
+
+  /** Picks where copy `c` runs: a PC's mesh id, or "" (the PC it's typed on). Kept on this PC only. */
+  pickRunsOn(c: Chat, pc: string): void {
+    this.h.store.set(runsOnKey(c.gid), pc === this.mesh.me.id ? "" : pc);
+    this.h.touch(c.id);
+  }
+
+  /** The PCs of this account's workspaces that are on, besides this one: where a chat may be picked to run. */
+  pcs(): { id: string; name: string }[] {
+    if (!this.mesh.on) return [];
+    const out: { id: string; name: string }[] = [];
+    for (const p of this.mesh.peers.values()) {
+      if (!p.online || this.h.scope?.(p.id) === false || this.h.mine?.(p.id) !== true) continue;
+      out.push({ id: p.id, name: p.name === "" ? p.id : p.name });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** The PC the user picked for copy `c` in Runs on (a mesh id), or null: the PC it's typed on runs it. */
+  picked(c: Chat): string | null {
+    const v = this.h.store.get(runsOnKey(c.gid)) ?? "";
+    return v === "" ? null : v;
+  }
+
+  /**
+   * Run anywhere: why a message typed here for copy `c` doesn't bring the chat here (null: it does). It stays where it
+   * is while it runs there, when the user picked a PC for it, for a sub-agent (it runs where its lead does), a chat on
+   * an SSH device, or a PC outside this account's workspaces.
+   */
+  whyNotHere(c: Chat): string | null {
+    if (c.home === "" || c.retired) return "not a copy";
+    if (c.role === "sub") return "a sub-agent runs where its lead does";
+    if (c.device !== "") return "it runs on a device of its PC";
+    if (this.h.mine?.(c.home) !== true) return "its PC isn't in this account's workspaces";
+    if (this.h.busy?.(c.id) === true) return "it runs there now";
+    const pick = this.picked(c);
+    if (pick !== null && pick !== this.mesh.me.id) return "picked to run there";
+    if (!this.h.accounts().some((a) => a.off !== true && (a.kind === "Claude" || (a.kind === "Codex" && a.loggedIn !== false)))) return "this PC has no Claude or Codex account";
+    return null;
+  }
+
+  /**
+   * Run anywhere: the copy `c` of a PC that is on comes here and the message runs here. Its PC sends the chat's
+   * session and work up first and stops running it (`/handoff`), then this PC takes it over as failover does (the
+   * session and work come before the turn; the old PC becomes a copy once it sees this one's). Null: it stays where it
+   * is (running there, picked, an older Harbor there, or that PC said no): the caller sends the message there.
+   */
+  async claim(c: Chat, msg: { text: string; files: string[]; mentions: unknown[] }, sendHere: ((own: Chat) => Promise<Reply> | Reply) | null = null): Promise<Reply | null> {
+    const e = this.h.engine();
+    const m = this.h.mesh();
+    const peer = this.mesh.peer(c.home);
+    if (!e || !m || !peer?.online || this.whyNotHere(c) !== null) return null;
+    const name = peer.name === "" ? peer.id : peer.name;
+    const r = await m
+      .forward(dest(peer), name, "POST", ["v1", "chats", String(c.homeId), "handoff"], { to: this.mesh.me.id }, [], [this.here(), ""], null)
+      .catch((): null => null);
+    if (r === null || r.status >= 300) return null;
+    // Its session and work are up now: read them before the chat is taken.
+    await this.h.refresh?.().catch(() => undefined);
+    const now = this.h.store.chat(c.id);
+    if (!now || now.home !== c.home) return null;
+    const why = this.takeHere(now, name, true);
+    if (why !== null) return null;
+    this.h.store.set(runsOnKey(c.gid), "");
+    const own = this.h.store.chat(c.id) ?? now;
+    if (sendHere !== null) return sendHere(own);
+    e.send(c.id, msg.text, { files: msg.files, mentions: msg.mentions as never });
+    return ok({ ok: true, here: true });
+  }
+
+  /**
+   * Run anywhere, this PC's side: PC `to` (one of this account's own) takes this PC's chat `c`. Not while it runs,
+   * waits or has messages queued here, or one of its sub-agents runs (409 `running`: the other PC sends its message
+   * here); else its session and work go up first and the answer says so. This PC becomes a copy once it sees the chat
+   * listed by `to` (meshstore.ts `upsert` → `release`).
+   */
+  async handoff(c: Chat, to: string): Promise<Reply> {
+    const e = this.h.engine();
+    if (!e) return err(503, "the engine isn't started");
+    if (c.home !== "") return err(409, "this chat runs on another PC now");
+    if (this.h.mine?.(to) !== true) return err(403, "only a PC of this account's workspaces takes its chats");
+    const busy = () => e.running(c.id) || e.queuedCount(c.id) > 0 || e.waiting(c.id) !== null || e.chats.some((k) => k.parent === c.id && k.home === "" && e.running(k.id));
+    if (busy()) return { status: 409, body: { error: "it runs here now", running: true } };
+    const carried = (await this.h.carryNow?.(c.id, HANDOFF_MS).catch(() => false)) ?? false;
+    if (busy()) return { status: 409, body: { error: "it started here meanwhile", running: true } };
+    // Its agent session couldn't go up (no workspace cloud here, its room is full): it goes on here, where it is.
+    if (!carried && c.started && c.sessionId !== "") return { status: 409, body: { error: "its session couldn't be sent up", running: false } };
+    return ok({ ok: true, count: this.h.store.items(c.id).length, carried });
   }
 
   private hold(c: Chat, msg: WaitingMessage, off: string, why: string): Reply {
@@ -175,7 +281,7 @@ export class Failover {
    * Codex). The session and work the cloud carries come before its next turn (continuehere.ts); without them, a new
    * session with the conversation so far. A notice says where it went. Null, or why it can't.
    */
-  takeHere(c: Chat, off: string): string | null {
+  takeHere(c: Chat, off: string, quiet = false): string | null {
     const e = this.h.engine();
     if (!e) return "the engine isn't started";
     const from = c.home;
@@ -201,14 +307,15 @@ export class Failover {
     this.h.store.set(takenKey(c.gid), JSON.stringify({ from, name: off, count }));
     e.reload();
     // Its session and work from the cloud, on the same provider: the next turn waits for them and resumes.
-    if (carried !== null && account.kind === kind && this.h.carry?.begin(c.id, from, hid, off)) {
+    if (carried !== null && account.kind === kind && this.h.carry?.begin(c.id, from, hid, off, quiet)) {
       this.h.touch(c.id);
       this.h.touch(null);
       return null;
     }
-    // A copy with messages is a conversation that goes on (its PC may not have said it started).
-    const n = switchedNotice(off, this.here(), c.started || count > 0);
-    if (!e.handOver(c.id, `${kind} on ${off}`, { icon: "monitor", ...n })) e.notice(c.id, "monitor", n.text, n.detail);
+    // A copy with messages is a conversation that goes on (its PC may not have said it started). Run anywhere says
+    // nothing of PCs: the session goes on with the conversation so far, quietly.
+    const n = quiet ? { text: "", detail: "" } : switchedNotice(off, this.here(), c.started || count > 0);
+    if (!e.handOver(c.id, `${kind} on ${off}`, quiet ? null : { icon: "monitor", ...n }) && !quiet) e.notice(c.id, "monitor", n.text, n.detail);
     freshSession(this.h.store, e, c.id);
     this.h.touch(c.id);
     this.h.touch(null);

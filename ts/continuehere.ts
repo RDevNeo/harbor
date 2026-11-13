@@ -149,6 +149,19 @@ interface Pending {
   from: string;
   hid: number;
   off: string;
+  /** Run anywhere (the chat came to the PC it was typed on): no notice unless something didn't come. */
+  quiet?: boolean;
+}
+
+/**
+ * What a chat that came to the PC it was typed on says (run anywhere): nothing when its session and work came whole;
+ * else what didn't, with no PC named as the chat's.
+ */
+export function quietNotice(resumed: string, work: readonly string[]): { text: string; detail: string } | null {
+  const odd = work.filter((l) => !/ came from /.test(l) && !/^Cloned the project/.test(l));
+  if (resumed === "resumed" && odd.length === 0) return null;
+  const text = resumed === "resumed" ? (odd[0] ?? "") : resumed === "new" ? "A new session with the conversation so far" : `A new session with the conversation so far (${resumed})`;
+  return { text, detail: (resumed === "resumed" ? odd.slice(1) : odd).join("\n") };
 }
 
 /** Taking a chat over with its session and work (failover.ts calls `begin`; the engine's `prepare` hook, `prepare`). */
@@ -167,9 +180,9 @@ export class ContinueHere {
     return { kind: c.index.kind, files: c.index.work?.kind === "files" && c.index.work.why === "" };
   }
 
-  begin(chat: number, from: string, hid: number, off: string): boolean {
+  begin(chat: number, from: string, hid: number, off: string, quiet = false): boolean {
     if (this.h.cloud().carryOf(from, hid) === null) return false;
-    this.pending.set(chat, { from, hid, off });
+    this.pending.set(chat, { from, hid, off, quiet });
     return true;
   }
 
@@ -230,7 +243,14 @@ export class ContinueHere {
     let pre = "";
     const c = e.chat(id);
     const kind = c ? (e.account(c.account)?.kind ?? "Claude") : "Claude";
-    if (resumed === "resumed") e.notice(id, "monitor", n.text, n.detail);
+    if (p.quiet === true) {
+      // Run anywhere: the chat simply goes on here. Said only when its session or some of its work didn't come.
+      const q = quietNotice(resumed, work);
+      if (resumed === "resumed") {
+        if (q !== null) e.notice(id, "info", q.text, q.detail);
+      } else if (c && e.handOver(id, `${kind} on ${p.off}`, q === null ? null : { icon: "restart", ...q })) pre = e.takeForkPreamble(id);
+      else if (q !== null) e.notice(id, "info", q.text, q.detail);
+    } else if (resumed === "resumed") e.notice(id, "monitor", n.text, n.detail);
     else if (c && e.handOver(id, `${kind} on ${p.off}`, { icon: "monitor", ...n })) pre = e.takeForkPreamble(id);
     else e.notice(id, "monitor", n.text, n.detail);
     freshSession(this.h.store, e, id);
