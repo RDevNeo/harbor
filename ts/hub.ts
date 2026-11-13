@@ -45,6 +45,7 @@ import {
   takesMainFrom,
   directoryPcOwner,
   directoryPcWorkspaces,
+  guestLevel,
   personWorkspace,
   scopeHas,
   scopeHasDevice,
@@ -919,6 +920,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const phone = new PhoneRoutes({
     ctx: ctxFor,
     shareLevel: (peer) => machines.levelFor(store, peer),
+    // Someone else's phone (its own PC may be off): what this PC's owner lets that person's PCs' chats do here.
+    guest: {
+      level: (caller) => {
+        const me = account.account()?.id ?? "";
+        if (me === "") return null;
+        const d = account.directory();
+        return guestLevel(caller, me, [...d.workspaces.flatMap((w) => w.pcs), ...d.peers], (pc) => machines.levelFor(store, pc));
+      },
+      owner: () => account.account()?.name ?? "",
+    },
     projectPlace: (repo) => projectClones.place(repo),
     projectIcon: (repo) => projectIcons.hash(repo),
     store,

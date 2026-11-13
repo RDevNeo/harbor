@@ -97,6 +97,8 @@ public class Hubs extends Base {
 
     private void open(String id) {
         Hub.setLast(this, id);
+        // Picked here: this workspace is the phone's own now, not a stand-in for another (Away).
+        Away.forget(this, id);
         startActivity(new Intent(this, Chats.class).putExtra("hub", id));
     }
 
@@ -245,6 +247,9 @@ public class Hubs extends Base {
                 JSONObject st = h.state();
                 String via = h.viaName();
                 s = n + (n == 1 ? " PC" : " PCs") + " · " + (via.isEmpty() ? st.optString("hub_name", h.labelOn("")) : via) + " answers";
+                // Its owner doesn't let this account start chats there (guest.ts): it reads only.
+                JSONObject g = st.optJSONObject("guest");
+                if (g != null && !g.optBoolean("start", true)) s += " · you can't start chats there";
                 color = Ui.GREEN;
             } catch (Exception e) {
                 s = h.whyDown(e);

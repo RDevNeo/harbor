@@ -382,6 +382,15 @@ refetch everything.
 - `profile_check` (optional, from 0.47; null or missing: nothing to ask): `{key, title, body}`,
   "Is this you?" while this PC's owner is a detection nobody confirmed (the desktop's pop-up).
   Confirm sends `PATCH /v1/people {"op": "confirm"}`; closing remembers `key` on the phone.
+- `guest` (after 0.181.5; null or missing: no limit): `{level, start, why}` for a phone signed in as
+  someone other than this PC's owner (a member of its workspace whose own PCs may be off). `level`
+  is what the owner lets that person's PCs' chats do here (Settings › Workspace: `off`, `read`,
+  `edit`, `full`; the most any of their PCs gets, `full` when none is set or they have no PC);
+  `start` whether a chat can start here within it, else `why`. A chat such a phone starts runs at
+  most at that level (`read`: `plan`, `edit`: `edits`); `403` when `off`. When no PC of the open
+  workspace answers, the phone asks every PC of the account's other workspaces for its state and
+  offers those that answer with `start` (or no `guest`) under the offline card, moving the chat
+  list to the first by itself (`Away.java`, `Fallback.java`).
 - `provider_updates`: gone from 0.111. Older hubs sent the provider CLIs that were behind (a
   "Updates available: N providers" banner with `POST /v1/providers/update`); the check offered
   updates its updater couldn't install (CLIs from mise, Homebrew or a distribution package), and

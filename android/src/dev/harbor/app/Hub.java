@@ -834,6 +834,26 @@ final class Hub {
         return s;
     }
 
+    /** GET /v1/state of PC v itself ("" the first), quickly: whether it answers and what it lets
+     *  this account do (`guest`), for the PCs offered when another workspace's are off (Away). */
+    JSONObject stateOn(String v) throws IOException {
+        Net.Http c = openOn(v, "GET", "/v1/state", 12_000);
+        try {
+            c.header("X-Harbor-Ids", "global");
+            return reply(c);
+        } finally {
+            c.close();
+        }
+    }
+
+    /** Calls go to PC v from now on ("" the first): the user picked it, or it was the one that
+     *  answered when the phone moved here from a workspace whose PCs are off. */
+    void use(String v) {
+        if (v == null || (!v.isEmpty() && ep(v) == null)) return;
+        route().reset(v);
+        saveVia(v);
+    }
+
     private static JSONObject reply(Net.Http c) throws IOException {
         int code = c.code();
         if (c.length() > MAX_REPLY) throw new IOException(TOO_BIG);
