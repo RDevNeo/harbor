@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.183.2] - 2026-11-13
+
+### Fixed
+- A chat whose PC is off is never read-only: settle, rename, delete, model and access, moves and the rest work from
+  any PC (and from a phone through it). The chat comes to that PC, as a message brings it; when the other PC is back
+  it shows the change. A chat deleted while its PC was off goes there too, unless someone wrote in it there.
+- A message to such a chat whose agent session never went up runs anyway: a new session with the conversation so far,
+  and a short note in the chat.
+
 ## [0.183.1] - 2026-11-13
 
 ### Changed
