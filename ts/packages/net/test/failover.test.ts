@@ -29,6 +29,14 @@ describe("failover (failover.ts)", () => {
     expect(switchedNotice("Tower", "Desk", false).text).toBe("Tower is off: started on Desk");
   });
 
+  test("Codex runs a chat too; the chat's own provider first", () => {
+    expect(pickFailover([pc("", "here", { claude: false, codex: true })]).to?.id).toBe("");
+    const two = [pc("a", "alpha", { ram: 9000 }), pc("b", "beta", { claude: false, codex: true, ram: 1000 })];
+    expect(pickFailover(two, "Codex").to?.id).toBe("b");
+    expect(pickFailover(two, "Claude").to?.id).toBe("a");
+    expect(pickFailover([pc("", "here", { claude: false })]).to).toBeNull();
+  });
+
   test("waiting messages survive a bad value", () => {
     expect(parseHeld("nope")).toEqual([]);
     expect(parseHeld(JSON.stringify([{ text: "hi", files: ["/a"], mentions: [] }, { x: 1 }]))).toEqual([{ text: "hi", files: ["/a"], mentions: [] }]);

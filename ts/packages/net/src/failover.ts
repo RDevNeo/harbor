@@ -2,19 +2,20 @@
  * When the PC a chat or a project lives on is off, Harbor carries on on another PC of the mesh
  * by itself and says so (no prompt, no setting). What can and can't carry over:
  *
- * - An existing chat's agent session is a file on the PC that is off: it can't resume. Every PC
- *   keeps a full copy of every chat's messages, so the PC that takes it starts a new session with
- *   the conversation so far (engine.ts `handOver`, as a switch of provider does) and the chat is
- *   its own from then on. Work that PC never pushed (uncommitted changes, unpushed commits) isn't
- *   there.
+ * - An existing chat's agent session is a file on the PC that is off: the workspace cloud carries
+ *   it, with the work that PC never pushed (uncommitted changes, unpushed commits), and the PC that
+ *   takes the chat resumes that session in its own copy of the project (continuehere.ts, carry.ts).
+ *   Without them (an older PC, too big, not published yet) it starts a new session with the
+ *   conversation so far (engine.ts `handOver`, as a switch of provider does). Either way the chat
+ *   is its own from then on.
  * - A new chat in a project whose folder is on the PC that is off starts on a PC that has the
  *   project (its checkout of the same Git remote) or can clone it.
  * - None usable: what is sent waits on the PC that got it, and goes out when the chat's PC or
  *   another usable one is back.
  *
  * "Usable": on, sharing chats with this one (it's in the mesh, so in the user's workspace), with a
- * Claude account (only Claude runs a chat on another PC), and the project: its folder already, or
- * a Git remote to clone it from.
+ * Claude or Codex account (the chat's own provider first: its session resumes there), and the
+ * project: its folder already, or a Git remote to clone it from.
  */
 
 /** A PC that could take over: "" is this PC. */
@@ -29,23 +30,36 @@ export interface FailoverPc {
   canClone: boolean;
   /** It runs Claude. */
   claude: boolean;
+  /** It runs Codex. */
+  codex?: boolean;
 }
 
 export type FailoverPick = { to: FailoverPc } | { to: null; why: string };
 
-/** Ranks the usable PCs: one with the project's folder, then the most free memory, then the name (every PC picks the same). */
-export function pickFailover(cands: readonly FailoverPc[]): FailoverPick {
-  const usable = cands.filter((c) => c.claude && (c.hasProject || c.canClone));
+const runs = (c: FailoverPc, kind?: "Claude" | "Codex"): boolean => (kind === "Codex" ? c.codex === true : kind === "Claude" ? c.claude : c.claude || c.codex === true);
+
+/**
+ * Ranks the usable PCs: one with the project's folder, then one with the chat's own provider (`kind`: its session
+ * resumes there), then the most free memory, then the name (every PC picks the same).
+ */
+export function pickFailover(cands: readonly FailoverPc[], kind?: "Claude" | "Codex"): FailoverPick {
+  const usable = cands.filter((c) => runs(c) && (c.hasProject || c.canClone));
   if (usable.length === 0) return { to: null, why: noneWhy(cands) };
   const ram = (c: FailoverPc) => c.ram ?? -1;
-  const best = [...usable].sort((a, b) => Number(b.hasProject) - Number(a.hasProject) || ram(b) - ram(a) || (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1))[0];
+  const best = [...usable].sort(
+    (a, b) =>
+      Number(b.hasProject) - Number(a.hasProject) ||
+      Number(runs(b, kind)) - Number(runs(a, kind)) ||
+      ram(b) - ram(a) ||
+      (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1),
+  )[0];
   return best ? { to: best } : { to: null, why: noneWhy(cands) };
 }
 
 /** Why no PC is usable, in a few words (the candidates are the PCs that are on). */
 function noneWhy(cands: readonly FailoverPc[]): string {
   if (cands.length === 0) return "no other PC is on";
-  if (!cands.some((c) => c.claude)) return "no PC that's on has a Claude account";
+  if (!cands.some((c) => runs(c))) return "no PC that's on has a Claude or Codex account";
   return "no PC that's on has this project, and it has no Git remote to clone";
 }
 
@@ -71,6 +85,14 @@ export function failoverDraftLine(off: string, pick: FailoverPick): string {
 export function switchedNotice(off: string, to: string, started: boolean): { text: string; detail: string } {
   if (!started) return { text: `${off} is off: started on ${to}`, detail: `${to} has the project.` };
   return { text: `${off} is off: moved to ${to}`, detail: `A new session with the conversation so far. Unpushed work stays on ${off}.` };
+}
+
+/** The notice of a chat that both its PC and the one that took it over went on with while apart: this one is kept as its own chat. */
+export function splitNotice(here: string, other: string): { text: string; detail: string } {
+  return {
+    text: `${other} went on with this chat too: this is ${here}'s, kept as its own chat`,
+    detail: `${here} and ${other} couldn't reach each other while both went on with it. ${other}'s goes on as the chat beside this one; nothing here was lost.`,
+  };
 }
 
 /** The answer to a message that waits because no PC can run the chat (`why`: the reason, for the log and the detail). */

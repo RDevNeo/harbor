@@ -19,6 +19,7 @@ import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, 
 import { computer, discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
+  type ChatCloud,
   Vault,
   fakePeers,
   RamMeter,
@@ -146,9 +147,10 @@ import { apk as updateApk, notices, type Updater } from "./packages/update/src/i
 import { type Services, startServices } from "./services.ts";
 import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
 import { chatCloud } from "./cloudsync.ts";
+import { carrySource, ContinueHere } from "./continuehere.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer">;
 
 export interface HubOptions {
   /** What peers and phones compare (advertised: older ones read only the first three numbers). */
@@ -200,6 +202,8 @@ export interface RunningHub {
   projectMove: ProjectMove;
   runOn: RunOn;
   failover: Failover;
+  /** The workspace cloud (chatcloud.ts): the account loop runs its rounds; rigs drive it themselves. */
+  cloud: ChatCloud;
   /** This PC's and the mesh's agent accounts, each sign-in once (meshaccounts.ts); another PC's run there. */
   sharedAccounts: () => SharedAccount[];
   windowMesh: WindowMesh;
@@ -374,6 +378,19 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     running: (chat) => engine?.runningSince(chat) != null,
     copied: (chat) => engine?.storeChanged(chat),
     log: env.HARBOR_ACCOUNT_LOG === "1" ? (line: string) => process.stderr.write(`cloud: ${line}\n`) : undefined,
+    // Continue anywhere: the recent chats' sessions and the work in their folders go up too (continuehere.ts).
+    carry: carrySource({ store, engine: () => engine, accounts: () => accounts, scratch: join(dataDir(env), "carry-scratch") }),
+  });
+  // A chat taken over from a PC that is off goes on with its session and work from the cloud (continuehere.ts).
+  const continueHere = new ContinueHere({
+    store,
+    engine: () => engine,
+    accounts: () => accounts,
+    scratch: join(dataDir(env), "carry-scratch"),
+    cloud: () => cloud,
+    here: () => hub.mesh.me.name,
+    touch: (chat) => hub.touch(chat, true),
+    log: (line) => process.stderr.write(`harbor: ${line}\n`),
   });
   const account = new AccountService({
     kv: store,
@@ -775,6 +792,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     place: (repo) => projectClones.place(repo),
     touch: (chat) => hub.touch(chat, true),
     scope: (pc) => scopeHas(account.scope(), pc),
+    carry: { of: (pc, hid) => continueHere.of(pc, hid), begin: (chat, from, hid, off) => continueHere.begin(chat, from, hid, off) },
   });
   ramMeter.start();
   const mesh = new Mesh({
@@ -1061,12 +1079,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     offline,
     turnEnded: (id) => {
       prs.want(id, null);
+      // Its session and work go up soon (continue anywhere): this PC may be switched off right after.
+      cloud.soon();
       void meshTurns.afterTurn(id).catch(() => undefined);
     },
     turnContext: (chat, remote) => meshTurns.context(chat, remote),
     adopt: (id, from) => meshTurns.adopt(id, from),
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
     hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
+    prepare: (chat, prompt, files) => continueHere.prepare(chat, prompt, files),
     // A chat of a project that moved to another PC doesn't run in the folder it left here.
     missingFolder: (c) => projectMove?.movedLine(c) ?? folders?.goneLine(c) ?? projectClones.missingFolder(c),
     // A folder Harbor knew that's gone from its path is looked for first (moved or renamed), then cloned.
@@ -1447,6 +1468,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     projectMove: pm,
     runOn,
     failover,
+    cloud,
     sharedAccounts: sharedNow,
     windowMesh,
     setBusyIn: (f) => {
@@ -1489,6 +1511,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       discard: (repo, made) => newWorktree.discard(repo, made),
     },
     stop: async () => {
+      // What the last turns left goes up first (another PC goes on with it while this one is off).
+      await cloud.flush(3000);
       clearInterval(tick);
       folders?.stop();
       // Pull request lookups still out (git, gh) would land on a closed store.

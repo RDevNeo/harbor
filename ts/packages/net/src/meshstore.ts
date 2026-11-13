@@ -75,7 +75,7 @@ export interface StoreReplicaOptions {
   /** A chat this PC took over while its PC was off (failover.ts): from which PC, at how many messages. */
   took?: (gid: string) => { from: string; count: number } | null;
   /** That PC, back, settles with it: its own chat `own` becomes a copy of `peer`'s (true) or stays (false). */
-  release?: (own: Chat, peer: string, hid: number, count: number) => boolean;
+  release?: (own: Chat, peer: string, hid: number, count: number) => boolean | "split";
   /** Where a chat's agent works (its worktree, else its project); null: the project's folder. */
   cwd?: (chat: Chat) => string | null;
   /** Whether project `repo`'s row here opens the main chat `peer` names for it (projectfold.ts `takesMainFrom`); absent: never. */
@@ -414,12 +414,18 @@ export class StoreReplica implements MeshApp {
     if (hid === null) return null;
     const gid = s(m, "gid");
     const mesh = this.o.hub.mesh;
-    const existingId = mesh.localId(peer, hid) ?? this.list.find((c) => gid !== "" && c.gid === gid)?.id ?? null;
-    const existing = existingId === null ? null : (this.list.find((c) => c.id === existingId) ?? null);
+    let existingId = mesh.localId(peer, hid) ?? this.list.find((c) => gid !== "" && c.gid === gid)?.id ?? null;
+    let existing = existingId === null ? null : (this.list.find((c) => c.id === existingId) ?? null);
     // This PC's own chat: unless `peer` took it over while this PC was off and nothing happened here since (failover.ts).
     if (existing && existing.home === "") {
       const count = int(m.failover_count);
-      if (s(m, "failover_from") !== mesh.me.id || count === null || !(this.o.release?.(existing, peer, hid, count) ?? false)) return null;
+      const r = s(m, "failover_from") !== mesh.me.id || count === null ? false : (this.o.release?.(existing, peer, hid, count) ?? false);
+      if (r === false) return null;
+      // Both went on with it: this PC's went its own way (a new gid), the peer's comes as a copy of its own.
+      if (r === "split") {
+        existing = null;
+        existingId = null;
+      }
     }
     const repo = m.project === null || m.project === undefined ? null : this.repoFor(obj(m.project));
     if (repo !== null) this.rememberPc(repo, peer, s(obj(m.project), "path"));

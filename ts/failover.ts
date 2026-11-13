@@ -15,11 +15,13 @@ import {
   parseHeld,
   pickFailover,
   type Reply,
+  splitNotice,
   switchedNotice,
   takenKey,
   type WaitingMessage,
 } from "./packages/net/src/index.ts";
-import { type Chat, repoDir, type Store } from "./packages/store/src/index.ts";
+import { type Chat, newUuid, repoDir, type Store } from "./packages/store/src/index.ts";
+import { freshSession } from "./continuehere.ts";
 
 /**
  * The hub's side of packages/net/src/failover.ts: which PC takes a chat or a new chat whose PC is
@@ -40,6 +42,19 @@ export interface FailoverHost {
   touch: (chat: number | null) => void;
   /** The PCs this account uses (account.ts `pcScope`): only those take a chat over. */
   scope?: (pc: string) => boolean;
+  /** Continue anywhere (continuehere.ts): what the cloud carries of a chat of PC `pc`, and taking it with them. */
+  carry?: {
+    of(pc: string, hid: number): { kind: "Claude" | "Codex"; files: boolean } | null;
+    /** The chat (now this PC's) resumes its session with its work on its next turn; false: nothing carried. */
+    begin(chat: number, from: string, hid: number, off: string): boolean;
+  };
+  /** A chat's notice (split: it went its own way). */
+  notice?: (chat: number, icon: string, text: string, detail: string) => void;
+}
+
+/** The provider an account id belongs to ("claude2" → Claude). */
+export function kindOfAccount(id: string): "Claude" | "Codex" | undefined {
+  return /^claude/i.test(id) ? "Claude" : /^codex/i.test(id) ? "Codex" : undefined;
 }
 
 const RETRY_MS = 15_000;
@@ -64,27 +79,30 @@ export class Failover {
   }
 
   /** The PCs that are on, this one first, as candidates for project `repo` (null: a chat without one). */
-  candidates(repo: number | null, skip: string): FailoverPc[] {
+  candidates(repo: number | null, skip: string, carried = false): FailoverPc[] {
     // The engine's own lists (in memory): this runs on every redraw of such a chat's composer.
     const e = this.h.engine();
     const r = repo === null ? undefined : (e?.repo(repo) ?? this.h.store.repos().find((x) => x.id === repo));
     const remote = (r?.remote ?? "") !== "";
     const claude = this.h.accounts().some((a) => a.kind === "Claude" && a.off !== true);
+    const codex = this.h.accounts().some((a) => a.kind === "Codex" && a.off !== true && a.loggedIn !== false);
     const hereHas = r === undefined || existsSync(repoDir(r));
-    const out: FailoverPc[] = [{ id: "", name: this.here(), ram: this.h.ram(), hasProject: hereHas, canClone: remote, claude }];
+    // A folder without Git the cloud carries is unpacked here as a clone would be.
+    const out: FailoverPc[] = [{ id: "", name: this.here(), ram: this.h.ram(), hasProject: hereHas, canClone: remote || carried, claude, codex }];
     if (!this.mesh.on) return out;
     const chats = e?.chats ?? this.h.store.chats();
     for (const p of this.mesh.peers.values()) {
       if (!p.online || p.id === skip || this.h.scope?.(p.id) === false) continue;
       // It runs chats of the project: it has its folder.
       const has = r === undefined || chats.some((c) => c.home === p.id && c.repoId === r.id);
-      out.push({ id: p.id, name: p.name === "" ? p.id : p.name, ram: p.ram, hasProject: has, canClone: remote, claude: p.accounts.some((a) => a[2] === "claude") });
+      out.push({ id: p.id, name: p.name === "" ? p.id : p.name, ram: p.ram, hasProject: has, canClone: remote || carried, claude: p.accounts.some((a) => a[2] === "claude"), codex: p.accounts.some((a) => a[2] === "codex") });
     }
     return out;
   }
 
   pick(c: Chat): FailoverPick {
-    return pickFailover(this.candidates(c.repoId, c.home));
+    const carried = c.home === "" || this.h.scope?.(c.home) === false ? null : (this.h.carry?.of(c.home, c.homeId) ?? null);
+    return pickFailover(this.candidates(c.repoId, c.home, carried?.files === true), carried?.kind ?? kindOfAccount(c.account));
   }
 
   held(c: Chat): WaitingMessage[] {
@@ -153,19 +171,27 @@ export class Failover {
   }
 
   /**
-   * The copy becomes this PC's own chat: on a Claude account here, a new session with the
-   * conversation so far, and a notice saying where it went. Null, or why it can't.
+   * The copy becomes this PC's own chat, on an account here of its own provider when there is one (else Claude, else
+   * Codex). The session and work the cloud carries come before its next turn (continuehere.ts); without them, a new
+   * session with the conversation so far. A notice says where it went. Null, or why it can't.
    */
   takeHere(c: Chat, off: string): string | null {
     const e = this.h.engine();
     if (!e) return "the engine isn't started";
-    const acc = this.h.accounts().filter((a) => a.kind === "Claude" && a.off !== true);
-    const want = this.h.store.get("default_account") ?? "claude";
-    const account = acc.find((a) => a.id === want) ?? acc[0];
-    if (!account) return "this PC has no Claude account";
-    const count = this.h.store.items(c.id).length;
     const from = c.home;
     const hid = c.homeId;
+    // Sessions and work come only from this account's own PCs (a workspace mate's chat goes on with the conversation).
+    const own = this.h.scope?.(from) !== false;
+    const carried = own ? (this.h.carry?.of(from, hid) ?? null) : null;
+    const kind = carried?.kind ?? kindOfAccount(c.account) ?? "Claude";
+    const on = this.h.accounts().filter((a) => a.off !== true && (a.kind === "Claude" || (a.kind === "Codex" && a.loggedIn !== false)));
+    const want = this.h.store.get("default_account") ?? "claude";
+    const same = on.filter((a) => a.kind === kind);
+    const claude = on.filter((a) => a.kind === "Claude");
+    const pool = same.length > 0 ? same : claude.length > 0 ? claude : on;
+    const account = pool.find((a) => a.id === c.account) ?? pool.find((a) => a.id === want) ?? pool[0];
+    if (!account) return "this PC has no Claude or Codex account";
+    const count = this.h.store.items(c.id).length;
     this.h.store.saveChat({ ...c, account: account.id, device: "" });
     this.h.store.setHome(c.id, "", 0);
     this.mesh.foreign.delete(c.id);
@@ -174,9 +200,16 @@ export class Failover {
     this.h.forgetCopy(c.id);
     this.h.store.set(takenKey(c.gid), JSON.stringify({ from, name: off, count }));
     e.reload();
+    // Its session and work from the cloud, on the same provider: the next turn waits for them and resumes.
+    if (carried !== null && account.kind === kind && this.h.carry?.begin(c.id, from, hid, off)) {
+      this.h.touch(c.id);
+      this.h.touch(null);
+      return null;
+    }
     // A copy with messages is a conversation that goes on (its PC may not have said it started).
     const n = switchedNotice(off, this.here(), c.started || count > 0);
-    if (!e.handOver(c.id, `Claude on ${off}`, { icon: "monitor", ...n })) e.notice(c.id, "monitor", n.text, n.detail);
+    if (!e.handOver(c.id, `${kind} on ${off}`, { icon: "monitor", ...n })) e.notice(c.id, "monitor", n.text, n.detail);
+    freshSession(this.h.store, e, c.id);
     this.h.touch(c.id);
     this.h.touch(null);
     return null;
@@ -233,13 +266,28 @@ export class Failover {
   }
 
   /**
-   * The chat's old PC is back and finds `peer` took over its chat `own` at `count` messages: when
-   * nothing happened here since (it was off), it becomes a copy of the peer's; true when it did.
-   * When it went on here too (the two PCs couldn't reach each other), both keep theirs.
+   * The chat's old PC is back and finds `peer` took over its chat `own` at `count` messages: when nobody wrote in it
+   * here since (this PC was off), it becomes a copy of the peer's (true): one chat, one PC that runs it. When someone
+   * did (the two PCs couldn't reach each other and both went on), this PC's goes its own way under a new id and says
+   * so, and the peer's comes beside it ("split"). While it runs here, later (false).
    */
-  release(own: Chat, peer: string, hid: number, count: number): boolean {
+  release(own: Chat, peer: string, hid: number, count: number): boolean | "split" {
     const e = this.h.engine();
-    if (e?.running(own.id) || this.h.store.items(own.id).length > count) return false;
+    if (e?.running(own.id)) return false;
+    const items = this.h.store.items(own.id);
+    if (items.slice(count).some((i) => i.kind === "user")) {
+      const gid = newUuid();
+      this.h.store.set(takenKey(own.gid), "");
+      this.h.store.setGid(own.id, gid);
+      own.gid = gid;
+      const name = this.mesh.nameOf(peer);
+      const n = splitNotice(this.here(), name);
+      (this.h.notice ?? ((id, icon, text, detail) => e?.notice(id, icon, text, detail)))(own.id, "monitor", n.text, n.detail);
+      e?.reload();
+      this.h.touch(own.id);
+      this.h.touch(null);
+      return "split";
+    }
     this.h.store.saveChat({ ...own, sessionId: "" });
     this.h.store.setHome(own.id, peer, hid);
     // Taken over here once before: that's settled, the peer has it now.

@@ -24,6 +24,7 @@ export * from "./movepcrun.ts";
 export * from "./relocate.ts";
 export * from "./ram.ts";
 export * from "./failover.ts";
+export * from "./carry.ts";
 export * from "./guest.ts";
 export * from "./clone.ts";
 export * from "./devices.ts";

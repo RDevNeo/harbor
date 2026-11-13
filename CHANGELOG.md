@@ -12,6 +12,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   sent to one carries it on here, as with a PC that went off. Projects without a folder here offer to clone.
   The account service needs its new `/v1/cloud` endpoints (migration 0008); until they're deployed, chats sync
   over the mesh only, as before.
+- Continue anywhere: a chat whose PC is off goes on on the PC you're on with the agent's own session, not a
+  summary. Each PC also keeps, for its recent chats between turns, the Claude Code session or Codex rollout and the
+  work its Git remote doesn't have (unpushed commits and uncommitted changes as one git bundle; a folder without Git
+  as a packed copy), encrypted in the workspace cloud. The PC that takes the chat over finds its own clone of the
+  project by its remote (or clones it into the Projects folder), puts the work in place, moves every path in the
+  session to its own folders (Linux, macOS and Windows alike) and resumes it; the chat says "Continued on Desk —
+  Tower is off". Nothing here is lost: the work goes into the folder only when it's clean and behind, or exactly
+  the state the work came from; otherwise into a worktree of its own. When the first PC is back the chat is the
+  other's (one PC runs it), and a message there takes it back the same way. If both went on while they couldn't
+  reach each other, the first PC's becomes its own chat and the other's comes beside it. Codex chats now fail over
+  too. Anything that can't come (too big, an older PC) falls back to a new session with the conversation so far.
 
 ### Fixed
 - The account loop no longer stops when the vault's round hangs (on Windows a check of a WhatsApp or Discord host

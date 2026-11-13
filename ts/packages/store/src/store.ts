@@ -751,6 +751,11 @@ export class Store {
     if (was !== null && (num(was.settled) !== 0) !== c.settled) this.settledChanged(c.id);
   }
 
+  /** A chat's global id, changed: it went its own way from the chat it was (continue anywhere's split, failover.ts). */
+  setGid(id: number, gid: string): void {
+    this.db.query("UPDATE chats SET gid=?2 WHERE id=?1").run(id, gid);
+  }
+
   /** Which PC owns a chat ("" and 0: this one), after it moved between PCs. */
   setHome(id: number, home: string, homeId: number): void {
     this.db.query("UPDATE chats SET home=?2, home_id=?3 WHERE id=?1").run(id, home, homeId);

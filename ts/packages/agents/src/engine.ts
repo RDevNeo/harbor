@@ -51,6 +51,8 @@ export interface EngineHost {
   copyTurn?(chatId: number): CopyTurn | null;
   /** The chat is being handed to another PC (net's movepcrun.ts): its turns and queue wait. */
   moving?(chatId: number): boolean;
+  /** The chat came here from a PC that is off and its session and work are on their way (continuehere.ts): true when the host holds this turn and starts it once they're here. */
+  prepare?(chatId: number, prompt: string, files: readonly string[]): boolean;
   /** A message sent to a moving chat is kept by the host, which sends it where the chat ends up; true when kept. */
   hold?(chatId: number, text: string, files: string[], mentions: Mention[]): boolean;
   /** Where a chat pinned to a device runs (net's remote.rs); throws the chat's error. */
@@ -538,6 +540,11 @@ export class Engine {
     const updating = providerUpdates.pending(this.cliOf(id));
     if (updating) {
       void updating.then(() => this.startTurn(id, prompt, files));
+      return;
+    }
+    // Taken over from a PC that is off: its session and work come first (continuehere.ts).
+    if (!this.turns.has(id) && (this.host.prepare?.(id, prompt, files) ?? false)) {
+      this.persist(id);
       return;
     }
     // One turn per chat. A runner still going for it, even one this Harbor lost track of, holds

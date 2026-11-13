@@ -20,9 +20,11 @@
 // An account service without `/v1/cloud` (not deployed yet) answers 404: the feature is off, and asked again hourly.
 import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { digest as digestItems, itemJson, parseItem, privateDir, writePrivate, type Item } from "@harbor/store";
+import { type PathSpace, SESSION_MAX, SESSION_PART, sessionParts, type Snap, type WorkIndex } from "./carry.ts";
 import type { Json } from "./wire.ts";
 
 /** One of this PC's chats, as the cloud publishes it. */
@@ -52,6 +54,55 @@ export interface CloudProject {
 export interface CloudSource {
   chats(): CloudOwnChat[];
   projects(): CloudProject[];
+  /** What this PC's chats need to go on elsewhere (carry.ts): their sessions and folders. */
+  carry?(): CarryChat[];
+  /** A snapshot of a folder's work (carry.ts `gitSnapshot`/`packFolder`, with the folder's chain). */
+  snapshot?(folder: CarryFolder): Promise<Snap | null>;
+}
+
+/** A chat's folder, as carried. */
+export interface CarryFolder {
+  dir: string;
+  name: string;
+  git: boolean;
+  /** The chat runs in a worktree of its own. */
+  worktree: boolean;
+}
+
+/** One of this PC's chats, for what goes with it to another PC (continue anywhere). */
+export interface CarryChat {
+  hid: number;
+  gid: string;
+  /** Last changed, in ms. */
+  updated: number;
+  running: boolean;
+  kind: "Claude" | "Codex";
+  /** Its session's id and file here (null: none). */
+  session: { id: string; file: string } | null;
+  /** Its folder, home and system here (paths in the session are moved from these). */
+  space: PathSpace;
+  folder: CarryFolder | null;
+}
+
+/** What the cloud holds for one chat to go on elsewhere (a `p:` row of its own, which older PCs pass over). */
+export interface CarryIndex {
+  pc: string;
+  carry: 1;
+  hid: number;
+  gid: string;
+  at: number;
+  kind: "Claude" | "Codex";
+  space: PathSpace;
+  session: { id: string; name: string; size: number; sha: string; parts: string[] } | null;
+  work: (WorkIndex & { dir: string }) | null;
+}
+
+/** A chat's carried session and work, fetched (`why` when it couldn't be). */
+export interface Carried {
+  index: CarryIndex;
+  session: Uint8Array | null;
+  work: Uint8Array | null;
+  why: string;
 }
 
 /** A PC of the account's workspaces (its mesh id and name). */
@@ -130,6 +181,13 @@ const BATCH_BYTES = 3 << 20;
 const ROUND_SEND = 4 << 20;
 const ROUND_FETCH = 16 << 20;
 const INFO = "harbor-cloud-v1";
+/** Carried sessions and work: chats changed within this long, at most this many, this many bytes in all (sealed), this much a round. */
+const CARRY_DAYS_MS = 14 * 86_400_000;
+const CARRY_CHATS = 16;
+const CARRY_BUDGET = 48 << 20;
+const CARRY_ROUND = 8 << 20;
+/** A folder's work is looked at again after this long even with no chat in it changed (edits by hand). */
+const WORK_EVERY_MS = 30 * 60_000;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (o: Record<string, unknown>, k: string): string => (typeof o[k] === "string" ? (o[k] as string) : "");
@@ -275,6 +333,18 @@ interface WsState {
   cursor: number;
   chats: Record<string, Known>;
   projects: Record<string, KnownProject>;
+  /** Carried sessions and work of other PCs' chats, by row. */
+  carry?: Record<string, { by: string; index: CarryIndex }>;
+}
+
+/** What this PC published of its chats' sessions and work. */
+interface PubCarry {
+  /** Each chat's index row's hash. */
+  chats: Record<string, string>;
+  /** Each session's file stamp (size:mtime) and parts. */
+  sessions: Record<string, { stamp: string; size: number; sha: string; parts: string[] }>;
+  /** Each folder's last snapshot. */
+  work: Record<string, { at: number; index: WorkIndex; parts: string[] }>;
 }
 
 interface Applied {
@@ -287,7 +357,7 @@ interface Saved {
   account: string;
   keys: Record<string, WsKey>;
   /** What this PC published: in which workspace (and its key's epoch), by chat id and project path. */
-  pub: { ws: string; epoch: string; chats: Record<string, PubChat>; projects: Record<string, string> };
+  pub: { ws: string; epoch: string; chats: Record<string, PubChat>; projects: Record<string, string>; carry?: PubCarry };
   read: Record<string, WsState>;
   /** What was applied here of each copy (by "pc\0hid"), and of each project row. */
   applied: Record<string, Applied>;
@@ -329,11 +399,14 @@ export class ChatCloud {
   private running: Promise<void> | null = null;
   private unsupportedAt = 0;
   private fullAt = 0;
+  private carryFullAt = 0;
   private pulledAt = 0;
   private err = "";
   private syncedAt = 0;
   /** Set by `poke`: something here changed, publish on the next round. */
   private dirty = true;
+  /** The last round's context: carried work is fetched with it between rounds. */
+  private ctx: CloudContext | null = null;
 
   constructor(o: ChatCloudOptions) {
     this.o = o;
@@ -396,6 +469,31 @@ export class ChatCloud {
     return this.running;
   }
 
+  private soonTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** A turn ended here: a round in a few seconds sends its chat, session and work (a PC may be switched off right after). */
+  soon(ms = 3000): void {
+    this.dirty = true;
+    if (this.soonTimer !== null) return;
+    this.soonTimer = setTimeout(() => {
+      this.soonTimer = null;
+      if (this.ctx !== null) void this.sync(this.ctx).catch(() => undefined);
+    }, ms);
+    (this.soonTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** Harbor stops: what's left goes up now, waited for at most `limitMs`. */
+  async flush(limitMs: number): Promise<void> {
+    if (this.soonTimer !== null) {
+      clearTimeout(this.soonTimer);
+      this.soonTimer = null;
+    }
+    if (this.ctx === null || !this.dirty) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([this.sync(this.ctx).catch(() => undefined), new Promise<void>((r) => (timer = setTimeout(r, limitMs)))]);
+    clearTimeout(timer);
+  }
+
   /** Signed out: what's kept of the account goes (the copies stay, as the mesh's do). */
   leave(): void {
     this.saved = blank();
@@ -404,6 +502,7 @@ export class ChatCloud {
 
   private async round(ctx: CloudContext): Promise<void> {
     if (ctx.account === "") return;
+    this.ctx = ctx;
     if (this.unsupportedAt !== 0 && this.now() - this.unsupportedAt < UNSUPPORTED_MS) return;
     if (this.saved.account !== ctx.account) {
       this.saved = blank(ctx.account);
@@ -555,11 +654,259 @@ export class ChatCloud {
     }
     const failed = await this.put(ctx, ws, rows);
     for (const [g, done] of dones) if (!failed.has(g)) done();
-    this.dirty = deferred || cut || failed.size > 0;
+    let more = false;
+    if (failed.size === 0 && this.o.source.carry && this.now() - this.carryFullAt >= FULL_MS) {
+      try {
+        more = await this.publishCarry(ctx, ws, key, epoch);
+      } catch (e) {
+        this.log(`carrying sessions: ${e instanceof Error ? e.message : String(e)}`);
+        more = true;
+      }
+    }
+    this.dirty = deferred || cut || failed.size > 0 || more;
+  }
+
+  // ---- what this PC's chats need to go on elsewhere (carry.ts): sessions and the work in their folders
+
+  /** Sends what changed of the recent idle chats' sessions and work; true when some is left for the next round. */
+  private async publishCarry(ctx: CloudContext, ws: string, key: Uint8Array, epoch: string): Promise<boolean> {
+    const src = this.o.source;
+    const fp = this.o.fp();
+    const me = this.o.meId();
+    const now = this.now();
+    const pc = (this.saved.pub.carry ??= { chats: {}, sessions: {}, work: {} });
+    const all = src.carry?.() ?? [];
+    // The recent chats: running ones keep what they had (a session is sent whole only between turns).
+    const recent = all
+      .filter((c) => now - c.updated < CARRY_DAYS_MS)
+      .sort((a, b) => b.updated - a.updated)
+      .slice(0, CARRY_CHATS);
+    const seal = (row: string, plain: Uint8Array | string) => cloudSeal(key, ws, epoch, row, typeof plain === "string" ? Buffer.from(plain) : plain);
+    const sid = (id: string, i: number) => cloudRowId(key, "k", `${fp}\0s\0${id}\0${i}`);
+    const wid = (h: string, i: number) => cloudRowId(key, "k", `${fp}\0w\0${h}\0${i}`);
+    const parts: Out[] = [];
+    const indexes: Out[] = [];
+    const after: (() => void)[] = [];
+    let sent = 0;
+    let budget = 0;
+    let left = false;
+    const keepS = new Set<string>();
+    const keepW = new Set<string>();
+    const keepC = new Set<string>();
+    /** Folders looked at this round (chats of one folder share its snapshot). */
+    const snapped = new Map<string, PubCarry["work"][string]>();
+    const turn = yielder();
+    for (const c of recent) {
+      await turn();
+      const k = String(c.hid);
+      const had = pc.chats[k];
+      if (c.running) {
+        // Kept as it was until the turn ends.
+        if (had !== undefined) {
+          keepC.add(k);
+          if (c.session) keepS.add(c.session.id);
+          if (c.folder) keepW.add(c.folder.dir);
+        }
+        continue;
+      }
+      // The session: re-read only when its file changed.
+      let session: CarryIndex["session"] = null;
+      if (c.session) {
+        const st = await stat(c.session.file).catch(() => null);
+        const ps = pc.sessions[c.session.id];
+        if (st !== null && st.isFile() && st.size <= SESSION_MAX) {
+          const stamp = `${st.size}:${Math.trunc(st.mtimeMs)}`;
+          if (ps && ps.stamp === stamp) {
+            session = { id: c.session.id, name: c.session.file.split(/[\\/]/).pop() ?? "", size: ps.size, sha: ps.sha, parts: ps.parts };
+          } else if (sent < CARRY_ROUND && budget + st.size <= CARRY_BUDGET) {
+            const b = new Uint8Array(await readFile(c.session.file));
+            const list = sessionParts(b);
+            const old = ps?.parts ?? [];
+            list.forEach((h, i) => {
+              if (old[i] === h) return;
+              const id = sid(c.session?.id ?? "", i);
+              const v = seal(id, b.subarray(i * SESSION_PART, Math.min(b.length, (i + 1) * SESSION_PART)));
+              parts.push({ g: 0, id, v });
+              sent += v.length;
+            });
+            for (let i = list.length; i < old.length; i++) parts.push({ g: 0, id: sid(c.session.id, i), v: null });
+            const id = c.session.id;
+            const entry = { stamp, size: b.length, sha: createHash("sha256").update(b).digest("hex").slice(0, 32), parts: list };
+            after.push(() => (pc.sessions[id] = entry));
+            session = { id, name: c.session.file.split(/[\\/]/).pop() ?? "", size: entry.size, sha: entry.sha, parts: list };
+          } else left = true;
+        }
+        if (session !== null) {
+          keepS.add(session.id);
+          budget += session.size;
+        }
+      }
+      // The work in its folder: looked at again when a chat in it changed, or now and then.
+      let work: CarryIndex["work"] = null;
+      if (c.folder && src.snapshot) {
+        const f = c.folder;
+        const pw = pc.work[f.dir];
+        let w = snapped.get(f.dir) ?? pw;
+        if (!snapped.has(f.dir) && (!pw || c.updated > pw.at || now - pw.at > WORK_EVERY_MS)) {
+          if (sent < CARRY_ROUND) {
+            const snap = await src.snapshot(f).catch(() => null);
+            if (snap !== null) {
+              const bytes = snap.bytes;
+              const idx = snap.index;
+              const same = pw && bytes !== null && pw.index.sha === idx.sha;
+              const list = bytes === null ? [] : same ? pw.parts : sessionParts(bytes);
+              if (bytes !== null && !same) {
+                if (budget + bytes.length > CARRY_BUDGET) {
+                  idx.why = "too big for the cloud's room";
+                  idx.size = 0;
+                  list.length = 0;
+                } else {
+                  list.forEach((_, i) => {
+                    const id = wid(idx.sha, i);
+                    const v = seal(id, bytes.subarray(i * SESSION_PART, Math.min(bytes.length, (i + 1) * SESSION_PART)));
+                    parts.push({ g: 0, id, v });
+                    sent += v.length;
+                  });
+                }
+              }
+              if (pw && pw.index.sha !== "" && pw.index.sha !== idx.sha) for (let i = 0; i < pw.parts.length; i++) parts.push({ g: 0, id: wid(pw.index.sha, i), v: null });
+              w = { at: now, index: { ...idx, parts: list }, parts: list };
+              snapped.set(f.dir, w);
+              const entry = w;
+              after.push(() => (pc.work[f.dir] = entry));
+            }
+          } else left = true;
+        }
+        if (w) {
+          work = { ...w.index, dir: f.dir };
+          keepW.add(f.dir);
+          budget += w.index.size;
+        }
+      }
+      if (session === null && work === null) continue;
+      keepC.add(k);
+      const index: CarryIndex = { pc: me, carry: 1, hid: c.hid, gid: c.gid, at: c.updated, kind: c.kind, space: c.space, session, work };
+      const plain = JSON.stringify(index);
+      const h = sha(plain);
+      if (had === h) continue;
+      const id = cloudRowId(key, "p", `${fp}\0carry\0${c.hid}`);
+      indexes.push({ g: 0, id, v: seal(id, plain) });
+      after.push(() => (pc.chats[k] = h));
+    }
+    // What's no longer carried goes.
+    for (const k of Object.keys(pc.chats)) {
+      if (keepC.has(k)) continue;
+      indexes.push({ g: 0, id: cloudRowId(key, "p", `${fp}\0carry\0${k}`), v: null });
+      after.push(() => delete pc.chats[k]);
+    }
+    for (const [id, ps] of Object.entries(pc.sessions)) {
+      if (keepS.has(id)) continue;
+      for (let i = 0; i < ps.parts.length; i++) parts.push({ g: 0, id: sid(id, i), v: null });
+      after.push(() => delete pc.sessions[id]);
+    }
+    for (const [dir, pw] of Object.entries(pc.work)) {
+      if (keepW.has(dir)) continue;
+      if (pw.index.sha !== "") for (let i = 0; i < pw.parts.length; i++) parts.push({ g: 0, id: wid(pw.index.sha, i), v: null });
+      after.push(() => delete pc.work[dir]);
+    }
+    if (parts.length === 0 && indexes.length === 0) return left;
+    // The parts first: an index goes up only once all it names is there.
+    if (parts.length > 0 && (await this.put(ctx, ws, parts, true)).size > 0) return true;
+    if (indexes.length > 0 && (await this.put(ctx, ws, indexes, true)).size > 0) return true;
+    for (const f of after) f();
+    return left;
+  }
+
+  private takeCarry(st: WsState, row: Row, v: Record<string, unknown>): void {
+    if (typeof v.hid !== "number" || typeof v.gid !== "string" || !isObj(v.space)) return;
+    (st.carry ??= {})[row.id] = { by: row.by, index: v as unknown as CarryIndex };
+  }
+
+  /** What the cloud holds for chat `hid` of PC `pc` to go on here; null: nothing. */
+  carryOf(pc: string, hid: number): { ws: string; by: string; index: CarryIndex } | null {
+    let best: { ws: string; by: string; index: CarryIndex } | null = null;
+    for (const [ws, st] of Object.entries(this.saved.read)) {
+      for (const c of Object.values(st.carry ?? {})) {
+        if (c.index.pc !== pc || c.index.hid !== hid) continue;
+        // Only from the PC the directory lists with the key that wrote it.
+        const p = this.o.sink.pcOf(c.by);
+        if (!p || p.id !== pc) continue;
+        if (!best || c.index.at > best.index.at) best = { ws, by: c.by, index: c.index };
+      }
+    }
+    return best;
+  }
+
+  /** Reads the workspaces again now (what a PC published just before it went off), then chat `hid` of `pc`'s carried session and work. */
+  async fetchCarry(pc: string, hid: number): Promise<Carried | null> {
+    const ctx = this.ctx;
+    if (ctx !== null) {
+      for (const ws of ctx.workspaces) {
+        try {
+          await this.pull(ctx, ws);
+        } catch (e) {
+          this.log(`reading ${ws}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      this.save();
+    }
+    const got = this.carryOf(pc, hid);
+    if (got === null) return null;
+    const { index } = got;
+    if (ctx === null) return { index, session: null, work: null, why: "not signed in to the account service" };
+    const kk = this.saved.keys[got.ws];
+    if (!kk) return { index, session: null, work: null, why: "no key for its workspace" };
+    const key = new Uint8Array(Buffer.from(kk.key, "base64"));
+    const blob = async (name: (i: number) => string, list: string[], whole: string): Promise<Uint8Array | null> => {
+      const ids = list.map((_, i) => cloudRowId(key, "k", name(i)));
+      const rows = new Map<string, Row>();
+      let ask = ids;
+      while (ask.length > 0) {
+        const r = await ctx.call("POST", `/v1/cloud/rows?ws=${encodeURIComponent(got.ws)}`, { ids: ask.slice(0, 64) });
+        if (!isObj(r) || !Array.isArray(r.items)) throw new Error("an odd answer from the workspace cloud");
+        let n = 0;
+        for (const raw of r.items) {
+          const row = parseRow(raw);
+          if (row && ids.includes(row.id) && row.by === got.by) {
+            rows.set(row.id, row);
+            n++;
+          }
+        }
+        if (n === 0) break;
+        ask = ask.filter((x) => !rows.has(x));
+      }
+      const out: Buffer[] = [];
+      for (const [i, id] of ids.entries()) {
+        const row = rows.get(id);
+        const b = row?.v ? cloudOpen(key, got.ws, kk.epoch, id, row.v) : null;
+        if (!b || sha(b) !== list[i]) return null;
+        out.push(b);
+      }
+      const all = Buffer.concat(out);
+      return whole === "" || sha(all) === whole ? new Uint8Array(all) : null;
+    };
+    let why = "";
+    let session: Uint8Array | null = null;
+    let work: Uint8Array | null = null;
+    try {
+      const s = index.session;
+      if (s !== null && s.parts.length > 0) {
+        session = await blob((i) => `${got.by}\0s\0${s.id}\0${i}`, s.parts, s.sha);
+        if (session === null) why = "its session changed while it was read; try again";
+      }
+      const w = index.work;
+      if (w !== null && w.why === "" && w.parts.length > 0) {
+        work = await blob((i) => `${got.by}\0w\0${w.sha}\0${i}`, w.parts, w.sha);
+        if (work === null && why === "") why = "its work isn't all in the cloud";
+      }
+    } catch (e) {
+      why = e instanceof Error ? e.message : String(e);
+    }
+    return { index, session, work, why };
   }
 
   /** Sends rows in batches; gives the groups not all taken (the room ran out, or a row is another PC's). */
-  private async put(ctx: CloudContext, ws: string, rows: readonly Out[]): Promise<Set<number>> {
+  private async put(ctx: CloudContext, ws: string, rows: readonly Out[], carry = false): Promise<Set<number>> {
     const failed = new Set<number>();
     let i = 0;
     while (i < rows.length) {
@@ -583,6 +930,13 @@ export class ChatCloud {
         const why = x ? str(x, "why") : "";
         if (why === "full") full = true;
         else if (why === "owned") this.log(`a row of this PC's is another PC's (${row.id})`);
+      }
+      if (full && carry) {
+        // Sessions and work are the first to give way: chats go on being sent.
+        this.log("the workspace's room in the cloud is full: sessions and work aren't sent for now");
+        this.carryFullAt = this.now();
+        for (const rest of rows.slice(i)) failed.add(rest.g);
+        break;
       }
       if (full) {
         this.log("the workspace's room in the cloud is full: older chats aren't sent");
@@ -663,6 +1017,7 @@ export class ChatCloud {
   private takeProject(st: WsState, k: { key: Uint8Array; epoch: string }, ws: string, row: Row): void {
     if (row.v === null) {
       delete st.projects[row.id];
+      if (st.carry) delete st.carry[row.id];
       return;
     }
     const b = cloudOpen(k.key, ws, k.epoch, row.id, row.v);
@@ -671,6 +1026,10 @@ export class ChatCloud {
       v = b ? JSON.parse(b.toString("utf8")) : null;
     } catch {
       v = null;
+    }
+    if (isObj(v) && v.carry === 1 && typeof v.pc === "string") {
+      this.takeCarry(st, row, v);
+      return;
     }
     if (!isObj(v) || typeof v.pc !== "string" || typeof v.path !== "string") return;
     const p: CloudProject = {
