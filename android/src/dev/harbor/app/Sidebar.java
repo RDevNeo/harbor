@@ -247,6 +247,13 @@ final class Sidebar {
             TextView icon = Ui.icon(a, Ui.I_MONITOR, 18, Ui.RED);
             icon.setBackground(Ui.round(Ui.G100, 0, 10));
             list.addView(banner(icon, offTitle, offBody, "Try again", true, offRetry, null, null, null), Ui.inset());
+            // The PCs of the account's other workspaces that answer: use one meanwhile (Away).
+            if (away != null || awayProbing) list.addView(awayCard(), Ui.inset());
+        }
+        // On a PC of another workspace because this account's own were off: says so, and the way back.
+        if (offTitle == null) {
+            View u = usingBanner();
+            if (u != null) list.addView(u, Ui.inset());
         }
         // Their Update buttons need the PC: not while it doesn't answer.
         if (offTitle == null) banners(st);
@@ -525,6 +532,62 @@ final class Sidebar {
 
     private String offTitle, offBody;
     private Runnable offRetry;
+
+    /** The PCs of the account's other workspaces offered while this one's don't answer (Away):
+     *  null while not looked for; awayProbing while they're being asked. */
+    private List<Fallback.Pc> away;
+    private boolean awayProbing;
+
+    /** The offline card shows (no PC of this workspace answered). */
+    boolean isOffline() { return offTitle != null; }
+
+    void away(List<Fallback.Pc> pcs, boolean probing) {
+        away = pcs;
+        awayProbing = probing;
+        if (offTitle != null) render(st != null ? st : new JSONObject());
+    }
+
+    /** Under the offline card: "Use another PC", a button per PC of another workspace that
+     *  answers and lets this account start chats (Fallback.offered). */
+    private View awayCard() {
+        List<Fallback.Pc> pcs = away == null ? new ArrayList<>() : away;
+        LinearLayout card = Ui.col(a);
+        card.setBackground(Ui.round(Ui.CARD, Ui.LINE, 14));
+        card.setPadding(Ui.dp(12), Ui.dp(12), Ui.dp(12), Ui.dp(12));
+        card.addView(Ui.bold(a, "Use another PC", 15, Ui.FG));
+        card.addView(Ui.text(a, Fallback.pickLine(pcs, awayProbing && pcs.isEmpty()), 13, Ui.G700), Ui.margins(Ui.fill(), 0, 2, 0, pcs.isEmpty() ? 0 : 8));
+        for (Fallback.Pc p : pcs) {
+            TextView b = Ui.bold(a, Fallback.button(p), 14, Ui.ON_INK);
+            b.setGravity(Gravity.CENTER);
+            b.setPadding(Ui.dp(16), Ui.dp(9), Ui.dp(16), Ui.dp(9));
+            b.setBackground(Ui.press(Ui.INK, 0, 18));
+            b.setOnClickListener(v -> Away.use(a, a.hub, p, false));
+            card.addView(b, Ui.margins(Ui.fill(), 0, 0, 0, 6));
+        }
+        LinearLayout wrap = Ui.col(a);
+        wrap.setPadding(0, Ui.dp(4), 0, Ui.dp(6));
+        wrap.addView(card, Ui.fill());
+        return wrap;
+    }
+
+    /** On a PC of another workspace because the account's own workspace's PCs were off (Away.use):
+     *  "Using Fagners-MacBook-Air while Igor-Windows is off", with Back; once one of those answers
+     *  again, "Igor-Windows is back" with Switch back. Null when the phone wasn't moved here. */
+    private View usingBanner() {
+        String home = Away.from(a, a.hub.id);
+        if (home.isEmpty()) return null;
+        Hub h = Hub.get(a, home);
+        if (h == null) { Away.forget(a, a.hub.id); return null; }
+        boolean back = Away.homeBack(a, a.hub.id, () -> { if (!a.isFinishing()) render(st != null ? st : new JSONObject()); });
+        String off = Away.offName(a, a.hub.id);
+        if (off.isEmpty()) off = h.labelOn("");
+        String pc = a.hub.labelOn(a.hub.via());
+        TextView icon = Ui.icon(a, Ui.I_MONITOR, 18, back ? Ui.GREEN : Ui.AMBER);
+        icon.setBackground(Ui.round(Ui.G100, 0, 10));
+        return banner(icon, Fallback.usingTitle(pc, off, back), Fallback.usingLine(pc, h.label(), Away.level(a, a.hub.id), back),
+                back ? "Switch back" : "Back to " + h.label(), true, () -> Away.back(a, a.hub.id),
+                null, null, () -> { Away.forget(a, a.hub.id); render(st != null ? st : new JSONObject()); });
+    }
 
     /** Shows (title non-null) or clears the card saying the PC doesn't answer, over the last
      *  list it sent: Harbor not running there, or the PC offline, with when it last answered. */

@@ -62,7 +62,7 @@ public class Chats extends Base {
                 Ui.main.post(() -> {
                     loading = false;
                     if (isFinishing()) return;
-                    if (down) side.offline(title, why, this::retryNow); else Ui.toast(this, why);
+                    if (down) { side.offline(title, why, this::retryNow); lookAway(); } else Ui.toast(this, why);
                 });
             }
         });
@@ -78,8 +78,34 @@ public class Chats extends Base {
     @Override
     void onOffline(boolean off, String why) {
         // A card over the last list it sent, not a toast that goes away: the poll keeps trying.
-        if (off) side.offline(hub.downTitle(offlineError), why, this::retryNow);
-        else { side.offline(null, null, null); load(); }
+        if (off) {
+            side.offline(hub.downTitle(offlineError), why, this::retryNow);
+            if (Hub.down(offlineError) != null) lookAway();
+        } else {
+            side.away(null, false);
+            side.offline(null, null, null);
+            load();
+        }
+    }
+
+    /** Moved away by itself once already from this screen: not again (the user may come back). */
+    private boolean movedAway;
+
+    /** No PC of this workspace answers: the PCs of the account's other workspaces that do and let
+     *  it start chats are offered under the offline card (Away), and the first is used at once,
+     *  unless the user came back here lately (Fallback.auto). */
+    private void lookAway() {
+        if (hub == null || isFinishing() || !Away.others(this, hub)) return;
+        side.away(null, true);
+        final Hub off = hub;
+        Away.find(this, off, pcs -> {
+            if (isFinishing() || hub == null || !hub.id.equals(off.id) || !side.isOffline()) return;
+            side.away(pcs, false);
+            if (front && !movedAway && Fallback.auto(pcs.size(), Away.stayedAt(this, off.id), System.currentTimeMillis())) {
+                movedAway = true;
+                Away.use(this, off, pcs.get(0), true);
+            }
+        });
     }
 
     static String kindOf(JSONObject st, String account) {

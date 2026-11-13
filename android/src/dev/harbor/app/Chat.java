@@ -263,7 +263,14 @@ public class Chat extends Base implements Images.Gallery {
         // The header says it, and the drawer has the same card as the chat list (Try again).
         if (side != null) {
             if (off) side.offline(hub.downTitle(offlineError), why, this::retryNow);
-            else side.offline(null, null, null);
+            else { side.away(null, false); side.offline(null, null, null); }
+            // The drawer's card offers the account's other workspaces' PCs too (no moving by
+            // itself here: the chat stays open; the chat list moves).
+            if (off && Hub.down(offlineError) != null && Away.others(this, hub)) {
+                final String was = hub.id;
+                side.away(null, true);
+                Away.find(this, hub, pcs -> { if (!isFinishing() && side != null && hub != null && hub.id.equals(was) && side.isOffline()) side.away(pcs, false); });
+            }
         }
         if (off) sub(why, Ui.RED); else { showChat(Hub.chat(Hub.states.get(hub.id), chatId)); load(true); }
     }
