@@ -1,0 +1,155 @@
+# Builds the app bundle of each push to main once, here on GitHub's runner, for the PCs that follow main
+# (ts/packages/update/src/followmain.ts): rather than each PC running bun install, tsc and the build, it
+# downloads this one (a few MB) and checks it loads on its own runtime. The bundle is plain JavaScript,
+# the same file for Linux, macOS and Windows (the runtime brings the native parts). A PC still builds a
+# commit itself when this one isn't there in time (PREBUILT_WAIT_MS), is refused, or when building there
+# is quicker (packages already installed for that lockfile): so a failed or missing run here only slows
+# PCs down, never strands them.
+#
+# Published on the rolling prerelease `main-build` (never "latest": /releases/latest, the updater, the
+# worker and the site keep naming the newest v* release) as harbor-app-<commit>.js and its .minisig,
+# signed with the release key, the trusted comment `harbor main <commit> v<version> min <runtime>
+# harbor-app.js` (followmain.ts prebuiltComment: a release's signature check never accepts it). The
+# newest KEEP builds are kept.
+#
+# An exception to "compute runs on boat" (CLAUDE.md), like release.yml's bundle-only tags: seconds of
+# `bun build`, where a sandbox would cost a minute or more before it starts.
+#
+# Secrets: MINISIGN_SECRET_KEY (as release.yml); the HARBOR_GOOGLE_* / GOOGLE_OAUTH_* clients (optional,
+# as release.yml: compiled into the bundle, so a build of main keeps Gmail's one-click sign-in).
+name: main-build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One at a time; a newer push waiting replaces an older one still waiting (PCs want the newest).
+concurrency:
+  group: main-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+  MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+  TAG: main-build
+  KEEP: 40
+
+jobs:
+  bundle:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      # The whole history (no file contents but the commit's): the lane is counted from the runtime's tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      # The runtime PCs have (the latest release's), and whether this commit can run on it at all.
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag=$(gh release view --json tagName -q .tagName)
+          mkdir -p "$RUNNER_TEMP/prev"
+          gh release download "$tag" -p harbor-app.json -D "$RUNNER_TEMP/prev"
+          rt=$(jq -r .runtime "$RUNNER_TEMP/prev/harbor-app.json")
+          sha=$(git rev-parse HEAD)
+          ver="$(jq -r .version ts/package.json)+${sha:0:7}"
+          { echo "runtime=$rt"; echo "sha=$sha"; echo "version=$ver"
+            echo "bun=$(jq -r '.packageManager | sub("bun@"; "")' ts/package.json)"; } >> "$GITHUB_OUTPUT"
+          echo "main $sha: $ver, on runtime $rt (latest release $tag)"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.plan.outputs.bun }}
+      - name: Lane
+        id: lane
+        run: |
+          set -eu
+          lane=$(bun ts/scripts/release.ts lane --base "v${{ steps.plan.outputs.runtime }}" | sed -n 's/^lane=//p')
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          # A commit that needs a new runtime: PCs skip it too (it comes with the next release).
+          [ "$lane" = bundle ] || echo "::notice::main needs a new runtime since v${{ steps.plan.outputs.runtime }}: no bundle"
+      - uses: actions/cache@v6
+        if: steps.lane.outputs.lane == 'bundle'
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ steps.plan.outputs.bun }}-${{ hashFiles('ts/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-${{ steps.plan.outputs.bun }}-
+      - name: Install, check, build
+        if: steps.lane.outputs.lane == 'bundle'
+        env:
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        working-directory: ts
+        run: |
+          set -eu
+          bun install --frozen-lockfile
+          bun node_modules/typescript/bin/tsc --noEmit
+          bun scripts/build.ts app "$RUNNER_TEMP/out/harbor-app.js" --version "${{ steps.plan.outputs.version }}" \
+            --min-runtime "${{ steps.plan.outputs.runtime }}" --sha "${{ steps.plan.outputs.sha }}"
+      # As release.yml's package job: the runtime PCs have must load it (each PC checks again on its own).
+      - name: The bundle starts on the runtime PCs have
+        if: steps.lane.outputs.lane == 'bundle'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          rt=${{ steps.plan.outputs.runtime }}
+          gh release download "v$rt" -p harbor-runtime-x86_64 -D "$RUNNER_TEMP/rt"
+          chmod +x "$RUNNER_TEMP/rt/harbor-runtime-x86_64"
+          said=$("$RUNNER_TEMP/rt/harbor-runtime-x86_64" smoke-bundle "$RUNNER_TEMP/out/harbor-app.js")
+          [ "$said" = "harbor ${{ steps.plan.outputs.version }}" ] || { echo "::error::the bundle on runtime $rt says: $said"; exit 1; }
+      - name: Sign
+        if: steps.lane.outputs.lane == 'bundle'
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -eu
+          [ -n "$MINISIGN_SECRET_KEY" ] || { echo "::error::MINISIGN_SECRET_KEY is not set"; exit 1; }
+          curl -fsSL "$MINISIGN_URL" -o "$RUNNER_TEMP/minisign.tgz"
+          echo "$MINISIGN_SHA256  $RUNNER_TEMP/minisign.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/minisign.tgz" -C "$RUNNER_TEMP" 2>/dev/null
+          m="$RUNNER_TEMP/minisign-linux/x86_64/minisign"
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          sha=${{ steps.plan.outputs.sha }}
+          f="$RUNNER_TEMP/out/harbor-app-$sha.js"
+          mv "$RUNNER_TEMP/out/harbor-app.js" "$f"
+          # followmain.ts prebuiltComment.
+          "$m" -S -s "$RUNNER_TEMP/minisign.key" -m "$f" -t "harbor main $sha v${{ steps.plan.outputs.version }} min ${{ steps.plan.outputs.runtime }} harbor-app.js"
+          rm -f "$RUNNER_TEMP/minisign.key"
+          "$m" -Vm "$f" -p packaging/minisign.pub
+      - name: Publish
+        if: steps.lane.outputs.lane == 'bundle'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sha=${{ steps.plan.outputs.sha }}
+          f="$RUNNER_TEMP/out/harbor-app-$sha.js"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --prerelease --latest=false --target "$sha" --title "Builds of main" \
+              --notes "The app bundle of each push to main, for installed Harbors that follow main (.github/workflows/main.yml). Not a release: install Harbor from the latest release."
+          fi
+          # The bundle first: PCs look for the signature, so the bundle is there once it is.
+          gh release upload "$TAG" "$f" --clobber
+          gh release upload "$TAG" "$f.minisig" --clobber
+          echo "::notice::published $(basename "$f") (${{ steps.plan.outputs.version }})"
+      - name: Keep the newest builds
+        if: steps.lane.outputs.lane == 'bundle'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$id/assets?per_page=100" --jq '.[] | [.created_at, .id] | @tsv' \
+            | sort -r | tail -n +$((KEEP * 2 + 1)) | cut -f2 \
+            | while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"; done

@@ -906,7 +906,7 @@ export class FollowMain {
     if (this.d.prebuilt === true && this.remote !== null && o.isPublic && this.memory().prebuiltBad !== commit) {
       const now = this.cfg.now();
       if (this.wanted?.commit !== commit) this.wanted = { commit, at: now };
-      const since = o.pushedAt > now - 3_600_000 && o.pushedAt <= now ? Math.min(o.pushedAt, this.wanted.at) : this.wanted.at;
+      const since = o.pushedAt > 0 && o.pushedAt > now - 3_600_000 && o.pushedAt <= now ? Math.min(o.pushedAt, this.wanted.at) : this.wanted.at;
       let decided = false;
       for (;;) {
         const got = await this.fetchPrebuilt(commit, version, o.minRuntime, subject);
