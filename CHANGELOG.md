@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.183.1] - 2026-11-13
+
+### Changed
+- No PC is named on a project's row or in the phone's chat header: a chat is its workspace's, and runs on the PC
+  you type on.
+- The sidebar shows every workspace's chats again on every PC: a workspace filter picked earlier goes back to All
+  once.
+
 ## [0.183.0] - 2026-11-13
 
 ### Added
