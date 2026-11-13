@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.184.0] - 2026-11-13
+
+### Changed
+- Computer use is built in and always on: agents running on this PC can see and use its screen, with no switch in
+  Settings › General (the old switches are gone and their saved values ignored). Another PC's chats may use this
+  screen only when that PC is signed in to the same account (your own PCs); another person's PC in a shared
+  workspace never can. The notification when an agent starts and the top-left-corner stop stay, and the tool tells
+  agents never to type passwords or act in sign-in and system authentication dialogs.
+
 ## [0.183.3] - 2026-11-13
 
 ### Fixed
