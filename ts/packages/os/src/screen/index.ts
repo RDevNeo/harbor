@@ -46,3 +46,5 @@ export function backend(env: Env = process.env): Backend {
   made = { key, b };
   return b;
 }
+
+export { authApp, focusedClass, linuxFocus, macFocus, parseWinFocus, type SecureFocus } from "./secure.ts";

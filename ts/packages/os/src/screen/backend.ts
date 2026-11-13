@@ -1,6 +1,7 @@
 // What a system's screen backend does, and which one this desktop gets. Coordinates are the screen's own pixels
 // (`size()`), the space screenshots come in: each backend maps them to what its input calls take.
 import type { Combo } from "./keys.ts";
+import type { SecureFocus } from "./secure.ts";
 import type { Image, Rect } from "./image.ts";
 
 export type Button = "left" | "right" | "middle";
@@ -25,6 +26,8 @@ export interface Backend {
   type(text: string): Promise<void>;
   /** Where the pointer is, or null when this system won't say. */
   cursor(): Promise<{ x: number; y: number } | null>;
+  /** What has the keyboard focus as far as secrets go (a password field, an auth dialog); never throws. */
+  secureFocus?(): Promise<SecureFocus>;
 }
 
 /** What `probe` found: the backend that would run, or why none can and what to install. */

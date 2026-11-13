@@ -154,6 +154,7 @@ export function backend(env: Env = process.env): Backend {
 
   return {
     name: probe(env).name,
+    secureFocus: () => (require("./linuxsecure.ts") as typeof import("./linuxsecure.ts")).secureFocus(env),
     size: async () => {
       const l = await layout();
       if (l !== null) return { w: Math.round(l.w * l.scale), h: Math.round(l.h * l.scale) };

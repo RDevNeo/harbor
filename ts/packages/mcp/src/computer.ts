@@ -34,9 +34,9 @@ export type Action =
   | { action: "left_click" | "right_click" | "middle_click" | "double_click" | "triple_click"; coordinate: Point | null; mods: string }
   | { action: "left_click_drag"; start: Point | null; coordinate: Point; mods: string }
   | { action: "scroll"; coordinate: Point | null; direction: screen.Direction; amount: number; mods: string }
-  | { action: "type"; text: string }
-  | { action: "key"; text: string; repeat: number }
-  | { action: "hold_key"; text: string; duration: number }
+  | { action: "type"; text: string; signIn?: true }
+  | { action: "key"; text: string; repeat: number; signIn?: true }
+  | { action: "hold_key"; text: string; duration: number; signIn?: true }
   | { action: "wait"; duration: number };
 
 /** The size screenshots are shown at for a screen of `w`×`h`. */
@@ -89,6 +89,8 @@ export function parseAction(args: unknown, view: { w: number; h: number } | null
   if (!(ACTIONS as readonly string[]).includes(name)) throw new Error(`action must be one of ${ACTIONS.join(", ")}`);
   const action = name as ActionName;
   const mods = (str(a, "text") ?? "").trim();
+  // The agent says the user asked for this sign-in: typing into a password field or an auth dialog is let through.
+  const signIn: { signIn?: true } = a.sign_in === true ? { signIn: true } : {};
   const coord = (required: boolean): Point | null => (a.coordinate === undefined || a.coordinate === null ? (required ? (() => { throw new Error(`${action} needs coordinate [x, y]`); })() : null) : point(a.coordinate, "coordinate", view));
   if (mods !== "" && ["left_click", "right_click", "middle_click", "double_click", "triple_click", "left_click_drag", "scroll"].includes(action)) {
     const c = screen.parseCombo(mods);
@@ -132,7 +134,7 @@ export function parseAction(args: unknown, view: { w: number; h: number } | null
       const text = str(a, "text") ?? "";
       if (text === "") throw new Error("type needs text");
       if (text.length > MAX_TEXT) throw new Error(`text is at most ${MAX_TEXT} characters a call`);
-      return { action, text };
+      return { action, text, ...signIn };
     }
     case "key":
     case "hold_key": {
@@ -142,11 +144,11 @@ export function parseAction(args: unknown, view: { w: number; h: number } | null
       if (action === "key") {
         const repeat = Math.round(num(a, "repeat") ?? 1);
         if (repeat < 1 || repeat > 100) throw new Error("repeat is 1 to 100");
-        return { action, text, repeat };
+        return { action, text, repeat, ...signIn };
       }
       const duration = num(a, "duration") ?? 1;
       if (!(duration > 0 && duration <= MAX_WAIT_S)) throw new Error(`duration is more than 0 and at most ${MAX_WAIT_S} seconds`);
-      return { action, text, duration };
+      return { action, text, duration, ...signIn };
     }
     case "wait": {
       const duration = num(a, "duration") ?? 1;
@@ -195,6 +197,33 @@ async function shot(b: screen.Backend, real: { w: number; h: number }, view: { w
   return { type: "image", data, mimeType: "image/png" };
 }
 
+/** Whether `a` only presses Escape (cancels a dialog: let through even in a password field). */
+function onlyEscape(a: Action): boolean {
+  if (a.action !== "key" && a.action !== "hold_key") return false;
+  return screen.parseKeys(a.text).every((c) => c.mods.length === 0 && c.key.toLowerCase() === "escape");
+}
+
+let lastUnknown = 0;
+
+/** Typing and keys while a password field or a system authentication dialog has the focus: the refusal for the
+ *  agent, or null to go on. Unless the agent says the user asked for this sign-in (`sign_in`). When the system
+ *  can't tell, typing goes on (a broken probe mustn't stop it everywhere) and the log says so. */
+export async function secretGate(a: Action, b: screen.Backend): Promise<string | null> {
+  if (a.action !== "type" && a.action !== "key" && a.action !== "hold_key") return null;
+  if (a.signIn === true || onlyEscape(a) || !b.secureFocus) return null;
+  const f = await b.secureFocus();
+  if (f.state === "unknown") {
+    // At most a line a minute: an agent typing a page shouldn't fill the log.
+    if (Date.now() - lastUnknown > 60_000) {
+      lastUnknown = Date.now();
+      console.warn(`harbor: computer use: can't tell whether a password field has the focus (${f.why}); typing goes on`);
+    }
+    return null;
+  }
+  if (f.state === "clear") return null;
+  return `Refused: ${f.what} has the keyboard focus on ${hostname()}, and agents don't type there. Ask the user to type it themselves. Only if the user explicitly asked you to do this sign-in, call again with sign_in: true. Escape still works to cancel it.`;
+}
+
 /** Runs one checked action on this PC's screen. */
 export async function act(a: Action, opts: { after?: boolean; backend?: screen.Backend; sizes?: Awaited<ReturnType<typeof sizes>> } = {}): Promise<Result> {
   const b = opts.backend ?? screen.backend();
@@ -209,6 +238,8 @@ export async function act(a: Action, opts: { after?: boolean; backend?: screen.B
       return textOf(false, `The user stopped computer use on ${hostname()}: they moved the pointer into the top-left corner. Don't use the screen for a minute; ask them what they want.`);
     }
   }
+  const refused = await secretGate(a, b);
+  if (refused !== null) return textOf(false, refused);
   const withMods = async (mods: string, f: () => Promise<void>): Promise<void> => {
     if (mods === "") return f();
     const c = screen.parseCombo(mods);

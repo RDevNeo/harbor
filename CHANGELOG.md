@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.185.0] - 2026-11-13
+
+### Added
+- Computer use refuses to type or press keys while a password field or a system sign-in or permission dialog has the
+  focus: Windows UI Automation (password fields, UAC, the credential dialog), macOS Accessibility (secure text fields,
+  SecurityAgent) and Linux (AT-SPI password text where python3-gi is installed; polkit agents, pinentry, askpass and
+  keyring prompters by window class). Escape still works, and an agent passes `sign_in` only when the user asked for
+  that sign-in. When the system can't tell, typing goes on and the log says so.
+
 ## [0.184.0] - 2026-11-13
 
 ### Changed

@@ -152,6 +152,7 @@ function keyIns(k: string, up: boolean): In {
 export function backend(): Backend {
   return {
     name: "Windows (GDI screenshots, SendInput)",
+    secureFocus: () => (require("./secure.ts") as typeof import("./secure.ts")).secureFocus(),
     size: async () => screenSize(),
     capture: async (region, out) => grab(region, out),
     move: async (x, y) => {

@@ -45,13 +45,14 @@ export function toolDef(mesh: boolean): JsonObj {
     duration: { type: "number", description: `wait and hold_key: seconds (at most ${MAX_WAIT_S})` },
     repeat: { type: "integer", description: "key: how many times (default 1)" },
     region: { type: "array", items: { type: "number" }, description: "zoom: [x0, y0, x1, y1] in the last screenshot's pixels" },
+    sign_in: { type: "boolean", description: "type, key and hold_key: true only when the user explicitly asked you to do this sign-in. Without it, typing into a password field or a system sign-in or permission dialog is refused" },
     screenshot: { type: "boolean", description: "After a click, drag, key, typing or scroll a screenshot comes back (default true); false skips it" },
   };
   if (mesh) properties.machine = MACHINE;
   return {
     name: "computer",
     description:
-      "See and control the screen of the PC Harbor runs on (or another PC of the mesh with `machine`): screenshots, the mouse and the keyboard, like Anthropic's computer-use tool. Start with a screenshot; coordinates are in its pixels (it's scaled down from the real screen). It's always on for this PC's chats; another PC's screen works only when that PC is signed in to the same account as this one (never another person's). The user sees when you start (a notification) and stops you by moving the pointer into the screen's top-left corner. Never type passwords, codes or other secrets, and never act in sign-in, password or system authentication dialogs (UAC, polkit, keychain): ask the user to do those. Ask before anything that sends, buys, deletes or signs in, and don't touch windows unrelated to the task. Below full access only screenshot, zoom, cursor_position and wait work.",
+      "See and control the screen of the PC Harbor runs on (or another PC of the mesh with `machine`): screenshots, the mouse and the keyboard, like Anthropic's computer-use tool. Start with a screenshot; coordinates are in its pixels (it's scaled down from the real screen). It's always on for this PC's chats; another PC's screen works only when that PC is signed in to the same account as this one (never another person's). The user sees when you start (a notification) and stops you by moving the pointer into the screen's top-left corner. Typing and keys are refused while a password field or a system sign-in or permission dialog (UAC, credentials, polkit, keychain, SecurityAgent) has the focus: ask the user to do it, and pass sign_in only when they explicitly asked you to do that sign-in. Ask before anything that sends, buys, deletes or signs in, and don't touch windows unrelated to the task. Below full access only screenshot, zoom, cursor_position and wait work.",
     inputSchema: { type: "object", properties, required: ["action"] },
   };
 }

@@ -141,6 +141,29 @@ describe("actions", () => {
     expect((await act({ action: "cursor_position" }, { backend: b })).content[0]).toEqual({ type: "text", text: "X=640, Y=360" });
   });
 
+  test("no typing or keys into a password field or an auth dialog, unless the user asked for that sign-in", async () => {
+    const { b, log } = fake();
+    let focus: screen.SecureFocus = { state: "secure", what: "a password field (chrome)" };
+    b.secureFocus = async () => focus;
+    const r = await act(parseAction({ action: "type", text: "hunter2" }, view), { backend: b, after: false });
+    expect(r.ok).toBe(false);
+    expect((r.content[0] as { text: string }).text).toContain("a password field (chrome)");
+    expect((await act(parseAction({ action: "key", text: "Return" }, view), { backend: b, after: false })).ok).toBe(false);
+    expect((await act(parseAction({ action: "hold_key", text: "a", duration: 0.01 }, view), { backend: b, after: false })).ok).toBe(false);
+    expect(log).toEqual([]);
+    // Escape cancels the dialog; clicks and looking aren't typing.
+    expect((await act(parseAction({ action: "key", text: "Escape" }, view), { backend: b, after: false })).ok).toBe(true);
+    expect((await act(parseAction({ action: "left_click", coordinate: [300, 300] }, view), { backend: b, after: false })).ok).toBe(true);
+    // The user asked for this sign-in: the agent says so.
+    expect((await act(parseAction({ action: "type", text: "pw", sign_in: true }, view), { backend: b, after: false })).ok).toBe(true);
+    // The system can't tell: typing goes on.
+    focus = { state: "unknown", why: "no UI Automation" };
+    expect((await act(parseAction({ action: "type", text: "ok" }, view), { backend: b, after: false })).ok).toBe(true);
+    focus = { state: "clear" };
+    expect((await act(parseAction({ action: "key", text: "ctrl+s" }, view), { backend: b, after: false })).ok).toBe(true);
+    expect(log.filter((l) => l.startsWith("type") || l.startsWith("key"))).toEqual(["key press escape", "type pw", "type ok", "key press ctrl+s"]);
+  });
+
   test("the pointer in the top-left corner stops input, not looking", async () => {
     const { b, log } = fake(2560, 1440, { x: 0, y: 1 });
     const r = await act(parseAction({ action: "left_click", coordinate: [5, 5] }, view), { backend: b });

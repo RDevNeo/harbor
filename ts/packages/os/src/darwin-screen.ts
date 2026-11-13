@@ -114,6 +114,7 @@ export function backend(): Backend {
   };
   return {
     name: "macOS (screencapture, CoreGraphics events)",
+    secureFocus: () => (require("./darwin-secure.ts") as typeof import("./darwin-secure.ts")).secureFocus(),
     size: async () => {
       const d = display();
       return { w: Math.round(d.w * ratio()), h: Math.round(d.h * ratio()) };
