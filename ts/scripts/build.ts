@@ -178,6 +178,9 @@ const slintAddon: BunPlugin = {
 };
 
 // The bundle has no files beside it: each asset import becomes a file written once, under the content's hash, and its path.
+/** The file name an embedded asset is written under: the last part of its path, either separator (Windows paths have backslashes). */
+const assetName = (path: string): string => path.split(/[\\/]/).pop() ?? path;
+
 const embedAssets: BunPlugin = {
   name: "embed-assets",
   setup(build) {
@@ -189,7 +192,7 @@ const embedAssets: BunPlugin = {
 import { tmpdir } from "node:os";
 const run = process.env.XDG_RUNTIME_DIR;
 const dir = \`\${run && existsSync(run) ? run : tmpdir()}/harbor-embedded-${hash}\`;
-const file = dir + "/" + ${JSON.stringify(a.path.slice(a.path.lastIndexOf("/") + 1))};
+const file = dir + "/" + ${JSON.stringify(assetName(a.path))};
 if (!existsSync(file)) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(file + "." + process.pid, Buffer.from(${JSON.stringify(Buffer.from(bytes).toString("base64"))}, "base64"));
