@@ -19,9 +19,20 @@
 // - What: only a commit that changes what the app bundle is built from (`shipsInApp`: ts/ sources,
 //   package.json, bun.lock, assets/; not tests, docs, rigs or scripts) is built. A commit that would need
 //   a new runtime (lane.ts says "runtime", counted from the runtime this PC has) is skipped and says why.
-// - How: in Harbor's own clone under the data folder (`follow-main/src`), never the checkout's working
-//   tree, at nice 19 and idle disk priority, with Harbor's own runtime as Bun (`BUN_BE_BUN=1`, the
-//   pinned Bun whatever the PC has): `bun install --frozen-lockfile`, `tsc --noEmit`, scripts/build.ts
+// - Built once, on GitHub: a push to the public main is built by `.github/workflows/main.yml` on a runner
+//   (tsc, scripts/build.ts app, signed with the release key) and published on the rolling prerelease
+//   `main-build` as `harbor-app-<commit>.js` (+ `.minisig`, whose trusted comment names the commit, the
+//   version and the runtime it needs: `prebuiltComment`). The bundle is the same file on Linux, macOS
+//   and Windows (the runtime brings the native parts). A PC takes it when it's there (a download of a
+//   few MB, then its own `smoke-bundle`), and waits for it (`PREBUILT_WAIT_MS` from the push) only when
+//   building here would be slow: no `node_modules` for that lockfile yet (`installKey`), or the last
+//   build here took over `SLOW_BUILD_MS`. Otherwise, or when it doesn't come, or it's unsigned, for
+//   another commit or doesn't load here, the PC builds it itself as below. Unpushed commits of a
+//   checkout are always built here.
+// - How (here): in Harbor's own clone under the data folder (`follow-main/src`), never the checkout's
+//   working tree, at nice 19 and idle disk priority, with Harbor's own runtime as Bun (`BUN_BE_BUN=1`,
+//   the pinned Bun whatever the PC has): `bun install --frozen-lockfile` (skipped when the lockfile and
+//   package.json files are the ones last installed, `installed.json`), `tsc --noEmit`, scripts/build.ts
 //   app, then the bundle must load in this PC's runtime (the installer's own `smoke-bundle` check).
 // - Then it's installed as a release is (install.ts: `.previous` keeps what ran, VERSION last), so the
 //   app restarts into it the way it does for a release (run.ts watches VERSION) and the start watchdog
@@ -35,7 +46,8 @@
 //   last build's push-to-running time).
 import { appendFileSync, closeSync, copyFileSync, openSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import type { UpdateConfig } from "./config.ts";
+import { publicKey, type UpdateConfig } from "./config.ts";
+import { verifyFileSignature } from "./minisign.ts";
 import { alive, BUNDLE_FILE, ensureDir, exists, fresh, isFile, read, readJson, remove, replace, RUNTIME_FILE, writeAtomic } from "./files.ts";
 import { bootId, begin, beat, BEAT_MS, CRASH_LIMIT, earlyCrashes, end, readHealth, recordChecks, recordCrash } from "./health.ts";
 import { current, hasPrevious, onDisk, PREVIOUS, rollback, rolledBack, runtimeOnDisk, smokeBundle, SKIP } from "./install.ts";
@@ -68,8 +80,17 @@ const NEWS_BACKOFF_MS = [5_000, 15_000, 60_000, 5 * 60_000];
 const LS_MS = 30_000;
 /** After a ref write, before reading `origin/main` (a push writes the lock, then renames it). */
 const NUDGE_SOON_MS = 100;
+/** The rolling prerelease main.yml publishes each main commit's bundle on. */
+export const MAIN_BUILD_TAG = "main-build";
+/** How long after a push a PC waits for GitHub's build before building it itself (main.yml takes about a minute). */
+export const PREBUILT_WAIT_MS = 4 * 60_000;
+/** While waiting, GitHub's build is looked for this often (a 404 of a few hundred bytes). */
+export const PREBUILT_POLL_MS = 3_000;
+/** A PC whose last build of main took longer than this waits for GitHub's even with its packages installed. */
+export const SLOW_BUILD_MS = 45_000;
+const PREBUILT_MS = 2 * 60_000;
 
-export type FollowState = "off" | "idle" | "building" | "checking" | "waiting" | "swapping" | "failed" | "skipped";
+export type FollowState = "off" | "idle" | "building" | "checking" | "fetching" | "waiting" | "swapping" | "failed" | "skipped";
 
 export interface FollowStatus {
   state: FollowState;
@@ -93,6 +114,8 @@ export interface Timeline {
   liveAt: number;
   /** When the account worker heard of the push (GitHub's webhook), if the build came from that news. */
   pushedAt?: number;
+  /** "github": main.yml's build was downloaded (`builtAt` is when it was in hand); absent: built here. */
+  via?: "github";
 }
 
 interface Memory {
@@ -102,6 +125,10 @@ interface Memory {
   pending: Omit<Timeline, "liveAt"> | null;
   /** rolled-back.json's `at` already taken in. */
   seenRollback: number;
+  /** How long the last build here took (install to smoke), ms: a slow PC waits for GitHub's build. */
+  buildMs?: number;
+  /** A commit whose build from GitHub was refused here (bad signature, didn't load): built here instead. */
+  prebuiltBad?: string;
 }
 
 export interface Kv {
@@ -135,6 +162,12 @@ export interface FollowDeps {
   remote?: string | null;
   /** This PC's Harbor token (account.ts), to tell the worker of its own pushes to main; null when signed out. */
   token?: () => string | null;
+  /**
+   * Take the public main's builds from GitHub (main.yml's `main-build` prerelease on `cfg.repo`) instead of
+   * building them here when they're there or building would be slow. Off (the default) for rigs and tests
+   * that follow a repository of their own.
+   */
+  prebuilt?: boolean;
   run?: Runner;
   watchRefs?: (gitDir: string, onChange: () => void) => () => void;
   changed?: () => void;
@@ -170,7 +203,31 @@ export const enabled = (kv: Kv): boolean => kv.get(KEY) !== "1";
 
 export const setEnabled = (kv: Kv, on: boolean): void => kv.set(KEY, on ? "0" : "1");
 
-const nice = (cmd: string[]): string[] => (Bun.which("ionice") ? ["nice", "-n", "19", "ionice", "-c3", ...cmd] : ["nice", "-n", "19", ...cmd]);
+/** GitHub's build of `commit`: the asset's name on the `main-build` prerelease. */
+export const prebuiltName = (commit: string): string => `harbor-app-${commit}.js`;
+
+/** The signature's trusted comment main.yml writes: a release's (`harbor v0.1.2 NAME`) never matches it, nor it a release's. */
+export const prebuiltComment = (commit: string, version: string, minRuntime: string): string => `harbor main ${commit} v${version} min ${minRuntime} harbor-app.js`;
+
+export function parsePrebuiltComment(tc: string): { commit: string; version: string; minRuntime: string } | null {
+  const m = /^harbor main ([0-9a-f]{40}) v(\S+) min (\S+) harbor-app\.js$/.exec(tc.trim());
+  return m === null ? null : { commit: m[1] as string, version: m[2] as string, minRuntime: m[3] as string };
+}
+
+/** What `bun install` depends on at a commit: the lockfile's and every package.json's blob ids (`git ls-tree -r`). */
+export function installKeyOf(lsTree: string, runtime: string): string {
+  const blobs = lsTree
+    .split("\n")
+    .map((l) => /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(l))
+    .filter((m): m is RegExpExecArray => m !== null && !m[2]?.includes("node_modules/") && (/(^|\/)package\.json$/.test(m[2] ?? "") || m[2] === "ts/bun.lock"))
+    .map((m) => `${m[2]} ${m[1]}`)
+    .sort();
+  if (!blobs.some((b) => b.startsWith("ts/bun.lock "))) return "";
+  return new Bun.CryptoHasher("sha256").update(`bun ${runtime}\n${blobs.join("\n")}`).digest("hex");
+}
+
+/** nice/ionice where the PC has them (Linux, macOS; Windows only with Git's tools on PATH): the command alone otherwise. */
+const nice = (cmd: string[]): string[] => (Bun.which("nice") === null ? cmd : Bun.which("ionice") ? ["nice", "-n", "19", "ionice", "-c3", ...cmd] : ["nice", "-n", "19", ...cmd]);
 
 export const defaultRunner: Runner = async (cmd, o) => {
   const fd = o.log === undefined ? null : openSync(o.log, "a");
@@ -308,7 +365,14 @@ export class FollowMain {
 
   private memory(): Memory {
     const m = readJson<Partial<Memory>>(join(this.home, "state.json"));
-    return { failed: m?.failed ?? null, crashed: Array.isArray(m?.crashed) ? m.crashed : [], pending: m?.pending ?? null, seenRollback: m?.seenRollback ?? 0 };
+    return {
+      failed: m?.failed ?? null,
+      crashed: Array.isArray(m?.crashed) ? m.crashed : [],
+      pending: m?.pending ?? null,
+      seenRollback: m?.seenRollback ?? 0,
+      ...(typeof m?.buildMs === "number" ? { buildMs: m.buildMs } : {}),
+      ...(typeof m?.prebuiltBad === "string" ? { prebuiltBad: m.prebuiltBad } : {}),
+    };
   }
 
   private remember(change: (m: Memory) => void): void {
@@ -614,13 +678,13 @@ export class FollowMain {
    * Which main a look builds: the public one, or the checkout's when that one is ahead of it (commits
    * not pushed yet) or the public one can't be reached.
    */
-  private async pickTip(checkout: string | null): Promise<{ tip: string; from: "checkout" | "remote" } | null> {
+  private async pickTip(checkout: string | null): Promise<{ tip: string; from: "checkout" | "remote"; public: boolean } | null> {
     const local = checkout === null ? null : await this.tipOf(checkout);
     const remote = local !== null && this.heard?.sha === local ? local : await this.lsRemote();
-    if (remote === null) return local === null ? null : { tip: local, from: "checkout" };
-    if (local === remote) return { tip: local, from: "checkout" };
-    if (local !== null && checkout !== null && (await this.revParse(checkout, remote)) !== null && (await this.ancestor(checkout, remote, local))) return { tip: local, from: "checkout" };
-    return { tip: remote, from: "remote" };
+    if (remote === null) return local === null ? null : { tip: local, from: "checkout", public: false };
+    if (local === remote) return { tip: local, from: "checkout", public: true };
+    if (local !== null && checkout !== null && (await this.revParse(checkout, remote)) !== null && (await this.ancestor(checkout, remote, local))) return { tip: local, from: "checkout", public: false };
+    return { tip: remote, from: "remote", public: true };
   }
 
   private ancestor(cwd: string, a: string, b: string): Promise<boolean> {
@@ -760,27 +824,33 @@ export class FollowMain {
 
     // The bundle asks for no more than the runtime that will run it: the older of RUNTIME and this one.
     const minRuntime = newer(rt, this.cfg.runtime) && parse(this.cfg.runtime) !== null ? this.cfg.runtime : rt;
-    const built = await this.build(tip, version, minRuntime, subject);
-    if (built === null) return;
+    const got = await this.obtain({ commit: tip, version, minRuntime, subject, isPublic: pick.public, pushedAt: news?.pushedAt ?? 0 });
+    if (got === null) return;
     if (this.d.busy() || onDisk(this.cfg) !== null) return this.waitThen(tip, "a release is being installed");
     if (!this.on() || !this.armed) return;
-    installLocal(this.cfg, built, version);
+    installLocal(this.cfg, got.bundle, version);
     this.remember((m) => {
-      m.pending = { commit: tip, version, committedAt, noticedAt, builtAt: this.cfg.now(), ...(news?.pushedAt ? { pushedAt: news.pushedAt } : {}) };
+      m.pending = { commit: tip, version, committedAt, noticedAt, builtAt: this.cfg.now(), ...(news?.pushedAt ? { pushedAt: news.pushedAt } : {}), ...(got.via === "github" ? { via: "github" as const } : {}) };
     });
-    this.cfg.log(`follow-main: ${version} installed, restarting into it`);
+    this.cfg.log(`follow-main: ${version} installed (${got.via === "github" ? "built by GitHub" : "built here"}), restarting into it`);
     this.set({ state: "swapping", commit: tip, subject, version, reason: "" });
   }
 
   /**
-   * Once per start, when the clone has no node_modules yet (a PC that never built main): the clone and
-   * `bun install` now, at idle priority, so the first push builds in seconds rather than downloading.
+   * Once per start, when the clone has no node_modules for what runs (a PC that never built main, or a
+   * lockfile that came with GitHub's build): the clone and `bun install` now, at idle priority, so the next
+   * push builds in seconds rather than downloading (or waiting for GitHub's build).
    */
   private async warm(): Promise<void> {
     if (this.warmed || !this.armed || !this.on() || this.d.busy()) return;
+    // Installed already, for what runs: nothing to do. Installed for an older lockfile (a build of main taken
+    // from GitHub brought a new one), or before installed.json: installed again, so the next build here is quick.
     if (exists(join(this.src, "ts", "node_modules"))) {
-      this.warmed = true;
-      return;
+      const at = this.commit !== null && isFile(join(this.src, ".git", "HEAD")) ? await this.revParse(this.src, this.commit) : null;
+      if (at === null || (await this.installed(at))) {
+        this.warmed = true;
+        return;
+      }
     }
     if (this.st.state !== "idle" && this.st.state !== "skipped") return;
     this.warmed = true;
@@ -793,10 +863,132 @@ export class FollowMain {
       const { exe, env } = this.bunCmd();
       const log = join(this.home, "build.log");
       writeAtomic(log, `follow-main: getting ready (bun install at ${at.slice(0, 7)})\n`);
-      await this.run([exe, "install", "--frozen-lockfile"], { cwd: join(this.src, "ts"), env, timeoutMs: INSTALL_MS, log, nice: true });
+      const key = await this.installKey(at);
+      remove(this.stampFile);
+      const r = await this.run([exe, "install", "--frozen-lockfile"], { cwd: join(this.src, "ts"), env, timeoutMs: INSTALL_MS, log, nice: true });
+      if (r.code === 0 && key !== "") writeAtomic(this.stampFile, JSON.stringify({ key }));
     } catch (e) {
       this.cfg.log(`follow-main: getting ready failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  // ---- the lockfile shortcut ----
+
+  /** What the clone's node_modules was last installed for (`installKeyOf`). */
+  private get stampFile(): string {
+    return join(this.home, "installed.json");
+  }
+
+  /** `installKeyOf` at `commit` (from the clone's trees: no blob is fetched); "" when it can't be told. */
+  private async installKey(commit: string): Promise<string> {
+    const out = await this.git(this.src, ["ls-tree", "-r", commit, "--", "ts/bun.lock", "ts/package.json", "ts/packages"]).catch(() => "");
+    return installKeyOf(out, runtimeOnDisk(this.cfg));
+  }
+
+  /** The clone's node_modules is installed for `commit`'s lockfile and package.json files: `bun install` would change nothing. */
+  private async installed(commit: string): Promise<boolean> {
+    if (!exists(join(this.src, "ts", "node_modules"))) return false;
+    const key = await this.installKey(commit);
+    return key !== "" && readJson<{ key?: string }>(this.stampFile)?.key === key;
+  }
+
+  // ---- GitHub's build (main.yml) ----
+
+  /** The first time this run wanted each commit: the wait for GitHub's build counts from the push, else from then. */
+  private wanted: { commit: string; at: number } | null = null;
+
+  /**
+   * The bundle for `commit`: GitHub's build when it's there (or worth waiting for), else built here.
+   * Null: nothing to install now (the failure is said and remembered, or main moved while waiting).
+   */
+  private async obtain(o: { commit: string; version: string; minRuntime: string; subject: string; isPublic: boolean; pushedAt: number }): Promise<{ bundle: string; via: "github" | "here" } | null> {
+    const { commit, version, subject } = o;
+    if (this.d.prebuilt === true && this.remote !== null && o.isPublic && this.memory().prebuiltBad !== commit) {
+      const now = this.cfg.now();
+      if (this.wanted?.commit !== commit) this.wanted = { commit, at: now };
+      const since = o.pushedAt > now - 3_600_000 && o.pushedAt <= now ? Math.min(o.pushedAt, this.wanted.at) : this.wanted.at;
+      let decided = false;
+      for (;;) {
+        const got = await this.fetchPrebuilt(commit, version, o.minRuntime, subject);
+        if (got !== "absent" && got !== "bad") return { bundle: got, via: "github" };
+        if (got === "bad") break;
+        if (!decided) {
+          decided = true;
+          // Packages installed for this lockfile on a quick PC: building here (seconds) beats waiting for GitHub (a minute).
+          if (!(await this.slowHere(commit))) break;
+        }
+        const left = since + PREBUILT_WAIT_MS - this.cfg.now();
+        if (left <= 0) {
+          this.cfg.log(`follow-main: GitHub's build of ${version} isn't there ${Math.round((this.cfg.now() - since) / 1000)} s after the push: building it here`);
+          break;
+        }
+        if (this.st.state !== "fetching" || this.st.commit !== commit) this.set({ state: "fetching", commit, subject, version, reason: "waiting for GitHub's build" });
+        await this.cfg.sleep(Math.min(PREBUILT_POLL_MS, left), this.news?.signal);
+        // Main moved (or the look was asked again): the next look starts from the top, the wait's start kept.
+        if (this.again || !this.armed || !this.on()) return null;
+      }
+    }
+    const bundle = await this.build(commit, version, o.minRuntime, subject);
+    return bundle === null ? null : { bundle, via: "here" };
+  }
+
+  /** Building `commit` here would be slow: its packages aren't installed, or the last build here was slow. */
+  private async slowHere(commit: string): Promise<boolean> {
+    if (!(await this.installed(commit))) return true;
+    return (this.memory().buildMs ?? 0) > SLOW_BUILD_MS;
+  }
+
+  /**
+   * main.yml's build of `commit`, downloaded, its signature (the release key) and trusted comment checked,
+   * then loaded in this PC's runtime: the bundle's path; "absent" while GitHub has none (or can't be
+   * reached); "bad" when it's there but not taken (remembered: this commit is built here).
+   */
+  private async fetchPrebuilt(commit: string, version: string, minRuntime: string, subject: string): Promise<string | "absent" | "bad"> {
+    const url = `${this.cfg.github}/${this.cfg.repo}/releases/download/${MAIN_BUILD_TAG}/${prebuiltName(commit)}`;
+    const get = (u: string): Promise<Response> => this.cfg.fetch(u, { headers: { "user-agent": `harbor/${this.cfg.version}` }, signal: AbortSignal.timeout(PREBUILT_MS) });
+    let sig: string;
+    try {
+      const res = await get(`${url}.minisig`);
+      if (!res.ok) return "absent";
+      sig = await res.text();
+    } catch {
+      return "absent";
+    }
+    const bad = (why: string): "bad" => {
+      this.remember((m) => {
+        m.prebuiltBad = commit;
+      });
+      this.cfg.log(`follow-main: GitHub's build of ${version} not taken: ${why}; building it here`);
+      return "bad";
+    };
+    this.set({ state: "fetching", commit, subject, version, reason: "" });
+    const file = join(fresh(join(this.home, "prebuilt")), BUNDLE_FILE);
+    try {
+      const res = await get(url);
+      if (!res.ok) return "absent";
+      await Bun.write(file, res);
+    } catch {
+      return "absent";
+    }
+    let tc: string;
+    try {
+      tc = (await verifyFileSignature(await publicKey(this.cfg), file, `${sig.trimEnd()}\n`)).trustedComment;
+    } catch (e) {
+      return bad(`its signature: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const said = parsePrebuiltComment(tc);
+    if (said === null || said.commit !== commit) return bad(`signed for something else (${tc})`);
+    if (said.version !== version) return bad(`it says ${said.version}, not ${version}`);
+    if (parse(said.minRuntime) === null || newer(said.minRuntime, minRuntime)) return bad(`it needs runtime ${said.minRuntime}, this PC has ${minRuntime}`);
+    this.set({ state: "checking", commit, subject, version, reason: "smoke-bundle" });
+    try {
+      await smokeBundle(join(this.cfg.dir ?? "", RUNTIME_FILE), file, version);
+    } catch (e) {
+      return bad(e instanceof Error ? e.message : String(e));
+    }
+    // main.yml ran tsc before it built.
+    recordChecks(this.home, commit, version, { tsc: true, smoke: true }, this.cfg.now());
+    return file;
   }
 
   private waitThen(commit: string, why: string): void {
@@ -848,13 +1040,33 @@ export class FollowMain {
       mark(cmd[0] === "install" ? "bun install" : cmd[0]?.includes("tsc") ? "tsc" : (cmd[0] ?? ""));
       return this.run([exe, ...cmd], { cwd: ts, env, timeoutMs, log, nice: true });
     };
-    if ((await step(["install", "--frozen-lockfile"], INSTALL_MS)).code !== 0) return fail("bun install failed");
+    // The lockfile shortcut: node_modules already installed for this lockfile and these package.json files.
+    const key = await this.installKey(commit);
+    let skipped = key !== "" && (await this.installed(commit));
+    const install = async (): Promise<boolean> => {
+      remove(this.stampFile);
+      if ((await step(["install", "--frozen-lockfile"], INSTALL_MS)).code !== 0) return false;
+      if (key !== "") writeAtomic(this.stampFile, JSON.stringify({ key }));
+      return true;
+    };
+    if (skipped) mark("bun install skipped: node_modules is installed for this lockfile");
+    else if (!(await install())) return fail("bun install failed");
+    // How long tsc, the build and the smoke take here (a first install is slow anywhere): a slow PC waits for GitHub.
+    const t1 = this.cfg.now();
+    // A step that fails after the install was skipped runs once more after one (node_modules may have been touched).
+    const twice = async (cmd: string[], timeoutMs: number, ok: () => boolean = () => true): Promise<boolean> => {
+      if ((await step(cmd, timeoutMs)).code === 0 && ok()) return true;
+      if (!skipped) return false;
+      skipped = false;
+      mark("again, after a bun install");
+      return (await install()) && (await step(cmd, timeoutMs)).code === 0 && ok();
+    };
     this.set({ state: "checking", commit, subject, version, reason: "tsc" });
     // tsc's own entry, run by this Bun: `bun run check` reaches it through `node`, which may be anything (a mise shim).
-    if ((await step(["node_modules/typescript/bin/tsc", "--noEmit"], TSC_MS)).code !== 0) return fail("tsc found errors", { tsc: false, smoke: false });
+    if (!(await twice(["node_modules/typescript/bin/tsc", "--noEmit"], TSC_MS))) return fail("tsc found errors", { tsc: false, smoke: false });
     this.set({ state: "building", commit, subject, version, reason: "" });
     const bundle = join(out, BUNDLE_FILE);
-    if ((await step(["scripts/build.ts", "app", bundle, "--version", version, "--min-runtime", minRuntime, "--sha", commit], BUILD_MS)).code !== 0 || !isFile(bundle)) return fail("the build failed");
+    if (!(await twice(["scripts/build.ts", "app", bundle, "--version", version, "--min-runtime", minRuntime, "--sha", commit], BUILD_MS, () => isFile(bundle)))) return fail("the build failed");
     mark("smoke-bundle");
     this.set({ state: "checking", commit, subject, version, reason: "smoke-bundle" });
     try {
@@ -864,8 +1076,10 @@ export class FollowMain {
     }
     recordChecks(this.home, commit, version, { tsc: true, smoke: true }, this.cfg.now());
     mark("built");
+    const took = this.cfg.now() - t1;
     this.remember((m) => {
       if (m.failed?.commit === commit) m.failed = null;
+      m.buildMs = took;
     });
     return bundle;
   }
@@ -884,6 +1098,8 @@ export function statusLine(s: FollowStatus, on: boolean): string {
       return `Building ${v}…`;
     case "checking":
       return `Checking ${v}${s.reason ? ` (${s.reason})` : ""}…`;
+    case "fetching":
+      return s.reason !== "" ? `Getting ${v} from GitHub: ${s.reason}…` : `Getting ${v} from GitHub…`;
     case "waiting":
       return `Built ${short}, waiting: ${s.reason}.`;
     case "swapping":
@@ -898,6 +1114,7 @@ export function statusLine(s: FollowStatus, on: boolean): string {
 export function timelineText(t: Timeline | undefined): string {
   if (t === undefined) return "";
   const s = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`;
-  if (t.pushedAt) return `${t.version} ran ${s(t.liveAt - t.pushedAt)} after its push (heard ${s(t.noticedAt - t.pushedAt)}, built ${s(t.builtAt - t.noticedAt)}, restarted ${s(t.liveAt - t.builtAt)}).`;
-  return `${t.version} ran ${s(t.liveAt - t.committedAt)} after its commit (noticed ${s(t.noticedAt - t.committedAt)}, built ${s(t.builtAt - t.noticedAt)}, restarted ${s(t.liveAt - t.builtAt)}).`;
+  const built = t.via === "github" ? "got GitHub's build" : "built";
+  if (t.pushedAt) return `${t.version} ran ${s(t.liveAt - t.pushedAt)} after its push (heard ${s(t.noticedAt - t.pushedAt)}, ${built} ${s(t.builtAt - t.noticedAt)}, restarted ${s(t.liveAt - t.builtAt)}).`;
+  return `${t.version} ran ${s(t.liveAt - t.committedAt)} after its commit (noticed ${s(t.noticedAt - t.committedAt)}, ${built} ${s(t.builtAt - t.noticedAt)}, restarted ${s(t.liveAt - t.builtAt)}).`;
 }
