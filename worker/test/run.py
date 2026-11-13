@@ -83,9 +83,9 @@ def event_seq(token):
     return js.get("seq") if st == 200 and isinstance(js, dict) else None
 
 
-def ws_hello(token):
-    """A PC's push socket: the 101 upgrade, then the first text frame (the hello)."""
-    import http.client, socket as so
+def ws_open(token):
+    """A PC's push socket: the 101 upgrade; (status, connection or None)."""
+    import http.client
     c = http.client.HTTPConnection("127.0.0.1", WP, timeout=20)
     c.putrequest("GET", "/v1/events")
     for k, v in [("Upgrade", "websocket"), ("Connection", "Upgrade"), ("Sec-WebSocket-Version", "13"),
@@ -95,17 +95,37 @@ def ws_hello(token):
     r = c.getresponse()
     if r.status != 101:
         return r.status, None
+    return 101, (c, r)
+
+
+def ws_next(sock):
+    """The socket's next text frame, as JSON."""
+    _, r = sock
     head = r.fp.read(2)
     n = head[1] & 0x7F
     if n == 126:
         n = int.from_bytes(r.fp.read(2), "big")
-    body = r.fp.read(n).decode()
+    return json.loads(r.fp.read(n).decode())
+
+
+def ws_close(sock):
+    import socket as so
+    c, _ = sock
     try:
         c.sock.shutdown(so.SHUT_RDWR)
     except OSError:
         pass
     c.close()
-    return 101, json.loads(body)
+
+
+def ws_hello(token):
+    """A PC's push socket: the 101 upgrade, then the first text frame (the hello)."""
+    st, sock = ws_open(token)
+    if sock is None:
+        return st, None
+    hello = ws_next(sock)
+    ws_close(sock)
+    return 101, hello
 
 
 def start(cmd, log, cwd):
@@ -614,6 +634,24 @@ def main():
     check("second session: no longer 'joined'", pj2["joined"] == [])
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     check("owner's invite list is empty after joining", d["workspaces"][0]["invites"] == [])
+
+    # the workspace cloud: a chat's row sent by a PC is pushed to the members' PCs at once ("cloud", sockets only);
+    # transcript parts alone tell nobody, and phones' polls aren't woken by it
+    st, sock = ws_open(sam_pc)
+    hello = ws_next(sock) if sock else None
+    ph_seq, ph_got = event_seq(sam_phone), []
+    ph_t = wait_event(sam_phone, ph_seq, ph_got)
+    time.sleep(0.5)
+    st, js, _, _ = http("PUT", W + f"/v1/cloud?ws={sam_ws}", {"set": [{"id": "k:" + "c" * 40, "v": "c1.x"}]}, token=sam_pc)
+    check("cloud: a transcript part is kept", st == 200 and js["results"][0]["ok"], js)
+    st, js, _, _ = http("PUT", W + f"/v1/cloud?ws={sam_ws}", {"set": [{"id": "m:" + "c" * 40, "v": "c1.x"}]}, token=sam_pc)
+    check("cloud: a chat's row is kept", st == 200 and js["results"][0]["ok"], js)
+    pushed = ws_next(sock) if sock else None
+    check("cloud: the members' PCs hear of the chat's row on their socket", pushed and pushed.get("what") == "cloud" and pushed.get("seq") == hello.get("seq"), (hello, pushed))
+    ws_close(sock)
+    time.sleep(1.0)
+    check("cloud: a phone's poll isn't woken by the cloud", ph_t.is_alive() and ph_got == [], ph_got)
+    ph_t.join(30)
 
     # peers by membership: a PC of pat's own workspace and sam's desk trust each other once pat is a member of sam's
     pat_box = Device("pc", "pat-box")

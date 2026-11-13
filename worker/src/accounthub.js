@@ -16,7 +16,7 @@ const MAX_WAITERS = 64;
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
-const WHAT = new Set(['invites', 'directory', 'vault']);
+const WHAT = new Set(['invites', 'directory', 'vault', 'cloud']);
 
 export class AccountHub {
   constructor(ctx, env) {
@@ -36,6 +36,21 @@ export class AccountHub {
 
   /** Something changed for this account: every open socket and waiting poll hears it. */
   async notify(what) {
+    // The workspace cloud changed: only PCs read it (their sockets), every few seconds while someone works. Phones
+    // aren't woken and the seq stays (what a device missed of the rest is still told by it).
+    if (what === 'cloud') {
+      const msg = JSON.stringify({ seq: await this.current(), what });
+      let sent = 0;
+      for (const ws of this.ctx.getWebSockets()) {
+        try {
+          ws.send(msg);
+          sent++;
+        } catch {
+          // gone
+        }
+      }
+      return json({ ok: true, sent });
+    }
     const seq = (await this.current()) + 1;
     this.seq = seq;
     await this.ctx.storage.put('seq', seq);

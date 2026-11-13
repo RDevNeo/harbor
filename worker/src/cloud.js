@@ -120,8 +120,9 @@ export async function getCloudRows(req, env, p) {
   return { items };
 }
 
-/** `PUT /v1/cloud?ws=W {set: [{id, v}]}`: rows of this PC (v null: gone). Each row's outcome. */
-export async function putCloud(req, env, p) {
+/** `PUT /v1/cloud?ws=W {set: [{id, v}]}`: rows of this PC (v null: gone). Each row's outcome. When a chat's or a
+ *  project's row changed, `notify(ws)` tells the workspace's members' devices (their PCs read it within a second). */
+export async function putCloud(req, env, p, notify) {
   const ws = wsOf(req);
   const fp = await member(env, p, ws);
   const b = await readBody(req);
@@ -170,5 +171,7 @@ export async function putCloud(req, env, p) {
     results.push({ id: e.id, ok: true, seq: s });
   }
   if (stmts.length > 0) await env.DB.batch(stmts);
+  const listed = b.set.some((e, i) => results[i]?.ok && e.id[0] !== 'k');
+  if (listed && notify) await notify(ws);
   return { now: Date.now(), results };
 }

@@ -23,6 +23,7 @@ export interface CloudSyncHost {
   /** Tests: the clock and smaller transcript chunks. */
   clock?: (() => number) | undefined;
   chunkItems?: number | undefined;
+  pokeMs?: number | undefined;
 }
 
 /** How long a project folder's presence is trusted (a missing one under /home costs macOS's automounter a look). */
@@ -96,5 +97,21 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
       h.copied(null);
     },
   };
-  return new ChatCloud({ stateDir: h.stateDir, fp: h.fp, meId: () => h.hub.mesh.me.id, source, sink, log: h.log, clock: h.clock, chunkItems: h.chunkItems });
+  return new ChatCloud({ stateDir: h.stateDir, fp: h.fp, meId: () => h.hub.mesh.me.id, source, sink, log: h.log, clock: h.clock, chunkItems: h.chunkItems, pokeMs: h.pokeMs });
+}
+
+/** The workspace cloud's log: everything with HARBOR_ACCOUNT_LOG=1, else its problems only, each once an hour (a sync that stopped shows in the journal). */
+export function cloudLog(all: boolean, write: (line: string) => void = (l) => process.stderr.write(l), clock: () => number = Date.now): (line: string) => void {
+  const seen = new Map<string, number>();
+  return (line) => {
+    if (!all) {
+      if (!/^(sync:|couldn't|reading |carrying|the workspace's room|a row of this PC's|the account service has no)/.test(line)) return;
+      const now = clock();
+      const at = seen.get(line);
+      if (at !== undefined && now - at < 3_600_000) return;
+      if (seen.size > 200) seen.clear();
+      seen.set(line, now);
+    }
+    write(`harbor: cloud: ${line}\n`);
+  };
 }

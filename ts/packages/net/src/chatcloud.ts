@@ -152,6 +152,8 @@ export interface ChatCloudOptions {
   /** Tests: smaller chunks. */
   chunkItems?: number | undefined;
   chunkBytes?: number | undefined;
+  /** Tests: the pause after a change before its round (POKE_MS). */
+  pokeMs?: number | undefined;
 }
 
 export interface CloudStatus {
@@ -164,9 +166,13 @@ export interface CloudStatus {
 }
 
 /** A chat running now is published at most this often (each publish rewrites its last chunk and its metadata). */
-export const RUNNING_GAP_MS = 180_000;
-/** Lists of the other PCs' chats are fetched at most this often (a round of the account loop is about 20 s). */
-const PULL_EVERY_MS = 45_000;
+export const RUNNING_GAP_MS = 30_000;
+/** Lists of the other PCs' chats are fetched at least this often (the service's push, `pullSoon`, brings them sooner). */
+const PULL_EVERY_MS = 15_000;
+/** A change here sends a round after this pause (a burst of changes, one round)… */
+const POKE_MS = 1500;
+/** …and rounds a change brings are at least this far apart (a streaming chat touches on every item). */
+const POKE_GAP_MS = 5000;
 /** An account service without `/v1/cloud` is asked again after this long. */
 const UNSUPPORTED_MS = 3_600_000;
 /** After the workspace's room ran out, publishing waits this long. */
@@ -457,14 +463,29 @@ export class ChatCloud {
     return { state, published: Object.keys(this.saved.pub.chats).length, known, error: this.err, syncedAt: this.syncedAt };
   }
 
-  /** Something of this PC's changed (a chat, a project): it goes up on the next round. */
+  /** Something of this PC's changed (a chat made, renamed, settled, deleted, a message): it goes up within seconds. */
   poke(): void {
     this.dirty = true;
+    const first = this.o.pokeMs ?? POKE_MS;
+    const wait = Math.max(first, this.startedAt + (this.o.pokeMs === undefined ? POKE_GAP_MS : first) - this.now());
+    this.soon(wait);
   }
+
+  /** The service says a workspace changed (a push): its rows are read on a round now. */
+  pullSoon(): void {
+    this.pulledAt = 0;
+    this.soon(300);
+  }
+
+  /** When the last round started. */
+  private startedAt = 0;
+
 
   /** One round (from the account loop): never two at once, never waited for by the loop. */
   sync(ctx: CloudContext): Promise<void> {
+    this.ctx = ctx;
     if (this.running) return this.running;
+    this.startedAt = this.now();
     this.running = this.round(ctx).finally(() => (this.running = null));
     return this.running;
   }
@@ -474,13 +495,26 @@ export class ChatCloud {
   /** A turn ended here: a round in a few seconds sends its chat, session and work (a PC may be switched off right after). */
   soon(ms = 3000): void {
     this.dirty = true;
-    if (this.soonTimer !== null) return;
+    const at = this.now() + ms;
+    if (this.soonTimer !== null) {
+      if (at >= this.soonAt) return;
+      clearTimeout(this.soonTimer);
+    }
+    this.soonAt = at;
     this.soonTimer = setTimeout(() => {
       this.soonTimer = null;
-      if (this.ctx !== null) void this.sync(this.ctx).catch(() => undefined);
+      const ctx = this.ctx;
+      if (ctx === null) return;
+      // A round under way may have looked at that chat already: one more after it.
+      void (this.running ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => this.sync(this.ctx ?? ctx))
+        .catch(() => undefined);
     }, ms);
     (this.soonTimer as { unref?: () => void }).unref?.();
   }
+
+  private soonAt = 0;
 
   /** Harbor stops: what's left goes up now, waited for at most `limitMs`. */
   async flush(limitMs: number): Promise<void> {

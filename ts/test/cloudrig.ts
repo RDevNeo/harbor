@@ -30,10 +30,12 @@ function d1(db: Database) {
   };
 }
 
-type Handler = (req: Request, env: unknown, p: unknown, live?: unknown) => Promise<unknown>;
+type Handler = (req: Request, env: unknown, p: unknown, extra?: unknown) => Promise<unknown>;
 const worker = (await import(join(WORKER, "src", "cloud.js"))) as { getCloudKey: Handler; getCloud: Handler; getCloudRows: Handler; putCloud: Handler };
 
 export function service(opts: { deployed?: boolean; maxMb?: number } = {}) {
+  /** Workspaces the service told its members' PCs about (a `cloud` push), in order. */
+  const told: string[] = [];
   const db = new Database(":memory:");
   db.run(`CREATE TABLE devices (fp TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', seen INTEGER NOT NULL)`);
   db.run(readFileSync(join(WORKER, "migrations", "0008_cloud.sql"), "utf8"));
@@ -53,7 +55,7 @@ export function service(opts: { deployed?: boolean; maxMb?: number } = {}) {
       try {
         if (route === "GET /v1/cloud/key") return await worker.getCloudKey(req, env, claims, live);
         if (route === "GET /v1/cloud") return await worker.getCloud(req, env, claims);
-        if (route === "PUT /v1/cloud") return await worker.putCloud(req, env, claims);
+        if (route === "PUT /v1/cloud") return await worker.putCloud(req, env, claims, async (ws: string) => void told.push(ws));
         if (route === "POST /v1/cloud/rows") return await worker.getCloudRows(req, env, claims);
       } catch (e) {
         const st = (e as { status?: number }).status;
@@ -63,5 +65,5 @@ export function service(opts: { deployed?: boolean; maxMb?: number } = {}) {
       throw Object.assign(new Error("Not found."), { code: 404 });
     };
   };
-  return { db, callAs, requests: () => requests };
+  return { db, callAs, requests: () => requests, told };
 }

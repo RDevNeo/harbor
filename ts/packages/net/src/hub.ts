@@ -252,6 +252,8 @@ export class Hub {
   /** A draft changed (it's written soon after, so a crash keeps it). */
   onDrafts: (() => void) | null = null;
   private waiters = new Set<() => void>();
+  /** Told of every chat or state change (the workspace cloud sends it within seconds). */
+  readonly touched = new Set<(chat: number | null) => void>();
 
   constructor(tokens: Token[], port: number, private clock: () => number = () => performance.now()) {
     const base = Date.now();
@@ -289,6 +291,7 @@ export class Hub {
     if (chat !== null) this.chats.set(chat, this.rev_);
     if (state) this.state = this.rev_;
     this.notify();
+    for (const f of this.touched) f(chat);
     return this.rev_;
   }
 

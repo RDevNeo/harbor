@@ -664,6 +664,24 @@ async function usersWithEmail(env, email) {
   return users.filter((u) => (u.email_addresses || []).some((e) => e.email_address.toLowerCase() === email && e.verification?.status === 'verified')).map((u) => u.id);
 }
 
+/** Members of each workspace the cloud told lately: a PC sends a row every few seconds while it works, Clerk is asked once a minute. */
+const cloudAudience = new Map();
+
+/** Tells the members of workspace `ws` that its cloud changed ("cloud"): their PCs read it at once. Never throws. */
+async function tellCloud(env, ws) {
+  try {
+    let a = cloudAudience.get(ws);
+    if (!a || Date.now() - a.at > 60_000) {
+      a = { at: Date.now(), ids: await memberIds(env, ws) };
+      if (cloudAudience.size > 500) cloudAudience.clear();
+      cloudAudience.set(ws, a);
+    }
+    await tell(env, a.ids, 'cloud');
+  } catch {
+    // a missed push: the PCs' own reads every few seconds catch it
+  }
+}
+
 /** The member ids of workspace `ws` ([] when Clerk can't say now). */
 async function memberIds(env, ws) {
   return (await orgMembers(env, ws).catch(() => [])).map((m) => m.id).filter(Boolean);
@@ -1014,7 +1032,7 @@ async function route(req, env) {
     try {
       if (m === 'GET' && path === '/v1/cloud/key') return json(await getCloudKey(req, env, p, liveWs));
       if (m === 'GET' && path === '/v1/cloud') return json(await getCloud(req, env, p));
-      if (m === 'PUT' && path === '/v1/cloud') return json(await putCloud(req, env, p));
+      if (m === 'PUT' && path === '/v1/cloud') return json(await putCloud(req, env, p, (ws) => tellCloud(env, ws)));
       if (m === 'POST' && path === '/v1/cloud/rows') return json(await getCloudRows(req, env, p));
     } catch (e) {
       if (e instanceof VaultError) throw new HttpError(e.status, e.message);

@@ -1711,7 +1711,12 @@ export class AccountService {
         if (seq !== this.sockSeq || seq < 0) this.timers.dir = null;
       } else if (what === "invites") this.timers.inv = null;
       else if (what === "vault") this.vaultDue = true;
-      else this.timers.dir = null;
+      else if (what === "cloud") {
+        // A workspace's chats changed in the cloud (another PC sent them): read now, the loop's turn isn't needed.
+        this.o.cloud?.pullSoon();
+        if (seq >= 0) this.sockSeq = seq;
+        return;
+      } else this.timers.dir = null;
       if (seq >= 0) this.sockSeq = seq;
       this.pushed = true;
       this.pokeWake?.();
@@ -1917,6 +1922,7 @@ export class AccountService {
     if (sec.token === "" || sec.token_exp <= now) return;
     const token = sec.token;
     this.listen(token);
+    const cloudWs = this.runCloud(token);
     const result = (f: AccountFail | null) => {
       if (f === null) {
         if (this.st.offlineSince !== 0) this.setStatus((st) => (st.offlineSince = 0));
@@ -1978,11 +1984,17 @@ export class AccountService {
       clearTimeout(timer);
       if (late) this.log(() => "the vault's round is taking long: the loop goes on without it");
     }
+    // The directory may have changed this turn (a workspace joined): the cloud reads it now, not a turn later.
+    if (this.dir.workspaces.map((w) => w.id).join("\n") !== cloudWs) this.runCloud(token);
+  }
+
+  /** A round of the workspace cloud, never waited for: first thing in a turn, so a slow vault, settings or directory never holds this PC's chats back. Returns the workspaces it read. */
+  private runCloud(token: string): string {
     const cloud = this.o.cloud;
-    if (cloud && who !== "") {
-      const workspaces = this.dir.workspaces.map((w) => w.id);
-      void cloud.sync({ account: who, mine: this.ws, workspaces, call: (method, path, body) => this.service(method, path, token, body) });
-    }
+    const who = this.acct?.id ?? "";
+    const workspaces = this.dir.workspaces.map((w) => w.id);
+    if (cloud && who !== "") void cloud.sync({ account: who, mine: this.ws, workspaces, call: (method, path, body) => this.service(method, path, token, body) });
+    return workspaces.join("\n");
   }
 
   /** Something Settings and the window show changed outside the loop (a single-host lease, settings from the account). */

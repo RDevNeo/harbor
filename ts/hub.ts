@@ -146,7 +146,7 @@ import { type Chat, dataDir, home, repoDir, secrets, settingsync, stateDir, Stor
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
-import { chatCloud } from "./cloudsync.ts";
+import { chatCloud, cloudLog } from "./cloudsync.ts";
 import { carrySource, ContinueHere } from "./continuehere.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
@@ -377,9 +377,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     directory: () => account.directory(),
     running: (chat) => engine?.runningSince(chat) != null,
     copied: (chat) => engine?.storeChanged(chat),
-    log: env.HARBOR_ACCOUNT_LOG === "1" ? (line: string) => process.stderr.write(`cloud: ${line}\n`) : undefined,
+    log: cloudLog(env.HARBOR_ACCOUNT_LOG === "1"),
     // Continue anywhere: the recent chats' sessions and the work in their folders go up too (continuehere.ts).
     carry: carrySource({ store, engine: () => engine, accounts: () => accounts, scratch: join(dataDir(env), "carry-scratch") }),
+  });
+  // A chat made, renamed, settled or deleted here, or a message: it goes up within seconds (a PC may be switched off,
+  // or booted into its other OS, right after).
+  hub.touched.add((chat) => {
+    if (chat === null || !hub.mesh.foreign.has(chat)) cloud.poke();
   });
   // A chat taken over from a PC that is off goes on with its session and work from the cloud (continuehere.ts).
   const continueHere = new ContinueHere({
@@ -1544,3 +1549,4 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
   };
 }
+

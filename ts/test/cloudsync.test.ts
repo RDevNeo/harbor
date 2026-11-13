@@ -4,7 +4,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CLOUD_EPOCH, chatCloud } from "../cloudsync.ts";
+import { CLOUD_EPOCH, chatCloud, cloudLog } from "../cloudsync.ts";
 import { service } from "./cloudrig.ts";
 import { type AccountDirectory, type ChatCloud, type CloudContext, chunkTranscript, firstNeeded, Hub, StoreReplica } from "../packages/net/src/index.ts";
 import { blankChat, type Item, Store } from "../packages/store/src/index.ts";
@@ -38,7 +38,7 @@ interface Pc {
   online: Set<string>;
 }
 
-function pc(name: string, fp: string, id: string): Pc {
+function pc(name: string, fp: string, id: string, pokeMs?: number): Pc {
   const dir = join(root, name);
   const store = Store.openAt(join(root, `${name}.db`));
   const hub = new Hub([], 0);
@@ -57,6 +57,7 @@ function pc(name: string, fp: string, id: string): Pc {
     copied: () => {},
     clock: now,
     chunkItems: 3,
+    pokeMs,
   });
   return { store, hub, replica, cloud, online };
 }
@@ -233,5 +234,58 @@ describe("workspace cloud", () => {
     // Asked again only after an hour.
     expect(svc.requests()).toBe(n);
     A.store.close();
+  });
+
+  test("a chat made here goes up within moments of the change, with no turn of the account loop; the service tells the members' PCs", async () => {
+    const svc = service();
+    const A = pc("a5", "fpA", "ts:a", 20);
+    const B = pc("b5", "fpB", "pc:b");
+    const callA = svc.callAs("u1", "fpA", ["W1"]);
+    const callB = svc.callAs("u1", "fpB", ["W1"]);
+    await round(A, callA);
+    const told = svc.told.length;
+    // Made, then the window's change (hub.ts pokes on every touch of this PC's own chats); the PC goes off right after.
+    const c = A.store.createChat(blankChat({ title: "Made on Windows", updated: 300 }));
+    A.store.saveItems(c.id, [user("hello from the other OS")]);
+    A.cloud.poke();
+    for (let i = 0; i < 100 && svc.told.length === told; i++) await Bun.sleep(10);
+    expect(svc.told.slice(told)).toContain("W1");
+    await round(B, callB);
+    expect(copyOf(B, c.id)?.title).toBe("Made on Windows");
+    expect(B.store.items(copyOf(B, c.id)?.id ?? -1)).toEqual([user("hello from the other OS")]);
+    // A push brings the next change to B without waiting for its own read: pullSoon reads at once.
+    A.store.saveChat({ ...c, title: "Renamed", updated: c.updated + 20 });
+    A.cloud.poke();
+    for (let i = 0; i < 100 && svc.told.length === told + 1; i++) await Bun.sleep(10);
+    clock += 1; // well within B's own read interval
+    B.cloud.pullSoon();
+    for (let i = 0; i < 100 && copyOf(B, c.id)?.title !== "Renamed"; i++) await Bun.sleep(10);
+    expect(copyOf(B, c.id)?.title).toBe("Renamed");
+    A.store.close();
+    B.store.close();
+  });
+
+  test("the service tells members only when a chat or project row changed, not for transcript parts alone", async () => {
+    const svc = service();
+    const a = svc.callAs("u1", "fpA", ["W1"]);
+    await a("PUT", "/v1/cloud?ws=W1", { set: [{ id: `k:${"b".repeat(40)}`, v: "c1.x" }] });
+    expect(svc.told).toEqual([]);
+    await a("PUT", "/v1/cloud?ws=W1", { set: [{ id: `m:${"b".repeat(40)}`, v: "c1.x" }] });
+    expect(svc.told).toEqual(["W1"]);
+  });
+
+  test("the cloud's problems reach the journal without HARBOR_ACCOUNT_LOG, each once an hour", () => {
+    const out: string[] = [];
+    let t = 0;
+    const log = cloudLog(false, (l) => out.push(l), () => t);
+    log("sent 3 rows");
+    log("sync: reading W1: offline");
+    log("sync: reading W1: offline");
+    t += 3_600_001;
+    log("sync: reading W1: offline");
+    expect(out).toEqual(["harbor: cloud: sync: reading W1: offline\n", "harbor: cloud: sync: reading W1: offline\n"]);
+    const all: string[] = [];
+    cloudLog(true, (l) => all.push(l))("sent 3 rows");
+    expect(all).toEqual(["harbor: cloud: sent 3 rows\n"]);
   });
 });
