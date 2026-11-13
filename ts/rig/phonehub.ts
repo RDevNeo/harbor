@@ -301,6 +301,17 @@ chat({ gid: TAKEN_GID, repoId: mobile, role: "lead", title: "Speed up the app's 
   notice("monitor", tookN.text, tookN.detail),
   user("Yes, do it.", ago(2)),
 ]);
+// One that went on here with the Tower's own session and unpushed work (continue anywhere: continuehere.ts).
+const CONTINUED_GID = "c4e7a1b2-0000-4000-8000-0000000f0a04";
+const { continuedNotice } = await import("../packages/net/src/carry.ts");
+const contN = continuedNotice("rig-pc", "Tower", { session: "resumed", work: ["1 unpushed commit and uncommitted changes came from Tower."] });
+chat({ gid: CONTINUED_GID, repoId: mobile, role: "lead", title: "Add the offline banner", updated: ago(0) }, [
+  user("Show a banner when the app goes offline.", ago(70)),
+  say("Added `OfflineBanner` under the toolbar, shown while the connectivity callback says offline. Not committed yet.", ago(65)),
+  user("Now make it dismissable.", ago(1)),
+  notice("monitor", contN.text, contN.detail),
+  say("Added a close button; it comes back the next time the app goes offline.", ago(0)),
+]);
 const deploy = Bun.spawn(["sleep", "86400"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 const { procStart } = await import("../packages/agents/src/procfs.ts");
 const deployLog = join(dir, "state", "deploy.log");
