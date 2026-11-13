@@ -4,6 +4,7 @@
 import { githubHook, mainNudge, mainWait, releasePing, releaseWait } from './release.js';
 import { events, tell } from './accounthub.js';
 import { VaultError, getVault, getVaultKey, putVault, putVaultKey } from './vault.js';
+import { getCloud, getCloudKey, getCloudRows, putCloud } from './cloud.js';
 
 export { ReleaseHub } from './release.js';
 export { AccountHub } from './accounthub.js';
@@ -1003,6 +1004,18 @@ async function route(req, env) {
         if (m === 'GET') return json(await getVault(req, env, p));
         if (m === 'PUT') return json(await putVault(req, env, p, vtell));
       }
+    } catch (e) {
+      if (e instanceof VaultError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
+  }
+  if (path === '/v1/cloud' || path === '/v1/cloud/key' || path === '/v1/cloud/rows') {
+    const p = await harborAuth(req, env);
+    try {
+      if (m === 'GET' && path === '/v1/cloud/key') return json(await getCloudKey(req, env, p, liveWs));
+      if (m === 'GET' && path === '/v1/cloud') return json(await getCloud(req, env, p));
+      if (m === 'PUT' && path === '/v1/cloud') return json(await putCloud(req, env, p));
+      if (m === 'POST' && path === '/v1/cloud/rows') return json(await getCloudRows(req, env, p));
     } catch (e) {
       if (e instanceof VaultError) throw new HttpError(e.status, e.message);
       throw e;

@@ -251,6 +251,53 @@ export class StoreReplica implements MeshApp {
     };
   }
 
+  /**
+   * One of this PC's chats as the workspace cloud keeps it (chatcloud.ts): chat JSON's fields that don't change by
+   * the second, which `applyChats` takes on another PC as it takes the mesh's (no live state: its PC is off then).
+   */
+  cloudMeta(c: Chat): Record<string, Json> {
+    const r = c.repoId === null ? null : (this.repos.find((x) => x.id === c.repoId) ?? null);
+    const main = r ? (this.mainGids().get(r.id) ?? "") : "";
+    return {
+      id: c.id,
+      gid: c.gid,
+      title: c.title,
+      project: r ? { name: r.name, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])], main } : null,
+      workspace: this.place.chats.get(c.id) ?? "",
+      shared: [...(this.place.shared?.chats.get(c.id) ?? [])],
+      account: c.account,
+      model: c.model,
+      effort: c.effort,
+      access: c.access,
+      device: c.device,
+      settled: c.settled,
+      retired: c.retired,
+      updated: c.updated,
+      role: c.role,
+      parent: c.parent,
+      name: c.name,
+      started: c.started,
+    };
+  }
+
+  /** This PC's own chats now (the cloud publishes them). */
+  ownChats(): Chat[] {
+    this.reload();
+    return this.list.filter((c) => c.home === "");
+  }
+
+  /** A transcript as it is now (the Engine's while it streams). */
+  transcript(chat: number): Item[] {
+    return this.itemsOf(chat);
+  }
+
+  /** A project of PC `peer` the workspace cloud lists (chatcloud.ts): made here when missing, remembered as that PC's. */
+  applyProject(peer: string, p: { path: string; name: string; remote: string; workspace: string; shared: string[] }): void {
+    this.reload();
+    const repo = this.repoFor({ path: p.path, name: p.name, remote: p.remote, workspace: p.workspace, shared: p.shared });
+    if (repo !== null) this.rememberPc(repo, peer, p.path);
+  }
+
   private tookJson(gid: string): Record<string, Json> {
     const t = this.o.took?.(gid) ?? null;
     return t === null ? {} : { failover_from: t.from, failover_count: t.count };

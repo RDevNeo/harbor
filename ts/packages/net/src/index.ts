@@ -43,3 +43,4 @@ export * from "./foldercopy.ts";
 export * from "./projectmove.ts";
 export * from "./projectmoverun.ts";
 export * from "./projectfold.ts";
+export * from "./chatcloud.ts";
