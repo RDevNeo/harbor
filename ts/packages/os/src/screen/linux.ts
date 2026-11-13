@@ -212,6 +212,9 @@ export function backend(env: Env = process.env): Backend {
     },
     key: async (c, how = "press") => {
       if (p.keys === "xdotool") await run(["xdotool", how === "press" ? "key" : how === "down" ? "keydown" : "keyup", "--clearmodifiers", xdotoolCombo(c)]);
+      // wtype's keys go up when it exits: a key held across calls (modifiers on a click) needs ydotool.
+      else if (p.keys === "wtype" && how !== "press" && p.press === "ydotool") await run(ydoKey(c, how));
+      else if (p.keys === "wtype" && how !== "press") throw new Error(`holding keys across a click needs ydotool (with ydotoold) on ${label(p.kind)}`);
       else if (p.keys === "wtype") await run(wtypeKey(c, how));
       else if (p.keys === "ydotool") await run(ydoKey(c, how));
       else throw new Error(`no keyboard tool on ${label(p.kind)}`);

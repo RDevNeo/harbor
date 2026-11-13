@@ -171,11 +171,6 @@ export function parseKeys(text: string): Combo[] {
   return list.map(parseCombo);
 }
 
-/** A chord's modifiers as keys of their own, for pressing them in order. */
-export function modKey(m: Mod): string {
-  return m;
-}
-
 // --- Windows: virtual-key codes; `ext` marks the keys that need KEYEVENTF_EXTENDEDKEY ---
 
 const WIN_NAMED: Record<string, [number, boolean]> = {

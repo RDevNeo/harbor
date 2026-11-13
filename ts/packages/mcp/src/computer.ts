@@ -18,8 +18,6 @@ export { ACTIONS, type ActionName, MAX_WAIT_S, toolDef } from "./computerdef.ts"
 export const ON_KEY = "computer_use";
 export const PEERS_KEY = "computer_use_peers";
 
-
-
 /** Actions that only look: allowed in every access mode. */
 const LOOKING: readonly ActionName[] = ["screenshot", "zoom", "cursor_position", "wait"];
 /** Actions after which a fresh screenshot comes back (unless `screenshot: false`). */

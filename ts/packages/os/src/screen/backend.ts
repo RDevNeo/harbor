@@ -140,6 +140,7 @@ export function linuxGaps(p: LinuxPlan): { missing: string[]; limits: string[] }
     if (p.scroll === null && p.click !== null) limits.push("scroll needs ydotool or wlrctl here");
     if (p.cursor === null) limits.push("cursor_position is where Harbor last moved the pointer (this compositor doesn't say)");
     if (p.keys === "ydotool") limits.push("ydotool types US-layout key positions: other layouts may get other characters");
+    if (p.keys === "wtype" && p.press !== "ydotool") limits.push("modifier keys held during clicks and scrolls (their text) need ydotool here: wtype lets go of keys when it exits");
   }
   return { missing, limits };
 }
