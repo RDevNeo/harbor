@@ -1,11 +1,14 @@
 // Continue anywhere's portable parts (carry.ts): paths moved between Linux, macOS and Windows, and the work in a
 // folder carried between two clones of one repository with git itself.
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { continuedNotice, gitApply, gitSnapshot, packFolder, remapPaths, remapSession, sessionParts, unpackFolder, type PathSpace, type WorkIndex, workLines } from "../src/carry.ts";
+
+// Each git test runs a dozen git processes: seconds on Windows.
+setDefaultTimeout(60_000);
 
 const root = mkdtempSync(join(tmpdir(), "hcarry-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -68,7 +71,8 @@ const worktree = (repo: string) => async (head: string) => {
   git(repo, "worktree", "add", "-q", "--detach", d, head);
   return d;
 };
-const read = (p: string) => readFileSync(p, "utf8");
+// Git on Windows checks text out with CRLF (core.autocrlf): the content is what counts.
+const read = (p: string) => readFileSync(p, "utf8").replaceAll("\r\n", "\n");
 
 function origin(): { bare: string; clone: (name: string) => string } {
   const bare = join(root, `origin-${Math.random().toString(36).slice(2)}.git`);

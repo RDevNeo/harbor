@@ -38,7 +38,8 @@ afterAll(async () => {
 
 const REMOTE = "https://example.org/sam/app.git";
 const git = (dir: string, ...args: string[]) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
-const read = (p: string) => readFileSync(p, "utf8");
+// Git on Windows checks text out with CRLF (core.autocrlf): the content is what counts.
+const read = (p: string) => readFileSync(p, "utf8").replaceAll("\r\n", "\n");
 const user = (s: string): Item => ({ kind: "user", text: s, files: [], at: 1, mentions: [], sender: "", intent: "" });
 const text = (s: string): Item => ({ kind: "text", text: s, at: 1 });
 
