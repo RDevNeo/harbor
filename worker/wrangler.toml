@@ -12,6 +12,8 @@ HARBOR_KID = "k1"
 APP_REDIRECT = "harbor://oauth"
 TOKEN_DAYS = "7"
 PUBLIC_URL = "https://harbor-accounts.rdevneo.workers.dev"
+# Bytes a workspace may keep in the workspace cloud (src/cloud.js): chats, projects, carried sessions and work.
+CLOUD_MAX_MB = "1024"
 
 [[d1_databases]]
 binding = "DB"
