@@ -1115,6 +1115,22 @@ describe("the account loop", () => {
     expect(items.size).toBe(0);
   });
 
+  test("a vault round that never ends doesn't stop the loop: the directory is still fetched on the next turns", async () => {
+    const r = rig();
+    const vault = new Vault({ stateDir: join(r.stateDir, "v"), identity: () => generateIdentity(), sources: () => [] });
+    // A single-host check that never answers (Windows: a socket connect with neither "connect" nor "error").
+    vault.afterSync.push(() => new Promise<void>(() => {}));
+    await r.svc.stop();
+    r.svc = r.make({ vault, vaultWaitMs: 30 });
+    await signedIn(r);
+    r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r)] };
+    await r.svc.tick(true);
+    r.calls.length = 0;
+    await r.svc.tick(true);
+    expect(callPaths(r.calls)).toContain("GET /v1/directory");
+    expect(r.svc.directory().workspaces.map((w) => w.id)).toEqual([workspaceDir(r).id]);
+  });
+
   test("start loads the cache and runs the loop until stopped; a poke runs everything now", async () => {
     const r = rig();
     await signedIn(r);

@@ -18,6 +18,9 @@ export interface CloudSyncHost {
   /** Copies were written: the window reads them again (a chat's items, or the list). */
   copied: (chat: number | null) => void;
   log?: ((line: string) => void) | undefined;
+  /** Tests: the clock and smaller transcript chunks. */
+  clock?: (() => number) | undefined;
+  chunkItems?: number | undefined;
 }
 
 /** How long a project folder's presence is trusted (a missing one under /home costs macOS's automounter a look). */
@@ -29,18 +32,21 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
   const source: CloudSource = {
     chats: () => {
       const r = h.replica();
-      return r.ownChats().map(
+      const own = r.ownChats();
+      const mains = r.mainsNow();
+      return own.map(
         (c): CloudOwnChat => ({
           hid: c.id,
           running: h.running(c.id),
           summary: () => h.store.summary(c.id),
-          meta: () => r.cloudMeta(c),
+          meta: () => r.cloudMeta(c, mains),
           items: () => r.transcript(c.id),
         }),
       );
     },
     projects: () => {
-      if (Date.now() - projects.at < PROJECTS_EVERY_MS) return projects.list;
+      const now = (h.clock ?? Date.now)();
+      if (projects.at !== 0 && now - projects.at < PROJECTS_EVERY_MS) return projects.list;
       const place = h.store.placement();
       const list: CloudProject[] = [];
       for (const r of h.store.repos()) {
@@ -55,7 +61,7 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
           shared: [...(place.shared?.repos.get(r.id) ?? [])],
         });
       }
-      projects = { at: Date.now(), list };
+      projects = { at: now, list };
       return list;
     },
   };
@@ -87,5 +93,5 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
       h.copied(null);
     },
   };
-  return new ChatCloud({ stateDir: h.stateDir, fp: h.fp, meId: () => h.hub.mesh.me.id, source, sink, log: h.log });
+  return new ChatCloud({ stateDir: h.stateDir, fp: h.fp, meId: () => h.hub.mesh.me.id, source, sink, log: h.log, clock: h.clock, chunkItems: h.chunkItems });
 }

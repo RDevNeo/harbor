@@ -255,9 +255,9 @@ export class StoreReplica implements MeshApp {
    * One of this PC's chats as the workspace cloud keeps it (chatcloud.ts): chat JSON's fields that don't change by
    * the second, which `applyChats` takes on another PC as it takes the mesh's (no live state: its PC is off then).
    */
-  cloudMeta(c: Chat): Record<string, Json> {
+  cloudMeta(c: Chat, mains: ReadonlyMap<number, string> = this.mainGids()): Record<string, Json> {
     const r = c.repoId === null ? null : (this.repos.find((x) => x.id === c.repoId) ?? null);
-    const main = r ? (this.mainGids().get(r.id) ?? "") : "";
+    const main = r ? (mains.get(r.id) ?? "") : "";
     return {
       id: c.id,
       gid: c.gid,
@@ -277,7 +277,13 @@ export class StoreReplica implements MeshApp {
       parent: c.parent,
       name: c.name,
       started: c.started,
+      ...this.tookJson(c.gid),
     };
+  }
+
+  /** Each project's main chat here (its gid), for `cloudMeta` over a whole list. */
+  mainsNow(): ReadonlyMap<number, string> {
+    return this.mainGids();
   }
 
   /** This PC's own chats now (the cloud publishes them). */

@@ -674,6 +674,17 @@ export class ChatCloud {
     const sink = this.o.sink;
     const me = this.o.meId();
     let fetched = 0;
+    // A chat another PC took over while its PC was off (failover.ts) is listed by both: the newest of a gid is the one.
+    const best = new Map<string, { updated: number; count: number; row: string }>();
+    for (const st of Object.values(this.saved.read)) {
+      for (const [row, c] of Object.entries(st.chats)) {
+        const gid = typeof c.chat.gid === "string" ? c.chat.gid : "";
+        if (gid === "" || c.gone) continue;
+        const updated = typeof c.chat.updated === "number" ? c.chat.updated : 0;
+        const b = best.get(gid);
+        if (!b || updated > b.updated || (updated === b.updated && (c.count > b.count || (c.count === b.count && row > b.row)))) best.set(gid, { updated, count: c.count, row });
+      }
+    }
     for (const [ws, st] of Object.entries(this.saved.read)) {
       if (!ctx.workspaces.includes(ws)) continue;
       const kk = this.saved.keys[ws];
@@ -704,6 +715,8 @@ export class ChatCloud {
         // Only from the PC the directory lists with the key that wrote it; never this PC's own.
         if (!pc || pc.id !== c.pc || pc.id === me) continue;
         if (sink.online(pc.id)) continue;
+        const gid = typeof c.chat.gid === "string" ? c.chat.gid : "";
+        if (!c.gone && gid !== "" && best.get(gid)?.row !== id) continue;
         const ak = `${pc.id}\0${c.hid}`;
         const done = this.saved.applied[ak];
         const copy = sink.copy(pc.id, c.hid);

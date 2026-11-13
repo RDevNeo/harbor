@@ -15,6 +15,10 @@ Wire format: see "Accounts" in `android/PROTOCOL.md`.
 - `POST /v1/pcs`, `DELETE /v1/pcs/{fp}`: register / remove a PC
 - `DELETE /v1/devices/{fp}`: remove a device
 - `GET|PUT /v1/settings`: per-account settings, newest write per key wins
+- `GET /v1/cloud/key?ws=W`, `GET /v1/cloud?ws=W&since=N`, `PUT /v1/cloud?ws=W`, `POST /v1/cloud/rows?ws=W`: the
+  workspace cloud (`src/cloud.js`, `ts/packages/net/src/chatcloud.ts`): each PC's chats and projects, encrypted with
+  a per-workspace key the service keeps sealed with `VAULT_SECRET` and hands to the members' signed-in PCs. A row
+  belongs to the PC that first wrote it. `CLOUD_MAX_MB` (default 256) bounds a workspace's bytes
 - `PUT|DELETE /v1/me/photo`: the account's photo (a JPEG, PNG or WebP of at most 2 MB, stored as Clerk's profile image), or none (D1 `photo_off`: Google's isn't shown again either); members' photos are `image` in the directory
 - `POST /v1/workspaces/{ws}/invites`, `DELETE .../invites/{id}`, `DELETE .../members/{user}`
 - `GET /oauth/android`: bounces the OAuth redirect to `harbor://oauth`
@@ -54,6 +58,14 @@ Test builds override them with those environment variables.
 
 Local test: `npm test` runs `test/run.py`: `test/fakeclerk.py` (Clerk's OAuth endpoints and the Backend API
 subset the Worker uses) and the real Worker under `wrangler dev --local`, driven through every endpoint.
+
+## Workspace cloud (chats and projects)
+
+`src/cloud.js`, tables `cloud` and `cloud_keys` (migration `0008_cloud.sql`). To turn it on:
+`npx wrangler d1 migrations apply harbor-accounts --remote`, then `npx wrangler deploy`. Until then the PCs get
+404 from `/v1/cloud*` and keep syncing chats over the mesh only (they ask again hourly). It reuses `VAULT_SECRET`.
+Transcripts live in D1 (compressed and encrypted, in chunks of up to 64 items): D1's free plan caps a database at
+500 MB, so watch its size; `CLOUD_MAX_MB` bounds each workspace. Moving the chunks to R2 is the next step if it grows.
 
 ## Clerk dashboard checklist
 
