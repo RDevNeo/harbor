@@ -422,6 +422,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
   });
   settingsync.onChanged(() => account.pokeSync());
+  // Every chat of every workspace shows everywhere (run anywhere): a workspace filter picked before 0.183.1 hid the
+  // other workspaces' chats on that PC; it goes back to All once.
+  if (store.get("sidebar_all_183") !== "1") {
+    if ((store.get("sidebar_workspace") ?? "") !== "") store.set("sidebar_workspace", "");
+    store.set("sidebar_all_183", "1");
+  }
   hub.mesh.dirName = (pc) => {
     const d = account.directory();
     for (const p of [...d.workspaces.flatMap((w) => w.pcs), ...d.peers]) if (p.id === pc && p.name !== "") return p.name;

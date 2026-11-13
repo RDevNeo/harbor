@@ -29,7 +29,7 @@ final class Place {
     static String hint(JSONObject st, String pid) {
         JSONObject p = project(st, pid);
         if (p == null) return "";
-        if (elsewhere(p)) return p.optString("pc_name").isEmpty() ? "not on this PC" : p.optString("pc_name");
+        // No PC is named after a project (a chat runs on the PC it's typed on): only two of one name get their folders.
         String name = p.optString("name");
         JSONArray ps = st.optJSONArray("projects");
         int same = 0;

@@ -2095,7 +2095,7 @@ export class Shell {
       if (!repo) return { place: "", place_pc: false, tip: "" };
       const dir = tilde(repo.local ?? repo.path, homedir());
       const at = this.placeOf(id);
-      return { place: placeHint(at, dir, clash.has(name)), place_pc: at !== null, tip: placeLine(at, dir) };
+      return { place: placeHint(at, dir, clash.has(name)), place_pc: false, tip: placeLine(at, dir) };
     };
     const rows: SideRow[] = [];
     // Rows whose status a running turn moves (its timer): refreshRunning redraws only them.

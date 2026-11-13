@@ -18,9 +18,11 @@ export function placeName(p: Place): string {
   return p.name !== "" ? p.name : "another PC";
 }
 
-/** The small hint after a project's name: the PC that holds it; for a project of this PC whose name another one has, its folder's parent. */
-export function placeHint(place: Place | null, dir: string, clash: boolean): string {
-  if (place !== null) return place.name !== "" ? place.name : "not on this PC";
+/**
+ * The small hint after a project's name: only when another project has its name, its folder's parent. Where the folder
+ * is says nothing of whose the project is (a chat runs on the PC it's typed on): no PC is named there.
+ */
+export function placeHint(_place: Place | null, dir: string, clash: boolean): string {
   if (!clash) return "";
   const up = dirname(dir);
   return up !== "." && up !== dir && up !== "/" ? up : dir;

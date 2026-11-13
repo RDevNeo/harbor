@@ -19,6 +19,8 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["favorites", A],
   ["default_device", D],
   ["sidebar_workspace", D],
+  // The workspace filter went back to All once (0.183.1): every chat shows everywhere.
+  ["sidebar_all_183", D],
   ["order_by_activity", A],
   ["fast_mode", A],
   ["notify", A],
