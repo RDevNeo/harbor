@@ -44,7 +44,7 @@
 //   is made only when main isn't already in what runs, and never older than a running release).
 // - Run health per commit (health.ts) is what `ts/scripts/soaked.ts` releases from (`status` shows the
 //   last build's push-to-running time).
-import { appendFileSync, closeSync, copyFileSync, openSync, watch, type FSWatcher } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, linkSync, openSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { publicKey, type UpdateConfig } from "./config.ts";
 import { verifyFileSignature } from "./minisign.ts";
@@ -277,6 +277,18 @@ export function installLocal(cfg: UpdateConfig, bundle: string, version: string)
   writeAtomic(join(prev, "RUNTIME"), runtimeOnDisk(cfg));
   const manifest = read(join(dir, "manifest.json"));
   if (manifest !== "") writeAtomic(join(prev, "manifest.json"), manifest);
+  // A single executable runs the bundle it carries (no harbor-app.js here): that is what ran, so a link to it is kept.
+  // Without it `.previous` held no bundle and no runtime, and the start watchdog (hasPrevious) had nothing to go back
+  // to: a build of main that never showed its window left the PC without Harbor. Rolled back, the same runtime with
+  // VERSION back runs its own bundle again (launcher useEmbedded).
+  const exe = join(dir, RUNTIME_FILE);
+  if (!isFile(join(dir, BUNDLE_FILE)) && isFile(exe)) {
+    try {
+      linkSync(exe, join(prev, RUNTIME_FILE));
+    } catch {
+      // another volume or no links: as before, nothing to go back to
+    }
+  }
   const staged = join(dir, ".staging-local.js");
   copyFileSync(bundle, staged);
   replace(staged, join(dir, BUNDLE_FILE), prev);

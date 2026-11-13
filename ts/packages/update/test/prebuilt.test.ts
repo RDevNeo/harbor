@@ -1,11 +1,12 @@
 // Follow-main's builds of main made once on GitHub (main.yml's `main-build` prerelease), and the lockfile
 // shortcut of the builds made here: against real git repositories and a fake GitHub, the Bun steps faked.
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   defaultRunner,
   FollowMain,
+  installLocal,
   installKeyOf,
   MAIN_BUILD_TAG,
   parsePrebuiltComment,
@@ -18,8 +19,10 @@ import {
   type Runner,
 } from "../src/followmain.ts";
 import { readHealth } from "../src/health.ts";
+import { hasPrevious, rollback } from "../src/install.ts";
+import { useEmbedded, type AppBundle } from "../src/launcher.ts";
 import { parsePublicKey, verifyAsset } from "../src/minisign.ts";
-import { FakeHost, bundleSource, cleanup, makeInstall, makeKey, tmp, windowsTime, type TestKey } from "./support.ts";
+import { FakeHost, bundleSource, cleanup, configFor, makeInstall, makeKey, tmp, windowsTime, type TestKey } from "./support.ts";
 
 windowsTime();
 
@@ -292,4 +295,22 @@ test("the status and timeline lines for GitHub's build", () => {
   expect(timelineText({ commit: "c", version: "1.0.0+c", committedAt: 0, pushedAt: 10_000, noticedAt: 11_000, builtAt: 50_000, liveAt: 53_000, via: "github" })).toBe(
     "1.0.0+c ran 43 s after its push (heard 1 s, got GitHub's build 39 s, restarted 3 s).",
   );
+});
+
+test("a build of main over a single executable keeps a link to it, so a start that fails goes back to its own bundle", () => {
+  const inst = makeInstall();
+  rmSync(join(inst.dir, "harbor-app.js"));
+  const cfg = configFor(inst);
+  expect(hasPrevious(cfg)).toBe(false);
+  const built = join(tmp(), "harbor-app.js");
+  writeFileSync(built, bundleSource("1.0.0+abc1234"));
+  installLocal(cfg, built, "1.0.0+abc1234");
+  expect(hasPrevious(cfg)).toBe(true);
+  const r = rollback({ ...cfg, version: "1.0.0+abc1234" }, "it showed no frame in time");
+  expect(r).toEqual({ restored: "1.0.0", gaveUp: "1.0.0+abc1234" });
+  expect(readFileSync(join(inst.dir, "VERSION"), "utf8")).toBe("1.0.0");
+  expect(existsSync(inst.exe)).toBe(true);
+  // VERSION back at the executable's own release: it runs the bundle it carries, not the build of main beside it.
+  const embedded: AppBundle = { meta: { version: "1.0.0", minRuntime: "0.1.0" }, main: () => 0 };
+  expect(useEmbedded({ kind: "release", path: join(inst.dir, "harbor-app.js"), id: "", version: "1.0.0" }, embedded)).toBe(true);
 });
