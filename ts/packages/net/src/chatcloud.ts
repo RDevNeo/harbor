@@ -363,10 +363,16 @@ export class ChatCloud {
     return blank();
   }
 
+  /** What was last written: a round that changed nothing writes nothing. */
+  private written = "";
+
   private save(): void {
     try {
+      const text = JSON.stringify(this.saved);
+      if (text === this.written) return;
       privateDir(this.o.stateDir);
-      writePrivate(this.path(), JSON.stringify(this.saved));
+      writePrivate(this.path(), text);
+      this.written = text;
     } catch (e) {
       this.log(`couldn't save the cloud's state: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -403,27 +409,36 @@ export class ChatCloud {
       this.saved = blank(ctx.account);
       this.save();
     }
+    const errors: string[] = [];
+    // Each part on its own: a workspace that refuses (a token from before joining it) doesn't hold the others.
+    const step = async (what: string, f: () => Promise<void>): Promise<boolean> => {
+      try {
+        await f();
+        return true;
+      } catch (e) {
+        if (notThere(e)) {
+          if (this.unsupportedAt === 0) this.log("the account service has no workspace cloud yet: chats sync over the mesh only");
+          this.unsupportedAt = this.now();
+          return false;
+        }
+        errors.push(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+        return true;
+      }
+    };
     try {
-      if (ctx.mine !== "" && this.now() - this.fullAt >= FULL_MS) await this.publish(ctx);
+      if (ctx.mine !== "" && this.now() - this.fullAt >= FULL_MS && !(await step("sending", () => this.publish(ctx)))) return;
       if (this.now() - this.pulledAt >= PULL_EVERY_MS) {
         this.pulledAt = this.now();
-        for (const ws of ctx.workspaces) await this.pull(ctx, ws);
+        for (const ws of ctx.workspaces) if (!(await step(`reading ${ws}`, () => this.pull(ctx, ws)))) return;
         // Workspaces the account left: what was known of them goes (their copies stay, as the mesh's do).
         for (const ws of Object.keys(this.saved.read)) if (!ctx.workspaces.includes(ws)) delete this.saved.read[ws];
         this.save();
       }
-      await this.applyAll(ctx);
+      if (!(await step("copying", () => this.applyAll(ctx)))) return;
       this.unsupportedAt = 0;
-      this.err = "";
+      this.err = errors.join("; ");
+      if (this.err !== "") this.log(`sync: ${this.err}`);
       this.syncedAt = this.now();
-    } catch (e) {
-      if (notThere(e)) {
-        if (this.unsupportedAt === 0) this.log("the account service has no workspace cloud yet: chats sync over the mesh only");
-        this.unsupportedAt = this.now();
-        return;
-      }
-      this.err = e instanceof Error ? e.message : String(e);
-      this.log(`sync: ${this.err}`);
     } finally {
       this.save();
     }
