@@ -1488,10 +1488,10 @@ export component AppWindow inherits Window {
                     height: root.height;
                     background: Theme.bg100;
                     init => {
-                        keys.focus();
+                        settings-page.focus-page();
                     }
                     TouchArea { }
-                    SettingsPage {
+                    settings-page := SettingsPage {
                         width: parent.width;
                         height: parent.height;
                     }

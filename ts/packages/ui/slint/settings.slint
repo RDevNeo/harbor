@@ -227,6 +227,55 @@ export component SettingsPage inherits Rectangle {
     callback chose <=> SettingsBus.chose;
     callback pressed <=> SettingsBus.pressed;
     background: Theme.bg100;
+    // A scroll set on the bus (a restart's restore) moves the page; a new visit or another tab starts at the top.
+    property <length> bus-y: SettingsBus.scroll-y;
+    changed bus-y => {
+        if sv.content-y != self.bus-y {
+            sv.content-y = self.bus-y;
+        }
+    }
+    property <string> shown-tab: root.tab;
+    changed shown-tab => {
+        sv.content-y = 0;
+    }
+    init => {
+        SettingsBus.scroll-y = 0;
+    }
+    // Keys that scroll the page when it has the focus (not a field): PageUp/PageDown, Home/End and the arrows; the rest go on.
+    public function scroll-key(e: KeyEvent) -> bool {
+        if e.modifiers.control || e.modifiers.alt || e.modifiers.meta {
+            return false;
+        }
+        let page = max(40px, sv.visible-height - 40px);
+        let bottom = min(0px, sv.visible-height - sv.content-height);
+        let y = e.text == Key.PageDown ? sv.content-y - page
+            : e.text == Key.PageUp ? sv.content-y + page
+            : e.text == Key.DownArrow ? sv.content-y - 40px
+            : e.text == Key.UpArrow ? sv.content-y + 40px
+            : e.text == Key.End ? bottom
+            : e.text == Key.Home ? 0px
+            : 1px;
+        if y == 1px {
+            return false;
+        }
+        sv.content-y = max(bottom, min(0px, y));
+        true
+    }
+    public function focus-page() {
+        keys.focus();
+    }
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        key-pressed(e) => {
+            if root.scroll-key(e) {
+                return accept;
+            }
+            reject
+        }
+    }
     if root.nav-open: SettingsNav {
         x: 0;
         y: 0;
@@ -306,9 +355,13 @@ export component SettingsPage inherits Rectangle {
                 vertical-alignment: center;
             }
         }
-        ScrollView {
+        sv := ScrollView {
             vertical-stretch: 1;
-            viewport-y <=> SettingsBus.scroll-y;
+            // Not `content-y <=> SettingsBus.scroll-y`: bound two-way to a global, the viewport stayed at 0 whatever the
+            // wheel, touchpad or scrollbar did (Slint 1.18), so no page scrolled. The bus follows the page instead.
+            changed content-y => {
+                SettingsBus.scroll-y = self.content-y;
+            }
             HorizontalLayout {
                 alignment: center;
                 VerticalLayout {
@@ -376,6 +429,9 @@ export component SettingsWindow inherits Window {
     background: Theme.bg100;
     default-font-family: "Geist";
     SettingsPage {
+        init => {
+            self.focus-page();
+        }
         width: root.width;
         height: root.height;
     }
