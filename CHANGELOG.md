@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.183.3] - 2026-11-13
+
+### Fixed
+- Settings pages scroll again, with the mouse wheel, a touchpad, the scrollbar and PageUp/PageDown, Home/End and the
+  arrows: since 0.173 no page moved, so what was below the window (Settings › General's Computer use) couldn't be
+  reached. A new visit or another tab starts at the top; a restart still comes back where the page was.
+
 ## [0.183.2] - 2026-11-13
 
 ### Fixed
