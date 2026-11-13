@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.182.1] - 2026-11-13
+
+### Fixed
+- The agents' computer tool gets its screenshots again: a big answer over Harbor's local socket was cut after its
+  first write, so the tool said "no reply".
+
 ## [0.182.0] - 2026-11-13
 
 ### Added
