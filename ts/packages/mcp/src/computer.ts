@@ -4,10 +4,10 @@
 // recommends) and the agent's coordinates are in that picture's pixels, mapped back to the screen's here. The
 // system side is @harbor/os `screen` (Windows, macOS, Linux compositors and X11).
 //
-// The user decides: off until they turn it on in Settings › General (kv `computer_use`), and another PC's chats
-// only when they also allow that (kv `computer_use_peers`) and share everything with that PC. While an agent uses
-// the screen the chat says so and the desktop shows a notification; moving the pointer into the screen's
-// top-left corner stops every agent's input for a minute.
+// Always on for this PC's chats (no setting; the old kv `computer_use` and `computer_use_peers` are ignored). Another
+// PC's chats only when that PC is signed in to the same account as this one: the user's own PCs, never another
+// person's in a shared workspace. While an agent uses the screen the chat says so and the desktop shows a
+// notification; moving the pointer into the screen's top-left corner stops every agent's input for a minute.
 import { screen } from "@harbor/os";
 import { hostname } from "@harbor/net";
 import { ACTIONS, type ActionName, MAX_WAIT_S } from "./computerdef.ts";
@@ -15,8 +15,6 @@ import { isObject, type Json } from "./json.ts";
 
 export { ACTIONS, type ActionName, MAX_WAIT_S, toolDef } from "./computerdef.ts";
 
-export const ON_KEY = "computer_use";
-export const PEERS_KEY = "computer_use_peers";
 
 /** Actions that only look: allowed in every access mode. */
 const LOOKING: readonly ActionName[] = ["screenshot", "zoom", "cursor_position", "wait"];
@@ -336,9 +334,8 @@ export async function act(a: Action, opts: { after?: boolean; backend?: screen.B
 // --- The gate, the indicator, and other PCs ---
 
 export interface Gate {
-  /** kv flags, read on every call (a switch in Settings takes effect at once). */
-  on(): boolean;
-  peers(): boolean;
+  /** Whether the PC with mesh id `peer` is signed in to the same account as this one (the user's own PC). */
+  sameAccount(peer: string): boolean;
 }
 
 export interface Host extends Gate {
@@ -355,11 +352,6 @@ export function setHost(h: Host | null): void {
   host = h;
 }
 
-/** Whether this PC's owner lets agents use its screen. */
-export function enabled(): boolean {
-  return host?.on() === true;
-}
-
 const QUIET_MS = 5 * 60_000;
 const lastUse = new Map<string, number>();
 
@@ -371,12 +363,8 @@ function startsUse(key: string): boolean {
   return before === undefined || t - before > QUIET_MS;
 }
 
-const OFF = (): string =>
-  `Computer use is off on ${hostname()}. The user turns it on in Harbor › Settings › General › Computer use; ask them, then try again.`;
-
-/** Gate line for the agent when this PC can't act: off, or what this desktop lacks. Null when it can. */
+/** Gate line for the agent when this PC can't act: what this desktop lacks. Null when it can. */
 export function unavailable(): string | null {
-  if (!enabled()) return OFF();
   const p = screen.probe(process.env, true);
   if (!p.ok) return `Computer use can't run on ${hostname()} (${p.name}): it needs ${p.missing.join("; ")}. Tell the user what to install or allow.`;
   return null;
@@ -431,12 +419,10 @@ export async function call(args: unknown, ctx: CallContext): Promise<Result> {
   }
 }
 
-/** The `computer` tool for a chat of another PC (`peer`, its name), through `/mesh/v1/tool`: only when this PC's owner
- *  allows other PCs' chats and shares everything with that one (`full`). */
-export async function served(peer: string, full: boolean, args: unknown): Promise<Result> {
-  if (!enabled()) return textOf(false, OFF());
-  if (!host?.peers()) return textOf(false, `${hostname()} doesn't let other PCs' chats use its screen; its owner can allow it in Settings › General › Computer use there.`);
-  if (!full) return textOf(false, `${hostname()} shares less than everything with ${peer}, and its screen goes only with everything (Settings › Workspace there).`);
+/** The `computer` tool for a chat of another PC (`peer`: its mesh id and name), through `/mesh/v1/tool`: only when that
+ *  PC is signed in to the same account as this one. Another person's PC never gets this screen, whatever is shared. */
+export async function served(peer: { id: string; name: string }, args: unknown): Promise<Result> {
+  if (host === null || !host.sameAccount(peer.id)) return textOf(false, `${hostname()}'s screen is only for chats of PCs signed in to the same account as it, and ${peer.name} isn't one.`);
   const why = unavailable();
   if (why !== null) return textOf(false, why);
   try {
@@ -448,11 +434,4 @@ export async function served(peer: string, full: boolean, args: unknown): Promis
   } catch (e) {
     return textOf(false, e instanceof Error ? e.message : String(e));
   }
-}
-
-/** One line for Settings: what this PC's desktop can do. */
-export function statusLine(): string {
-  const p = screen.probe();
-  if (p.ok) return `Works here: ${p.name}.${p.limits.length > 0 ? ` ${p.limits.map((l) => l.charAt(0).toUpperCase() + l.slice(1)).join(". ")}.` : ""}`;
-  return `Not ready here (${p.name}): needs ${p.missing.join("; ")}.`;
 }

@@ -26,7 +26,7 @@ export type ActionName = (typeof ACTIONS)[number];
 
 export const MAX_WAIT_S = 60;
 
-const MACHINE = { type: "string", description: "Another PC of the user's Harbor mesh to use (its name, as the machines tool's `list` shows it); default: this PC" };
+const MACHINE = { type: "string", description: "Another PC of the user's own (signed in to the same account) to use (its name, as the machines tool's `list` shows it); default: this PC" };
 
 /** The tool's definition on the `harbor` server. */
 export function toolDef(mesh: boolean): JsonObj {
@@ -51,7 +51,7 @@ export function toolDef(mesh: boolean): JsonObj {
   return {
     name: "computer",
     description:
-      "See and control the screen of the PC Harbor runs on (or another PC of the mesh with `machine`): screenshots, the mouse and the keyboard, like Anthropic's computer-use tool. Start with a screenshot; coordinates are in its pixels (it's scaled down from the real screen). The user must turn it on (Harbor › Settings › General › Computer use) and sees when you use it; ask before anything that sends, buys, deletes or signs in, and don't touch windows unrelated to the task. Below full access only screenshot, zoom, cursor_position and wait work.",
+      "See and control the screen of the PC Harbor runs on (or another PC of the mesh with `machine`): screenshots, the mouse and the keyboard, like Anthropic's computer-use tool. Start with a screenshot; coordinates are in its pixels (it's scaled down from the real screen). It's always on for this PC's chats; another PC's screen works only when that PC is signed in to the same account as this one (never another person's). The user sees when you start (a notification) and stops you by moving the pointer into the screen's top-left corner. Never type passwords, codes or other secrets, and never act in sign-in, password or system authentication dialogs (UAC, polkit, keychain): ask the user to do those. Ask before anything that sends, buys, deletes or signs in, and don't touch windows unrelated to the task. Below full access only screenshot, zoom, cursor_position and wait work.",
     inputSchema: { type: "object", properties, required: ["action"] },
   };
 }

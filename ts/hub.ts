@@ -1076,17 +1076,20 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (!engine) throw new Error("the engine isn't started");
     return engine;
   };
-  // Computer use: the user's switches in Settings › General, a notification when an agent starts using the screen,
-  // and calls for another PC's screen through the mesh.
+  // Computer use: always on here; another PC's chats only from PCs signed in to this PC's account (the directory's
+  // owner of that mesh id). A notification when an agent starts using the screen, and calls for another PC's screen
+  // through the mesh.
   computer.setHost({
-    on: () => store.get(computer.ON_KEY) === "1",
-    peers: () => store.get(computer.PEERS_KEY) === "1",
+    sameAccount: (peer) => {
+      const me = account.account()?.id ?? "";
+      return me !== "" && directoryPcOwner(account.directory(), peer) === me;
+    },
     started: (who, here) =>
       eng().host.notify?.(
         "computer",
         "computer-use",
         here ? `${who} is using your screen` : `${who} is using this PC's screen`,
-        "An agent moves the mouse and types here (computer use). Move the pointer into the screen's top-left corner to stop it; turn it off in Settings › General.",
+        "An agent moves the mouse and types here (computer use). Move the pointer into the screen's top-left corner to stop it for a minute.",
       ),
     remote: (m, args, ctx) => machines.remoteComputer(m, args, ctx),
   });

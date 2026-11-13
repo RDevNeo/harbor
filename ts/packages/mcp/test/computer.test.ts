@@ -158,15 +158,8 @@ describe("the gate", () => {
   afterEach(() => setHost(null));
   const ctx = (access = "full", notes: string[] = []): CallContext => ({ chatId: 7, title: "Tests", access, chatGid: "g7", project: "harbor", notice: (t) => void notes.push(t) });
 
-  test("off until the user turns it on", async () => {
-    setHost({ on: () => false, peers: () => false, started: () => {} });
-    const r = await call({ action: "screenshot" }, ctx());
-    expect(r.ok).toBe(false);
-    expect((r.content[0] as { text: string }).text).toContain("Settings › General › Computer use");
-  });
-
   test("input needs full access; the arguments are checked first", async () => {
-    setHost({ on: () => true, peers: () => false, started: () => {} });
+    setHost({ sameAccount: () => false, started: () => {} });
     expect((await call({ action: "left_click" }, ctx("plan"))).content[0]).toMatchObject({ text: expect.stringContaining("needs full access") });
     expect((await call({ action: "nope" }, ctx())).ok).toBe(false);
   });
@@ -174,8 +167,7 @@ describe("the gate", () => {
   test("another PC's calls go through the mesh, and the chat says so once", async () => {
     const sent: unknown[] = [];
     setHost({
-      on: () => false,
-      peers: () => false,
+      sameAccount: () => false,
       started: () => {},
       remote: async (m, args) => {
         sent.push([m, args]);
@@ -188,17 +180,18 @@ describe("the gate", () => {
     expect(sent).toEqual([["lenovo", { action: "screenshot" }], ["lenovo", { action: "screenshot" }]]);
     expect(notes).toEqual(["Using the screen of lenovo"]);
     expect((await call({ action: "screenshot", machine: "nobody" }, ctx())).content[0]).toMatchObject({ text: expect.stringContaining("No PC named 'nobody'") });
-    // This PC by name is this PC: off here.
-    expect((await call({ action: "screenshot", machine: hostname() }, ctx())).content[0]).toMatchObject({ text: expect.stringContaining("is off") });
   });
 
-  test("other PCs' chats need the second switch and everything shared", async () => {
-    setHost({ on: () => true, peers: () => false, started: () => {} });
-    expect((await served("mac", true, { action: "screenshot" })).content[0]).toMatchObject({ text: expect.stringContaining("doesn't let other PCs' chats") });
-    setHost({ on: () => true, peers: () => true, started: () => {} });
-    expect((await served("mac", false, { action: "screenshot" })).content[0]).toMatchObject({ text: expect.stringContaining("shares less than everything") });
-    setHost({ on: () => false, peers: () => true, started: () => {} });
-    expect((await served("mac", true, { action: "screenshot" })).ok).toBe(false);
+  test("other PCs' chats only from PCs of the same account, never another person's", async () => {
+    const asked: string[] = [];
+    setHost({ sameAccount: (id) => (asked.push(id), id === "pc-mine"), started: () => {} });
+    const r = await served({ id: "pc-theirs", name: "mac" }, { action: "left_click", coordinate: [1, 1] });
+    expect(r.ok).toBe(false);
+    expect(r.content[0]).toMatchObject({ text: expect.stringContaining("same account") });
+    expect(asked).toEqual(["pc-theirs"]);
+    // No host (no account known): refused too.
+    setHost(null);
+    expect((await served({ id: "pc-mine", name: "mac" }, { action: "screenshot" })).ok).toBe(false);
   });
 });
 

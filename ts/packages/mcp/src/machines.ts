@@ -157,7 +157,7 @@ export async function serveTool(peer: string, body: unknown): Promise<Reply> {
   }
   if (tool === "computer") {
     const name = hub?.peers().find((p) => p.id === peer)?.name ?? peer;
-    const r = await computer.served(name, level === "full", args);
+    const r = await computer.served({ id: peer, name }, args);
     return ok({ ok: r.ok, content: r.content });
   }
   if (!TOOLS.includes(tool)) return err(400, "no such tool");

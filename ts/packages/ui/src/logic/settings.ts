@@ -41,27 +41,6 @@ export interface GeneralEnv {
   version: string;
   /** The home folder (paths show as ~/…); left out: this PC's. */
   home?: string;
-  /** What this PC's desktop can do for computer use (mcp's computer.ts `statusLine`); left out: no section. */
-  computer?: string;
-}
-
-/** Computer use's switches (mcp's computer.ts ON_KEY and PEERS_KEY): off until the user turns them on. */
-export const COMPUTER = { on: "computer_use", peers: "computer_use_peers" } as const;
-
-export function computerSection(kv: Kv, status: string): SettingSection {
-  const on = offUnless1(kv, COMPUTER.on);
-  return {
-    title: "Computer use",
-    rows: [
-      toggle(
-        COMPUTER.on,
-        "Let agents see and control this screen",
-        `Agents get a computer tool: screenshots, the mouse and the keyboard of this PC, as you would use them. The chat says when its agent starts, a notification pops up, and moving the pointer into the screen's top-left corner stops them for a minute. Below full access a chat may only take screenshots. ${status}`,
-        on,
-      ),
-      { ...toggle(COMPUTER.peers, "Also for chats from other PCs", "Chats running on the PCs you share everything with (Settings › Workspace) may use this screen too.", offUnless1(kv, COMPUTER.peers)), enabled: on },
-    ],
-  };
 }
 
 /** The Projects folder row's buttons (pages/settings.ts opens the folder picker for `change`). */
@@ -108,7 +87,6 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
     },
     projectsSection(kv, env.home ?? home()),
     worktreesSection(kv),
-    ...(env.computer === undefined ? [] : [computerSection(kv, env.computer)]),
     { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Harbor ${env.version}` }), ] },
   ];
 }
@@ -130,7 +108,7 @@ export function worktreesSection(kv: Kv): SettingSection {
 
 /** A toggle of the General tab, written to kv; false for what isn't a kv flag. */
 export function setGeneral(kv: Kv, key: string, value: boolean | number): boolean {
-  if ((key === "auto_fix" || key === "auto_merge" || Object.values(WT_CLEAN).includes(key as never) || Object.values(COMPUTER).includes(key as never)) && typeof value === "boolean") kv.set(key, value ? "1" : "0");
+  if ((key === "auto_fix" || key === "auto_merge" || Object.values(WT_CLEAN).includes(key as never)) && typeof value === "boolean") kv.set(key, value ? "1" : "0");
   else return false;
   return true;
 }
