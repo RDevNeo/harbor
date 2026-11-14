@@ -11,6 +11,7 @@ import { sessionDir } from "./movechat.ts";
 import * as turnscope from "./turnscope.ts";
 import { BRIDGE_PORT, BRIDGE_TOKEN, PORT_REF, RELAY } from "./relay.ts";
 import { type Account, accountEnv, binStr, childPath, defaultEffort, kindOf, type Kind } from "./providers.ts";
+import { limits } from "@harbor/store";
 
 export type Event =
   /** The provider's session id, needed to continue the conversation. */
@@ -35,8 +36,9 @@ export type Event =
   | { type: "compact"; state: "start" | "done" | "claude"; before: number; after: number; ok: boolean; error: string }
   /** Claude's request is out (its reply started streaming): a steer written now cuts into it. */
   | { type: "querying" }
-  /** The account hit a usage limit: its window, when it resets (Unix time) if known, and the CLI's sentence. */
-  | { type: "limit"; kind: string; resetsAt: number | null; text: string }
+  /** The account hit a usage limit: its window, when it resets (Unix time) if known, and the CLI's sentence. Kind
+   *  `billing` (limits.BILLING): it has no usable plan (payment past due, no credit, on hold), `code` the CLI's. */
+  | { type: "limit"; kind: string; resetsAt: number | null; text: string; code?: string }
   /** Live quota seen in a Claude turn: per window, utilization (0–1) and reset time. */
   | { type: "quota"; windows: [string, number, number][] };
 
@@ -100,6 +102,8 @@ export interface Servers {
   /** Codex's `-c` overrides for a turn: the local servers that are on, the signed-in apps and `extra` (Harbor's team server). With `lazy`, stdio servers go on the turn's bridge grant and Codex gets their URLs (`base` + name, the token from the environment variable `tokenVar`). */
   codexArgs(chatId: number, extra: [string, unknown][], lazy?: { servers: Record<string, unknown>; base: string; tokenVar: string } | null): string[] | Promise<string[]>;
   machinesName: string;
+  /** Harbor's own apps' servers (Gmail, Discord, WhatsApp): served by Harbor itself, unlike the user's servers and the third-party apps'. */
+  ownApps?: readonly string[];
 }
 
 export interface Integrations {
@@ -125,7 +129,14 @@ const harborOnly: Servers = {
   },
   codexArgs: (_chat, extra) => extra.flatMap(([k, v]) => codexStdio(k, v)),
   machinesName: "machines",
+  ownApps: [],
 };
+
+/** The MCP servers Harbor itself gives a turn: its team server, every PC's files, its own apps. */
+export function harborServers(): Set<string> {
+  const sv = integrations.servers;
+  return new Set(["harbor", sv.machinesName, ...(sv.ownApps ?? [])]);
+}
 
 export const integrations: Integrations = { servers: harborOnly, bridge: null, remote: null, workspace: null };
 
@@ -712,6 +723,15 @@ export function parseClaude(v: unknown): Event[] {
     if (dt === "text_delta") return [{ type: "textDelta", text: str(at(e, "delta", "text")) }];
     if (dt === "thinking_delta") return [{ type: "thinkingDelta", text: str(at(e, "delta", "thinking")) }];
     return [];
+  }
+  if (ty === "assistant" && at(v, "error") !== undefined && at(v, "error") !== null && at(v, "error") !== "rate_limit") {
+    // An account without a usable plan: by its code, or by its sentence (a code this version doesn't know yet).
+    const code = str(at(v, "error"));
+    const text = arr(at(v, "message", "content"))
+      .filter((b) => at(b, "type") === "text")
+      .map((b) => str(at(b, "text")))
+      .join(" ");
+    if (limits.BILLING_CODES.includes(code) || limits.billingFromText(text) !== null) return [{ type: "limit", kind: limits.BILLING, resetsAt: null, text, code }];
   }
   if (ty === "assistant" && at(v, "error") === "rate_limit") {
     const q = at(v, "quotaLimits");

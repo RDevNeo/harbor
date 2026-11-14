@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { type AccountInfo, type Block, Limits, type LimitsHost, fromText, nextBlock, windowLabel } from "../src/limits.ts";
+import { BILLING, billingBlock, billingFromText, billingWhat, type AccountInfo, type Block, Limits, type LimitsHost, fromText, nextBlock, windowLabel } from "../src/limits.ts";
 import { keyLabel, mergeWindows, percentText, quotaText, readingJson, readingText, type ReadingAccount, resetsIn } from "../src/usage_ctl.ts";
 import { type Chat, Store, blankChat, now } from "../src/index.ts";
 
@@ -349,4 +349,69 @@ test("reset times are read without GNU date (macOS, Windows)", async () => {
   expect(parseWhen("soon", "UTC", at)).toBeNull();
   expect(parseWhen("13pm", "UTC", at)).toBeNull();
   expect(parseWhen("5", "UTC", at)).toBeNull();
+});
+
+const PAST_DUE = "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead";
+
+test("billing failures read from their sentence: what the account has, or null for anything else", () => {
+  expect(billingFromText(PAST_DUE)).toBe("has no active subscription (payment past due)");
+  expect(billingFromText("Credit balance is too low")).toBe("is out of credit (credit balance too low)");
+  expect(billingFromText("Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead")).toBe("has no Claude Code access on its plan");
+  expect(billingFromText("Your account is on hold and can't use Claude Code. View details or appeal: https://claude.ai/restricted")).toBe("is on hold");
+  expect(billingFromText("Your subscription has expired")).toBe("has no active subscription (expired)");
+  expect(billingFromText("You've hit your limit · resets 3pm")).toBeNull();
+  expect(billingFromText("error_during_execution")).toBeNull();
+  expect(billingWhat("", "billing_error")).toBe("is out of credit");
+  expect(billingWhat("", "oauth_org_not_allowed")).toBe("has no active subscription");
+});
+
+test("an account without a usable plan is blocked; its chat moves on like at a limit, with one notice, and its error card is left out", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  h.store.setQuiet("limit_switch", "1");
+  h.store.setQuiet("limit_switch_accounts", '["claude", "claude2"]');
+  expect(l.limitEvent(c.id, { type: "limit", kind: BILLING, resetsAt: null, text: PAST_DUE, code: "oauth_org_not_allowed" })).toBe(true);
+  // The turn's result error that follows: consumed, no red card.
+  expect(l.limitEvent(c.id, { type: "error", text: PAST_DUE })).toBe(true);
+  expect(l.limitEvent(c.id, { type: "done" })).toBe(false);
+  const b = l.blocked("claude");
+  expect([b?.kind, b?.known, b?.until]).toEqual([BILLING, false, h.clock + 3600]);
+  expect(l.hitLimit(c.id)).toBe(true);
+  expect(l.switch.get(c.id)).toBe("claude2");
+  expect(h.notices).toEqual([]);
+  l.limitExited(c.id);
+  expect(h.chat(c.id)?.account).toBe("claude2");
+  expect(h.started[0]?.[1]).toContain("You're on another account now");
+  expect(h.notices).toEqual(["claude has no active subscription (payment past due) · continued on claude2"]);
+  // Never a switch target while blocked; a turn that goes through on it lifts the block.
+  const d = h.addChat({ account: "claude2" });
+  expect(l.switchTargets(d.id, false)).toEqual([]);
+  const e = h.addChat();
+  expect(l.limitEvent(e.id, { type: "done" })).toBe(false);
+  expect(l.blocked("claude")).toBeUndefined();
+  expect(l.switchTargets(d.id, false)).toEqual(["claude"]);
+});
+
+test("a billing failure with nowhere to go waits for the user (no timer); Continue tries the account again; it's tried again after an hour, then longer", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  // The sentence alone (a CLI without the code), in the turn's error line.
+  expect(l.limitEvent(c.id, { type: "error", text: "Credit balance is too low" })).toBe(true);
+  expect(l.paused.get(c.id)?.at).toBeNull();
+  expect(h.store.limitTimers()).toEqual([]);
+  expect(h.notices).toEqual(["claude is out of credit (credit balance too low) · waiting for you (automatic account switching is off)"]);
+  expect(l.limitText(c.id)).toEqual(["claude is out of credit (credit balance too low) · waiting for you", false]);
+  l.limitExited(c.id);
+  expect(l.limitGuard(c.id, "next", [])).toBe(true);
+  h.clock += 2 * 3600;
+  l.fireLimitTimers();
+  expect(h.started).toEqual([]);
+  // Expired: usable again; failing again within a day holds it 3 hours.
+  expect(l.blocked("claude")).toBeUndefined();
+  const again = billingBlock(l.blocks.get("claude"), h.clock);
+  expect([again.until - h.clock, again.tries]).toEqual([3 * 3600, 1]);
+  l.continueChat(c.id, true);
+  expect(h.started.length).toBe(1);
+  expect(h.started[0]?.[1]).toContain("next");
+  expect(h.notices.at(-1)).toBe("Trying this account again · continuing");
 });

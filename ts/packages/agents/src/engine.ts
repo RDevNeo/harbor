@@ -2063,16 +2063,19 @@ export class Engine {
 }
 
 /** The lead's line for a subagent's report (agentstrip.rs): its first sentence. */
-/** The notice for MCP servers Claude Code reports as failed when its process starts (null: none failed). Claude doesn't try them again; the next turn is a new process, which connects anew. */
-export function mcpFailNotice(servers: readonly (readonly [string, string])[]): string | null {
-  const failed = servers.filter(([, status]) => status === "failed").map(([name]) => name);
+/** The notice for Harbor's own MCP servers (`own`: harbor, machines, its apps) that Claude Code reports as failed when
+ *  its process starts (null: none failed). The user's own servers (and third-party apps') are left out: one that's
+ *  down (an app that isn't running) would say so on every turn, and it isn't Harbor's to fix. Claude doesn't try them
+ *  again; the next turn is a new process, which connects anew. */
+export function mcpFailNotice(servers: readonly (readonly [string, string])[], own: ReadonlySet<string> = agent.harborServers()): string | null {
+  const failed = servers.filter(([name, status]) => status === "failed" && own.has(name)).map(([name]) => name);
   if (failed.length === 0) return null;
   const names = failed.length <= 4 ? failed.join(", ") : `${failed.slice(0, 3).join(", ")} and ${failed.length - 3} more`;
   return `MCP servers didn't connect: ${names} · they reconnect on the next turn`;
 }
 
 export const MCP_FAIL_DETAIL =
-  "Claude Code couldn't reach these servers when this turn started, so their tools are missing until it ends. When every server that goes through Harbor failed at once, Harbor's MCP bridge was out of reach.";
+  "Claude Code couldn't reach these servers of Harbor's when this turn started, so their tools are missing until it ends. When they all failed at once, Harbor's MCP bridge was out of reach.";
 
 function noticedThisTurn(items: readonly Item[], text: string): boolean {
   for (let i = items.length - 1; i >= 0; i--) {
@@ -2123,7 +2126,8 @@ export function subsRunning(n: number): string {
 
 function limitEvent(ev: Event): limits.LimitEvent {
   if (ev.type === "quota") return { type: "quota", windows: ev.windows };
-  if (ev.type === "limit") return { type: "limit", kind: ev.kind, resetsAt: ev.resetsAt, text: ev.text };
+  if (ev.type === "limit") return { type: "limit", kind: ev.kind, resetsAt: ev.resetsAt, text: ev.text, code: ev.code ?? "" };
+  if (ev.type === "result") return { type: "done" };
   if (ev.type === "error") return { type: "error", text: ev.text };
   return { type: "other" };
 }

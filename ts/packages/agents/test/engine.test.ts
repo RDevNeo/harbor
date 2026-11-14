@@ -55,6 +55,13 @@ for await (const chunk of Bun.stdin.stream()) {
     out({ type: "user", isReplay: true, message: { content: [{ type: "text", text }] } });
     out({ type: "stream_event", event: { type: "message_start" } });
     if (text.includes("slow")) await Bun.sleep(700);
+    if (text.includes("unpaid")) {
+      // Claude Code 2.1.325 on an account whose payment is past due (its synthetic message, trimmed).
+      const said = "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead";
+      out({ type: "assistant", error: "oauth_org_not_allowed", isApiErrorMessage: true, apiErrorStatus: 403, message: { model: "<synthetic>", content: [{ type: "text", text: said }] } });
+      out({ type: "result", subtype: "success", is_error: true, result: said, usage: {} });
+      continue;
+    }
     if (text.includes("limit")) {
       out({ type: "assistant", error: "rate_limit", quotaLimits: { rateLimitType: "five_hour", resetsAt: Math.floor(Date.now() / 1000) + 3600 }, message: { content: [{ type: "text", text: "You've hit your limit" }] } });
       out({ type: "result", subtype: "error_during_execution", is_error: true, result: "You've hit your limit", usage: {} });
@@ -286,11 +293,11 @@ describe("a chat's turn", () => {
     store.close();
   });
 
-  test("MCP servers Claude reports failed leave a notice in the chat, once a turn", async () => {
+  test("Harbor's MCP servers Claude reports failed leave a notice in the chat, once a turn; the user's own don't", async () => {
     const failing = join(base, "claude-mcpfail");
     const src = readFileSync(fake, "utf8");
     expect(src).toContain("mcp_servers: []");
-    writeFileSync(failing, src.replace("mcp_servers: []", 'mcp_servers: [{ name: "harbor", status: "failed" }, { name: "github", status: "connected" }, { name: "machines", status: "failed" }]'));
+    writeFileSync(failing, src.replace("mcp_servers: []", 'mcp_servers: [{ name: "harbor", status: "failed" }, { name: "github", status: "connected" }, { name: "machines", status: "failed" }, { name: "blender", status: "failed" }]'));
     chmodSync(failing, 0o755);
     const { e, store } = setup(failing);
     const c = newChat(store);
@@ -640,6 +647,29 @@ describe("switching a subagent's account", () => {
     expect(texts(e.transcript(lead.id).items).some((t) => t.includes("[agent worker]"))).toBe(false);
     await until("its end", () => !e.running(sub.id));
     // Its report wakes the lead: that turn ends before the store closes.
+    await until("the lead's report turn", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent worker] finished its turn")) && !e.running(lead.id));
+    store.close();
+  }, 30_000);
+
+  test("an account without a usable subscription: the sub moves on like at a limit, with one notice and no error card, and the lead hears it", async () => {
+    const { e, store, lead, sub, dirA, dirB } = team();
+    mkdirSync(join(dirA, "projects", "-some-project"), { recursive: true });
+    writeFileSync(join(dirA, "projects", "-some-project", `${sub.sessionId}.jsonl`), '{"type":"user"}\n');
+    store.set("limit_switch", "1");
+    store.set("limit_switch_accounts", JSON.stringify(["claude", "claude3"]));
+    e.trigger(sub.id, "unpaid work", false);
+    await until("the move", () => e.chat(sub.id)?.account === "claude3", 10_000);
+    expect(e.limits.blocked("claude")?.kind).toBe("billing");
+    // Its conversation came along.
+    expect(existsSync(join(dirB, "projects", "-some-project", `${sub.sessionId}.jsonl`))).toBe(true);
+    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [harbor] You're on another account now.")));
+    const items = e.transcript(sub.id).items;
+    expect(items.filter((i) => i.kind === "notice").map((i) => (i.kind === "notice" ? `${i.icon}: ${i.text}` : ""))).toEqual(["alert: Claude has no active subscription (payment past due) · continued on Claude"]);
+    // Neither the CLI's sentence as a reply nor a red card.
+    expect(texts(items).some((t) => t.includes("can't use your Claude subscription"))).toBe(false);
+    expect(items.some((i) => i.kind === "error")).toBe(false);
+    expect(e.transcript(lead.id).items.some((i) => i.kind === "notice" && i.text === "worker stopped: Claude has no active subscription (payment past due) · moving to Claude (automatic switch)")).toBe(true);
+    await until("its end", () => !e.running(sub.id));
     await until("the lead's report turn", () => texts(e.transcript(lead.id).items).some((t) => t.startsWith("echo: [agent worker] finished its turn")) && !e.running(lead.id));
     store.close();
   }, 30_000);
@@ -1286,12 +1316,16 @@ describe("list_models", () => {
   });
 });
 
-test("the failed-MCP notice names the failed servers only, and only when some failed", () => {
+test("the failed-MCP notice names Harbor's failed servers only, and only when some failed", () => {
   expect(mcpFailNotice([])).toBeNull();
   expect(mcpFailNotice([["github", "connected"], ["gmail", "pending"], ["x", "needs-auth"]])).toBeNull();
   expect(mcpFailNotice([["harbor", "failed"]])).toBe("MCP servers didn't connect: harbor · they reconnect on the next turn");
-  const many = ["a", "b", "c", "d", "e", "f"].map((n): [string, string] => [n, "failed"]);
-  expect(mcpFailNotice(many)).toBe("MCP servers didn't connect: a, b, c and 3 more · they reconnect on the next turn");
+  // The user's own servers (and third-party apps) never: Blender not running isn't news on every turn.
+  expect(mcpFailNotice([["blender", "failed"], ["Roblox Studio", "failed"], ["playwright", "failed"], ["supabase", "failed"]])).toBeNull();
+  expect(mcpFailNotice([["blender", "failed"], ["machines", "failed"]])).toBe("MCP servers didn't connect: machines · they reconnect on the next turn");
+  const own = new Set(["a", "b", "c", "d", "e", "f"]);
+  const many = ["a", "b", "c", "d", "e", "f", "mine"].map((n): [string, string] => [n, "failed"]);
+  expect(mcpFailNotice(many, own)).toBe("MCP servers didn't connect: a, b, c and 3 more · they reconnect on the next turn");
 });
 
 // An OpenCode-shaped CLI (`opencode run --format json … <prompt>`): logs its arguments, answers "oc: <prompt>" in the

@@ -341,6 +341,19 @@ describe("event streams", () => {
       { type: "quota", windows: [["five_hour", 0.5, 8], ["seven_day", 1, 9]] },
       { type: "limit", kind: "seven_day", resetsAt: 9, text: "" },
     ]);
+    // No usable subscription (Claude Code 2.1.325's line, trimmed): a billing "limit", by its code or by its sentence.
+    const pastDue = "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead";
+    expect(agent.parseClaude({ type: "assistant", error: "oauth_org_not_allowed", isApiErrorMessage: true, apiErrorStatus: 403, message: { model: "<synthetic>", content: [{ type: "text", text: pastDue }] } })).toEqual([
+      { type: "limit", kind: "billing", resetsAt: null, text: pastDue, code: "oauth_org_not_allowed" },
+    ]);
+    expect(agent.parseClaude({ type: "assistant", error: "billing_error", message: { content: [{ type: "text", text: "Credit balance is too low" }] } })).toEqual([
+      { type: "limit", kind: "billing", resetsAt: null, text: "Credit balance is too low", code: "billing_error" },
+    ]);
+    expect(agent.parseClaude({ type: "assistant", error: "some_new_code", message: { content: [{ type: "text", text: pastDue }] } })).toEqual([
+      { type: "limit", kind: "billing", resetsAt: null, text: pastDue, code: "some_new_code" },
+    ]);
+    // Other errors stay text.
+    expect(agent.parseClaude({ type: "assistant", error: "invalid_request", message: { content: [{ type: "text", text: "Prompt is too long" }] } })).toEqual([{ type: "textFinal", text: "Prompt is too long" }]);
     expect(agent.parseClaude({ type: "user", isReplay: true, message: { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] } })).toEqual([{ type: "userEcho", text: "a\nb" }]);
     // Its request is out: what a steer waits for.
     expect(agent.parseClaude({ type: "stream_event", event: { type: "message_start", message: {} }, parent_tool_use_id: null })).toEqual([{ type: "querying" }]);

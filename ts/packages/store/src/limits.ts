@@ -74,8 +74,11 @@ export function accountName(a: AccountInfo): string {
 
 export type LimitEvent =
   | { type: "quota"; windows: Quota[] }
-  | { type: "limit"; kind: string; resetsAt: number | null; text: string }
+  /** `kind` BILLING: the account has no usable plan (`code`: the CLI's error code). */
+  | { type: "limit"; kind: string; resetsAt: number | null; text: string; code?: string }
   | { type: "error"; text: string }
+  /** The turn's result came. */
+  | { type: "done" }
   | { type: "other" };
 
 /** What the limits need from the app around them. */
@@ -114,6 +117,50 @@ export function windowLabel(kind: string): string {
 }
 
 export const isWeekly = (kind: string): boolean => kind.startsWith("seven_day");
+
+/** A block's kind when the account has no usable subscription or credit (payment past due, no plan, account on
+ *  hold): no reset is known, so it holds a while and is tried again after (`billingBlock`); a turn that succeeds on
+ *  the account, or "Continue now", lifts it. */
+export const BILLING = "billing";
+const PAY = "Pay or renew the plan, then Continue to try this account again, or continue on another account.";
+
+/** Claude Code's `error` codes for it on its synthetic assistant message: `oauth_org_not_allowed` (the subscription
+ *  can't be used: payment past due, or the organization turned Claude Code off), `billing_error` (an API account's
+ *  credit balance is too low) and `account_on_hold`. */
+export const BILLING_CODES: readonly string[] = ["oauth_org_not_allowed", "billing_error", "account_on_hold"];
+
+/** An error that reads like an account without a usable plan, from CLIs (or versions) without the codes above: what
+ *  the account "has" for notices ("has no active subscription (payment past due)"), or null. */
+export function billingFromText(text: string): string | null {
+  const l = asciiLower(text).replace(/\u2019/g, "'");
+  const any = (...k: string[]): boolean => k.some((x) => l.includes(x));
+  if (any("credit balance is too low", "credit balance too low", "insufficient credit", "out of credits")) return "is out of credit (credit balance too low)";
+  if (any("account is on hold", "account has been suspended", "account is suspended")) return "is on hold";
+  if (any("disabled claude subscription access", "not allowed for this organization", "doesn't include claude code", "does not include claude code", "plan doesn't include", "plan does not include"))
+    return "has no Claude Code access on its plan";
+  if (any("past due", "payment failed", "payment is overdue")) return "has no active subscription (payment past due)";
+  if (any("subscription has expired", "subscription expired")) return "has no active subscription (expired)";
+  if (any("subscription was cancel", "subscription has been cancel", "subscription is cancel")) return "has no active subscription (cancelled)";
+  if (any("can't use your claude subscription", "cannot use your claude subscription", "no active subscription", "requires a subscription", "requires a paid plan", "pay or renew"))
+    return "has no active subscription";
+  return null;
+}
+
+/** How a billing block's account is said in notices, from what the CLI said and its code. */
+export function billingWhat(text: string, code = ""): string {
+  const t = billingFromText(text);
+  if (t !== null) return t;
+  if (code === "billing_error") return "is out of credit";
+  if (code === "account_on_hold") return "is on hold";
+  return "has no active subscription";
+}
+
+/** The block after a billing failure: an hour, then 3 and 12 while it keeps failing within a day. */
+export function billingBlock(prev: Block | undefined, at: number): Block {
+  const tries = prev && prev.kind === BILLING && prev.until > at - 24 * 3600 ? prev.tries + 1 : 0;
+  const hours = [1, 3, 12][Math.min(tries, 2)] ?? 12;
+  return { until: at + hours * 3600, kind: BILLING, known: false, tries, cap: null };
+}
 
 let offsetCache: number | undefined;
 
@@ -314,6 +361,12 @@ export class Limits {
   quotaAt = new Map<string, number>();
   /** Chats whose running turn hit a limit (until it exits). */
   readonly hit = new Set<number>();
+  /** Chats whose running turn failed for want of a usable plan (until it exits): its error card is left out. */
+  private readonly billed = new Set<number>();
+  /** Per chat moving off a billing failure: what the CLI said, for the notice once it moved. */
+  private readonly billingText = new Map<number, string>();
+  /** Per account: how its billing block is said ("has no active subscription (payment past due)"); not stored. */
+  readonly billingWhy = new Map<string, string>();
   /** Chats to move to another account once their limited turn has exited. */
   readonly switch = new Map<number, string>();
   /** Limit hits already told to a sub-agent's lead (chat:account:until), so a retry doesn't tell again. */
@@ -456,6 +509,7 @@ export class Limits {
 
   /** "Paused at your 80% cap of the weekly limit" or "Hit the weekly limit". */
   static blockReason(b: Block): string {
+    if (b.kind === BILLING) return "No usable subscription on this account";
     return b.cap !== null ? `Paused at your ${b.cap}% cap of the ${windowLabel(b.kind)} limit` : `Hit the ${windowLabel(b.kind)} limit`;
   }
 
@@ -474,6 +528,10 @@ export class Limits {
         this.save();
         return true;
       case "limit": {
+        if (ev.kind === BILLING) {
+          this.billingHit(chatId, ev.text, ev.code ?? "");
+          return true;
+        }
         let { kind, resetsAt } = ev;
         // Newer CLIs leave quotaLimits out of the synthetic message: read its text.
         if (resetsAt === null) {
@@ -487,9 +545,24 @@ export class Limits {
         return true;
       }
       case "error": {
+        // The turn's own error line after it: the notice says it already.
+        if (this.billed.has(chatId)) return true;
+        if (!this.hit.has(chatId) && billingFromText(ev.text) !== null) {
+          this.billingHit(chatId, ev.text, "");
+          return true;
+        }
         if (!this.hit.has(chatId)) {
           const parsed = fromText(ev.text, this.now());
           if (parsed) this.limitHit(chatId, parsed[0], parsed[1], ev.text);
+        }
+        return false;
+      }
+      case "done": {
+        // A turn that went through: the account is usable again.
+        if (!this.hit.has(chatId) && this.blocks.get(account)?.kind === BILLING) {
+          this.blocks.delete(account);
+          this.billingWhy.delete(account);
+          this.save();
         }
         return false;
       }
@@ -501,11 +574,23 @@ export class Limits {
   /** After the turn's exit was handled. */
   limitExited(chatId: number): void {
     this.hit.delete(chatId);
+    this.billed.delete(chatId);
     const to = this.switch.get(chatId);
     if (to === undefined) return;
     this.switch.delete(chatId);
     const chat = this.host.chat(chatId);
     const b = chat ? this.blocks.get(chat.account) : undefined;
+    if (chat && b?.kind === BILLING) {
+      const from = this.host.account(chat.account);
+      const target = this.host.account(to);
+      const what = `${from ? accountName(from) : chat.account} ${this.billingSaid(chat.account)}`;
+      const said = this.billingText.get(chatId) ?? "";
+      this.billingText.delete(chatId);
+      if (this.continueOn(chatId, to, "", { text: `${what} · continued on ${target ? accountName(target) : to}`, detail: said })) return;
+      this.pause(chatId, true);
+      this.host.notice(chatId, "alert", `${what} · waiting for you`, `${said}${said === "" ? "" : "\n\n"}${PAY}`);
+      return;
+    }
     const why = b ? `hit its ${windowLabel(b.kind)} limit` : "";
     // If it can't move, it waits for the reset like any other.
     if (!this.continueOn(chatId, to, why)) this.pause(chatId, true);
@@ -553,6 +638,50 @@ export class Limits {
     for (const [id, p] of others) this.pause(id, p.resume);
   }
 
+  /** What a billing block's account "has", for notices. */
+  billingSaid(account: string): string {
+    return this.billingWhy.get(account) ?? "has no active subscription";
+  }
+
+  /** The chat's turn failed because its account has no usable subscription or credit: the account is blocked (no
+   *  reset known, see `billingBlock`), and the chat moves to another account as at a limit, or waits for the user. */
+  private billingHit(chatId: number, said: string, code: string): void {
+    const chat = this.host.chat(chatId);
+    if (!chat) return;
+    const at = this.now();
+    const first = !this.billed.has(chatId);
+    this.hit.add(chatId);
+    this.billed.add(chatId);
+    if (!first) return; // the same failure, seen twice (its message, then its result)
+    const prev = this.blocks.get(chat.account);
+    const block = prev && prev.kind === BILLING && prev.until > at ? prev : billingBlock(prev, at);
+    this.blocks.set(chat.account, block);
+    this.billingWhy.set(chat.account, billingWhat(said, code));
+    const from = this.host.account(chat.account);
+    const name = from ? accountName(from) : chat.account;
+    const what = `${name} ${this.billingSaid(chat.account)}`;
+    const to = this.autoTarget(chatId);
+    if (to !== undefined) {
+      // One notice once it moved (limitExited): "… · continued on <account>".
+      const a = this.host.account(to);
+      this.billingText.set(chatId, said.trim());
+      this.switch.set(chatId, to);
+      this.save();
+      this.host.teamNote?.(chatId, `stopped: ${what} · moving to ${a ? accountName(a) : to} (automatic switch)`, said, false);
+      return;
+    }
+    this.pause(chatId, true);
+    const { on } = this.switchSettings();
+    const others = this.switchTargets(chatId, false);
+    const why = others.length === 0 ? "no other account can take it" : on ? "no account on the automatic-switch list can take it" : "automatic account switching is off";
+    const text = `${what} · waiting for you (${why})`;
+    this.host.notice(chatId, "alert", text, `${said.trim()}${said.trim() === "" ? "" : "\n\n"}${PAY}`);
+    const target = others[0] === undefined ? undefined : this.host.account(others[0]);
+    const note = others[0] === undefined ? text : `${text} · Continue on ${target ? accountName(target) : others[0]} available`;
+    this.host.noteLimit(chatId, chat.account, true, note);
+    if (chat.role === "sub") this.tellLead(chatId, chat.account, block, null, said);
+  }
+
   /** Settings: continue automatically, also weekly, wait at most (hours), notify. */
   limitSettings(): { auto: boolean; weekly: boolean; hours: number; notify: boolean } {
     const on = (k: string, d: boolean): boolean => {
@@ -570,7 +699,8 @@ export class Limits {
     const block = this.blocks.get(chat.account);
     if (!block) return;
     const { auto, weekly, hours } = this.limitSettings();
-    const ok = auto && (weekly || !isWeekly(block.kind)) && block.until - this.now() <= hours * 3600 && block.tries < MAX_TRIES;
+    // No reset to wait for after a billing failure: the user decides.
+    const ok = block.kind !== BILLING && auto && (weekly || !isWeekly(block.kind)) && block.until - this.now() <= hours * 3600 && block.tries < MAX_TRIES;
     const keep = resume || (this.paused.get(chatId)?.resume ?? false);
     const old = this.paused.get(chatId)?.timer ?? null;
     if (old !== null) this.host.store.deleteTimer(old);
@@ -598,7 +728,7 @@ export class Limits {
       const target = this.host.account(to);
       this.host.setAccount(chatId, to);
       const cap = this.blocks.get(account)?.cap ?? null;
-      const why = cap !== null ? `is at your ${cap}% cap` : "is at its usage limit";
+      const why = cap !== null ? `is at your ${cap}% cap` : this.blocks.get(account)?.kind === BILLING ? this.billingSaid(account) : "is at its usage limit";
       this.host.notice(chatId, "clock", `Switched to ${target ? accountName(target) : to} (${from ? accountName(from) : ""} ${why})`, "");
       return false;
     }
@@ -612,7 +742,10 @@ export class Limits {
     if (!this.paused.has(chatId)) {
       this.pause(chatId, false);
       const b = this.blocks.get(account);
-      if (b && b.cap !== null) {
+      if (b && b.kind === BILLING) {
+        const from = this.host.account(account);
+        this.host.notice(chatId, "alert", `${from ? accountName(from) : account} ${this.billingSaid(account)} · waiting for you`, PAY);
+      } else if (b && b.cap !== null) {
         const at = this.paused.get(chatId)?.at ?? null;
         const then = at === null ? "" : ` · continuing at ${when(at, this.now())}`;
         this.host.notice(chatId, "clock", `${Limits.blockReason(b)}${then}`, "");
@@ -646,6 +779,7 @@ export class Limits {
       return;
     }
     if (this.host.turnRunning(chatId)) return;
+    const wasBilling = this.blocks.get(p.account)?.kind === BILLING;
     if (force) {
       this.blocks.delete(p.account);
     } else if (this.blocked(p.account)) {
@@ -673,7 +807,7 @@ export class Limits {
     this.host.pending.delete(chatId);
     this.syncPending();
     if (parts.length === 0) return;
-    const text = this.ctl.lifting ? "Under your cap again · continuing" : "Usage limit reset · continuing";
+    const text = this.ctl.lifting ? "Under your cap again · continuing" : force && wasBilling ? "Trying this account again · continuing" : "Usage limit reset · continuing";
     this.host.notice(chatId, "clock", text, "");
     this.host.noteResumed(chatId, p.account, text);
     this.host.startTurn(chatId, parts.join("\n\n---\n\n"));
@@ -696,6 +830,10 @@ export class Limits {
     if (this.host.turnRunning(chatId)) return null;
     const block = this.blocks.get(p.account);
     const at = this.now();
+    if (block && block.kind === BILLING) {
+      const a = this.host.account(p.account);
+      return [`${a ? accountName(a) : p.account} ${this.billingSaid(p.account)} · waiting for you`, false];
+    }
     const what = block && block.cap !== null ? `Paused at your ${block.cap}% cap · resets ${when(block.until, at)}` : "Usage limit";
     let text: string;
     if (p.at !== null) text = `${what} · continuing at ${when(p.at, at)} (in ${minutesText(Math.max(p.at - at, 0))})`;
@@ -790,7 +928,7 @@ export class Limits {
   }
 
   /** Moves the chat to `to` and continues it there now. False if it couldn't move. */
-  continueOn(chatId: number, to: string, why: string): boolean {
+  continueOn(chatId: number, to: string, why: string, said?: { text: string; detail: string }): boolean {
     if (this.host.turnRunning(chatId)) return false;
     const err = this.bringSession(chatId, to);
     if (err !== null) {
@@ -801,7 +939,8 @@ export class Limits {
     const from = chat ? this.host.account(chat.account) : undefined;
     const target = this.host.account(to);
     this.host.setAccount(chatId, to);
-    this.host.notice(chatId, "clock", `Switched to ${target ? accountName(target) : to} (${from ? accountName(from) : ""} ${why})`, "");
+    if (said) this.host.notice(chatId, "alert", said.text, said.detail);
+    else this.host.notice(chatId, "clock", `Switched to ${target ? accountName(target) : to} (${from ? accountName(from) : ""} ${why})`, "");
     const p = this.paused.get(chatId);
     this.paused.delete(chatId);
     if (p && p.timer !== null) this.host.store.deleteTimer(p.timer);
@@ -849,7 +988,10 @@ export class Limits {
     const from = this.host.account(account);
     const label = windowLabel(block.kind);
     const then = pausedAt !== null ? `it continues there at ${when(pausedAt, at)}` : `it waits (resets ${when(block.until, at)}; it doesn't continue by itself)`;
-    const text = `hit the ${label} limit on ${from ? accountName(from) : account} (account '${account}') · ${then}`;
+    const text =
+      block.kind === BILLING
+        ? `stopped: ${from ? accountName(from) : account} (account '${account}') ${this.billingSaid(account)} · it waits; it doesn't continue by itself`
+        : `hit the ${label} limit on ${from ? accountName(from) : account} (account '${account}') · ${then}`;
     const { on } = this.switchSettings();
     const why = on ? "No account on the automatic-switch list has quota left, so it didn't move by itself." : "Automatic account switching is off on this PC, so it didn't move by itself.";
     const others = this.switchTargets(chatId, false).map((id) => {
@@ -867,6 +1009,7 @@ export class Limits {
    *  was cut off and goes on with `MOVED`), or null when it wasn't paused. */
   takePause(chatId: number): boolean | null {
     this.switch.delete(chatId);
+    this.billingText.delete(chatId);
     const p = this.paused.get(chatId);
     if (!p) return null;
     this.paused.delete(chatId);

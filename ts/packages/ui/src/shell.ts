@@ -4435,7 +4435,7 @@ export class Shell {
     for (const a of this.data.accounts) {
       if (a.bin === null || a.off === true || a.loggedIn === false) continue;
       const block = this.engine.limits.blocked(a.id);
-      const desc = a.id === wanted ? "Moves here when this turn ends" : block ? `At its ${block.cap !== null ? "cap" : "limit"} · resets ${limits.when(block.until)}` : a.kind !== (this.account(c.account)?.kind ?? a.kind) ? "New session, conversation kept" : "";
+      const desc = a.id === wanted ? "Moves here when this turn ends" : block?.kind === limits.BILLING ? "No usable subscription" : block ? `At its ${block.cap !== null ? "cap" : "limit"} · resets ${limits.when(block.until)}` : a.kind !== (this.account(c.account)?.kind ?? a.kind) ? "New session, conversation kept" : "";
       items.push(this.item(providers.short(a), pick(a.id), { desc, checked: a.id === c.account }));
     }
     this.popup("agent-account", x, y, items, 280);

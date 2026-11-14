@@ -1,5 +1,5 @@
 import { fixed } from "./cost.ts";
-import { accountName, type Limits, type Quota, type UsageWindow, when } from "./limits.ts";
+import { accountName, BILLING, type Limits, type Quota, type UsageWindow, when } from "./limits.ts";
 
 /** How often caps are checked against usage (seconds). */
 const CHECK_EVERY = 5;
@@ -294,6 +294,7 @@ export class UsageCtl {
     const b = this.limits.blocked(account);
     if (!b) return undefined;
     const at = this.limits.now();
+    if (b.kind === BILLING) return `No usable subscription · tried again at ${when(b.until, at)}`;
     return b.cap !== null ? `Paused at ${b.cap}% · until ${when(b.until, at)}` : `Limit reached · until ${when(b.until, at)}`;
   }
 }
