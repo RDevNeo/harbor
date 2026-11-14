@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.0] - 2026-11-14
+
+### Added
+- Chats show "Syncing" while the workspace cloud brings them up to date, and nothing that would race the sync can
+  change them meanwhile: while a chat's session and work come from another PC, while it's handed to or taken from
+  another PC, while a newer version of it is on its way, and for the first seconds after Harbor starts, the PC wakes
+  or you sign in. Its composer says why with a spinner and the send button is off (your draft stays); its row shows
+  a grey spinner and "Syncing"; rename, settle, delete, moves, shares, Runs on and account or model picks wait, on
+  the desktop and the phone alike (the PC refuses them for phones and other PCs too). Messages from agents wait for
+  the sync instead of failing. It never lasts: after 30 s without an answer the chat opens again.
+
 ## [0.186.2] - 2026-11-13
 
 ### Fixed
