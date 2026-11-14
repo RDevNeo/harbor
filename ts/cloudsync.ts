@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { type AccountDirectory, type CarryChat, type CarryFolder, ChatCloud, type CloudOwnChat, type CloudProject, type CloudSink, type CloudSource, type Hub, type Snap, type StoreReplica } from "./packages/net/src/index.ts";
+import { type AccountDirectory, type CarryChat, type CarryFolder, ChatCloud, type CloudBehind, type CloudOwnChat, type CloudProject, type CloudSink, type CloudSource, type CloudWatch, type Hub, type Snap, type StoreReplica, type Syncing } from "./packages/net/src/index.ts";
 import { githead, itemJson, parseDropped, repoDir, type Store } from "./packages/store/src/index.ts";
 
 /** The epoch copies made from the workspace cloud are noted under: never a PC's, so the mesh fetches a copy's items afresh once its PC is back. */
@@ -20,6 +20,8 @@ export interface CloudSyncHost {
   log?: ((line: string) => void) | undefined;
   /** Continue anywhere (continuehere.ts `carrySource`): this PC's chats' sessions and work go up too. */
   carry?: { carry(): CarryChat[]; snapshot(f: CarryFolder): Promise<Snap | null> } | undefined;
+  /** The per-chat syncing state (syncing.ts): what the rounds find behind, and when the first read is done. */
+  syncing?: Syncing | undefined;
   /** Tests: the clock and smaller transcript chunks. */
   clock?: (() => number) | undefined;
   chunkItems?: number | undefined;
@@ -101,8 +103,30 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
       h.replica().applyDropped(pc.id, parseDropped(list));
       h.copied(null);
     },
+    ownGids: () => new Map(h.store.chats().flatMap((c) => (c.home === "" && c.gid !== "" ? [[c.gid, c.updated] as [string, number]] : []))),
   };
-  return new ChatCloud({ stateDir: h.stateDir, fp: h.fp, meId: () => h.hub.mesh.me.id, source, sink, log: h.log, clock: h.clock, chunkItems: h.chunkItems, pokeMs: h.pokeMs });
+  const s = h.syncing;
+  const watch: CloudWatch | undefined = s && {
+    stale: () => s.boot("the first sync after signing in"),
+    pulled: () => s.pulled(),
+    behind: (list) => s.behind(behindChats(h, list)),
+  };
+  return new ChatCloud({ stateDir: h.stateDir, fp: h.fp, meId: () => h.hub.mesh.me.id, source, sink, log: h.log, clock: h.clock, chunkItems: h.chunkItems, pokeMs: h.pokeMs, watch });
+}
+
+/** The chats here the cloud's newer versions are of: a copy by its PC and id there, this PC's own by its gid. */
+function behindChats(h: CloudSyncHost, list: readonly CloudBehind[]): Map<number, { key: string; why: string }> {
+  const out = new Map<number, { key: string; why: string }>();
+  for (const b of list) {
+    if (b.gid !== "") {
+      const id = h.store.chatIdByGid(b.gid);
+      if (id !== null) out.set(id, { key: b.key, why: `${h.hub.mesh.nameOf(b.pc)} went on with it` });
+      continue;
+    }
+    const id = h.hub.mesh.localId(b.pc, b.hid);
+    if (id !== null) out.set(id, { key: b.key, why: "a newer version is coming from the cloud" });
+  }
+  return out;
 }
 
 /** The workspace cloud's log: everything with HARBOR_ACCOUNT_LOG=1, else its problems only, each once an hour (a sync that stopped shows in the journal). */

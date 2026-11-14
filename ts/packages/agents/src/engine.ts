@@ -53,6 +53,10 @@ export interface EngineHost {
   moving?(chatId: number): boolean;
   /** The chat came here from a PC that is off and its session and work are on their way (continuehere.ts): true when the host holds this turn and starts it once they're here. */
   prepare?(chatId: number, prompt: string, files: readonly string[]): boolean;
+  /** Why the chat is syncing (net's syncing.ts: its newest version on its way, handed on or taken over), or null. */
+  syncing?(chatId: number): string | null;
+  /** Runs `f` once the chat isn't syncing: a turn that came meanwhile (an agent's message, a wake-up) waits for it. */
+  afterSync?(chatId: number, f: () => void): void;
   /** A message sent to a moving chat is kept by the host, which sends it where the chat ends up; true when kept. */
   hold?(chatId: number, text: string, files: string[], mentions: Mention[]): boolean;
   /** Where a chat pinned to a device runs (net's remote.rs); throws the chat's error. */
@@ -545,6 +549,12 @@ export class Engine {
     // Taken over from a PC that is off: its session and work come first (continuehere.ts).
     if (!this.turns.has(id) && (this.host.prepare?.(id, prompt, files) ?? false)) {
       this.persist(id);
+      return;
+    }
+    // Syncing (its newest version on its way, or it's being handed on): the turn starts once that's done.
+    if (!this.turns.has(id) && this.host.afterSync && (this.host.syncing?.(id) ?? null) !== null) {
+      this.persist(id);
+      this.host.afterSync(id, () => this.startTurn(id, prompt, files));
       return;
     }
     // One turn per chat. A runner still going for it, even one this Harbor lost track of, holds

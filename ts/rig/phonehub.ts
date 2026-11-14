@@ -312,6 +312,12 @@ chat({ gid: CONTINUED_GID, repoId: mobile, role: "lead", title: "Add the offline
   notice("monitor", contN.text, contN.detail),
   say("Added a close button; it comes back the next time the app goes offline.", ago(0)),
 ]);
+// One that is syncing now (syncing.ts): its session and work are on their way from the Tower; sending waits.
+const SYNCING_GID = "c4e7a1b2-0000-4000-8000-0000000f0a05";
+const syncingChat = chat({ gid: SYNCING_GID, repoId: mobile, role: "lead", title: "Migrate the settings screen", updated: ago(0) }, [
+  user("Move the settings screen to the new navigation.", ago(90)),
+  say("Moved the three settings pages; the deep links still point at the old routes. Fixing those next.", ago(80)),
+]);
 const deploy = Bun.spawn(["sleep", "86400"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 const { procStart } = await import("../packages/agents/src/procfs.ts");
 const deployLog = join(dir, "state", "deploy.log");
@@ -335,6 +341,8 @@ const h = await startHub({ version, hookPort: false });
 // The drawer's statuses: an unread chat (blue) and one paused at its account's usage limit (Limited).
 h.engine.unread.add(lazy.id);
 h.engine.limits.paused.set(notesChat.id, { account: "claude", resume: false, at: null, timer: null });
+// Syncing: the drawer's row and the composer say so while the Tower's session and work come.
+h.syncing.hold(syncingChat.id, "bringing its session and work from Tower", 24 * 3600_000);
 h.hub.touch(null, true);
 
 // The captcha's picture: the challenge stage as hCaptcha shows it, at 2x the page (448 x 628 page
@@ -401,7 +409,7 @@ const front = Bun.serve({
   },
 });
 console.log(`phonehub ready ${port}`);
-console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID, waiting: WAITING_GID, switch: SWITCH_GID, none: NONE_GID, taken: TAKEN_GID }));
+console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID, waiting: WAITING_GID, switch: SWITCH_GID, none: NONE_GID, taken: TAKEN_GID, syncing: SYNCING_GID }));
 const stop = async () => {
   front.stop(true);
   deploy.kill();

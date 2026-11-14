@@ -355,7 +355,9 @@ export type Status =
   /** Waiting out a usage limit: "Limited", amber; `text` is when it lifts ("" not known), for its tip. */
   | { kind: "limited"; text: string }
   /** A folded project with a chat at work: its spinner alone. */
-  | { kind: "busy" };
+  | { kind: "busy" }
+  /** Its newest version is on its way, or it's being handed on (net's syncing.ts): a grey spinner and "Syncing". */
+  | { kind: "syncing" };
 
 /** What a chat's own status is made of (it and its subagents'). */
 export interface StatusFacts {
@@ -371,11 +373,14 @@ export interface StatusFacts {
   /** What wakes it again (a process, subagent, wake-up or key asked: "2 processes"), null for nothing. */
   waiting?: string | null;
   unread: boolean;
+  /** Syncing (net's syncing.ts): nothing that changes it is done meanwhile. */
+  syncing?: boolean;
 }
 
 /** A chat's own status: working, waiting on a limit, written in or open elsewhere, failed, waiting on what wakes it, done until opened, else `idle`. */
 export function ownStatus(f: StatusFacts, idle: Status, now: number, off: number): Status {
   if (f.working !== null) return { kind: "working", secs: f.working };
+  if (f.syncing === true) return { kind: "syncing" };
   if (f.paused) return { kind: "limited", text: f.paused.at === null ? "" : when(f.paused.at, now, off) };
   if (f.typing) return { kind: "text", icon: "PEN_LINE", text: "", color: "blue-900" };
   if (f.viewed) return { kind: "text", icon: null, text: "●", color: "blue-900" };
@@ -414,6 +419,7 @@ export function foldedStatus(main: Status | null, hidden: readonly Status[], idl
   const quiet = (s: Status) => s.kind === "text" && s.icon === null && s.color === "gray-800";
   if (main !== null && !quiet(main)) return main;
   if (hidden.some((s) => s.kind === "working" || s.kind === "busy")) return { kind: "busy" };
+  if (hidden.some((s) => s.kind === "syncing")) return { kind: "syncing" };
   if (hidden.some((s) => s.kind === "waiting" || s.kind === "limited")) return { kind: "waiting", text: "" };
   if (hidden.some((s) => s.kind === "failed")) return { kind: "failed" };
   if (hidden.some((s) => s.kind === "done")) return { kind: "done" };

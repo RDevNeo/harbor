@@ -58,6 +58,12 @@ export interface FailoverHost {
   refresh?: () => Promise<void>;
   /** Sends this PC's chat `hid` up with its session and work now (chatcloud.ts `carryNow`): true once they're up. */
   carryNow?: (hid: number, limitMs: number) => Promise<boolean>;
+  /** The per-chat syncing state (syncing.ts): a chat handed on or taken over syncs meanwhile. */
+  syncing?: {
+    hold(chat: number, why: string, ms?: number): () => void;
+    drop(chat: number): void;
+    why(chat: number): string | null;
+  };
 }
 
 /** The short notice of a chat that came here without its agent session (it stayed on `off`). */
@@ -235,18 +241,25 @@ export class Failover {
     const peer = this.mesh.peer(c.home);
     if (!e || !m || !peer?.online || this.whyNotHere(c) !== null) return null;
     const name = peer.name === "" ? peer.id : peer.name;
-    const r = await m
-      .forward(dest(peer), name, "POST", ["v1", "chats", String(c.homeId), "handoff"], { to: this.mesh.me.id }, [], [this.here(), ""], null)
-      .catch((): null => null);
-    if (r === null || r.status >= 300) return null;
-    // Its session and work are up now: read them before the chat is taken.
-    await this.h.refresh?.().catch(() => undefined);
-    const now = this.h.store.chat(c.id);
-    if (!now || now.home !== c.home) return null;
-    const why = this.takeHere(now, name, true);
-    if (why !== null) return null;
+    // The chat syncs while it comes here: nothing else changes it meanwhile (this message is the one that brings it).
+    const release = this.h.syncing?.hold(c.id, `bringing it here from ${name}`, HANDOFF_MS + 15_000) ?? (() => {});
+    let now: Chat | undefined;
+    try {
+      const r = await m
+        .forward(dest(peer), name, "POST", ["v1", "chats", String(c.homeId), "handoff"], { to: this.mesh.me.id }, [], [this.here(), ""], null)
+        .catch((): null => null);
+      if (r === null || r.status >= 300) return null;
+      // Its session and work are up now: read them before the chat is taken.
+      await this.h.refresh?.().catch(() => undefined);
+      now = this.h.store.chat(c.id);
+      if (!now || now.home !== c.home) return null;
+      const why = this.takeHere(now, name, true);
+      if (why !== null) return null;
+    } finally {
+      release();
+    }
     this.h.store.set(runsOnKey(c.gid), "");
-    const own = this.h.store.chat(c.id) ?? now;
+    const own = this.h.store.chat(c.id) ?? now ?? c;
     if (sendHere !== null) return sendHere(own);
     e.send(c.id, msg.text, { files: msg.files, mentions: msg.mentions as never });
     return ok({ ok: true, here: true });
@@ -265,11 +278,25 @@ export class Failover {
     if (this.h.mine?.(to) !== true) return err(403, "only a PC of this account's workspaces takes its chats");
     const busy = () => e.running(c.id) || e.queuedCount(c.id) > 0 || e.waiting(c.id) !== null || e.chats.some((k) => k.parent === c.id && k.home === "" && e.running(k.id));
     if (busy()) return { status: 409, body: { error: "it runs here now", running: true } };
-    const carried = (await this.h.carryNow?.(c.id, HANDOFF_MS).catch(() => false)) ?? false;
-    if (busy()) return { status: 409, body: { error: "it started here meanwhile", running: true } };
-    // Its agent session couldn't go up (no workspace cloud here, its room is full): it goes on here, where it is.
-    if (!carried && c.started && c.sessionId !== "") return { status: 409, body: { error: "its session couldn't be sent up", running: false } };
-    return ok({ ok: true, count: this.h.store.items(c.id).length, carried });
+    // Syncing already (another PC is taking it, its own newest version isn't here): that one goes first.
+    const syncing = this.h.syncing?.why(c.id) ?? null;
+    if (syncing !== null) return { status: 409, body: { error: `it is syncing (${syncing})`, running: false, syncing: true } };
+    const name = this.mesh.nameOf(to);
+    // It syncs here from now until the other PC's version of it is seen (`release`), or for SYNC_MS at most.
+    const release = this.h.syncing?.hold(c.id, `handing it to ${name}`) ?? (() => {});
+    let handed = false;
+    try {
+      const carried = (await this.h.carryNow?.(c.id, HANDOFF_MS).catch(() => false)) ?? false;
+      if (busy()) return { status: 409, body: { error: "it started here meanwhile", running: true } };
+      // Its agent session couldn't go up (no workspace cloud here, its room is full): it goes on here, where it is.
+      if (!carried && c.started && c.sessionId !== "") return { status: 409, body: { error: "its session couldn't be sent up", running: false } };
+      handed = true;
+      return ok({ ok: true, count: this.h.store.items(c.id).length, carried });
+    } finally {
+      // Handed on: it stays syncing until the other PC's version of it is seen here (`release`), SYNC_MS at most.
+      if (handed) this.h.syncing?.hold(c.id, `${name} is taking it over`);
+      release();
+    }
   }
 
   private hold(c: Chat, msg: WaitingMessage, off: string, why: string): Reply {
@@ -445,6 +472,8 @@ export class Failover {
     }
     this.h.store.saveChat({ ...own, sessionId: "" });
     this.h.store.setHome(own.id, peer, hid);
+    // Handed on: what held it here for that is over.
+    this.h.syncing?.drop(own.id);
     // Taken over here once before: that's settled, the peer has it now.
     this.h.store.set(takenKey(own.gid), "");
     own.home = peer;

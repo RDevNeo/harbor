@@ -138,6 +138,7 @@ import {
   fakeAccount,
   fakePeerDevices,
   newPeer,
+  Syncing,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
@@ -150,7 +151,7 @@ import { chatCloud, cloudLog } from "./cloudsync.ts";
 import { carrySource, ContinueHere } from "./continuehere.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer" | "syncing" | "afterSync">;
 
 export interface HubOptions {
   /** What peers and phones compare (advertised: older ones read only the first three numbers). */
@@ -204,6 +205,8 @@ export interface RunningHub {
   failover: Failover;
   /** The workspace cloud (chatcloud.ts): the account loop runs its rounds; rigs drive it themselves. */
   cloud: ChatCloud;
+  /** Which chats are syncing (syncing.ts): while one is, nothing that changes what syncs of it is done. */
+  syncing: Syncing;
   /** This PC's and the mesh's agent accounts, each sign-in once (meshaccounts.ts); another PC's run there. */
   sharedAccounts: () => SharedAccount[];
   windowMesh: WindowMesh;
@@ -367,8 +370,32 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     log: vaultLog,
   });
   single.attach();
+  // A chat syncing (its newest version on its way, handed on or taken over) takes no change that would race the sync
+  // (syncing.ts): the window, phones, other PCs' calls and agents' turns all ask it. Its own redraws don't poke the cloud.
+  let syncTouch = false;
+  const syncing = new Syncing({
+    inCloud: (id) => {
+      const c = engine?.chat(id) ?? store.chat(id);
+      return c !== undefined && (c.home !== "" || cloud.published(id));
+    },
+    cloudOn: () => signedIn(),
+    changed: (chat) => {
+      syncTouch = true;
+      try {
+        if (engine) engine.changed(chat);
+        else hub.touch(chat, true);
+      } finally {
+        syncTouch = false;
+      }
+    },
+    late: (chat, why) => process.stderr.write(`harbor: sync: ${chat === null ? "the cloud's chats" : `chat ${chat}`} waited too long for ${why} (the cloud or the other PC didn't answer): open again\n`),
+    woke: () => cloud.pullSoon(),
+  });
+  // The account loop's state, read lazily (it's made below).
+  let signedIn = (): boolean => false;
   // The workspace cloud: this PC's chats and projects follow the account and its workspaces to PCs that are on while this one is off (cloudsync.ts).
   const cloud = chatCloud({
+    syncing,
     stateDir: state,
     fp: () => id.fp,
     store,
@@ -384,6 +411,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // A chat made, renamed, settled or deleted here, or a message: it goes up within seconds (a PC may be switched off,
   // or booted into its other OS, right after).
   hub.touched.add((chat) => {
+    if (syncTouch) return;
     if (chat === null || !hub.mesh.foreign.has(chat)) cloud.poke();
   });
   // A chat taken over from a PC that is off goes on with its session and work from the cloud (continuehere.ts).
@@ -396,6 +424,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     here: () => hub.mesh.me.name,
     touch: (chat) => hub.touch(chat, true),
     log: (line) => process.stderr.write(`harbor: ${line}\n`),
+    hold: (chat, why) => syncing.hold(chat, why),
   });
   const account = new AccountService({
     kv: store,
@@ -529,6 +558,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const projects = new ProjectsApi({
     moves,
     store,
+    syncing: (chat) => syncing.why(chat),
     reload: () => engine?.reload(),
     touch: () => hub.touch(null, true),
     me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name }),
@@ -830,6 +860,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     refresh: () => cloud.refresh(),
     carryNow: (hid, limitMs) => cloud.carryNow(hid, limitMs),
+    syncing,
   });
   ramMeter.start();
   const mesh = new Mesh({
@@ -1128,6 +1159,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
     hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
     prepare: (chat, prompt, files) => continueHere.prepare(chat, prompt, files),
+    // A chat syncing: its turns (an agent's message, a wake-up) wait for the sync; people's changes are refused.
+    syncing: (chat) => syncing.why(chat),
+    afterSync: (chat, f) => syncing.after(chat, f),
     // A chat of a project that moved to another PC doesn't run in the folder it left here.
     missingFolder: (c) => projectMove?.movedLine(c) ?? folders?.goneLine(c) ?? projectClones.missingFolder(c),
     // A folder Harbor knew that's gone from its path is looked for first (moved or renamed), then cloned.
@@ -1334,6 +1368,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // Run anywhere: another of this account's PCs takes one of this PC's chats. Not while it runs, waits or has messages
   // queued here (those go on here, and the other PC sends its message here); else its session and work go up first.
   phone.d.handoff = (c, to) => failover.handoff(c, to);
+  phone.d.syncing = (id) => syncing.why(id);
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc, want) => mover.movePc(chat, pc, false, want ?? null) };
   phone.d.engine = {
     running: (id) => live.running(id),
@@ -1482,7 +1517,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const voiceKv = setInterval(() => dictate.loadFrom(store), 15_000);
   voiceKv.unref();
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
+  signedIn = () => signIn && account.account() !== null;
+  // Until the first read of the workspace cloud, its chats here may be older than theirs elsewhere: they sync.
+  if (signIn) syncing.boot();
   if (signIn) account.start();
+  // Shots and previews: chats shown syncing ("all": every one) for an hour.
+  const fakeSync = env.HARBOR_FAKE_SYNCING ?? "";
+  if (fakeSync !== "") {
+    const ids = fakeSync === "all" ? store.chats().map((c) => c.id) : fakeSync.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    for (const id of ids) syncing.hold(id, "bringing its session and work from another PC", 3_600_000);
+  }
   folders?.start();
   const tick = setInterval(() => {
     hub.enabled = true;
@@ -1520,6 +1564,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     runOn,
     failover,
     cloud,
+    syncing,
     sharedAccounts: sharedNow,
     windowMesh,
     setBusyIn: (f) => {
@@ -1564,6 +1609,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     stop: async () => {
       // What the last turns left goes up first (another PC goes on with it while this one is off).
       await cloud.flush(3000);
+      syncing.stop();
       clearInterval(tick);
       folders?.stop();
       // Pull request lookups still out (git, gh) would land on a closed store.

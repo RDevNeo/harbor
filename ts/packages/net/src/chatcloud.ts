@@ -129,6 +129,8 @@ export interface CloudSink {
   projects(pc: CloudPc, list: CloudProject[]): void;
   /** What PC `pc` deleted of the chats it took over from PCs that were off (dropped.ts). */
   dropped?(pc: CloudPc, list: Json[]): void | Promise<void>;
+  /** This PC's own chats (not copies): gid → when each last changed (syncing.ts: one another PC went on with is behind). */
+  ownGids?(): ReadonlyMap<string, number>;
 }
 
 export type CloudCall = (method: "GET" | "PUT" | "POST", path: string, body?: Json) => Promise<unknown>;
@@ -158,6 +160,29 @@ export interface ChatCloudOptions {
   chunkBytes?: number | undefined;
   /** Tests: the pause after a change before its round (POKE_MS). */
   pokeMs?: number | undefined;
+  /** What the per-chat syncing state (syncing.ts) needs to know of the rounds. */
+  watch?: CloudWatch | undefined;
+}
+
+/** A chat a newer version of which is in the cloud and isn't applied here yet. */
+export interface CloudBehind {
+  /** A copy of PC `pc`'s chat `hid`… */
+  pc: string;
+  hid: number;
+  /** …or this PC's own chat with this gid, which another PC went on with ("" for a copy). */
+  gid: string;
+  /** The version (the row's hash). */
+  key: string;
+}
+
+/** The rounds as the syncing state sees them (syncing.ts). */
+export interface CloudWatch {
+  /** A new account signed in here: its chats wait for its first read. */
+  stale(): void;
+  /** Every workspace was read and what it had applied, or there is no cloud to read: the start's wait ends. */
+  pulled(): void;
+  /** After each read and apply: the chats still behind the cloud. */
+  behind(list: CloudBehind[]): void;
 }
 
 export interface CloudStatus {
@@ -463,6 +488,11 @@ export class ChatCloud {
     }
   }
 
+  /** This PC's chat `hid` is published in the workspace cloud (its other PCs follow it there). */
+  published(hid: number): boolean {
+    return Object.hasOwn(this.saved.pub.chats, String(hid));
+  }
+
   status(): CloudStatus {
     const state = this.saved.account === "" ? "off" : this.unsupportedAt !== 0 ? "unsupported" : "on";
     const known = Object.values(this.saved.read).reduce((n, w) => n + Object.values(w.chats).filter((c) => !c.gone).length, 0);
@@ -592,13 +622,23 @@ export class ChatCloud {
   }
 
   private async round(ctx: CloudContext): Promise<void> {
-    if (ctx.account === "") return;
+    const w = this.o.watch;
+    if (ctx.account === "") {
+      w?.pulled();
+      return;
+    }
     this.ctx = ctx;
-    if (this.unsupportedAt !== 0 && this.now() - this.unsupportedAt < UNSUPPORTED_MS) return;
+    if (this.unsupportedAt !== 0 && this.now() - this.unsupportedAt < UNSUPPORTED_MS) {
+      w?.pulled();
+      return;
+    }
     if (this.saved.account !== ctx.account) {
       this.saved = blank(ctx.account);
       this.save();
+      w?.stale();
     }
+    let read = false;
+    let readOk = true;
     const errors: string[] = [];
     // Each part on its own: a workspace that refuses (a token from before joining it) doesn't hold the others.
     const step = async (what: string, f: () => Promise<void>): Promise<boolean> => {
@@ -612,19 +652,38 @@ export class ChatCloud {
           return false;
         }
         errors.push(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+        if (what.startsWith("reading") || what === "copying") readOk = false;
         return true;
       }
     };
     try {
-      if (ctx.mine !== "" && this.now() - this.fullAt >= FULL_MS && !(await step("sending", () => this.publish(ctx)))) return;
+      if (ctx.mine !== "" && this.now() - this.fullAt >= FULL_MS && !(await step("sending", () => this.publish(ctx)))) {
+        w?.pulled();
+        return;
+      }
       if (this.now() - this.pulledAt >= PULL_EVERY_MS) {
         this.pulledAt = this.now();
-        for (const ws of ctx.workspaces) if (!(await step(`reading ${ws}`, () => this.pull(ctx, ws)))) return;
+        read = true;
+        for (const ws of ctx.workspaces)
+          if (!(await step(`reading ${ws}`, () => this.pull(ctx, ws)))) {
+            w?.pulled();
+            return;
+          }
         // Workspaces the account left: what was known of them goes (their copies stay, as the mesh's do).
         for (const ws of Object.keys(this.saved.read)) if (!ctx.workspaces.includes(ws)) delete this.saved.read[ws];
         this.save();
+        // What's newer there than here: those chats sync until it's applied (most are, a moment later, below).
+        if (w) w.behind(this.behindNow(ctx));
       }
-      if (!(await step("copying", () => this.applyAll(ctx)))) return;
+      if (!(await step("copying", () => this.applyAll(ctx)))) {
+        w?.pulled();
+        return;
+      }
+      if (w) {
+        w.behind(this.behindNow(ctx));
+        // A read that failed (the cloud unreachable) ends the start's wait only by its timeout.
+        if (read && readOk) w.pulled();
+      }
       this.unsupportedAt = 0;
       this.err = errors.join("; ");
       if (this.err !== "") this.log(`sync: ${this.err}`);
@@ -1160,6 +1219,53 @@ export class ChatCloud {
       shared: Array.isArray(v.shared) ? v.shared.filter((x): x is string => typeof x === "string") : [],
     };
     st.projects[row.id] = { by: row.by, pc: v.pc, p, h: sha(row.v) };
+  }
+
+  /**
+   * The chats a newer version of which is known here and not applied yet: copies of PCs that are off whose row
+   * `applyAll` would take (as it decides), and this PC's own chats another PC listed newer (it went on with them: the
+   * mesh or the cloud makes this PC's a copy of it). Rows of PCs the mesh follows are the mesh's to bring.
+   */
+  private behindNow(ctx: CloudContext): CloudBehind[] {
+    const sink = this.o.sink;
+    const me = this.o.meId();
+    const out: CloudBehind[] = [];
+    const mine = sink.ownGids?.() ?? new Map<string, number>();
+    const newest = new Map<string, { updated: number; row: string }>();
+    for (const st of Object.values(this.saved.read)) {
+      for (const [row, c] of Object.entries(st.chats)) {
+        const gid = typeof c.chat.gid === "string" ? c.chat.gid : "";
+        if (gid === "" || c.gone) continue;
+        const updated = typeof c.chat.updated === "number" ? c.chat.updated : 0;
+        const b = newest.get(gid);
+        if (!b || updated > b.updated) newest.set(gid, { updated, row });
+      }
+    }
+    for (const [ws, st] of Object.entries(this.saved.read)) {
+      if (!ctx.workspaces.includes(ws)) continue;
+      for (const [id, c] of Object.entries(st.chats)) {
+        if (c.gone) continue;
+        const pc = sink.pcOf(c.by);
+        if (!pc || pc.id !== c.pc || pc.id === me) continue;
+        const gid = typeof c.chat.gid === "string" ? c.chat.gid : "";
+        const updated = typeof c.chat.updated === "number" ? c.chat.updated : 0;
+        const own = gid === "" ? undefined : mine.get(gid);
+        if (own !== undefined) {
+          if (newest.get(gid)?.row === id && updated > own) out.push({ pc: pc.id, hid: c.hid, gid, key: c.mh });
+          continue;
+        }
+        if (sink.online(pc.id)) continue;
+        if (gid !== "" && newest.get(gid)?.row !== id) continue;
+        const done = this.saved.applied[`${pc.id}\0${c.hid}`];
+        const copy = sink.copy(pc.id, c.hid);
+        if (done && done.mh === c.mh && (copy ? hexDigest(copy.digest) === c.digest : done.digest === c.digest)) continue;
+        // No copy here yet (one is made, nothing here to race), the copy is that version, or the mesh brought a newer one.
+        if (!copy || (hexDigest(copy.digest) === c.digest && copy.count === c.count)) continue;
+        if (copy.updated > updated || (copy.updated === updated && copy.count > c.count)) continue;
+        out.push({ pc: pc.id, hid: c.hid, gid: "", key: c.mh });
+      }
+    }
+    return out;
   }
 
   /** Makes or updates the copies of the chats of PCs that are off, from what's known of each workspace. */

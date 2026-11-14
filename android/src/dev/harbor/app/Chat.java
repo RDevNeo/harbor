@@ -325,9 +325,16 @@ public class Chat extends Base implements Images.Gallery {
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
         String fo = c.isNull("failover") ? "" : c.optString("failover", "");
         boolean warn = c.optBoolean("failover_warn");
+        // Syncing (hubs from 0.187): its newest version is on its way, or it's being handed on. Nothing goes out meanwhile.
+        String sync = Sidebar.syncing(c);
+        comp.syncing(!sync.isEmpty());
+        if (!sync.isEmpty()) {
+            fo = "Syncing: " + sync + ". Sending and changes wait until it's done.";
+            warn = false;
+        }
         foNote.setText(fo);
         foNote.setTextColor(warn ? (Ui.dark ? 0xfffef3dd : 0xff541c00) : Ui.G700);
-        foIcon.setText(warn ? "\ue077" : "\ue11d");
+        foIcon.setText(!sync.isEmpty() ? Ui.I_LOADER : warn ? "\ue077" : "\ue11d");
         foIcon.setTextColor(warn ? (Ui.dark ? 0xfff2a20d : 0xffa64f00) : Ui.G700);
         foBox.setBackground(warn ? Ui.round(Ui.dark ? 0xff291800 : 0xfffff6e1, Ui.dark ? 0xff6b4105 : 0xffffc85e, 12) : Ui.round(Ui.CARD, Ui.LINE, 12));
         foBox.setVisibility(!ro && !fo.isEmpty() ? View.VISIBLE : View.GONE);
@@ -2298,6 +2305,8 @@ public class Chat extends Base implements Images.Gallery {
     private void send(String mode) {
         String text = composer.getText().toString().trim();
         if (text.isEmpty() && !attach.any() && mentions.length() == 0) return;
+        // Syncing: nothing goes out (the PC would refuse it too); the draft stays, the note above says why.
+        if (comp.syncing()) { Ui.toast(this, "Syncing… try again in a moment"); return; }
         if (attach.busy()) { Ui.toast(this, "Still uploading…"); return; }
         typing(false, false);
         JSONArray files = attach.ids();

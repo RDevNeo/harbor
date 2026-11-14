@@ -13,7 +13,7 @@ import { busOf } from "./pages/bus.ts";
 import type { Pixels } from "./logos.ts";
 
 export interface StatusData {
-  kind: "working" | "done" | "failed" | "waiting" | "limited" | "busy" | "text";
+  kind: "working" | "done" | "failed" | "waiting" | "limited" | "busy" | "syncing" | "text";
   text: string;
   icon: string;
   color: string;
@@ -326,12 +326,12 @@ export interface ComposerState {
   device: string;
   /** The device chip's glyph; "" is the house. */
   device_icon: string;
-  action: "send" | "stop" | "steer" | "queue" | "update" | "resume";
+  action: "send" | "stop" | "steer" | "queue" | "update" | "resume" | "syncing";
   action_tip: string;
   hint: string;
   typing: string;
   notice: string;
-  /** "warn" amber with the alert glyph, "pc" the PC glyph, "" plain (composer.slint). */
+  /** "warn" amber with the alert glyph, "pc" the PC glyph, "sync" a spinner (syncing), "" plain (composer.slint). */
   notice_tone: string;
   place: string;
   error: string;

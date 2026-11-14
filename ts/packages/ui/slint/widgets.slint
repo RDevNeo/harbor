@@ -385,7 +385,7 @@ export struct StatusData {
 
 export component StatusView {
     in property <StatusData> status;
-    property <color> shade: status.kind == "working" || status.kind == "busy" ? Theme.blue-900 : status.kind == "done" ? Theme.green-900 : status.kind == "failed" ? Theme.red-900 : status.kind == "waiting" || status.kind == "limited" ? Theme.amber-900 : status.color;
+    property <color> shade: status.kind == "syncing" ? Theme.subtle : status.kind == "working" || status.kind == "busy" ? Theme.blue-900 : status.kind == "done" ? Theme.green-900 : status.kind == "failed" ? Theme.red-900 : status.kind == "waiting" || status.kind == "limited" ? Theme.amber-900 : status.color;
     property <string> label: status.kind == "working" ? "Working " + status.text : status.kind == "failed" ? "Failed" : status.kind == "limited" ? "Limited" : status.kind == "busy" ? "" : status.text;
     HorizontalLayout {
         alignment: end;
@@ -401,7 +401,7 @@ export component StatusView {
             }
         }
         // widgets.rs: in a 13px icon box, radius 13/2 - 0.5 (egui's feathered stroke reads half a pixel wider).
-        if root.status.kind == "working" || root.status.kind == "busy": Rectangle {
+        if root.status.kind == "working" || root.status.kind == "busy" || root.status.kind == "syncing": Rectangle {
             width: 13px;
             Spinner {
                 radius: 6.5px;

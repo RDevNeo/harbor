@@ -44,14 +44,19 @@ export struct SideRow {
     pane-focus: bool,
 }
 
-// A chat's status before its title: the spinner while it works, amber while it waits or is limited, blue while unread,
-// red when its turn failed.
+// A chat's status before its title: the spinner while it works (grey while it syncs), amber while it waits or is
+// limited, blue while unread, red when its turn failed.
 component LeadMark {
     in property <StatusData> status;
     width: 12px;
     if root.status.kind == "working": Spinner {
         radius: 5px;
         color: Theme.blue-900;
+    }
+    // Syncing (its newest version on its way, or handed on): a grey spinner; changes to it wait.
+    if root.status.kind == "syncing": Spinner {
+        radius: 5px;
+        color: Theme.subtle;
     }
     if root.status.kind == "waiting" || root.status.kind == "limited": Rectangle {
         width: 6px;
@@ -72,20 +77,20 @@ component LeadMark {
     }
 }
 
-// What a chat row says on its right: Working, Waiting, Limited or Failed in their colours; a snooze's clock or another
+// What a chat row says on its right: Working, Syncing, Waiting, Limited or Failed in their colours; a snooze's clock or another
 // mark as the status says it; else when it was last active ("13m ago").
 component RowStatus {
     in property <StatusData> status;
     in property <string> ago;
-    property <bool> word: status.kind == "working" || status.kind == "waiting" || status.kind == "limited" || status.kind == "failed";
+    property <bool> word: status.kind == "working" || status.kind == "waiting" || status.kind == "limited" || status.kind == "failed" || status.kind == "syncing";
     property <bool> mark: status.kind == "text" && (status.icon != "" || status.text == "●");
     width: self.preferred-width;
     HorizontalLayout {
         alignment: end;
         if root.word: Text {
-            text: root.status.kind == "working" ? "Working" : root.status.kind == "waiting" ? (root.status.text == "" ? "Waiting" : root.status.text) : root.status.kind == "limited" ? "Limited" : "Failed";
+            text: root.status.kind == "working" ? "Working" : root.status.kind == "syncing" ? "Syncing" : root.status.kind == "waiting" ? (root.status.text == "" ? "Waiting" : root.status.text) : root.status.kind == "limited" ? "Limited" : "Failed";
             font-size: 12.5px;
-            color: root.status.kind == "working" ? Theme.blue-900 : root.status.kind == "failed" ? Theme.red-900 : Theme.amber-900;
+            color: root.status.kind == "working" ? Theme.blue-900 : root.status.kind == "syncing" ? Theme.subtle : root.status.kind == "failed" ? Theme.red-900 : Theme.amber-900;
             vertical-alignment: center;
         }
         if root.mark: StatusView {
@@ -181,7 +186,7 @@ component ThreadRow {
     property <bool> hovering: area.has-hover || worktree.has-hover || pr.has-hover || shared.has-hover || owner.has-hover || settle-btn.hovered || snooze-btn.hovered;
     property <bool> indented: data.kind == "thread";
     // A loose chat (Threads, Settled) keeps its chat glyph until it has a status to show there.
-    property <bool> lead-status: data.status.kind == "working" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
+    property <bool> lead-status: data.status.kind == "working" || data.status.kind == "syncing" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
     // The branch it works on, on a second line under the title.
     property <bool> two-lines: data.branch != "";
     // The hover buttons' width: the clock and Settle, icons only.

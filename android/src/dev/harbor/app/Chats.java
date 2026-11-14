@@ -121,6 +121,14 @@ public class Chats extends Base {
      *  deleted (if any) runs instead after a delete. */
     static void menu(Base a, Hub hub, JSONObject c, Runnable after, Runnable deleted) {
         String id = c.optString("id");
+        // Syncing: every change waits (the PC refuses them too), as the desktop's menu greys them out.
+        String sync = Sidebar.syncing(c);
+        if (!sync.isEmpty()) {
+            Ui.dialog(a).setTitle(c.optString("title", "Chat"))
+                    .setMessage("Syncing… " + sync + ". Rename, settle, moves and delete wait until it's up to date.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
         boolean settled = c.optBoolean("settled");
         // Sub-agents move with their lead: no "Move to PC…" on them.
         boolean sub = "sub".equals(c.optString("role"));

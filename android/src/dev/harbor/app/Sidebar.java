@@ -955,9 +955,15 @@ final class Sidebar {
         return t;
     }
 
+    /** Why the chat is syncing (hubs from 0.187: its newest version on its way, or it's being handed on), "" when it isn't. */
+    static String syncing(JSONObject c) {
+        return c == null || c.isNull("syncing") ? "" : c.optString("syncing", "");
+    }
+
     /** The status before a chat's title, or null for none. */
     private View leadMark(JSONObject c, String you) {
         if (working(c)) return Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE);
+        if (!syncing(c).isEmpty()) return Ui.icon(a, Ui.I_LOADER, 14, Ui.G600);
         if (c.optBoolean("failed")) return Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED);
         if (waiting(c) || c.optBoolean("limited") || Hub.queued(c) > 0) return centred(Ui.dot(a, Ui.AMBER, 7));
         if (c.optBoolean("unread")) return centred(Ui.dot(a, Ui.BLUE, 7));
@@ -989,6 +995,7 @@ final class Sidebar {
         int color = Ui.G600;
         if (typing != null) { word = "typing…"; color = Ui.BLUE; }
         else if (working(c)) { word = "Working"; color = Ui.BLUE; }
+        else if (!syncing(c).isEmpty()) { word = "Syncing"; color = Ui.G600; }
         else if (c.optBoolean("limited")) { word = "Limited"; color = Ui.AMBER; }
         else if (c.optBoolean("failed")) { word = "Failed"; color = Ui.RED; }
         else if (waiting(c)) { word = c.optJSONObject("wait").optString("label", "Waiting"); color = Ui.AMBER; }

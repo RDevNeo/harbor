@@ -505,6 +505,10 @@ export class Shell {
     this.prs = hub.prs;
     this.workspaces = hub.workspaces;
     this.hub = hub;
+    // A chat's sync took too long and it opened again anyway: said quietly, only for the chat on screen.
+    hub.syncing?.lates?.add((chat) => {
+      if (chat !== null && this.view === "chat" && this.chatId === chat) this.toast("This chat didn't finish syncing in time: it's open again");
+    });
     // The @ menu's file list is read in the background (composer.ts): the menu shows it when it arrives.
     this.menus.onFiles = () => this.refreshMenu();
     const shellMesh = hub.mesh ?? solo;
@@ -2038,6 +2042,8 @@ export class Shell {
         return { kind: "limited", text: s.text, icon: "", color: token("amber-900", this.dark) };
       case "busy":
         return { kind: "busy", text: "", icon: "", color: token("blue-900", this.dark) };
+      case "syncing":
+        return { kind: "syncing", text: "Syncing", icon: "", color: token("subtle", this.dark) };
       case "text":
         return { kind: "text", text: s.text, icon: glyph(s.icon), color: token(s.color, this.dark) };
     }
@@ -2055,7 +2061,7 @@ export class Shell {
     const t = now();
     const w = since === null ? this.engine.waiting(c.id, asks) : null;
     return ownStatus(
-      { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.limitOf(c.id), typing: false, viewed: false, failed: this.engine.failed.has(c.id), waiting: w === null ? null : "Waiting", unread: this.engine.unread.has(c.id) },
+      { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.limitOf(c.id), typing: false, viewed: false, failed: this.engine.failed.has(c.id), waiting: w === null ? null : "Waiting", unread: this.engine.unread.has(c.id), syncing: this.syncWhy(c.id) !== null },
       idle,
       t,
       utcOffset(),
@@ -2367,9 +2373,24 @@ export class Shell {
     if (file !== undefined && favicon.setCustom(repo, file)) this.loadIcon(repo, false);
   }
 
+  /** Why chat `id` is syncing (net's syncing.ts), or null: while it is, nothing that changes what syncs of it is done. */
+  private syncWhy(id: number | null | undefined): string | null {
+    if (id === null || id === undefined || id === DRAFT) return null;
+    return this.hub.syncing?.why(id) ?? null;
+  }
+
+  /** A change to a syncing chat waits: says so and returns true (the caller does nothing). */
+  private syncRefused(id: number | null | undefined): boolean {
+    const why = this.syncWhy(id);
+    if (why === null) return false;
+    this.toast(`Syncing… ${why}: try again in a moment`);
+    return true;
+  }
+
   private setSettled(id: number, on: boolean): void {
     const c = this.data.chat(id);
     if (!c) return;
+    if (this.syncRefused(id)) return;
     if (this.meshChat.patch(c, { settled: on })) {
       this.engine.unread.delete(id);
       return;
@@ -2461,6 +2482,8 @@ export class Shell {
     const mine = this.shared().find((x) => (x.pc === at && x.account === sel.account) || (at === "" && x.id === sel.account));
     // Its PC is off: where the next message goes, or that it waits (failover.ts).
     const failover = open !== undefined ? this.meshChat.failoverLine(open) : null;
+    // Syncing (net's syncing.ts): nothing goes out until it's done; the draft stays.
+    const sync = this.syncWhy(open?.id);
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
       // With their photo the label already names them: "Claude · Dana Reyes's, runs on laptop".
@@ -2472,8 +2495,10 @@ export class Shell {
       access_icon: sel.access === "full" ? ICONS.LOCK_OPEN : sel.access === "plan" ? ICONS.EYE : ICONS.LOCK,
       device,
       device_icon: device.startsWith("Auto") ? ICONS.SPARKLES : "",
-      action: editing ? "update" : running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : resume !== null ? "resume" : "send",
-      action_tip: editing
+      action: running && draftEmpty ? "stop" : sync !== null ? "syncing" : editing ? "update" : steer ? "steer" : running ? "queue" : resume !== null ? "resume" : "send",
+      action_tip: sync !== null && !(running && draftEmpty)
+        ? "Syncing… sending waits until this chat is up to date"
+        : editing
         ? "Update queued message (Enter)"
         : running && draftEmpty
           ? "Stop (Esc)"
@@ -2490,8 +2515,8 @@ export class Shell {
                     : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: open !== undefined ? this.meshChat.typing(id) : "",
-      notice: failover?.text ?? "",
-      notice_tone: failover?.tone ?? "",
+      notice: sync !== null ? `Syncing: ${sync}. Sending and changes wait until it's done.` : (failover?.text ?? ""),
+      notice_tone: sync !== null ? "sync" : (failover?.tone ?? ""),
       place: open !== undefined ? "" : this.draftLine(),
       error: this.meshChat.error(id),
     };
@@ -3192,6 +3217,8 @@ export class Shell {
 
   private send(mode: "steer" | "queue" = this.engine.followDefault()): void {
     const from = this.key();
+    // Syncing: nothing goes out (Enter does nothing, the draft stays); the composer says why and its button is off.
+    if (this.view === "chat" && this.syncWhy(from) !== null) return;
     if (this.queueEdit?.chat === from) {
       this.queueEditEnd(true);
       this.refreshAll();
@@ -3227,6 +3254,8 @@ export class Shell {
       return;
     }
     const joinsMain = this.view !== "chat" && this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
+    // The project's main chat is syncing: the message waits (the draft stays).
+    if (joinsMain !== null && this.syncRefused(joinsMain)) return;
     // A project's main chat that is another PC's (a project shared with you opens its owner's): the message goes to its home PC.
     const mainCopy = joinsMain === null ? undefined : this.data.chat(joinsMain);
     if (mainCopy !== undefined && this.meshChat.foreign(mainCopy)) {
@@ -3485,6 +3514,7 @@ export class Shell {
 
   private queueAction(qid: number, a: string): void {
     const id = this.chatId;
+    if (this.syncRefused(id)) return;
     if (a === "q-remove") this.engine.queueRemove(id, qid);
     else if (a === "q-steer") this.engine.queuePromote(id, qid);
     else if (a === "q-edit") this.queueEditStart(id, qid);
@@ -3891,6 +3921,7 @@ export class Shell {
       this.win.focus_composer();
       return;
     }
+    if (this.syncRefused(open.id)) return;
     const away: boolean = this.meshChat.foreign(open);
     if (away) this.meshChat.send(open, text, [], [], mode);
     else this.engine.send(open.id, text, { files: [], mentions: [], mode });
@@ -4106,6 +4137,7 @@ export class Shell {
   /** A started chat switched to another PC's account: it moves there (or to this PC, for a copy picking one of this
    *  PC's) and goes on with it; what happens shows as a toast and in the chat. */
   private switchShared(c: Chat, account: string, model: string): void {
+    if (this.syncRefused(c.id)) return;
     const label = this.shared().find((x) => x.id === account)?.label ?? account;
     const id = c.id;
     if (this.meshChat.patch(c, { account, model })) {
@@ -4349,6 +4381,7 @@ export class Shell {
   /** remoteui.rs `device_menu`: where the chat runs; a started chat moves where it's picked, its sessions with it. */
   private runOnMenu(kind: string, x: number, y: number): void {
     const [chat, current] = this.deviceOf();
+    if (this.syncRefused(chat)) return;
     const open = chat === null ? undefined : this.data.chat(chat);
     if (this.meshChat.foreign(open) && this.hub.failover?.whyNotHere !== undefined && this.copyRunsOn(open).free) {
       // Run anywhere: the PC it's typed on runs it, unless another is picked; it stays where it runs while it runs.
@@ -4417,6 +4450,7 @@ export class Shell {
   private agentAccountMenu(id: number, x: number, y: number): void {
     const c = this.data.chat(id);
     if (!c) return;
+    if (this.syncRefused(id)) return;
     if (c.home !== "") {
       this.toast("This agent runs on another PC: switch its account there");
       return;
@@ -4445,6 +4479,10 @@ export class Shell {
     if (this.view === "chat") {
       const c = this.data.chat(this.chatId);
       if (!c) return;
+      if (this.syncRefused(c.id)) {
+        this.refreshComposer();
+        return;
+      }
       if (this.meshChat.foreign(c) && patch.device === undefined) {
         const n = { account: c.account, model: c.model, effort: c.effort, access: c.access, ...patch };
         this.meshChat.patch(c, { account: n.account, model: n.model, effort: n.effort, access: n.access });
@@ -4548,7 +4586,9 @@ export class Shell {
   private chatMenu(id: number, x: number, y: number): void {
     const c = this.data.chat(id);
     if (!c) return;
-    const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, extra), kind: "native" as const });
+    // Syncing: every change here waits, greyed out with why.
+    const sync = this.syncWhy(id);
+    const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, sync === null ? extra : { ...extra, enabled: false, badge: "", desc: `Syncing… ${sync}` }), kind: "native" as const });
     const items: PopRow[] = [native("Rename", () => this.renameDialog(id)), native(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled))];
     if (c.role === "lead" && c.repoId !== null && this.data.repo(c.repoId)) {
       items.push(native("Make main chat", () => this.makeMain(id), { desc: "The project's row opens this chat, and what you write on the project's page goes here" }));
@@ -4574,6 +4614,10 @@ export class Shell {
       if (sh !== null) items.push(sh.why === null ? { ...native(SHARE_LABEL, () => {}, { badge: "submenu", desc: sh.line }), sub: () => this.wsShareMenu("chat", id) } : native(SHARE_LABEL, () => {}, { enabled: false, desc: sh.why }));
     }
     items.push(native("Delete", () => this.deleteDialog(id)));
+    if (sync !== null) {
+      for (const it of items) delete (it as { sub?: unknown }).sub;
+      items.unshift({ ...this.item("Syncing… changes wait", () => {}, { enabled: false }), kind: "native" as const });
+    }
     this.popup("chat", x, y, items, 240, false, true);
   }
 
@@ -4581,6 +4625,7 @@ export class Shell {
   private makeMain(id: number): void {
     const c = this.data.chat(id);
     if (!c || c.repoId === null) return;
+    if (this.syncRefused(id)) return;
     if (c.settled) {
       c.settled = false;
       this.data.saveChat(c);
@@ -4593,8 +4638,8 @@ export class Shell {
   /** The PCs of the mesh the chat can move to; one that can't take it says why. */
   private movePcMenu(id: number): SubMenu {
     const go = (pc: string) => () =>
-      void this.hub.movePc(id, pc).then(
-        (n) => this.toast(`Moving to ${n}…`),
+      void (this.syncRefused(id) ? Promise.resolve("") : this.hub.movePc(id, pc)).then(
+        (n) => n !== "" && this.toast(`Moving to ${n}…`),
         (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
       );
     const items = this.hub.moveTargets(id).targets.map((t) => this.item(t.name, go(t.id), { icon: ICONS.MONITOR, desc: t.why ?? "Goes on there", enabled: t.why === null }));
@@ -4607,7 +4652,7 @@ export class Shell {
     const menu = m ? (kind === "chat" ? m.chatMenu(id) : m.projectMenu(id)) : null;
     if (!m || menu === null || menu.why !== null) return null;
     const go = (ws: string) => () =>
-      void (kind === "chat" ? m.moveChat(id, ws) : m.moveProject(id, ws)).then(
+      void ((kind === "chat" ? this.syncRefused(id) : this.projectSyncRefused(id)) ? null : kind === "chat" ? m.moveChat(id, ws) : m.moveProject(id, ws))?.then(
         (r) => {
           const b = (r.body ?? {}) as { notice?: unknown; error?: unknown };
           this.toast(r.status < 300 ? String(b.notice ?? "Moved") : `Couldn't move it: ${String(b.error ?? r.status)}`);
@@ -4633,7 +4678,7 @@ export class Shell {
     const menu = m ? (kind === "chat" ? m.chatShares(id) : m.projectShares(id)) : null;
     if (!m || menu === null || menu.why !== null) return null;
     const go = (ws: string, on: boolean) => () =>
-      void (kind === "chat" ? m.shareChat(id, ws, on) : m.shareProject(id, ws, on)).then(
+      void ((kind === "chat" ? this.syncRefused(id) : this.projectSyncRefused(id)) ? null : kind === "chat" ? m.shareChat(id, ws, on) : m.shareProject(id, ws, on))?.then(
         (r) => {
           const b = (r.body ?? {}) as { notice?: unknown; error?: unknown };
           this.toast(r.status < 300 ? String(b.notice ?? "Shared") : `Couldn't share it: ${String(b.error ?? r.status)}`);
@@ -4656,6 +4701,7 @@ export class Shell {
     const c = this.data.chat(id);
     if (!c) return null;
     const move = (repo: number | null) => () => {
+      if (this.syncRefused(id)) return;
       if (!this.meshChat.takeOver(this.data.chat(id), "move the chat")) return;
       try {
         this.engine.moveChat(id, repo);
@@ -5088,8 +5134,10 @@ export class Shell {
   private renameDialog(id: number): void {
     const c = this.data.chat(id);
     if (!c) return;
+    if (this.syncRefused(id)) return;
     this.dialog("Rename chat", "", "Save changes", false, c.title, (ok, title) => {
       if (!ok || title.trim() === "") return;
+      if (this.syncRefused(id)) return;
       // Another PC's chat: renamed there (its copies follow), or here when that PC is off (it becomes this PC's).
       if (this.meshChat.rename(c, title.trim())) return;
       c.title = title.trim();
@@ -5102,8 +5150,10 @@ export class Shell {
   private deleteDialog(id: number): void {
     const c = this.data.chat(id);
     if (!c) return;
+    if (this.syncRefused(id)) return;
     this.dialog("Delete chat?", "The transcript is removed from Harbor. The provider's session stays on disk.", "Delete", true, null, (ok) => {
       if (!ok) return;
+      if (this.syncRefused(id)) return;
       // Another PC's chat: deleted there (its copies go with it), or here when that PC is off (it hears of it when back).
       if (!this.meshChat.remove(c)) {
         this.data.deleteChat(id);
@@ -5117,6 +5167,7 @@ export class Shell {
   private removeRepoDialog(id: number): void {
     const r = this.data.repo(id);
     if (!r) return;
+    if (this.projectSyncRefused(id)) return;
     this.dialog(REMOVE_PROJECT.title, REMOVE_PROJECT.text, REMOVE_PROJECT.ok, true, null, (ok) => {
       if (!ok) return;
       this.data.removeRepo(id);
@@ -5126,7 +5177,14 @@ export class Shell {
 
   /** After project `id` left Harbor (here, or from a phone): off the draft, out of a chat of it. */
   /** Settle project (logic/projectmenu.ts): it and its chats go to Settled; Unsettle brings them back. */
+  /** One of project `id`'s chats is syncing: an act that rewrites them waits (says so and returns true). */
+  private projectSyncRefused(id: number): boolean {
+    for (const c of this.data.chats) if (c.repoId === id && this.syncRefused(c.id)) return true;
+    return false;
+  }
+
   private settleProject(id: number, on: boolean): void {
+    if (this.projectSyncRefused(id)) return;
     this.data.store.settleProject(id, on);
     this.data.reload();
     this.projectSettled(id, on);
@@ -5255,6 +5313,7 @@ export class Shell {
 
   /** fork.rs `fork_from`: a new chat with the conversation up to that reply. */
   private fork(id: number, reply: number): void {
+    if (this.syncRefused(id)) return;
     if (this.meshChat.fork(this.data.chat(id), reply)) return;
     const c = this.engine.forkFrom(id, reply);
     if (!c) return;
@@ -5419,7 +5478,17 @@ function transferRow(x: DeviceTransfer): TransferRow {
 }
 
 /** What the window takes from the running hub. */
+/** Which chats are syncing (net's syncing.ts), as the window asks it. */
+export interface ShellSyncing {
+  /** Why chat `id` is syncing (a few words), or null when it isn't. */
+  why(id: number): string | null;
+  /** Told when something took too long and its chat (null: the cloud's) opened again anyway. */
+  lates?: Set<(chat: number | null, why: string) => void>;
+}
+
 export interface ShellHub extends PageHub {
+  /** Which chats are syncing: while one is, nothing that changes what syncs of it is done (none without a hub). */
+  syncing?: ShellSyncing;
   /** One of this PC's chats was deleted in the window: the other PCs and phones hear of it now. */
   deleted?: (chatId: number) => void;
   /** The composer's "Runs on" menu for a chat (null: the draft) whose device is `current`. */

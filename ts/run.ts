@@ -255,6 +255,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       runOnRows: (chatId: number | null, current: string, kind: string) => run.runOn.rows(chatId, current, kind),
       sharedAccounts: () => run.sharedAccounts(),
       relocate: (chatId: number, to: string) => run.runOn.relocate(chatId, to),
+      syncing: run.syncing,
       deleted: (chatId: number) => void run.hub.mesh.gone.push([run.hub.touch(null, true), chatId]),
       failover: {
         draft: (repo: number) => run.failover.draft(repo),

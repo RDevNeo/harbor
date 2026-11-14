@@ -646,7 +646,17 @@ export component Composer {
                 padding-top: 10px;
                 padding-bottom: 10px;
                 spacing: 10px;
-                if root.state.notice-tone != "": Glyph {
+                // Syncing: a spinner while the chat's newest version comes (or it's handed on).
+                if root.state.notice-tone == "sync": Rectangle {
+                    width: 15px;
+                    height: 15px;
+                    y: 1px;
+                    Spinner {
+                        radius: 6px;
+                        color: Theme.subtle;
+                    }
+                }
+                if root.state.notice-tone != "" && root.state.notice-tone != "sync": Glyph {
                     y: 1px;
                     width: 15px;
                     icon: root.state.notice-tone == "warn" ? Icons.alert : Icons.monitor;
@@ -977,7 +987,7 @@ export component Composer {
                             }
                             if root.state.action != "stop": RoundButton {
                                 icon: root.state.action == "steer" ? Icons.corner-up-right : root.state.action == "queue" ? Icons.list-plus : root.state.action == "update" ? Icons.check : root.state.action == "resume" ? Icons.play : Icons.arrow-up;
-                                enabled: root.state.action != "send" || field.text != "" || root.files.length > 0;
+                                enabled: root.state.action != "syncing" && (root.state.action != "send" || field.text != "" || root.files.length > 0);
                                 tip: root.state.action-tip;
                                 clicked => {
                                     root.send();
@@ -1195,7 +1205,7 @@ export component Composer {
                             }
                             if root.state.action != "stop": RoundButton {
                                 icon: root.state.action == "steer" ? Icons.corner-up-right : root.state.action == "queue" ? Icons.list-plus : root.state.action == "update" ? Icons.check : root.state.action == "resume" ? Icons.play : Icons.arrow-up;
-                                enabled: root.state.action != "send" || field.text != "" || root.files.length > 0;
+                                enabled: root.state.action != "syncing" && (root.state.action != "send" || field.text != "" || root.files.length > 0);
                                 tip: root.state.action-tip;
                                 clicked => {
                                     root.send();

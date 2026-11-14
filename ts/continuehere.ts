@@ -143,6 +143,8 @@ export interface ContinueHost extends CarryHost {
   here: () => string;
   touch: (chat: number | null) => void;
   log?: ((line: string) => void) | undefined;
+  /** The chat syncs while its session and work are fetched and put in place (syncing.ts `hold`). */
+  hold?: ((chat: number, why: string) => () => void) | undefined;
 }
 
 interface Pending {
@@ -207,11 +209,12 @@ export class ContinueHere {
     if (!p) return false;
     this.pending.delete(chat);
     this.busy.set(chat, [{ prompt, files: [...files] }]);
-    void this.run(chat, p).catch((e) => this.h.log?.(`continue: ${say(e)}`));
+    const release = this.h.hold?.(chat, `bringing its session and work from ${p.off}`) ?? (() => {});
+    void this.run(chat, p, release).catch((e) => this.h.log?.(`continue: ${say(e)}`));
     return true;
   }
 
-  private async run(id: number, p: Pending): Promise<void> {
+  private async run(id: number, p: Pending, release: () => void = () => {}): Promise<void> {
     let resumed: "resumed" | string = "new";
     let work: string[] = [];
     try {
@@ -229,6 +232,7 @@ export class ContinueHere {
     } catch (e) {
       resumed = say(e);
     } finally {
+      release();
       this.finish(id, p, resumed, work);
     }
   }

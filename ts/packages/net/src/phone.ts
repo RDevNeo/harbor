@@ -129,6 +129,23 @@ export interface PhoneMove {
   movePc(chat: number, pc: string, want?: MoveWant | null): Promise<string>;
 }
 
+/**
+ * Calls about a chat that don't change what syncs of it (syncing.ts): answered while it syncs. Stopping, the handoff
+ * that is the sync itself, a snooze (this PC's own), a mention being picked, the draft and typing.
+ */
+const SYNC_FREE = new Set(["stop", "stop_all", "handoff", "snooze", "mention", "draft", "typing", "seen", "opened", "ui", "captcha"]);
+
+/** Whether a call about a chat would change what syncs of it (refused while it syncs). */
+export function changesSync(method: string, p: readonly string[]): boolean {
+  if (method === "GET" || p.length < 3 || p[0] !== "v1" || p[1] !== "chats") return false;
+  return !SYNC_FREE.has(p[3] ?? "");
+}
+
+/** The answer to a change refused while its chat syncs (the phone and the window say "Syncing…"). */
+export function syncingReply(why: string): Reply {
+  return { status: 409, body: { error: `Syncing… ${why}: try again in a moment`, syncing: true } };
+}
+
 export interface PhoneDeps {
   store: Store;
   hub: Hub;
@@ -196,6 +213,8 @@ export interface PhoneDeps {
   };
   /** Run anywhere: another PC takes this PC's chat `c` (its session and work go up first); 409 while it runs here. */
   handoff?: (c: Chat, to: string) => Promise<Reply>;
+  /** Why chat `id` is syncing now (syncing.ts), or null: while it is, nothing that changes what syncs is done. */
+  syncing?: (id: number) => string | null;
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
   worktrees?: {
     make(repo: number | null, base: string, about: string): Promise<unknown>;
@@ -572,6 +591,8 @@ export class PhoneRoutes {
       // Its PC is off: where the next message goes (another PC takes the chat over), or that it waits.
       failover: this.d.failover?.line(c)?.text ?? null,
       failover_warn: this.d.failover?.line(c)?.warn === true,
+      // Syncing (syncing.ts): why, a few words; null when it isn't. Sending and every change wait meanwhile.
+      syncing: this.d.syncing?.(c.id) ?? null,
       role: c.role,
       parent: parent === null ? null : this.idOf(parent, global),
       main: this.isMain(c),
@@ -948,6 +969,9 @@ export class PhoneRoutes {
     const found = this.chatOf(p[2] ?? "");
     if (!found) return err(404, "no such chat");
     let c: Chat = found;
+    // A chat syncing (its newest version on its way, handed on or taken over): no change races the sync.
+    const syncing = changesSync(m, p) ? (this.d.syncing?.(found.id) ?? null) : null;
+    if (syncing !== null) return syncingReply(syncing);
     // A send the phone repeats (it never got the answer) is answered, not run again; a copy's
     // send goes on to its home PC with the same client id, which does the same there.
     if (m === "POST" && p.length === 4 && p[3] === "send") {

@@ -142,6 +142,8 @@ final class Composer {
         send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 44, v -> {
             if (editing) { if (onSend != null) onSend.run(); }
             else if (running && empty()) { if (onStop != null) onStop.run(); }
+            // Syncing: nothing goes out (the PC refuses it too); the note above says why.
+            else if (syncing) Ui.toast(a, "Syncing… try again in a moment");
             else if (resumable()) { if (onResume != null) onResume.run(); }
             else if (onSend != null) onSend.run();
         });
@@ -322,7 +324,21 @@ final class Composer {
     /** What sending now does: "steer" when the running agent takes it, else "queue". */
     String sendMode() { return running && canSteer && "steer".equals(mode) ? "steer" : "queue"; }
 
-    void busy(boolean b) { send.setAlpha(b ? 0.4f : 1f); }
+    void busy(boolean b) {
+        busy = b;
+        refresh();
+    }
+
+    /** The chat is syncing (its newest version on its way, or it's being handed on): sending waits, the draft stays. */
+    void syncing(boolean s) {
+        if (syncing == s) return;
+        syncing = s;
+        refresh();
+    }
+
+    boolean syncing() { return syncing; }
+
+    private boolean busy, syncing;
 
     private void refresh() {
         boolean empty = empty();
@@ -335,8 +351,10 @@ final class Composer {
             d = steer ? "Steer message" : "Queue message";
         } else if (resumable()) { g = Ui.I_PLAY; d = held ? "Resume queue" : "Resume"; }
         else { g = Ui.I_UP; d = "Send"; }
-        sendGlyph.setText(g);
         boolean stopping = !editing && running && empty;
+        if (syncing && !stopping) d = "Syncing… sending waits until this chat is up to date";
+        sendGlyph.setText(g);
+        send.setAlpha(busy || (syncing && !stopping) ? 0.4f : 1f);
         send.setBackground(Ui.press(stopping ? Ui.STOP : Ui.INK, 0, 22));
         sendGlyph.setTextColor(stopping ? Ui.ON_STOP : Ui.ON_INK);
         send.setContentDescription(d);

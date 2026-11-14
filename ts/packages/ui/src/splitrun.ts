@@ -107,6 +107,8 @@ export function pillOf(s: StatusData | null): { pill: string; tone: PaneHead["to
       return { pill: "Working", tone: "blue" };
     case "waiting":
       return { pill: "Waiting", tone: "amber" };
+    case "syncing":
+      return { pill: "Syncing", tone: "" };
     case "limited":
       return { pill: "Limited", tone: "amber" };
     case "failed":

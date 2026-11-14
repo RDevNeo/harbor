@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { statSync } from "node:fs";
-import { addFolder, type Call, err, gitRemote, type Json, ok, type Reply } from "./packages/net/src/index.ts";
+import { addFolder, type Call, err, gitRemote, type Json, ok, type Reply, syncingReply } from "./packages/net/src/index.ts";
 import { homedir } from "node:os";
 import { type Repo, repoDir, type Store } from "./packages/store/src/index.ts";
 import { ICONS } from "./packages/ui/src/icons.ts";
@@ -20,8 +20,24 @@ import { choiceJson, shareJson, type WorkspaceMoves } from "./workspacemoves.ts"
  * call goes on to it, and a project made there is listed here too (as a copy of one of its chats
  * would list it), so the new chat started from the phone finds it.
  */
+/** Project acts that rewrite its chats (refused while one of them syncs). */
+const REWRITES = new Set(["workspace", "share", "settle_project", "unsettle_project", "remove"]);
+
+/** Why one of project `repo`'s chats is syncing ("“Title”: why"), or null when none is. */
+export function projectSyncing(store: Store, repo: number, syncing: ((chat: number) => string | null) | undefined): string | null {
+  if (!syncing) return null;
+  for (const c of store.chats()) {
+    if (c.repoId !== repo) continue;
+    const why = syncing(c.id);
+    if (why !== null) return `“${c.title}” ${why}`;
+  }
+  return null;
+}
+
 export interface ProjectsHost {
   store: Store;
+  /** Why chat `id` is syncing (net's syncing.ts), or null: a project act that rewrites its chats waits for them. */
+  syncing?: (chat: number) => string | null;
   /** The engine re-reads the projects. */
   reload(): void;
   /** Phones and the window hear of a change. */
@@ -419,6 +435,11 @@ export class ProjectsApi {
   /** One of the project sheet's acts that runs on the PC: icons, Snooze, Remove from Harbor. */
   private async run(r: Repo, b: Record<string, unknown>, forwarded = false): Promise<Reply> {
     const act = str(b.act);
+    // Acts that rewrite the project's chats wait while one of them syncs.
+    if (REWRITES.has(act)) {
+      const why = projectSyncing(this.h.store, r.id, this.h.syncing);
+      if (why !== null) return syncingReply(why);
+    }
     switch (act) {
       case "workspace":
         if (!this.h.moves) return err(409, "this Harbor can't move projects to a workspace");

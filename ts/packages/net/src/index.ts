@@ -46,3 +46,4 @@ export * from "./projectmove.ts";
 export * from "./projectmoverun.ts";
 export * from "./projectfold.ts";
 export * from "./chatcloud.ts";
+export * from "./syncing.ts";

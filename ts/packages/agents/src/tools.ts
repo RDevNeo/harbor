@@ -42,7 +42,8 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
         .map((c) => {
           const w = e.turns.has(c.id) ? null : e.waiting(c.id, asks);
           const limit = e.turns.has(c.id) ? null : e.limits.limitText(c.id);
-          const status = e.turns.has(c.id) ? "running" : limit !== null ? `paused: ${limit[0]}` : (e.pending.get(c.id)?.length ?? 0) > 0 ? "queued" : w !== null ? waitWords(w, now(), utcOffset()) : `idle (${team.ago(c.updated)} ago)`;
+          const sync = e.host.syncing?.(c.id) ?? null;
+          const status = sync !== null ? `syncing: ${sync}` : e.turns.has(c.id) ? "running" : limit !== null ? `paused: ${limit[0]}` : (e.pending.get(c.id)?.length ?? 0) > 0 ? "queued" : w !== null ? waitWords(w, now(), utcOffset()) : `idle (${team.ago(c.updated)} ago)`;
           const acc = e.account(c.account);
           const who = acc ? short(acc) : c.account;
           const model = acc ? e.modelLabel(acc.kind, c.model) : c.model;
@@ -298,6 +299,8 @@ export function toolProject(e: Engine, me: Chat, a: unknown): number | null {
 
 export function statusWords(e: Engine, c: Chat): string {
   if (c.retired) return "retired";
+  const sync = e.host.syncing?.(c.id) ?? null;
+  if (sync !== null) return `syncing (${sync}): messages wait for it`;
   if (e.live(c.id) || e.subsOf(c.id).some((s) => e.live(s.id))) {
     const since = e.liveSince(c.id);
     return `working${since === null ? "" : ` ${elapsed(Math.floor((Date.now() - since) / 1000))}`}`;
