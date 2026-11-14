@@ -19,12 +19,15 @@ type Obj = { [k: string]: Json };
 /** Requests whose answer depends only on the server (and the protocol version asked for). */
 export const CACHED = new Set(["initialize", "server/discover", "tools/list", "prompts/list", "resources/list", "resources/templates/list"]);
 
-/** Tests shorten them. `idle`: an unused server is stopped after it (`stateful`: one that holds a session, such as a browser). `live`: servers kept running at most, the least recently used idle one goes first. `starts`: servers starting at once. */
-export const limits = { idle: 60_000, stateful: 300_000, ttl: 24 * 3600_000, live: 8, starts: 2 };
+/** Tests shorten them. `idle`: an unused server is stopped after it (`stateful`: one that holds a session, such as a browser). `live`: servers kept running at most, the least recently used idle one goes first. `starts`: servers starting at once. `retry`: after a dead server's failed starts in a row, when it's tried again (the last one repeats). `deadAfter`: a server that never answered a handshake is taken for dead once silent this long on one (just under Claude Code's 30 s), though its start goes on to `waits.wait`. */
+export const limits = { idle: 60_000, stateful: 300_000, ttl: 24 * 3600_000, live: 8, starts: 2, retry: [30_000, 60_000], deadAfter: 25_000 };
 
 interface Entry {
   /** When the server last answered for real. */
   at: number;
+  /** It has never answered its handshake, and its last start failed or didn't answer in time: since when, its failed
+   *  starts in a row, and when it's tried again. Turns get a failed handshake at once meanwhile (`dead`). */
+  dead?: { since: number; fails: number; next: number };
   /** Request key → the request (to ask again when the server starts) and its answer (`result`, or a method-not-found `error`). */
   answers: { [rk: string]: { ask: Obj; answer: Obj } };
 }
@@ -64,7 +67,7 @@ export function flush(): void {
   const c = cache();
   // Servers not seen for a long time go.
   const old = Date.now() - 30 * 24 * 3600_000;
-  for (const [k, e] of Object.entries(c)) if (e.at < old) delete c[k];
+  for (const [k, e] of Object.entries(c)) if (Math.max(e.at, e.dead?.next ?? 0) < old) delete c[k];
   try {
     writePrivate(path(), JSON.stringify(c));
   } catch {
@@ -147,6 +150,33 @@ export function remember(sk: string, ask: Obj, answer: Obj): void {
   delete q.id;
   e.answers[rk] = { ask: q, answer: keep };
   e.at = Date.now();
+  if (ask.method === "initialize") delete e.dead;
+  c[sk] = e;
+  save();
+}
+
+/** The server has answered an `initialize` (a fresh answer is cached). */
+export function initialized(sk: string): boolean {
+  const e = cache()[sk];
+  return !!e && Date.now() - e.at <= limits.ttl && Object.values(e.answers).some((a) => a.ask.method === "initialize");
+}
+
+/** The server never answered its handshake and its last start failed: since when and when it's tried again, or null. */
+export function dead(sk: string): { since: number; fails: number; next: number } | null {
+  const d = cache()[sk]?.dead;
+  return d ? { ...d } : null;
+}
+
+/** A start that got no answer to `initialize` (it didn't start, exited, or took too long), for a server with none cached.
+ *  Only a try again (`again`: the background start) moves the next try further out; the turns' own starts that
+ *  overlapped the first one are the same failure. */
+export function markDead(sk: string, again = false, at: number = Date.now()): void {
+  const c = cache();
+  const e = c[sk] ?? { at: 0, answers: {} };
+  if (e.dead && !again) return;
+  const fails = (e.dead?.fails ?? 0) + 1;
+  const wait = limits.retry[Math.min(fails, limits.retry.length) - 1] ?? 60_000;
+  e.dead = { since: e.dead?.since ?? at, fails, next: at + wait };
   c[sk] = e;
   save();
 }

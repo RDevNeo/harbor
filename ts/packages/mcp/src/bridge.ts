@@ -12,7 +12,7 @@ import { grantFrom, type Grant as MachinesGrant, mcp as machinesMcp, NAME as MAC
 import { hostname } from "@harbor/net";
 import { agentProcessEnv, OUTPUT_MAX, shell, token } from "./shell.ts";
 import { harborVersion } from "./version.ts";
-import { ackFor, asked, cached, flush, idleFor, limits, remember, rememberAck, requestKey, serverKey, starts } from "./lazy.ts";
+import { ackFor, asked, cached, dead, flush, initialized, idleFor, limits, markDead, remember, rememberAck, requestKey, serverKey, starts } from "./lazy.ts";
 import { answer as teamAnswer, callApp } from "./mcpshim.ts";
 import { selfExe } from "./sys.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
@@ -213,6 +213,8 @@ class Slot {
   next = 0;
   /** The turn ended: nothing starts here anymore. */
   closed = false;
+  /** Its last start got no answer to `initialize`: the server didn't start, exited or took longer than `waits.wait`. */
+  failedStart = false;
   /** The grants that use it. */
   readonly users = new Set<string>();
   /** When a request last came or ended. */
@@ -405,17 +407,25 @@ async function restart(s: Slot, reinit: boolean): Promise<Obj | null> {
     s.proc = p;
     if (p) watch();
     const init = reinit ? s.init : null;
+    s.failedStart = p === null;
     if (!init || !p) return null;
     s.next += 1;
     const sent = send(p, init, s.next);
+    if (sent && !initialized(s.ckey)) markIfSilent(s.ckey, p, Date.now());
     const first = sent?.inbox ? await within(sent.inbox.next(), waits.wait) : null;
     const answered = first !== null && first !== "late" && "result" in first;
     if (!answered || !send(p, { jsonrpc: "2.0", method: "notifications/initialized" }, null)) {
+      // Not when the turn ended meanwhile (that stops it): the server had no fair try.
+      s.failedStart = !s.closed;
       s.stop();
       return null;
     }
+    // A server taken for dead that answered after all: what a turn asks first is cached too, as a try again does.
+    const wasDead = dead(s.ckey) !== null;
     remember(s.ckey, init, first);
-    for (const ask of asked(s.ckey)) {
+    const asks = asked(s.ckey);
+    if (wasDead) for (const extra of firstAsks(s.ckey)) if (!asks.some((a) => a.method === extra.method)) asks.push(extra);
+    for (const ask of asks) {
       s.next += 1;
       const r = send(p, { ...ask, id: s.next }, s.next);
       if (r?.inbox) void within(r.inbox.next(), waits.wait).then((a) => (a !== null && a !== "late" && !("method" in a) ? remember(s.ckey, { ...ask, id: 0 }, a) : undefined));
@@ -467,6 +477,87 @@ async function stdio(slot: Slot, message: Obj, agent: Agent): Promise<Json | nul
   }
 }
 
+/** What Claude Code asks every server before a turn starts, and waits for (30 s each at most). */
+const HANDSHAKE = new Set(["server/discover", "initialize"]);
+
+/** The server never answered a handshake (none cached). */
+const noInit = (slot: Slot): boolean => !initialized(slot.ckey);
+
+/** Servers being tried again in the background (by cache key). */
+const probing = new Set<string>();
+/** The `server/discover` turns sent a dead server (by cache key): its background start asks it too (`probe`). */
+const discovers = new Map<string, Obj>();
+
+/**
+ * A dead server tried again, apart from any turn: started with the handshake a turn sent (`init`), and if it answers
+ * now, its answers to it and to `tools/list` are cached, so the next turn gets it as usual; if not, it's tried again
+ * later (`limits.retry`). It doesn't wait at the gate on starts: it would hold a place there for `waits.wait`.
+ */
+async function probe(slot: Slot, init: Obj): Promise<void> {
+  if (probing.has(slot.ckey)) return;
+  probing.add(slot.ckey);
+  let p: Proc | null = null;
+  try {
+    p = await spawnServer(slot.cwd, slot.def);
+    const sent = p ? send(p, { ...init, id: 1 }, 1) : null;
+    // Still silent after `deadAfter`: the next try is set, as for a turn's start; an answer later still counts.
+    let first = sent?.inbox ? await within(sent.inbox.next(), limits.deadAfter) : null;
+    const marked = first === "late";
+    if (first === "late") {
+      markDead(slot.ckey, true);
+      first = sent?.inbox ? await within(sent.inbox.next(), Math.max(0, waits.wait - limits.deadAfter)) : null;
+      if (first === null || first === "late") return;
+    }
+    if (!p || first === null || !("result" in first)) {
+      if (!marked) markDead(slot.ckey, true);
+      return;
+    }
+    remember(slot.ckey, init, first);
+    if (!send(p, { jsonrpc: "2.0", method: "notifications/initialized" }, null)) return;
+    // The rest of what a turn asks first, so the next one starts nothing.
+    let n = 1;
+    for (const ask of firstAsks(slot.ckey)) {
+      n += 1;
+      const q = { ...ask, id: n };
+      const r = send(p, q, n);
+      const a = r?.inbox ? await within(r.inbox.next(), waits.wait) : null;
+      if (a !== null && a !== "late" && !("method" in a)) remember(slot.ckey, q, a);
+    }
+  } finally {
+    p?.kill();
+    probing.delete(slot.ckey);
+  }
+}
+
+/** Besides `initialize`, what a turn asks a server first: its tools, and the `server/discover` turns sent it. */
+function firstAsks(ckey: string): Obj[] {
+  const out: Obj[] = [{ jsonrpc: "2.0", method: "tools/list", params: {} }];
+  const d = discovers.get(ckey);
+  if (d) out.push(structuredClone(d));
+  return out;
+}
+
+/** The `initialize` turns sent a server (by cache key), for its try again; Claude Code's when none came yet. */
+const inits = new Map<string, Obj>();
+const INIT: Obj = { jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-code", version: "harbor" } } };
+
+/** A handshake request sent to a server that never answered one: if it has said nothing `limits.deadAfter` later,
+ *  it's taken for dead, so the next turns don't wait for it. Its start goes on meanwhile (to `waits.wait`), and an
+ *  answer after all lifts that (`revived`). */
+function markIfSilent(ckey: string, proc: Proc, since: number): void {
+  const t = setTimeout(() => {
+    if ((proc.heard === null || proc.heard < since) && !initialized(ckey)) markDead(ckey);
+  }, limits.deadAfter);
+  t.unref?.();
+}
+
+/** A server taken for dead answered a handshake request after all (a slow first start): it's started again apart from
+ *  any turn at once, and its handshake and tools cached for the next turn (`probe` lifts the mark). */
+function revived(slot: Slot): void {
+  if (dead(slot.ckey) === null || initialized(slot.ckey)) return;
+  void probe(slot, inits.get(slot.ckey) ?? INIT);
+}
+
 async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | null> {
   const hasId = "id" in message;
   const id = (message.id ?? null) as Json;
@@ -478,6 +569,20 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
     if (msg.method === "initialize") slot.init = structuredClone(msg);
     return { jsonrpc: "2.0", id, ...hit };
   }
+  // A server that never answered and failed its last start (an app that isn't running): the turn isn't held up for it.
+  // It's tried again in the background when its time comes; once it answers, the next turn gets it.
+  const method = typeof msg.method === "string" ? msg.method : "";
+  if (method === "initialize" && hasId) inits.set(slot.ckey, structuredClone(msg));
+  const gone = HANDSHAKE.has(method) && hasId && !slot.closed && !slot.proc?.alive() ? dead(slot.ckey) : null;
+  if (gone) {
+    if (method === "server/discover") {
+      discovers.set(slot.ckey, structuredClone(msg));
+      return { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } };
+    }
+    if (Date.now() >= gone.next) void probe(slot, msg);
+    const ago = Math.max(1, Math.round((Date.now() - gone.since) / 1000));
+    return rpcError(id, `the MCP server on the Harbor PC hasn't answered since it was first tried ${ago} s ago (it isn't running?); Harbor tries it again in the background, and the next turn gets it once it answers`);
+  }
   if (msg.method === "subscriptions/listen" && hasId) return listenLazily(slot, msg, agent, id);
   // A notification for a server that isn't running has no one to tell.
   if (!hasId && !slot.proc?.alive()) return null;
@@ -488,7 +593,11 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
       // A start sends the agent's `initialize` (or the last one it sent) itself, inside the gate on starts.
       if (!slot.proc?.alive()) {
         const init = await restart(slot, true);
-        if (msg.method === "initialize") return init ? { answer: init } : null;
+        if (msg.method === "initialize") {
+          // It didn't start, or didn't answer in `waits.wait`: dead until it answers (`probe`).
+          if (!init && slot.failedStart && noInit(slot)) markDead(slot.ckey);
+          return init ? { answer: init } : null;
+        }
       }
       slot.next += 1;
       const mine = slot.next;
@@ -516,6 +625,7 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
   const { inbox, mine, proc } = sent;
   if (!hasId || !inbox) return null;
   const at = Date.now();
+  if (HANDSHAKE.has(method) && noInit(slot)) markIfSilent(slot.ckey, proc, at);
   // A listen is answered only by its events, for as long as the agent wants them.
   const listen = msg.method === "subscriptions/listen";
   const limit = msg.method === "tools/call" ? waits.tool : waits.wait;
@@ -529,11 +639,22 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
     const next = Promise.race([inbox.next(), agent.goneP]);
     const got = listen ? await next : await within(next, Math.max(0, until - Date.now()));
     if (got === "gone") {
+      // Claude Code gave up on the handshake (30 s): a server that never answered one still has until `until`, and
+      // its answer is kept (a slow first start).
+      if (HANDSHAKE.has(method) && noInit(slot)) {
+        void within(inbox.next(), Math.max(0, until - Date.now())).then((late) => {
+          if (late === null || late === "late" || "method" in late) return forget();
+          remember(slot.ckey, msg, late);
+          revived(slot);
+        });
+        return null;
+      }
       forget();
       return null;
     }
     if (got === "late") {
       forget();
+      if (HANDSHAKE.has(method) && (proc.heard === null || proc.heard < at) && noInit(slot)) markDead(slot.ckey);
       const stuck = (proc.heard === null || proc.heard < at) && ![...proc.byId.values()].some((x) => x.tool);
       if (stuck) await slot.lock(async () => (slot.proc?.id === proc.id ? slot.stop() : undefined));
       return rpcError(id, `the MCP server on the Harbor PC didn't answer in ${Math.floor(limit / 1000)} s`);
@@ -552,6 +673,7 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
       continue;
     }
     remember(slot.ckey, msg, got);
+    if (HANDSHAKE.has(method)) revived(slot);
     got.id = id;
     return got;
   }

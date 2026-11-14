@@ -4,13 +4,14 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Grant, close, grant, parsePortFile, portFile, resumeWait, revoke, token } from "../src/bridge.ts";
+import { type Grant, close, grant, parsePortFile, portFile, resumeWait, revoke, token, waits } from "../src/bridge.ts";
 import type { Json } from "../src/json.ts";
-import { limits, resetCache } from "../src/lazy.ts";
+import { dead, initialized, limits, markDead, resetCache, serverKey } from "../src/lazy.ts";
 import { tools } from "../src/mcpshim.ts";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const saved = { ...limits };
+const savedWaits = { ...waits };
 
 afterAll(close);
 
@@ -25,9 +26,13 @@ beforeEach(() => {
   // A stdio MCP server that writes down when it starts and what it hears; FAKE_DELAY holds its first answer back.
   writeFileSync(
     fake,
-    `import { appendFileSync } from "node:fs";
+    `import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const log = process.env.FAKE_LOG ?? "";
 appendFileSync(log, "start " + process.pid + " " + Date.now() + "\\n");
+// FAKE_HANG: while that file is there, it never answers (an app that isn't running).
+if (process.env.FAKE_HANG && existsSync(process.env.FAKE_HANG)) await new Promise(() => {});
+// FAKE_DELAY_FILE: how long it holds its first answer back, read at its start.
+if (process.env.FAKE_DELAY_FILE) await Bun.sleep(Number(readFileSync(process.env.FAKE_DELAY_FILE, "utf8")));
 await Bun.sleep(Number(process.env.FAKE_DELAY ?? "0"));
 const listens = [];
 const SUB = "io.modelcontextprotocol/subscriptionId";
@@ -53,6 +58,7 @@ for await (const line of console) {
 });
 afterEach(() => {
   Object.assign(limits, saved);
+  Object.assign(waits, savedWaits);
   delete process.env.HARBOR_EXE;
   rmSync(work, { recursive: true, force: true });
 });
@@ -323,4 +329,144 @@ test("a share-safe server (Roblox Studio's) is one process for every turn with t
   expect(JSON.stringify((await ask(b, "Roblox_Studio", 5))?.result)).toBe(JSON.stringify(ra?.result));
   revoke(b.token);
   await until("the shared server stops once unused", () => !alive(shared));
+}, 30_000);
+
+test("a server that never answers holds up one turn, not every one: later turns get a failed handshake at once, it's tried again in the background and served once it answers", async () => {
+  waits.wait = 600;
+  limits.deadAfter = 300;
+  limits.retry = [1500, 1500];
+  const hang = join(work, "hang");
+  writeFileSync(hang, "");
+  const def = server({ FAKE_HANG: hang });
+  const discover = { jsonrpc: "2.0", id: 9, method: "server/discover", params: {} };
+  const init = { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-code", version: "x" } } };
+  // The first turn waits for it, as before (Claude Code gives up at 30 s; here `waits.wait`).
+  const g1 = base({ servers: { s: def } });
+  const p = (await grant(g1)) as number;
+  let t = Date.now();
+  expect(JSON.stringify((await rpc(p, `/${g1.token}/s`, discover))?.error)).toContain("didn't answer");
+  expect(Date.now() - t).toBeGreaterThanOrEqual(550);
+  expect(dead(serverKey(def as { [k: string]: Json }, tmpdir()))?.fails).toBe(1);
+  expect(startsSeen()).toHaveLength(1);
+  t = Date.now();
+  expect(JSON.stringify((await rpc(p, `/${g1.token}/s`, init))?.error)).toContain("Harbor tries it again in the background");
+  expect(Date.now() - t).toBeLessThan(400);
+  revoke(g1.token);
+  // The next turn: both answered at once, and nothing starts before its time comes.
+  const g2 = base({ servers: { s: def } });
+  await grant(g2);
+  t = Date.now();
+  expect((await rpc(p, `/${g2.token}/s`, discover))?.error).toMatchObject({ code: -32601 });
+  expect((await rpc(p, `/${g2.token}/s`, init))?.error).toMatchObject({ code: -32000 });
+  expect(Date.now() - t).toBeLessThan(400);
+  revoke(g2.token);
+  expect(startsSeen()).toHaveLength(1);
+  // Its time came, and the app runs now: a turn still fails at once, but the server is tried again meanwhile...
+  await sleep(1600);
+  rmSync(hang);
+  const g3 = base({ servers: { s: def } });
+  await grant(g3);
+  t = Date.now();
+  expect((await rpc(p, `/${g3.token}/s`, discover))?.error).toMatchObject({ code: -32601 });
+  expect((await rpc(p, `/${g3.token}/s`, init))?.error).toMatchObject({ code: -32000 });
+  expect(Date.now() - t).toBeLessThan(400);
+  revoke(g3.token);
+  await until("the background start answers", () => initialized(serverKey(def as { [k: string]: Json }, tmpdir())));
+  expect(dead(serverKey(def as { [k: string]: Json }, tmpdir()))).toBeNull();
+  // ...and the next turn gets its handshake and tools as from any other server, without starting it.
+  const g4 = base({ servers: { s: def } });
+  await grant(g4);
+  await until("the tool list is cached", () => lines().includes("got server/discover"));
+  const n = startsSeen().length;
+  const h = await handshake(p, `/${g4.token}/s`);
+  expect(h.init).toMatchObject({ serverInfo: { name: "fake" } });
+  expect(h.list).toMatchObject({ tools: [{ name: "hello" }] });
+  expect(startsSeen()).toHaveLength(n);
+  revoke(g4.token);
+}, 30_000);
+
+test("a slow first start taken for dead is lifted once it answers: the next turn gets its handshake and tools from the cache", async () => {
+  waits.wait = 4000;
+  limits.deadAfter = 300;
+  const def = server({ FAKE_DELAY: "1200" });
+  const key = serverKey(def as { [k: string]: Json }, tmpdir());
+  const discover = { jsonrpc: "2.0", id: 9, method: "server/discover", params: {} };
+  const init = { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-code", version: "x" } } };
+  const g1 = base({ servers: { s: def } });
+  const p = (await grant(g1)) as number;
+  // The first turn's client gives up on it (Claude Code at 30 s; here 600 ms): it hangs up.
+  const body = JSON.stringify(discover);
+  const sock = connect(p, "127.0.0.1");
+  sock.on("error", () => {});
+  sock.write(`POST /${g1.token}/s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+  await sleep(600);
+  sock.destroy();
+  // Silent past `deadAfter`: taken for dead, so a turn now isn't held up; its start goes on.
+  expect(dead(key)?.fails).toBe(1);
+  const g2 = base({ servers: { s: def } });
+  await grant(g2);
+  const t = Date.now();
+  expect((await rpc(p, `/${g2.token}/s`, discover))?.error).toMatchObject({ code: -32601 });
+  expect((await rpc(p, `/${g2.token}/s`, init))?.error).toMatchObject({ code: -32000 });
+  expect(Date.now() - t).toBeLessThan(400);
+  revoke(g2.token);
+  // It answers (1.2 s): no longer dead, and its handshake, tools and discover answer are cached.
+  await until("it's lifted", () => dead(key) === null && initialized(key), 8000);
+  await until("its tools are cached", () => lines().includes("got tools/list") && lines().filter((l) => l === "got server/discover").length >= 2, 8000);
+  revoke(g1.token);
+  const g3 = base({ servers: { s: def } });
+  await grant(g3);
+  const n = startsSeen().length;
+  const h = await handshake(p, `/${g3.token}/s`);
+  expect(h.init).toMatchObject({ serverInfo: { name: "fake" } });
+  expect(h.list).toMatchObject({ tools: [{ name: "hello" }] });
+  expect(startsSeen()).toHaveLength(n);
+  revoke(g3.token);
+}, 30_000);
+
+test("a server slow on its first start, within `deadAfter`, isn't taken for dead", async () => {
+  waits.wait = 3000;
+  const def = server({ FAKE_DELAY: "800" });
+  const g = base({ servers: { s: def } });
+  const p = (await grant(g)) as number;
+  const r = await rpc(p, `/${g.token}/s`, { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25" } });
+  expect(r?.result).toMatchObject({ serverInfo: { name: "fake" } });
+  expect(dead(serverKey(def as { [k: string]: Json }, tmpdir()))).toBeNull();
+  revoke(g.token);
+}, 30_000);
+
+test("a dead server's next try: overlapping failed starts are one failure, only a failed try again waits longer", () => {
+  limits.retry = [1000, 5000];
+  markDead("k", false, 100);
+  markDead("k", false, 900);
+  expect(dead("k")).toEqual({ since: 100, fails: 1, next: 1100 });
+  markDead("k", true, 1200);
+  expect(dead("k")).toEqual({ since: 100, fails: 2, next: 6200 });
+  markDead("k", true, 7000);
+  expect(dead("k")).toEqual({ since: 100, fails: 3, next: 12000 });
+});
+
+test("a try again gives up waiting at `deadAfter` (the next try is set), but an answer later is still cached", async () => {
+  waits.wait = 3000;
+  limits.deadAfter = 300;
+  limits.retry = [200, 200];
+  const delay = join(work, "delay");
+  writeFileSync(delay, "100000");
+  const def = server({ FAKE_DELAY_FILE: delay });
+  const key = serverKey(def as { [k: string]: Json }, tmpdir());
+  const init = { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-code", version: "x" } } };
+  const g1 = base({ servers: { s: def } });
+  const p = (await grant(g1)) as number;
+  void rpc(p, `/${g1.token}/s`, init);
+  await until("taken for dead", () => dead(key) !== null);
+  revoke(g1.token);
+  // From now on it starts slowly (700 ms): the try again a turn starts is past `deadAfter` when it answers.
+  writeFileSync(delay, "700");
+  await sleep(250);
+  const g2 = base({ servers: { s: def } });
+  await grant(g2);
+  expect((await rpc(p, `/${g2.token}/s`, init))?.error).toMatchObject({ code: -32000 });
+  revoke(g2.token);
+  await until("the try again's silence counted", () => (dead(key)?.fails ?? 0) >= 2);
+  await until("its late answer cached", () => initialized(key) && dead(key) === null);
 }, 30_000);
