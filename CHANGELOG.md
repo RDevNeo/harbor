@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.186.1] - 2026-11-13
+
+### Fixed
+- A Claude account without a usable subscription (payment past due, no credit, account on hold) no longer stops the
+  chat with a red error: Harbor treats it like an account at its usage limit and continues the chat on another
+  account (with automatic switching on), with one notice saying why; with nowhere to go it waits for you. The account
+  is tried again after an hour, or as soon as a turn goes through on it.
+- "MCP servers didn't connect" only names Harbor's own servers now, never yours (Blender not running no longer shows
+  on every turn).
+
 ## [0.186.0] - 2026-11-13
 
 ### Added
