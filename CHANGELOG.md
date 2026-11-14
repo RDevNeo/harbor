@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.2] - 2026-11-14
+
+### Fixed
+- A quoted part of a chat can be sent with just its note: the send button turns on with a quote in the
+  composer even when the main box is empty, and Enter in the note box sends the message (Shift+Enter makes a
+  new line) instead of only moving to the main box.
+
 ## [0.187.1] - 2026-11-14
 
 ### Fixed
