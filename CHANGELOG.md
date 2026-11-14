@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.1] - 2026-11-14
+
+### Fixed
+- A message sent from the phone no longer stays in the PC's composer for that chat. The phone's last draft update
+  could reach the PC just after the message and put its text back as the shared draft: the phone ignored it as its
+  own, every other device showed it, and the phone appeared to still be typing. A late update that only holds the
+  sent message is now dropped; words typed after the send still show everywhere.
+
 ## [0.187.0] - 2026-11-14
 
 ### Added
