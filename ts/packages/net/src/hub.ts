@@ -15,6 +15,9 @@ export const PREVIEW_CHARS = 500;
 export const DRAFT_CHARS = 32_000;
 export const DRAFT_ITEMS = 20;
 export const DRAFT_HOLD = 1_000;
+/** How long after a message went out a typing report holding (the start of) it is the sender's composer from before
+ * the send, arriving late: a phone's last ping and its send take separate connections, a forwarded lease another PC's. */
+export const DRAFT_STALE = 5_000;
 export const INBOX_TTL = 24 * 3600 * 1000;
 export const APP_INBOX = 17000;
 const PHONES_SEEN = "phones_seen";
@@ -248,6 +251,8 @@ export class Hub {
   private typingMap = new Map<number, Typer[]>();
   private viewingMap = new Map<number, Typer[]>();
   private drafts = new Map<number, SharedDraft>();
+  /** Per chat, the last message out (trimmed text, file paths) and when: a late report of it may still come. */
+  private sentOut = new Map<number, { text: string; files: string[]; at: number }>();
   private draftsDirty = false;
   /** A draft changed (it's written soon after, so a crash keeps it). */
   onDrafts: (() => void) | null = null;
@@ -437,6 +442,7 @@ export class Hub {
   /** A typing report: the lease, and the composer's content when it says (`draft` {text, files?, mentions?}). */
   report(chat: number, device: string, kind: string, label: string, on: boolean, draft: Record<string, unknown> | null, resolve: (id: string) => DraftFile | null): boolean {
     const text = draft && typeof draft.text === "string" ? draft.text : null;
+    if (on && draft && this.stale(chat, text ?? "", draft.files, resolve)) return false;
     let changed = this.setTyping(chat, device, kind, label, on, text);
     if (draft) {
       const textOnly = !("files" in draft) && !("mentions" in draft);
@@ -458,14 +464,34 @@ export class Hub {
   /** A message went out of `chat`: its draft empties everywhere and its typers stop. The empty draft always gets a
    * new rev, even when this hub knew no draft (it restarted, or the composer was never reported): every device's
    * composer may still hold the message, and only a newer rev makes it give way. */
-  clearDraft(chat: number): void {
+  clearDraft(chat: number, sent: { text: string; files: readonly string[] } | null = null): void {
     this.typingMap.delete(chat);
+    if (sent) this.sentOut.set(chat, { text: sent.text.trim(), files: [...sent.files], at: this.clock() });
     this.rev_ += 1;
     this.drafts.set(chat, { ...emptyDraft(), rev: this.rev_ });
     this.draftsDirty = true;
     this.onDrafts?.();
     this.mark(chat);
     this.notify();
+  }
+
+  /** A report of what a composer held before the message `chat` just sent (its text the start of the message's, its
+   * files among the message's): it left before the send and got here after the clear. Taken, it would put the message
+   * back as the draft on every other device (the sender skips its own) and its writer back among the typers. */
+  private stale(chat: number, text: string, files: unknown, resolve: (id: string) => DraftFile | null): boolean {
+    const s = this.sentOut.get(chat);
+    if (!s) return false;
+    if (this.clock() - s.at >= DRAFT_STALE) {
+      this.sentOut.delete(chat);
+      return false;
+    }
+    if (!s.text.startsWith(text.trim())) return false;
+    for (const f of Array.isArray(files) ? files : []) {
+      const id = typeof f === "string" ? f : typeof f === "object" && f !== null && typeof (f as { id?: unknown }).id === "string" ? (f as { id: string }).id : null;
+      const path = id === null ? null : (resolve(id)?.path ?? null);
+      if (path === null || !s.files.includes(path)) return false;
+    }
+    return true;
   }
 
   draft(chat: number): SharedDraft | null {

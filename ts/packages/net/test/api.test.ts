@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { Api, apkAllowed, byteRange, type ApiDeps, type Call } from "../src/api.ts";
 import { HttpError, ok, readBody, readChunked, readHead, Reader, urlDecode, urlEncode, bearer, header, query, segments, type Request } from "../src/http.ts";
-import { APP_INBOX, deviceId, loadTokens, saveTokens, draftFileOf, draftFromJson, draftJson, Hub, INBOX_TTL, newToken, PREVIEW_CHARS, PREVIEW_GAP, resolveUpload, safeName, shouldApply, type Parcel, type SharedDraft, type Token } from "../src/hub.ts";
+import { APP_INBOX, DRAFT_STALE, deviceId, loadTokens, saveTokens, draftFileOf, draftFromJson, draftJson, Hub, INBOX_TTL, newToken, PREVIEW_CHARS, PREVIEW_GAP, resolveUpload, safeName, shouldApply, type Parcel, type SharedDraft, type Token } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { wire } from "../src/wire.ts";
 
@@ -353,6 +353,45 @@ describe("hub (api.rs)", () => {
     const back = draftFromJson(JSON.parse(wire(draftJson(hub.draft(7) as SharedDraft))));
     expect([back?.text, back?.rev]).toEqual(["stays", hub.draft(7)?.rev]);
     expect(draftFromJson(null)).toBeNull();
+  });
+
+  test("a typing report that left before the send and lands after its clear doesn't bring the message back", () => {
+    const c = clock();
+    const hub = new Hub([], 0, c.now);
+    // The phone types; its last ping and its send go on separate connections (or the ping through another PC's
+    // forwarded lease), and the ping gets here after the message's clear.
+    hub.report(7, "tok:1", "phone", "Galaxy", true, { text: "hello wor", files: [], mentions: [] }, () => null);
+    hub.clearDraft(7, { text: "hello world", files: [] });
+    const cleared = (hub.draft(7) as SharedDraft).rev;
+    c.t += 300;
+    expect(hub.report(7, "tok:1", "phone", "Galaxy", true, { text: "hello wor", files: [], mentions: [] }, () => null)).toBe(false);
+    // The same through another PC's /mesh/v1/lease (files left out) and from a PC that still held the text.
+    expect(hub.report(7, "tok:1", "phone", "Galaxy", true, { text: "  hello world\n", mentions: [] }, () => null)).toBe(false);
+    expect(hub.report(7, "pc:desk", "pc", "desk", true, { text: "hello world", mentions: [], files: [] }, () => null)).toBe(false);
+    expect(hub.draft(7)).toMatchObject({ text: "", by: "", rev: cleared });
+    // Nobody shows as typing it either (a message sent from the PC would wait for them).
+    expect(hub.typing(7)).toEqual([]);
+    // The PC's composer, which took "hello wor" in, takes the clear.
+    expect(shouldApply(hub.draft(7) as SharedDraft, "pc:desk", null, c.t)).toBe("now");
+    // Words typed after the send aren't the sent message: they go in.
+    expect(hub.report(7, "tok:1", "phone", "Galaxy", true, { text: "and one more", files: [], mentions: [] }, () => null)).toBe(true);
+    expect(hub.draft(7)).toMatchObject({ text: "and one more", by: "tok:1" });
+    // Long after a send, the same words are a new draft.
+    hub.clearDraft(8, { text: "ok", files: [] });
+    c.t += DRAFT_STALE;
+    hub.report(8, "tok:1", "phone", "Galaxy", true, { text: "ok", files: [], mentions: [] }, () => null);
+    expect(hub.draft(8)?.text).toBe("ok");
+    // A message of files alone: a late report holding just those files is stale too, one with another file isn't.
+    const up = join(tmp, "uploads-late");
+    mkdirSync(join(up, "9"), { recursive: true });
+    writeFileSync(join(up, "9", "1-a.png"), "x");
+    writeFileSync(join(up, "9", "2-b.png"), "x");
+    const res = (id: string) => draftFileOf(up, id);
+    hub.clearDraft(9, { text: "", files: [join(up, "9", "1-a.png")] });
+    expect(hub.report(9, "tok:1", "phone", "Galaxy", true, { text: "", files: ["9/1-a.png"], mentions: [] }, res)).toBe(false);
+    expect(hub.draft(9)?.files).toEqual([]);
+    hub.report(9, "tok:1", "phone", "Galaxy", true, { text: "", files: ["9/2-b.png"], mentions: [] }, res);
+    expect(hub.draft(9)?.files.map((f) => f.id)).toEqual(["9/2-b.png"]);
   });
 
   test("a message out clears the draft on every device, even one this hub never had", () => {

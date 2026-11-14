@@ -116,6 +116,25 @@ function engineFor(store: Store, sent: string[]): PhoneEngine {
   } satisfies PhoneEngine;
 }
 
+describe("phone sends and the shared draft", () => {
+  test("the phone's last typing ping, landing after its send, doesn't put the message back in the PC's composer", async () => {
+    const store = Store.openAt(join(tmp, "draft.db"));
+    const hub = new Hub([], 0);
+    const sent: string[] = [];
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: engineFor(store, sent) });
+    const c = store.createChat(blankChat({ title: "m" }));
+    hub.report(c.id, "tok:1", "phone", "Pixel", true, { text: "fix the bu", files: [], mentions: [] }, () => null);
+    expect(hub.draft(c.id)?.text).toBe("fix the bu");
+    const r = await routes.route({ method: "POST", path: ["v1", "chats", String(c.id), "send"], query: [], body: { text: "fix the bug " }, token: "", device: "Pixel", global: false });
+    expect(r.status).toBe(200);
+    expect(sent).toEqual(["fix the bug"]);
+    hub.report(c.id, "tok:1", "phone", "Pixel", true, { text: "fix the bu", files: [], mentions: [] }, () => null);
+    expect(hub.draft(c.id)).toMatchObject({ text: "", by: "" });
+    store.close();
+  });
+});
+
 describe("phone sends: a retried POST can't send the message twice", () => {
   test("a chat on this PC: the same client id runs once, another runs, none without one", async () => {
     const store = Store.openAt(join(tmp, "local.db"));

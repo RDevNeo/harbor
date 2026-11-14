@@ -919,6 +919,10 @@ files, mentioned messages) shows up in everyone's composer as if they had typed 
   and ends every typing lease in it (the message doesn't wait for "one sender at a time" then).
   The empty draft always gets a newer `rev` (0.121.1), also when the hub knew no draft for the
   chat, so a device that still shows the message's text (or opens the chat later) empties it.
+  For 5 s after a send, a `typing: true` report whose draft text is the start of the message's
+  (trimmed) and whose files all went with it is dropped (0.187.1): it left before the send and
+  got there late (a ping on another connection, a lease forwarded by another PC), and would put
+  the message back in every other composer.
 - A report with only `text` (0.56–0.63 clients) changes the draft's text and keeps its files
   and mentions; `typing: false` from such a client leaves the draft alone. Clients before 0.56
   don't touch it.

@@ -3371,7 +3371,7 @@ export class Shell {
     this.attached.delete(from);
     this.win.draft = "";
     // The message went out: the chat's draft empties on every device (and its typers stop, so it isn't queued for them).
-    this.shellMesh.sent?.(id);
+    this.shellMesh.sent?.(id, text, files);
     this.draftSync.sent(id, this.shellMesh.draft?.(id)?.rev ?? 0);
     this.refreshFiles();
     this.engine.send(id, text, { files, mentions, mode });

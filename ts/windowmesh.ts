@@ -106,9 +106,16 @@ export class WindowMesh {
   }
 
   /** A message went out of the window's composer: the chat's draft empties on every device (a copy's home PC does it when the message gets there). */
-  sent(id: number): void {
+  sent(id: number, text = "", files: readonly string[] = []): void {
     const c = this.d.chat(id);
-    if (c && c.home === "") this.d.hub.clearDraft(id);
+    if (!c || c.home !== "") return;
+    // Its files as the hub's drafts hold them (the uploads shared for them), for a late report of the message.
+    const dir = this.d.uploadsDir;
+    const up = (p: string): string => {
+      const known = this.shared.get(p);
+      return (known !== undefined && dir ? resolveUpload(dir, known) : null) ?? p;
+    };
+    this.d.hub.clearDraft(id, { text, files: files.map(up) });
   }
 
   /** Calls `changed` with the chats whose state moved (drafts among them), for as long as the window lives. */

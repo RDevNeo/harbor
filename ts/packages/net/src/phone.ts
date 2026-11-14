@@ -1179,7 +1179,8 @@ export class PhoneRoutes {
     const before = e.queued(c.id).filter((q) => q.intent === "").length;
     const running = e.running(c.id);
     const mode = body.mode === "steer" ? "steer" : "queue";
-    this.d.hub.clearDraft(c.id);
+    // The draft empties everywhere; a typing report of this message that comes after it (it left first) is late.
+    this.d.hub.clearDraft(c.id, { text: said, files });
     e.send(c.id, said, { files, mentions, mode, sender, device, from, who: who.who, via: who.via ?? undefined, dev: who.dev });
     const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;
     this.d.replica.touch(c.id);

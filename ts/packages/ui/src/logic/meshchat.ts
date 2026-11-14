@@ -24,7 +24,7 @@ export interface ShellMesh {
   /** The chat's shared composer draft (windowmesh.ts `draft`). */
   draft?(id: number): DraftIn | null;
   /** A message went out of the window's composer: the chat's draft empties everywhere. */
-  sent?(id: number): void;
+  sent?(id: number, text?: string, files?: readonly string[]): void;
   /** Any change but a message to a copy whose PC is off: the chat becomes this PC's (failover.ts `adopt`): the chat, now
    *  this PC's, or why not. */
   adopt?(c: Chat): Chat | string;
