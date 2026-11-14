@@ -703,6 +703,7 @@ export interface AppWindow extends slint.ComponentHandle {
   patch_chip: (i: number, x: number, y: number) => void;
   mentions: slint.Model<{ head: string; snippet: string; tip: string; note: string; hint: string; focus: boolean }>;
   note_edited: (i: number, text: string) => void;
+  note_key: (e: KeyEvent) => boolean;
   remove_mention: (i: number) => void;
   strip_rows: slint.Model<StripRow>;
   strip_title: string;

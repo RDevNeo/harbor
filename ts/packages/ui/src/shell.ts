@@ -1019,6 +1019,7 @@ export class Shell {
       const m = this.messageMentions()[i];
       if (m) m.note = t;
     };
+    w.note_key = (e) => this.noteKey(e);
     w.remove_mention = (i) => {
       const shown = this.messageMentions();
       const m = shown[i];
@@ -2897,6 +2898,18 @@ export class Shell {
         return;
       }
     }
+  }
+
+  /** A key in a mention's note box: the composer's send shortcuts send the message, its notes with it; anything else types. */
+  private noteKey(e: KeyEvent): boolean {
+    const p = pressOf(e.text, e.modifiers);
+    const follow = this.engine.followDefault();
+    const mode = this.keys.matches("send", p) ? follow : this.keys.matches("send_now", p) ? (follow === "steer" ? "queue" : "steer") : null;
+    if (mode === null) return false;
+    this.send(mode);
+    // The note box goes with its sent mention: typing carries on in the composer.
+    this.win.focus_composer();
+    return true;
   }
 
   private composerKey(e: KeyEvent): boolean {

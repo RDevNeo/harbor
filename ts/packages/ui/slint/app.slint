@@ -614,6 +614,7 @@ export component AppWindow inherits Window {
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
     callback note-edited(int, string);
+    callback note-key(KeyEvent) -> bool;
     in property <[StripRow]> strip-rows;
     in property <string> strip-title;
     in property <string> strip-names;
@@ -1406,8 +1407,8 @@ export component AppWindow inherits Window {
                                 note-edited(i, t) => {
                                     root.note-edited(i, t);
                                 }
-                                note-done => {
-                                    root.focus-composer();
+                                note-key(e) => {
+                                    return root.note-key(e);
                                 }
                                 trust => {
                                     root.trust();

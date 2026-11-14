@@ -530,7 +530,8 @@ export component Composer {
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
     callback note-edited(int, string);
-    callback note-done();
+    // A key in a mention's note box: true when it was one of the composer's send shortcuts (the message went).
+    callback note-key(KeyEvent) -> bool;
     public function focus-text() {
         field.focus();
     }
@@ -785,8 +786,7 @@ export component Composer {
                                                 root.note-edited(i, self.text);
                                             }
                                             key-pressed(e) => {
-                                                if e.text == "\n" && !e.modifiers.shift {
-                                                    root.note-done();
+                                                if root.note-key(e) {
                                                     return accept;
                                                 }
                                                 reject
@@ -987,7 +987,7 @@ export component Composer {
                             }
                             if root.state.action != "stop": RoundButton {
                                 icon: root.state.action == "steer" ? Icons.corner-up-right : root.state.action == "queue" ? Icons.list-plus : root.state.action == "update" ? Icons.check : root.state.action == "resume" ? Icons.play : Icons.arrow-up;
-                                enabled: root.state.action != "syncing" && (root.state.action != "send" || field.text != "" || root.files.length > 0);
+                                enabled: root.state.action != "syncing" && (root.state.action != "send" || field.text != "" || root.files.length > 0 || root.mentions.length > 0);
                                 tip: root.state.action-tip;
                                 clicked => {
                                     root.send();
@@ -1205,7 +1205,7 @@ export component Composer {
                             }
                             if root.state.action != "stop": RoundButton {
                                 icon: root.state.action == "steer" ? Icons.corner-up-right : root.state.action == "queue" ? Icons.list-plus : root.state.action == "update" ? Icons.check : root.state.action == "resume" ? Icons.play : Icons.arrow-up;
-                                enabled: root.state.action != "syncing" && (root.state.action != "send" || field.text != "" || root.files.length > 0);
+                                enabled: root.state.action != "syncing" && (root.state.action != "send" || field.text != "" || root.files.length > 0 || root.mentions.length > 0);
                                 tip: root.state.action-tip;
                                 clicked => {
                                     root.send();
