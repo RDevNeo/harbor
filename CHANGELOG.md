@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.186.2] - 2026-11-13
+
+### Fixed
+- One of your MCP servers that doesn't answer (Blender's while Blender isn't running) no longer holds every turn's
+  start for 30 s: after its first silent start, turns start at once (about 0.7 s instead of 30 s) and Harbor tries the
+  server again in the background (after 30 s, then every minute, when a turn comes). Once it answers, the next turn
+  has it again. A server that is only slow on its first start still gets cached when it answers.
+
 ## [0.186.1] - 2026-11-13
 
 ### Fixed
