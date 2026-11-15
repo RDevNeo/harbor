@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.3] - 2026-11-15
+
+### Fixed
+- A chat moved to another Claude account no longer fails every message with `error_during_execution` when its
+  conversation didn't come along at the switch (for example, the profile folder was being renamed then): each
+  turn now also looks in every Claude profile of the PC and brings the newest copy over.
+- An error that Claude Code reports only as its code (`error_during_execution`) now shows what Claude Code
+  printed, such as "No conversation found with session ID: …".
+
 ## [0.187.2] - 2026-11-14
 
 ### Fixed
