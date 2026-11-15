@@ -49,3 +49,19 @@ test("sessions_follow_the_chat_and_stay_behind", async () => {
   expect(readFileSync(join(fresh, "abc.jsonl"), "utf8")).toBe("one\ntwo\nthree\n");
   expect(readFileSync(join(old, "abc.jsonl"), "utf8")).toBe("one\ntwo\n");
 });
+
+test("a_session_left_in_another_profile_comes_over", () => {
+  // A chat switched from ~/.claude to ~/.claude2 whose copy didn't happen at the switch: the turn start finds it in
+  // the other profile instead of resuming nothing ("No conversation found").
+  const one = join(base, "p1");
+  const two = join(base, "p2");
+  const work = join(base, "proj");
+  mkdirSync(work);
+  mkdirSync(mc.sessionDir(one, work), { recursive: true });
+  writeFileSync(join(mc.sessionDir(one, work), "sid.jsonl"), "conversation\n");
+  expect(mc.ensureSession(two, "sid", work)).toBe(false);
+  expect(mc.ensureSessionIn(two, [one], "sid", work)).toBe(true);
+  expect(readFileSync(join(mc.sessionDir(two, work), "sid.jsonl"), "utf8")).toBe("conversation\n");
+  // The other profile's copy stays.
+  expect(existsSync(join(mc.sessionDir(one, work), "sid.jsonl"))).toBe(true);
+});
