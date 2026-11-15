@@ -614,9 +614,12 @@ export class Engine {
     }
     const cwd = this.chatCwd(chat);
     const context = this.host.turnContext?.(chat, remote !== null) ?? agent.ownContext();
-    // Claude resumes sessions of its folder only: a moved chat's is brought over.
+    // Claude resumes sessions of its folder only: a moved chat's is brought over. Every Claude profile of this PC is
+    // looked in too: a switch whose copy didn't happen (the profile was missing or renamed then) would otherwise fail
+    // every turn with "No conversation found".
     if (!remote && account.kind === "Claude" && chat.started && chat.sessionId !== "") {
-      const also = [...(this.host.overlays?.() ?? []), account.configDir ?? `${home()}/.claude`];
+      const profiles = this.host.accounts().filter((a) => a.kind === "Claude").map((a) => a.configDir ?? `${home()}/.claude`);
+      const also = [...(this.host.overlays?.() ?? []), account.configDir ?? `${home()}/.claude`, ...profiles];
       try {
         ensureSessionIn(context.overlay ?? account.configDir, also, chat.sessionId, cwd);
       } catch {
