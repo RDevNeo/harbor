@@ -897,6 +897,11 @@ export class Engine {
         if (!tr.gotResult && !stopped && !resumes) {
           const tail = tr.stderr.join("\n");
           tr.items.push({ kind: "error", text: tail !== "" ? tail : ev.ok ? "The agent exited without a result." : "The agent exited with an error." });
+        } else if (!stopped && last?.kind === "error" && /^error_[a-z_]+$/.test(last.text.trim())) {
+          // A result with only its subtype ("error_during_execution") says nothing: what the CLI printed says why
+          // ("No conversation found with session ID: …").
+          const tail = tr.stderr.join("\n").trim();
+          if (tail !== "") last.text = `${tail}\n(${last.text.trim()})`;
         }
         tr.pendingText = null;
         tr.pendingThinking = null;
