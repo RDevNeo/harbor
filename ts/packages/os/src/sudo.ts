@@ -100,7 +100,9 @@ export async function runRoot(via: Via, verb: "on" | "off", p: string = platform
   if (cmd === null) return { code: 127, declined: false, noPrompt: true, out: "no pkexec" };
   try {
     const tty = via === "terminal";
-    const proc = Bun.spawn(cmd, { stdin: tty ? "inherit" : "ignore", stdout: "pipe", stderr: tty ? "inherit" : "pipe" });
+    // sudo by its full path, from "/": a working folder this user can't enter made the spawn fail (EACCES).
+    const full = cmd[0] === "sudo" ? [Bun.which("sudo") ?? "/usr/bin/sudo", ...cmd.slice(1)] : cmd;
+    const proc = Bun.spawn(full, { cwd: "/", stdin: tty ? "inherit" : "ignore", stdout: "pipe", stderr: tty ? "inherit" : "pipe" });
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), proc.stderr instanceof ReadableStream ? new Response(proc.stderr).text() : Promise.resolve(""), proc.exited]);
     return interpret(via, p, code, `${out}${err}`);
   } catch (e) {
@@ -110,9 +112,10 @@ export async function runRoot(via: Via, verb: "on" | "off", p: string = platform
 
 /** Whether sudo needs no password now (`sudo -n true`). */
 export async function passwordless(): Promise<boolean> {
-  if (Bun.which("sudo") === null) return false;
+  const sudo = Bun.which("sudo");
+  if (sudo === null) return false;
   try {
-    const p = Bun.spawn(["sudo", "-n", "true"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    const p = Bun.spawn([sudo, "-n", "true"], { cwd: "/", stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     return (await p.exited) === 0;
   } catch {
     return false;

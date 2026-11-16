@@ -36,12 +36,21 @@ out=$(run auto 0.188.5); echo "$out"
 check "same minor version: not asked again" "[ \"\$(echo \"\$out\" | tail -1)\" = null ]"
 
 echo "=== 3. a polkit agent that says yes (a test rule standing in for the person typing the password)"
-if [ -d /etc/polkit-1/rules.d ] && command -v pkexec >/dev/null && pgrep -x polkitd >/dev/null; then
+if command -v pkexec >/dev/null && pgrep -x polkitd >/dev/null; then
+  # Newer polkit reads JavaScript rules, 0.105 (Ubuntu 22.04) .pkla files: both, saying yes to this user.
+  sudo mkdir -p /etc/polkit-1/rules.d /etc/polkit-1/localauthority/50-local.d
   echo "polkit.addRule(function(a, s) { if (a.id == 'org.freedesktop.policykit.exec' && s.user == '$t') return polkit.Result.YES; });" | sudo tee /etc/polkit-1/rules.d/49-harbortest.rules >/dev/null
-  sleep 2
+  printf '[harbortest]
+Identity=unix-user:%s
+Action=org.freedesktop.policykit.exec
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes
+' "$t" | sudo tee /etc/polkit-1/localauthority/50-local.d/49-harbortest.pkla >/dev/null
+  sleep 3
   out=$(run auto 0.189.0); echo "$out"
   check "auto in the next minor version: asked through pkexec, rule written" "sudo test -f /etc/sudoers.d/harbor-$t && as_t sudo -n true"
-  sudo rm -f /etc/polkit-1/rules.d/49-harbortest.rules
+  sudo rm -f /etc/polkit-1/rules.d/49-harbortest.rules /etc/polkit-1/localauthority/50-local.d/49-harbortest.pkla
   run off >/dev/null
 else
   echo "SKIP 3: no polkit daemon running here (pkexec can't authorize anything without it: section 2 is what Harbor does then)"
@@ -66,7 +75,7 @@ out=$(run auto 0.190.0); echo "$out"
 check "after off, a later version doesn't ask" "[ \"\$(echo \"\$out\" | tail -1)\" = null ]"
 
 echo "=== 6. a broken rule never goes in"
-check "visudo refuses a rule that doesn't parse, nothing written, sudo intact" "! echo '$pw' | as_t sudo -S -p '' /bin/sh -c \"\$script\" sh on /etc/sudoers.d harbor-$t 'bad user' >/dev/null 2>&1 && ! sudo test -e /etc/sudoers.d/harbor-$t && sudo visudo -c >/dev/null"
+check "visudo refuses a rule that doesn't parse, nothing written, sudo intact" "! echo '$pw' | as_t sudo -S -p '' /bin/sh -c \"\$script\" sh on /etc/sudoers.d harbor-$t '(broken' >/dev/null 2>&1 && ! sudo test -e /etc/sudoers.d/harbor-$t && sudo visudo -c >/dev/null"
 
 echo "=== 7. a user with passwordless sudo already: nothing asked, nothing written"
 out=$(XDG_STATE_HOME=$(mktemp -d) bun "$src/packages/os/rig/sudo-live.ts" auto 0.188.0); echo "$out"
