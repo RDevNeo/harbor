@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { autostart, clipboard, desktop, env, folders, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
+import { admin, autostart, clipboard, desktop, env, folders, keychain, libc, lock, paths, platform, proc, spawn, sys } from "../src/index.ts";
 
 const linux = process.platform === "linux";
 
@@ -193,7 +193,9 @@ describe("desktop", () => {
   test("the opener per OS", () => {
     expect(desktop.opener("linux")).toEqual(["xdg-open"]);
     expect(desktop.opener("darwin")).toEqual(["open"]);
-    expect(desktop.opener("win32")).toEqual(["rundll32", "url.dll,FileProtocolHandler"]);
+    // An elevated Harbor on Windows (its default) opens through Explorer, which has the desktop's normal rights.
+    const viaExplorer = process.platform === "win32" && admin.elevated();
+    expect(desktop.opener("win32")).toEqual(viaExplorer ? [expect.stringMatching(/explorer\.exe$/i)] : ["rundll32", "url.dll,FileProtocolHandler"]);
   });
 
   test("no compositor to ask: nothing raised", () => {

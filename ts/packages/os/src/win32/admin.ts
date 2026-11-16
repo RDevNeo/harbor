@@ -139,6 +139,8 @@ export function removeMarker(env: Env = process.env): void {
 export interface Choice {
   off: boolean;
   declined: string;
+  /** What the declined (or failed) attempt said ("" none). */
+  why: string;
 }
 
 export const choicePath = (env: Env = process.env): string => join(dir(env), "admin-choice.json");
@@ -146,9 +148,9 @@ export const choicePath = (env: Env = process.env): string => join(dir(env), "ad
 export function readChoice(env: Env = process.env): Choice {
   try {
     const c = JSON.parse(readFileSync(choicePath(env), "utf8")) as Partial<Choice>;
-    return { off: c.off === true, declined: typeof c.declined === "string" ? c.declined : "" };
+    return { off: c.off === true, declined: typeof c.declined === "string" ? c.declined : "", why: typeof c.why === "string" ? c.why : "" };
   } catch {
-    return { off: false, declined: "" };
+    return { off: false, declined: "", why: "" };
   }
 }
 

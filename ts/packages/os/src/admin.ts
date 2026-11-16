@@ -1,6 +1,8 @@
-// Harbor runs as administrator on Windows by default (win32/admin.ts has how): its state, setting it up (the first
-// start asks Windows once) and turning it off or on again (`harbor admin off|on`), a start without the administrator
-// token handed to the task, and the restarts that go through a task. Elsewhere every answer is "not here".
+// Harbor's administrator rights, on by default: on Windows Harbor itself runs as administrator (win32/admin.ts: a
+// scheduled task Windows allows once); on Linux and macOS its agents get passwordless sudo (sudo.ts: a sudoers.d rule
+// the desktop's own prompt allows once; Harbor's window never runs as root). Here: the state, setting it up at the
+// first window start, turning it off or on again (`harbor admin off|on`), and on Windows a start without the token
+// handed to the task and the restarts that go through a task.
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { home } from "./paths.ts";
@@ -10,13 +12,34 @@ import { exists as procExists } from "./proc.ts";
 type Env = Record<string, string | undefined>;
 type W = typeof import("./win32/admin.ts");
 type Login = typeof import("./win32/login.ts");
+type U = typeof import("./sudo.ts");
 let w: W | undefined;
 const win = (): W | null => (platform() === "win32" ? (w ??= require("./win32/admin.ts") as W) : null);
+/** The marker and the remembered choice: plain files, the same on every OS (win32/admin.ts has them). */
+const files = (): W => (w ??= require("./win32/admin.ts") as W);
+let u: U | undefined;
+const unix = (): U | null => (platform() === "linux" || platform() === "darwin" ? (u ??= require("./sudo.ts") as U) : null);
 const login = (): Login => require("./win32/login.ts") as Login;
 
+/** Linux and macOS: whether sudo needs no password, as last seen (`refresh`). */
+let sudoActive: boolean | null = null;
+
+/** Linux and macOS: looks again whether sudo needs no password (`sudo -n true`); off the main thread's way. */
+export async function refresh(): Promise<boolean> {
+  const x = unix();
+  sudoActive = x === null ? false : await x.passwordless();
+  return sudoActive;
+}
+
 export interface AdminState {
-  /** Windows: the setting exists. */
+  /** Windows, Linux or macOS: there's something to show. */
   supported: boolean;
+  /** How: Windows' task (Harbor runs as administrator), or passwordless sudo for its agents. */
+  kind: "task" | "sudo" | null;
+  /** Linux and macOS: sudo needs no password, but not by Harbor's rule (it was so before). */
+  preexisting: boolean;
+  /** Why the last attempt didn't set it up ("" none). */
+  why: string;
   /** The setting is on. */
   on: boolean;
   /** This Harbor has the administrator token. */
@@ -31,9 +54,25 @@ export interface AdminState {
 
 export function state(): AdminState {
   const a = win();
-  if (a === null) return { supported: false, on: false, elevated: false, canElevate: false, off: false, declined: "" };
-  const c = a.readChoice();
-  return { supported: true, on: a.marker() !== null, elevated: a.elevated() === true, canElevate: a.canElevate(), off: c.off, declined: c.declined };
+  const x = unix();
+  if (a === null && x === null) return { supported: false, kind: null, preexisting: false, why: "", on: false, elevated: false, canElevate: false, off: false, declined: "" };
+  const f = files();
+  const c = f.readChoice();
+  const on = f.marker() !== null;
+  if (a !== null) return { supported: true, kind: "task", preexisting: false, why: c.why, on, elevated: a.elevated() === true, canElevate: a.canElevate(), off: c.off, declined: c.declined };
+  // Before the first look (`refresh`), Harbor's own rule counts as working.
+  const active = sudoActive ?? on;
+  return { supported: true, kind: "sudo", preexisting: active && !on, why: c.why, on, elevated: active, canElevate: x?.hasSudo() ?? false, off: c.off, declined: c.declined };
+}
+
+/** `harbor admin on|off` is done by the command itself (Linux, macOS: sudo asks in the terminal), not the running Harbor. */
+export const cliLocal = (): boolean => unix() !== null;
+
+/** The note shown just before the one prompt. */
+export function promptNote(): string {
+  return unix() !== null
+    ? "Harbor's agents get sudo without a password on this PC: your system asks for your password once. (harbor admin off in a terminal turns that off.)"
+    : "Harbor runs as administrator on Windows: Windows asks once to allow it. (harbor admin off in a terminal turns that off.)";
 }
 
 /** This process has the administrator token (false off Windows). Read once: it can't change. */
@@ -63,14 +102,47 @@ export interface SetOptions {
   arg: string;
 }
 
-/** Turns "Run as administrator" on or off. Windows shows its prompt (UAC) once when it must. */
-export async function set(on: boolean, o: SetOptions): Promise<SetResult> {
+/**
+ * Turns it on or off. Windows shows its prompt (UAC) once when it must; Linux and macOS ask through the desktop's
+ * prompt (`via` "desktop") or sudo in the terminal (`via` "terminal", `harbor admin on|off`).
+ */
+export async function set(on: boolean, o: SetOptions, via: "desktop" | "terminal" = "desktop"): Promise<SetResult> {
   const a = win();
-  if (a === null) return { ok: false, message: "Running as administrator is for Windows.", restart: false };
-  const r = on ? await enable(a, o) : await disable(a, o);
+  const x = unix();
+  if (a === null && x === null) return { ok: false, message: "Harbor's administrator rights are for Windows, Linux and macOS.", restart: false };
+  const r = a !== null ? (on ? await enable(a, o) : await disable(a, o)) : on ? await sudoOn(x as U, via) : await sudoOff(x as U, via);
   // Turned off, it stays off over updates; turned on, the default is back.
-  if (r.ok) a.writeChoice({ off: !on, declined: "" });
+  if (r.ok) files().writeChoice({ off: !on, declined: "", why: "" });
   return r;
+}
+
+async function sudoOn(x: U, via: "desktop" | "terminal"): Promise<SetResult> {
+  const f = files();
+  const ok = (message: string): SetResult => ({ ok: true, message, restart: false });
+  if (!x.hasSudo()) return { ok: false, message: "sudo isn't installed here, so there's nothing to make passwordless.", restart: false };
+  if (await refresh()) return ok(f.marker() !== null ? "sudo needs no password already (Harbor's rule)." : "sudo needs no password for you already (not Harbor's doing): nothing to change.");
+  const r = await x.runRoot(via, "on");
+  if (r.declined) return { ok: false, message: "The password prompt was declined: sudo still asks for your password.", restart: false };
+  if (r.noPrompt) return { ok: false, message: "There's no password prompt Harbor can show here (no polkit agent): run harbor admin on in a terminal, where sudo asks for your password.", restart: false };
+  if (r.code !== 0) return { ok: false, message: `sudo wasn't changed${r.out === "" ? ` (exit ${r.code})` : `: ${r.out}`}`, restart: false };
+  f.writeMarker({ login: false, exe: `${x.sudoersDir()}/${x.fileName(x.currentUser())}`, since: Date.now() });
+  await refresh();
+  return ok("Harbor's agents can use sudo without a password now.");
+}
+
+async function sudoOff(x: U, via: "desktop" | "terminal"): Promise<SetResult> {
+  const f = files();
+  if (f.marker() === null) {
+    const pre = await refresh();
+    return { ok: true, message: pre ? "Off. sudo still needs no password for you, but that rule isn't Harbor's: it was left alone." : "Off.", restart: false };
+  }
+  // While Harbor's rule is there, sudo needs no password to take it out.
+  let r = await x.runRoot("sudo-n", "off");
+  if (r.code !== 0) r = await x.runRoot(via, "off");
+  if (r.code !== 0) return { ok: false, message: `Harbor's sudo rule wasn't removed${r.out === "" ? "" : `: ${r.out}`}`, restart: false };
+  f.removeMarker();
+  await refresh();
+  return { ok: true, message: "Off: sudo asks for your password again.", restart: false };
 }
 
 /**
@@ -79,15 +151,26 @@ export async function set(on: boolean, o: SetOptions): Promise<SetResult> {
  * raised, or when the prompt was declined in this minor version (a decline is remembered: the next minor version asks
  * once more). Null: nothing asked; else the outcome (`restart`: restart now, through the task).
  */
-export async function autoSetup(o: SetOptions & { version: string }, exe: string = process.execPath, before: () => void = () => {}): Promise<SetResult | null> {
+export async function autoSetup(o: SetOptions & { version: string }, exe: string = process.execPath, before: (note: string) => void = () => {}): Promise<SetResult | null> {
   const a = win();
-  if (a === null || !samePath(o.exe, exe) || a.marker() !== null || !a.canElevate()) return null;
-  const c = a.readChoice();
-  if (c.off || c.declined === a.minorOf(o.version)) return null;
-  // An elevated Harbor (opened as administrator) sets it up with no prompt; else Windows asks now.
-  if (a.elevated() !== true) before();
-  const r = await enable(a, o);
-  if (!r.ok) a.writeChoice({ off: false, declined: a.minorOf(o.version) });
+  const x = unix();
+  const f = files();
+  if (f.marker() !== null) return null;
+  const c = f.readChoice();
+  if (c.off || c.declined === f.minorOf(o.version)) return null;
+  let r: SetResult;
+  if (a !== null) {
+    if (!samePath(o.exe, exe) || !a.canElevate()) return null;
+    // An elevated Harbor (opened as administrator) sets it up with no prompt; else Windows asks now.
+    if (a.elevated() !== true) before(promptNote());
+    r = await enable(a, o);
+  } else if (x !== null) {
+    // Passwordless already (a rule of the person's own): nothing to ask, no file.
+    if (!x.hasSudo() || (await refresh())) return null;
+    before(promptNote());
+    r = await sudoOn(x, "desktop");
+  } else return null;
+  if (!r.ok) f.writeChoice({ off: false, declined: f.minorOf(o.version), why: r.message });
   return r;
 }
 
@@ -304,7 +387,10 @@ function uninstallHook(exe: string, on: boolean): void {
  */
 export async function status(self: "harbor" | "command" = "command"): Promise<string[]> {
   const a = win();
-  if (a === null) return ["Running as administrator: Windows only."];
+  const x = unix();
+  if (a === null && x === null) return ["Harbor's administrator rights: Windows, Linux and macOS only."];
+  if (a === null && x !== null) return sudoStatus(x);
+  if (a === null) return [];
   const m = a.marker();
   const c = a.readChoice();
   const task = await a.taskExists(a.TASK);
@@ -315,6 +401,31 @@ export async function status(self: "harbor" | "command" = "command"): Promise<st
     `Run as administrator (Windows default): ${how}`,
     `${who}: ${el === null ? "unknown" : el ? "elevated (administrator token)" : "not elevated (normal rights)"}; account: ${a.tokenKind() === "default" && el !== true ? "no administrator token to raise" : "administrator"}`,
     `task "${a.TASK}": ${task ? "registered" : "not found"}`,
+  ];
+}
+
+async function sudoStatus(x: U): Promise<string[]> {
+  const f = files();
+  const m = f.marker();
+  const c = f.readChoice();
+  const active = await refresh();
+  const how =
+    m !== null
+      ? `Harbor's rule since ${new Date(m.since).toISOString()} (${m.exe})${active ? "" : ", but sudo still asks for a password (see harbor admin on)"}`
+      : active
+        ? "sudo needs no password for you already, by a rule that isn't Harbor's (nothing written)"
+        : !x.hasSudo()
+          ? "sudo (or visudo) isn't installed"
+          : c.off
+            ? "off (harbor admin off; harbor admin on turns it back on)"
+            : c.declined !== ""
+              ? `not set up: the prompt in ${c.declined} didn't (${c.why || "declined"}); asked again once a later version comes, harbor admin on asks now`
+              : "not set up yet (the next start of Harbor's window asks once)";
+  return [
+    `Passwordless sudo for Harbor's agents (default on Linux and macOS): ${how}`,
+    `sudo -n true: ${active ? "works (no password)" : "asks for a password"}`,
+    ...(active ? ["The cost: any program running as you can get root without a password."] : []),
+    "Harbor's window itself never runs as root.",
   ];
 }
 

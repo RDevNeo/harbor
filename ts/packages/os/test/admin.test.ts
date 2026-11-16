@@ -15,21 +15,27 @@ const env = () => {
   return { XDG_STATE_HOME: d };
 };
 
-test("off Windows there's no such setting", () => {
-  if (process.platform === "win32") return;
-  expect(state()).toEqual({ supported: false, on: false, elevated: false, canElevate: false, off: false, declined: "" });
+test("an OS that is none of Windows, Linux and macOS has nothing to show", () => {
+  const was = process.env.HARBOR_TEST_PLATFORM;
+  process.env.HARBOR_TEST_PLATFORM = "freebsd";
+  try {
+    expect(state()).toEqual({ supported: false, kind: null, preexisting: false, why: "", on: false, elevated: false, canElevate: false, off: false, declined: "" });
+  } finally {
+    if (was === undefined) delete process.env.HARBOR_TEST_PLATFORM;
+    else process.env.HARBOR_TEST_PLATFORM = was;
+  }
 });
 
 test("the person's choice outlives updates: off for good, or a declined prompt that waits for the next minor version", () => {
   const e = env();
-  expect(readChoice(e)).toEqual({ off: false, declined: "" });
-  writeChoice({ off: false, declined: minorOf("0.187.99+3303a45") }, e);
-  expect(readChoice(e)).toEqual({ off: false, declined: "0.187" });
+  expect(readChoice(e)).toEqual({ off: false, declined: "", why: "" });
+  writeChoice({ off: false, declined: minorOf("0.187.99+3303a45"), why: "declined" }, e);
+  expect(readChoice(e)).toEqual({ off: false, declined: "0.187", why: "declined" });
   expect(minorOf("0.188.0")).not.toBe(readChoice(e).declined);
-  writeChoice({ off: true, declined: "" }, e);
+  writeChoice({ off: true, declined: "", why: "" }, e);
   expect(readChoice(e).off).toBe(true);
   // Back to the default: nothing kept.
-  writeChoice({ off: false, declined: "" }, e);
+  writeChoice({ off: false, declined: "", why: "" }, e);
   expect(existsSync(choicePath(e))).toBe(false);
 });
 

@@ -57,6 +57,10 @@ export interface AdminView {
   off: boolean;
   /** Windows' prompt was declined in this minor version ("" none). */
   declined: string;
+  /** How: Windows' task (Harbor runs as administrator), or passwordless sudo for its agents (Linux, macOS). Left out: "task". */
+  kind?: "task" | "sudo";
+  /** Linux, macOS: sudo needed no password already, by a rule that isn't Harbor's. */
+  preexisting?: boolean;
 }
 
 export const RUN_AS_ADMIN = "run_as_admin";
@@ -80,8 +84,28 @@ export function adminDesc(a: AdminView): string {
   return `${now}${cost}`;
 }
 
-/** Windows: whether Harbor runs as administrator (its default), read-only. */
+/** Linux, macOS: what is true of passwordless sudo now, its cost, and how to change it. */
+export function sudoDesc(a: AdminView): string {
+  const now = a.elevated
+    ? a.on
+      ? "Harbor's agents can run sudo without a password (your system asked once). Harbor's window itself never runs as root."
+      : "sudo already needs no password for you, by a rule that isn't Harbor's: Harbor's agents can use it."
+    : !a.canElevate
+      ? "sudo isn't installed here."
+      : a.off
+        ? "sudo asks for your password: harbor admin off in a terminal turned Harbor's rule off. harbor admin on turns it back on."
+        : a.on
+          ? "Harbor's sudo rule is there, but sudo still asks for a password. harbor admin in a terminal says why."
+          : a.declined !== ""
+            ? "sudo asks for your password: the prompt was declined. harbor admin on in a terminal asks again."
+            : "sudo asks for your password until you allow Harbor once (it asks at the start of its window).";
+  const cost = a.elevated && a.on ? " The cost: any program running as you can get root without a password. harbor admin off in a terminal removes the rule." : "";
+  return `${now}${cost}`;
+}
+
+/** Whether Harbor has administrator rights (its default), read-only: Windows' task, or passwordless sudo elsewhere. */
 export function adminSection(a: AdminView): SettingSection {
+  if (a.kind === "sudo") return { title: "Administrator", rows: [item({ kind: "value", key: RUN_AS_ADMIN, title: "Passwordless sudo", desc: sudoDesc(a), label: a.elevated ? "Yes" : "No" })] };
   return { title: "Administrator", rows: [item({ kind: "value", key: RUN_AS_ADMIN, title: "Runs as administrator", desc: adminDesc(a), label: a.elevated ? "Yes" : "No" })] };
 }
 

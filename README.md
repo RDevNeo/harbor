@@ -57,6 +57,19 @@ curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh
 - Files: `~/.local/lib/harbor/` (`harbor`, `libmpv-harbor.so`), `~/.local/bin/harbor`, a desktop entry
   and icons.
 
+### Passwordless sudo (Linux and macOS)
+
+Harbor's agents get passwordless sudo by default, so `sudo …` in a turn doesn't stop at a password prompt (Harbor's
+window itself never runs as root). The first time its window opens, your system asks for your password once
+(polkit's dialog on Linux, the system's on macOS) and Harbor adds `/etc/sudoers.d/harbor-<you>`, checked with
+`visudo` first. The cost: any program running as you can get root without a password.
+
+- `harbor admin off` removes the rule for good (updates don't add it back); `harbor admin on` adds it (sudo asks in
+  the terminal); `harbor admin` says what's set up (Settings › General › Administrator shows it too).
+- If sudo needs no password for you already, Harbor asks nothing and writes nothing.
+- Declined the prompt? sudo keeps asking for your password, and Harbor asks once more with the next minor version.
+- `install.sh --uninstall` removes Harbor's rule.
+
 ### Windows
 
 `irm https://github.com/RDevNeo/harbor/releases/latest/download/install.ps1 | iex` (or the setup,

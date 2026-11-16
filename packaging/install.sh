@@ -88,6 +88,19 @@ refresh_menus() {
   command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$ICONS" 2>/dev/null || true
 }
 
+# Harbor's passwordless sudo rule (its default; `harbor admin`), if Harbor made one: removed with sudo, which needs no
+# password while the rule is there. A rule of the person's own is left alone.
+remove_sudo_rule() {
+  mark="${XDG_STATE_HOME:-$HOME/.local/state}/harbor/run-as-admin.json"
+  [ -f "$mark" ] || return 0
+  name=$(id -un | tr -c 'A-Za-z0-9_\n-' '_')
+  for d in /etc/sudoers.d /private/etc/sudoers.d; do
+    [ -d "$d" ] || continue
+    sudo -n rm -f "$d/harbor-$name" 2>/dev/null || say "Harbor's sudo rule wasn't removed: run sudo rm $d/harbor-$name"
+  done
+  rm -f "$mark" "${XDG_STATE_HOME:-$HOME/.local/state}/harbor/admin-choice.json"
+}
+
 # Asks a running Harbor to quit cleanly (turns stop, data saved) before its files go.
 quit_harbor() {
   for h in "$BIN/harbor" "$HOME/Applications/Harbor.app/Contents/MacOS/harbor" "$LIB/harbor"; do
@@ -97,6 +110,7 @@ quit_harbor() {
 
 if [ "$UNINSTALL" = 1 ] && [ "$(uname -s)" = Darwin ]; then
   quit_harbor
+  remove_sudo_rule
   if [ -L "$BIN/harbor" ] && [ "$(readlink "$BIN/harbor")" = "$HOME/Applications/Harbor.app/Contents/MacOS/harbor" ]; then rm -f "$BIN/harbor"; fi
   rm -rf "$HOME/Applications/Harbor.app"
   rm -f "$HOME/Library/LaunchAgents/dev.harbor.Harbor.plist"
@@ -106,6 +120,7 @@ fi
 
 if [ "$UNINSTALL" = 1 ]; then
   quit_harbor
+  remove_sudo_rule
   if [ -L "$BIN/harbor" ] && [ "$(readlink "$BIN/harbor")" = "$LIB/harbor" ]; then rm -f "$BIN/harbor"; fi
   rm -rf "$LIB"
   rm -f "$APPS/harbor.desktop" "$ICONS/scalable/apps/harbor.svg" "$ICONS/256x256/apps/harbor.png"

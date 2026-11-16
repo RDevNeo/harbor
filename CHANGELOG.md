@@ -24,6 +24,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
     dev servers, terminals and other programs Harbor starts run as administrator too; and any program running as
     you could replace Harbor's files and so get administrator rights through its task without a prompt.
   - A standard (non-administrator) Windows account isn't asked and keeps its normal rights.
+- Linux and macOS: Harbor's agents get passwordless sudo by default, so `sudo …` in a turn doesn't stop at a password
+  prompt. Harbor's window never runs as root; only sudo stops asking. The first time Harbor's window opens on a
+  version with this, your system asks for your password once (Linux: polkit's own dialog; macOS: the system's
+  authentication dialog), and Harbor adds `/etc/sudoers.d/harbor-<you>` (`<you> ALL=(ALL) NOPASSWD: ALL`, root,
+  0440). The file is checked with `visudo` before it goes in and the whole configuration again after (it's taken
+  back out if that fails), and nothing is written when `/etc/sudoers` doesn't read `sudoers.d`.
+  - If sudo already needs no password for you, Harbor asks nothing and writes nothing.
+  - No polkit agent to ask with (a bare session)? Harbor says so once: `harbor admin on` in a terminal does it, and
+    sudo asks for the password right there (Harbor never sees it).
+  - Declined, `harbor admin off|on|status`, read-only Settings › General › Administrator ("Passwordless sudo"): as
+    on Windows. `harbor admin off` removes the file with sudo, which needs no password while it's there.
+  - Uninstalling (`install.sh --uninstall`) removes Harbor's rule.
+  - The cost, plainly: any program running as you can get root without a password.
+  - macOS is untested on a real Mac (no macOS machine to test on).
 
 ## [0.187.7] - 2026-11-15
 

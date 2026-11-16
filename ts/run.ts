@@ -69,8 +69,10 @@ export async function runApp(o: RunOptions): Promise<number> {
     return 0;
   }
   const adminNow = admin.state();
+  // Linux and macOS: whether sudo needs no password, looked at once now (a process, not on the main thread's way).
+  if (adminNow.kind === "sudo") void admin.refresh();
   if (adminNow.on) admin.keepHook(cfg.exe);
-  if (adminNow.supported) console.error(`harbor: running as administrator (Windows default) is ${adminNow.on ? "set up" : adminNow.off ? "off (harbor admin off)" : "not set up"}; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`);
+  if (adminNow.supported) console.error(`harbor: ${adminNow.kind === "sudo" ? "passwordless sudo" : "running as administrator"} (default) is ${adminNow.on ? "set up" : adminNow.off ? "off (harbor admin off)" : "not set up"}${adminNow.kind === "sudo" ? "" : `; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`}`);
   const stopTrims = malloc.trimEvery();
   // A line in the log for every time the main thread stops answering for a quarter second or more (stallwatch.ts).
   stallwatch.hookSqlite();
@@ -154,12 +156,11 @@ export async function runApp(o: RunOptions): Promise<number> {
     await new Promise((r) => setTimeout(r, 3000));
     const opts = adminOptions();
     if (opts === null) return;
-    const r = await admin.autoSetup({ ...opts, version: o.version }, cfg.exe, () =>
-      adminToast("Harbor runs as administrator on Windows: Windows asks once to allow it. (harbor admin off in a terminal turns that off.)"),
-    );
+    const r = await admin.autoSetup({ ...opts, version: o.version }, cfg.exe, (note) => adminToast(note));
     if (r === null) return;
     if (r.ok && r.restart) void reloader?.now();
-    else if (!r.ok) adminToast(`${r.message} harbor admin on in a terminal asks again.`);
+    else if (r.ok) adminToast(r.message);
+    else adminToast(r.message.includes("harbor admin on") ? r.message : `${r.message} harbor admin on in a terminal asks again.`);
   };
   const sock = control.startSocket<never, never, preview.Offer>({
     ...(adminNow.supported ? { admin: adminCall } : {}),
@@ -225,7 +226,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     place: () => single.placeEnv(),
     // Windows: Run as administrator turned on or off, or on and this Harbor lacks the token: the next one starts
     // through a task (admin.ts); otherwise as a child, as everywhere.
-    ...(adminNow.supported ? { spawn: (cmd: string[], env: Record<string, string | undefined>) => admin.restartSpawn(cmd, env, cfg.exe) } : {}),
+    ...(adminNow.kind === "task" ? { spawn: (cmd: string[], env: Record<string, string | undefined>) => admin.restartSpawn(cmd, env, cfg.exe) } : {}),
   });
 
   const bundle = runtimeInfo()?.bundle;
@@ -374,7 +375,8 @@ export async function runApp(o: RunOptions): Promise<number> {
       void confirmStart(cfg);
       o.shown?.(w, quit);
       if (handover !== null) void handedOver(handover, reloadedFrom, () => late(), ui.loopState);
-      if (adminNow.supported && !adminNow.on && !offline && !adminFirstAsked) {
+      // Linux and macOS: only an installed Harbor asks (not a run from source, a rig or a preview window).
+      if (adminNow.supported && !adminNow.on && !offline && !adminFirstAsked && (adminNow.kind === "task" || updater.managed())) {
         adminFirstAsked = true;
         void adminFirstStart();
       }

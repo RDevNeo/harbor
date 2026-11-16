@@ -126,10 +126,10 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const providersTab = await providersFeed(store, { ...deps.providers, modelsFor: providers.staticModels }, logos);
   const blocks = await blockTabs(store, () => show(), deps.copy, deps.runtime);
 
-  // Windows: whether Harbor runs as administrator (its default; @harbor/os admin.ts), read-only (`harbor admin off|on`).
+  // Whether Harbor has administrator rights (its default; @harbor/os admin.ts), read-only (`harbor admin off|on`).
   const adminView = (): AdminView | undefined => {
     const s = osAdmin.state();
-    return s.supported ? { on: s.on, elevated: s.elevated, canElevate: s.canElevate, off: s.off, declined: s.declined } : undefined;
+    return s.supported ? { on: s.on, elevated: s.elevated, canElevate: s.canElevate, off: s.off, declined: s.declined, kind: s.kind ?? "task", preexisting: s.preexisting } : undefined;
   };
 
   function sections(t: Tab): SettingSection[] {
