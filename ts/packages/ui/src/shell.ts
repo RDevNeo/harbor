@@ -58,6 +58,7 @@ import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from 
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
+import { paneTitle } from "./logic/splitpanes.ts";
 import { type PaneInfo, type PaneTarget, SplitPanes } from "./splitrun.ts";
 import { AttachThumbs, sameFile } from "./attachthumbs.ts";
 import { VideoPane } from "./videopane.ts";
@@ -1640,8 +1641,10 @@ export class Shell {
     const sel = c ? { account: c.account, model: c.model, effort: c.effort, access: c.access, device: c.device } : this.newSel();
     const { state, mine } = this.composerStateOf(c, sel, draft, false);
     const strip = this.stripOf(c);
+    const repoId = c?.repoId ?? null;
     return {
-      title: c ? (c.role === "sub" ? c.name : c.title) : "",
+      // A project's main chat (as its sidebar row drags it in) goes by the project's name, as that row does.
+      title: paneTitle(c, repoId === null ? null : (this.data.repo(repoId)?.name ?? null), repoId === null ? null : this.data.mainChat(repoId)),
       status: row?.status ?? null,
       running: this.running(id),
       draft,

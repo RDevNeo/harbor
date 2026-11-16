@@ -451,3 +451,11 @@ export function parse(raw: string | null | undefined): Split | null {
 }
 
 export const serialize = (s: Split): string => JSON.stringify({ v: SPLIT_VERSION, chats: s.chats, focus: s.focus, tree: s.tree, max: s.max });
+
+/** A pane's header: its project's name when the chat is that project's main chat (`main`, the one its sidebar row opens),
+ *  as that row names it; a subagent's name; else the chat's own title. */
+export function paneTitle(chat: { id: number; role: string; name: string; title: string } | undefined, project: string | null, main: number | null): string {
+  if (chat === undefined) return "";
+  if (chat.role === "sub") return chat.name;
+  return project !== null && main === chat.id ? project : chat.title;
+}
