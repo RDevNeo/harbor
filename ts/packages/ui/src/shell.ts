@@ -479,6 +479,8 @@ export class Shell {
   /** The footer's last answer from the PC (`GET /v1/workspace`), for the target `wsKey`. */
   private wsInfo: WsInfo | null = null;
   private wsKey = "";
+  /** The last "worktree" notice of the open chat the footer was read again for. */
+  private wsNotice: unknown = null;
   private wsAt = 0;
   private wsGen = 0;
   /** What git does now for the footer ("Switching to main…"), until the call answers. */
@@ -3626,6 +3628,14 @@ export class Shell {
    */
   changed(id: number | null): void {
     if (id === null || (this.view === "chat" && id === this.chatId)) this.cardsDirty = true;
+    // The lead's checkout tools moved the open chat or switched its branch (they say so in a "worktree" notice): the footer reads it now, not in 10 s.
+    if (id !== null && this.view === "chat" && id === this.chatId) {
+      const last = this.engine.transcripts.get(id)?.items.at(-1);
+      if (last?.kind === "notice" && last.icon === "worktree" && last !== this.wsNotice) {
+        this.wsNotice = last;
+        this.refreshWorkBar(true);
+      }
+    }
     if (this.split.changed(id)) this.cardsDirty = true;
     this.sidebarDirty = true;
     this.schedule(80);

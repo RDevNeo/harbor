@@ -38,7 +38,7 @@ test("subs get the team tools and everyone the shared ones", () => {
   expect(names("sub")).toContain("send_message");
   expect(names("sub")).toContain("read_messages");
   expect(names("lead")).not.toContain("send_message");
-  expect(names("lead")).toHaveLength(28);
+  expect(names("lead")).toHaveLength(34);
   // Only the lead moves agents between accounts.
   expect(names("lead")).toContain("switch_agent_account");
   expect(names("sub")).not.toContain("switch_agent_account");
@@ -56,6 +56,27 @@ test("leads steer or queue their messages and take queued ones back", () => {
   const un = lead.find((t) => t.name === "unqueue_message")?.inputSchema as { required: string[] };
   expect(un.required).toEqual(["id"]);
   expect(names("sub")).not.toContain("unqueue_message");
+});
+
+test("only_leads_manage_the_chats_checkout_and_branches", () => {
+  const lead = tools("lead");
+  const schema = (n: string) => lead.find((t) => t.name === n)?.inputSchema as { properties: Record<string, { type?: string; enum?: string[] }>; required: string[] };
+  for (const n of ["checkout_status", "create_branch", "switch_branch", "rename_branch", "delete_branch", "merge_branch"]) {
+    expect(names("lead")).toContain(n);
+    expect(names("sub")).not.toContain(n);
+  }
+  expect(schema("create_branch").required).toEqual(["name"]);
+  expect(schema("create_branch").properties.worktree?.type).toBe("boolean");
+  expect(schema("rename_branch").required).toEqual(["name"]);
+  for (const n of ["checkout_status", "switch_branch", "delete_branch", "merge_branch"]) expect(schema(n).required).toEqual([]);
+  expect(schema("delete_branch").properties.force?.type).toBe("boolean");
+  expect(schema("merge_branch").properties.mode?.enum).toEqual(["auto", "ff-only", "no-ff"]);
+  for (const n of ["checkout_status", "create_branch", "switch_branch", "rename_branch"]) expect(Object.keys(schema(n).properties)).toContain("agent");
+  // A subagent can get a worktree and branch of its own at spawn.
+  const spawn = schema("spawn_agent");
+  expect(spawn.properties.worktree?.type).toBe("boolean");
+  expect(Object.keys(spawn.properties)).toEqual(expect.arrayContaining(["branch", "base"]));
+  expect(spawn.required).toEqual(["name", "task"]);
 });
 
 async function* from(lines: string[]): AsyncGenerator<string> {

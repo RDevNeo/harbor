@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type Engine, movechat, providers, worktree as wt } from "./packages/agents/src/index.ts";
+import { checkout, type Engine, movechat, providers, worktree as wt } from "./packages/agents/src/index.ts";
 import { workspace } from "./packages/mcp/src/index.ts";
 import { type Chat, repoDir, type Store } from "./packages/store/src/index.ts";
 
@@ -55,8 +55,36 @@ export class Worktrees {
     return this.h.engine();
   }
 
+  /** Whose worktree a chat works in: its own (a lead's, or a sub-agent's given at spawn), else its lead's. */
+  owner(c: Chat): number {
+    if (c.role !== "sub") return c.id;
+    return (this.h.store.get(`worktree:${c.id}`) ?? "") !== "" ? c.id : (c.parent ?? c.id);
+  }
+
   private lead(c: Chat): number {
-    return c.role === "sub" ? (c.parent ?? c.id) : c.id;
+    return this.owner(c);
+  }
+
+  /** The window and phones show the change now, as after the picker. */
+  changed(): void {
+    this.h.touch();
+  }
+
+  /** Moves chat `chat` (a lead with its sub-agents sharing its folder, or a sub-agent alone) into worktree `dir`, or back to the project's
+   *  checkout (null: a sub-agent then shares its lead's folder again). Its agents start there from their next turn; `note` tells them why. */
+  place(chat: number, dir: string | null, text: string, note: string): void {
+    const c = this.e.chat(chat);
+    if (!c) throw new Error("no such chat");
+    const id = c.role === "sub" ? c.id : this.owner(c);
+    this.loadMoves();
+    this.unplanMove(id);
+    this.h.store.set(`worktree:${id}`, dir ?? "");
+    this.h.store.set(`worktree_named:${id}`, "");
+    for (const i of [id, ...(c.role === "sub" ? [] : this.e.subsOf(id).filter((s) => (this.h.store.get(`worktree:${s.id}`) ?? "") === "").map((s) => s.id))]) workspace.forget(i);
+    this.e.notice(id, "worktree", text, dir === null ? "" : `Folder: ${wt.tilde(dir)}`);
+    this.e.noteWorktree(id, note);
+    this.h.wantPr?.(id);
+    this.h.touch();
   }
 
   private tree(lead: number): number[] {
@@ -156,7 +184,7 @@ export class Worktrees {
       }
       return;
     }
-    await this.renameBranch(lead, to, false, false).catch((x) => console.error(`harbor: couldn't name the worktree: ${say(x)}`));
+    await this.renameBranch(lead, to, false, "harbor").catch((x) => console.error(`harbor: couldn't name the worktree: ${say(x)}`));
   }
 
   async moveToWorktree(chat: number): Promise<string> {
@@ -247,7 +275,8 @@ export class Worktrees {
     return { kind, renamed, folder: basename(path), path, waits: busy === null ? null : suffix(busy) };
   }
 
-  async renameBranch(chat: number, name: string, onRemote: boolean, byUser: boolean): Promise<RenameResult> {
+  /** Renames the branch of chat `chat`'s own worktree; `by` says who (the user in the picker, Harbor naming it, or the lead's rename_branch). */
+  async renameBranch(chat: number, name: string, onRemote: boolean, by: "user" | "harbor" | "agent"): Promise<RenameResult> {
     const c = this.e.chat(chat);
     if (!c) throw new Error("no such chat");
     const lead = this.lead(c);
@@ -268,9 +297,9 @@ export class Worktrees {
       let detail = `Branch: ${rn.branch} (was ${rn.old})`;
       if (rn.remote !== null) detail += `\n${rn.remote}.`;
       const e = this.e;
-      if (byUser) {
+      if (by !== "harbor") {
         e.notice(lead, "worktree", `Branch renamed · ${rn.old} → ${rn.branch}`, detail);
-        e.noteWorktree(lead, `the user renamed this worktree's branch from ${rn.old} to ${rn.branch}.`);
+        e.noteWorktree(lead, `the ${by === "user" ? "user" : "lead"} renamed this worktree's branch from ${rn.old} to ${rn.branch}.`);
       } else {
         e.notice(lead, "worktree", `Branch named · ${rn.old} → ${rn.branch}`, detail);
         e.noteWorktree(lead, `Harbor renamed this worktree's branch from ${rn.old} to ${rn.branch}, a name for the task.`);
@@ -402,6 +431,9 @@ export class Worktrees {
     this.unplanMove(chat.id);
     if (dir === null || dir === "") return;
     const repo = this.e.cwdOf(chat.repoId);
+    // A chat the lead moved to the project's own checkout, or into a worktree another chat made and still uses, leaves it be.
+    if (checkout.samePath(dir, repo)) return;
+    if (this.e.chats.some((c) => c.id !== chat.id && checkout.samePath(this.h.store.get(`worktree:${c.id}`) || repo, dir))) return;
     void wt.remove(repo, dir).catch((x) => {
       this.e.notice(chat.id, "alert", "Kept the chat's worktree", `${say(x)}. Commit or discard them, then remove it with \`git worktree remove ${dir}\`.`);
     });

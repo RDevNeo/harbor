@@ -93,7 +93,7 @@ export function tools(role: string): JsonObject[] {
     v.push(
       tool(
         "spawn_agent",
-        "Start a subagent that works in the project folder with full tools. Give it a short unique name and a complete, self-contained task. It reports back to you when its turn ends.",
+        "Start a subagent that works in your folder with full tools, or (worktree) in a worktree and branch of its own, so agents changing code in parallel don't collide. Give it a short unique name and a complete, self-contained task. It reports back to you when its turn ends.",
         {
           name: prop("string", "Short handle, e.g. 'tests', 'api', 'reviewer'"),
           title: prop("string", "What the work is in a few words, for the user: the chat shows \"<name> started: <title>\", e.g. 'PR status in the composer footer' (default: the task's first sentence)"),
@@ -101,6 +101,9 @@ export function tools(role: string): JsonObject[] {
           account: prop("string", "Provider account id from list_models (default: your own account)"),
           model: prop("string", "Model id from list_models (default: your model)"),
           effort: prop("string", "Reasoning effort, e.g. low/medium/high (default: medium on Claude)"),
+          worktree: prop("boolean", "Work in a new worktree of its own, on a new branch (default false: it shares your folder)"),
+          branch: prop("string", "That branch's name (default 'harbor/<name>'); giving one implies worktree"),
+          base: prop("string", "Branch or commit its branch starts from (default: your current branch, as committed)"),
         },
         ["name", "task"],
       ),
@@ -162,6 +165,60 @@ export function tools(role: string): JsonObject[] {
         ["agent", "account"],
       ),
       tool("list_models", "Providers, accounts and models you can give to subagents, with each account's current usage.", {}, []),
+      tool(
+        "checkout_status",
+        "This chat's checkout (the project's own or a worktree) and branch, as the composer's line shows them: uncommitted changes, how far it is ahead of and behind the default branch and its upstream; the project's default branch, its worktrees (and which chats work in each) and its local branches (pushed, merged).",
+        { agent: prop("string", "A subagent's name: its checkout instead of this chat's") },
+        [],
+      ),
+      tool(
+        "create_branch",
+        "Create a branch from an up-to-date base (default: the project's default branch, fetched first) and switch this chat to it: in a new worktree of its own (default), or in the checkout it's in (worktree: false; uncommitted changes come along). The composer's line follows.",
+        {
+          name: prop("string", "Branch name, e.g. 'fix-login-redirect'"),
+          base: prop("string", "Branch or commit to start from (default: the project's default branch)"),
+          worktree: prop("boolean", "In a new worktree (default true) or in the current checkout (false)"),
+          switch: prop("boolean", "Switch the chat to it (default true); false only creates it"),
+          agent: prop("string", "A subagent's name: its checkout instead of this chat's"),
+        },
+        ["name"],
+      ),
+      tool(
+        "switch_branch",
+        "Switch this chat to an existing branch or worktree: a branch checked out in a worktree moves the chat there; another one is checked out where the chat is (git refuses rather than lose uncommitted changes). worktree 'checkout' moves it back to the project's own checkout.",
+        {
+          branch: prop("string", "Branch to switch to (local, or a remote one such as 'origin/x')"),
+          worktree: prop("string", "Instead of branch: a worktree's folder name or path, or 'checkout' for the project's own"),
+          agent: prop("string", "A subagent's name: its checkout instead of this chat's"),
+        },
+        [],
+      ),
+      tool(
+        "rename_branch",
+        "Rename a local branch (default: this chat's). Its remote copy keeps its name until you push the new one. The default branch is never renamed.",
+        { name: prop("string", "New name"), branch: prop("string", "Branch to rename (default: this chat's current one)"), agent: prop("string", "A subagent's name: its checkout instead of this chat's") },
+        ["name"],
+      ),
+      tool(
+        "delete_branch",
+        "Delete a local branch and/or remove a worktree (a branch checked out in a Harbor worktree takes its worktree along). Refused when the branch's commits aren't merged into the default branch or pushed, when the worktree has uncommitted changes or another chat works there, unless force; never the default branch, the project's checkout, or the checkout this chat is in.",
+        {
+          branch: prop("string", "Branch to delete"),
+          worktree: prop("string", "Worktree to remove: its folder name or path (its branch stays unless you give branch too)"),
+          force: prop("boolean", "Delete unmerged commits, discard uncommitted changes and move chats out of the worktree (default false)"),
+        },
+        [],
+      ),
+      tool(
+        "merge_branch",
+        "Merge a branch (default: this chat's) into another (default: the project's default branch), in the checkout that has it, which must have no uncommitted changes. On conflicts nothing is merged: the merge is aborted, the checkout left as it was, and the conflicting files listed. Doesn't push.",
+        {
+          branch: prop("string", "Branch to merge (default: this chat's current one)"),
+          into: prop("string", "Branch to merge into (default: the project's default branch)"),
+          mode: { type: "string", enum: ["auto", "ff-only", "no-ff"], description: "'auto' (default): fast-forward when possible, else a merge commit; 'ff-only' refuses a merge commit; 'no-ff' always makes one" },
+        },
+        [],
+      ),
       tool(
         "snooze",
         "Wake yourself up later. After the given minutes you get a '[wake]' message with the reason. End your turn after calling it.",

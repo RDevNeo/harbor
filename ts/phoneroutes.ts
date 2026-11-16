@@ -599,7 +599,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
           return ok({ ok: true, name: d.folder, path: d.path, folder_waits: d.waits, said: wt.renameSaid(d) });
         }
         if (typeof b.branch !== "string") return err(400, "branch or folder: the new name");
-        const d = await h.worktrees.renameBranch(chat.id, b.branch, b.remote !== false, true);
+        const d = await h.worktrees.renameBranch(chat.id, b.branch, b.remote !== false, "user");
         return ok({ ok: true, branch: d.renamed.branch, old: d.renamed.old, remote: d.renamed.remote, name: d.folder, path: d.path, folder_waits: d.waits, said: wt.renameSaid(d) });
       } catch (x) {
         return err(409, x instanceof Error ? x.message : String(x));

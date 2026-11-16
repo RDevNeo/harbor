@@ -8,6 +8,7 @@ export { integrate, Turn, type Event, type Integrations, type Steering, type Tur
 export * as git from "./git.ts";
 export * as procs from "./procs.ts";
 export * as worktree from "./worktree.ts";
+export * as checkout from "./checkout.ts";
 export * as recap from "./recap.ts";
 export * as team from "./team.ts";
 export * as engine from "./engine.ts";

@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { type Chat, secrets, usageCtl } from "@harbor/store";
 import type { Delivery, Engine } from "./engine.ts";
 import * as oc from "./openchat.ts";
@@ -440,7 +440,7 @@ function gist(text: string): string {
   return chars.length > 60 ? `${chars.slice(0, 59).join("")}…` : line;
 }
 
-export function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): string {
+export async function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): Promise<string> {
   let name = [...arg(a, "name")].filter((c) => /^[\p{L}\p{N}_-]$/u.test(c)).slice(0, 24).join("");
   const task = arg(a, "task");
   if (task === "") throw new Error("task is empty");
@@ -463,6 +463,13 @@ export function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): str
   if (access === null) throw new Error(`${acc.kind} has no ${accessLabel("Claude", me.access)} access; pick another account`);
   const pre = acc.kind === "Claude";
   const title = [...(arg(a, "title") || (task.split("\n")[0] ?? ""))].slice(0, 80).join("");
+  // Its own worktree and branch, so agents working in parallel don't collide in one folder: made before the agent, which starts in it.
+  const own = (a as Record<string, unknown> | null)?.worktree === true || arg(a, "branch") !== "";
+  let made: { dir: string; branch: string; base: string } | null = null;
+  if (own) {
+    if (!e.host.makeWorktree) throw new Error("own worktrees aren't part of this Harbor");
+    made = await e.host.makeWorktree(me, arg(a, "branch") || `harbor/${name.toLowerCase()}`, arg(a, "base"));
+  }
   const chat = e.store.createChat({
     id: 0,
     repoId: me.repoId,
@@ -486,9 +493,14 @@ export function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): str
     retired: false,
   });
   e.chats.push(chat);
+  if (made !== null) {
+    e.store.set(`worktree:${chat.id}`, made.dir);
+    e.notice(chat.id, "worktree", `Working in its own worktree · ${basename(made.dir)} on branch ${made.branch} (from ${made.base})`, `Folder: ${made.dir}`);
+  }
   e.transcript(chat.id).items.push({ kind: "message", from: "lead", to: name, text: task });
   e.persist(chat.id);
   e.trigger(chat.id, task, false);
   const queued = !e.turns.has(chat.id);
-  return `Spawned '${name}' on ${short(acc)} / ${e.modelLabel(acc.kind, model)}${queued ? " (queued: too many agents running)" : ""}. It reports back to you when its turn ends.`;
+  const where = made === null ? "" : ` It works in its own worktree ${made.dir} on branch ${made.branch} (from ${made.base}): merge_branch brings its work in once it's committed.`;
+  return `Spawned '${name}' on ${short(acc)} / ${e.modelLabel(acc.kind, model)}${queued ? " (queued: too many agents running)" : ""}. It reports back to you when its turn ends.${where}`;
 }

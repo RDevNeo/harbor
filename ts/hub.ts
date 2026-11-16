@@ -11,6 +11,7 @@ import { ProjectIcons } from "./projecticons.ts";
 import { placeOlderStarts, STARTS_PLACED, WorkspaceMoves } from "./workspacemoves.ts";
 import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
+import { CheckoutTools } from "./checkouttools.ts";
 import { WorktreeCleaner } from "./worktreeclean.ts";
 import { FolderTracker } from "./foldertrack.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
@@ -151,7 +152,7 @@ import { chatCloud, cloudLog } from "./cloudsync.ts";
 import { carrySource, ContinueHere } from "./continuehere.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer" | "syncing" | "afterSync">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer" | "syncing" | "afterSync" | "tool" | "makeWorktree">;
 
 export interface HubOptions {
   /** What peers and phones compare (advertised: older ones read only the first three numbers). */
@@ -608,6 +609,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   let windowProjects: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void } | null = null;
   let busyIn: (dir: string) => string | null = () => null;
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
+  // The lead's checkout tools (create_branch, switch_branch…): the picker's code, driven by the agent.
+  const checkoutTools = new CheckoutTools({ store, engine: () => eng(), worktrees });
   // Delete merged worktrees: on this PC's own chats only, never on a copy of someone's data.
   // Moved or renamed folders followed (foldertrack.ts): this PC's own Harbor only, never a rig on a copy of its data.
   const folders = offline
@@ -1125,6 +1128,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     remote: (m, args, ctx) => machines.remoteComputer(m, args, ctx),
   });
   const host: HubHost = {
+    tool: (chat, name, args) => checkoutTools.tool(chat, name, args),
+    makeWorktree: (lead, branch, base) => checkoutTools.makeWorktree(lead, branch, base),
     computer: (chat, args) =>
       computer.call(args, {
         chatId: chat.id,

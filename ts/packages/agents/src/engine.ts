@@ -110,6 +110,8 @@ export interface EngineHost {
   restoreDraft?(chatId: number, text: string, files: string[], mentions: Mention[]): void;
   /** Tools other packages answer (secrets, chats across PCs, open_chat); undefined: not theirs. */
   tool?(chat: Chat, name: string, args: unknown): Promise<string> | undefined;
+  /** A new worktree of `lead`'s project on a new branch `branch` from `base` ("": the lead's branch), for a sub-agent spawned with its own (ts/checkouttools.ts). */
+  makeWorktree?(lead: Chat, branch: string, base: string): Promise<{ dir: string; branch: string; base: string }>;
   /** The `computer` tool (mcp's computer.ts): its MCP content (text and screenshots), ok or not. */
   computer?(chat: Chat, args: unknown): Promise<{ ok: boolean; content: unknown[] }>;
   /** Running on a copy of someone's data (ts/run.sh): only a message the person sends starts a turn. No timer,
@@ -393,9 +395,10 @@ export class Engine {
     this.persist(id);
   }
 
-  /** Something the lead's agents are told at the start of their next turn: its worktree's branch or folder changed under them. */
+  /** Something the lead's agents are told at the start of their next turn: its worktree's branch or folder changed under them (not under a sub-agent with a worktree of its own). */
   noteWorktree(lead: number, text: string): void {
-    for (const id of [lead, ...this.subsOf(lead).map((s) => s.id)]) {
+    const sharing = this.subsOf(lead).filter((s) => (this.store.get(`worktree:${s.id}`) ?? "") === "");
+    for (const id of [lead, ...sharing.map((s) => s.id)]) {
       const k = `worktree_note:${id}`;
       const old = this.store.get(k) ?? "";
       this.store.set(k, old === "" ? text : `${old}\n${text}`);
@@ -412,8 +415,10 @@ export class Engine {
     return `[Harbor: ${n}]\n\n`;
   }
 
-  /** The worktree a chat runs in (sub-agents: their lead's), if any. */
+  /** The worktree a chat runs in (sub-agents: their own, given at spawn or by the lead's checkout tools, else their lead's), if any. */
   worktreeOf(c: Chat): string | null {
+    const own = c.role === "sub" ? this.store.get(`worktree:${c.id}`) : null;
+    if (own !== null && own !== "") return own;
     const id = c.role === "sub" ? c.parent : c.id;
     if (id === null) return null;
     const p = this.store.get(`worktree:${id}`);

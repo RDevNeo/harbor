@@ -798,6 +798,30 @@ describe("teams", () => {
     store.close();
   });
 
+  test("a subagent spawned with a worktree of its own starts in it", async () => {
+    const { e, store } = setup();
+    const lead = newChat(store, { role: "lead", name: "lead" });
+    e.reload();
+    await expect(e.tool(lead.id, "spawn_agent", { name: "api", task: "x", worktree: true })).rejects.toThrow("own worktrees aren't part of this Harbor");
+    expect(e.subsOf(lead.id)).toHaveLength(0);
+    const asked: [string, string][] = [];
+    const dir = join(base, "proj-api");
+    e.host.makeWorktree = async (_l, branch, from) => (asked.push([branch, from]), { dir, branch, base: "main" });
+    const said = await e.tool(lead.id, "spawn_agent", { name: "api", task: "build the api", worktree: true });
+    expect(asked).toEqual([["harbor/api", ""]]);
+    expect(said).toContain(`It works in its own worktree ${dir} on branch harbor/api (from main)`);
+    const sub = e.subsOf(lead.id)[0] as Chat;
+    expect(e.worktreeOf(sub)).toBe(dir);
+    // The lead's folder isn't the sub-agent's.
+    expect(e.worktreeOf(lead)).toBeNull();
+    expect(e.transcript(sub.id).items[0]).toMatchObject({ kind: "notice", text: "Working in its own worktree · proj-api on branch harbor/api (from main)" });
+    // A branch named is a worktree asked for.
+    await e.tool(lead.id, "spawn_agent", { name: "ui", task: "y", branch: "feature/ui", base: "develop" });
+    expect(asked[1]).toEqual(["feature/ui", "develop"]);
+    await until("quiet", () => e.subsOf(lead.id).every((s) => !e.running(s.id)));
+    store.close();
+  });
+
   test("a lead opens a chat of its own and messages it", async () => {
     const { e, store } = setup();
     const lead = newChat(store, { role: "lead", name: "lead", title: "Main" });
