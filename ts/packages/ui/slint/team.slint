@@ -232,6 +232,8 @@ export component TeamPanel inherits Rectangle {
     in property <bool> split;
     in property <string> chat-title;
     in property <length> head-h: 34px;
+    // Room at its head's right end for the window's buttons drawn over it (app.slint SplitTools).
+    in property <length> head-trail;
     background: root.split ? Theme.bg100 : Theme.bg200;
     border-width: root.split ? 0px : 1px;
     border-color: Theme.border;
@@ -242,7 +244,7 @@ export component TeamPanel inherits Rectangle {
         height: root.head-h;
         HorizontalLayout {
             padding-left: 14px;
-            padding-right: 12px;
+            padding-right: 12px + root.head-trail;
             spacing: 6px;
             Glyph {
                 width: 14px;

@@ -120,6 +120,9 @@ export component PaneHeader inherits Rectangle {
     // The pointer in window coordinates while the head is dragged, and where it was let go.
     callback drag(length, length);
     callback dropped(length, length);
+    // Room kept at either end for the window's buttons drawn over it (app.slint: in the top-left and top-right panes').
+    in property <length> lead;
+    in property <length> trail;
     property <bool> far;
     height: round(PaneMetrics.head / 1phx) * 1phx;
     background: Theme.bg100;
@@ -151,8 +154,8 @@ export component PaneHeader inherits Rectangle {
         background: Theme.border;
     }
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 6px;
+        padding-left: 14px + root.lead;
+        padding-right: 6px + root.trail;
         spacing: 8px;
         HorizontalLayout {
             horizontal-stretch: 1;
@@ -237,6 +240,8 @@ export component SidePane inherits Rectangle {
     callback captcha-seen(string, bool, float);
     callback captcha-pointer(string, string, float, float);
     callback captcha-cancel(string);
+    in property <length> lead;
+    in property <length> trail;
     // Its transcript, for the window (the focused pane's is the one the shell scrolls).
     out property <bool> at-end: tr.at-end;
     out property <length> content-height: tr.content-height;
@@ -276,6 +281,8 @@ export component SidePane inherits Rectangle {
         y: 0;
         width: parent.width;
         head: root.head;
+        lead: root.lead;
+        trail: root.trail;
         take => {
             root.take(false, tr.from-end-now, tr.at-end);
         }
@@ -433,6 +440,10 @@ export component Panes {
     callback captcha-seen(string, bool, float);
     callback captcha-pointer(string, string, float, float);
     callback captcha-cancel(string);
+    // The window's buttons over the panes' header row (app.slint): room for them in the top-left pane's head and the
+    // top-right one's.
+    in property <length> lead;
+    in property <length> trail;
     property <PaneHead> none;
     property <PaneBody> nobody;
     property <ChatCaptchaData> nocap;
@@ -518,6 +529,8 @@ export component Panes {
         height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
         head: self.h;
         body: root.bodies.length > 0 ? root.bodies[0] : root.nobody;
+        lead: self.y == 0 && self.x == 0 ? root.lead : 0px;
+        trail: self.y == 0 && self.x + self.width >= root.width - 1px ? root.trail : 0px;
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
@@ -579,6 +592,8 @@ export component Panes {
         height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
         head: self.h;
         body: root.bodies.length > 1 ? root.bodies[1] : root.nobody;
+        lead: self.y == 0 && self.x == 0 ? root.lead : 0px;
+        trail: self.y == 0 && self.x + self.width >= root.width - 1px ? root.trail : 0px;
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
@@ -640,6 +655,8 @@ export component Panes {
         height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
         head: self.h;
         body: root.bodies.length > 2 ? root.bodies[2] : root.nobody;
+        lead: self.y == 0 && self.x == 0 ? root.lead : 0px;
+        trail: self.y == 0 && self.x + self.width >= root.width - 1px ? root.trail : 0px;
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
@@ -701,6 +718,8 @@ export component Panes {
         height: floor((self.h.y + self.h.h) * root.height / 1phx) * 1phx - self.y - (self.h.focused ? root.focus-box : 0px);
         head: self.h;
         body: root.bodies.length > 3 ? root.bodies[3] : root.nobody;
+        lead: self.y == 0 && self.x == 0 ? root.lead : 0px;
+        trail: self.y == 0 && self.x + self.width >= root.width - 1px ? root.trail : 0px;
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;

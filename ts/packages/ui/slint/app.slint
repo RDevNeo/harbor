@@ -97,6 +97,39 @@ export struct Crumbs {
     branch: string,
 }
 
+// At four panes, while a chat is dragged: only a replace is left. Over the top bar's middle, or split, the panes' header row.
+component CapNotice inherits Rectangle {
+    width: cap-row.preferred-width;
+    height: 30px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: Theme.amber-500;
+    background: Theme.amber-100;
+    cap-row := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        LayoutGlyph {
+            y: (parent.height - self.height) / 2;
+            id: "2x2";
+            ink: Theme.amber-900;
+        }
+        Text {
+            text: "4 panes is the most";
+            font-size: 13px;
+            font-weight: 500;
+            color: Theme.amber-900;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "· drop on a pane to replace it · Esc cancels";
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+}
+
 component TopBar {
     in property <Crumbs> crumbs;
     in property <bool> sidebar-open;
@@ -114,9 +147,8 @@ component TopBar {
     in property <string> mem;
     in property <bool> mem-open;
     callback mem-clicked(length, length);
-    // Split panes (panes.slint): no breadcrumb (each pane's header names its chat; layout is by dragging); at four, while
-    // a chat is dragged, the notice that only a replace is left.
-    in property <bool> split;
+    // Split panes have no top bar (SplitTools has its buttons); four panes held while a chat no pane shows is on screen,
+    // and a chat dragged: the notice that only a replace is left.
     in property <bool> cap;
     // A split pane maximized: this is its title bar, with a button that shows every pane again.
     in property <bool> maxed;
@@ -140,10 +172,7 @@ component TopBar {
                 root.show-sidebar();
             }
         }
-        if root.split: Rectangle {
-            horizontal-stretch: 1;
-        }
-        if !root.split: HorizontalLayout {
+        HorizontalLayout {
             horizontal-stretch: 1;
             spacing: 6px;
             Rectangle {
@@ -297,36 +326,86 @@ component TopBar {
             }
         }
     }
-    if root.cap: Rectangle {
+    if root.cap: CapNotice {
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 2;
-        width: cap-row.preferred-width;
-        height: 30px;
-        border-radius: 7px;
-        border-width: 1px;
-        border-color: Theme.amber-500;
-        background: Theme.amber-100;
-        cap-row := HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 12px;
-            spacing: 8px;
-            LayoutGlyph {
-                y: (parent.height - self.height) / 2;
-                id: "2x2";
-                ink: Theme.amber-900;
+    }
+}
+
+// Split panes have no top bar: the panes' header row is the window's top. Its buttons (Team, the bottom and right panels,
+// Close Harbor) sit at that row's right end, over the top-right pane's head (or the docked Agents column's), after a 1px
+// line that keeps them apart from that pane's own maximize and close; the same icons, tips and shortcuts.
+component SplitTools {
+    in property <bool> team-enabled;
+    in property <bool> team-on;
+    in property <bool> right-on;
+    in property <bool> bottom-on;
+    callback team();
+    callback pane(string);
+    callback close-window();
+    width: row.preferred-width;
+    height: round(PaneMetrics.head / 1phx) * 1phx;
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 1phx;
+        height: 16px;
+        background: Theme.border;
+    }
+    row := HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 0px;
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                icon: Icons.square-menu;
+                size: icon-xs;
+                variant: ghost-muted;
+                enabled: root.team-enabled;
+                pressed: root.team-enabled && root.team-on;
+                tip: "Team: agents, processes, wake-ups, webhooks (Ctrl+J)";
+                clicked => {
+                    root.team();
+                }
             }
-            Text {
-                text: "4 panes is the most";
-                font-size: 13px;
-                font-weight: 500;
-                color: Theme.amber-900;
-                vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                icon: Icons.panel-bottom;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.bottom-on;
+                tip: "Bottom panel";
+                clicked => {
+                    root.pane("bottom");
+                }
             }
-            Text {
-                text: "· drop on a pane to replace it · Esc cancels";
-                font-size: 13px;
-                color: Theme.subtle;
-                vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                icon: Icons.panel-right;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.right-on;
+                tip: "Right panel";
+                clicked => {
+                    root.pane("right");
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                icon: Icons.x;
+                size: icon-xs;
+                variant: ghost;
+                tip: "Close Harbor";
+                clicked => {
+                    root.close-window();
+                }
             }
         }
     }
@@ -1056,7 +1135,8 @@ export component AppWindow inherits Window {
                     y: 0;
                     width: root.width - self.x - root.right-shown;
                     height: root.height - root.bottom-shown;
-                    if root.view == "draft" || root.view == "chat": TopBar {
+                    // Split, the panes' header row is the window's top (SplitTools has the bar's buttons).
+                    if (root.view == "draft" || root.view == "chat") && !root.panes-on: TopBar {
                         crumbs: root.crumbs;
                         sidebar-open: root.docked;
                         team-enabled: root.team-enabled;
@@ -1082,7 +1162,6 @@ export component AppWindow inherits Window {
                             root.parent-clicked();
                         }
                         mem: root.view == "chat" ? root.chat-mem : "";
-                        split: body.split;
                         cap: root.drag-chat >= 0 && root.split-drop.cap;
                         maxed: root.split-maxed;
                         restore => {
@@ -1093,7 +1172,7 @@ export component AppWindow inherits Window {
                             root.mem-pop("mem-chat", x, y);
                         }
                     }
-                    if root.view == "draft" || root.view == "chat": Separator { }
+                    if (root.view == "draft" || root.view == "chat") && !root.panes-on: Separator { }
                     body := Rectangle {
                         vertical-stretch: 1;
                         // Split panes: each one is drawn by Panes; the focused one has this usual composer under it.
@@ -1122,6 +1201,7 @@ export component AppWindow inherits Window {
                             height: parent.height - self.y;
                             split: body.split;
                             head-h: body.top;
+                            head-trail: body.split ? split-tools.width : 0px;
                             chat-title: root.team-chat-title;
                             agents: root.team-agents;
                             settled: root.team-settled;
@@ -1229,6 +1309,10 @@ export component AppWindow inherits Window {
                             bodies: root.split-bodies;
                             content-w: root.content-w;
                             focus-box: composer-box.height;
+                            // Room for the window's buttons over their header row: Show sidebar on the left, SplitTools on
+                            // the right (over the Agents column instead while it's docked).
+                            lead: root.docked ? 0px : show-side.width + 4px;
+                            trail: body.team-docked ? 0px : split-tools.width;
                             captcha: root.chat-cap;
                             captcha-frame: root.chat-cap-frame;
                             take(i, composer, from-end, follow) => {
@@ -1470,6 +1554,38 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                        // Split, the top bar's buttons over the panes' header row: Show sidebar at its left end (the
+                        // top-left pane's head), SplitTools at its right end (the top-right pane's, or the Agents column's).
+                        show-side := Btn {
+                            visible: body.split && !root.docked;
+                            x: 6px;
+                            y: (body.top - self.height) / 2;
+                            icon: Icons.panel-left;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Show sidebar (Ctrl+B)";
+                            clicked => {
+                                root.sidebar-open = true;
+                            }
+                        }
+                        split-tools := SplitTools {
+                            visible: body.split;
+                            x: body.width - self.width;
+                            y: 0;
+                            team-enabled: root.team-enabled;
+                            team-on: root.team-on;
+                            right-on: root.right-open;
+                            bottom-on: root.bottom-open;
+                            team => {
+                                root.team();
+                            }
+                            pane(d) => {
+                                root.pane-toggle(d);
+                            }
+                            close-window => {
+                                root.close-window();
+                            }
+                        }
                         // A chat dragged from the sidebar, or a pane by its header: where it would land.
                         if (root.drag-chat >= 0 || root.drag-pane >= 0) && root.view == "chat": DropOverlay {
                             x: 0;
@@ -1479,6 +1595,11 @@ export component AppWindow inherits Window {
                             drop: root.split-drop;
                             heads: root.split-heads;
                             from: root.drag-pane;
+                        }
+                        // Split, at four panes: the notice the top bar has, over the panes' header row.
+                        if body.split && root.drag-chat >= 0 && root.split-drop.cap: CapNotice {
+                            x: (body.area-w - self.width) / 2;
+                            y: (body.top - self.height) / 2;
                         }
                     }
                 }
