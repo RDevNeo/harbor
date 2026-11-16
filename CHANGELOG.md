@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.188.1] - 2026-11-16
+
 ### Added
 - Harbor comes with Node.js: on a PC with no Node of its own (no `node` and `npx` on PATH), Harbor downloads the
   official Node.js 26.13.1 LTS for this system from nodejs.org in the background shortly after it starts, checks it
