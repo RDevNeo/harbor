@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.188.0] - 2026-11-16
+
 ### Changed
 - Windows: Harbor runs as administrator by default. Harbor and everything its agents run get full control of the
   PC with no Windows prompt. The first time Harbor's window opens on a version with this (a new install, or the
