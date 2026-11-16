@@ -36,36 +36,37 @@ out=$(run auto 0.188.5); echo "$out"
 check "same minor version: not asked again" "[ \"\$(echo \"\$out\" | tail -1)\" = null ]"
 
 echo "=== 3. a polkit agent that says yes (a test rule standing in for the person typing the password)"
-if [ -d /etc/polkit-1/rules.d ] && command -v pkexec >/dev/null; then
+if [ -d /etc/polkit-1/rules.d ] && command -v pkexec >/dev/null && pgrep -x polkitd >/dev/null; then
   echo "polkit.addRule(function(a, s) { if (a.id == 'org.freedesktop.policykit.exec' && s.user == '$t') return polkit.Result.YES; });" | sudo tee /etc/polkit-1/rules.d/49-harbortest.rules >/dev/null
-  sudo systemctl restart polkit 2>/dev/null || sudo pkill -HUP polkitd 2>/dev/null || true
   sleep 2
   out=$(run auto 0.189.0); echo "$out"
-  check "auto in the next minor version: asked, rule written" "sudo test -f /etc/sudoers.d/harbor-$t"
-  check "the rule is root's, 0440, and reads as Harbor's" "[ \"\$(sudo stat -c '%U %a' /etc/sudoers.d/harbor-$t)\" = 'root 440' ] && sudo grep -qx '$t ALL=(ALL) NOPASSWD: ALL' /etc/sudoers.d/harbor-$t"
-  check "visudo -c is happy with the whole configuration" "sudo visudo -c >/dev/null"
-  check "sudo -n true works for the user now" "as_t sudo -n true"
-  check "no temporary file left in sudoers.d" "[ -z \"\$(sudo find /etc/sudoers.d -name '.harbor.*')\" ]"
-  run status
+  check "auto in the next minor version: asked through pkexec, rule written" "sudo test -f /etc/sudoers.d/harbor-$t && as_t sudo -n true"
   sudo rm -f /etc/polkit-1/rules.d/49-harbortest.rules
-  echo "=== 4. harbor admin off: no password needed while the rule is there (polkit can't say yes any more)"
-  out=$(run off); echo "$out"
-  check "off removed the rule without a password" "! sudo test -e /etc/sudoers.d/harbor-$t && ! as_t sudo -n true 2>/dev/null"
-  check "off is remembered" "as_t cat /home/$t/.local/state/harbor/admin-choice.json | grep -q '\"off\":true'"
-  out=$(run auto 0.190.0); echo "$out"
-  check "after off, a later version doesn't ask" "[ \"\$(echo \"\$out\" | tail -1)\" = null ]"
+  run off >/dev/null
 else
-  echo "SKIP 3-4: no polkit rules folder or pkexec here"
+  echo "SKIP 3: no polkit daemon running here (pkexec can't authorize anything without it: section 2 is what Harbor does then)"
 fi
 
-echo "=== 5. harbor admin on from a terminal: sudo asks there (password given on stdin here, as -S would)"
-args="on /etc/sudoers.d harbor-$t $t"
+echo "=== 4. harbor admin on from a terminal: sudo asks there (the password on stdin here, as a person types it)"
 script=$(as_t /usr/local/bin/bun -e 'console.log((await import("/home/'$t'/ts/packages/os/src/sudo.ts")).ROOT_SCRIPT)')
-echo "$pw" | as_t sudo -S -p '' /bin/sh -c "$script" sh $args
-check "the root script through sudo with the password: rule in, sudo -n works" "as_t sudo -n true"
+echo "$pw" | as_t sudo -S -p '' /bin/sh -c "$script" sh on /etc/sudoers.d harbor-$t $t
+check "the root script through sudo: rule in, sudo -n works" "as_t sudo -n true"
+check "the rule is root's, 0440, and reads as Harbor's" "[ \"\$(sudo stat -c '%U %a' /etc/sudoers.d/harbor-$t)\" = 'root 440' ] && sudo grep -qx '$t ALL=(ALL) NOPASSWD: ALL' /etc/sudoers.d/harbor-$t"
+check "visudo -c is happy with the whole configuration" "sudo visudo -c >/dev/null"
+check "no temporary file left in sudoers.d" "[ -z \"\$(sudo find /etc/sudoers.d -name '.harbor.*')\" ]"
+as_t mkdir -p /home/$t/.local/state/harbor
+echo '{"exe":"/etc/sudoers.d/harbor-'$t'","login":false,"since":1}' | as_t tee /home/$t/.local/state/harbor/run-as-admin.json >/dev/null
+run status
+
+echo "=== 5. harbor admin off: no password needed while the rule is there"
+out=$(run off terminal < /dev/null); echo "$out"
+check "off removed the rule with sudo -n (no password)" "! sudo test -e /etc/sudoers.d/harbor-$t && ! as_t sudo -n true 2>/dev/null"
+check "off is remembered" "as_t cat /home/$t/.local/state/harbor/admin-choice.json | grep -q '\"off\":true'"
+out=$(run auto 0.190.0); echo "$out"
+check "after off, a later version doesn't ask" "[ \"\$(echo \"\$out\" | tail -1)\" = null ]"
+
 echo "=== 6. a broken rule never goes in"
-sudo rm -f /etc/sudoers.d/harbor-$t
-check "visudo refuses a bad user name, nothing written" "! echo '$pw' | as_t sudo -S -p '' /bin/sh -c \"\$script\" sh on /etc/sudoers.d harbor-$t 'bad,name' >/dev/null 2>&1 && ! sudo test -e /etc/sudoers.d/harbor-$t && sudo visudo -c >/dev/null"
+check "visudo refuses a rule that doesn't parse, nothing written, sudo intact" "! echo '$pw' | as_t sudo -S -p '' /bin/sh -c \"\$script\" sh on /etc/sudoers.d harbor-$t 'bad user' >/dev/null 2>&1 && ! sudo test -e /etc/sudoers.d/harbor-$t && sudo visudo -c >/dev/null"
 
 echo "=== 7. a user with passwordless sudo already: nothing asked, nothing written"
 out=$(XDG_STATE_HOME=$(mktemp -d) bun "$src/packages/os/rig/sudo-live.ts" auto 0.188.0); echo "$out"
@@ -74,7 +75,7 @@ out=$(XDG_STATE_HOME=$(mktemp -d) bun "$src/packages/os/rig/sudo-live.ts" status
 check "status says the rule isn't Harbor's" "echo \"\$out\" | grep -q \"isn't Harbor's\""
 
 echo "=== 8. install.sh --uninstall removes Harbor's rule"
-echo "$pw" | as_t sudo -S -p '' /bin/sh -c "$script" sh $args
+echo "$pw" | as_t sudo -S -p '' /bin/sh -c "$script" sh on /etc/sudoers.d harbor-$t $t
 as_t mkdir -p /home/$t/.local/state/harbor
 echo '{"exe":"/etc/sudoers.d/harbor-'$t'","login":false,"since":1}' | as_t tee /home/$t/.local/state/harbor/run-as-admin.json >/dev/null
 sudo install -m 0644 /home/user/src/packaging/install.sh /home/$t/install.sh
