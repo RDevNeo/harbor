@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Removed
+- The Omarchy MCP server is gone from Settings › Integrations' MCP servers: agents use Harbor's built-in `computer`
+  tool (screenshots, mouse and keyboard) on every OS instead. Harbor's Claude and Codex turns no longer start it,
+  even when your own `~/.claude.json` or `~/.codex/config.toml` still lists it, and it leaves Harbor's saved list of
+  servers turned off. Omarchy's theme (light or dark) is still followed. Every PC (Linux, macOS, Windows) the same; the
+  phone app has no MCP server list, so nothing changes there.
+
 ### Fixed
 - Vercel sign-ins no longer die when their first access token runs out: an OAuth sign-in now also asks for
   `offline_access` when the service offers it (Vercel lists it only on its authorization server), so it gets a

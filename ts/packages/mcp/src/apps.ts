@@ -12,7 +12,6 @@ export interface Local {
 export const LOCAL: readonly Local[] = [
   { id: "discord", label: "Discord" },
   { id: "robloxstudio", label: "Roblox Studio" },
-  { id: "omarchy", label: "Omarchy" },
   { id: "blender", label: "Blender" },
   { id: "playwright", label: "Playwright" },
 ];
@@ -94,6 +93,9 @@ export function norm(s: string): string {
     .join("")
     .toLowerCase();
 }
+
+/** Local servers Harbor no longer starts (Omarchy: the built-in `computer` tool does its desktop control on every OS). */
+export const DROPPED_LOCALS: readonly string[] = ["omarchy"];
 
 export function localFor(name: string): Local | undefined {
   const n = norm(name);
@@ -564,7 +566,17 @@ export function offPath(): string {
 function offList(): string[] {
   const t = readFile(offPath());
   const v = t === undefined ? undefined : parseJson(t);
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  const all = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  const list = all.filter((x) => !DROPPED_LOCALS.includes(x));
+  // A server Harbor dropped leaves the saved list the first time it's read.
+  if (list.length !== all.length) {
+    try {
+      writePrivate(offPath(), JSON.stringify(list));
+    } catch {
+      // can't write: it's left out all the same
+    }
+  }
+  return list;
 }
 
 export function isOff(id: string): boolean {

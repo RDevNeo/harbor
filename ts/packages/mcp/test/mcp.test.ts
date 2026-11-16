@@ -209,7 +209,22 @@ test("Codex: servers that are off go off in one override (a key with a space too
   writeFileSync(join(root, ".codex", "config.toml"), '[mcp_servers."Roblox Studio"]\ncommand = "rbx"\n\n[mcp_servers.node_repl]\ncommand = "repl"\n\n[mcp_servers.Omarchy]\ncommand = "hypr"\n');
   mcp.toggleOff("robloxstudio");
   const m = overrides(await codexArgs());
-  expect(m).toEqual({ "Roblox Studio": { enabled: false }, node_repl: { enabled: false } });
+  expect(m).toEqual({ "Roblox Studio": { enabled: false }, node_repl: { enabled: false }, Omarchy: { enabled: false } });
+});
+
+test("the dropped Omarchy server: never started, and it leaves the saved off list", async () => {
+  writeFileSync(join(root, ".claude.json"), JSON.stringify({ mcpServers: { Omarchy: { command: "hypr" }, "Roblox Studio": { command: "rbx" } } }));
+  mcp.writePrivate(mcp.offPath(), JSON.stringify(["omarchy", "robloxstudio"]));
+  resetLocalsCache();
+  expect(localFor("Omarchy")).toBeUndefined();
+  expect(mcp.locals().map((l) => l.local.id)).not.toContain("omarchy");
+  expect(await claudeServers()).not.toHaveProperty("Omarchy");
+  expect(mcp.isOff("robloxstudio") && !mcp.isOff("omarchy")).toBe(true);
+  expect(JSON.parse(readFileSync(mcp.offPath(), "utf8"))).toEqual(["robloxstudio"]);
+  // Codex: the user's own entry is turned off for Harbor's turns.
+  mkdirSync(join(root, ".codex"));
+  writeFileSync(join(root, ".codex", "config.toml"), '[mcp_servers.Omarchy]\ncommand = "hypr"\n');
+  expect(overrides(await codexArgs()).Omarchy).toEqual({ enabled: false });
 });
 
 test("Codex: with a grant, stdio servers are the bridge's and Codex gets their URLs, the token from its environment", async () => {
@@ -221,16 +236,16 @@ test("Codex: with a grant, stdio servers are the bridge's and Codex gets their U
       '[mcp_servers."Roblox Studio"]',
       'command = "/bin/rbx"',
       "args = []",
-      "[mcp_servers.Omarchy]",
-      'command = "/bin/hypr"',
+      "[mcp_servers.Blender]",
+      'command = "/bin/blend"',
       "startup_timeout_sec = 20",
-      "[mcp_servers.Omarchy.tools.desktop]",
+      "[mcp_servers.Blender.tools.desktop]",
       'approval_mode = "approve"',
-      "[mcp_servers.Omarchy.env]",
+      "[mcp_servers.Blender.env]",
       'A = "1"',
       // Its own folder: the bridge can't run it so; Codex keeps starting it.
-      "[mcp_servers.blender]",
-      'command = "/bin/blend"',
+      "[mcp_servers.discord]",
+      'command = "/bin/disc"',
       'cwd = "/tmp"',
       // The lowercase twin is taken: no free name.
       "[mcp_servers.playwright]",
@@ -249,15 +264,15 @@ test("Codex: with a grant, stdio servers are the bridge's and Codex gets their U
   const at = (name: string): Record<string, unknown> => ({ url: `http://127.0.0.1:\${HARBOR_BRIDGE_PORT}/${name}`, bearer_token_env_var: "HARBOR_BRIDGE_TOKEN", enabled: true });
   expect(m["Roblox Studio"]).toEqual({ enabled: false });
   expect(m.Roblox_Studio).toEqual(at("Roblox_Studio"));
-  expect(m.Omarchy).toEqual({ enabled: false });
-  expect(m.omarchy).toEqual({ ...at("omarchy"), startup_timeout_sec: 20, tools: { desktop: { approval_mode: "approve" } } });
+  expect(m.Blender).toEqual({ enabled: false });
+  expect(m.blender).toEqual({ ...at("blender"), startup_timeout_sec: 20, tools: { desktop: { approval_mode: "approve" } } });
   expect(m.harbor).toEqual(at("harbor"));
-  expect(m.blender).toBeUndefined();
+  expect(m.discord).toBeUndefined();
   expect(m.playwright).toBeUndefined();
   expect(m.convex).toEqual({ enabled: false });
   expect(lazy.servers).toEqual({
     Roblox_Studio: { type: "stdio", command: "/bin/rbx", args: [] },
-    omarchy: { type: "stdio", command: "/bin/hypr", args: [], env: { A: "1" } },
+    blender: { type: "stdio", command: "/bin/blend", args: [], env: { A: "1" } },
     harbor: team,
   });
   // Nothing secret on the command line.

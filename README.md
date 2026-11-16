@@ -173,7 +173,7 @@ them; a started chat stays where its session is.
   Claude Code are needed there.
 - **The bridge** (`ts/packages/mcp/src/bridge.ts`) gives the remote agent this PC's MCP servers: Harbor serves them on
   `127.0.0.1` as streamable-HTTP MCP and `ssh -R` forwards that port to the device's `127.0.0.1`; the
-  remote `--mcp-config` points there, with a random per-turn token in each URL. Stdio servers (Omarchy,
+  remote `--mcp-config` points there, with a random per-turn token in each URL. Stdio servers (Roblox Studio,
   Blender, Playwright, Harbor's own team tools…) run here; HTTP apps (GitHub, Vercel…) are proxied with
   their tokens added here, so no credential is copied to the device. The bridge's own `origin` server
   offers your `~/.claude/commands` and `~/.claude/skills` as prompts and, if the device is allowed it,

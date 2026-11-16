@@ -40,7 +40,6 @@ const MARKS: [string, Mark][] = [
   ["whatsapp", { mask: whatsapp, brand: 0x25d366 }],
   ["playwright", { glyph: ICONS.DRAMA, brand: 0x2ead33 }],
   ["context7", { glyph: ICONS.LIBRARY, brand: null }],
-  ["omarchy", { glyph: ICONS.MONITOR, brand: null }],
 ];
 
 const rgb = (c: number): [number, number, number] => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
