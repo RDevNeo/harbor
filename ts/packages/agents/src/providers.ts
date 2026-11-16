@@ -3,6 +3,7 @@ import { delimiter, join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
 import { dataDir, home, writePrivate } from "./paths.ts";
 import * as claudecreds from "./claudecreds.ts";
+import * as noderuntime from "./noderuntime.ts";
 import { env as osEnv } from "@harbor/os";
 
 export const KINDS = ["Claude", "Codex", "OpenCode"] as const;
@@ -201,8 +202,24 @@ function m(id: string, label: string, more: boolean): Model {
   return { id, label, more };
 }
 
-/** GUI launches often miss the shell's PATH additions; add the usual tool dirs. */
+/**
+ * GUI launches often miss the shell's PATH additions; add the usual tool dirs, and last the Node.js Harbor
+ * installed when the PC has none (noderuntime.ts), so node, npm and npx work for agents and MCP servers while a
+ * user's own Node, earlier on PATH, still wins.
+ */
 export function childPath(): string {
+  const base = basePath();
+  const node = noderuntime.managedBin();
+  return node === null || base.split(delimiter).includes(node) ? base : base + delimiter + node;
+}
+
+/** The managed Node's bin folder, installing it first when the user has no Node of their own (null: none). */
+export function ensureNode(): Promise<string | null> {
+  return noderuntime.ensure({ path: basePath() });
+}
+
+/** childPath() without Harbor's own Node. */
+export function basePath(): string {
   const h = home();
   const dirs = (process.env.PATH ?? "").split(delimiter);
   for (const extra of [".local/bin", ".local/share/mise/shims", ".cargo/bin", ".bun/bin", ".opencode/bin", ".npm-global/bin"]) {

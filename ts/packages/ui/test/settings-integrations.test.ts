@@ -127,6 +127,14 @@ test("integrations lists errors and the local servers with what a click does", (
   ]);
 });
 
+test("the Playwright chip says Node.js is being installed, or why it couldn't be", () => {
+  const tips = (found: boolean, note: string | null): string[] =>
+    data(view({ locals: () => [{ id: "playwright", label: "Playwright", found, note }], isOff: () => false })).chips.map((c) => c.tip);
+  expect(tips(false, "Couldn't install Node.js: offline \u{b7} tried again on the next start")).toEqual(["Couldn't install Node.js: offline \u{b7} tried again on the next start"]);
+  expect(tips(true, "Installing Node.js for it\u{2026}")).toEqual(["On for agents \u{b7} click to turn off \u{b7} Installing Node.js for it\u{2026}"]);
+  expect(tips(false, null)).toEqual(["Not set up on this machine"]);
+});
+
 function rig() {
   const calls: string[] = [];
   const api: AppsApi = {

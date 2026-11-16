@@ -15,7 +15,7 @@ import { CheckoutTools } from "./checkouttools.ts";
 import { WorktreeCleaner } from "./worktreeclean.ts";
 import { FolderTracker } from "./foldertrack.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
-import { type Account, agent, chatpr, commits, memory, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
+import { type Account, agent, chatpr, commits, memory, noderuntime, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { computer, discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
@@ -623,6 +623,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         configs: () => [null, ...accounts.filter((a) => a.kind === "Claude").map((a) => a.configDir)],
       });
   if (!offline) cleaner = new WorktreeCleaner({ store, engine: () => eng(), prs, worktrees, busyIn: (dir) => busyIn(dir), touch: () => hub.touch(null, true) });
+  // Node.js for agents and MCP servers (npx: the built-in Playwright) when the PC has none: fetched in the
+  // background a little after the window is up (noderuntime.ts). Not for a rig on a copy of someone's data.
+  if (!offline) noderuntime.startBackground(providers.basePath);
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));

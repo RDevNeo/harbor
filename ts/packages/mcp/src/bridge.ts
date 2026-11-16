@@ -17,6 +17,10 @@ import { answer as teamAnswer, callApp } from "./mcpshim.ts";
 import { selfExe } from "./sys.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
 import { env as osEnv, proc } from "@harbor/os";
+import { providers } from "@harbor/agents";
+
+/** Commands that are Node's own: their server waits for the Node Harbor installs (noderuntime.ts) when it's on its way. */
+const NODE_CMDS = new Set(["node", "npm", "npx", "node.exe", "npm.cmd", "npx.cmd"]);
 
 export { OUTPUT_MAX, shell, token };
 
@@ -347,6 +351,9 @@ async function spawnServer(cwd: string, def: Obj): Promise<Proc | null> {
   const command = def.command;
   if (typeof command !== "string") return null;
   const args = Array.isArray(def.args) ? def.args.filter((a): a is string => typeof a === "string") : [];
+  // node, npm or npx (the built-in Playwright): the Node Harbor installs when the PC has none may still be on its
+  // way. Waited for up to `waits.wait`; not there by then, the start fails and the bridge tries again later.
+  if (NODE_CMDS.has(command.toLowerCase())) await within(providers.ensureNode(), waits.wait);
   const env = await agentProcessEnv();
   if (isObject(def.env)) for (const [k, v] of Object.entries(def.env)) if (typeof v === "string") env[k] = v;
   // A bare name is looked up on the server's own PATH, Windows' suffixes too (npx is npx.cmd there, which node's
