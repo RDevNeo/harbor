@@ -25,7 +25,12 @@ export function open(target: string): void {
   const [cmd, ...args] = opener();
   if (cmd === undefined) return;
   try {
-    const p = spawn(cmd, [...args, target], { stdio: "ignore", detached: true });
+    // Explorer reads its command line itself and splits an unquoted one at commas: the target goes in quotes, as is
+    // (a URL or a Windows path holds no `"`).
+    const viaExplorer = /explorer\.exe$/i.test(cmd);
+    const p = viaExplorer
+      ? spawn(cmd, [`"${target.replaceAll('"', "%22")}"`], { stdio: "ignore", detached: true, windowsVerbatimArguments: true })
+      : spawn(cmd, [...args, target], { stdio: "ignore", detached: true });
     p.on("error", () => {});
     p.unref();
   } catch {

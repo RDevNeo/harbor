@@ -160,8 +160,23 @@ export async function handOffStart(argv: readonly string[]): Promise<boolean> {
   const a = win();
   if (a === null) return false;
   const pid = await a.startThrough(a.TASK, argv);
-  if (pid === null) console.error("harbor: Run as administrator is on, but its task didn't start Harbor: starting with normal rights");
-  return pid !== null;
+  if (pid === null) {
+    console.error("harbor: Run as administrator is on, but its task didn't start Harbor: starting with normal rights");
+    return false;
+  }
+  // A program Task Scheduler starts isn't the one the user just opened, so Windows doesn't bring its window to the
+  // front. This process is (the Start menu started it): it brings the new window forward once it shows.
+  if (argv.length === 0) {
+    const d = require("./win32/desktop.ts") as typeof import("./win32/desktop.ts");
+    for (let i = 0; i < 150 && procExists(pid); i++) {
+      if (d.windowsOf(pid).length > 0) {
+        d.raise(pid);
+        break;
+      }
+      await Bun.sleep(100);
+    }
+  }
+  return true;
 }
 
 /** The mark `admin-start` gives the Harbor it starts, dropped so that what this Harbor starts doesn't carry it. */
