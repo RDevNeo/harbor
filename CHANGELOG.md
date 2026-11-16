@@ -99,6 +99,9 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   Before, they failed with "ProtocolError dialing …/playwright". Linux and macOS look the command up the same way.
 - The built-in Playwright server is offered only where `npx` is installed; elsewhere its chip says "Not set up on
   this machine" and turns don't get a server that can't start.
+- Windows: signing in to Convex finishes. The Convex CLI saved its key in `.convex` in your user folder (Node takes
+  the home folder from `USERPROFILE` there, not `HOME`), so Harbor, which reads it from its own Convex folder, never
+  saw the sign-in end. Linux and macOS already used `HOME` and are unchanged; the phone app doesn't sign in to Convex.
 - Phone app unaffected: it shows no sign-in status for these apps or the local servers (only its own Gmail,
   Discord and WhatsApp screens), so nothing changes there.
 

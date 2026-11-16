@@ -156,12 +156,15 @@ function ghLoginCmd(): Cmd {
   };
 }
 
-function convexLoginCmd(): Cmd {
+/** Exported for the tests. */
+export function convexLoginCmd(): Cmd {
   const h = convexHome();
   return {
     argv: ["npx", "-y", "convex@latest", "login", "--no-open", "--device-name", "Harbor", "--login-flow", "poll"],
     cwd: h,
-    env: { ...process.env, HOME: h, npm_config_cache: join(home(), ".npm"), CONVEX_OVERRIDE_ACCESS_TOKEN: undefined, CONVEX_DEPLOY_KEY: undefined },
+    // The CLI keeps its key in its home's .convex, which Harbor reads (apps.ts convexHome): HOME, and USERPROFILE,
+    // where Node takes the home folder from on Windows. The npm cache stays the user's own.
+    env: { ...process.env, HOME: h, USERPROFILE: h, npm_config_cache: join(home(), ".npm"), CONVEX_OVERRIDE_ACCESS_TOKEN: undefined, CONVEX_DEPLOY_KEY: undefined },
   };
 }
 

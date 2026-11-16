@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as mcp from "../src/mcp.ts";
-import { listenCallback, oauthScope } from "../src/signin.ts";
+import { convexLoginCmd, listenCallback, oauthScope } from "../src/signin.ts";
 
 let root: string;
 const saved = { ...process.env };
@@ -289,4 +289,13 @@ test("an OAuth sign-in that ran out with no refresh token is expired, not signed
   mcp.signOut("vercel");
   expect(mcp.load("vercel")).toBeUndefined();
   void server.stop(true);
+});
+
+test("the Convex sign-in keeps its key in Harbor's Convex folder: HOME, and USERPROFILE for Node on Windows", () => {
+  process.env.USERPROFILE = join(root, "user");
+  const c = convexLoginCmd();
+  expect(c.cwd).toBe(mcp.convexHome());
+  expect(c.env.HOME).toBe(mcp.convexHome());
+  expect(c.env.USERPROFILE).toBe(mcp.convexHome());
+  expect(c.env.CONVEX_OVERRIDE_ACCESS_TOKEN).toBeUndefined();
 });
