@@ -40,39 +40,45 @@ export component MiniBar {
     }
 }
 
-// The chat's memory in the top bar: icon and figure; `open` while its popover shows.
+// The chat's memory in the top bar (and, `compact`, in a split pane's header, as tall as its status pill): icon and
+// figure; `open` while its popover shows.
 export component MemPill {
     in property <string> text;
     in property <string> tip;
     in property <bool> open;
+    in property <bool> compact;
     callback clicked(length, length);
     property <bool> hover: area.has-hover || open;
+    property <length> pad: compact ? 7px : 9px;
+    property <length> icon: compact ? 12px : 14px;
+    property <length> gap: compact ? 4px : 6px;
+    property <length> font: compact ? 11.5px : 12px;
     // Reserve a typical maximum label width so memory samples do not move nearby controls.
     // Larger labels can still grow to avoid clipping.
     property <length> figure: max(sizer.preferred-width, label.preferred-width);
-    height: 24px;
-    width: figure + 14px + 6px + 18px;
+    height: compact ? 19px : 24px;
+    width: figure + icon + gap + 2 * pad;
     sizer := Text {
         visible: false;
         text: "888 MB";
-        font-size: 12px;
+        font-size: root.font;
     }
     Rectangle {
         background: root.hover ? Theme.accent : Theme.gray-100;
         border-width: 1px;
         border-color: Theme.border;
-        border-radius: 12px;
+        border-radius: root.height / 2;
     }
     MemIcon {
-        x: 9px;
-        size: 14px;
+        x: root.pad;
+        size: root.icon;
         color: root.hover ? Theme.fg : Theme.subtle;
     }
     label := Text {
-        x: 9px + 14px + 6px;
+        x: root.pad + root.icon + root.gap;
         width: root.figure;
         text: root.text;
-        font-size: 12px;
+        font-size: root.font;
         horizontal-alignment: center;
         color: root.hover ? Theme.fg : Theme.gray-900;
         vertical-alignment: center;

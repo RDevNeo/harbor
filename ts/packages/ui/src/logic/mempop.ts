@@ -59,8 +59,26 @@ export function parseMem(v: unknown): Mem | null {
   if (!o || !("ram" in o)) return null;
   const ram = ramOf(o.ram);
   const top = Array.isArray(o.top) ? o.top.flatMap((t) => (rec(t) ? [{ title: String(rec(t)?.title ?? ""), bytes: num(rec(t)?.bytes) }] : [])) : [];
-  const c = rec(o.chat);
-  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  return { ram, running: num(o.running), top, ...chatOf(rec(o.chat)) };
+}
+
+/** The window's own numbers' `chats` (memory.snapshot `asks`): each chat's parts, with the PC's RAM; none on another shape. */
+export function parseChats(v: unknown): Map<number, Mem> {
+  const out = new Map<number, Mem>();
+  const all = parseMem(v);
+  const list = rec(v)?.chats;
+  if (!all || !Array.isArray(list)) return out;
+  for (const x of list) {
+    const c = rec(x);
+    if (c && Number.isInteger(c.id)) out.set(c.id as number, { ram: all.ram, running: all.running, top: all.top, ...chatOf(c) });
+  }
+  return out;
+}
+
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** A chat's `{ parts, device }`. */
+function chatOf(c: Record<string, unknown> | null): Pick<Mem, "parts" | "device"> {
   const parts = c && Array.isArray(c.parts)
     ? c.parts.flatMap((v) => {
         const p = rec(v);
@@ -72,7 +90,7 @@ export function parseMem(v: unknown): Mem | null {
     : null;
   const d = rec(c?.device);
   const device = d && str(d.name) !== "" ? { name: str(d.name), ram: ramOf(d.ram), asking: d.asking === true } : null;
-  return { ram, running: num(o.running), top, parts, ...(device ? { device } : {}) };
+  return { parts, ...(device ? { device } : {}) };
 }
 
 function ramOf(v: unknown): Ram | null {
@@ -123,21 +141,23 @@ export const partsTotal = (parts: readonly MemPart[]): number => parts.reduce((a
 /**
  * The pill's popover: the chat's total and where it runs, each process, then that PC's RAM. A chat whose Runs on is an
  * SSH device runs "on <device>": its agent's row is what it holds there, the PC's end of it is the SSH link's
- * row, and the RAM is the device's.
+ * row, and the RAM is the device's. `project`: a project's main chat, whose figure is its project's (memory.ts
+ * `projectParts`): the main chat's own rows, then one for each of the project's other chats holding memory.
  */
-export function chatRows(mem: Mem, pc: string): MemRow[] {
+export function chatRows(mem: Mem, pc: string, project = false): MemRow[] {
   const parts = mem.parts ?? [];
   const total = partsTotal(parts);
   const dev = mem.device ?? null;
+  const what = project ? "project" : "chat";
   // The PC it's started from shows on the SSH link's row: the header has room for one name.
   const where = dev ? `on ${dev.name}` : pc === "" ? "" : `on ${pc}`;
-  const out = [row("usage-account", "This chat", { badge: bytesText(total), desc: where })];
-  if (parts.length === 0) out.push(row("usage-note", "Nothing of this chat is running now."));
+  const out = [row("usage-account", `This ${what}`, { badge: bytesText(total), desc: where })];
+  if (parts.length === 0) out.push(row("usage-note", `Nothing of this ${what} is running now.`));
   for (const p of parts) {
-    const icon = p.kind === "proc" ? ICONS.TERMINAL : p.kind === "link" ? ICONS.LINK : ICONS.BOT;
+    const icon = p.kind === "proc" ? ICONS.TERMINAL : p.kind === "link" ? ICONS.LINK : p.kind === "chat" ? ICONS.MESSAGE : ICONS.BOT;
     const label = p.kind === "link" && pc !== "" ? `${p.label} on ${pc}` : p.label;
     const desc = p.idle ? "Idle" : p.note !== undefined && p.note !== "" ? p.note : bytesText(p.bytes);
-    out.push(row("mem-row", label, { icon, badge: p.kind === "sub" ? "subagent" : p.kind === "proc" ? "process" : "", desc, value: total > 0 ? p.bytes / total : 0 }));
+    out.push(row("mem-row", label, { icon, badge: p.kind === "sub" ? "subagent" : p.kind === "proc" ? "process" : p.kind === "chat" ? "chat" : "", desc, value: total > 0 ? p.bytes / total : 0 }));
   }
   if (dev) {
     out.push(row("separator"), ...(dev.ram ? ramRows(dev.ram, dev.name) : [row("usage-note", dev.asking ? `Asking ${dev.name} for its memory…` : `No memory figures from ${dev.name} now.`)]));

@@ -1,14 +1,29 @@
-// Samples memory only while the window shows it: the sidebar gauge, the open chat's pill, their popovers.
+// Samples memory only while the window shows it: the sidebar gauge, the chips of the chats on screen (the usual view's,
+// or each split pane's), their popovers.
 import type { Chat } from "@harbor/store";
-import { bytesText, chatRows, deviceRows, gauge, type Mem, type MemRow, parseMem, partsTotal, type PcCard, type PcMem, type Ram } from "./logic/mempop.ts";
+import { bytesText, chatRows, deviceRows, gauge, type Mem, type MemRow, parseChats, parseMem, partsTotal, type PcCard, type PcMem, type Ram } from "./logic/mempop.ts";
+
+/** A chat whose parts this PC is asked for (memory.ts `ChatAsk`): `project`, its project's other chats when it's the main chat. */
+export interface MemAsk {
+  id: number;
+  project?: readonly number[];
+}
+
+/** A chat's chip: its figure ("—" while there's none) and whether that is its project's (a main chat of this PC). */
+export interface MemFigure {
+  text: string;
+  project: boolean;
+}
 
 export interface MemWatchDeps {
   /** This PC's RAM alone (cheap: /proc/meminfo). */
   ram(): Ram | null;
-  /** This PC's numbers and, for one of its own chats, that chat's parts (memory.snapshot: a /proc scan). */
-  local(chat: number | null): unknown;
-  /** The chat on screen. */
-  chat(): Chat | undefined;
+  /** This PC's numbers and, for its own chats in `asks`, each one's parts (memory.snapshot: one /proc scan). */
+  local(asks: readonly MemAsk[]): unknown;
+  /** The chats on screen: the usual view's, or each split pane's. */
+  chats(): Chat[];
+  /** A project's main chat: the project's other chats (its figure is then the project's); null for any other chat. */
+  project(c: Chat): number[] | null;
   /** The window is on screen. */
   looking(): boolean;
   pcName(): string;
@@ -17,7 +32,7 @@ export interface MemWatchDeps {
   peers: (() => Promise<{ name: string; online: boolean; mem: unknown; asking?: boolean; note?: string; ssh?: boolean }[]>) | null;
   /** A copy's numbers from its home PC. */
   chatMemory: ((c: Chat) => Promise<unknown>) | null;
-  show(v: { chat: string; pc: string; frac: number; low: boolean; tip: string }): void;
+  show(v: { chats: Map<number, MemFigure>; pc: string; frac: number; low: boolean; tip: string }): void;
   /** The popover on screen ("mem-chat", "mem-devices" or another). */
   popId(): string;
   /** `cards[i]`: row i's submenu, null for none. */
@@ -37,12 +52,15 @@ export class MemWatch {
   private timer: ReturnType<typeof setInterval> | null = null;
   private key = "";
   private at = 0;
-  private remote: { chat: number; mem: Mem | null; at: number } | null = null;
-  private remoteAsking = false;
+  /** Copies' numbers from their home PCs, by chat. */
+  private remote = new Map<number, { mem: Mem | null; at: number }>();
+  private remoteAsking = new Set<number>();
   private peers: PcMem[] | null = null;
   private peersAt = 0;
   private peersAsking = false;
-  private lastChat = "";
+  private lastChats = new Map<number, MemFigure>();
+  /** The chat whose chip opened the "mem-chat" popover (-1: the first on screen). */
+  private popChat = -1;
 
   constructor(private readonly d: MemWatchDeps) {}
 
@@ -60,8 +78,14 @@ export class MemWatch {
     this.timer = null;
   }
 
+  /** The "mem-chat" popover is chat `id`'s (its chip was clicked). */
+  pick(id: number): void {
+    this.popChat = id;
+  }
+
   private screenKey(): string {
-    return `${this.d.looking()}|${this.d.chat()?.id ?? ""}|${this.d.popId()}`;
+    const ids = this.d.chats().map((c) => c.id);
+    return `${this.d.looking()}|${ids.join(",")}|${this.d.popId()}|${this.popChat}`;
   }
 
   /** Reads the numbers now and shows them (also into a memory popover that's open). */
@@ -70,15 +94,30 @@ export class MemWatch {
     this.at = Date.now();
     if (!this.d.looking()) return;
     const pop = this.d.popId();
-    const c = this.d.chat();
-    const own = c !== undefined && c.home === "";
-    const here = own || pop === "mem-devices" ? parseMem(this.d.local(own ? c.id : null)) : { ram: this.d.ram(), running: 0, top: [], parts: null };
-    const r = here?.ram ?? null;
-    const chatMem = c === undefined ? null : own ? here : this.remoteOf(c);
-    this.lastChat = c === undefined ? "" : chatMem ? bytesText(partsTotal(chatMem.parts ?? [])) : "—";
-    this.showGauge(r);
+    const chats = this.d.chats();
+    const asks = new Map<number, MemAsk>();
+    for (const c of chats) {
+      if (c.home !== "") continue;
+      const project = this.d.project(c);
+      asks.set(c.id, project === null ? { id: c.id } : { id: c.id, project });
+    }
+    const raw = asks.size > 0 || pop === "mem-devices" ? this.d.local([...asks.values()]) : null;
+    const here = raw !== null ? parseMem(raw) : { ram: this.d.ram(), running: 0, top: [], parts: null };
+    const mine = parseChats(raw);
+    const mems = new Map<number, Mem | null>();
+    this.lastChats = new Map();
+    for (const c of chats) {
+      const m = c.home === "" ? (mine.get(c.id) ?? null) : this.remoteOf(c);
+      mems.set(c.id, m);
+      this.lastChats.set(c.id, { text: m ? bytesText(partsTotal(m.parts ?? [])) : "—", project: asks.get(c.id)?.project !== undefined });
+    }
+    for (const id of this.remote.keys()) if (!mems.has(id)) this.remote.delete(id);
+    this.showGauge(here?.ram ?? null);
+    const c = chats.find((x) => x.id === this.popChat) ?? chats[0];
     if (pop === "mem-chat" && c) {
-      const rows = chatMem ? chatRows(chatMem, own ? this.d.pcName() : this.d.homeName(c)) : chatRows({ ram: null, running: 0, top: [], parts: [] }, this.d.homeName(c));
+      const own = c.home === "";
+      const m = mems.get(c.id) ?? null;
+      const rows = chatRows(m ?? { ram: null, running: 0, top: [], parts: [] }, own && m ? this.d.pcName() : this.d.homeName(c), asks.get(c.id)?.project !== undefined);
       this.d.rows(rows, rows.map(() => null));
     }
     if (pop === "mem-devices") {
@@ -91,7 +130,7 @@ export class MemWatch {
   private showGauge(r: Ram | null): void {
     const pick = this.d.sidebarPc();
     if (pick !== "" && this.d.popId() !== "mem-devices") this.askPeers(SIDEBAR_MS);
-    this.d.show({ chat: this.lastChat, ...gauge(this.d.pcName(), r, pick, this.d.peers ? this.peers : null) });
+    this.d.show({ chats: this.lastChats, ...gauge(this.d.pcName(), r, pick, this.d.peers ? this.peers : null) });
   }
 
   /** Asks the other PCs when the last answer is `ms` old; a fresh answer redraws what shows it. */
@@ -113,16 +152,16 @@ export class MemWatch {
 
   /** A copy's numbers, asked of its home PC at most every REMOTE_MS. */
   private remoteOf(c: Chat): Mem | null {
-    const r = this.remote?.chat === c.id ? this.remote : null;
-    if ((!r || Date.now() - r.at >= REMOTE_MS) && !this.remoteAsking && this.d.chatMemory) {
-      this.remoteAsking = true;
+    const r = this.remote.get(c.id);
+    if ((!r || Date.now() - r.at >= REMOTE_MS) && !this.remoteAsking.has(c.id) && this.d.chatMemory) {
+      this.remoteAsking.add(c.id);
       void this.d
         .chatMemory(c)
         .catch(() => null)
         .then((v) => {
-          this.remote = { chat: c.id, mem: parseMem(v), at: Date.now() };
-          this.remoteAsking = false;
-          if (this.d.chat()?.id === c.id) this.sample();
+          this.remote.set(c.id, { mem: parseMem(v), at: Date.now() });
+          this.remoteAsking.delete(c.id);
+          if (this.d.chats().some((x) => x.id === c.id)) this.sample();
         });
     }
     return r?.mem ?? null;

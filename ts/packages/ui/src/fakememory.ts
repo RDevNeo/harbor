@@ -4,7 +4,8 @@ const MB = 1024 ** 2;
 const GB = 1024 ** 3;
 
 export interface FakeMemory {
-  local(real: unknown, chat: boolean): unknown;
+  /** `chats`: the chats on screen this PC is asked about, each given the same made-up parts. */
+  local(real: unknown, chats: readonly number[]): unknown;
   peers(names: readonly string[]): Promise<{ name: string; online: boolean; mem: unknown; ssh?: boolean }[]>;
 }
 
@@ -29,9 +30,9 @@ export function fakeMemory(env: Record<string, string | undefined> = process.env
     { title: "Phone screenshots", bytes: 286 * MB },
   ].sort((a, b) => b.bytes - a.bytes);
   return {
-    local(real, chat) {
+    local(real, chats) {
       const r = typeof real === "object" && real !== null ? (real as Record<string, unknown>) : {};
-      return { ...r, running: top.length, top, ...(chat ? { chat: { parts, ...(device ? { device } : {}) } } : {}) };
+      return { ...r, running: top.length, top, chats: chats.map((id) => ({ id, parts, ...(device ? { device } : {}) })) };
     },
     /** A PC with room, a low one deep in swap, a Runs on device over SSH and one that's off. */
     async peers(names) {

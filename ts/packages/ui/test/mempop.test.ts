@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bytesText, chatRows, deviceRows, gauge, low, type MemRow, type PcCard, parseMem, ramText, usedText } from "../src/logic/mempop.ts";
+import { bytesText, chatRows, deviceRows, gauge, low, type MemRow, type PcCard, parseChats, parseMem, ramText, usedText } from "../src/logic/mempop.ts";
 
 const MB = 1024 ** 2;
 const GB = 1024 ** 3;
@@ -38,6 +38,40 @@ describe("memory popovers", () => {
     ]);
     expect(rows[1]?.value).toBe(0.75);
     expect(chatRows({ ram: null, running: 0, top: [], parts: [] }, "").map((r) => r.label)).toEqual(["This chat", "Nothing of this chat is running now."]);
+  });
+
+  test("the window's chips: each chat's parts with the PC's RAM, a chat on a device with that device", () => {
+    const got = parseChats({
+      ram: ram(4, 16),
+      running: 1,
+      top: [],
+      chats: [
+        { id: 3, parts: [{ kind: "agent", label: "Lead · Claude", bytes: 300 * MB }] },
+        { id: 5, parts: [{ kind: "agent", label: "Agent · Codex", bytes: 0, on: "Mac", note: "Asking Mac…" }], device: { name: "Mac", ram: null, asking: true } },
+        { parts: [] },
+      ],
+    });
+    expect([...got.keys()]).toEqual([3, 5]);
+    expect(got.get(3)).toEqual({ ram: { total: 16 * GB, used: 4 * GB, swapTotal: 4 * GB, swapUsed: 0 }, running: 1, top: [], parts: [{ kind: "agent", label: "Lead · Claude", bytes: 300 * MB }] });
+    expect(got.get(5)?.device).toEqual({ name: "Mac", ram: null, asking: true });
+    // An older shape (a single `chat`), or none: no chips' numbers.
+    expect(parseChats({ ram: ram(4, 16), running: 0, top: [], chat: { parts: [] } }).size).toBe(0);
+    expect(parseChats(null).size).toBe(0);
+  });
+
+  test("a project's main chat: its popover is the project's, the other chats a row each", () => {
+    const m = parseMem({ ram: ram(4, 16), running: 2, top: [], chat: { parts: [{ kind: "agent", label: "Lead · Claude", bytes: 300 * MB }, { kind: "chat", label: "Fix the build", bytes: 100 * MB }] } });
+    if (!m) throw new Error("no numbers");
+    const rows = chatRows(m, "", true);
+    expect(rows.map((r) => [r.kind, r.label, r.badge || r.desc])).toEqual([
+      ["usage-account", "This project", "400 MB"],
+      ["mem-row", "Lead · Claude", "300 MB"],
+      ["mem-row", "Fix the build", "chat"],
+      ["separator", "", ""],
+      ["mem-ram", "This PC", "4 of 16 GB  ·  25%"],
+    ]);
+    expect(rows[2]?.desc).toBe("100 MB");
+    expect(chatRows({ ram: null, running: 0, top: [], parts: [] }, "", true).map((r) => r.label)).toEqual(["This project", "Nothing of this project is running now."]);
   });
 
   test("a lead between turns: listed idle, the chat at 0 MB", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chatParts, deviceProcsSh, engineSource, type MemSource, parseDeviceProcs, parseDeviceRam, parseMeminfo, parseStat, type ProcTable, ram, snapshot, topChats, treeBytes } from "../src/memory.ts";
+import { chatParts, deviceProcsSh, engineSource, type MemSource, parseDeviceProcs, parseDeviceRam, parseMeminfo, parseStat, type ProcTable, projectParts, ram, snapshot, topChats, treeBytes } from "../src/memory.ts";
 
 const MB = 1024 * 1024;
 
@@ -55,6 +55,39 @@ describe("memory", () => {
       { id: 1, title: "chat 1", bytes: 370 * MB },
       { id: 4, title: "chat 4", bytes: 70 * MB },
     ]);
+  });
+
+  test("a project's main chat: its own parts, then each other chat of the project here holding memory, each process once", () => {
+    const t = table({ 100: [1, 100, 200], 200: [1, 200, 90], 300: [1, 300, 10], 400: [1, 400, 70], 500: [1, 500, 40], 600: [1, 600, 20] });
+    const src: MemSource = {
+      chats: [chat(1, { role: "lead" }), chat(2, { role: "sub", parent: 1, name: "tests" }), chat(4), chat(5), chat(6, { home: "pc:studio" })],
+      runner: (id) => ({ 1: { pid: 100, kind: "Claude" }, 2: { pid: 200, kind: "Claude" }, 4: { pid: 400, kind: "Codex" }, 6: { pid: 999, kind: "Claude" } })[id] ?? null,
+      procs: [
+        { name: "vite", lead: 1, owner: 1, pid: 300 },
+        { name: "db", lead: 4, owner: 4, pid: 500 },
+        // Started by chat 4 for the lead: the main chat's, not counted again in chat 4's.
+        { name: "shared", lead: 1, owner: 4, pid: 600 },
+      ],
+    };
+    expect(projectParts(src, 1, [1, 2, 4, 5, 6], t)).toEqual([
+      { kind: "agent", label: "Lead · Claude", bytes: 200 * MB },
+      { kind: "sub", label: "tests", bytes: 90 * MB },
+      { kind: "proc", label: "shared", bytes: 20 * MB },
+      { kind: "proc", label: "vite", bytes: 10 * MB },
+      { kind: "chat", label: "chat 4", bytes: 110 * MB },
+    ]);
+    // Nothing else of the project here: the main chat's own parts.
+    expect(projectParts(src, 1, [], t)).toEqual(chatParts(src, 1, t));
+  });
+
+  test("the window's chips: several chats' parts from one snapshot, a project's main chat with its project's", () => {
+    const s = snapshot({ chats: [chat(1), chat(2)], runner: () => null, procs: [] }, null, 5, [{ id: 1 }, { id: 2, project: [1] }]);
+    expect(s.chat).toBeUndefined();
+    expect(s.chats).toEqual([
+      { id: 1, parts: [{ kind: "agent", label: "Agent", bytes: 0, idle: true }] },
+      { id: 2, parts: [{ kind: "agent", label: "Agent", bytes: 0, idle: true }] },
+    ]);
+    expect(snapshot({ chats: [], runner: () => null, procs: [] }, null).chats).toBeUndefined();
   });
 
   test("a lead between turns still heads its breakdown, idle, with its subagents' numbers after it", () => {

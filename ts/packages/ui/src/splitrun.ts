@@ -22,6 +22,8 @@ export interface PaneInfo {
   bar: WorkBarData;
   strip: StripRow[];
   stripView: { title: string; names: string; header: boolean; folded: boolean; open: boolean };
+  /** Its memory chip (memwatch.ts), null before the first sample. */
+  mem: { text: string; project: boolean } | null;
 }
 
 export interface SplitHost {
@@ -367,6 +369,8 @@ export class SplitPanes {
           strip_header: info.stripView.header,
           strip_folded: info.stripView.folded,
           strip_open: info.stripView.open,
+          mem: info.mem?.text ?? "",
+          mem_project: info.mem?.project ?? false,
         };
       }),
       sameHead,

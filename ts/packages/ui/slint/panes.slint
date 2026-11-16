@@ -9,6 +9,7 @@ import { ChatCaptchaData } from "captcha.slint";
 import { MdBlock } from "markdown.slint";
 import { SideRow } from "sidebar.slint";
 import { Composer, ComposerState, WorkBarData, StripRow } from "composer.slint";
+import { MemPill } from "memory.slint";
 
 /** A pane's header and place: x, y, w, h are shares of the centre. */
 export struct PaneHead {
@@ -38,6 +39,9 @@ export struct PaneHead {
     strip-header: bool,
     strip-folded: bool,
     strip-open: bool,
+    // Its chat's memory chip ("" hides it), the project's figure for a project's main chat.
+    mem: string,
+    mem-project: bool,
 }
 
 /** A pane's transcript and its agents strip (the strip empty for the focused one: the window's composer shows it). Set
@@ -120,6 +124,9 @@ export component PaneHeader inherits Rectangle {
     // The pointer in window coordinates while the head is dragged, and where it was let go.
     callback drag(length, length);
     callback dropped(length, length);
+    // Its memory chip clicked (where its popover goes), and that popover is up.
+    callback mem(length, length);
+    in property <bool> mem-open;
     // Room kept at either end for the window's buttons drawn over it (app.slint: in the top-left and top-right panes').
     in property <length> lead;
     in property <length> trail;
@@ -179,6 +186,19 @@ export component PaneHeader inherits Rectangle {
                     tone: root.head.tone;
                 }
             }
+            // The top bar's memory chip, compact; a narrow pane leaves its room to the title.
+            if root.head.mem != "" && root.width - root.lead - root.trail >= 300px: VerticalLayout {
+                alignment: center;
+                MemPill {
+                    compact: true;
+                    text: root.head.mem;
+                    tip: root.head.mem-project ? "Memory this project's chats use" : "Memory this chat's agents and processes use";
+                    open: root.mem-open;
+                    clicked(x, y) => {
+                        root.mem(x, y);
+                    }
+                }
+            }
             Rectangle {
                 horizontal-stretch: 0.001;
             }
@@ -229,6 +249,9 @@ export component SidePane inherits Rectangle {
     callback maximize();
     callback drag(length, length);
     callback dropped(length, length);
+    // Its header's memory chip (PaneHeader).
+    callback mem(length, length);
+    in property <bool> mem-open;
     callback toggle(int);
     callback act(int, string);
     callback link(string);
@@ -283,6 +306,10 @@ export component SidePane inherits Rectangle {
         head: root.head;
         lead: root.lead;
         trail: root.trail;
+        mem-open: root.mem-open;
+        mem(x, y) => {
+            root.mem(x, y);
+        }
         take => {
             root.take(false, tr.from-end-now, tr.at-end);
         }
@@ -429,6 +456,9 @@ export component Panes {
     callback maximize(int);
     callback drag(int, length, length);
     callback dropped(int, length, length);
+    // Pane i's memory chip clicked; `mem-open`: the chat whose chip's popover is up (-1 none).
+    callback mem(int, length, length);
+    in property <int> mem-open: -1;
     callback toggle(int, int);
     callback act(int, int, string);
     callback link(string);
@@ -534,6 +564,10 @@ export component Panes {
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
+        mem-open: root.mem-open >= 0 && root.mem-open == self.h.chat;
+        mem(x, y) => {
+            root.mem(0, x, y);
+        }
         take(composer, from-end, follow) => {
             root.take(0, composer, from-end, follow);
         }
@@ -597,6 +631,10 @@ export component Panes {
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
+        mem-open: root.mem-open >= 0 && root.mem-open == self.h.chat;
+        mem(x, y) => {
+            root.mem(1, x, y);
+        }
         take(composer, from-end, follow) => {
             root.take(1, composer, from-end, follow);
         }
@@ -660,6 +698,10 @@ export component Panes {
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
+        mem-open: root.mem-open >= 0 && root.mem-open == self.h.chat;
+        mem(x, y) => {
+            root.mem(2, x, y);
+        }
         take(composer, from-end, follow) => {
             root.take(2, composer, from-end, follow);
         }
@@ -723,6 +765,10 @@ export component Panes {
         content-w: root.content-w;
         captcha: self.h.focused ? root.captcha : root.nocap;
         captcha-frame: root.captcha-frame;
+        mem-open: root.mem-open >= 0 && root.mem-open == self.h.chat;
+        mem(x, y) => {
+            root.mem(3, x, y);
+        }
         take(composer, from-end, follow) => {
             root.take(3, composer, from-end, follow);
         }

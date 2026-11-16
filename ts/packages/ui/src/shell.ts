@@ -33,7 +33,7 @@ import { Keys, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { richTip } from "./logic/tips.ts";
-import { MemWatch } from "./memwatch.ts";
+import { type MemFigure, MemWatch } from "./memwatch.ts";
 import { PatchBar } from "./patchbar.ts";
 import { HotDev, hotDir, shareHost, tsRoot } from "./hotdev.ts";
 import type { PatchChipData } from "./logic/patchchips.ts";
@@ -467,6 +467,8 @@ export class Shell {
   private subActions: (() => void)[] = [];
   /** The gauge's popover rows' PCs (null: not a PC card). */
   private memCards: (PcCard | null)[] = [];
+  /** The chips' figures of the chats on screen (MemWatch), for the split panes' headers. */
+  private memFigures = new Map<number, MemFigure>();
   private subItems = new slint.ArrayModel<PopItem>([]);
   private subTimer: ReturnType<typeof setTimeout> | null = null;
   /** The popup row under the pointer and its top in the window. */
@@ -563,18 +565,30 @@ export class Shell {
     const fakeMem = fakeMemory();
     this.memWatch = new MemWatch({
       ram: () => memory.ram(),
-      local: (chat) => {
-        const v = memory.snapshot(memory.engineSource(this.engine, mesh.deviceMemory ? (c, running) => mesh.deviceMemory?.(c, running) ?? null : undefined), chat);
-        return fakeMem ? fakeMem.local(v, chat !== null) : v;
+      local: (asks) => {
+        const v = memory.snapshot(memory.engineSource(this.engine, mesh.deviceMemory ? (c, running) => mesh.deviceMemory?.(c, running) ?? null : undefined), null, 5, asks);
+        return fakeMem ? fakeMem.local(v, asks.map((a) => a.id)) : v;
       },
-      chat: () => (this.view === "chat" && this.page === null ? this.data.chat(this.chatId) : undefined),
+      // The usual view's chat, or every split pane's on screen: each has a chip.
+      chats: () => {
+        if (this.view !== "chat" || this.page !== null) return [];
+        const panes = this.split.onScreenChats();
+        return (panes.length > 0 ? panes : [this.chatId]).flatMap((id) => this.data.chat(id) ?? []);
+      },
+      // A project's main chat (the one its sidebar row opens): its chip is the project's, every chat of it on this PC.
+      project: (c) => (c.repoId !== null && this.data.mainChat(c.repoId) === c.id ? this.data.chats.filter((x) => x.repoId === c.repoId && x.id !== c.id).map((x) => x.id) : null),
       looking: () => win.window.visible && !win.window.minimized,
       pcName: () => mesh.myName?.() || hostname().split(".")[0] || "",
       homeName: (c) => mesh.home(c)?.name ?? c.home,
       peers: fakeMem ? () => fakeMem.peers((mesh.peers?.() ?? []).map((p) => p.name)) : mesh.memory ? () => mesh.memory?.() ?? Promise.resolve([]) : null,
       chatMemory: mesh.chatMemory ? (c) => mesh.chatMemory?.(c) ?? Promise.resolve(null) : null,
       show: (v) => {
-        if (win.chat_mem !== v.chat) win.chat_mem = v.chat;
+        const shown = this.view === "chat" && this.page === null ? v.chats.get(this.chatId) : undefined;
+        if (win.chat_mem !== (shown?.text ?? "")) win.chat_mem = shown?.text ?? "";
+        if (win.chat_mem_project !== (shown?.project ?? false)) win.chat_mem_project = shown?.project ?? false;
+        const before = this.memFigures;
+        this.memFigures = v.chats;
+        if (this.split.onScreenChats().some((id) => JSON.stringify(before.get(id)) !== JSON.stringify(v.chats.get(id)))) this.split.refreshHeads();
         if (win.pc_mem !== v.pc) win.pc_mem = v.pc;
         if (Math.abs(win.pc_mem_frac - v.frac) >= 0.005) win.pc_mem_frac = v.frac;
         if (win.pc_mem_low !== v.low) win.pc_mem_low = v.low;
@@ -734,7 +748,16 @@ export class Shell {
     w.usage = (x, y) => (w.pop_id === "usage" ? this.closePopup() : this.usageMenu(x, y));
     w.mem_pop = (id, x, y) => {
       if (w.pop_id === id) return this.closePopup();
+      // The top bar's chip: the usual view's chat.
+      if (id === "mem-chat") this.memChat(this.chatId);
       this.popup(id, x, y, [], id === "mem-devices" ? 320 : 300, id === "mem-devices");
+      this.memWatch.sample();
+    };
+    // A split pane's chip: that pane's chat (another pane's chip moves the popover there).
+    w.chat_mem_pop = (chat, x, y) => {
+      if (w.pop_id === "mem-chat" && w.mem_pop_chat === chat) return this.closePopup();
+      this.memChat(chat);
+      this.popup("mem-chat", x, y, [], 300, false);
       this.memWatch.sample();
     };
     w.mem_default = (i) => this.memDefault(i);
@@ -1654,6 +1677,7 @@ export class Shell {
       bar: barData(this.chatBar(c, c ? this.paneWsInfo(c) : null, null)),
       strip: strip.rows,
       stripView: strip.view,
+      mem: this.memFigures.get(id) ?? null,
     };
   }
 
@@ -4051,6 +4075,12 @@ export class Shell {
   /** A PC's submenu in the gauge's popover: why it's low, and its chats. */
   private memSub(c: PcCard): SubMenu {
     return { items: c.sub, width: 260, spacing: 0 };
+  }
+
+  /** The "mem-chat" popover is chat `id`'s: its rows, and its chip drawn open. */
+  private memChat(id: number): void {
+    this.memWatch.pick(id);
+    this.win.mem_pop_chat = id;
   }
 
   /** A card's "Default" pill: that PC's RAM goes to the sidebar's gauge now; the popover and its submenu stay as they are. */

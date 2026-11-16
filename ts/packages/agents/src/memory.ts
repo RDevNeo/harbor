@@ -111,8 +111,9 @@ export function treeBytes(t: ProcTable, roots: readonly number[], seen: Set<numb
 }
 
 export interface MemPart {
-  /** `link`: this PC's end of a turn on a device (the runner and its ssh), apart from the agent there. */
-  kind: "agent" | "sub" | "proc" | "link";
+  /** `link`: this PC's end of a turn on a device (the runner and its ssh), apart from the agent there; `chat`: another chat of
+   *  a project, all of it in one row (projectParts). */
+  kind: "agent" | "sub" | "proc" | "link" | "chat";
   label: string;
   bytes: number;
   /** The chat's own agent between turns (a lead waiting on its subagents, say): nothing of it runs. */
@@ -202,23 +203,52 @@ export function topChats(src: MemSource, t: ProcTable): MemChat[] {
   return out.sort((a, b) => b.bytes - a.bytes);
 }
 
-/** `GET /mesh/v1/memory` (and the window's own numbers): RAM, the chats holding memory and, asked for one, a chat's parts. */
-export function snapshot(src: MemSource, chat: number | null, top = 5): Record<string, unknown> {
+/**
+ * A project's main chat with the project's other chats on this PC (`others`): its own parts, then each other chat that
+ * holds memory as one row (`chat`: its agents, subagents and processes), the most first. Their total is the project's.
+ */
+export function projectParts(src: MemSource, id: number, others: readonly number[], t: ProcTable, seen: Set<number> = new Set()): MemPart[] {
+  const own = chatParts(src, id, t, seen);
+  const rest: MemPart[] = [];
+  for (const o of others) {
+    const c = src.chats.find((x) => x.id === o);
+    // A subagent counts in its lead's; a copy's memory is its home PC's.
+    if (o === id || !c || c.home !== "" || c.role === "sub") continue;
+    const bytes = chatParts(src, o, t, seen).reduce((a, p) => a + p.bytes, 0);
+    if (bytes > 0) rest.push({ kind: "chat", label: c.title, bytes });
+  }
+  return [...own, ...rest.sort((a, b) => b.bytes - a.bytes)];
+}
+
+/** A chat whose parts are asked for; `project`: it's its project's main chat, these the project's other chats (projectParts). */
+export interface ChatAsk {
+  id: number;
+  project?: readonly number[];
+}
+
+const ramJson = (x: Ram | null) => (x === null ? null : { total: x.total, used: x.used, swap_total: x.swapTotal, swap_used: x.swapUsed });
+
+function chatJson(src: MemSource, ask: ChatAsk, t: ProcTable): Record<string, unknown> {
+  const parts = ask.project ? projectParts(src, ask.id, ask.project, t) : chatParts(src, ask.id, t);
+  // Where it runs, for the popover (said even between turns), and that device's RAM instead of this PC's.
+  const d = src.device?.(ask.id, src.runner(ask.id) !== null) ?? null;
+  return d ? { parts, device: { name: d.name, ram: ramJson(d.ram), asking: d.asking && d.ram === null } } : { parts };
+}
+
+/**
+ * `GET /mesh/v1/memory` (and the window's own numbers): RAM, the chats holding memory and, asked for one, a chat's parts.
+ * `asks`: several chats' parts from the same scan (`chats`: the window's chips, the usual view's and each split pane's).
+ */
+export function snapshot(src: MemSource, chat: number | null, top = 5, asks: readonly ChatAsk[] = []): Record<string, unknown> {
   const t = procTable();
-  const r = ram();
   const chats = topChats(src, t);
   const out: Record<string, unknown> = {
-    ram: r === null ? null : { total: r.total, used: r.used, swap_total: r.swapTotal, swap_used: r.swapUsed },
+    ram: ramJson(ram()),
     running: chats.length,
     top: chats.slice(0, top).map((c) => ({ id: c.id, title: c.title, bytes: c.bytes })),
   };
-  if (chat !== null) {
-    const parts = chatParts(src, chat, t);
-    // Where it runs, for the popover (said even between turns), and that device's RAM instead of this PC's.
-    const d = src.device?.(chat, src.runner(chat) !== null) ?? null;
-    const ramJson = (x: Ram | null) => (x === null ? null : { total: x.total, used: x.used, swap_total: x.swapTotal, swap_used: x.swapUsed });
-    out.chat = d ? { parts, device: { name: d.name, ram: ramJson(d.ram), asking: d.asking && d.ram === null } } : { parts };
-  }
+  if (chat !== null) out.chat = chatJson(src, { id: chat }, t);
+  if (asks.length > 0) out.chats = asks.map((a) => ({ id: a.id, ...chatJson(src, a, t) }));
   return out;
 }
 

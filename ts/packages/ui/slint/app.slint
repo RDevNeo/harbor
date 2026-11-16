@@ -143,8 +143,9 @@ component TopBar {
     callback pane(string);
     callback project-clicked(length, length);
     callback parent-clicked();
-    // The chat's memory ("" hides the pill), and its breakdown's popover.
+    // The chat's memory ("" hides the pill; its project's for a project's main chat), and its breakdown's popover.
     in property <string> mem;
+    in property <bool> mem-project;
     in property <bool> mem-open;
     callback mem-clicked(length, length);
     // Split panes have no top bar (SplitTools has its buttons); four panes held while a chat no pane shows is on screen,
@@ -256,7 +257,7 @@ component TopBar {
                 padding-left: 4px;
                 MemPill {
                     text: root.mem;
-                    tip: "Memory this chat's agents and processes use";
+                    tip: root.mem-project ? "Memory this project's chats use" : "Memory this chat's agents and processes use";
                     open: root.mem-open;
                     clicked(x, y) => {
                         root.mem-clicked(x, y);
@@ -489,7 +490,12 @@ export component AppWindow inherits Window {
 
     in-out property <bool> dark <=> Theme.dark;
     // Memory: the open chat's ("" hides its pill) and this PC's (the sidebar's gauge); `mem-pop` opens either's popover.
+    // A project's main chat's pill is its project's (`chat-mem-project`). Split, each pane's head has its chat's
+    // (PaneHead.mem): `chat-mem-pop` opens that chat's popover, `mem-pop-chat` is the chat whose popover is up.
     in property <string> chat-mem;
+    in property <bool> chat-mem-project;
+    in property <int> mem-pop-chat: -1;
+    callback chat-mem-pop(int, length, length);
     in property <string> pc-mem;
     in property <float> pc-mem-frac;
     in property <bool> pc-mem-low;
@@ -1162,6 +1168,7 @@ export component AppWindow inherits Window {
                             root.parent-clicked();
                         }
                         mem: root.view == "chat" ? root.chat-mem : "";
+                        mem-project: root.chat-mem-project;
                         cap: root.drag-chat >= 0 && root.split-drop.cap;
                         maxed: root.split-maxed;
                         restore => {
@@ -1339,6 +1346,10 @@ export component AppWindow inherits Window {
                             }
                             maximize(i) => {
                                 root.split-solo(i);
+                            }
+                            mem-open: root.pop-id == "mem-chat" ? root.mem-pop-chat : -1;
+                            mem(i, x, y) => {
+                                root.chat-mem-pop(root.split-heads[i].chat, x, y);
                             }
                             toggle(i, seq) => {
                                 root.split-toggle(i, seq);

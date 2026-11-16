@@ -91,6 +91,9 @@ export interface PaneHead {
   strip_header: boolean;
   strip_folded: boolean;
   strip_open: boolean;
+  /** Its chat's memory chip ("" hides it; MemWatch) and whether that figure is its project's. */
+  mem: string;
+  mem_project: boolean;
 }
 
 /** A pane's transcript and its agents strip, set once per pane and filled in place. */
@@ -530,6 +533,12 @@ export interface AppWindow extends slint.ComponentHandle {
   /** A PC card's "Default" pill: row i's PC becomes the sidebar gauge's. */
   mem_default: (i: number) => void;
   chat_mem: string;
+  /** The usual view's chat is its project's main chat: its chip is the project's. */
+  chat_mem_project: boolean;
+  /** The chat whose chip opened the "mem-chat" popover (a split pane's chip is drawn open by it). */
+  mem_pop_chat: number;
+  /** A split pane's chip clicked: its chat, where the popover goes. */
+  chat_mem_pop: (chat: number, x: number, y: number) => void;
   pc_mem: string;
   pc_mem_frac: number;
   pc_mem_low: boolean;
