@@ -5,6 +5,11 @@ Harbor is TypeScript on Bun, with a Slint window (`ts/`; Bun's version is pinned
 The phone app is Java (`android/`); the video player is libmpv (`video/`); Slint's native module is Harbor's own build of
 slint-ui's, patched so a compiled UI doesn't keep the compiler's state (`slint/`).
 
+## Every platform
+
+A change that applies on more than one platform ships on all of them in the same change: Linux, macOS, Windows
+and the phone app (`android/`). If one can't get it, say which and why in the commit and the CHANGELOG.
+
 ## TypeScript checks run on the PC
 
 `tsc --noEmit`, `bun test` and `bun build` for `ts/` are light and run on the PC, with the pinned
@@ -23,7 +28,9 @@ go down (`bun packages/os/test/boundary.ts --write` lowers them after you move s
 ## Follow main and soaked releases
 
 A PC with Follow main on (`ts/packages/update/src/followmain.ts`) runs every main commit that changes the
-app bundle within seconds, so a push from your worktree goes live there: keep main working. Each push is
+app bundle within seconds, so a push from your worktree goes live there: keep main working. Finished work goes
+straight to main (the owner's choice: no PR to wait on) once `scripts/boat/check` is green on it, rebased on the
+latest main. Each push is
 built once on GitHub (`.github/workflows/main.yml`: tsc, the bundle, signed, on the rolling prerelease
 `main-build`); a PC downloads that when it's there, waits for it when building itself would be slow (no
 packages installed for that lockfile yet), and otherwise builds from its own clone (skipping `bun install`
