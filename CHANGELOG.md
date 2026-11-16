@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.6] - 2026-11-15
+
+### Fixed
+- Split panes no longer sit under an empty top bar: the panes' headers are the window's top. Team, the bottom and
+  right panels and Close Harbor sit at the header row's right end, Show sidebar (with the sidebar hidden) at its left.
+
 ## [0.187.5] - 2026-11-15
 
 ### Fixed
