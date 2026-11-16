@@ -27,11 +27,14 @@ import {
 } from "./apps.ts";
 import { type Json, isObject, parseObject } from "./json.ts";
 import { noderuntime, providers } from "@harbor/agents";
+import { browsers } from "@harbor/os";
+import * as pwbrowser from "./pwbrowser.ts";
 import { urlEncode } from "@harbor/net";
 import { selfExe } from "./sys.ts";
 
 export * from "./apps.ts";
 export * from "./http.ts";
+export * as pwbrowser from "./pwbrowser.ts";
 export { openUrl, setOpener } from "./sys.ts";
 export {
   callbackPage,
@@ -95,7 +98,7 @@ export function locals(): LocalDef[] {
     if (found) return { local: l, def: found };
     // The built-in Playwright needs npx: the user's, or the Node Harbor installs (noderuntime.ts; while that's on
     // its way the bridge waits for it). Without either the server can't start, and the chip says it isn't set up.
-    if (l.id === "playwright" && (providers.which("npx") !== null || noderuntime.current().kind === "installing")) return { local: l, def: ["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }] };
+    if (l.id === "playwright" && (providers.which("npx") !== null || noderuntime.current().kind === "installing")) return { local: l, def: ["playwright", { type: "stdio", command: "npx", args: playwrightArgs() }] };
     return { local: l, def: undefined };
   });
   localsCache = { at: Date.now(), defs };
@@ -106,12 +109,37 @@ export function resetLocalsCache(): void {
   localsCache = undefined;
 }
 
-// Node installed (or failed): Playwright's entry and its chip change at once.
-noderuntime.onChange(resetLocalsCache);
+/**
+ * The arguments of Harbor's own Playwright entry (a user's own entry is never changed): @playwright/mcp drives
+ * Google Chrome unless told otherwise, and fails where it isn't installed, so without Chrome it's Edge (always on
+ * Windows), else Playwright's Chromium, which Harbor installs (pwbrowser.ts). Other args, other server key: a
+ * running bridge starts the new one.
+ */
+export function playwrightArgs(browser: browsers.PlaywrightBrowser = browsers.playwrightBrowser()): string[] {
+  return ["-y", pwbrowser.PACKAGE, "--headless", ...(browser === "chrome" ? [] : ["--browser", browser])];
+}
 
-/** Why a local server that needs Node isn't set up yet (Node being installed, or why that failed); null: nothing to add. */
+/** Whether agents get Harbor's own Playwright entry with Playwright's Chromium (so that has to be installed). */
+export function needsPlaywrightChromium(): boolean {
+  const pw = locals().find((l) => l.local.id === "playwright")?.def;
+  if (pw === undefined || isOff("playwright")) return false;
+  // Harbor's own entry only: a user's own playwright entry is theirs, browser and all.
+  const args = isObject(pw[1]) ? pw[1].args : undefined;
+  return Array.isArray(args) && JSON.stringify(args) === JSON.stringify(playwrightArgs("chromium"));
+}
+
+/** Installs Playwright's Chromium in the background when Harbor's entry needs it (hub.ts, after Node's own start). */
+export function startPlaywrightBrowser(): void {
+  pwbrowser.startBackground(needsPlaywrightChromium);
+}
+
+// Node or the browser installed (or failed): Playwright's entry and its chip change at once.
+noderuntime.onChange(resetLocalsCache);
+pwbrowser.onChange(resetLocalsCache);
+
+/** Why a local server that needs Node isn't set up yet (Node or its browser being installed, or why that failed); null: nothing to add. */
 export function localNote(id: string): string | null {
-  return id === "playwright" ? noderuntime.tip() : null;
+  return id === "playwright" ? (noderuntime.tip() ?? pwbrowser.tip()) : null;
 }
 
 export function tokenVar(id: string): string {
