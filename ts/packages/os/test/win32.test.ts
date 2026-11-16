@@ -227,6 +227,50 @@ describe("npm shims", () => {
       rmSync(d, { recursive: true, force: true });
     }
   });
+
+  // npm's own npx.cmd, as Node.js' zip (and the managed Node, agents/src/noderuntime.ts) has it.
+  const NPX_CMD = [
+    ":: Created by npm, please don't edit manually.",
+    "@ECHO OFF",
+    "SETLOCAL",
+    'SET "NODE_EXE=%~dp0\\node.exe"',
+    'IF NOT EXIST "%NODE_EXE%" (',
+    '  SET "NODE_EXE=node"',
+    ")",
+    'SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"',
+    'SET "NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js"',
+    `FOR /F "delims=" %%F IN ('CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"') DO (`,
+    '  SET "NPM_PREFIX_NPX_CLI_JS=%%F\\node_modules\\npm\\bin\\npx-cli.js"',
+    ")",
+    'IF EXIST "%NPM_PREFIX_NPX_CLI_JS%" (',
+    '  SET "NPX_CLI_JS=%NPM_PREFIX_NPX_CLI_JS%"',
+    ")",
+    "",
+    '"%NODE_EXE%" "%NPX_CLI_JS%" %*',
+    "",
+  ].join("\r\n");
+  test("npm's own npx.cmd names npm's script, run by node", () => {
+    expect(shimTarget(NPX_CMD)).toEqual({ target: "node_modules\\npm\\bin\\npx-cli.js", node: true });
+  });
+  test("argvOf: Node's bare npx (a bash script) beside npm's npx.cmd runs node.exe and npx-cli.js, no bash", () => {
+    const d = mkdtempSync(join(tmpdir(), "shim-"));
+    try {
+      mkdirSync(join(d, "node_modules", "npm", "bin"), { recursive: true });
+      const cli = join(d, "node_modules", "npm", "bin", "npx-cli.js");
+      writeFileSync(cli, "");
+      writeFileSync(join(d, "node.exe"), "");
+      writeFileSync(join(d, "npx"), "#!/usr/bin/env bash\n");
+      writeFileSync(join(d, "npx.cmd"), NPX_CMD.replaceAll("\\node_modules\\npm\\bin\\", `\\node_modules${sep}npm${sep}bin${sep}`));
+      const bash = (n: string): string | null => (n === "bash" ? "C:\\Git\\bin\\bash.exe" : null);
+      expect(argvOf(join(d, "npx"), bash)).toEqual([join(d, "node.exe"), cli]);
+      expect(argvOf(join(d, "npx.cmd"), bash)).toEqual([join(d, "node.exe"), cli]);
+      // No npx.cmd beside it: the script runs with its interpreter, as before.
+      writeFileSync(join(d, "tool"), "#!/usr/bin/env bash\n");
+      expect(argvOf(join(d, "tool"), bash)).toEqual(["C:\\Git\\bin\\bash.exe", join(d, "tool")]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("#! scripts", () => {

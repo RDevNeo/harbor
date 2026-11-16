@@ -27,4 +27,5 @@ export * as waiting from "./waiting.ts";
 export type { Waiting } from "./waiting.ts";
 export * as patches from "./patches.ts";
 export * as provupdate from "./provupdate.ts";
+export * as noderuntime from "./noderuntime.ts";
 export * as turnscope from "./turnscope.ts";

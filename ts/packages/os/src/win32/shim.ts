@@ -10,9 +10,21 @@ export function shimTarget(text: string): { target: string; node: boolean } | nu
   // cmd-shim's last line: `"%_prog%"  "%dp0%\node_modules\pkg\bin\cli.js" %*`, or for a program of its own
   // `"%dp0%\..\pkg\bin\tool.exe"   %*`.
   const m = /"%(?:~)?dp0%?\\([^"]+)"\s+%\*/i.exec(text);
-  if (!m?.[1]) return null;
+  if (!m?.[1]) return npmOwn(text);
   const node = /"%_prog%"/i.test(text) || /\bnode(\.exe)?"?\s+"%(?:~)?dp0/i.test(text);
   return { target: m[1], node };
+}
+
+/**
+ * npm's own npm.cmd and npx.cmd (Node.js' Windows install and zip): `SET "NPX_CLI_JS=%~dp0\node_modules\npm\bin\npx-cli.js"`
+ * and last `"%NODE_EXE%" "%NPX_CLI_JS%" %*`, node.exe beside it. (They'd prefer an npm installed into a global
+ * prefix; the bundled one runs, as a fresh install does.)
+ */
+function npmOwn(text: string): { target: string; node: boolean } | null {
+  const run = /"%NODE_EXE%"\s+"%(\w+)%"\s+%\*/i.exec(text);
+  if (!run?.[1]) return null;
+  const set = new RegExp(`SET\\s+"${run[1]}=%~?dp0%?\\\\([^"]+)"`, "i").exec(text);
+  return set?.[1] ? { target: set[1], node: true } : null;
 }
 
 /** A script's `#!` line: its interpreter and the one argument it may give. Null: none. */
@@ -45,6 +57,25 @@ export function interpreterOf(s: { interpreter: string; arg: string | null }, wh
   return arg === null ? [found] : [found, arg];
 }
 
+/** [node, script] when `program + ".cmd"` is npm's own shim (npmOwn) and its script and a node are there; else null. */
+function ownCmd(program: string, which: (name: string) => string | null): string[] | null {
+  const cmd = `${program}.cmd`;
+  let text: string;
+  try {
+    text = readFileSync(cmd, "utf8");
+  } catch {
+    return null;
+  }
+  const t = npmOwn(text);
+  if (t === null) return null;
+  const dir = dirname(cmd);
+  const target = join(dir, t.target);
+  if (!existsSync(target)) return null;
+  const beside = join(dir, "node.exe");
+  const node = existsSync(beside) ? beside : which("node");
+  return node === null ? null : [node, target];
+}
+
 const SCRIPT_EXT = new Set(["", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".py"]);
 
 /** The first bytes of a file (its `#!` line), "" when it can't be read. */
@@ -70,6 +101,11 @@ function head(path: string): string {
  */
 export function argvOf(program: string, which: (name: string) => string | null, gitBash: string | null = null): string[] {
   if (SCRIPT_EXT.has(extname(program).toLowerCase())) {
+    // Node's own `npx`/`npm` (a bash script) beside npm's npx.cmd/npm.cmd: node and npm's script, no bash between.
+    if (extname(program) === "") {
+      const own = ownCmd(program, which);
+      if (own !== null) return own;
+    }
     const s = shebang(head(program));
     const run = s === null ? null : interpreterOf(s, which, gitBash);
     return run === null ? [program] : [...run, program];

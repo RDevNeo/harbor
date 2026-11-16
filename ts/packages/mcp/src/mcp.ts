@@ -26,7 +26,7 @@ import {
   dir,
 } from "./apps.ts";
 import { type Json, isObject, parseObject } from "./json.ts";
-import { providers } from "@harbor/agents";
+import { noderuntime, providers } from "@harbor/agents";
 import { urlEncode } from "@harbor/net";
 import { selfExe } from "./sys.ts";
 
@@ -93,8 +93,9 @@ export function locals(): LocalDef[] {
   const defs = LOCAL.map((l): LocalDef => {
     const found = servers.find(([n]) => localFor(n)?.id === l.id);
     if (found) return { local: l, def: found };
-    // The built-in Playwright needs npx: without it the server can't start, and the chip says it isn't set up.
-    if (l.id === "playwright" && providers.which("npx") !== null) return { local: l, def: ["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }] };
+    // The built-in Playwright needs npx: the user's, or the Node Harbor installs (noderuntime.ts; while that's on
+    // its way the bridge waits for it). Without either the server can't start, and the chip says it isn't set up.
+    if (l.id === "playwright" && (providers.which("npx") !== null || noderuntime.current().kind === "installing")) return { local: l, def: ["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }] };
     return { local: l, def: undefined };
   });
   localsCache = { at: Date.now(), defs };
@@ -103,6 +104,14 @@ export function locals(): LocalDef[] {
 
 export function resetLocalsCache(): void {
   localsCache = undefined;
+}
+
+// Node installed (or failed): Playwright's entry and its chip change at once.
+noderuntime.onChange(resetLocalsCache);
+
+/** Why a local server that needs Node isn't set up yet (Node being installed, or why that failed); null: nothing to add. */
+export function localNote(id: string): string | null {
+  return id === "playwright" ? noderuntime.tip() : null;
 }
 
 export function tokenVar(id: string): string {

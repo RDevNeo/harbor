@@ -86,7 +86,8 @@ export interface AppsView {
   discordLine(about: string): { text: string; tone: number };
   /** The WhatsApp card's line (whatsapp.ts `cardLine`, which the phone shows too). */
   whatsappLine(about: string): { text: string; tone: number };
-  locals(): { id: string; label: string; found: boolean }[];
+  /** `note`: why one that isn't found isn't set up yet (Playwright: Node.js being installed, or why that failed). */
+  locals(): { id: string; label: string; found: boolean; note?: string | null }[];
   isOff(id: string): boolean;
 }
 
@@ -182,7 +183,9 @@ export function integrationsData(i: IntInput): IntData {
   });
   const chips = i.view.locals().map((l): IntChip => {
     const off = i.view.isOff(l.id);
-    return { id: l.id, label: l.label, tile: i.tile(l.label), found: l.found, off, tip: !l.found ? "Not set up on this machine" : off ? "Off for agents \u{b7} click to turn on" : "On for agents \u{b7} click to turn off" };
+    const note = l.note ?? null;
+    const tip = !l.found ? (note ?? "Not set up on this machine") : (off ? "Off for agents \u{b7} click to turn on" : "On for agents \u{b7} click to turn off") + (note === null ? "" : ` \u{b7} ${note}`);
+    return { id: l.id, label: l.label, tile: i.tile(l.label), found: l.found, off, tip };
   });
   return { rows, errors, chips };
 }
@@ -205,7 +208,7 @@ export function realView(): AppsView {
       mcp
         .locals()
         .filter((l) => mcp.app(l.local.id) === undefined)
-        .map((l) => ({ id: l.local.id, label: l.local.label, found: l.def !== undefined })),
+        .map((l) => ({ id: l.local.id, label: l.local.label, found: l.def !== undefined, note: mcp.localNote(l.local.id) })),
     isOff: mcp.isOff,
   };
 }

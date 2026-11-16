@@ -22,3 +22,4 @@ export * as admin from "./admin.ts";
 export * as audio from "./audio.ts";
 export * as notify from "./notify.ts";
 export * as screen from "./screen/index.ts";
+export * as nodedist from "./nodedist.ts";

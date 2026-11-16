@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { providers } from "@harbor/agents";
-import { env as osEnv } from "@harbor/os";
+import { noderuntime, providers } from "@harbor/agents";
+import { nodedist, env as osEnv } from "@harbor/os";
 import {
   accountFile,
   accountsIn,
@@ -49,6 +49,7 @@ beforeEach(() => {
   delete process.env.HARBOR_GOOGLE_CLIENT_ID;
   delete process.env.HARBOR_GOOGLE_CLIENT_SECRET;
   resetLocalsCache();
+  noderuntime.resetForTests();
 });
 
 afterEach(() => {
@@ -178,6 +179,26 @@ test("the built-in Playwright is offered only where npx is installed", () => {
   writeFileSync(join(root, ".claude.json"), JSON.stringify({ mcpServers: { playwright: { command: "/opt/pw" } } }));
   resetLocalsCache();
   expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { command: "/opt/pw" }]);
+});
+
+test("the built-in Playwright is offered once Harbor's own Node (and its npx) is installed", () => {
+  process.env.PATH = join(root, "empty");
+  noderuntime.resetForTests();
+  resetLocalsCache();
+  if (providers.which("npx") !== null) return; // the OS's own tool folders have one: nothing to show here
+  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toBeUndefined();
+  const dist = nodedist.distFor();
+  if (dist === null) return;
+  const bin = noderuntime.binOf(noderuntime.runtimesDir(), dist);
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, dist.node), "", { mode: 0o755 });
+  writeFileSync(join(bin, osEnv.execSuffixes().includes(".cmd") ? "npx.cmd" : "npx"), "", { mode: 0o755 });
+  noderuntime.resetForTests();
+  resetLocalsCache();
+  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def?.[1]).toEqual({ type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] });
+  expect(mcp.localNote("playwright")).toBeNull();
+  expect(mcp.localNote("discord")).toBeNull();
+  noderuntime.resetForTests();
 });
 
 test("agents get the local servers from the user's config and the signed-in apps", async () => {

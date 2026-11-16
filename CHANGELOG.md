@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Harbor comes with Node.js: on a PC with no Node of its own (no `node` and `npx` on PATH), Harbor downloads the
+  official Node.js 26.13.1 LTS for this system from nodejs.org in the background shortly after it starts, checks it
+  against the release's SHA-256 (pinned in `ts/packages/os/src/nodedist.ts`), unpacks it beside harbor.db
+  (`<data>/runtimes/node-v26.13.1-<os>-<arch>`, moved in whole from a temporary folder) and adds its bin folder last
+  to agents' and MCP servers' PATH: `node`, `npm` and `npx` work in agents' shells, and the built-in Playwright
+  server (`npx -y @playwright/mcp@latest`) is offered and starts (an MCP server that is `node`, `npm` or `npx`
+  waits for the download, up to a minute). A user's own Node wins and nothing is downloaded. A failed download
+  (offline, a hash that doesn't match) leaves nothing behind, is logged, and is tried again on the next start; the
+  Playwright chip in Settings › Integrations says why. Linux (x64, arm64; the .tar.gz, so xz isn't needed), macOS
+  (Intel, Apple silicon) and Windows (x64, arm64; the .zip, unpacked by Windows' own tar). Windows: Node's own
+  `npx`/`npm` run as node.exe and npm's script, without Git Bash in between. The phone app doesn't apply: it runs no
+  agents, shells or MCP servers. `HARBOR_NODE=0` turns the download off.
+
 ### Removed
 - The Omarchy MCP server is gone from Settings › Integrations' MCP servers: agents use Harbor's built-in `computer`
   tool (screenshots, mouse and keyboard) on every OS instead. Harbor's Claude and Codex turns no longer start it,
