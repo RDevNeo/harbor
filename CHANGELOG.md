@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.7] - 2026-11-15
+
+### Added
+- A project's main chat manages its own checkout and branch, the ones the line above the composer shows: its agent
+  sees where it is (uncommitted changes, ahead/behind the default branch, worktrees, branches), starts a branch from
+  the up-to-date default branch in a new worktree or in the checkout, switches to another branch or worktree (or back
+  to the project's checkout), renames, merges (fast-forward or merge commit) and deletes branches and worktrees. The
+  line follows at once. Deleting refuses unmerged or unpushed work and uncommitted changes unless forced, and never
+  touches the default branch or the checkout the chat is in; a conflicting merge is aborted and leaves the checkout
+  as it was. Asked for something unrelated, it parks the current work on its branch and starts a fresh one; it
+  merges when the work is done and you approved it, cleans up merged branches, and follows the project's own rules
+  first. Its agents can get a worktree and branch of their own, so parallel ones don't collide.
+
+### Fixed
+- Every split pane's header shows the memory chip too; a project's main chat's chip counts its whole project, every
+  chat of it on this PC.
+- A chat opened from the new-chat draft (or started there) shows alone instead of bringing the split view back
+  around it; dragging a chat into the view splits it again.
+
 ## [0.187.6] - 2026-11-15
 
 ### Fixed
