@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.4] - 2026-11-15
+
+### Fixed
+- A project can be dragged from the sidebar like a chat: grab it by its name and drop it on the open chat to show
+  the project's main chat in a split pane beside it. The project's icon still drags it into another place in the
+  list (manual order). A project without a main chat doesn't drag that way.
+
 ## [0.187.3] - 2026-11-15
 
 ### Fixed
