@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { turnscope } from "./packages/agents/src/index.ts";
 import { apps, connect, control, setHarborVersion } from "./packages/mcp/src/index.ts";
@@ -23,9 +23,9 @@ import {
 } from "./packages/update/src/index.ts";
 import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
-import { autostartByDefault, healAutostart, keepsRunning } from "./packages/ui/src/background.ts";
+import { autostart, autostartByDefault, BACKGROUND_FLAG, healAutostart, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
-import { admin, env as osEnv, proc } from "./packages/os/src/index.ts";
+import { admin, autostart as osAutostart, env as osEnv, proc } from "./packages/os/src/index.ts";
 
 export interface RunOptions {
   window: boolean;
@@ -70,7 +70,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   }
   const adminNow = admin.state();
   if (adminNow.on) admin.keepHook(cfg.exe);
-  if (adminNow.on || adminNow.elevated) console.error(`harbor: Run as administrator is ${adminNow.on ? "on" : "off"}; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`);
+  if (adminNow.supported) console.error(`harbor: running as administrator (Windows default) is ${adminNow.on ? "set up" : adminNow.off ? "off (harbor admin off)" : "not set up"}; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`);
   const stopTrims = malloc.trimEvery();
   // A line in the log for every time the main thread stops answering for a quarter second or more (stallwatch.ts).
   stallwatch.hookSqlite();
@@ -133,7 +133,36 @@ export async function runApp(o: RunOptions): Promise<number> {
     hidden = false;
     void reloader?.now();
   };
+  // Windows: Harbor runs as administrator by default (packages/os/src/admin.ts); `harbor admin on|off|status` lands here.
+  let adminToast = (_text: string): void => {};
+  const adminOptions = (): admin.SetOptions | null => {
+    const exe = osAutostart.installedLauncher();
+    return existsSync(exe) ? { exe, login: autostart(), arg: BACKGROUND_FLAG } : null;
+  };
+  const adminCall = async (what: string): Promise<{ ok: boolean; text: string }> => {
+    if (what === "status") return { ok: true, text: (await admin.status("harbor")).join("\n") };
+    if (what !== "on" && what !== "off") return { ok: false, text: "usage: harbor admin [status|on|off]" };
+    const opts = adminOptions();
+    if (opts === null) return { ok: false, text: "This Harbor isn't the installed one: running as administrator is for an installed Harbor." };
+    const r = await admin.set(what === "on", opts);
+    // After the answer is out: the restart through a task (into or out of the administrator token).
+    if (r.restart) setTimeout(() => void reloader?.now(), 500);
+    return { ok: r.ok, text: r.message };
+  };
+  // The first start of a window that isn't set up yet (a new install, or the version that brought it) asks Windows once.
+  const adminFirstStart = async (): Promise<void> => {
+    await new Promise((r) => setTimeout(r, 3000));
+    const opts = adminOptions();
+    if (opts === null) return;
+    const r = await admin.autoSetup({ ...opts, version: o.version }, cfg.exe, () =>
+      adminToast("Harbor runs as administrator on Windows: Windows asks once to allow it. (harbor admin off in a terminal turns that off.)"),
+    );
+    if (r === null) return;
+    if (r.ok && r.restart) void reloader?.now();
+    else if (!r.ok) adminToast(`${r.message} harbor admin on in a terminal asks again.`);
+  };
   const sock = control.startSocket<never, never, preview.Offer>({
+    ...(adminNow.supported ? { admin: adminCall } : {}),
     // The new Harbor of a restart asks the running one to show itself when it can't start: that isn't the user.
     raise: () => (reloader?.handingOver ? true : single.raise()),
     previewReceived: (v) => preview.received(cfg, v as Partial<preview.PushRequest>),
@@ -340,12 +369,17 @@ export async function runApp(o: RunOptions): Promise<number> {
       homeImage: async (chat: number, path: string) => (await run.mesh.homeImage(chat, path, null))?.body ?? null,
     };
     let late = (): void => {};
+    let adminFirstAsked = false;
     const shown = (w: slint.Window): void => {
       void confirmStart(cfg);
       o.shown?.(w, quit);
       if (handover !== null) void handedOver(handover, reloadedFrom, () => late(), ui.loopState);
+      if (adminNow.supported && !adminNow.on && !offline && !adminFirstAsked) {
+        adminFirstAsked = true;
+        void adminFirstStart();
+      }
     };
-    await ui.runShell(data, hub, { restore, shown, snapshotWith: (f) => (snapshot = f), leaveWith: (f) => (leave = f), lateWith: (f) => (late = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; run.setProviderPopup((text) => {
+    await ui.runShell(data, hub, { restore, shown, snapshotWith: (f) => (snapshot = f), leaveWith: (f) => (leave = f), lateWith: (f) => (late = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { adminToast = t; run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; run.setProviderPopup((text) => {
       const desk = data.notifier.desktop;
       if (desk?.focused) t(text);
       else desk?.show(newNote({ kind: "pc", key: "providers", title: text }));

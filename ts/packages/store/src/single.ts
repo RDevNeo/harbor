@@ -121,6 +121,32 @@ export function apiCall(req: { method: string; path: string; body?: unknown; wav
   });
 }
 
+/**
+ * `harbor admin on|off|status`: asked of the running Harbor (Windows' prompt may be up meanwhile, so it waits long).
+ * Its answer, or null when no Harbor answered.
+ */
+export function adminRunning(what: string, env: Record<string, string | undefined> = process.env, timeoutMs = 10 * 60_000): Promise<{ ok: boolean; text: string } | null> {
+  return new Promise((resolve) => {
+    const s = createConnection(socketPath(env));
+    let buf = "";
+    s.setTimeout(timeoutMs, () => (s.destroy(), resolve(null)));
+    s.on("connect", () => s.write(`${JSON.stringify({ admin: what })}\n`));
+    s.on("data", (d) => {
+      buf += d.toString();
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      s.destroy();
+      try {
+        const r = JSON.parse(buf.slice(0, nl)) as { ok?: unknown; text?: unknown };
+        resolve({ ok: r.ok === true, text: typeof r.text === "string" ? r.text : "" });
+      } catch {
+        resolve(null);
+      }
+    });
+    s.on("error", () => resolve(null));
+  });
+}
+
 /** Whether something listens on the control socket (connects, says nothing). */
 export function socketListening(env: Record<string, string | undefined> = process.env): Promise<boolean> {
   return new Promise((resolve) => {

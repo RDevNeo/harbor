@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { MemKv } from "@harbor/net";
 import { tabFromSlug, TAB_ORDER, TABS } from "../src/logic/pages.ts";
-import { adminDesc, generalSections, navTabs, projectsSection, PROJECTS_DIR, RUN_AS_ADMIN, setGeneral } from "../src/logic/settings.ts";
+import { generalSections, navTabs, projectsSection, PROJECTS_DIR, RUN_AS_ADMIN, setGeneral } from "../src/logic/settings.ts";
 
 test("Settings has nine pages, General then Workspace, with old Devices and Phones links reaching Workspace", () => {
   expect(TAB_ORDER.map((t) => TABS[t].label)).toEqual(["General", "Workspace", "Notifications", "Keybindings", "Voice", "Providers", "Integrations", "Secrets"]);
@@ -42,20 +42,23 @@ test("Projects folder: ~/Projects until one is picked, then a way back", () => {
   expect(s().rows[1]?.title).toBe("Back to ~/Projects");
 });
 
-test("Run as administrator: a row on Windows only, off by default, its trade-offs and what's true now", () => {
+test("Running as administrator: a read-only row on Windows only, what's true now, its cost and how to change it", () => {
   const kv = new MemKv();
-  const row = (admin: Parameters<typeof adminDesc>[0]) => generalSections(kv, { autostart: true, version: "0.1.0", admin }).find((s) => s.title === "Administrator")?.rows[0];
+  const base = { on: false, elevated: false, canElevate: true, off: false, declined: "" };
+  const row = (a: Partial<typeof base>) => generalSections(kv, { autostart: true, version: "0.1.0", admin: { ...base, ...a } }).find((s) => s.title === "Administrator")?.rows[0];
   expect(generalSections(kv, { autostart: true, version: "0.1.0" }).some((s) => s.title === "Administrator")).toBe(false);
-  const off = row({ on: false, elevated: false, canElevate: true, busy: false });
-  expect(off).toMatchObject({ kind: "toggle", key: RUN_AS_ADMIN, title: "Run as administrator", on: false, enabled: true });
-  expect(off?.desc).toContain("full control of this PC");
-  expect(off?.desc).toContain("can't be dropped on Harbor's window");
-  expect(off?.desc).toEndWith("Now: Harbor runs with your normal rights.");
-  expect(row({ on: true, elevated: true, canElevate: true, busy: false })?.desc).toEndWith("Now: Harbor runs as administrator.");
-  expect(row({ on: true, elevated: false, canElevate: true, busy: false })?.desc).toContain("this Harbor has your normal rights");
-  // A standard account: nothing to raise, so it can't be turned on (but can be turned off).
-  expect(row({ on: false, elevated: false, canElevate: false, busy: false })).toMatchObject({ enabled: false });
-  expect(row({ on: true, elevated: false, canElevate: false, busy: false })).toMatchObject({ enabled: true });
-  expect(row({ on: false, elevated: false, canElevate: true, busy: true })).toMatchObject({ enabled: false });
-  expect(row({ on: false, elevated: false, canElevate: true, busy: true })?.desc).toEndWith("Waiting for Windows…");
+  const yes = row({ on: true, elevated: true });
+  expect(yes).toMatchObject({ kind: "value", key: RUN_AS_ADMIN, title: "Runs as administrator", label: "Yes" });
+  expect(yes?.desc).toContain("full control of this PC");
+  expect(yes?.desc).toContain("can't be dropped on its window");
+  expect(yes?.desc).toContain("harbor admin off");
+  // No switch: nothing in General toggles it.
+  expect(generalSections(kv, { autostart: true, version: "0.1.0", admin: { ...base, on: true, elevated: true } }).flatMap((s) => s.rows).some((r) => r.key === RUN_AS_ADMIN && r.kind === "toggle")).toBe(false);
+  expect(row({})).toMatchObject({ label: "No" });
+  expect(row({})?.desc).toContain("until Windows allows it");
+  expect(row({ off: true })?.desc).toContain("harbor admin on turns it back on");
+  expect(row({ declined: "0.187" })?.desc).toContain("prompt was declined");
+  expect(row({ on: true })?.desc).toContain("its task didn't start it");
+  expect(row({ canElevate: false })?.desc).toContain("isn't an administrator");
+  expect(row({ elevated: true })?.desc).toContain("opened that way");
 });

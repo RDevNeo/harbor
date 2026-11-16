@@ -57,6 +57,24 @@ curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh
 - Files: `~/.local/lib/harbor/` (`harbor`, `libmpv-harbor.so`), `~/.local/bin/harbor`, a desktop entry
   and icons.
 
+### Windows
+
+`irm https://github.com/RDevNeo/harbor/releases/latest/download/install.ps1 | iex` (or the setup,
+`harbor-x86_64-windows-setup.exe`) installs Harbor for your user into `%LOCALAPPDATA%\Programs\Harbor`.
+
+On Windows Harbor runs as administrator: it and everything its agents run have full control of the PC, with
+no prompt. The first time its window opens, Windows asks once to let Harbor make a scheduled task, "Harbor
+(elevated)", for your account; every start goes through it afterwards (Start menu, shortcuts, a terminal, login,
+updates, restarts). Links and files still open in your normal browser and apps. The cost: files dragged from other
+apps can't be dropped on Harbor's window, other apps' global shortcuts may not work while Harbor is in front, what
+Harbor starts (dev servers, terminals) runs as administrator too, and any program running as you could replace
+Harbor's files to get administrator rights through its task.
+
+- `harbor admin off` turns that off for good (updates don't turn it back on); `harbor admin on` turns it back on;
+  `harbor admin` says how Harbor runs (Settings › General › Administrator shows it too).
+- Declined Windows' prompt? Harbor keeps your normal rights and asks once more with the next minor version.
+- Uninstalling from Settings › Apps removes the task (Windows asks once).
+
 ### What a fresh PC needs
 
 Required:

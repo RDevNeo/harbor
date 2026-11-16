@@ -131,6 +131,35 @@ export function removeMarker(env: Env = process.env): void {
   rmSync(markerPath(env), { force: true });
 }
 
+/**
+ * What the person chose, kept over updates: `off` (`harbor admin off`: Harbor never sets it up again by itself), or
+ * the minor version (`0.187`) whose start asked and saw Windows' prompt declined (asked again once a later minor
+ * version comes). Nothing: the default, Harbor runs as administrator.
+ */
+export interface Choice {
+  off: boolean;
+  declined: string;
+}
+
+export const choicePath = (env: Env = process.env): string => join(dir(env), "admin-choice.json");
+
+export function readChoice(env: Env = process.env): Choice {
+  try {
+    const c = JSON.parse(readFileSync(choicePath(env), "utf8")) as Partial<Choice>;
+    return { off: c.off === true, declined: typeof c.declined === "string" ? c.declined : "" };
+  } catch {
+    return { off: false, declined: "" };
+  }
+}
+
+export function writeChoice(c: Choice, env: Env = process.env): void {
+  if (!c.off && c.declined === "") rmSync(choicePath(env), { force: true });
+  else writeJson(choicePath(env), c);
+}
+
+/** "0.187" of "0.187.6+abc": the versions a declined prompt waits out. */
+export const minorOf = (version: string): string => /^v?(\d+\.\d+)/.exec(version)?.[1] ?? version;
+
 // ---- the task ----
 
 const xml = (s: string): string => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");

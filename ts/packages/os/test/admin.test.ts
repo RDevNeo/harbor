@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hookLines, state, withHook } from "../src/admin.ts";
-import { LIMITED_TASK, marker, passable, pendingPath, removeMarker, takeStart, TASK, taskXml, tellTaken, utf16, writeMarker } from "../src/win32/admin.ts";
+import { choicePath, LIMITED_TASK, marker, minorOf, passable, pendingPath, readChoice, removeMarker, takeStart, TASK, taskXml, tellTaken, utf16, writeChoice, writeMarker } from "../src/win32/admin.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -17,7 +17,20 @@ const env = () => {
 
 test("off Windows there's no such setting", () => {
   if (process.platform === "win32") return;
-  expect(state()).toEqual({ supported: false, on: false, elevated: false, canElevate: false });
+  expect(state()).toEqual({ supported: false, on: false, elevated: false, canElevate: false, off: false, declined: "" });
+});
+
+test("the person's choice outlives updates: off for good, or a declined prompt that waits for the next minor version", () => {
+  const e = env();
+  expect(readChoice(e)).toEqual({ off: false, declined: "" });
+  writeChoice({ off: false, declined: minorOf("0.187.99+3303a45") }, e);
+  expect(readChoice(e)).toEqual({ off: false, declined: "0.187" });
+  expect(minorOf("0.188.0")).not.toBe(readChoice(e).declined);
+  writeChoice({ off: true, declined: "" }, e);
+  expect(readChoice(e).off).toBe(true);
+  // Back to the default: nothing kept.
+  writeChoice({ off: false, declined: "" }, e);
+  expect(existsSync(choicePath(e))).toBe(false);
 });
 
 test("the task: this user's alone, the administrator token, in their desktop, no time limit, on battery, normal priority", () => {

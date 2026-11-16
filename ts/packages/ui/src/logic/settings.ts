@@ -41,45 +41,48 @@ export interface GeneralEnv {
   version: string;
   /** The home folder (paths show as ~/…); left out: this PC's. */
   home?: string;
-  /** Windows: Run as administrator (@harbor/os admin.ts). Left out elsewhere: no row. */
+  /** Windows: how Harbor runs (as administrator by default; @harbor/os admin.ts). Left out elsewhere: no row. */
   admin?: AdminView | undefined;
 }
 
-/** Run as administrator as the row shows it. */
+/** Running as administrator, as the read-only row shows it. */
 export interface AdminView {
-  /** The setting is on. */
+  /** Set up (the task is there). */
   on: boolean;
   /** This Harbor has the administrator token. */
   elevated: boolean;
   /** The Windows account is an administrator. */
   canElevate: boolean;
-  /** Turning it on or off is under way (Windows' prompt may be up). */
-  busy: boolean;
+  /** `harbor admin off` was run. */
+  off: boolean;
+  /** Windows' prompt was declined in this minor version ("" none). */
+  declined: string;
 }
 
 export const RUN_AS_ADMIN = "run_as_admin";
 
-/** What it means, then what it is now. */
+/** What is true now, then what it means and how to change it (there's no switch: `harbor admin off|on`). */
 export function adminDesc(a: AdminView): string {
-  const what =
-    "Harbor and everything its agents run get full control of this PC, with no Windows prompt: Windows asks you once, when you turn this on. Trade-offs: files dragged from other apps can't be dropped on Harbor's window, other apps' keyboard shortcuts may not work while Harbor is in front, and dev servers, terminals and other programs Harbor starts run as administrator too. Links and files still open in your normal browser and apps.";
-  const now = a.busy
-    ? "Waiting for Windows…"
-    : !a.canElevate && !a.on
-      ? "Not available: your Windows account isn't an administrator."
-      : a.on && a.elevated
-        ? "Now: Harbor runs as administrator."
+  const now = a.elevated
+    ? a.on
+      ? "Harbor and everything its agents run have full control of this PC, with no Windows prompt (Windows asked once)."
+      : "Harbor runs as administrator because it was opened that way."
+    : !a.canElevate
+      ? "Your Windows account isn't an administrator, so Harbor runs with your normal rights."
+      : a.off
+        ? "Harbor runs with your normal rights: harbor admin off in a terminal turned that off. harbor admin on turns it back on (Windows asks once)."
         : a.on
-          ? "Now: on, but this Harbor has your normal rights (its task didn't start it). Turn it off and on again if that stays."
-          : a.elevated
-            ? "Now: Harbor runs as administrator, because it was opened that way."
-            : "Now: Harbor runs with your normal rights.";
-  return `${what} ${now}`;
+          ? "Harbor should run as administrator, but this one has your normal rights (its task didn't start it). harbor admin on in a terminal sets it up again."
+          : a.declined !== ""
+            ? "Harbor runs with your normal rights: Windows' prompt was declined. harbor admin on in a terminal asks again."
+            : "Harbor runs with your normal rights until Windows allows it (Harbor asks once).";
+  const cost = a.elevated && a.on ? " Files dragged from other apps can't be dropped on its window, other apps' keyboard shortcuts may not work while it's in front, and dev servers and terminals it starts run as administrator too; links and files still open in your normal browser and apps. harbor admin off in a terminal turns this off." : "";
+  return `${now}${cost}`;
 }
 
-/** Windows' Run as administrator, off by default. */
+/** Windows: whether Harbor runs as administrator (its default), read-only. */
 export function adminSection(a: AdminView): SettingSection {
-  return { title: "Administrator", rows: [{ ...toggle(RUN_AS_ADMIN, "Run as administrator", adminDesc(a), a.on), enabled: !a.busy && (a.canElevate || a.on) }] };
+  return { title: "Administrator", rows: [item({ kind: "value", key: RUN_AS_ADMIN, title: "Runs as administrator", desc: adminDesc(a), label: a.elevated ? "Yes" : "No" })] };
 }
 
 /** The Projects folder row's buttons (pages/settings.ts opens the folder picker for `change`). */

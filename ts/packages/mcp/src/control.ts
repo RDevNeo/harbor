@@ -50,6 +50,8 @@ export interface SocketOptions<A, M, O> {
    * is its owner's only), or a recording (`wav`, base64) to transcribe as this PC dictates.
    */
   api?(method: string, path: string, body: Json, wav: Uint8Array | null): Promise<{ status: number; body: unknown }>;
+  /** `harbor admin on|off|status` (Windows): this Harbor turns running as administrator on or off, or says how it runs. */
+  admin?(what: string): Promise<{ ok: boolean; text: string }>;
 }
 
 export interface Listener {
@@ -112,6 +114,13 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
     if (v.quit === true) {
       opts.send({ kind: "quit" });
       return reply(socket, { ok: true });
+    }
+    if (typeof v.admin === "string") {
+      if (!opts.admin) return reply(socket, { ok: false, text: "This Harbor doesn't run as administrator (Windows only)." });
+      return void opts.admin(v.admin).then(
+        (r) => reply(socket, r),
+        (e: unknown) => reply(socket, { ok: false, text: e instanceof Error ? e.message : String(e) }),
+      );
     }
     if (v.preview_back !== undefined) {
       opts.send({ kind: "previewBack", off: v.off === true });

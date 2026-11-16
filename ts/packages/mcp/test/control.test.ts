@@ -188,3 +188,18 @@ test("harbor api: a call reaches the running Harbor's own API and its answer com
   l?.stop();
   expect(await apiCall({ method: "GET", path: "v1/state" }, env, 2000)).toBeNull();
 });
+
+test("harbor admin: on, off or status goes to the running Harbor and its answer comes back; a Harbor without it says so", async () => {
+  const { adminRunning } = await import("../../store/src/single.ts");
+  const env = { HARBOR_SOCK: join(root, "admin.sock") };
+  expect(await adminRunning("status", env)).toBeNull();
+  const asked: string[] = [];
+  const l = startSocket({ path: env.HARBOR_SOCK, send: () => undefined, admin: async (what) => (asked.push(what), { ok: what !== "nope", text: `did ${what}` }) });
+  expect(await adminRunning("off", env)).toEqual({ ok: true, text: "did off" });
+  expect(await adminRunning("nope", env)).toEqual({ ok: false, text: "did nope" });
+  expect(asked).toEqual(["off", "nope"]);
+  l?.stop();
+  const plain = startSocket({ path: env.HARBOR_SOCK, send: () => undefined });
+  expect((await adminRunning("on", env))?.ok).toBe(false);
+  plain?.stop();
+});

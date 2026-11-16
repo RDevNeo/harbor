@@ -1,6 +1,6 @@
-// "Run as administrator" (Windows only; win32/admin.ts has how): the setting's state, turning it on and off, a
-// start without the administrator token handed to the task, and the restarts that go through a task. Elsewhere
-// every answer is "not here".
+// Harbor runs as administrator on Windows by default (win32/admin.ts has how): its state, setting it up (the first
+// start asks Windows once) and turning it off or on again (`harbor admin off|on`), a start without the administrator
+// token handed to the task, and the restarts that go through a task. Elsewhere every answer is "not here".
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { home } from "./paths.ts";
@@ -23,12 +23,17 @@ export interface AdminState {
   elevated: boolean;
   /** The account is an administrator (Windows can raise Harbor). */
   canElevate: boolean;
+  /** `harbor admin off` was run: Harbor keeps the normal rights. */
+  off: boolean;
+  /** Windows' prompt was declined at a start of this minor version ("" none). */
+  declined: string;
 }
 
 export function state(): AdminState {
   const a = win();
-  if (a === null) return { supported: false, on: false, elevated: false, canElevate: false };
-  return { supported: true, on: a.marker() !== null, elevated: a.elevated() === true, canElevate: a.canElevate() };
+  if (a === null) return { supported: false, on: false, elevated: false, canElevate: false, off: false, declined: "" };
+  const c = a.readChoice();
+  return { supported: true, on: a.marker() !== null, elevated: a.elevated() === true, canElevate: a.canElevate(), off: c.off, declined: c.declined };
 }
 
 /** This process has the administrator token (false off Windows). Read once: it can't change. */
@@ -61,12 +66,34 @@ export interface SetOptions {
 /** Turns "Run as administrator" on or off. Windows shows its prompt (UAC) once when it must. */
 export async function set(on: boolean, o: SetOptions): Promise<SetResult> {
   const a = win();
-  if (a === null) return { ok: false, message: "Run as administrator is for Windows.", restart: false };
-  return on ? enable(a, o) : disable(a, o);
+  if (a === null) return { ok: false, message: "Running as administrator is for Windows.", restart: false };
+  const r = on ? await enable(a, o) : await disable(a, o);
+  // Turned off, it stays off over updates; turned on, the default is back.
+  if (r.ok) a.writeChoice({ off: !on, declined: "" });
+  return r;
+}
+
+/**
+ * At a start with a window: Harbor isn't set up to run as administrator yet (a new install, or the first start of the
+ * version that brought it), so it asks Windows once. Not when `harbor admin off` was run, when the account can't be
+ * raised, or when the prompt was declined in this minor version (a decline is remembered: the next minor version asks
+ * once more). Null: nothing asked; else the outcome (`restart`: restart now, through the task).
+ */
+export async function autoSetup(o: SetOptions & { version: string }, exe: string = process.execPath, before: () => void = () => {}): Promise<SetResult | null> {
+  const a = win();
+  if (a === null || !samePath(o.exe, exe) || a.marker() !== null || !a.canElevate()) return null;
+  const c = a.readChoice();
+  if (c.off || c.declined === a.minorOf(o.version)) return null;
+  // An elevated Harbor (opened as administrator) sets it up with no prompt; else Windows asks now.
+  if (a.elevated() !== true) before();
+  const r = await enable(a, o);
+  if (!r.ok) a.writeChoice({ off: false, declined: a.minorOf(o.version) });
+  return r;
 }
 
 async function enable(a: W, o: SetOptions): Promise<SetResult> {
   if (!a.canElevate()) return { ok: false, message: "Your Windows account isn't an administrator, so Harbor can't run as one.", restart: false };
+  if (a.marker() !== null && (await a.taskExists(a.TASK))) return { ok: true, message: "Harbor runs as administrator already.", restart: a.elevated() === false };
   const sid = await a.userSid();
   if (sid === null) return { ok: false, message: "Harbor couldn't tell who you are in Windows (whoami /user failed).", restart: false };
   const xmlFile = a.scratchPath("admin-task.xml");
@@ -111,7 +138,7 @@ async function disable(a: W, o: SetOptions): Promise<SetResult> {
     const gone = await a.deleteTask(a.TASK);
     if (!gone.ok && (await a.taskExists(a.TASK))) return { ok: false, message: `Windows didn't remove Harbor's task: ${gone.out}`, restart: false };
     if (restart) next = { name: a.LIMITED_TASK, after: () => a.deleteTask(a.LIMITED_TASK) };
-  } else {
+  } else if (m !== null || (await a.taskExists(a.TASK))) {
     const resultFile = a.scratchPath("admin-task-result.json");
     rmSync(resultFile, { force: true });
     const r = await a.runElevated(o.exe, ["admin-task", "remove", resultFile]);
@@ -271,16 +298,22 @@ function uninstallHook(exe: string, on: boolean): void {
   }
 }
 
-/** `harbor admin`: the state, for diagnostics. */
-export async function status(): Promise<string[]> {
+/**
+ * `harbor admin` (and the running Harbor's answer to it): the state, for diagnostics. `self` says whether these lines
+ * come from the running Harbor (its own token) or from the command in a terminal.
+ */
+export async function status(self: "harbor" | "command" = "command"): Promise<string[]> {
   const a = win();
-  if (a === null) return ["Run as administrator: Windows only."];
+  if (a === null) return ["Running as administrator: Windows only."];
   const m = a.marker();
+  const c = a.readChoice();
   const task = await a.taskExists(a.TASK);
   const el = a.elevated();
+  const how = m !== null ? `set up since ${new Date(m.since).toISOString()} (start at login ${m.login ? "on" : "off"}, ${m.exe})` : c.off ? "off (harbor admin off; harbor admin on turns it back on)" : c.declined !== "" ? `not set up: Windows' prompt was declined in ${c.declined} (asked again once a later version comes; harbor admin on asks now)` : "not set up yet (the next start of Harbor's window asks Windows once)";
+  const who = self === "harbor" ? "the running Harbor" : "this command";
   return [
-    `Run as administrator: ${m === null ? "off" : "on"}${m === null ? "" : ` since ${new Date(m.since).toISOString()} (start at login ${m.login ? "on" : "off"}, ${m.exe})`}`,
-    `this process: ${el === null ? "unknown" : el ? "elevated (administrator token)" : "not elevated (normal rights)"}; account: ${a.tokenKind() === "default" && el !== true ? "no administrator token to raise" : "administrator"}`,
+    `Run as administrator (Windows default): ${how}`,
+    `${who}: ${el === null ? "unknown" : el ? "elevated (administrator token)" : "not elevated (normal rights)"}; account: ${a.tokenKind() === "default" && el !== true ? "no administrator token to raise" : "administrator"}`,
     `task "${a.TASK}": ${task ? "registered" : "not found"}`,
   ];
 }

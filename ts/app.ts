@@ -163,11 +163,30 @@ const commands: Record<string, Command> = {
     console.error("harbor: Harbor is still quitting after 30 s");
     return 1;
   },
-  // Windows' Run as administrator (Settings › General; packages/os/src/admin.ts). `harbor admin`: its state.
-  admin: async () => {
-    const { admin } = await import("./packages/os/src/index.ts");
-    for (const l of await admin.status()) console.log(l);
-    return 0;
+  // Windows: Harbor runs as administrator by default (packages/os/src/admin.ts). `harbor admin off` turns that off
+  // for good (updates don't turn it back on), `harbor admin on` back on; `harbor admin` says how it runs. The running
+  // Harbor does it (and restarts into or out of the administrator token); with none running, this command does.
+  admin: async (args) => {
+    const what = args[0] ?? "status";
+    if (!["status", "on", "off"].includes(what)) return (console.error("usage: harbor admin [status|on|off]"), 2);
+    const { admin, autostart } = await import("./packages/os/src/index.ts");
+    if (!admin.state().supported) return (console.log("Running as administrator is Harbor's default on Windows only."), what === "status" ? 0 : 2);
+    const { single } = await import("./packages/store/src/index.ts");
+    const r = await single.adminRunning(what);
+    if (r !== null) {
+      (r.ok ? console.log : console.error)(r.text);
+      return r.ok ? 0 : 1;
+    }
+    if (what === "status") {
+      for (const l of await admin.status("command")) console.log(l);
+      console.log("Harbor isn't running.");
+      return 0;
+    }
+    const exe = autostart.installedLauncher();
+    if (!existsSync(exe)) return (console.error(`harbor: no installed Harbor at ${exe}`), 1);
+    const done = await admin.set(what === "on", { exe, login: autostart.enabled("--background", exe), arg: "--background" });
+    (done.ok ? console.log : console.error)(done.ok ? (what === "on" ? "On: Harbor starts as administrator from now on." : "Off: Harbor starts with your normal rights from now on, updates included (harbor admin on turns it back on).") : done.message);
+    return done.ok ? 0 : 1;
   },
   // The one prompt's program, run elevated: registers or removes the scheduled task.
   "admin-task": async (args) => (await import("./packages/os/src/index.ts")).admin.taskCommand(args),
