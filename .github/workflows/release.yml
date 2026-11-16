@@ -40,6 +40,11 @@ on:
         type: choice
         options: [build, auto]
         default: build
+      lane:
+        description: "Lane: auto (planned against the latest release, as a tag) or runtime/bundle (a dry run of that lane: its builds and install tests)"
+        type: choice
+        options: [auto, runtime, bundle]
+        default: auto
 
 # One run per ref; a newer run waits instead of cancelling (cancelled runs save no cache).
 concurrency:
@@ -102,6 +107,10 @@ jobs:
           else
             lane=runtime
           fi
+          # A run by hand may rehearse a lane (input lane); a tag always takes the planned one.
+          case "${{ inputs.lane }}" in
+            runtime|bundle) [[ "$GITHUB_REF" == refs/tags/v* ]] || lane="${{ inputs.lane }}" ;;
+          esac
           # The phone app is rebuilt only when what goes into the APK changed since the latest
           # release: android/ and the fonts and logos android/build.sh
           # copies in. The desktop runtime isn't in it, so the lane doesn't matter. Otherwise that
@@ -663,9 +672,12 @@ jobs:
   # The install tests run when the runtime or the packaging changed (the runtime lane: packaging/
   # counts as runtime, ts/packages/update/src/lane.ts). A bundle-only release changes neither, and
   # package checks its bundle on the runtime PCs have.
+  # `!cancelled() && !failure()`, as package has: some of package's own needs are always skipped (build or
+  # quick, android), and a condition without a status function means success() of every job before, so the
+  # install tests were skipped on every runtime release since the quick lane came (0.180.0).
   smoke:
     needs: [plan, package]
-    if: needs.plan.outputs.lane == 'runtime'
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.lane == 'runtime' }}
     uses: ./.github/workflows/smoke.yml
     secrets: inherit
     with:
@@ -676,7 +688,7 @@ jobs:
   # release is out.
   smoke-aarch64:
     needs: [plan, package]
-    if: needs.plan.outputs.lane == 'runtime'
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.lane == 'runtime' }}
     uses: ./.github/workflows/smoke.yml
     secrets: inherit
     with:
@@ -686,7 +698,7 @@ jobs:
   # A runtime release, once smoke passed (a bundle-only one is published by package).
   publish:
     needs: [plan, package, smoke]
-    if: ${{ !cancelled() && !failure() && startsWith(github.ref, 'refs/tags/v') && needs.plan.outputs.lane == 'runtime' }}
+    if: ${{ !cancelled() && !failure() && startsWith(github.ref, 'refs/tags/v') && needs.plan.outputs.lane == 'runtime' && needs.smoke.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
