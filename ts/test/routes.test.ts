@@ -257,7 +257,10 @@ test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
   const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
   expect(st).toBe(200);
   expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
-  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Share with workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Share with workspace…", "Settle project", "Keep on one account…", "Move to PC…", "Remove from Harbor"]);
+  // Keep on one account… (pins.ts): not pinned yet, with the accounts to pick from.
+  expect(menu.pin).toBeNull();
+  expect(Array.isArray(menu.pin_choices)).toBe(true);
   // Not signed in: greyed with why, and nothing to pick.
   expect((menu.items as { act: string }[]).find((i) => i.act === "move_workspace")).toMatchObject({ enabled: false, desc: expect.stringMatching(/Sign in/) });
   expect(menu.workspaces).toEqual({ why: expect.stringMatching(/Sign in/), items: [] });
@@ -291,4 +294,31 @@ test("a_settled_project_leaves_the_phones_drawer_for_settled", async () => {
   const [, again] = await json("GET", "/v1/state");
   expect((again.tree as { projects: { id: unknown }[] }).projects.some((p) => p.id === pid)).toBe(true);
   expect((again.tree as { settled_projects: unknown[] }).settled_projects).not.toContain(pid);
+});
+
+test("a_phone_pins_a_chat_and_a_project_to_an_account_and_unpins_them", async () => {
+  const [, made] = await json("POST", "/v1/projects", { act: { kind: "create", name: "pinned", git: false } });
+  const pid = made.id as number;
+  // Here the only account is the default Claude one (signed out, or not installed): a pin to it holds, and says what's wrong with it.
+  const c = h.store.createChat(blankChat({ title: "Kept", account: "claude", role: "lead", name: "lead", repoId: pid, gid: "g-pinned" }));
+  h.engine.reload();
+  const chatOf = async () => ((await json("GET", "/v1/state"))[1].chats as { id: unknown; pin: Record<string, unknown> | null }[]).find((x) => x.id === c.id);
+  expect((await chatOf())?.pin).toBeNull();
+  // The project's pin: its chats show it, scope "project"; the project's own entry in the state too.
+  const [st, done] = await json("POST", "/v1/projects/do", { project: pid, act: "pin_account", account: "claude" });
+  expect(st).toBe(200);
+  expect(done).toMatchObject({ ok: true, pin: { account: "claude", scope: "project", why: expect.stringMatching(/^is/) } });
+  expect((await chatOf())?.pin).toMatchObject({ account: "claude", scope: "project" });
+  expect(((await json("GET", "/v1/state"))[1].projects as { id: unknown; pin: unknown }[]).find((p) => p.id === pid)?.pin).toMatchObject({ account: "claude" });
+  // The chat's own pin wins, and unpins on its own (its project's is back).
+  const [cs, pinned] = await json("POST", `/v1/chats/${c.id}/pin`, { account: "claude" });
+  expect(cs).toBe(200);
+  expect(pinned.chat).toMatchObject({ pin: { account: "claude", scope: "chat" } });
+  expect((await json("POST", `/v1/chats/${c.id}/pin`, { account: 3 }))[0]).toBe(400);
+  expect((await json("POST", `/v1/chats/${c.id}/pin`, { account: "nobody" }))[0]).toBe(409);
+  expect((await json("POST", `/v1/chats/${c.id}/pin`, { account: null }))[1]).toMatchObject({ ok: true, chat: { pin: { scope: "project" } } });
+  expect((await json("POST", "/v1/projects/do", { project: pid, act: "pin_account", account: null }))[1]).toMatchObject({ ok: true, pin: null });
+  expect((await chatOf())?.pin).toBeNull();
+  // Not waiting at a limit: nothing to use instead.
+  expect((await json("POST", `/v1/chats/${c.id}/use_other`, {}))[0]).toBe(409);
 });

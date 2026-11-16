@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type Chat, type CopyTurn, hot, type Item, limits, liveSince, type Mention, projectsdir, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
+import { type Chat, type CopyTurn, hot, type Item, limits, liveSince, type Mention, pins, projectsdir, type Repo, secrets, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import { providerUpdates } from "./provupdate.ts";
 import * as compaction from "./compaction.ts";
@@ -253,6 +253,13 @@ export class Engine {
         }
       },
       sessionFile: (configDir, sid) => sessionCopies(configDir, sid)[0] ?? null,
+      pinned: (id) => this.pinOf(id),
+      toPin: (id, to) => {
+        const c = this.chat(id);
+        if (!c || c.account === to) return true;
+        this.moveAccount(id, to, undefined, undefined, "back on its pinned account");
+        return this.chat(id)?.account === to;
+      },
       teamNote: (id, text, detail, wake) => {
         const c = this.chat(id);
         if (!c || c.role !== "sub" || c.parent === null || c.retired) return;
@@ -326,6 +333,85 @@ export class Engine {
 
   account(id: string): Account | undefined {
     return this.host.accounts().find((a) => a.id === id);
+  }
+
+  /** Account pins (kv, synced to the user's other PCs): a chat's own, or its project's. */
+  get pins(): pins.Pins {
+    return new pins.Pins(this.store);
+  }
+
+  /** The pin that governs chat `id` here (its own, else its project's), resolved to this PC's accounts; null: none. */
+  pinOf(id: number): pins.Pinned | null {
+    const c = this.chat(id);
+    if (!c) return null;
+    return this.pins.of(c, this.repo(c.repoId), this.host.accounts());
+  }
+
+  /** The account a new chat or subagent of project `repo` runs on when nothing names one: the project's pin (when
+   *  it's usable here), else `dflt`. Throws when the project is pinned to an account that can't run here. */
+  projectAccount(repo: number | null, dflt: string): string {
+    const r = this.repo(repo);
+    const pin = this.pins.project(r);
+    if (!pin) return dflt;
+    const a = pins.resolvePin(pin, this.host.accounts());
+    const why = pins.pinTrouble(a);
+    if (a === undefined || why !== "") throw new Error(`the project${r ? ` ${r.name}` : ""} is pinned to ${pin.label}, which ${why}: the user can pick another account or unpin it`);
+    return a.id;
+  }
+
+  /** Sets or clears (null) a chat's own pin. Pinning moves an idle chat to the account now (a running one when its
+   *  turn ends); unpinning sends what waited for its missing account. What happened, for a toast. */
+  pinChat(id: number, to: string | null): string {
+    const c = this.chat(id);
+    if (!c) throw new Error("no such chat");
+    if (to === null) {
+      this.pins.setChat(c.gid, null);
+      this.notice(id, "clock", "Unpinned: Harbor may switch its account again");
+      this.pinChanged(id);
+      return "Unpinned";
+    }
+    const acc = this.account(to);
+    if (!acc) throw new Error(`unknown account '${to}'`);
+    this.pins.setChat(c.gid, pins.pinOf(acc, short(acc)));
+    this.notice(id, "clock", `Pinned to ${short(acc)}: Harbor won't switch it`);
+    if (c.account !== to && c.home === "") return this.switchAccount(id, to, { why: "pinned by hand", byUser: true });
+    this.pinChanged(id);
+    return `Pinned to ${short(acc)}`;
+  }
+
+  /** Sets or clears (null) a project's pin; its chats follow it from their next turn. */
+  pinProject(repo: number, to: string | null): string {
+    const r = this.repo(repo);
+    if (!r) throw new Error("no such project");
+    if (to === null) {
+      this.pins.setProject(r, null);
+      for (const c of this.chats.filter((x) => x.repoId === repo)) this.pinChanged(c.id);
+      return `Unpinned ${r.name}`;
+    }
+    const acc = this.account(to);
+    if (!acc) throw new Error(`unknown account '${to}'`);
+    this.pins.setProject(r, pins.pinOf(acc, short(acc)));
+    return `Pinned ${r.name} to ${short(acc)}: its chats and agents stay on it`;
+  }
+
+  /** The user picked account `to` for chat `id` by hand (composer, Agents panel, phone): a pin that governs it moves
+   *  to `to` (as the chat's own pin), so the pick sticks. True when a pin moved. */
+  pickedByHand(id: number, to: string): boolean {
+    const c = this.chat(id);
+    const acc = this.account(to);
+    if (!c || !acc) return false;
+    const moved = this.pins.followPick(c, this.repo(c.repoId), { ...acc, short: short(acc) }, this.host.accounts());
+    if (moved) this.notice(id, "clock", `Pinned to ${short(acc)} now (picked by hand)`);
+    return moved;
+  }
+
+  /** After a pin changed: a chat holding messages for a missing pinned account sends them, when it can now. */
+  pinChanged(id: number): void {
+    this.changed(id);
+    if (this.turns.has(id) || this.limits.paused.has(id) || (this.pending.get(id)?.length ?? 0) === 0) return;
+    const p = this.pinOf(id);
+    if (p !== null && (p.account === null || p.why !== "")) return;
+    this.goOnMoved(id, null);
   }
 
   /** The provider CLI a chat's turns run (null: not one Harbor updates, or not known: then every update counts). */
@@ -1827,11 +1913,17 @@ export class Engine {
    *  the old account first. A chat waiting at a usage limit, or with messages waiting, goes on at once. `model` and
    *  `effort` (undefined: kept, or the new provider's defaults) change with it. What happened, for the lead. Throws
    *  when it can't move. */
-  switchAccount(id: number, to: string, opts: { model?: string | undefined; effort?: string | undefined; why?: string } = {}): string {
+  switchAccount(id: number, to: string, opts: { model?: string | undefined; effort?: string | undefined; why?: string; byUser?: boolean } = {}): string {
     const c = this.chat(id);
     if (!c) throw new Error("no such chat");
     if (c.retired) throw new Error(`${c.name || "that chat"} was retired`);
     if (c.home !== "") throw new Error("it runs on another PC: switch it there");
+    // A pinned chat moves only when the user moves it (and its pin goes with it); never for the lead or by itself.
+    const pin = this.pinOf(id);
+    if (pin !== null && opts.byUser !== true && pin.account !== to) {
+      const whose = pin.scope === "project" ? "its project is pinned" : "it's pinned";
+      throw new Error(`${c.role === "sub" ? c.name : "that chat"} stays on ${pin.pin.label}: ${whose} to that account by the user, so Harbor won't switch it. Leave it there (it waits for a reset at a limit), or ask the user to unpin it.`);
+    }
     const acc = this.account(to);
     if (!acc) throw new Error(`unknown account '${to}'. Use list_models.`);
     if (acc.off === true) throw new Error(`account '${to}' is turned off on this PC (Settings › Providers)`);
@@ -1849,6 +1941,7 @@ export class Engine {
       const lead = c.parent === null ? undefined : this.chat(c.parent);
       if (team.subAccess(lead?.access ?? c.access, kind) === null) throw new Error(`${kind} has no access level like its lead's; pick another account`);
     }
+    if (opts.byUser === true) this.pickedByHand(id, to);
     const name = c.role === "sub" ? c.name : "the chat";
     const label = `${short(acc)} (account '${to}')`;
     if (to === c.account && model === undefined && effort === undefined) return `${name} is already on ${label}.`;

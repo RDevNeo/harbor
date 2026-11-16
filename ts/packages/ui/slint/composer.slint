@@ -368,6 +368,8 @@ component WorkBarChip {
 export struct ComposerState {
     model: string,
     model-tip: string,
+    // The account pin (pins.ts): "" none, "ok" pinned, "error" its pinned account can't run here.
+    pin: string,
     badge: string,
     has-effort: bool,
     effort: string,
@@ -937,6 +939,7 @@ export component Composer {
                                 badge: root.state.badge;
                                 photo: root.badge-photo;
                                 has-photo: root.has-badge-photo;
+                                pin: root.state.pin;
                                 ground: Theme.dark ? Theme.bg200 : Theme.bg100;
                                 label: text-box.width > 420px ? root.state.model : "";
                                 label-max: 120px;
@@ -1066,6 +1069,7 @@ export component Composer {
                                 badge: root.state.badge;
                                 photo: root.badge-photo;
                                 has-photo: root.has-badge-photo;
+                                pin: root.state.pin;
                                 ground: Theme.dark ? Theme.bg200 : Theme.bg100;
                                 label: chips.show-m ? root.state.model : "";
                                 label-max: chips.lm + chips.gm - 4px;

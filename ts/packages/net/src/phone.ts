@@ -82,7 +82,11 @@ export interface PhoneEngine {
   /** PROTOCOL.md `wait`: what wakes the chat once its own turn is done, null for nothing (hubs from 0.149). */
   wait?(id: number): Json;
   /** Moves a chat to another account with its conversation (agents' Engine.switchAccount); throws why not. */
-  switchAccount?(id: number, to: string, opts: { model?: string | undefined; effort?: string | undefined; why?: string }): string;
+  switchAccount?(id: number, to: string, opts: { model?: string | undefined; effort?: string | undefined; why?: string; byUser?: boolean }): string;
+  /** The user picked an account by hand: a pin governing the chat moves to it (Engine.pickedByHand). */
+  pickedByHand?(id: number, to: string): boolean;
+  /** A pin changed: what waited for a pinned account that couldn't run goes out (Engine.pinChanged). */
+  pinChanged?(id: number): void;
   chat?(id: number): Chat | undefined;
 }
 
@@ -172,6 +176,8 @@ export interface PhoneDeps {
   placeNew?: (who: { account: string; pc: string }) => string;
   /** The commits a reply of `chat` names; their pills come once git has answered (then `chat` is touched). */
   commits?: (chat: Chat) => CommitLookup | null;
+  /** Account pins (store's pins.ts) as the phone shows them: a chat's (its own or its project's) and a project's own; null: none. */
+  pins?: { chat(c: Chat): Json; project(repo: number): Json };
   /** What a PATCH of a chat's account, model, effort, access, device or fast mode is checked against. */
   runSettings?: RunSettings;
   /** Settings › Workspace as the desktop lists them: the configured SSH devices and the tailnet's PCs, with whether each is online (null: not known). */
@@ -572,6 +578,8 @@ export class PhoneRoutes {
       // "Auto → <PC>" while the chat is where Auto put it; null otherwise.
       auto_label: this.d.auto?.label(c, hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name) ?? null,
       account: c.account,
+      // The account pin that governs it (its own, else its project's): {account, label, scope, why, tip}; null: none.
+      pin: this.d.pins?.chat(c) ?? null,
       model: c.model,
       effort: c.effort,
       access: c.access,
@@ -833,7 +841,7 @@ export class PhoneRoutes {
         const at = this.placeJson(r.id);
         // Where it was moved: here, or (its folder on another PC) as that PC says it in its chats' copies; "": its PC's.
         const moved = place.repos.get(r.id) ?? (at.here === true ? "" : (carried.get(r.id) ?? ""));
-        return { id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: moved, shared: [...(place.shared?.repos.get(r.id) ?? [])], icon: this.d.projectIcon?.(r.id) ?? "", ...at };
+        return { id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: moved, shared: [...(place.shared?.repos.get(r.id) ?? [])], icon: this.d.projectIcon?.(r.id) ?? "", pin: this.d.pins?.project(r.id) ?? null, ...at };
       }),
       chats: chats.map((c) => this.chatJson(c, global, place)),
       tree,
@@ -1070,7 +1078,7 @@ export class PhoneRoutes {
       const eng = this.d.engine;
       if (eng?.switchAccount && c.role === "sub" && c.started && c.home === "" && n.account !== c.account) {
         try {
-          eng.switchAccount(c.id, n.account, { model: n.model, effort: n.effort, why: "switched on the phone" });
+          eng.switchAccount(c.id, n.account, { model: n.model, effort: n.effort, why: "switched on the phone", byUser: true });
         } catch (e) {
           return err(409, e instanceof Error ? e.message : String(e));
         }
@@ -1082,11 +1090,15 @@ export class PhoneRoutes {
         n = { ...n, settled: body.settled };
         this.d.engine?.opened(c.id);
       }
+      // A pick by hand on the phone moves a pin that governs the chat (pins.ts), as on the desktop.
+      const repinned = n.account !== c.account && c.home === "" && (eng?.pickedByHand?.(c.id, n.account) ?? false);
       if (n !== c) {
         this.d.store.saveChat(n);
         this.d.engine?.reload();
         this.d.replica.touch(c.id);
       }
+      // What waited for a pinned account that couldn't run goes out on the one picked.
+      if (repinned) eng?.pinChanged?.(c.id);
       if (fast !== null) rs?.setFast(fast);
       if (moving !== null || auto) {
         try {

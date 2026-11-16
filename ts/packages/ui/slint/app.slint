@@ -19,7 +19,7 @@ import { Transcript, CardData } from "chat.slint";
 import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip, WorkBarData, PatchChip } from "composer.slint";
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
-import { ModelPicker, RailItem, ModelRow, ProjectPop, ProjectPopRow } from "picker.slint";
+import { ModelPicker, RailItem, ModelRow, PinRow, ProjectPop, ProjectPopRow } from "picker.slint";
 import { SettingsBus, SettingsPage } from "settings.slint";
 import { PrsBus, PrsPage } from "prs.slint";
 import { IssuesBus, IssuesPage } from "issues.slint";
@@ -28,7 +28,7 @@ import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
 import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, Panes, PaneHeader, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
 
-export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
+export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, PinRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
 export struct PopItem {
     kind: string,
@@ -802,6 +802,7 @@ export component AppWindow inherits Window {
     in property <int> picker-more-count;
     in property <bool> picker-in-more;
     in property <string> picker-empty;
+    in property <[PinRow]> picker-pin-rows;
     in-out property <string> picker-search;
     callback picker-rail-pick(string);
     callback picker-pick(int);
@@ -810,6 +811,7 @@ export component AppWindow inherits Window {
     callback picker-back();
     callback picker-searched(string);
     callback picker-key(KeyEvent) -> bool;
+    callback picker-pin-pick(int);
 
     in property <string> dialog-id;
     callback modal-visibility(bool);
@@ -1908,6 +1910,10 @@ export component AppWindow inherits Window {
                 more-count: root.picker-more-count;
                 in-more: root.picker-in-more;
                 empty: root.picker-empty;
+                pin-rows: root.picker-pin-rows;
+                pin-pick(i) => {
+                    root.picker-pin-pick(i);
+                }
                 search <=> root.picker-search;
                 init => {
                     self.focus-search();

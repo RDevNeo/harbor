@@ -49,7 +49,9 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
           const model = acc ? e.modelLabel(acc.kind, c.model) : c.model;
           const moving = e.wantAccount.get(c.id);
           const next = moving ? ` (moves to account '${moving.to}' when this turn ends)` : "";
-          return `- ${c.name} [${status}] account '${c.account}' (${who}) / ${model}${next}\n  link: ${e.chatLink(c)}\n  task: ${c.title}\n  last: ${team.clip(e.lastReply(c.id), 400)}${isLead ? queuedLine(e, me, c) : ""}`;
+          const pin = e.pinOf(c.id);
+          const pinned = pin === null ? "" : ` [pinned by the user to ${pin.pin.label}${pin.scope === "project" ? " via its project" : ""}: don't switch it]`;
+          return `- ${c.name} [${status}] account '${c.account}' (${who}) / ${model}${next}${pinned}\n  link: ${e.chatLink(c)}\n  task: ${c.title}\n  last: ${team.clip(e.lastReply(c.id), 400)}${isLead ? queuedLine(e, me, c) : ""}`;
         })
         .join("\n");
     }
@@ -222,6 +224,8 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
         for (const m of shown) if (m.id !== "") out.push(`    model '${m.id}' (${m.label})${m.more ? " legacy" : ""}`);
         if (shown.length < models.length) out.push(`    … and ${models.length - shown.length} more 'provider/model' ids from \`opencode models\``);
       }
+      const pinned = e.pins.project(e.repo(me.repoId));
+      if (pinned !== null) out.unshift(`The user pinned this project to ${pinned.label}: new agents and chats here run on it (leave account out), and none of them is switched off it.`);
       return out.join("\n");
     }
     case "snooze": {
@@ -316,7 +320,15 @@ export function statusWords(e: Engine, c: Chat): string {
 /** The account a new chat or agent runs on: the one named, else `dflt`. An account turned off in Settings ›
  *  Providers is never used: named, it's refused; as the default, the first usable one (of `kind`, else of the
  *  default's provider) takes its place. */
-function pickAccount(e: Engine, named: string, dflt: string, kind?: Kind): Account {
+function pickAccount(e: Engine, named: string, dflt: string, repo: number | null, kind?: Kind): Account {
+  // A pinned project's chats and agents run on its account: unnamed, that one; named, only that one.
+  const pinned = e.pins.project(e.repo(repo));
+  if (pinned !== null) {
+    const at = e.projectAccount(repo, dflt);
+    const want = named === "" ? undefined : e.account(named);
+    if (named !== "" && want?.id !== at) throw new Error(`the user pinned this project to ${pinned.label} (account '${at}'): its chats and agents run there, not on '${named}'. Leave account out, or ask the user to unpin the project.`);
+    named = at;
+  }
   const id = named || dflt;
   const acc = e.account(id);
   if (!acc) throw new Error(`unknown account '${id}'. Use list_models.`);
@@ -346,7 +358,8 @@ export async function openChat(e: Engine, me: Chat, a: unknown): Promise<string>
     return e.host.openElsewhere(me, machine, a);
   }
   // A chat runs on any provider: the one named, else this chat's own.
-  const acc = pickAccount(e, arg(a, "account"), me.account);
+  // A pinned project's chats run on its account (pickAccount).
+  const acc = pickAccount(e, arg(a, "account"), me.account, repo);
   const account = acc.id;
   if (acc.bin === null) throw new Error(`${acc.kind} is not installed`);
   const same = account === me.account;
@@ -455,7 +468,8 @@ export async function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown
       }
     }
   }
-  const acc = pickAccount(e, arg(a, "account"), me.account);
+  // A subagent follows its project's pin, never its lead's own chat pin (it starts on the lead's account, unpinned).
+  const acc = pickAccount(e, arg(a, "account"), me.account, me.repoId);
   const accountId = acc.id;
   if (acc.bin === null) throw new Error(`${acc.kind} is not installed`);
   const model = arg(a, "model") || (acc.kind === "Claude" ? me.model : "");

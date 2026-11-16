@@ -8,6 +8,7 @@ import { f64Json } from "./item.ts";
 import { home, now as unixNow } from "./paths.ts";
 import type { Chat, Store } from "./store.ts";
 import { UsageCtl } from "./usage_ctl.ts";
+import type { Pinned } from "./pins.ts";
 import { notify as osNotify } from "@harbor/os";
 
 export const RESUME = "[harbor] Your usage limit reset. Continue the task from where you stopped.";
@@ -106,6 +107,10 @@ export interface LimitsHost {
   teamNote?(chatId: number, text: string, detail: string, wake: boolean): void;
   /** The session file of a Claude session under an account's config folder. */
   sessionFile(configDir: string | null, sessionId: string): string | null;
+  /** The account pin that governs the chat (pins.ts), or null: a pinned chat never moves by itself. */
+  pinned?(chatId: number): Pinned | null;
+  /** Moves the chat back to its pinned account before a turn (it was on another one "this time"); false: it couldn't. */
+  toPin?(chatId: number, to: string): boolean;
   now?(): number;
 }
 
@@ -620,8 +625,11 @@ export class Limits {
     }
     this.pause(chatId, true);
     const pausedAt = this.paused.get(chatId)?.at ?? null;
+    const pin = this.pinnedName(chatId);
     const text =
-      pausedAt !== null
+      pin !== null && block.tries < MAX_TRIES
+        ? `Hit the ${label} limit · pinned to ${pin}: waiting until ${when(pausedAt ?? block.until, at)}`
+        : pausedAt !== null
         ? `Hit the ${label} limit · continuing at ${when(pausedAt, at)}`
         : block.tries >= MAX_TRIES
           ? `Still at the ${label} limit after ${MAX_TRIES} tries · continue it yourself`
@@ -673,7 +681,8 @@ export class Limits {
     this.pause(chatId, true);
     const { on } = this.switchSettings();
     const others = this.switchTargets(chatId, false);
-    const why = others.length === 0 ? "no other account can take it" : on ? "no account on the automatic-switch list can take it" : "automatic account switching is off";
+    const pin = this.pinnedName(chatId);
+    const why = pin !== null ? `pinned to ${pin}` : others.length === 0 ? "no other account can take it" : on ?"no account on the automatic-switch list can take it" : "automatic account switching is off";
     const text = `${what} · waiting for you (${why})`;
     this.host.notice(chatId, "alert", text, `${said.trim()}${said.trim() === "" ? "" : "\n\n"}${PAY}`);
     const target = others[0] === undefined ? undefined : this.host.account(others[0]);
@@ -700,7 +709,9 @@ export class Limits {
     if (!block) return;
     const { auto, weekly, hours } = this.limitSettings();
     // No reset to wait for after a billing failure: the user decides.
-    const ok = block.kind !== BILLING && auto && (weekly || !isWeekly(block.kind)) && block.until - this.now() <= hours * 3600 && block.tries < MAX_TRIES;
+    // A pinned chat can't move on, so it waits for the reset however far off it is.
+    const pinned = (this.host.pinned?.(chatId) ?? null) !== null;
+    const ok = block.kind !== BILLING && auto && (pinned || ((weekly || !isWeekly(block.kind)) && block.until - this.now() <= hours * 3600)) && block.tries < MAX_TRIES;
     const keep = resume || (this.paused.get(chatId)?.resume ?? false);
     const old = this.paused.get(chatId)?.timer ?? null;
     if (old !== null) this.host.store.deleteTimer(old);
@@ -718,8 +729,18 @@ export class Limits {
     limitGuard(chatId: number, prompt: string, files: readonly string[]): boolean {
     const chat = this.host.chat(chatId);
     if (!chat) return false;
+    const pin = this.host.pinned?.(chatId) ?? null;
+    if (pin !== null) {
+      // Its pinned account is missing here, signed out or turned off: it waits for the user, it doesn't move.
+      if (pin.account === null || pin.why !== "") return this.holdForPin(chatId, prompt, files, `Pinned to ${pin.pin.label}, which ${pin.why}: pick another account or unpin this ${pin.scope}`);
+      // On another account "this time" (or since before the pin): back on the pinned one once that's usable.
+      if (pin.account !== chat.account && !this.blocked(pin.account) && !this.ctl.overCap(pin.account)) this.host.toPin?.(chatId, pin.account);
+    }
     const account = chat.account;
-    if (this.host.account(account)?.off === true) return this.offGuard(chatId);
+    if (this.host.account(account)?.off === true) {
+      if (pin !== null) return this.holdForPin(chatId, prompt, files, `${this.host.account(account)?.short ?? account} is turned off in Settings › Providers, and this chat is pinned to ${pin.pin.label}: pick another account or unpin`);
+      return this.offGuard(chatId);
+    }
     if (!this.blocked(account)) return false;
     // Auto-switch: the turn starts on another account instead.
     const to = this.autoTarget(chatId);
@@ -754,6 +775,40 @@ export class Limits {
       this.syncPending();
     }
     return true;
+  }
+
+  /** A pinned chat whose account can't run it: the message waits (it goes out once the user picks another account or
+   *  unpins, Engine.goOnMoved), with a notice saying why. */
+  private holdForPin(chatId: number, prompt: string, files: readonly string[], text: string): boolean {
+    let p = prompt;
+    for (const f of files) p += `\n(attached: ${f})`;
+    const q = this.host.pending.get(chatId) ?? [];
+    q.push(p);
+    this.host.pending.set(chatId, q);
+    this.host.notice(chatId, "alert", text, "");
+    this.host.persist(chatId);
+    return true;
+  }
+
+  /** The pinned account's name when a pin governs the chat (for notices), else null. */
+  pinnedName(chatId: number): string | null {
+    const p = this.host.pinned?.(chatId) ?? null;
+    if (p === null) return null;
+    const a = p.account === null ? undefined : this.host.account(p.account);
+    return a ? accountName(a) : p.pin.label;
+  }
+
+  /** "Use another account this time" on a pinned chat waiting at its account's limit: it goes on now on the least used
+   *  other account of its provider; the pin stays, and its first turn after the reset is back on the pinned account.
+   *  Null when it moved, else why not. */
+  useOtherOnce(chatId: number): string | null {
+    const to = this.switchTargets(chatId, false)[0];
+    if (to === undefined) return "no other account of this provider can take it now";
+    const chat = this.host.chat(chatId);
+    const from = chat ? this.host.account(chat.account) : undefined;
+    const pin = this.pinnedName(chatId);
+    const why = `${from ? accountName(from) : ""} is at its limit; this time only${pin === null ? "" : `, back on ${pin} after the reset`}`;
+    return this.continueOn(chatId, to, why) ? null : "it couldn't move (see the chat)";
   }
 
   /** Continues the chats whose time has come. Returns the seconds until the next one. */
@@ -834,7 +889,8 @@ export class Limits {
       const a = this.host.account(p.account);
       return [`${a ? accountName(a) : p.account} ${this.billingSaid(p.account)} · waiting for you`, false];
     }
-    const what = block && block.cap !== null ? `Paused at your ${block.cap}% cap · resets ${when(block.until, at)}` : "Usage limit";
+    const pin = this.pinnedName(chatId);
+    const what = (pin === null ? "" : `Pinned to ${pin} · `) + (block && block.cap !== null ? `Paused at your ${block.cap}% cap · resets ${when(block.until, at)}` : pin === null ? "Usage limit" : "usage limit");
     let text: string;
     if (p.at !== null) text = `${what} · continuing at ${when(p.at, at)} (in ${minutesText(Math.max(p.at - at, 0))})`;
     else if (block && block.until > at && block.cap === null) text = `${what} · resets ${when(block.until, at)} · waiting for you`;
@@ -992,6 +1048,11 @@ export class Limits {
       block.kind === BILLING
         ? `stopped: ${from ? accountName(from) : account} (account '${account}') ${this.billingSaid(account)} · it waits; it doesn't continue by itself`
         : `hit the ${label} limit on ${from ? accountName(from) : account} (account '${account}') · ${then}`;
+    const pin = this.pinnedName(chatId);
+    if (pin !== null) {
+      this.host.teamNote(chatId, text, `The user pinned it to ${pin}: Harbor doesn't switch it and switch_agent_account refuses to; it waits for the reset. Only the user can move or unpin it.${said.trim() === "" ? "" : `\n\nIt said: ${said.trim()}`}`, true);
+      return;
+    }
     const { on } = this.switchSettings();
     const why = on ? "No account on the automatic-switch list has quota left, so it didn't move by itself." : "Automatic account switching is off on this PC, so it didn't move by itself.";
     const others = this.switchTargets(chatId, false).map((id) => {
@@ -1018,7 +1079,9 @@ export class Limits {
     return p.resume;
   }
 
+  /** The account an automatic switch moves the chat to: never one for a pinned chat. */
   autoTarget(chatId: number): string | undefined {
+    if ((this.host.pinned?.(chatId) ?? null) !== null) return undefined;
     return this.switchSettings().on ? this.switchTargets(chatId, true)[0] : undefined;
   }
 }

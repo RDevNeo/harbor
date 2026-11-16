@@ -157,6 +157,25 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         e.limits.cancelLimit(c.id);
         h.hub.touch(c.id, true);
         return ok({ ok: true });
+      // Account pins (pins.ts): {account: id} keeps the chat on that account (moving it there), {account: null} unpins.
+      case "pin": {
+        const to = b.account === null || b.account === "" ? null : typeof b.account === "string" ? b.account : undefined;
+        if (to === undefined) return err(400, "account: an account id, or null to unpin");
+        try {
+          const text = e.pinChat(c.id, to);
+          h.hub.touch(c.id, true);
+          return ok({ ok: true, text, chat: h.phone().chatJson(e.chat(c.id) ?? c, call.global) });
+        } catch (x) {
+          return err(409, x instanceof Error ? x.message : String(x));
+        }
+      }
+      // "Use another account this time": a pinned chat at its account's limit goes on now on another; the pin stays.
+      case "use_other": {
+        const why = e.limits.useOtherOnce(c.id);
+        if (why !== null) return err(409, why);
+        h.hub.touch(c.id, true);
+        return ok({ ok: true });
+      }
       case "continue_on": {
         const to = typeof b.account === "string" ? b.account : "";
         if (!e.limits.switchTargets(c.id, false).includes(to)) return err(409, "that account can't take this chat now");
@@ -614,7 +633,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         const r = await discord.chatCaptcha(chat.id, body(call));
         return r.status === 200 ? ok(plain(r.body)) : err(r.status, String((r.body as { error?: unknown } | null)?.error ?? "no captcha"));
       }
-      if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
+      if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "pin", "use_other", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
       if (m === "GET" && ["mention", "team", "slash", "tags"].includes(name)) return action(chat, name, call);
       if (m === "GET" && name === "move_targets") return ok(await moveTargets(chat));
       if (m === "GET" && name === "patches") return ok({ links: await patchLinks(chat) });

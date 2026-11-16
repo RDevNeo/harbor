@@ -11,6 +11,17 @@ export struct RailItem {
     active: bool,
     dim: bool,
     tip: string,
+    // The account the chat (or its project) is pinned to: a lock on its corner.
+    pinned: bool,
+}
+
+// An account pin row under the models (logic/pinmenu.ts).
+export struct PinRow {
+    label: string,
+    sub: string,
+    // Amber: its pinned account can't run here, or it waits at a limit.
+    warn: bool,
+    enabled: bool,
 }
 
 export struct ModelRow {
@@ -39,6 +50,7 @@ export component ModelPicker inherits PopoverFrame {
     in property <int> more-count;
     in property <bool> in-more;
     in property <string> empty;
+    in property <[PinRow]> pin-rows;
     in-out property <string> search <=> field.text;
     callback rail-pick(string);
     callback pick(int);
@@ -47,6 +59,7 @@ export component ModelPicker inherits PopoverFrame {
     callback back();
     callback searched(string);
     callback key(KeyEvent) -> bool;
+    callback pin-pick(int);
     public function focus-search() {
         field.focus-field();
     }
@@ -127,6 +140,21 @@ export component ModelPicker inherits PopoverFrame {
                     photo: r.photo;
                     has-photo: r.has-photo;
                     ring: r.active ? Theme.gray-200 : tile-area.has-hover ? Theme.gray-100 : Theme.bg100;
+                }
+                if r.pinned: Rectangle {
+                    x: 3px;
+                    y: 3px;
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 7px;
+                    background: r.active ? Theme.gray-200 : tile-area.has-hover ? Theme.gray-100 : Theme.bg100;
+                    Glyph {
+                        width: 14px;
+                        height: 14px;
+                        icon: Icons.lock;
+                        size: 10px;
+                        color: Theme.fg;
+                    }
                 }
                 if r.active: Rectangle {
                     x: 49px;
@@ -341,6 +369,58 @@ export component ModelPicker inherits PopoverFrame {
                         mouse-cursor: pointer;
                         clicked => {
                             root.more();
+                        }
+                    }
+                }
+                // Account pins (logic/pinmenu.ts): keep this chat on its account, unpin, or use another this time.
+                if root.pin-rows.length > 0: Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        y: 4px;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                for p[i] in root.pin-rows: Rectangle {
+                    height: 50px;
+                    border-radius: Theme.radius-lg;
+                    background: p.enabled && pin-area.has-hover ? Theme.gray-100 : transparent;
+                    Glyph {
+                        x: 11px;
+                        y: 9px;
+                        width: 16px;
+                        height: 16px;
+                        icon: Icons.lock;
+                        size: 14px;
+                        color: p.warn ? Theme.amber-900 : Theme.subtle;
+                    }
+                    Text {
+                        x: 34px;
+                        y: 8px;
+                        width: parent.width - 46px;
+                        text: p.label;
+                        font-size: 15px;
+                        color: p.warn ? Theme.amber-1000 : Theme.fg.with-alpha(p.enabled ? 1 : 0.6);
+                        overflow: elide;
+                    }
+                    Text {
+                        x: 34px;
+                        y: 28px;
+                        width: parent.width - 46px;
+                        height: 14px;
+                        text: p.sub;
+                        font-size: 13px;
+                        color: p.warn ? Theme.amber-900 : Theme.subtle;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    pin-area := TipArea {
+                        tip: p.sub;
+                        mouse-cursor: p.enabled ? pointer : default;
+                        clicked => {
+                            if p.enabled {
+                                root.pin-pick(i);
+                            }
                         }
                     }
                 }

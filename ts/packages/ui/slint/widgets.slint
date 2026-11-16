@@ -772,6 +772,8 @@ export component Trigger {
     in property <string> tip;
     // The most the label may take; a longer one elides (the composer's footer shrinks it when short of room).
     in property <length> label-max: 100000px;
+    // An account pin (pins.ts): "ok" a lock on the logo's corner, "error" an amber one (its account can't run here).
+    in property <string> pin;
     callback clicked;
     property <bool> hover: area.has-hover || open;
     property <color> fg: hover ? Theme.fg : Theme.subtle;
@@ -798,6 +800,21 @@ export component Trigger {
         photo: root.photo;
         has-photo: root.has-photo;
         ring: root.hover ? Theme.accent : root.ground;
+    }
+    if root.has-logo && root.pin != "": Rectangle {
+        x: 2px;
+        y: (parent.height - 20px) / 2 - 3px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: root.pin == "error" ? Theme.amber-100 : root.hover ? Theme.accent : root.ground;
+        Glyph {
+            width: 12px;
+            height: 12px;
+            icon: Icons.lock;
+            size: 9px;
+            color: root.pin == "error" ? Theme.amber-900 : Theme.fg;
+        }
     }
     text := Text {
         x: 31px;

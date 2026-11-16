@@ -6,7 +6,7 @@ import { desktop as osDesktop } from "@harbor/os";
 import { basename, isAbsolute, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
-import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, repoDir, secrets } from "@harbor/store";
+import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, pins, repoDir, secrets } from "@harbor/store";
 import { accountOn, chatOwner, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
@@ -52,7 +52,8 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ModalOpacity } from "./modalopacity.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
-import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
+import { PIN_LABEL, projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
+import { chipPin, type PinAct, pinNotice, pinRows } from "./logic/pinmenu.ts";
 import { agoLabel, carriedProjects, chatIdle, dragChat, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
@@ -69,7 +70,7 @@ import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, ra
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { parseMode, pinnedMode, toggledMode, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type WorkChip, type WorkBarData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type PinRow, type ProjectPopRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type ListRow, type FileItem, type WorkChip, type WorkBarData } from "./window.ts";
 
 /** The transcript's cards, swapped by dev hot reload (hotdev.ts). */
 const transcript = hot.unit("cards", "packages/ui/src/cards.ts", cardsModule);
@@ -264,6 +265,11 @@ export class Shell {
   private projPop: { rows: ProjRow[]; search: string } = { rows: [], search: "" };
   private picker: PickerState = { rail: null, search: "", more: false, hover: 0 };
   private pickerRowsNow: Row[] = [];
+  /** What each pin row under the picker does (logic/pinmenu.ts). */
+  private pinActs: PinAct[] = [];
+  private readonly pinRowsModel = new slint.ArrayModel<PinRow>([]);
+  /** The draft's account was picked by hand for this project: a pinned project's pin doesn't override it, and the new chat is pinned to it. */
+  private draftAccountPick: { repo: number | null } | null = null;
   private sharedList: SharedAccount[] = [];
   private sharedAt = 0;
   private favorites: Favorites;
@@ -648,6 +654,7 @@ export class Shell {
     win.strip_rows = this.stripRows;
     win.mentions = this.mentionChips;
     win.picker_rows = this.modelRows;
+    win.picker_pin_rows = this.pinRowsModel;
     win.proj_rows = this.projRows;
     this.favorites = new Favorites(data.store);
     this.keys = Keys.load(data.store);
@@ -1034,6 +1041,7 @@ export class Shell {
       this.refreshPicker();
     };
     w.picker_key = (e) => this.pickerKey(e);
+    w.picker_pin_pick = (i) => this.pinPick(i);
     w.proj_pick = (i) => this.projPick(i);
     w.proj_searched = (t) => {
       this.projPop.search = t;
@@ -2463,6 +2471,16 @@ export class Shell {
   /** The new-chat picks; a default account turned off in Settings › Providers (a default can sync in from another
    *  PC) gives way to the first account that's on, its provider's first model when that's another provider. */
   private newSel(): Sel {
+    const base = this.newSelBase();
+    // A pinned project's new chat starts on its account, unless the user picked one for this draft (that pick pins the
+    // new chat to it when it's made: Engine.pickedByHand).
+    const pin = this.pinnedOf(undefined);
+    const to = pin?.account === null || pin === null || pin.why !== "" ? undefined : this.account(pin.account);
+    if (to === undefined || to.id === base.account || this.draftAccountPick?.repo === this.draftRepo) return base;
+    return to.kind === this.kind(base) ? { ...base, account: to.id } : { ...base, account: to.id, model: providers.staticModels(to.kind).find((m) => !m.more)?.id ?? "", effort: providers.defaultEffort(to.kind) };
+  }
+
+  private newSelBase(): Sel {
     const a = this.account(this.sel.account);
     if (a === undefined || a.off !== true) return this.sel;
     // Turning the default off in Settings moved the saved default: that one first.
@@ -2470,6 +2488,124 @@ export class Shell {
     const alt = saved !== undefined && providers.usable(saved) ? saved : providers.fallback(this.data.accounts, a.kind);
     if (alt === undefined) return this.sel;
     return alt.kind === a.kind ? { ...this.sel, account: alt.id } : { ...this.sel, account: alt.id, model: providers.staticModels(alt.kind).find((m) => !m.more)?.id ?? "", effort: providers.defaultEffort(alt.kind) };
+  }
+
+  /** The account pin (pins.ts) of chat `open`, or of the draft's project (undefined: the draft); null: none. */
+  private pinnedOf(open: Chat | undefined): pins.Pinned | null {
+    if (open) return this.engine.pinOf(open.id);
+    const r = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
+    return pins.projectPinned(this.engine.pins.project(r), this.data.accounts);
+  }
+
+  /** A pinned account's name: this PC's for it, else the name it was pinned with. */
+  private pinName(p: pins.Pinned | null): string {
+    if (p === null) return "";
+    const a = p.account === null ? undefined : this.account(p.account);
+    return a ? providers.short(a) : p.pin.label;
+  }
+
+  /** When a pinned chat waiting at its limit goes on ("at 14:05"), null when it doesn't wait. */
+  private pinWaits(id: number): string | null {
+    const l = this.engine.limits.paused.get(id);
+    if (!l) return null;
+    const b = this.engine.limits.blocked(l.account);
+    const at = l.at ?? b?.until ?? null;
+    return at === null ? "until you continue it" : limits.when(at);
+  }
+
+  /** The picker's pin rows (logic/pinmenu.ts) for the open chat or the draft, and the account rail's pinned one. */
+  private pinMenu(): { rows: PinRow[]; acts: PinAct[]; account: string | null } {
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const p = this.pinnedOf(open);
+    const sel = this.chatSel();
+    const selAcc = this.account(sel.account);
+    const waiting = open !== undefined && p !== null && this.engine.limits.paused.has(open.id) ? this.engine.limits.switchTargets(open.id, false)[0] : undefined;
+    const other = waiting === undefined ? null : this.account(waiting);
+    const repo = open ? this.data.repo(open.repoId ?? -1) : this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
+    const { rows, acts } = pinRows({
+      chat: open !== undefined && !isSharedId(sel.account),
+      pinned: p,
+      pinName: this.pinName(p),
+      sel: { account: sel.account, name: selAcc ? providers.short(selAcc) : sel.account },
+      waiting: open !== undefined && this.engine.limits.paused.has(open.id) ? { other: other ? providers.short(other) : null } : null,
+      project: repo?.name ?? "",
+    });
+    return { rows, acts, account: p?.account ?? null };
+  }
+
+  /** A pin row of the picker was picked. */
+  private pinPick(i: number): void {
+    const act = this.pinActs[i];
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    if (!act || act.kind === "none" || !open) return;
+    if (this.syncRefused(open.id)) return;
+    this.closePopup();
+    // Another PC's chat: its home PC pins it (phoneroutes.ts `pin`), where its turns run.
+    if (this.meshChat.foreign(open) && act.kind !== "other") {
+      const call = this.hub.call;
+      if (!call) return;
+      void call("POST", `v1/chats/${open.id}/pin`, {}, { account: act.kind === "pin" ? act.account : null }).then((r) => {
+        const b = typeof r.body === "object" && r.body !== null ? (r.body as Record<string, unknown>) : {};
+        this.toast(r.status < 300 ? (typeof b.text === "string" ? b.text : "Done") : `Couldn't change the pin: ${typeof b.error === "string" ? b.error : "it didn't work"}`);
+      });
+      return;
+    }
+    try {
+      if (act.kind === "other") {
+        const why = this.engine.limits.useOtherOnce(open.id);
+        if (why !== null) this.toast(`Couldn't use another account: ${why}`);
+      } else this.toast(this.engine.pinChat(open.id, act.kind === "pin" ? act.account : null));
+    } catch (e) {
+      this.toast(`Couldn't change the pin: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    this.refreshAll();
+  }
+
+  /** A chat's Keep on one account…: its accounts (the pinned one ticked) and Unpin; picks go through the picker's acts. */
+  private chatPinMenu(id: number): SubMenu {
+    const c = this.data.chat(id);
+    const p = this.engine.pinOf(id);
+    const set = (to: string | null) => () => {
+      if (!c || this.syncRefused(id)) return;
+      if (this.meshChat.foreign(c)) {
+        const call = this.hub.call;
+        if (call) void call("POST", `v1/chats/${id}/pin`, {}, { account: to }).then((r) => r.status >= 300 && this.toast("Couldn't change the pin there"));
+        return;
+      }
+      try {
+        this.toast(this.engine.pinChat(id, to));
+      } catch (e) {
+        this.toast(`Couldn't change the pin: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      this.refreshAll();
+    };
+    const head = p === null ? "Keep this chat on:" : `Pinned to ${this.pinName(p)}${p.scope === "project" ? " by its project" : ""}${p.why === "" ? "" : `, which ${p.why}`}`;
+    const items: PopRow[] = [{ ...this.label(head), kind: "caption" }];
+    for (const a of this.data.accounts.filter(providers.usable)) items.push(this.item(providers.short(a), set(a.id), { checked: p?.scope === "chat" && p.account === a.id }));
+    if (p?.scope === "chat") items.push(this.separator(), this.item("Unpin", set(null), { desc: "Harbor may switch its account again" }));
+    return { items, width: 260 };
+  }
+
+  /** The project menu's Keep on one account…: its accounts, the pinned one ticked, and Unpin. */
+  private projectPinMenu(id: number): SubMenu {
+    const r = this.data.repo(id);
+    const p = pins.projectPinned(this.engine.pins.project(r), this.data.accounts);
+    const set = (to: string | null) => () => {
+      try {
+        this.toast(this.engine.pinProject(id, to));
+      } catch (e) {
+        this.toast(`Couldn't change the pin: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      // The folder's PC (where its chats run) hears it now; the account sync brings it to the others.
+      const place = this.placeOf(id);
+      const call = this.hub.call;
+      if (call && r && place !== null && place.pc !== "") void call("POST", "v1/projects/do", {}, { project: r.path, pc: place.pc, act: "pin_account", account: to }).catch(() => {});
+      this.refreshAll();
+    };
+    const items: PopRow[] = [{ ...this.label(p === null ? "Its chats and agents stay on:" : `Pinned to ${this.pinName(p)}${p.why === "" ? "" : `, which ${p.why}`}`), kind: "caption" }];
+    for (const a of this.data.accounts.filter(providers.usable)) items.push(this.item(providers.short(a), set(a.id), { checked: p?.account === a.id }));
+    if (p !== null) items.push(this.separator(), this.item("Unpin", set(null), { desc: "Harbor may switch its chats' accounts again" }));
+    return { items, width: 260 };
   }
 
   private kind(sel: Sel): Kind {
@@ -2528,10 +2664,16 @@ export class Shell {
     const failover = open !== undefined ? this.meshChat.failoverLine(open) : null;
     // Syncing (net's syncing.ts): nothing goes out until it's done; the draft stays.
     const sync = this.syncWhy(open?.id);
+    // An account pin (pins.ts): a lock on the chip, a line over the composer when it can't run as it is.
+    const pinned = this.pinnedOf(open);
+    const chip = chipPin(pinned, this.pinName(pinned));
+    const pinLine = open === undefined ? "" : pinNotice(pinned, this.pinName(pinned), this.pinWaits(open.id));
+    const tipBase = mine ? `${mine.photo !== "" ? kindLabel(mine.kind) : mine.label} · ${sharedTip(mine)}` : acc ? providers.short(acc) : kind;
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
       // With their photo the label already names them: "Claude · Dana Reyes's, runs on laptop".
-      model_tip: mine ? `${mine.photo !== "" ? kindLabel(mine.kind) : mine.label} · ${sharedTip(mine)}` : acc ? providers.short(acc) : kind,
+      model_tip: chip.tip === "" ? tipBase : `${tipBase} · ${chip.tip}`,
+      pin: chip.pin,
       badge: mine?.badge ?? acc?.badge ?? "",
       has_effort: providers.efforts(kind).length > 0,
       effort: providers.effortLabel(kind, sel.effort) + (providers.hasFast(kind) && this.data.store.get("fast_mode") === "1" ? " · Fast" : ""),
@@ -2559,8 +2701,8 @@ export class Shell {
                     : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: open !== undefined ? this.meshChat.typing(id) : "",
-      notice: sync !== null ? `Syncing: ${sync}. Sending and changes wait until it's done.` : (failover?.text ?? ""),
-      notice_tone: sync !== null ? "sync" : (failover?.tone ?? ""),
+      notice: sync !== null ? `Syncing: ${sync}. Sending and changes wait until it's done.` : (failover?.text ?? pinLine),
+      notice_tone: sync !== null ? "sync" : failover ? failover.tone : pinLine !== "" ? "warn" : "",
       place: open !== undefined ? "" : this.draftLine(),
       error: this.meshChat.error(id),
     };
@@ -3384,6 +3526,7 @@ export class Shell {
         (made) => {
           this.wsPending = null;
           const t = this.engine.newThread(repo, text, sel);
+          if (this.draftAccountPick?.repo === repo) this.engine.pickedByHand(t.id, sel.account);
           if (made !== null) nw.attach(t.id, made);
           if (auto) this.hub.auto?.mark(t.gid, sel.device);
           if (this.view !== "chat" && this.draftRepo === repo) {
@@ -3411,6 +3554,7 @@ export class Shell {
       if (joins === null) {
         const fo = this.draftFailover();
         const made = this.engine.newThread(this.draftRepo, text, sel);
+        if (this.draftAccountPick?.repo === this.draftRepo) this.engine.pickedByHand(made.id, sel.account);
         if (auto) this.hub.auto?.mark(made.gid, sel.device);
         id = made.id;
         // Started here because its project's PC is off: it says so.
@@ -4261,6 +4405,9 @@ export class Shell {
     const sel = this.chatSel();
     const locked = this.lockedKind();
     const { on, mesh } = this.pickerAccounts();
+    const pinNow = this.pinMenu();
+    this.pinActs = pinNow.acts;
+    sync(this.pinRowsModel, pinNow.rows, (a, b) => JSON.stringify(a) === JSON.stringify(b));
     const accounts = on.filter(providers.installed);
     // Another PC's account: a new chat starts there; a started lead moves there (Move to PC) and goes on with it.
     const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
@@ -4287,7 +4434,7 @@ export class Shell {
       accounts.map((a) => {
         // Its owner's photo in place of the initials, once loaded (meshaccounts.ts `photo`).
         const photo = this.photoPixels(mesh.get(a.id)?.photo ?? "");
-        return { id: a.id, logo: this.logoOf(a.kind), badge: a.badge, photo: photo ?? noPixels, has_photo: photo !== null, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind) || !ok(a), tip: tipOf(a) };
+        return { id: a.id, logo: this.logoOf(a.kind), badge: a.badge, photo: photo ?? noPixels, has_photo: photo !== null, active: this.picker.rail === a.id, dim: a.loggedIn === false || (locked !== null && locked !== a.kind) || !ok(a), tip: pinNow.account === a.id ? `${tipOf(a)} · pinned` : tipOf(a), pinned: pinNow.account === a.id };
       }),
       (a, b) => a.logo === b.logo && a.photo === b.photo && JSON.stringify({ ...a, logo: 0, photo: 0 }) === JSON.stringify({ ...b, logo: 0, photo: 0 }),
     );
@@ -4529,7 +4676,7 @@ export class Shell {
     const pick = (to: string) => () => {
       this.closePopup();
       try {
-        this.toast(this.engine.switchAccount(id, to, { why: "switched by hand" }));
+        this.toast(this.engine.switchAccount(id, to, { why: "switched by hand", byUser: true }));
       } catch (e) {
         this.toast(`Couldn't switch ${c.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -4561,20 +4708,25 @@ export class Shell {
       // A started subagent moves with its session, and goes on if it waited at a limit (as the Agents panel's menu).
       if (c.role === "sub" && c.started && patch.account !== undefined && patch.account !== c.account) {
         try {
-          this.toast(this.engine.switchAccount(c.id, patch.account, { model: patch.model, effort: patch.effort, why: "switched by hand" }));
+          this.toast(this.engine.switchAccount(c.id, patch.account, { model: patch.model, effort: patch.effort, why: "switched by hand", byUser: true }));
         } catch (e) {
           this.toast(`Couldn't switch ${c.name}: ${e instanceof Error ? e.message : String(e)}`);
         }
         this.refreshComposer();
         return;
       }
+      // A pick by hand moves a pin that governs the chat to it (pins.ts): the pick sticks.
+      const repinned = patch.account !== undefined && patch.account !== c.account && this.engine.pickedByHand(c.id, patch.account);
       if (patch.account !== undefined) c.account = patch.account;
       if (patch.model !== undefined) c.model = patch.model;
       if (patch.effort !== undefined) c.effort = patch.effort;
       if (patch.access !== undefined) c.access = parseAccess(patch.access);
       if (patch.device !== undefined) c.device = patch.device;
       this.data.saveChat(c);
+      // What waited for a pinned account that couldn't run goes out on the one picked.
+      if (repinned) this.engine.pinChanged(c.id);
     } else {
+      if (patch.account !== undefined) this.draftAccountPick = { repo: this.draftRepo };
       this.sel = { ...this.sel, ...patch };
       const s = this.sel;
       for (const [k, v] of [
@@ -4683,6 +4835,9 @@ export class Shell {
       const sh = this.hub.moves?.chatShares(id) ?? null;
       if (sh !== null) items.push(sh.why === null ? { ...native(SHARE_LABEL, () => {}, { badge: "submenu", desc: sh.line }), sub: () => this.wsShareMenu("chat", id) } : native(SHARE_LABEL, () => {}, { enabled: false, desc: sh.why }));
     }
+    // Account pins (pins.ts): this chat's own; a copy's goes to its home PC.
+    const pinned = this.engine.pinOf(id);
+    if (!c.retired) items.push({ ...native(PIN_LABEL, () => {}, { badge: "submenu", desc: pinned === null ? "Harbor may switch its account at a limit" : `Pinned to ${this.pinName(pinned)}` }), sub: () => this.chatPinMenu(id) });
     items.push(native("Delete", () => this.deleteDialog(id)));
     if (sync !== null) {
       for (const it of items) delete (it as { sub?: unknown }).sub;
@@ -4823,6 +4978,7 @@ export class Shell {
       move_workspace: () => {},
       share_workspace: () => {},
       move_pc: () => void this.projectMovePc(id, x, y),
+      pin_account: () => {},
       remove: () => this.removeRepoDialog(id),
     };
     const ws = this.hub.moves?.projectMenu(id) ?? null;
@@ -4834,14 +4990,15 @@ export class Shell {
     const sh = this.hub.moves?.projectShares(id) ?? null;
     // A project here offers it when it's a git one; one on another PC always (that PC answers).
     const isGit = this.hub.call !== undefined && r !== undefined && (place !== null ? place.pc !== "" : existsSync(join(r.local ?? r.path, ".git")));
-    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, git: isGit, ...(ws ? { moveWhy: ws.why } : {}), ...(sh ? { shareWhy: sh.why, shareLine: sh.line } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
+    const pinNow = pins.projectPinned(this.engine.pins.project(r), this.data.accounts);
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, git: isGit, pin: pinNow === null ? null : this.pinName(pinNow), ...(ws ? { moveWhy: ws.why } : {}), ...(sh ? { shareWhy: sh.why, shareLine: sh.line } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
       if (it.icon !== "") extra.icon = it.icon;
       if (it.desc !== "") extra.desc = it.desc;
       if (it.off === true) extra.enabled = false;
-      if (it.act === "move_workspace" || it.act === "share_workspace") extra.badge = it.off === true ? "" : "submenu";
-      const sub = it.off === true ? null : it.act === "move_workspace" ? () => this.wsMoveMenu("project", id) : it.act === "share_workspace" ? () => this.wsShareMenu("project", id) : null;
+      if (it.act === "move_workspace" || it.act === "share_workspace" || it.act === "pin_account") extra.badge = it.off === true ? "" : "submenu";
+      const sub = it.off === true ? null : it.act === "move_workspace" ? () => this.wsMoveMenu("project", id) : it.act === "share_workspace" ? () => this.wsShareMenu("project", id) : it.act === "pin_account" ? () => this.projectPinMenu(id) : null;
       items.push(sub !== null ? { ...native(it.label, acts[it.act], extra), sub } : native(it.label, acts[it.act], extra));
     }
     this.popup("project-row", x, y, items, 260, false, true);

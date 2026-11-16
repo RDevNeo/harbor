@@ -84,12 +84,15 @@ export function statusBars(h: BarsHost, id: number, nowMs: number): Record<strin
       ? { agents: subs.map(([s, secs]) => ({ id: s.id, name: s.name, title: s.title, since_ms: nowMs - secs * 1000 })), queued: h.engine.subsQueued(id) }
       : null;
   const text = h.engine.limits.limitText(id);
+  const pin = text === null ? null : h.engine.pinOf(id);
   const limit =
     text === null
       ? null
       : {
           text: text[0],
           can_cancel: text[1],
+          // Pinned (pins.ts): it waits for the reset; the phone offers "Use another account this time" and "Unpin".
+          pinned: pin === null ? null : { label: h.engine.limits.pinnedName(id) ?? pin.pin.label, scope: pin.scope },
           targets: h.engine.limits.switchTargets(id, false).map((t) => {
             const a = h.engine.account(t);
             return { id: t, name: a ? `${providers.short(a)} · ${a.email}` : t };

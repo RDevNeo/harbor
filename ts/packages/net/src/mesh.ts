@@ -839,7 +839,7 @@ export function partOf(range: string): string {
 
 /** A forwarded call about a chat (`tail` after `/v1/chats/{id}`) that may start a turn. */
 export function startsTurn(method: string, tail: string[]): boolean {
-  return method === "POST" && (["send", "continue", "continue_on", "slash", "resume"].includes(tail[0] ?? "") || tail.at(-1) === "steer");
+  return method === "POST" && (["send", "continue", "continue_on", "use_other", "pin", "slash", "resume"].includes(tail[0] ?? "") || tail.at(-1) === "steer");
 }
 
 /** A phone's call about a chat that the chat's home PC answers for a copy. */

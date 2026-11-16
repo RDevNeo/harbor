@@ -31,3 +31,12 @@ test("project_menu_offers_clean_up_merged_worktrees_for_git_projects", () => {
   expect(labels(false)).not.toContain("Clean up merged worktrees");
   expect(projectMenu({ remote: null, main: false, customIcon: false, git: true }).find((i) => i.act === "clean_worktrees")).toMatchObject({ label: "Clean up merged worktrees", sep: true });
 });
+
+test("project_menu_offers_keep_on_one_account_with_its_pin", () => {
+  const items = (pin: string | null) => projectMenu({ remote: null, main: false, customIcon: false, pin });
+  expect(items(null).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Settle project", "Keep on one account…", "Move to PC…", "Remove from Harbor"]);
+  expect(items(null).find((i) => i.act === "pin_account")?.desc).toBe("Its chats and agents stay on the account you pick: Harbor won't switch them");
+  expect(items("Claude · IG").find((i) => i.act === "pin_account")?.desc).toBe("Pinned to Claude · IG: Harbor won't switch its chats");
+  // Not offered where pins aren't known (an older caller).
+  expect(projectMenu({ remote: null, main: false, customIcon: false }).some((i) => i.act === "pin_account")).toBe(false);
+});

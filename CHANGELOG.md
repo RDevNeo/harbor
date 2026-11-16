@@ -18,6 +18,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   (Intel, Apple silicon) and Windows (x64, arm64; the .zip, unpacked by Windows' own tar). Windows: Node's own
   `npx`/`npm` run as node.exe and npm's script, without Git Bash in between. The phone app doesn't apply: it runs no
   agents, shells or MCP servers. `HARBOR_NODE=0` turns the download off.
+- Keep a chat or a project on one account. In the composer's account menu, "Keep this chat on <account>" pins the
+  chat; the chat's menu and the project's menu have "Keep on one account…" (a project's pin covers its new chats
+  and subagents, and its started chats of that provider; a chat's own pin wins). While pinned, Harbor never moves
+  it by itself: no switch at a usage limit (also with automatic switching on), no move when its account is at your
+  cap or has a billing problem, and the lead's switch_agent_account and spawn_agent/open_chat with another account
+  are refused with why. At a limit it waits for the reset, however long (the usual "wait at most" doesn't apply),
+  and the account menu offers "Use <account> this time" (it goes back after the reset) and "Unpin". Picking another
+  account by hand still works and moves the pin to it. A lock on the account chip and in the account rail shows
+  it. If the pinned account is signed out, turned off or not on that PC, messages wait with a notice and the menu
+  offers "Pick another account" / "Unpin" instead of a silent switch.
+  - Phone: the same, in the run settings sheet ("Keep this chat on …"), on the limit bar ("Use another account this
+    time", "Unpin"), in a notice over the composer for a broken pin, and in the project sheet.
+  - Pins sync to your other PCs with your account settings (signed in to Harbor). Another PC finds the pinned
+    account by its sign-in, even under another id; without it there, the chat waits there with the notice. A pin
+    made before signing in syncs once it changes. A project is matched across PCs by its Git remote, else its name.
+  - Linux, macOS and Windows alike; nothing platform-specific.
 
 ### Changed
 - Links in chats behave like links: the pointer turns into a hand over a link's own words (not the rest of its

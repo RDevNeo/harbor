@@ -144,7 +144,7 @@ import {
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
-import { type Chat, dataDir, home, repoDir, secrets, settingsync, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, home, pins, repoDir, secrets, settingsync, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
@@ -556,6 +556,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   // Read at the start, so a phone's first look has them.
   for (const r of store.repos()) void projectIcons.get(r.id);
+  // An account's name for pins (pins.ts), by its id here.
+  const pinName = (id: string): string | undefined => {
+    const a = accounts.find((x) => x.id === id);
+    return a ? providers.short(a) : undefined;
+  };
   const projects = new ProjectsApi({
     moves,
     store,
@@ -598,6 +603,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       windowProjects?.removed(repo);
     },
     uploadPath: (id) => resolveUpload(uploadsDir, id),
+    pin: (repo) => ({
+      pin: pins.pinJson(pins.projectPinned(new pins.Pins(store).project(store.repos().find((r) => r.id === repo)), accounts), pinName),
+      choices: accounts.filter(providers.usable).map((a) => ({ id: a.id, label: providers.short(a) })),
+    }),
+    pinProject: (repo, to) => {
+      if (!engine) throw new Error("agents aren't available in this build");
+      return engine.pinProject(repo, to);
+    },
     settled: (repo, on) => windowProjects?.settled(repo, on),
     move: (repo, body, sender) => (projectMove ? projectMove.api(repo, body, sender) : Promise.resolve(err(409, "projects can't move from here"))),
     cleanWorktrees: (repo) => (cleaner ? cleaner.project(repo) : Promise.resolve(null)),
@@ -1065,6 +1078,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     // Relative paths start where the chat works; another PC's chat has its files there.
     find: (text, c) => media.find(text, c.home === "" && engine ? engine.chatCwd(c) : null),
     refs: { strip: (md) => media.stripRefs(md), parts: (md) => media.parts(md) },
+    // Account pins (pins.ts): chat JSON `pin` and a project's `pin`.
+    pins: {
+      chat: (c) => pins.pinJson(new pins.Pins(store).of(c, store.repos().find((r) => r.id === c.repoId), accounts), pinName),
+      project: (repo) => pins.pinJson(pins.projectPinned(new pins.Pins(store).project(store.repos().find((r) => r.id === repo)), accounts), pinName),
+    },
     runSettings: {
       accounts: () => accounts,
       modelsFor: (k) => providers.staticModels(k),
@@ -1414,6 +1432,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     forksOf: (id) => live.forksOf(id),
     wait: (id) => waitJson(live, id, Date.now(), asksNow()),
     switchAccount: (id, to, opts) => live.switchAccount(id, to, opts),
+    pickedByHand: (id, to) => live.pickedByHand(id, to),
+    pinChanged: (id) => live.pinChanged(id),
     chat: (id) => live.chat(id),
   };
   live.reattachTurns();

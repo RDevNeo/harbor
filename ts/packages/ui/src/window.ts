@@ -326,6 +326,8 @@ export interface WorkBarData {
 export interface ComposerState {
   model: string;
   model_tip: string;
+  /** The account pin (pins.ts): "" none, "ok" pinned, "error" its pinned account can't run here. */
+  pin: string;
   badge: string;
   has_effort: boolean;
   effort: string;
@@ -455,6 +457,16 @@ export interface RailItem {
   active: boolean;
   dim: boolean;
   tip: string;
+  /** The account the chat (or its project) is pinned to (pins.ts): a lock on its corner. */
+  pinned: boolean;
+}
+
+/** An account pin row under the picker's models (logic/pinmenu.ts). */
+export interface PinRow {
+  label: string;
+  sub: string;
+  warn: boolean;
+  enabled: boolean;
 }
 
 export interface ModelRow {
@@ -812,6 +824,7 @@ export interface AppWindow extends slint.ComponentHandle {
   picker_more_count: number;
   picker_in_more: boolean;
   picker_empty: string;
+  picker_pin_rows: slint.Model<PinRow>;
   picker_search: string;
   picker_rail_pick: (id: string) => void;
   picker_pick: (i: number) => void;
@@ -820,6 +833,7 @@ export interface AppWindow extends slint.ComponentHandle {
   picker_back: () => void;
   picker_searched: (t: string) => void;
   picker_key: (e: KeyEvent) => boolean;
+  picker_pin_pick: (i: number) => void;
   proj_rows: slint.Model<ProjectPopRow>;
   proj_hover: number;
   proj_search: string;

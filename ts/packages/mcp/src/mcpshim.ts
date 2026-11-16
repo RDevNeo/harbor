@@ -155,7 +155,7 @@ export function tools(role: string): JsonObject[] {
       ),
       tool(
         "switch_agent_account",
-        "Move a subagent to another account (e.g. one stuck at a usage limit), keeping its conversation: on the same provider it resumes its session there; on another provider (Claude <-> Codex) it starts a new session that begins with its conversation so far. If it waits at a limit or has messages waiting, it continues on the new account at once; if a turn is running, it moves when that turn ends. Only use accounts the user allows.",
+        "Move a subagent to another account (e.g. one stuck at a usage limit), keeping its conversation: on the same provider it resumes its session there; on another provider (Claude <-> Codex) it starts a new session that begins with its conversation so far. If it waits at a limit or has messages waiting, it continues on the new account at once; if a turn is running, it moves when that turn ends. Only use accounts the user allows. A subagent the user pinned to an account (it, or its project; list_agents says so) is refused: it stays there.",
         {
           agent: prop("string", "Agent name"),
           account: prop("string", "Account id from list_models, e.g. 'claude3' or 'codex'"),

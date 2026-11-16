@@ -5,9 +5,10 @@ import { ICONS } from "../icons.ts";
  * phone's project sheet are both built from this list, so they offer the same things in the
  * same order with the same words.
  */
-export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "clean_worktrees" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "remove";
+export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "clean_worktrees" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "pin_account" | "remove";
 
 export const CLEAN_LABEL = "Clean up merged worktrees";
+export const PIN_LABEL = "Keep on one account…";
 export const SHARE_LABEL = "Share with workspace…";
 /** What Share with workspace…'s checklist says under its title (desktop and phone alike). */
 export const SHARE_NOTE = "It also shows under each workspace ticked here and stays owned by its own. Placement only: who can reach it and what the PCs copy don't change.";
@@ -40,6 +41,8 @@ export interface ProjectMenuInput {
   shareLine?: string;
   /** It's moving to another PC now: what it does ("Copying 340 MB of 1.2 GB"). */
   moving?: string | null;
+  /** Keep on one account…: the account it's pinned to (pins.ts), null when none; left out: not offered. */
+  pin?: string | null;
   /** A git project its chats may have worktrees in: Clean up merged worktrees is offered. */
   git?: boolean;
 }
@@ -75,6 +78,7 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
   if (p.shareWhy !== undefined) add("share_workspace", SHARE_LABEL, ICONS.LINK, p.shareWhy ?? p.shareLine ?? "It and its chats show under those workspaces too", p.shareWhy !== null);
   if (p.settled === true) add("unsettle_project", "Unsettle project", ICONS.UNARCHIVE, "It and the chats settled with it come back");
   else add("settle_project", "Settle project", ICONS.ARCHIVE, "It and its chats go to Settled; a new chat or new activity in it brings it back");
+  if (p.pin !== undefined) add("pin_account", PIN_LABEL, ICONS.LOCK, p.pin === null ? "Its chats and agents stay on the account you pick: Harbor won't switch them" : `Pinned to ${p.pin}: Harbor won't switch its chats`);
   add("move_pc", "Move to PC…", ICONS.MONITOR, p.moving ? p.moving : "Its folder and its chats go to another PC of yours");
   add("remove", "Remove from Harbor");
   return out;

@@ -50,6 +50,9 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["limit_switch_accounts", A],
   ["usage_caps", A],
   ["usage_warn", A],
+  // Account pins (pins.ts): a chat (by gid) or a project (by its Git remote, else its name) kept on one account.
+  ["pin_chat:", A],
+  ["pin_project:", A],
   ["limits", D],
   ["recap_count", D],
   ["api_port", D],

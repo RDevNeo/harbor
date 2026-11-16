@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { BILLING, billingBlock, billingFromText, billingWhat, type AccountInfo, type Block, Limits, type LimitsHost, fromText, nextBlock, windowLabel } from "../src/limits.ts";
 import { keyLabel, mergeWindows, percentText, quotaText, readingJson, readingText, type ReadingAccount, resetsIn } from "../src/usage_ctl.ts";
 import { type Chat, Store, blankChat, now } from "../src/index.ts";
+import type { Pinned } from "../src/pins.ts";
 
 test("from_text_survives_case_changing_chars", () => {
   expect(fromText("İ rate limit try again at ")).not.toBeNull();
@@ -68,6 +69,16 @@ class Host implements LimitsHost {
     if (c) c.account = account;
   };
   sessionFile = (): string | null => null;
+  /** Account pins by chat (pins.ts `Pinned`). */
+  pinMap = new Map<number, Pinned>();
+  pinned = (id: number): Pinned | null => this.pinMap.get(id) ?? null;
+  teamNote?: NonNullable<LimitsHost["teamNote"]>;
+  toPinCalls: [number, string][] = [];
+  toPin = (id: number, to: string): boolean => {
+    this.toPinCalls.push([id, to]);
+    this.setAccount(id, to);
+    return true;
+  };
 
   addChat(over: Partial<Chat> = {}): Chat {
     const c = this.store.createChat(blankChat({ title: "t", ...over }));
@@ -414,4 +425,117 @@ test("a billing failure with nowhere to go waits for the user (no timer); Contin
   expect(h.started.length).toBe(1);
   expect(h.started[0]?.[1]).toContain("next");
   expect(h.notices.at(-1)).toBe("Trying this account again · continuing");
+});
+
+// Account pins (pins.ts): every automatic path leaves a pinned chat on its account.
+const pinTo = (account: string | null, scope: "chat" | "project" = "chat", why = ""): Pinned => ({ pin: { account: account ?? "gone", kind: "claude", ident: "", label: `Claude · ${account ?? "gone"}` }, scope, account, why });
+
+test("a pinned chat at a limit never auto-switches, even to an opted-in account: it waits for the reset, however far", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  h.store.setQuiet("limit_switch", "1");
+  h.store.setQuiet("limit_switch_accounts", '["claude2"]');
+  for (const scope of ["chat", "project"] as const) {
+    h.pinMap.set(c.id, pinTo("claude", scope));
+    expect(l.autoTarget(c.id)).toBeUndefined();
+  }
+  // A weekly reset two days off, beyond the 12 hours an unpinned chat waits at most: it still waits for it.
+  const reset = h.clock + 48 * 3600;
+  l.limitEvent(c.id, { type: "limit", kind: "seven_day", resetsAt: reset, text: "hit" });
+  expect(l.switch.has(c.id)).toBe(false);
+  l.limitExited(c.id);
+  expect(c.account).toBe("claude");
+  expect(l.paused.get(c.id)?.at).toBeGreaterThanOrEqual(reset + 60);
+  expect(h.notices.at(-1)).toStartWith("Hit the weekly limit · pinned to claude: waiting until");
+  expect(l.limitText(c.id)?.[0]).toStartWith("Pinned to claude · usage limit · continuing at");
+  // Its next message waits too, on the same account.
+  expect(l.limitGuard(c.id, "more", [])).toBe(true);
+  expect(c.account).toBe("claude");
+  expect(h.pending.get(c.id)).toEqual(["more"]);
+  // Unpinned, the same hit would have moved it.
+  const d = h.addChat();
+  l.limitEvent(d.id, { type: "limit", kind: "seven_day", resetsAt: reset, text: "hit" });
+  expect(l.switch.get(d.id)).toBe("claude2");
+});
+
+test("a pinned chat sent while its account is blocked or at a cap stays and queues; a billing failure waits for the user", () => {
+  const [h, l] = setup();
+  h.store.setQuiet("limit_switch", "1");
+  h.store.setQuiet("limit_switch_accounts", '["claude2"]');
+  const c = h.addChat();
+  h.pinMap.set(c.id, pinTo("claude"));
+  l.capBlock("claude", "five_hour", 80, h.clock + 600, true);
+  expect(l.limitGuard(c.id, "go", [])).toBe(true);
+  expect(c.account).toBe("claude");
+  expect(h.toPinCalls).toEqual([]);
+  const d = h.addChat();
+  h.pinMap.set(d.id, pinTo("claude"));
+  l.limitEvent(d.id, { type: "limit", kind: BILLING, resetsAt: null, text: PAST_DUE, code: "oauth_org_not_allowed" });
+  expect(l.switch.has(d.id)).toBe(false);
+  expect(h.notices.at(-1)).toContain("waiting for you (pinned to claude)");
+  expect(d.account).toBe("claude");
+});
+
+test("a pinned account that's missing, signed out or turned off holds the message with a notice; nothing moves", () => {
+  const [h, l] = setup();
+  h.store.setQuiet("limit_switch", "1");
+  h.store.setQuiet("limit_switch_accounts", '["claude2"]');
+  const c = h.addChat();
+  h.pinMap.set(c.id, pinTo(null, "chat", "isn't on this PC"));
+  expect(l.limitGuard(c.id, "hello", ["/f.png"])).toBe(true);
+  expect(c.account).toBe("claude");
+  expect(h.pending.get(c.id)).toEqual(["hello\n(attached: /f.png)"]);
+  expect(h.notices.at(-1)).toBe("Pinned to Claude · gone, which isn't on this PC: pick another account or unpin this chat");
+  // Its own account turned off (the one an unpinned chat would leave for the default): it holds, it doesn't move.
+  h.accountsList = [acct("claude", { off: true }), acct("claude2")];
+  h.store.set("default_account", "claude2");
+  const d = h.addChat();
+  h.pinMap.set(d.id, pinTo("claude", "project", "is turned off in Settings › Providers"));
+  expect(l.limitGuard(d.id, "go", [])).toBe(true);
+  expect(d.account).toBe("claude");
+  expect(h.notices.at(-1)).toContain("pick another account or unpin this project");
+});
+
+test("a pinned chat on another account (this time, or since before its project's pin) goes back once the pinned one is usable", () => {
+  const [h, l] = setup();
+  const c = h.addChat({ account: "claude2" });
+  h.pinMap.set(c.id, pinTo("claude", "project"));
+  l.capBlock("claude", "five_hour", 80, h.clock + 600, true);
+  expect(l.limitGuard(c.id, "go", [])).toBe(false);
+  expect(c.account).toBe("claude2");
+  l.liftBlock("claude");
+  expect(l.limitGuard(c.id, "go", [])).toBe(false);
+  expect(h.toPinCalls).toEqual([[c.id, "claude"]]);
+  expect(c.account).toBe("claude");
+});
+
+test("Use another account this time: a waiting pinned chat goes on on another now, and keeps its pin", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  h.pinMap.set(c.id, pinTo("claude"));
+  l.limitEvent(c.id, { type: "limit", kind: "five_hour", resetsAt: h.clock + 3600, text: "hit" });
+  l.limitExited(c.id);
+  expect(l.paused.has(c.id)).toBe(true);
+  expect(l.useOtherOnce(c.id)).toBeNull();
+  expect(c.account).toBe("claude2");
+  expect(l.paused.has(c.id)).toBe(false);
+  expect(h.started.at(-1)?.[1]).toContain("You're on another account now");
+  expect(h.notices.at(-1)).toContain("this time only, back on claude after the reset");
+  expect(h.pinMap.get(c.id)?.account).toBe("claude");
+  // Nowhere to go: says why.
+  const d = h.addChat({ account: "claude2" });
+  h.accountsList = [acct("claude2")];
+  expect(l.useOtherOnce(d.id)).toBe("no other account of this provider can take it now");
+});
+
+test("a pinned sub at a limit: its lead hears it's pinned and that switch_agent_account won't move it", () => {
+  const [h, l] = setup();
+  const told: [string, string][] = [];
+  h.teamNote = (_id: number, text: string, detail: string) => void told.push([text, detail]);
+  const lead = h.addChat({ role: "lead" });
+  const c = h.addChat({ role: "sub", parent: lead.id, name: "w" });
+  h.pinMap.set(c.id, pinTo("claude", "project"));
+  l.limitEvent(c.id, { type: "limit", kind: "five_hour", resetsAt: h.clock + 3600, text: "hit" });
+  expect(told.at(-1)?.[1]).toContain("The user pinned it to claude: Harbor doesn't switch it and switch_agent_account refuses to");
+  expect(told.at(-1)?.[1]).not.toContain("switch_agent_account(agent:");
 });

@@ -9,7 +9,7 @@ import { type Act, AddProject, type Disk, type GhList, nameProblem, type Row, ST
 import { cloneProject, createProject, ghRepos, localClones, realDisk } from "./packages/ui/src/addproject.ts";
 import { type ProjectAct, projectMenu } from "./packages/ui/src/logic/projectmenu.ts";
 import { parseSnooze } from "./packages/ui/src/logic/sidebar.ts";
-import { projectsdir, sidebartree } from "./packages/store/src/index.ts";
+import { type pins, projectsdir, sidebartree } from "./packages/store/src/index.ts";
 import { webUrl } from "./packages/agents/src/git.ts";
 import { githubRepo } from "./packages/agents/src/worktree.ts";
 import { choiceJson, shareJson, type WorkspaceMoves } from "./workspacemoves.ts";
@@ -74,6 +74,10 @@ export interface ProjectsHost {
   moving?: (repo: number) => string | null;
   /** Clean up merged worktrees of project `repo` (worktreeclean.ts): what it did (null: this Harbor can't). */
   cleanWorktrees?: (repo: number) => Promise<{ removed: number; branches: number; kept: number; busy: number; open: number; said: string } | null>;
+  /** Keep on one account… (pins.ts): project `repo`'s pin as the phone shows it (null: none), and the accounts it can be pinned to. */
+  pin?: (repo: number) => { pin: pins.PinJson | null; choices: { id: string; label: string }[] };
+  /** Pins project `repo` to account `to` (null: unpins); what happened, or throws why not. */
+  pinProject?: (repo: number, to: string | null) => string;
 }
 
 const STEPS: readonly Step[] = ["sources", "new", "local", "url", "github"];
@@ -104,9 +108,12 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.LINK, "link"],
   [ICONS.MONITOR, "monitor"],
   [ICONS.GIT_MERGE, "merge"],
+  [ICONS.LOCK, "lock"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "clean_worktrees", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "clean_worktrees", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "pin_account", "remove"];
+/** A pin's name for the project menu's line (pins.ts `PinJson`), null when there is none. */
+const pinLabel = (p: pins.PinJson | null): string | null => p?.label ?? null;
 const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -389,6 +396,7 @@ export class ProjectsApi {
     const settled = this.h.store.settledProjects().has(r.id);
     const moves = this.h.moves?.projectMenu(r) ?? null;
     const shares = this.h.moves?.projectShares(r) ?? null;
+    const pin = this.h.pin?.(r.id) ?? null;
     const items = projectMenu({
       remote,
       main: main !== null,
@@ -398,6 +406,7 @@ export class ProjectsApi {
       ...(moves ? { moveWhy: moves.why } : {}),
       ...(shares ? { shareWhy: shares.why, shareLine: shares.line } : {}),
       moving: this.h.moving?.(r.id) ?? null,
+      ...(pin ? { pin: pinLabel(pin.pin) } : {}),
     }).map((it): Json => {
       const off = it.act === "terminal" || it.off === true;
       return {
@@ -424,6 +433,9 @@ export class ProjectsApi {
       workspaces: moves ? choiceJson(moves) : null,
       // Share with workspace…'s checklist (null: a Harbor without it).
       shares: shares ? shareJson(shares) : null,
+      // Keep on one account…: its pin ({account, label, scope, why, tip}, null: none) and the accounts to pick from.
+      pin: pin?.pin ?? null,
+      pin_choices: pin?.choices ?? null,
       row: settled ? [] : [
         { act: "new_chat", label: "New chat in this project", icon: "plus" },
         { act: "snooze", label: "Snooze", icon: "clock" },
@@ -474,6 +486,18 @@ export class ProjectsApi {
         if (done === null) return err(409, "this Harbor can't clean up worktrees");
         if (done.removed > 0) this.h.touch();
         return ok({ ok: true, ...done });
+      }
+      case "pin_account": {
+        if (!this.h.pinProject) return err(409, "this Harbor can't pin projects to an account");
+        const to = b.account === null || b.account === "" ? null : typeof b.account === "string" ? b.account : undefined;
+        if (to === undefined) return err(400, "account: an account id, or null to unpin");
+        try {
+          const text = this.h.pinProject(r.id, to);
+          this.h.touch();
+          return ok({ ok: true, text, pin: this.h.pin?.(r.id).pin ?? null });
+        } catch (x) {
+          return err(409, x instanceof Error ? x.message : String(x));
+        }
       }
       case "remove":
         if (!this.h.remove) return err(409, "can't remove projects here");
