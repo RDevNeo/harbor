@@ -515,7 +515,8 @@ describe("sign-in through Clerk", () => {
     r.browse = (url) => {
       const u = new URL(url);
       const redirect = u.searchParams.get("redirect_uri") ?? "";
-      setTimeout(() => void fetch(`${redirect}?state=wrong&error_description=${encodeURIComponent("<b>no</b>")}`).then(async (res) => void (page = await res.text())), 0);
+      const state = u.searchParams.get("state") ?? "";
+      setTimeout(() => void fetch(`${redirect}?state=${state}&error_description=${encodeURIComponent("<b>no</b>")}`).then(async (res) => void (page = await res.text())), 0);
     };
     await r.svc.signIn();
     expect(r.svc.status().error).toBe("Sign-in failed: <b>no</b>");
@@ -526,11 +527,61 @@ describe("sign-in through Clerk", () => {
     expect(existsSync(join(r.stateDir, "account.json"))).toBe(false);
   });
 
-  test("a state that does not match fails the sign-in", async () => {
+  /** Hits the callback with each stray query in turn (each must get the "Not this sign-in" page while the sign-in still waits), then with `last(state)`. */
+  function strayThen(r: Rig, last: (state: string) => string, pages: string[]): (url: string) => void {
+    return (url) => {
+      const u = new URL(url);
+      r.world.challenge = u.searchParams.get("code_challenge") ?? "";
+      const redirect = u.searchParams.get("redirect_uri") ?? "";
+      const state = u.searchParams.get("state") ?? "";
+      const strays = ["code=abc&state=forged", "code=abc", "error=access_denied", "error=access_denied&state=forged", `state=${state}`, `state=${state}&x=1`];
+      setTimeout(async () => {
+        for (const q of strays) {
+          pages.push(await (await fetch(`${redirect}?${q}`)).text());
+          expect(r.svc.status().signingIn).toBe(true);
+        }
+        await (await fetch(`${redirect}?${last(state)}`)).text();
+      }, 0);
+    };
+  }
+
+  test("stray hits (another state, no state, neither code nor error) don't end the wait; then this sign-in's code signs in", async () => {
     const r = rig();
+    const pages: string[] = [];
+    r.browse = strayThen(r, (state) => `code=abc&state=${state}`, pages);
+    await signedIn(r);
+    expect(pages.length).toBe(6);
+    for (const p of pages) {
+      expect(p).toContain("Not this sign-in");
+      expect(p).toContain("Harbor is still waiting.");
+    }
+  });
+
+  test("after stray hits, this sign-in's error fails it with that message", async () => {
+    const r = rig();
+    const pages: string[] = [];
+    r.browse = strayThen(r, (state) => `error=access_denied&error_description=${encodeURIComponent("The user said no")}&state=${state}`, pages);
+    await r.svc.signIn();
+    expect(pages.length).toBe(6);
+    expect(r.svc.status().error).toBe("Sign-in failed: The user said no");
+    expect(r.svc.signedIn()).toBe(false);
+    expect(r.clerkCalls).toEqual([]);
+  });
+
+  test("this sign-in's bare error fails it with the error code", async () => {
+    const r = rig();
+    r.browse = (url) => comeBack(url, r.world, (state) => `error=access_denied&state=${state}`);
+    await r.svc.signIn();
+    expect(r.svc.status().error).toBe("Sign-in failed: access_denied");
+    expect(r.clerkCalls).toEqual([]);
+  });
+
+  test("a state that does not match is ignored: the sign-in goes on waiting", async () => {
+    const r = rig();
+    r.svc = r.make({ signInTimeoutMs: 300 });
     r.browse = (url) => comeBack(url, r.world, () => "code=abc&state=forged");
     await r.svc.signIn();
-    expect(r.svc.status().error).toBe("Sign-in failed: state mismatch");
+    expect(r.svc.status().error).toBe("Sign-in timed out.");
     expect(r.clerkCalls).toEqual([]);
   });
 
