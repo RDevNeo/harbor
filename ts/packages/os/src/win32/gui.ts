@@ -50,6 +50,7 @@ export const user32 = lib("user32.dll", {
   CreateIconFromResourceEx: { args: [P, U32, I32, U32, I32, I32, U32], returns: P },
   DestroyIcon: { args: [P], returns: I32 },
   GetSystemMetrics: { args: [I32], returns: I32 },
+  ChangeWindowMessageFilterEx: { args: [P, U32, U32, P], returns: I32 },
 });
 
 export const shell32 = lib("shell32.dll", {

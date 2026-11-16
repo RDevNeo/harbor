@@ -11,6 +11,7 @@ const NIF_MESSAGE = 0x1;
 const NIF_ICON = 0x2;
 const NIF_TIP = 0x4;
 const CALLBACK = WM_USER + 1;
+const MSGFLT_ALLOW = 1;
 const WM_LBUTTONUP = 0x0202;
 const WM_RBUTTONUP = 0x0205;
 const WM_CONTEXTMENU = 0x007b;
@@ -50,6 +51,9 @@ export function start(o: TrayOptions): () => void {
     throw new Error("Windows didn't take the icon (no taskbar?)");
   }
   const taskbarCreated = user32().RegisterWindowMessageW(ptr(wide("TaskbarCreated")));
+  // Harbor running as administrator (admin.ts): Windows keeps messages from Explorer (normal rights) away from its
+  // windows (UIPI), so the icon's clicks and Explorer's restart are let through by name.
+  for (const m of [taskbarCreated, CALLBACK]) user32().ChangeWindowMessageFilterEx(hwnd, m, MSGFLT_ALLOW, null);
   const items = o.items;
   const later = (f: () => void): void => void setTimeout(f, 0);
   const off = onMessage((msg, _wparam, lparam) => {
