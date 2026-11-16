@@ -11,6 +11,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   refresh token. A sign-in that ran out with nothing to renew it showed "Sign out" in Settings › Integrations while
   chats got none of its tools; it now says "Sign-in expired: sign in again", and Sign in replaces it. Sign in to
   Vercel again once to get the refresh token; a running chat gets the tools on its next message.
+- Signing in to an app from Settings › Integrations (Vercel and other OAuth apps, Gmail) no longer fails with
+  "Sign-in failed: state mismatch" when something reaches Harbor's sign-in page before the real redirect (a login
+  interstitial, a browser prefetch, a reload of an old tab). Such a hit now gets a page saying it isn't for this
+  sign-in and Harbor keeps waiting, so the real redirect after the consent page still finds it instead of "Unable to
+  connect to 127.0.0.1". Only this sign-in's redirect, with a code or an error, ends it. Linux, macOS and Windows
+  alike, and the phone app's Gmail sign-in in the browser does the same.
 - Windows: Playwright and other MCP servers started by a bare command (`npx`, npm's .cmd shims) start: the command
   is looked up on the server's PATH with Windows' suffixes and an npm shim runs as node and its script, as turns do.
   Before, they failed with "ProtocolError dialing …/playwright". Linux and macOS look the command up the same way.

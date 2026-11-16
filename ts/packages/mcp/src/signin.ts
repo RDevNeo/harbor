@@ -451,10 +451,17 @@ export interface Callback {
   close(): void;
 }
 
-export function callbackPage(ok: boolean, error: string): string {
+/** The page a sign-in's browser tab lands on. `stray`: a hit that isn't for the sign-in Harbor waits for (it goes on waiting). */
+export function callbackPage(ok: boolean, error: string, stray = false): string {
   const esc = (t: string): string => t.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-  const title = ok ? "You're signed in" : "Sign-in didn't finish";
-  const line = ok ? "Harbor is back in front. You can close this tab." : error === "" ? "Go back to Harbor and try again." : `${esc(error)}. Go back to Harbor and try again.`;
+  const title = ok ? "You're signed in" : stray ? "Not this sign-in" : "Sign-in didn't finish";
+  const line = ok
+    ? "Harbor is back in front. You can close this tab."
+    : stray
+      ? "This link isn't for the sign-in Harbor is waiting for. Finish signing in in the tab Harbor opened: Harbor is still waiting."
+      : error === ""
+        ? "Go back to Harbor and try again."
+        : `${esc(error)}. Go back to Harbor and try again.`;
   const mark = ok ? "&#10003;" : "!";
   const mk = ok ? "#0070f3" : "#e5484d";
   const close = ok ? 600 : 600000;
@@ -495,13 +502,22 @@ export function listenCallback(): Callback {
         const i = kv.indexOf("=");
         if (i > 0) params.set(dec(kv.slice(0, i)), dec(kv.slice(i + 1)));
       }
-      const ok = params.get("state") === w.state && params.has("code");
-      const err = params.get("error_description") ?? params.get("error") ?? "";
+      const html = (page: string): Response => new Response(page, { headers: { "Content-Type": "text/html; charset=utf-8", Connection: "close" } });
+      // Only the redirect for this sign-in ends it: its state, with a code or an error. Anything else on
+      // this path (a login interstitial, a prefetch, a reload of an old tab: no state, another state, or
+      // neither code nor error) gets a page saying so and the wait goes on, so the real redirect that
+      // comes later still finds the server. An `error` without our state is ignored the same way: some
+      // providers send one without state, but it can't be told apart from a stray hit, and the timeout
+      // (or Cancel in Harbor) still ends a sign-in the user gave up on.
+      if (params.get("state") !== w.state) return html(callbackPage(false, "", true));
+      const code = params.get("code");
+      const err = params.get("error_description") || params.get("error");
+      if (code === undefined && err === undefined) return html(callbackPage(false, "", true));
       void single.focusRunning().catch(() => false);
       waiter = undefined;
-      if (ok) w.resolve(params.get("code") ?? "");
-      else w.reject(new Error(`Sign-in failed: ${err === "" ? "state mismatch" : err}`));
-      return new Response(callbackPage(ok, err), { headers: { "Content-Type": "text/html; charset=utf-8", Connection: "close" } });
+      if (code !== undefined) w.resolve(code);
+      else w.reject(new Error(`Sign-in failed: ${err || "the service refused"}`));
+      return html(callbackPage(code !== undefined, err ?? ""));
     },
   });
   return {

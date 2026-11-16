@@ -319,9 +319,8 @@ final class Gmail {
                 if (hint != null) url = url.replace("select_account%20consent", "consent") + "&login_hint=" + Uri.encode(hint);
                 String go = url;
                 Ui.main.post(() -> open(a, go));
-                String[] got = waitCode(ss);
+                String[] got = waitCode(ss, st.getString("state"));
                 if (got == null) return;
-                if (!st.getString("state").equals(got[1])) throw new java.io.IOException("Sign-in failed: state mismatch");
                 JSONObject r = hub.call("POST", "/v1/apps/gmail/finish", new JSONObject().put("state", got[1]).put("code", got[0]), 60_000);
                 Ui.main.post(() -> {
                     say(a, "Gmail connected: " + r.optString("email"));
@@ -347,8 +346,12 @@ final class Gmail {
         }
     }
 
-    /** The browser's one visit to the loopback port: {code, state}, or null (an error, cancelled). */
-    private static String[] waitCode(ServerSocket ss) throws Exception {
+    /** The browser's visit to the loopback port for this sign-in (`want`, its state): {code, state}, or
+     *  null (an error, cancelled). A visit that isn't for it (no state or another one, or neither code nor
+     *  error: a login interstitial, a prefetch, an old tab reloaded) gets a page saying so and the wait goes
+     *  on, so the real redirect still finds the port. An error without this state is ignored the same way:
+     *  it can't be told apart from a stray visit, and the socket's timeout still ends the wait. */
+    private static String[] waitCode(ServerSocket ss, String want) throws Exception {
         try (ServerSocket server = ss) {
             while (true) {
                 try (Socket s = server.accept()) {
@@ -366,8 +369,12 @@ final class Gmail {
                         else if (k.equals("state")) state = v;
                         else if (k.equals("error")) error = v;
                     }
-                    boolean ok = code != null && state != null;
-                    reply(s.getOutputStream(), 200, ok ? "Done. Go back to Harbor: it's connecting the account." : "Sign-in didn't finish" + (error == null ? "" : " (" + error + ")") + ". Go back to Harbor and try again.");
+                    if (!want.equals(state) || (code == null && error == null)) {
+                        reply(s.getOutputStream(), 200, "This link isn't for the sign-in Harbor is waiting for. Finish signing in in the tab Harbor opened: Harbor is still waiting.");
+                        continue;
+                    }
+                    boolean ok = code != null;
+                    reply(s.getOutputStream(), 200, ok ? "Done. Go back to Harbor: it's connecting the account." : "Sign-in didn't finish (" + error + "). Go back to Harbor and try again.");
                     return ok ? new String[] {code, state} : null;
                 }
             }

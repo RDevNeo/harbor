@@ -296,16 +296,18 @@ test("a Google code is exchanged and saved as an account", async () => {
   endpoints.googleToken = "https://oauth2.googleapis.com/token";
 });
 
-test("the sign-in callback takes the code and refuses a wrong state", async () => {
+test("the sign-in callback takes the code and ignores a wrong state", async () => {
   const cb = listenCallback();
-  const refused = cb.wait("/", "st", new AbortController().signal).then(
+  const ac = new AbortController();
+  const first = cb.wait("/", "st", ac.signal).then(
     () => "accepted",
     (e: Error) => e.message,
   );
   const bad = await fetch(`${cb.base}?code=x&state=other`);
   expect(bad.status).toBe(200);
-  expect(await bad.text()).toContain("Sign-in didn't finish");
-  expect(await refused).toContain("Sign-in failed");
+  expect(await bad.text()).toContain("Not this sign-in");
+  ac.abort();
+  expect(await first).toBe("Sign-in was cancelled.");
   const again = cb.wait("/cb", "s2", new AbortController().signal);
   expect((await fetch(`${cb.base}other?code=x&state=s2`)).status).toBe(404);
   const good = await fetch(`${cb.base}cb?code=the-code&state=s2`);

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as mcp from "../src/mcp.ts";
-import { oauthScope } from "../src/signin.ts";
+import { listenCallback, oauthScope } from "../src/signin.ts";
 
 let root: string;
 const saved = { ...process.env };
@@ -75,6 +75,39 @@ test("an MCP OAuth sign-in discovers, registers, follows the redirect and saves 
   mcp.signOut("vercel");
   expect(mcp.signedIn("vercel")).toBe(false);
   void server.stop(true);
+});
+
+test("a stray hit on the sign-in callback doesn't end the wait: only this sign-in's state with a code or an error does", async () => {
+  const cb = listenCallback();
+  try {
+    let settled = "";
+    const wait = cb.wait("/callback", "the-state", new AbortController().signal).then(
+      (c) => (settled = `code ${c}`),
+      (e: Error) => (settled = `error ${e.message}`),
+    );
+    for (const q of ["code=x&state=other", "state=the-state", "code=x", "error=access_denied", "foo=bar", "error=access_denied&state=other"]) {
+      const r = await fetch(`${cb.base}callback?${q}`);
+      expect(r.status).toBe(200);
+      expect(await r.text()).toContain("isn't for the sign-in Harbor is waiting for");
+    }
+    await Bun.sleep(10);
+    expect(settled).toBe("");
+    const good = await fetch(`${cb.base}callback?code=the-code&state=the-state`);
+    expect(await good.text()).toContain("You're signed in");
+    await wait;
+    expect(settled).toBe("code the-code");
+
+    const denied = cb.wait("/callback", "s2", new AbortController().signal).then(
+      () => "accepted",
+      (e: Error) => e.message,
+    );
+    expect((await fetch(`${cb.base}callback?code=x&state=nope`)).status).toBe(200);
+    const r = await fetch(`${cb.base}callback?error=access_denied&error_description=${encodeURIComponent("The user said no")}&state=s2`);
+    expect(await r.text()).toContain("The user said no. Go back to Harbor");
+    expect(await denied).toBe("Sign-in failed: The user said no");
+  } finally {
+    cb.close();
+  }
 });
 
 test("Cloudflare signs in with OAuth on its API server and asks for every scope its consent screen can narrow", async () => {
