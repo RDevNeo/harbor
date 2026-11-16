@@ -31,6 +31,7 @@ function signedView(real: AppsView): AppsView {
     ...real,
     pending: () => undefined,
     signedIn: () => true,
+    expired: () => false,
     account: (id) => who[id],
     error: () => undefined,
     googleAccounts: (id) => (id === "gmail" ? ["sam.rivera@example.com", "sam.rivera.work@example.org"] : []),

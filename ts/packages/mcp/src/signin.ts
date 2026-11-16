@@ -249,6 +249,15 @@ export function scopeList(v: Json | undefined): string {
   return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string").join(" ") : "";
 }
 
+/** The scope an OAuth sign-in asks for: with `allScopes`, every scope the authorization server lists (apps.ts
+ * `scopes: "all"`), else the resource's. Plus `offline_access` when the server offers it: some (Vercel) issue no
+ * refresh token without it, so the sign-in would die with its first access token. */
+export function oauthScope(resource: Json | undefined, server: Json | undefined, allScopes = false): string {
+  const words = ((allScopes ? scopeList(server) : "") || scopeList(resource)).split(/\s+/).filter(Boolean);
+  if (scopeList(server).split(" ").includes("offline_access") && !words.includes("offline_access")) words.push("offline_access");
+  return words.join(" ");
+}
+
 /** `allScopes`: ask for every scope the authorization server lists (apps.ts `scopes: "all"`), else the resource's. */
 export async function oauthLogin(id: string, url: string, signal: AbortSignal, update: (p: Pending) => void, allScopes = false): Promise<void> {
   const rm = (await firstJson(wellKnown(url, "oauth-protected-resource"))) ?? {};
@@ -258,7 +267,7 @@ export async function oauthLogin(id: string, url: string, signal: AbortSignal, u
   const resource = typeof rm.resource === "string" ? rm.resource : url;
   const meta = await firstJson([...wellKnown(issuer, "oauth-authorization-server"), ...wellKnown(issuer, "openid-configuration")]);
   if (!meta) throw new Error("The service has no OAuth metadata.");
-  const scope = (allScopes ? scopeList(meta.scopes_supported) : "") || scopeList(rm.scopes_supported);
+  const scope = oauthScope(rm.scopes_supported, meta.scopes_supported, allScopes);
   const authorize = text(meta.authorization_endpoint);
   const tokenEp = text(meta.token_endpoint);
   const register = text(meta.registration_endpoint);

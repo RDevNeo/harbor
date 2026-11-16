@@ -1,10 +1,10 @@
 import "./sandbox.ts";
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { type Grant, close, grant, parsePortFile, portFile, resumeWait, revoke, token, waits } from "../src/bridge.ts";
+import { delimiter, join } from "node:path";
+import { type Grant, close, grant, onPath, parsePortFile, portFile, resumeWait, revoke, token, waits } from "../src/bridge.ts";
 import type { Json } from "../src/json.ts";
 import { dead, initialized, limits, markDead, resetCache, serverKey } from "../src/lazy.ts";
 import { tools } from "../src/mcpshim.ts";
@@ -469,4 +469,28 @@ test("a try again gives up waiting at `deadAfter` (the next try is set), but an 
   revoke(g2.token);
   await until("the try again's silence counted", () => (dead(key)?.fails ?? 0) >= 2);
   await until("its late answer cached", () => initialized(key) && dead(key) === null);
+}, 30_000);
+
+test("a server's bare command is found on its own PATH (Windows: with its suffixes, an npm shim as node and its script); one found nowhere fails its handshake", async () => {
+  // A program by a bare name in a folder only the entry's PATH has (as npx is on Windows: npx.cmd, which a spawn
+  // without a shell wouldn't find): a #! script, which Windows runs with Git's sh.
+  const bin = join(work, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "fakemcp"), `#!/bin/sh\nexec '${process.execPath}' "$@"\n`);
+  chmodSync(join(bin, "fakemcp"), 0o755);
+  const path = [bin, process.env.PATH ?? ""].join(delimiter);
+  expect(onPath("fakemcp", { PATH: path })).toBe(join(bin, "fakemcp"));
+  expect(onPath("fakemcp", { PATH: process.env.PATH ?? "" })).toBeNull();
+  const g = base({ servers: { onpath: { type: "stdio", command: "fakemcp", args: [fake], env: { FAKE_LOG: log, PATH: path } } } });
+  const p = (await grant(g)) as number;
+  const called = await rpc(p, `/${g.token}/onpath`, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "hello", arguments: {} } });
+  expect(JSON.stringify(called?.result)).toContain("pid ");
+  expect(startsSeen()).toHaveLength(1);
+  revoke(g.token);
+  const missing = base({ servers: { gone: { type: "stdio", command: "no-such-mcp-server-anywhere", args: [], env: { FAKE_LOG: log } } } });
+  await grant(missing);
+  const init = { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-code", version: "x" } } };
+  expect((await rpc(p, `/${missing.token}/gone`, init))?.error).toBeDefined();
+  expect(startsSeen()).toHaveLength(1);
+  revoke(missing.token);
 }, 30_000);

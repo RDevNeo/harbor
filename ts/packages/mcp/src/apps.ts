@@ -258,8 +258,18 @@ export function signedIn(id: string): boolean {
     case undefined:
       return false;
     default:
-      return load(id) !== undefined;
+      return load(id) !== undefined && !expired(id);
   }
+}
+
+/**
+ * An OAuth sign-in whose access token ran out with no refresh token to renew it (a Vercel sign-in from before
+ * Harbor asked for `offline_access`): turns can't use it, so it shows as "Sign-in expired" rather than signed in.
+ */
+export function expired(id: string): boolean {
+  if (app(id)?.auth.kind !== "oauth") return false;
+  const c = load(id);
+  return c !== undefined && c.refresh_token === "" && c.expires_at > 0 && now() >= c.expires_at;
 }
 
 export function githubUser(): string | undefined {
