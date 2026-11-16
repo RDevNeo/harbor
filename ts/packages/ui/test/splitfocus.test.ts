@@ -61,7 +61,19 @@ function rig() {
     shown = chat;
     split.render();
   };
-  return { split, built, bodies, shell, focus, show, win, render: () => split.render() };
+  /** A chat opened from outside the panes (the new-chat draft): the shell's `openChat` from the draft screen, `showSent`. */
+  const alone = (chat: number) => {
+    split.opened(chat, true);
+    shown = chat;
+    split.render();
+  };
+  /** A chat opened from the single (usual) view: the shell's `openChat` from a chat. */
+  const open = (chat: number) => {
+    split.opened(chat);
+    shown = chat;
+    split.render();
+  };
+  return { split, built, bodies, shell, focus, show, alone, open, kv, win, render: () => split.render() };
 }
 
 test("the focused pane's transcript is built by the shell into that pane's own models", () => {
@@ -132,8 +144,49 @@ test("a chat no pane holds shows as the usual view, never as blank panes; panes 
   expect(r.built).toEqual([2]);
   expect([0, 1].map((i) => r.bodies().rowData(i)?.cards.rowCount())).toEqual([3, 3]);
   expect(heads().rowCount()).toBe(2);
-  // A chat started from the draft screen goes into the focused pane; the other keeps its chat.
+  // In the split view, a chat opened from the sidebar takes the focused pane's place; the other keeps its chat.
   r.focus(7);
   expect(r.win.split_count).toBe(2);
+  expect(r.split.onScreenChats()).toEqual([7, 2]);
   expect([0, 1].map((i) => r.bodies().rowData(i)?.cards.rowCount())).toEqual([3, 3]);
+});
+
+test("the split left for a new chat: the chat sent from the draft shows alone, never in a pane, and the panes are let go", () => {
+  const r = rig();
+  r.render();
+  r.shell();
+  expect(r.split.onScreenChats()).toEqual([1, 2]);
+  // The new-chat draft: the panes go off screen...
+  r.show(null);
+  // ...and the chat its first message started (7) comes on screen by itself.
+  r.alone(7);
+  expect(r.win.split_count).toBe(1);
+  expect(r.split.count()).toBe(1);
+  expect(r.split.onScreenChats()).toEqual([]);
+  expect(r.split.target(7)).toBeNull();
+  expect((r.win.split_heads as unknown as slint.ArrayModel<unknown>).rowCount()).toBe(0);
+  // No pane took it in its chat's place: the layout is gone, not rewritten around it.
+  expect(r.kv.get(SPLIT_KEY)).toBe("");
+  // Another chat opened from the sidebar now is the usual view too.
+  r.open(9);
+  expect(r.win.split_count).toBe(1);
+  expect(r.split.count()).toBe(1);
+});
+
+test("a chat that was in the split, opened from outside it, shows alone: the split doesn't come back", () => {
+  const r = rig();
+  r.render();
+  r.shell();
+  r.show(null);
+  // Pane 2's chat (or a project whose main chat it is), opened from the draft screen.
+  r.alone(2);
+  expect(r.win.split_count).toBe(1);
+  expect(r.split.onScreenChats()).toEqual([]);
+  expect(r.split.target(2)).toBeNull();
+  expect(r.kv.get(SPLIT_KEY)).toBe("");
+  // Then the other pane's chat, from the single view: alone as well.
+  r.open(1);
+  expect(r.win.split_count).toBe(1);
+  expect(r.split.onScreenChats()).toEqual([]);
+  expect(r.kv.get(SPLIT_KEY)).toBe("");
 });

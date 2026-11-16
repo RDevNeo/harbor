@@ -195,8 +195,16 @@ export class SplitPanes {
     return out;
   }
 
-  /** The usual view opens `chat`: its pane takes the keyboard, or it takes the focused pane's place. */
-  opened(chat: number): void {
+  /** The usual view opens `chat`: its pane takes the keyboard, or it takes the focused pane's place. `alone`: it's
+   * opened from outside the panes (the new-chat draft, a chat started there): it shows by itself, even one a pane
+   * held, and the panes are let go, as nothing on screen would bring them back (a chat is dragged in to split again). */
+  opened(chat: number, alone = false): void {
+    if (alone) {
+      if (this.state === null) return;
+      this.state = null;
+      this.save();
+      return;
+    }
     const before = this.state;
     const next = before === null ? null : opened(before, chat);
     if (before !== null && next !== null && next.chats[next.focus] !== before.chats[before.focus]) {

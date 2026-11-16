@@ -1358,7 +1358,7 @@ export class Shell {
         o.groups = new Set(t.groups);
         o.cards = new Set(t.cards);
       }
-      this.openChat(s.view.id, t && t.chat === s.view.id && !t.follow ? t.fromEnd : null);
+      this.openChat(s.view.id, t && t.chat === s.view.id && !t.follow ? t.fromEnd : null, true);
     } else {
       const repo = s.draftRepo !== null && this.data.repo(s.draftRepo) ? s.draftRepo : null;
       this.newDraft(repo, s.draftMain);
@@ -1392,7 +1392,7 @@ export class Shell {
       this.surfaces.openDevices("right");
       this.refreshPanes();
       this.refreshDevices();
-    } else if (name === "chat" && this.data.chat(id)) this.openChat(id);
+    } else if (name === "chat" && this.data.chat(id)) this.openChat(id, null, true); // a shot of the view as kept, panes too
     else if (tab !== null) shown = this.pages.openSettings(tab);
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
@@ -1462,10 +1462,13 @@ export class Shell {
 
   private aheadTimer: ReturnType<typeof setTimeout> | null = null;
 
-  openChat(id: number, fromEnd: number | null = null): void {
+  /** `resume`: the view as it was before an in-place restart, its split panes with it. */
+  openChat(id: number, fromEnd: number | null = null, resume = false): void {
     if (!this.data.chat(id)) return;
     this.openTok++;
     switchTrace.begin(`open ${id}`);
+    // Opened from the draft screen (the split view was left for a new chat): it shows by itself, never in a pane.
+    const alone = this.view !== "chat" && !resume;
     // A split pane on screen taking the keyboard: its transcript stays as it is, where it was read.
     const inPane = this.view === "chat" && this.page === null && this.split.holds(id);
     if (inPane) fromEnd = null;
@@ -1477,7 +1480,7 @@ export class Shell {
     this.refreshInvite();
     this.view = "chat";
     this.chatId = id;
-    this.split.opened(id);
+    this.split.opened(id, alone);
     this.selection = null;
     this.win.sel_shown = false;
     this.engine.unread.delete(id);
@@ -1520,12 +1523,12 @@ export class Shell {
     switchTrace.end();
   }
 
-  /** A chat started (or joined) from the draft screen comes on screen: with split panes, in the focused pane, as a
-   * chat clicked in the sidebar does (the other panes keep theirs). */
+  /** A chat started (or joined) from the draft screen comes on screen by itself, as any chat opened from there: the
+   * split view was left for the draft, so it neither takes a pane nor brings the panes back. */
   private showSent(id: number): void {
     this.view = "chat";
     this.chatId = id;
-    this.split.opened(id);
+    this.split.opened(id, true);
   }
 
   /** The shown composer is left: its text and cursor stay with its key. */
