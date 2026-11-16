@@ -27,6 +27,7 @@ import {
   parseGoogleClient,
   phoneRedirectOk,
   pickClient,
+  playwrightArgs,
   resetLocalsCache,
   sha256,
   signIn,
@@ -169,7 +170,7 @@ test("the built-in Playwright is offered only where npx is installed", () => {
   const bin = fakeNpx();
   process.env.PATH = [bin, process.env.PATH ?? ""].join(delimiter);
   resetLocalsCache();
-  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }]);
+  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { type: "stdio", command: "npx", args: playwrightArgs() }]);
   // Without npx anywhere (an empty PATH; the OS's own tool folders may still have one): no entry that can't start.
   process.env.PATH = join(root, "empty");
   resetLocalsCache();
@@ -195,7 +196,7 @@ test("the built-in Playwright is offered once Harbor's own Node (and its npx) is
   writeFileSync(join(bin, osEnv.execSuffixes().includes(".cmd") ? "npx.cmd" : "npx"), "", { mode: 0o755 });
   noderuntime.resetForTests();
   resetLocalsCache();
-  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def?.[1]).toEqual({ type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] });
+  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def?.[1]).toEqual({ type: "stdio", command: "npx", args: playwrightArgs() });
   expect(mcp.localNote("playwright")).toBeNull();
   expect(mcp.localNote("discord")).toBeNull();
   noderuntime.resetForTests();
@@ -401,4 +402,17 @@ test("on a bridge grant, stdio servers become its URLs and only the team server 
     if (was === undefined) delete integrations.discord;
     else integrations.discord = was;
   }
+});
+
+test("Playwright's Chromium is wanted only for Harbor's own entry on it, while it's on", () => {
+  process.env.PATH = [fakeNpx(), process.env.PATH ?? ""].join(delimiter);
+  resetLocalsCache();
+  expect(mcp.needsPlaywrightChromium()).toBe(playwrightArgs().includes("chromium"));
+  // A user's own entry is theirs, even one on Playwright's Chromium: Harbor installs nothing for it.
+  writeFileSync(join(root, ".claude.json"), JSON.stringify({ mcpServers: { playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest", "--browser", "chromium"] } } }));
+  resetLocalsCache();
+  expect(mcp.needsPlaywrightChromium()).toBe(false);
+  mcp.toggleOff("playwright");
+  resetLocalsCache();
+  expect(mcp.needsPlaywrightChromium()).toBe(false);
 });

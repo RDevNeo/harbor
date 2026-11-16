@@ -27,6 +27,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   phone app has no MCP server list, so nothing changes there.
 
 ### Fixed
+- The built-in Playwright MCP server can open a browser where Google Chrome isn't installed: @playwright/mcp drives
+  Chrome by default and every browser call failed with "Chromium distribution 'chrome' is not found". Harbor's own
+  entry now keeps Chrome where Playwright finds it, else uses Microsoft Edge (`--browser msedge`; always there on
+  Windows, and used on macOS and Linux too when installed), else Playwright's own Chromium (`--browser chromium`),
+  which Harbor installs into Playwright's cache in the background after Node, with the installer of the same
+  `@playwright/mcp@latest` the server runs. The Playwright chip in Settings › Integrations says "Installing a browser
+  for it…" meanwhile, or why it failed (tried again on the next start); a server started during the download waits for
+  it up to a minute. Linux: a plain install, no root asked; when Chromium can't start for missing system libraries the
+  chip names them and the command that adds them. Your own `playwright` entry in `~/.claude.json` is left as it is.
+  Linux, macOS and Windows; the phone app runs no MCP servers, so nothing changes there.
 - Vercel sign-ins no longer die when their first access token runs out: an OAuth sign-in now also asks for
   `offline_access` when the service offers it (Vercel lists it only on its authorization server), so it gets a
   refresh token. A sign-in that ran out with nothing to renew it showed "Sign out" in Settings › Integrations while

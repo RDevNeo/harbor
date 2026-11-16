@@ -626,6 +626,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // Node.js for agents and MCP servers (npx: the built-in Playwright) when the PC has none: fetched in the
   // background a little after the window is up (noderuntime.ts). Not for a rig on a copy of someone's data.
   if (!offline) noderuntime.startBackground(providers.basePath);
+  // The built-in Playwright's browser where the PC has neither Chrome nor Edge (mcp/src/pwbrowser.ts), after Node.
+  if (!offline) mcp.startPlaywrightBrowser();
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
