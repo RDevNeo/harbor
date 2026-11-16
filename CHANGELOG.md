@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.187.5] - 2026-11-15
+
+### Fixed
+- A project's main chat in a split pane (dragged there from the sidebar) is titled with the project's name, as its
+  sidebar row is, instead of the chat's own title.
+
 ## [0.187.4] - 2026-11-15
 
 ### Fixed
