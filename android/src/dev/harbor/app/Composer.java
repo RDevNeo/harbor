@@ -39,6 +39,9 @@ final class Composer {
     final LinearLayout badges;
     private final LinearLayout modelBadge;
     private final TextView modelText, effortBadge;
+    /** The model badge's lock while the chat is pinned to its account, and the pin's line (long press). */
+    private final TextView pinMark;
+    private String pinTip = "";
     private String modelLogo;
     private final FrameLayout send;
     private final TextView sendGlyph;
@@ -169,6 +172,14 @@ final class Composer {
         modelBadge.setOnClickListener(v -> { if (onModel != null) onModel.run(); });
         modelText = Ui.subtitle(Ui.text(a, "", 13, Ui.FG));
         modelBadge.addView(modelText, Ui.margins(new LinearLayout.LayoutParams(-2, -2, 1), 6, 0, 0, 0));
+        pinMark = Ui.icon(a, Ui.I_LOCK, 12, Ui.G700);
+        pinMark.setVisibility(View.GONE);
+        modelBadge.addView(pinMark, Ui.margins(Ui.wrap(), 5, 0, 0, 0));
+        modelBadge.setOnLongClickListener(v -> {
+            if (pinTip.isEmpty()) return false;
+            Ui.toast(a, pinTip);
+            return true;
+        });
         badges.addView(modelBadge, new LinearLayout.LayoutParams(-2, Ui.dp(44), 1));
         effortBadge = Ui.subtitle(Ui.text(a, "", 13, Ui.FG));
         effortBadge.setGravity(Gravity.CENTER);
@@ -266,10 +277,20 @@ final class Composer {
             modelBadge.addView(mark, 0, new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)));
         }
         modelText.setText(model);
-        modelBadge.setContentDescription("Model: " + model);
+        modelBadge.setContentDescription("Model: " + model + (pinTip.isEmpty() ? "" : ". " + pinTip));
         effortBadge.setText(effort);
         effortBadge.setContentDescription("Effort: " + effort);
         effortBadge.setVisibility(effort.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    /** The chat's account pin on the model badge: a lock after the model's name (amber when the
+     *  pinned account can't run it: `broken`), and `tip` on a long press. "" for no pin. */
+    void pin(String tip, boolean broken) {
+        pinTip = tip == null ? "" : tip;
+        pinMark.setVisibility(pinTip.isEmpty() ? View.GONE : View.VISIBLE);
+        pinMark.setTextColor(broken ? Ui.AMBER : Ui.G700);
+        CharSequence model = modelText.getText();
+        modelBadge.setContentDescription("Model: " + model + (pinTip.isEmpty() ? "" : ". " + pinTip));
     }
 
     private android.graphics.drawable.Drawable badgeBackground() {

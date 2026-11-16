@@ -90,6 +90,8 @@ final class Sheet {
         final String id, label, sub; final boolean enabled;
         /** Drawn before the label (an account's logo and owner), or null. */
         final View lead;
+        /** A lock after the label: the account a chat is pinned to (Run.pickAccount). */
+        boolean locked;
         Option(String id, String label, String sub, boolean enabled) { this(id, label, sub, enabled, null); }
         Option(String id, String label, String sub, boolean enabled, View lead) { this.id = id; this.label = label; this.sub = sub; this.enabled = enabled; this.lead = lead; }
     }
@@ -112,6 +114,11 @@ final class Sheet {
             LinearLayout r = Ui.cardRow(a, o.lead, o.label, o.sub, o.enabled ? Ui.FG : Ui.G600,
                     o.enabled ? v -> { s.dismiss(); chosen.on(o.id); } : null);
             Ui.wrapSub(r, 3);
+            if (o.locked) {
+                TextView lock = Ui.icon(a, Ui.I_LOCK, 16, Ui.G700);
+                lock.setContentDescription("Pinned");
+                r.addView(lock, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 8, 0, 4, 0));
+            }
             if (o.id.equals(current)) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
             c.addView(r, Ui.fill());
         }

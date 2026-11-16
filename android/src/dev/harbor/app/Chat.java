@@ -86,6 +86,12 @@ public class Chat extends Base implements Images.Gallery {
     /** Its PC is off: where the next message goes (another PC takes the chat over) or that it waits; over the composer. */
     private TextView foNote, foIcon;
     private LinearLayout foBox;
+    /** Its account pin is broken (the pinned account is missing, signed out or turned off on its PC):
+     *  the hub's line with Pick another account and Unpin, over the composer. */
+    private TextView pinNote, pinIcon;
+    private LinearLayout pinBox;
+    /** The notice's Unpin: only for the chat's own pin (a project's is unpinned in its project sheet). */
+    private TextView pinUnpin;
     /** In front (resumed): a captcha card asks for frames only then. */
     private boolean front;
     /** Opened from a captcha's notification: the first load scrolls to its card. */
@@ -195,6 +201,23 @@ public class Chat extends Base implements Images.Gallery {
         foBox.addView(foNote, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         foBox.setVisibility(View.GONE);
         below.addView(foBox, Ui.margins(Ui.fill(), 0, 0, 0, 6));
+        // A broken account pin: the same amber notice, with the lock and its two ways out under the line.
+        pinBox = Ui.col(this);
+        pinBox.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));
+        LinearLayout pinLine = new LinearLayout(this);
+        pinLine.setOrientation(LinearLayout.HORIZONTAL);
+        pinIcon = Ui.icon(this, Ui.I_LOCK, 15, Ui.G700);
+        pinLine.addView(pinIcon, Ui.margins(Ui.wrap(), 0, 1, 10, 0));
+        pinNote = Ui.text(this, "", 13, Ui.G700);
+        pinLine.addView(pinNote, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        pinBox.addView(pinLine, Ui.fill());
+        LinearLayout pinActs = Ui.row(this);
+        pinActs.addView(small("Pick another account", this::pickAccount));
+        pinUnpin = small("Unpin", () -> pin(null));
+        pinActs.addView(pinUnpin, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        pinBox.addView(pinActs, Ui.margins(Ui.fill(), 25, 8, 0, 0));
+        pinBox.setVisibility(View.GONE);
+        below.addView(pinBox, Ui.margins(Ui.fill(), 0, 0, 0, 6));
         below.addView(comp.view, Ui.fill());
         // The tray: narrower than the card, its sides under the card's rounded corners.
         below.addView(work.view, Ui.margins(Ui.fill(), 22, 0, 22, 0));
@@ -319,6 +342,22 @@ public class Chat extends Base implements Images.Gallery {
         String home = c.optString("home_name", "");
         String line = acc;
         sub(line, Ui.G700);
+        // Pinned to one account (PROTOCOL.md "Account pins"): a lock after its name here and on the
+        // model badge (its line on a long press); amber, with the notice over the composer, when broken.
+        JSONObject pin = Run.pinOf(c);
+        boolean pinBroken = Run.pinBroken(pin);
+        if (pin != null && !line.isEmpty()) {
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(line + "  ");
+            int at = sb.length();
+            glyph(sb, Ui.I_LOCK, 12);
+            if (pinBroken) sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.AMBER), at, sb.length(), 0);
+            barSub.setText(sb);
+        }
+        comp.pin(pin == null ? "" : pin.optString("tip"), pinBroken);
+        pinNote.setText(pinBroken ? pin.optString("tip") : "");
+        pinNote.setTextColor(Ui.dark ? 0xfffef3dd : 0xff541c00);
+        pinIcon.setTextColor(Ui.dark ? 0xfff2a20d : 0xffa64f00);
+        pinBox.setBackground(Ui.round(Ui.dark ? 0xff291800 : 0xfffff6e1, Ui.dark ? 0xff6b4105 : 0xffffc85e, 12));
         boolean ro = c.has("writable") && !c.optBoolean("writable", true);
         offNote.setText(c.optBoolean("retired") ? "This agent was retired, so it takes no more messages. Its chat stays here to read."
                 : home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
@@ -338,6 +377,8 @@ public class Chat extends Base implements Images.Gallery {
         foIcon.setTextColor(warn ? (Ui.dark ? 0xfff2a20d : 0xffa64f00) : Ui.G700);
         foBox.setBackground(warn ? Ui.round(Ui.dark ? 0xff291800 : 0xfffff6e1, Ui.dark ? 0xff6b4105 : 0xffffc85e, 12) : Ui.round(Ui.CARD, Ui.LINE, 12));
         foBox.setVisibility(!ro && !fo.isEmpty() ? View.VISIBLE : View.GONE);
+        pinBox.setVisibility(!ro && pinBroken ? View.VISIBLE : View.GONE);
+        pinUnpin.setVisibility(pin != null && "chat".equals(pin.optString("scope")) ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));
@@ -702,10 +743,20 @@ public class Chat extends Base implements Images.Gallery {
             LinearLayout acts = Ui.row(this);
             acts.addView(small("Continue now", () -> post("continue")));
             if (limit.optBoolean("can_cancel")) acts.addView(small("Cancel", () -> post("cancel_limit")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
-            // Continue on another account of the provider (hubs from 0.48 send `targets`).
+            // Continue on another account of the provider (hubs from 0.48 send `targets`). Pinned to its
+            // account instead (hubs from 0.189 send `pinned`): it waits for the reset, and a second row
+            // lets it go on on another account this once (the pin stays), or unpins it.
             JSONArray targets = limit.optJSONArray("targets");
-            if (targets != null && targets.length() > 0) acts.addView(small("Continue on…", () -> continueOn(targets)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+            boolean pinned = limit.optJSONObject("pinned") != null;
+            if (!pinned && targets != null && targets.length() > 0) acts.addView(small("Continue on…", () -> continueOn(targets)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
+            if (pinned) {
+                LinearLayout pins = Ui.row(this);
+                pins.addView(small("Use another account this time", this::useOther));
+                // A project's pin is unpinned in its project sheet, not here.
+                if ("chat".equals(limit.optJSONObject("pinned").optString("scope"))) pins.addView(small("Unpin", () -> pin(null)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+                status.addView(pins, Ui.margins(Ui.fill(), 23, 2, 0, 4));
+            }
         }
         // The project isn't on the chat's PC (a project another PC shares; hubs from 0.62).
         JSONObject folder = b.optJSONObject("folder");
@@ -969,6 +1020,12 @@ public class Chat extends Base implements Images.Gallery {
         });
     }
 
+    /** The pinned limit line's Use another account this time: it goes on now on another account of
+     *  its provider; the pin stays, and it goes back after the reset (`POST use_other`). */
+    private void useOther() {
+        Ui.bg(this, () -> folderCall("use_other", null), r -> load(false));
+    }
+
     /** The folder line's Clone here (or Use a folder here): where on the PC (the hub suggests the
      *  owner's place under this PC's home; a folder that already holds the project is used as it is). */
     private void cloneHere(String suggested, String action, String note) {
@@ -1019,6 +1076,8 @@ public class Chat extends Base implements Images.Gallery {
 
     /** A run-settings pick: PATCH the chat; the hub answers with the chat as it is now. */
     private void change(String field, Object value) {
+        // The account pin's row: its own call.
+        if ("pin".equals(field)) { pin(value instanceof String ? (String) value : null); return; }
         JSONObject body = new JSONObject();
         try { body.put(field, value); } catch (Exception ignored) { }
         Ui.bg(this, () -> hub.call("PATCH", "/v1/chats/" + chatId, body), r -> {
@@ -1032,6 +1091,32 @@ public class Chat extends Base implements Images.Gallery {
                 showChat(c);
             } else refreshState();
         });
+    }
+
+    /** Keeps the chat on account `to` (null: unpins it; `POST pin`, PROTOCOL.md "Account pins"): the
+     *  hub moves it there now or when its running turn ends, and answers what it did and the chat. */
+    private void pin(String to) {
+        JSONObject body = new JSONObject();
+        try { body.put("account", to == null ? JSONObject.NULL : to); } catch (Exception ignored) { }
+        Ui.bg(this, () -> folderCall("pin", body), r -> {
+            String said = r.optString("text", "");
+            if (!said.isEmpty()) Ui.toast(this, said);
+            JSONObject c = r.optJSONObject("chat");
+            if (c != null) {
+                JSONObject st = Hub.states.get(hub.id);
+                if (st != null) replaceChat(st, c);
+                showChat(c);
+            } else refreshState();
+            // The limit bar's choices follow the pin.
+            load(false);
+        });
+    }
+
+    /** A broken pin's Pick another account: the account picker (the hub moves the pin to the one picked). */
+    private void pickAccount() {
+        if (run == null) return;
+        if (!run.can("account")) { Ui.toast(this, "The account can't change now: " + run.why("account")); return; }
+        run.pickAccount(this, this::change);
     }
 
     /** The slash menu's Harbor commands: /model and /effort open their pickers, /new a new chat

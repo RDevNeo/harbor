@@ -436,6 +436,20 @@ refetch everything.
   message goes out when a PC is back, and the line ends with "N waiting.").
   `/v1/state` projects whose PC is off carry the same kind of line as `failover`: the new-chat line
   (a new chat starts on the PC it names, or `409` with that line when none can run it).
+- `pin` (0.189; missing: an older hub, so offer no pinning; null: not pinned): the chat is pinned to
+  one provider account, `{"account": "claude2" | null, "label": "Claude · IG", "scope": "chat" |
+  "project", "why": "", "tip": "Pinned to Claude · IG: Harbor won't switch it"}`. While pinned
+  Harbor never moves it to another account by itself (no usage-limit failover: at a limit it waits
+  for the reset; see `status.limit.pinned`). `account` is that account's id on the chat's PC (null:
+  that PC doesn't have it); `scope` `project`: the pin is its project's (`projects[].pin`), not the
+  chat's own. `why` is `""` while the account can run it, else what's wrong ("is signed out",
+  "isn't on this PC", "is turned off in Settings › Providers"); `tip` is the line to show: the
+  pin, or with a `why` the whole error sentence. The phone draws a lock after the account's name
+  under the title and after the model on the composer's model badge (a long press there toasts
+  `tip`), amber with a `why`; then an amber notice over the composer says `tip` with **Pick another
+  account** (the account picker: `PATCH` `account`, which moves the pin there) and **Unpin**. See
+  [Account pins](#account-pins-0189).
+  `/v1/state` `projects[]` carry `pin` too, the same shape with `scope` `project` (null: none).
 - `worktree` (optional, 0.66; null or missing: it runs in the project's checkout, or an older
   hub): the chat runs in a git worktree of its own (sub-agents: their lead's), `{"name":
   "app-a1b2c3", "path": "/home/sam/.local/share/harbor/worktrees/app-a1b2c3" | null, "gone":
@@ -616,6 +630,11 @@ the desktop shows nothing:
   `targets: [{id, name}]` (optional, hubs before 0.48 send none): other signed-in accounts of the
   same provider that aren't blocked; when not empty, a **Continue on…** chip opens a picker of
   their `name`s and sends the choice to `POST /v1/chats/{id}/continue_on`.
+  `pinned: {label, scope}` (0.189; null or missing: not pinned): the chat is pinned to this account
+  (`label`; `scope` `chat` or `project`, as the chat's `pin`), so it waits for the reset. Instead of
+  **Continue on…**, a second row offers **Use another account this time** (`POST
+  /v1/chats/{id}/use_other`) and **Unpin** (`POST /v1/chats/{id}/pin` with `account` null);
+  **Continue now** and **Cancel** stay.
 - `agents: {title, folded, header, rows: [{id, name, doing, task, model, logo, badge, since_ms, usage}]}` (optional,
   null or missing without running sub-agents; older hubs never send it): the live strip over a
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
@@ -853,6 +872,7 @@ first; if any field fails nothing changes (`400` an unknown value, `409` not swi
   that changes provider continues in a fresh session that gets the conversation so far. A started
   subagent keeps its provider (Claude accounts share sessions, so it may move between them).
   When the provider changes and no `model` is given, the model becomes that provider's first one.
+  A pinned chat (`pin`, 0.189) may switch by hand too: its pin moves to the account picked.
 - `model`: one of `models[kind]` of the (new) account's kind.
 - `effort`: one of `efforts[kind]`, or `""`. Left out and no longer valid for the provider: its default.
 - `access`: one of `access[kind]`. Left out and no longer valid: the provider's first level.
@@ -1204,6 +1224,13 @@ project is gone.
   settings below say). `200 {ok, removed, branches, kept, busy, open, said}`; `said` is the line
   the app toasts ("Removed 2 merged worktrees and their branches; kept 1 (…: it has 1 uncommitted
   change)").
+- Keep on one account… (0.189, [Account pins](#account-pins-0189)): item `act` `pin_account`, `icon`
+  lock. `menu` also has `pin` (the project's, as a chat's `pin` with `scope` `project`; null: none)
+  and `pin_choices: [{id, label}]` (the accounts it can be pinned to; null: a Harbor without pins).
+  The app opens a chooser of `pin_choices` (the pinned one checked), plus **Unpin** while pinned,
+  and sends `do` with `act` `pin_account` and `account` (the id picked, or null to unpin):
+  `200 {ok, text, pin}`, `text` the line it toasts; `409 {error}` when it can't. Its chats and
+  their agents stay on that account.
 
 ### Merged worktrees settings (0.154): `GET`/`PUT /v1/worktrees/settings`
 
@@ -1345,6 +1372,28 @@ continue). → `{"ok": true}`.
 continues there now (like the desktop's Continue on…). → `{"ok": true}`; `409` when that account
 can't take it now (blocked, signed out, gone) or the chat couldn't move. Hubs before 0.48 answer
 `404 unknown action`.
+
+### Account pins (0.189)
+
+A chat, or a whole project, can be pinned to one provider account ("Claude · IG", "Codex"):
+Harbor then never switches it by itself (no usage-limit failover; at a limit it waits for the
+reset). The user may still pick another account by hand (`PATCH` `account`: the pin moves with
+it). The chat's `pin` and `projects[].pin` in `/v1/state` say what it's pinned to and whether that
+account can run it there; hubs before 0.189 send no `pin` and answer `404` to these calls.
+
+- `POST /v1/chats/{id}/pin` `{"account": "<id>"}` pins the chat to that account (it moves there
+  now, or when its running turn ends); `{"account": null}` unpins it. → `{"ok": true, "text":
+  "Pinned to Claude · IG", "chat": {…as in /v1/state…}}`, `text` the line to toast; `409 {error}`
+  when it can't. The phone pins to the account picked in the chat's run settings: under Account in
+  the composer's + sheet, a switch "Keep this chat on <account>" (on: "Pinned to <label>"; off
+  unpins), or with a project's pin "This project keeps its chats on <label>" and **Pin this
+  chat**; a broken pin's `tip` under it. The account picker marks the pinned account with a lock.
+- `POST /v1/chats/{id}/use_other` (no body): a pinned chat waiting at its account's usage limit
+  goes on now on another account of its provider, this once: the pin stays and it goes back after
+  the reset (the limit line's **Use another account this time**). → `{"ok": true}`; `409 {error}`
+  when no other account can take it.
+- A project's pin is set from its sheet ([Project menu](#project-menu-01122-post-v1projectsmenu-post-v1projectsdo),
+  `pin_account`).
 
 ### `GET /v1/image?path=<absolute path>&max=<px>`
 
@@ -2052,7 +2101,7 @@ Harbor keeps a full copy of every chat (`src/mesh.rs`), so any of them answers t
 same chats, rendered the same way.
 
 - A chat runs on one PC, its `home`. Another hub holds a copy: reading it is local; a write to it
-  (`send`, `stop`, `stop_all`, `retire`, `continue`, `cancel_limit`, `continue_on`, `fork`, `slash`, `move_pc`, `PATCH`, `DELETE`), and
+  (`send`, `stop`, `stop_all`, `retire`, `continue`, `cancel_limit`, `continue_on`, `pin`, `use_other`, `fork`, `slash`, `move_pc`, `PATCH`, `DELETE`), and
   `GET …/slash` and `GET …/move_targets`, is forwarded to the home PC and answered from there. The message records where it came from (`sender`).
   While the home PC is off the copy is read-only (`writable: false`, writes `409`) and catches up
   when it's back.

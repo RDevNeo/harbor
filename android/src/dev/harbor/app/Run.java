@@ -1,6 +1,8 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.Switch;
 
@@ -35,6 +37,29 @@ final class Run {
             fast = chat.optBoolean("fast", fast);
             project = chat.isNull("project_id") ? "" : chat.optString("project_id");
         }
+    }
+
+    /** The chat's account pin (hubs from 0.189; PROTOCOL.md "Account pins"): `{account, label, scope,
+     *  why, tip}`, null when it has none (or the hub doesn't know pins). */
+    JSONObject pin() { return pinOf(chat); }
+
+    static JSONObject pinOf(JSONObject c) {
+        return c == null || c.isNull("pin") ? null : c.optJSONObject("pin");
+    }
+
+    /** The pinned account is missing, signed out or turned off on the chat's PC: `why` says which. */
+    static boolean pinBroken(JSONObject pin) {
+        return pin != null && !pin.isNull("why") && !pin.optString("why", "").isEmpty();
+    }
+
+    /** The hub's line with a full stop, for text that goes on after it. */
+    static String sentence(String s) {
+        return s.isEmpty() || s.endsWith(".") || s.endsWith("!") || s.endsWith("?") ? s : s + ".";
+    }
+
+    /** The account the pin names on the chat's PC ("": none, or that account isn't on that PC). */
+    static String pinAccount(JSONObject pin) {
+        return pin == null || pin.isNull("account") ? "" : pin.optString("account", "");
     }
 
     String kind() {
@@ -243,6 +268,11 @@ final class Run {
 
         LinearLayout m = s.card();
         m.addView(row(a, Ui.I_USER, "Account", accountLabel(), can("account"), why("account"), () -> pickAccount(a, ch)), Ui.fill());
+        // Keep this chat on its account (hubs that know pins send `pin`, null when there's none).
+        if (chat != null && chat.has("pin") && (pin() != null || !account.isEmpty())) {
+            m.addView(Ui.gap(a));
+            m.addView(pinRow(a, ch), Ui.fill());
+        }
         m.addView(Ui.gap(a));
         m.addView(row(a, Ui.I_SPARKLES, "Model", modelLabel(), can("model") && models().length() > 0, why("model"), () -> pickList(a, "Model", models(), model, "model", ch)), Ui.fill());
         if (efforts().length() > 0) {
@@ -258,6 +288,34 @@ final class Run {
         sw.setOnCheckedChangeListener((b, on) -> ch.apply("fast", on));
         f.addView(sw);
         m.addView(f, Ui.fill());
+    }
+
+    /** The account pin's row under Account: a switch that keeps this chat on its account (Harbor
+     *  then never switches it, and at a usage limit it waits for the reset), on while it's pinned.
+     *  A pin its project gives says so, and its button pins the chat itself to its account. A
+     *  broken pin (`why`) has its lock in amber and the hub's sentence under it. */
+    private LinearLayout pinRow(Activity a, Changed ch) {
+        JSONObject p = pin();
+        boolean broken = pinBroken(p);
+        View mark = Ui.disc(a, p != null ? Ui.I_LOCK : Ui.I_LOCK_OPEN, 44);
+        if (broken) ((android.widget.TextView) ((FrameLayout) mark).getChildAt(0)).setTextColor(Ui.AMBER);
+        if (p != null && "project".equals(p.optString("scope"))) {
+            LinearLayout r = Ui.cardRow(a, mark, "This project keeps its chats on " + p.optString("label"),
+                    broken ? p.optString("tip") : "Harbor won't switch them; at a usage limit they wait for the reset", Ui.FG, null);
+            Ui.wrapSub(r, 3);
+            if (!account.isEmpty()) r.addView(Ui.rowButton(a, "Pin this chat", false, v -> ch.apply("pin", account)));
+            return r;
+        }
+        String title = p != null ? "Pinned to " + p.optString("label") : "Keep this chat on " + accountLabel();
+        String sub = broken ? p.optString("tip") : "Harbor won't switch it to another account; at a usage limit it waits for the reset";
+        LinearLayout r = Ui.cardRow(a, mark, title, sub, Ui.FG, null);
+        Ui.wrapSub(r, 3);
+        Switch sw = new Switch(a);
+        sw.setChecked(p != null);
+        sw.setContentDescription(p != null ? "Unpin" : "Keep this chat on " + accountLabel());
+        sw.setOnCheckedChangeListener((b, on) -> ch.apply("pin", on ? account : null));
+        r.addView(sw);
+        return r;
     }
 
     private LinearLayout row(Activity a, String glyph, String title, String value, boolean enabled, String reason, Runnable on) {
@@ -307,12 +365,24 @@ final class Run {
         Sheet.pick(a, title, note, o, cur, id -> { if (!id.equals(cur)) ch.apply(field, id); });
     }
 
-    private void pickAccount(Activity a, Changed ch) {
+    /** The account picker (the Account row, and a broken pin's Pick another account). A pinned
+     *  chat may move too: the hub moves its pin to the account picked. The pinned one has a lock. */
+    void pickAccount(Activity a, Changed ch) {
         List<Sheet.Option> o = new ArrayList<>();
+        JSONObject p = pin();
+        String pinned = pinAccount(p);
         // Each with its logo and whose it is: their workspace photo (hubs from 0.163), else their initials.
-        for (JSONObject j : accounts()) o.add(new Sheet.Option(j.optString("id"), j.optString("label", j.optString("id")), usage(j), true,
-                Ui.accountMark(a, Labels.logo(j.optString("kind")), j.optString("badge"), 28, j.optString("photo"))));
-        String note = chat == null ? "Any provider can lead a chat. OpenCode works alone, without subagents." : null;
+        for (JSONObject j : accounts()) {
+            Sheet.Option op = new Sheet.Option(j.optString("id"), j.optString("label", j.optString("id")), usage(j), true,
+                    Ui.accountMark(a, Labels.logo(j.optString("kind")), j.optString("badge"), 28, j.optString("photo")));
+            op.locked = !pinned.isEmpty() && pinned.equals(op.id);
+            o.add(op);
+        }
+        String note = chat == null ? "Any provider can lead a chat. OpenCode works alone, without subagents."
+                : p == null ? null
+                : pinBroken(p) ? sentence(p.optString("tip")) + " Pick another account to keep it on that one."
+                : "project".equals(p.optString("scope")) ? "This project keeps its chats on " + p.optString("label") + ". Pick another to keep this chat on that one."
+                : "Pinned to " + p.optString("label") + ": Harbor won't switch it. Pick another to keep it on that one.";
         Sheet.pick(a, "Account", note, o, account, id -> ch.apply("account", id));
     }
 

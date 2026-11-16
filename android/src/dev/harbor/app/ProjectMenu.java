@@ -13,6 +13,8 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /** A project's sheet: what the desktop's project row offers, in its order and words. The row's
  *  own buttons first (New chat in this project, Snooze), then its right-click menu (Open
@@ -57,6 +59,7 @@ final class ProjectMenu {
             case "link": return Ui.I_LINK;
             case "monitor": return Ui.I_MONITOR;
             case "merge": return Ui.I_MERGE;
+            case "lock": return Ui.I_LOCK;
             default: return null;
         }
     }
@@ -159,6 +162,9 @@ final class ProjectMenu {
             case "move_pc":
                 ProjectMove.show(a, hub, pid, m.optString("name", "Project"), after);
                 break;
+            case "pin_account":
+                pinAccount(a, hub, pid, m, after);
+                break;
             case "remove":
                 Ui.dialog(a).setTitle("Remove project?")
                         .setMessage("Its chats are removed from Harbor. Nothing on disk is touched.")
@@ -169,6 +175,28 @@ final class ProjectMenu {
             default:
                 break;
         }
+    }
+
+    /** Not an account id: the chooser's Unpin. */
+    private static final String UNPIN = "\u0000unpin";
+
+    /** Keep on one account…: the accounts the menu offers (`pin_choices`), the pinned one checked,
+     *  and Unpin while it has a pin. The pick goes to `do` as `pin_account` (`account` null: unpin). */
+    private static void pinAccount(Base a, Hub hub, String pid, JSONObject m, Runnable after) {
+        JSONObject pin = Run.pinOf(m);
+        List<Sheet.Option> o = new ArrayList<>();
+        JSONArray choices = m.optJSONArray("pin_choices");
+        for (int i = 0; choices != null && i < choices.length(); i++) {
+            JSONObject c = choices.optJSONObject(i);
+            if (c != null) o.add(new Sheet.Option(c.optString("id"), c.optString("label", c.optString("id")), "", true));
+        }
+        if (pin != null) o.add(new Sheet.Option(UNPIN, "Unpin", "Harbor may switch its chats to another account again", true));
+        String note = Run.pinBroken(pin) ? Run.sentence(pin.optString("tip")) + " Pick another account, or unpin it."
+                : "Its chats and agents stay on the account you pick: Harbor won't switch them, and at a usage limit they wait for the reset.";
+        Sheet.pick(a, "Keep on one account", note, o, Run.pinAccount(pin), id -> Ui.bg(a,
+                () -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "pin_account")
+                        .put("account", UNPIN.equals(id) ? JSONObject.NULL : id)),
+                r -> { Ui.toast(a, r.optString("text", "Done")); after.run(); }));
     }
 
     private static JSONObject run(Hub hub, String pid, String act, String upload) throws Exception {
