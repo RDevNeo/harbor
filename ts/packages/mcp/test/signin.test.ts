@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as mcp from "../src/mcp.ts";
+import { oauthScope } from "../src/signin.ts";
 
 let root: string;
 const saved = { ...process.env };
@@ -190,5 +191,69 @@ test("a cancelled sign-in stops waiting", async () => {
     (e: Error) => e.message,
   );
   expect(await p).toBe("Sign-in was cancelled.");
+  void server.stop(true);
+});
+
+test("an OAuth sign-in asks for offline_access when the server offers it, so it gets a refresh token (Vercel)", () => {
+  // Vercel: the resource lists only openid; its authorization server lists offline_access.
+  expect(oauthScope(["openid"], ["openid", "email", "profile", "offline_access"])).toBe("openid offline_access");
+  expect(oauthScope(["read", "write"], ["read", "write"])).toBe("read write");
+  expect(oauthScope(undefined, undefined)).toBe("");
+  expect(oauthScope(["openid", "offline_access"], ["offline_access", "openid"])).toBe("openid offline_access");
+  // Every scope the server lists: offline_access once.
+  expect(oauthScope(["user:read"], ["offline_access", "user:read", "d1.write"], true)).toBe("offline_access user:read d1.write");
+  expect(oauthScope(["a"], ["b"], true)).toBe("b");
+});
+
+test("an OAuth sign-in that ran out with no refresh token is expired, not signed in, and a new sign-in replaces it", async () => {
+  const at = Math.floor(Date.now() / 1000);
+  mcp.save("vercel", mcp.blankCred({ access_token: "at-old", expires_at: at - 8 * 86400, token_endpoint: "http://127.0.0.1:9/t" }));
+  expect(mcp.expired("vercel")).toBe(true);
+  expect(mcp.signedIn("vercel")).toBe(false);
+  expect(await mcp.freshToken("vercel", false)).toBeUndefined();
+  expect(await mcp.claudeServers()).not.toHaveProperty("vercel");
+  // Still valid, renewable, or never expiring: not expired.
+  mcp.save("vercel", mcp.blankCred({ access_token: "at", expires_at: at + 3600 }));
+  expect([mcp.expired("vercel"), mcp.signedIn("vercel")]).toEqual([false, true]);
+  mcp.save("vercel", mcp.blankCred({ access_token: "at", refresh_token: "rt", expires_at: at - 60 }));
+  expect([mcp.expired("vercel"), mcp.signedIn("vercel")]).toEqual([false, true]);
+  mcp.save("vercel", mcp.blankCred({ access_token: "at", expires_at: 0 }));
+  expect(mcp.expired("vercel")).toBe(false);
+  // A key never expires; neither does nothing.
+  mcp.save("context7", mcp.blankCred({ access_token: "k", expires_at: 1 }));
+  expect([mcp.expired("context7"), mcp.expired("linear")]).toEqual([false, false]);
+  // Signing in again over the expired one.
+  mcp.save("vercel", mcp.blankCred({ access_token: "at-old", expires_at: 1 }));
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const u = new URL(req.url);
+      const base = u.origin;
+      if (u.pathname.startsWith("/.well-known/oauth-protected-resource")) return Response.json({ authorization_servers: [base], resource: `${base}/mcp`, scopes_supported: ["openid"] });
+      if (u.pathname.startsWith("/.well-known/oauth-authorization-server")) {
+        return Response.json({ authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`, registration_endpoint: `${base}/register`, scopes_supported: ["openid", "offline_access"] });
+      }
+      if (u.pathname === "/register") {
+        expect(((await req.json()) as { scope: string }).scope).toBe("openid offline_access");
+        return Response.json({ client_id: "cid-v" });
+      }
+      if (u.pathname === "/token") return Response.json({ access_token: "at-new", refresh_token: "rt-new", expires_in: 3600 });
+      return new Response(null, { status: 404 });
+    },
+  });
+  let scope = "";
+  await mcp.oauthLogin("vercel", `http://127.0.0.1:${server.port}/mcp`, new AbortController().signal, (p) => {
+    const q = new URL(p.url ?? "").searchParams;
+    scope = q.get("scope") ?? "";
+    void fetch(`${q.get("redirect_uri")}?code=c&state=${q.get("state")}`);
+  });
+  expect(scope).toBe("openid offline_access");
+  expect(mcp.load("vercel")).toMatchObject({ access_token: "at-new", refresh_token: "rt-new", client_id: "cid-v" });
+  expect([mcp.expired("vercel"), mcp.signedIn("vercel")]).toEqual([false, true]);
+  // Sign out works on an expired one too.
+  mcp.save("vercel", mcp.blankCred({ access_token: "at-old", expires_at: 1 }));
+  mcp.signOut("vercel");
+  expect(mcp.load("vercel")).toBeUndefined();
   void server.stop(true);
 });

@@ -93,7 +93,8 @@ export function locals(): LocalDef[] {
   const defs = LOCAL.map((l): LocalDef => {
     const found = servers.find(([n]) => localFor(n)?.id === l.id);
     if (found) return { local: l, def: found };
-    if (l.id === "playwright") return { local: l, def: ["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }] };
+    // The built-in Playwright needs npx: without it the server can't start, and the chip says it isn't set up.
+    if (l.id === "playwright" && providers.which("npx") !== null) return { local: l, def: ["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }] };
     return { local: l, def: undefined };
   });
   localsCache = { at: Date.now(), defs };

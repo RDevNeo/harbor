@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Vercel sign-ins no longer die when their first access token runs out: an OAuth sign-in now also asks for
+  `offline_access` when the service offers it (Vercel lists it only on its authorization server), so it gets a
+  refresh token. A sign-in that ran out with nothing to renew it showed "Sign out" in Settings › Integrations while
+  chats got none of its tools; it now says "Sign-in expired: sign in again", and Sign in replaces it. Sign in to
+  Vercel again once to get the refresh token; a running chat gets the tools on its next message.
+- Windows: Playwright and other MCP servers started by a bare command (`npx`, npm's .cmd shims) start: the command
+  is looked up on the server's PATH with Windows' suffixes and an npm shim runs as node and its script, as turns do.
+  Before, they failed with "ProtocolError dialing …/playwright". Linux and macOS look the command up the same way.
+- The built-in Playwright server is offered only where `npx` is installed; elsewhere its chip says "Not set up on
+  this machine" and turns don't get a server that can't start.
+- Phone app unaffected: it shows no sign-in status for these apps or the local servers (only its own Gmail,
+  Discord and WhatsApp screens), so nothing changes there.
+
 ## [0.188.0] - 2026-11-16
 
 ### Changed

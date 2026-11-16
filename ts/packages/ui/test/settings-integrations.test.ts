@@ -10,6 +10,7 @@ function view(over: Partial<AppsView> = {}): AppsView {
   return {
     pending: () => undefined,
     signedIn: () => false,
+    expired: () => false,
     account: () => undefined,
     error: () => undefined,
     googleBuiltin: () => false,
@@ -47,6 +48,15 @@ test("integrations shows a signed-in app with who it is and a Sign out button", 
   expect(find(d, "github")).toMatchObject({ sub: "Signed in as someone", action: "signout", action_primary: false });
   const named = data(view({ signedIn: (id) => id === "github" }));
   expect(find(named, "github")?.sub).toBe("Repos, issues, PRs; gh and git push");
+});
+
+test("integrations shows an expired sign-in as expired, with Sign in to sign in again", () => {
+  const d = data(view({ expired: (id) => id === "vercel" }));
+  expect(find(d, "vercel")).toMatchObject({ sub: "Sign-in expired: sign in again", sub_tone: 2, action: "signin", action_text: "Sign in", action_primary: true });
+  expect(find(d, "linear")).toMatchObject({ sub: "Issues, projects, cycles", sub_tone: 0 });
+  // Signing in again: the flow's own line, not the expired one.
+  const again = find(data(view({ expired: (id) => id === "vercel", pending: (id) => (id === "vercel" ? {} : undefined) })), "vercel");
+  expect([again?.sub, again?.sub_tone, again?.action]).toEqual(["Finish in your browser\u{2026}", 1, "cancel"]);
 });
 
 test("integrations tells a sign-in going on from its code and its URL", () => {

@@ -1,8 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { readFileSync, statSync, unlinkSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { basename, join } from "node:path";
+import { basename, delimiter, isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { HEAD_WAIT, HttpError, header, Reader, readBody, readChunked, readHead, urlEncode, type Request } from "@harbor/net";
 import { dataDir, home, privateDir, single, writePrivate } from "@harbor/store";
@@ -16,7 +16,7 @@ import { ackFor, asked, cached, dead, flush, initialized, idleFor, limits, markD
 import { answer as teamAnswer, callApp } from "./mcpshim.ts";
 import { selfExe } from "./sys.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
-import { proc } from "@harbor/os";
+import { env as osEnv, proc } from "@harbor/os";
 
 export { OUTPUT_MAX, shell, token };
 
@@ -320,13 +320,42 @@ function team(t: { chat: number; role: string; sock: string }, msg: Obj): Promis
   return teamAnswer(msg, t.chat, t.role, (c, n, a) => callApp(c, n, a, { path: t.sock }), harborVersion());
 }
 
+/** `name`'s file on `env`'s PATH, with the suffixes a command may have there (Windows: PATHEXT's); null if none. */
+export function onPath(name: string, env: Record<string, string | undefined>): string | null {
+  const suffixes = osEnv.execSuffixes(env);
+  for (const d of (env.PATH ?? env.Path ?? "").split(delimiter)) {
+    if (d === "") continue;
+    for (const x of suffixes) {
+      const p = join(d, name + x);
+      if (isProgram(p)) return p;
+    }
+  }
+  return null;
+}
+
+function isProgram(p: string): boolean {
+  try {
+    if (!statSync(p).isFile()) return false;
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function spawnServer(cwd: string, def: Obj): Promise<Proc | null> {
   const command = def.command;
   if (typeof command !== "string") return null;
   const args = Array.isArray(def.args) ? def.args.filter((a): a is string => typeof a === "string") : [];
   const env = await agentProcessEnv();
   if (isObject(def.env)) for (const [k, v] of Object.entries(def.env)) if (typeof v === "string") env[k] = v;
-  const child = spawn(command, args, { cwd: isDir(cwd) ? cwd : undefined, env, stdio: ["pipe", "pipe", "ignore"] });
+  // A bare name is looked up on the server's own PATH, Windows' suffixes too (npx is npx.cmd there, which node's
+  // spawn without a shell doesn't find); an npm shim then runs as node and its script (argvOf), as turns do.
+  const found = isAbsolute(command) || /[\\/]/.test(command) ? command : onPath(command, env);
+  if (found === null) return null;
+  const [prog, ...pre] = osEnv.argvOf(found, env);
+  if (prog === undefined) return null;
+  const child = spawn(prog, [...pre, ...args], { cwd: isDir(cwd) ? cwd : undefined, env, stdio: ["pipe", "pipe", "ignore"] });
   const failed = await new Promise<Error | null>((res) => {
     child.once("spawn", () => res(null));
     child.once("error", res);

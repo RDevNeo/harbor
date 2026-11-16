@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+import { providers } from "@harbor/agents";
+import { env as osEnv } from "@harbor/os";
 import {
   accountFile,
   accountsIn,
@@ -153,7 +155,33 @@ test("device_codes_and_names: device codes and names", () => {
   expect(dec("a%20b+c%3D")).toBe("a b c=");
 });
 
+/** An `npx` on PATH (a folder of its own), for the built-in Playwright; Windows finds it as npx.cmd. */
+function fakeNpx(): string {
+  const bin = join(root, "npxbin");
+  mkdirSync(bin, { recursive: true });
+  const name = osEnv.execSuffixes().includes(".cmd") ? "npx.cmd" : "npx";
+  writeFileSync(join(bin, name), name === "npx.cmd" ? "@echo off\r\n" : "#!/bin/sh\n", { mode: 0o755 });
+  return bin;
+}
+
+test("the built-in Playwright is offered only where npx is installed", () => {
+  const bin = fakeNpx();
+  process.env.PATH = [bin, process.env.PATH ?? ""].join(delimiter);
+  resetLocalsCache();
+  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { type: "stdio", command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"] }]);
+  // Without npx anywhere (an empty PATH; the OS's own tool folders may still have one): no entry that can't start.
+  process.env.PATH = join(root, "empty");
+  resetLocalsCache();
+  const none = mcp.locals().find((l) => l.local.id === "playwright");
+  if (providers.which("npx") === null) expect(none?.def).toBeUndefined();
+  // The user's own entry still counts with no npx.
+  writeFileSync(join(root, ".claude.json"), JSON.stringify({ mcpServers: { playwright: { command: "/opt/pw" } } }));
+  resetLocalsCache();
+  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { command: "/opt/pw" }]);
+});
+
 test("agents get the local servers from the user's config and the signed-in apps", async () => {
+  process.env.PATH = [fakeNpx(), process.env.PATH ?? ""].join(delimiter);
   writeFileSync(join(root, ".claude.json"), JSON.stringify({ mcpServers: { "Roblox Studio": { command: "rbx" }, other: { command: "x" } } }));
   mcp.saveKey("context7", "k-1");
   const m = await claudeServers();

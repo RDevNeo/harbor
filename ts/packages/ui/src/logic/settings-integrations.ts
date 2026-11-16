@@ -75,6 +75,8 @@ export type Form = { kind: "key" } | { kind: "google"; clientId: string; secret:
 export interface AppsView {
   pending(id: string): mcp.Pending | undefined;
   signedIn(id: string): boolean;
+  /** An OAuth sign-in that ran out with nothing to renew it (apps.ts `expired`): signed out, said so. */
+  expired(id: string): boolean;
   account(id: string): string | undefined;
   error(id: string): string | undefined;
   googleBuiltin(): boolean;
@@ -132,6 +134,7 @@ function card(a: mcp.App, i: IntInput): IntApp {
   else if (accounts.length > 1) sub = `${accounts.length} accounts`;
   else if (line !== undefined && (signed || line.tone !== 0)) [sub, tone] = [line.text, line.tone === 2 ? 2 : line.tone === 1 ? 1 : 0];
   else if (signed) sub = view.account(a.id) !== undefined ? `Signed in as ${view.account(a.id)}` : a.about;
+  else if (view.expired(a.id)) [sub, tone] = ["Sign-in expired: sign in again", 2];
 
   let open: IntegrationForm = "";
   if (pending && discord) open = pending.qr !== undefined ? "discord-qr" : "";
@@ -189,6 +192,7 @@ export function realView(): AppsView {
   return {
     pending: mcp.pending,
     signedIn: mcp.signedIn,
+    expired: mcp.expired,
     account: mcp.account,
     error: mcp.error,
     googleBuiltin: mcp.googleBuiltin,
