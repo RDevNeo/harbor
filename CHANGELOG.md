@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Windows: Settings › General › Run as administrator (off by default). Turned on, Harbor and everything its agents
+  run get full control of the PC with no Windows prompt: Windows asks once, when you turn it on, to let Harbor make
+  a scheduled task, "Harbor (elevated)", for your account only. Harbor then restarts through it as administrator,
+  and the window and chats come back as they were. Every start goes the same way: the Start menu, the desktop
+  shortcut, a terminal, start at login (the task's logon start replaces the Run entry meanwhile), updates,
+  rollbacks and `harbor restart`. Links and files still open in your normal browser and apps. Turning it off
+  removes the task and restarts Harbor with your normal rights; uninstalling Harbor removes it too (Windows asks
+  once). The row says whether this Harbor runs as administrator, as do `harbor admin` and Harbor's log. The cost:
+  files dragged from other apps can't be dropped on Harbor's window, other apps' keyboard shortcuts may not work
+  while Harbor is in front, and what Harbor starts (dev servers, terminals) runs as administrator too.
+
 ## [0.187.7] - 2026-11-15
 
 ### Added

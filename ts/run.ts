@@ -68,6 +68,8 @@ export async function runApp(o: RunOptions): Promise<number> {
     if (o.window) await single.focusRunning();
     return 0;
   }
+  const adminNow = admin.state();
+  if (adminNow.on || adminNow.elevated) console.error(`harbor: Run as administrator is ${adminNow.on ? "on" : "off"}; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`);
   const stopTrims = malloc.trimEvery();
   // A line in the log for every time the main thread stops answering for a quarter second or more (stallwatch.ts).
   stallwatch.hookSqlite();
