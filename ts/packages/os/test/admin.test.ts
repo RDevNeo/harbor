@@ -21,20 +21,26 @@ test("off Windows there's no such setting", () => {
 });
 
 test("the task: this user's alone, the administrator token, in their desktop, no time limit, on battery, normal priority", () => {
-  const x = taskXml({ exe: "C:\Users\A & B\AppData\Local\Programs\Harbor\harbor.exe", sid: "S-1-5-21-1-2-3-1001", home: "C:\Users\A & B", level: "highest", logon: true });
+  const x = taskXml({ exe: String.raw`C:\Users\A & B\AppData\Local\Programs\Harbor\harbor.exe`, sid: "S-1-5-21-1-2-3-1001", home: String.raw`C:\Users\A & B`, level: "highest", logon: true });
   expect(x).toStartWith('<?xml version="1.0" encoding="UTF-16"?>');
   expect(x).toContain("<LogonTrigger>\n      <Enabled>true</Enabled>\n      <UserId>S-1-5-21-1-2-3-1001</UserId>");
   expect(x).toContain("<UserId>S-1-5-21-1-2-3-1001</UserId>\n      <LogonType>InteractiveToken</LogonType>\n      <RunLevel>HighestAvailable</RunLevel>");
   for (const s of ["<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>", "<Priority>4</Priority>", "<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"]) expect(x).toContain(s);
-  expect(x).toContain("<Command>C:\Users\A &amp; B\AppData\Local\Programs\Harbor\harbor.exe</Command>");
+  expect(x).toContain(String.raw`<Command>C:\Users\A &amp; B\AppData\Local\Programs\Harbor\harbor.exe</Command>`);
+  expect(x).toContain(String.raw`<WorkingDirectory>C:\Users\A &amp; B</WorkingDirectory>`);
   expect(x).toContain("<Arguments>admin-start</Arguments>");
-  const limited = taskXml({ exe: "C:\h.exe", sid: "S-1-5-21-9", home: "C:\\", level: "limited", logon: false });
+  const limited = taskXml({ exe: String.raw`C:\h.exe`, sid: "S-1-5-21-9", home: "C:\\", level: "limited", logon: false });
   expect(limited).toContain("<RunLevel>LeastPrivilege</RunLevel>");
   expect(limited).not.toContain("<Triggers>");
   expect(TASK).toBe("Harbor (elevated)");
   expect(LIMITED_TASK).not.toBe(TASK);
   // schtasks reads it as UTF-16 with its byte order mark.
   expect([...utf16("<").subarray(0, 4)]).toEqual([0xff, 0xfe, 0x3c, 0x00]);
+});
+
+test("start at login is still the Run value Windows reads (HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Harbor)", async () => {
+  const { where } = await import("../src/win32/login.ts");
+  expect(where).toBe(String.raw`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Harbor`);
 });
 
 test("a start through the task carries a window or the background, nothing else", () => {
@@ -52,8 +58,8 @@ test("the task's start: what a Harbor left for it, once and while fresh, with on
     mkdirSync(join(e.XDG_STATE_HOME, "harbor"), { recursive: true });
     writeFileSync(pendingPath(e), JSON.stringify(p));
   };
-  leave({ id: "1-2", args: [], env: { HARBOR_HANDOVER: "C:\run\h", HARBOR_RELOADED_PID: "42", BUN_OPTIONS: "--preload evil.js" }, at: now });
-  expect(takeStart(e, now + 1000)).toEqual({ id: "1-2", args: [], env: { HARBOR_HANDOVER: "C:\run\h", HARBOR_RELOADED_PID: "42" } });
+  leave({ id: "1-2", args: [], env: { HARBOR_HANDOVER: String.raw`C:\run\h`, HARBOR_RELOADED_PID: "42", BUN_OPTIONS: "--preload evil.js" }, at: now });
+  expect(takeStart(e, now + 1000)).toEqual({ id: "1-2", args: [], env: { HARBOR_HANDOVER: String.raw`C:\run\h`, HARBOR_RELOADED_PID: "42" } });
   expect(existsSync(pendingPath(e))).toBe(false);
   expect(takeStart(e, now + 1000)).toBeNull();
   // Stale, or asking for anything but a window: not started (and gone).
@@ -63,11 +69,11 @@ test("the task's start: what a Harbor left for it, once and while fresh, with on
   expect(takeStart(e, now)).toBeNull();
   expect(existsSync(pendingPath(e))).toBe(false);
   // Nothing asked for is the logon trigger: the background, when start at login is on.
-  writeMarker({ login: false, exe: "C:\h.exe", since: 1 }, e);
+  writeMarker({ login: false, exe: String.raw`C:\h.exe`, since: 1 }, e);
   expect(takeStart(e)).toBeNull();
-  writeMarker({ login: true, exe: "C:\h.exe", since: 1 }, e);
+  writeMarker({ login: true, exe: String.raw`C:\h.exe`, since: 1 }, e);
   expect(takeStart(e)).toEqual({ id: null, args: ["--background"], env: {} });
-  expect(marker(e)).toEqual({ login: true, exe: "C:\h.exe", since: 1 });
+  expect(marker(e)).toEqual({ login: true, exe: String.raw`C:\h.exe`, since: 1 });
   removeMarker(e);
   expect(marker(e)).toBeNull();
   tellTaken("5", 77, e);

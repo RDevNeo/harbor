@@ -5,8 +5,8 @@
 import { marker, writeMarker } from "./admin.ts";
 import { deleteRegValue, regBinary, regString, setRegString } from "./gui.ts";
 
-const RUN = "Software\Microsoft\Windows\CurrentVersion\Run";
-const APPROVED = "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+const RUN = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const APPROVED = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 const NAME = "Harbor";
 
 /** The command line the Run value holds. */
@@ -48,4 +48,4 @@ export function setRun(on: boolean, exe: string, arg: string): void {
 }
 
 /** Where the entry is, as the person would find it. */
-export const where = `HKEY_CURRENT_USER\${RUN}\${NAME}`;
+export const where = `HKEY_CURRENT_USER\\${RUN}\\${NAME}`;
