@@ -60,6 +60,8 @@ export interface SideRow {
   /** Open in a split pane; that pane has the keyboard. */
   pane: boolean;
   pane_focus: boolean;
+  /** The chat a drag of the row carries to the split panes (logic/sidebar.ts `dragChat`), -1 none. */
+  chat: number;
 }
 
 /** A split pane's header and place (panes.slint PaneHead): x, y, w, h are shares of the centre. */

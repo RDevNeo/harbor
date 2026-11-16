@@ -985,7 +985,7 @@ export component DragGhost inherits Rectangle {
                 }
             }
             Text {
-                text: root.chat.branch != "" ? root.chat.branch : root.chat.kind == "thread" ? "Chat" : "Thread";
+                text: root.chat.branch != "" ? root.chat.branch : root.chat.kind == "project" ? "Main chat" : root.chat.kind == "thread" ? "Chat" : "Thread";
                 font-size: 12px;
                 color: Theme.subtle;
                 overflow: elide;

@@ -1026,17 +1026,17 @@ export component AppWindow inherits Window {
                         root.reorder(id, target, above);
                     }
                     chat-drag(r, x, y) => {
-                        if root.view == "chat" && !root.drag-dead {
+                        if root.view == "chat" && r.chat >= 0 && !root.drag-dead {
                             root.drag-row = r;
-                            root.drag-chat = r.id;
+                            root.drag-chat = r.chat;
                             root.drag-x = x;
                             root.drag-y = y;
-                            root.split-drag(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
+                            root.split-drag(r.chat, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
                         }
                     }
                     chat-drop(r, x, y) => {
                         if root.drag-chat >= 0 && !root.drag-dead {
-                            root.split-dropped(r.id, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
+                            root.split-dropped(r.chat, (x - body.absolute-position.x) / body.area-w, (y - body.absolute-position.y) / body.height, PaneMetrics.band / body.area-w, PaneMetrics.band / body.height);
                         }
                         root.drag-chat = -1;
                         root.drag-dead = false;

@@ -9,6 +9,7 @@ import {
   type Workspace,
   carriedProjects,
   chatWorkspace,
+  dragChat,
   inWorkspaces,
   isMainOf,
   moveMenu,
@@ -526,6 +527,18 @@ test("a dragged project lands above or below the row it's dropped on", () => {
   expect(reordered([1, 2, 3, 4], 4, 1, true)).toEqual([4, 1, 2, 3]);
   expect(reordered([1, 2, 3, 4], 4, 2, false)).toEqual([1, 2, 4, 3]);
   expect(reordered([1, 2, 3], 2, 9, true)).toEqual([1, 2, 3]);
+});
+
+test("a_project_row_drags_as_its_main_chat_and_without_one_not_at_all", () => {
+  // A chat row carries itself to the split panes, a project row its main chat (the chat clicking it opens).
+  expect(dragChat("thread", 4, null)).toBe(4);
+  expect(dragChat("loose", 9, null)).toBe(9);
+  expect(dragChat("project", 6, 12)).toBe(12);
+  // No main chat here: the drag doesn't start; the project's own id is never taken for a chat's.
+  expect(dragChat("project", 6, null)).toBe(-1);
+  // Labels and settled projects open nothing a pane could show.
+  expect(dragChat("label", 1, null)).toBe(-1);
+  expect(dragChat("settled-project", 6, 12)).toBe(-1);
 });
 
 test("a_settled_project_and_every_chat_of_it_are_under_settled", () => {

@@ -53,7 +53,7 @@ import { ModalOpacity } from "./modalopacity.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
-import { agoLabel, carriedProjects, chatIdle, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { agoLabel, carriedProjects, chatIdle, dragChat, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -148,8 +148,8 @@ function sync<T>(model: slint.ArrayModel<T>, next: readonly T[], same: (a: T, b:
 const sameJson = <T>(a: T, b: T): boolean => JSON.stringify(a) === JSON.stringify(b);
 const sameJsonRow = (a: AgentRow, b: AgentRow): boolean => a.logo === b.logo && JSON.stringify({ ...a, logo: 0 }) === JSON.stringify({ ...b, logo: 0 });
 const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar && a.owner_photo === b.owner_photo && JSON.stringify({ ...a, avatar: 0, owner_photo: 0 }) === JSON.stringify({ ...b, avatar: 0, owner_photo: 0 });
-/** A row's variant A fields when it has none of them: no fold, branch, owner. */
-const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false, pane: false, pane_focus: false } as const;
+/** A row's variant A fields when it has none of them: no fold, branch, owner, chat to drag. */
+const ROW_PLAIN = { fold: "", ago: "", branch: "", last: false, owner: "", owner_tip: "", owner_photo: noPixels, has_owner_photo: false, pane: false, pane_focus: false, chat: -1 } as const;
 
 function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
@@ -2156,6 +2156,7 @@ export class Shell {
         has_owner_photo: photo !== null,
         pane: panes.has(c.id),
         pane_focus: panes.get(c.id) ?? false,
+        chat: dragChat(kind, c.id, null),
       };
     };
     // Folded projects show only their row (and the open chat, so you see where you are); a search unfolds them all.
@@ -2199,6 +2200,8 @@ export class Shell {
         ...projectShared(p.repo.id),
         ...ROW_PLAIN,
         fold,
+        // Dragged by its name, the row is its main chat's (split panes); its grip still reorders.
+        chat: dragChat("project", p.repo.id, mainChat ? mainChat.id : null),
       });
       shownChats.forEach((c, i) => rows.push(chatRow(c, "thread", i === shownChats.length - 1)));
     }

@@ -288,6 +288,13 @@ export function canReorder(byActivity: boolean, query: string, shownWorkspaces: 
   return !byActivity && query.trim() === "" && shownWorkspaces.length === 0;
 }
 
+/** The chat a sidebar row carries when it's dragged to the centre (split panes), -1 for none (that drag doesn't start):
+ *  a chat row's own; a project row's main chat (`main`, null when it has none here), as clicking the row opens it. */
+export function dragChat(kind: string, id: number, main: number | null): number {
+  if (kind === "thread" || kind === "loose") return id;
+  return kind === "project" && main !== null ? main : -1;
+}
+
 /** The manual order after dragging `dragged` to position `to` among `visible`; null when it isn't there. */
 export function moveProject(visible: readonly number[], dragged: number, to: number): number[] | null {
   const order = [...visible];
