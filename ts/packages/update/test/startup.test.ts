@@ -5,7 +5,7 @@ import { alive } from "../src/files.ts";
 import { rolledBack, skipped } from "../src/install.ts";
 import { readMeta, writeMeta, type Meta } from "../src/previewmeta.ts";
 import { FAILED_LOG, START_LOG, captureStart } from "../src/startlog.ts";
-import { ATTEMPT, START_LIMIT_MS, beginAttempt, confirmStart, failedStart, readAttempt, recoverUnconfirmed, watch } from "../src/startup.ts";
+import { ATTEMPT, START_LIMIT_MS, abandonStart, beginAttempt, confirmStart, failedStart, readAttempt, recoverUnconfirmed, watch } from "../src/startup.ts";
 import { cleanup, configFor, makeInstall, tmp, type Install, windowsTime } from "./support.ts";
 
 windowsTime();
@@ -263,4 +263,19 @@ setTimeout(() => process.exit(0), 3000);`;
     expect(exit).toBe(1);
     expect(readFileSync(join(dir, START_LOG), "utf8")).toContain("boom at start");
   }
+});
+
+test("a start handed to another process (Windows' Run as administrator) leaves no attempt for the watchdog, and only its own", async () => {
+  const inst = makeInstall();
+  const cfg = configFor(inst);
+  beginAttempt(cfg, attempt(process.pid + 1));
+  abandonStart(cfg);
+  expect(readAttempt(inst.dir)?.pid).toBe(process.pid + 1);
+  beginAttempt(cfg, attempt(process.pid));
+  abandonStart(cfg);
+  expect(readAttempt(inst.dir)).toBeNull();
+  // The watchdog then ends quietly: nothing failed, nothing rolled back.
+  let relaunched = false;
+  expect(await watch(configFor(inst, { sleep: async () => undefined }), process.pid, { relaunch: () => (relaunched = true), kill: () => {} })).toBe(0);
+  expect(relaunched).toBe(false);
 });

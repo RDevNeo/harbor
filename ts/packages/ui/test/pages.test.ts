@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { MemKv } from "@harbor/net";
 import { tabFromSlug, TAB_ORDER, TABS } from "../src/logic/pages.ts";
-import { generalSections, navTabs, projectsSection, PROJECTS_DIR, setGeneral } from "../src/logic/settings.ts";
+import { adminDesc, generalSections, navTabs, projectsSection, PROJECTS_DIR, RUN_AS_ADMIN, setGeneral } from "../src/logic/settings.ts";
 
 test("Settings has nine pages, General then Workspace, with old Devices and Phones links reaching Workspace", () => {
   expect(TAB_ORDER.map((t) => TABS[t].label)).toEqual(["General", "Workspace", "Notifications", "Keybindings", "Voice", "Providers", "Integrations", "Secrets"]);
@@ -40,4 +40,22 @@ test("Projects folder: ~/Projects until one is picked, then a way back", () => {
   expect(s().rows.map((r) => r.key)).toEqual([PROJECTS_DIR.change, PROJECTS_DIR.reset]);
   expect(s().rows[0]?.desc).toBe("~/Documents/work. New projects and clones go here, worktrees in its .worktrees folder and chats without a project in its chats folder.");
   expect(s().rows[1]?.title).toBe("Back to ~/Projects");
+});
+
+test("Run as administrator: a row on Windows only, off by default, its trade-offs and what's true now", () => {
+  const kv = new MemKv();
+  const row = (admin: Parameters<typeof adminDesc>[0]) => generalSections(kv, { autostart: true, version: "0.1.0", admin }).find((s) => s.title === "Administrator")?.rows[0];
+  expect(generalSections(kv, { autostart: true, version: "0.1.0" }).some((s) => s.title === "Administrator")).toBe(false);
+  const off = row({ on: false, elevated: false, canElevate: true, busy: false });
+  expect(off).toMatchObject({ kind: "toggle", key: RUN_AS_ADMIN, title: "Run as administrator", on: false, enabled: true });
+  expect(off?.desc).toContain("full control of this PC");
+  expect(off?.desc).toContain("can't be dropped on Harbor's window");
+  expect(off?.desc).toEndWith("Now: Harbor runs with your normal rights.");
+  expect(row({ on: true, elevated: true, canElevate: true, busy: false })?.desc).toEndWith("Now: Harbor runs as administrator.");
+  expect(row({ on: true, elevated: false, canElevate: true, busy: false })?.desc).toContain("this Harbor has your normal rights");
+  // A standard account: nothing to raise, so it can't be turned on (but can be turned off).
+  expect(row({ on: false, elevated: false, canElevate: false, busy: false })).toMatchObject({ enabled: false });
+  expect(row({ on: true, elevated: false, canElevate: false, busy: false })).toMatchObject({ enabled: true });
+  expect(row({ on: false, elevated: false, canElevate: true, busy: true })).toMatchObject({ enabled: false });
+  expect(row({ on: false, elevated: false, canElevate: true, busy: true })?.desc).toEndWith("Waiting for Windows…");
 });

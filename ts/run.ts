@@ -10,6 +10,7 @@ import {
   HANDOVER,
   handoverSay,
   Reloader,
+  abandonStart,
   advertised,
   Updater,
   confirmStart,
@@ -24,7 +25,7 @@ import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
 import { autostartByDefault, healAutostart, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
-import { env as osEnv, proc } from "./packages/os/src/index.ts";
+import { admin, env as osEnv, proc } from "./packages/os/src/index.ts";
 
 export interface RunOptions {
   window: boolean;
@@ -55,6 +56,14 @@ export async function runApp(o: RunOptions): Promise<number> {
     }
     handoverSay(handover, "ready");
   }
+  // Windows' Run as administrator (Settings › General) is on and this Harbor lacks the token (the Start menu, a
+  // shortcut, a terminal): the task starts the elevated one, with no prompt, and this one leaves. Not when a Harbor
+  // runs already: this one asks it to show itself, below.
+  if (handover === null && reloadedFrom === 0 && admin.handsOffStart(o.argv) && single.lockHeld() !== true) {
+    abandonStart(cfg);
+    if (await admin.handOffStart(o.argv)) return 0;
+  }
+  admin.forgetViaTask();
   if (!(await single.acquire(process.env, handover !== null ? 60_000 : undefined))) {
     if (o.window) await single.focusRunning();
     return 0;
@@ -182,6 +191,8 @@ export async function runApp(o: RunOptions): Promise<number> {
     handover: join(process.env.XDG_RUNTIME_DIR || runDir(), `harbor-handover-${process.pid}`),
     leaving: () => leave(),
     place: () => single.placeEnv(),
+    // Run as administrator turned on or off, or on and this Harbor lacks the token: the next one starts through a task.
+    via: () => admin.relauncher(cfg.exe),
   });
 
   const bundle = runtimeInfo()?.bundle;

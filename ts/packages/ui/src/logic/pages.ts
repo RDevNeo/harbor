@@ -12,7 +12,7 @@ interface TabInfo {
 /** Settings' tabs in the sidebar's order (pages.rs `Tab::ALL`); the key is the slug in snapshots and HARBOR_VIEW. */
 export const TABS: Record<Tab, TabInfo> = {
   account: { label: "Workspace", icon: ICONS.USER_ROUND, keywords: "account google sign in sign out login logout workspace invite people members team email pcs devices machines phones android mobile rename name share run agents elsewhere" },
-  general: { label: "General", icon: ICONS.SLIDERS, keywords: "auto fix merge background autostart login startup updates version" },
+  general: { label: "General", icon: ICONS.SLIDERS, keywords: "auto fix merge background autostart login startup updates version administrator admin elevated uac" },
   notifications: { label: "Notifications", icon: ICONS.BELL, keywords: "notify notifications alerts popups desktop finished needs input ci checks limit offline" },
   keybindings: { label: "Keybindings", icon: ICONS.KEYBOARD, keywords: "shortcuts keyboard keys hotkeys cheat sheet" },
   voice: { label: "Voice", icon: ICONS.MIC, keywords: "voice dictation speech microphone mic input device test parakeet transcribe dictionary model" },

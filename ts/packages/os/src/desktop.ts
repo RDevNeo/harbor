@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { elevated } from "./admin.ts";
 import { platform } from "./platform.ts";
 import { win } from "./win32/load.ts";
 
@@ -11,6 +12,9 @@ type Env = Record<string, string | undefined>;
 /** The program that opens a file or URL with the desktop's default app. */
 export function opener(p = platform()): string[] {
   if (p === "darwin") return ["open"];
+  // Harbor running as administrator (admin.ts): Explorer opens it, with the normal rights of the desktop it runs, so
+  // the browser or app isn't an administrator too (an elevated explorer.exe hands the request to the running one).
+  if (p === "win32" && p === platform() && elevated()) return [join(process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows", "explorer.exe")];
   // The shell's URL handler takes any URL as one argument (cmd's `start` would split it at `&`).
   if (p === "win32") return ["rundll32", "url.dll,FileProtocolHandler"];
   return ["xdg-open"];

@@ -41,6 +41,45 @@ export interface GeneralEnv {
   version: string;
   /** The home folder (paths show as ~/…); left out: this PC's. */
   home?: string;
+  /** Windows: Run as administrator (@harbor/os admin.ts). Left out elsewhere: no row. */
+  admin?: AdminView | undefined;
+}
+
+/** Run as administrator as the row shows it. */
+export interface AdminView {
+  /** The setting is on. */
+  on: boolean;
+  /** This Harbor has the administrator token. */
+  elevated: boolean;
+  /** The Windows account is an administrator. */
+  canElevate: boolean;
+  /** Turning it on or off is under way (Windows' prompt may be up). */
+  busy: boolean;
+}
+
+export const RUN_AS_ADMIN = "run_as_admin";
+
+/** What it means, then what it is now. */
+export function adminDesc(a: AdminView): string {
+  const what =
+    "Harbor and everything its agents run get full control of this PC, with no Windows prompt: Windows asks you once, when you turn this on. Trade-offs: files dragged from other apps can't be dropped on Harbor's window, other apps' keyboard shortcuts may not work while Harbor is in front, and dev servers, terminals and other programs Harbor starts run as administrator too. Links and files still open in your normal browser and apps.";
+  const now = a.busy
+    ? "Waiting for Windows…"
+    : !a.canElevate && !a.on
+      ? "Not available: your Windows account isn't an administrator."
+      : a.on && a.elevated
+        ? "Now: Harbor runs as administrator."
+        : a.on
+          ? "Now: on, but this Harbor has your normal rights (its task didn't start it). Turn it off and on again if that stays."
+          : a.elevated
+            ? "Now: Harbor runs as administrator, because it was opened that way."
+            : "Now: Harbor runs with your normal rights.";
+  return `${what} ${now}`;
+}
+
+/** Windows' Run as administrator, off by default. */
+export function adminSection(a: AdminView): SettingSection {
+  return { title: "Administrator", rows: [{ ...toggle(RUN_AS_ADMIN, "Run as administrator", adminDesc(a), a.on), enabled: !a.busy && (a.canElevate || a.on) }] };
 }
 
 /** The Projects folder row's buttons (pages/settings.ts opens the folder picker for `change`). */
@@ -68,6 +107,7 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
       title: "Background",
       rows: [toggle("autostart", "Start Harbor when I log in", "Starts in the background, without a window, so this PC is reachable as soon as you log in.", env.autostart)],
     },
+    ...(env.admin === undefined ? [] : [adminSection(env.admin)]),
     {
       title: "Issues and pull requests",
       rows: [

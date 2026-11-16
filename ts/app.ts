@@ -163,6 +163,16 @@ const commands: Record<string, Command> = {
     console.error("harbor: Harbor is still quitting after 30 s");
     return 1;
   },
+  // Windows' Run as administrator (Settings › General; packages/os/src/admin.ts). `harbor admin`: its state.
+  admin: async () => {
+    const { admin } = await import("./packages/os/src/index.ts");
+    for (const l of await admin.status()) console.log(l);
+    return 0;
+  },
+  // The one prompt's program, run elevated: registers or removes the scheduled task.
+  "admin-task": async (args) => (await import("./packages/os/src/index.ts")).admin.taskCommand(args),
+  // The scheduled task's action: starts the Harbor that was asked for (or the logon start), then leaves.
+  "admin-start": async () => (await import("./packages/os/src/index.ts")).admin.taskStart(),
   "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
   turn: async (args) => {
     const { runTurn } = await import("./packages/agents/src/index.ts");

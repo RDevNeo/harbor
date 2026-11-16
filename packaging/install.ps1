@@ -83,6 +83,14 @@ function Stop-Harbor {
 
 if ($Uninstall) {
   Stop-Harbor
+  # Run as administrator (Harbor's Settings > General): its scheduled task, which only an administrator may remove
+  # (Windows asks once), and the setting with it.
+  $adminMark = Join-Path $env:LOCALAPPDATA "harbor\run-as-admin.json"
+  $q = Start-Process -FilePath schtasks.exe -ArgumentList '/query /tn "Harbor (elevated)"' -WindowStyle Hidden -Wait -PassThru
+  if ($q.ExitCode -eq 0 -or (Test-Path $adminMark)) {
+    try { Start-Process -FilePath schtasks.exe -ArgumentList '/delete /tn "Harbor (elevated)" /f' -Verb RunAs -WindowStyle Hidden -Wait } catch {}
+  }
+  Remove-Item -Path $adminMark -Force -ErrorAction SilentlyContinue
   Remove-ItemProperty -Path $RunKey -Name "Harbor" -ErrorAction SilentlyContinue
   Remove-Item -Path $UninstallKey -Recurse -ErrorAction SilentlyContinue
   Remove-Item -Path "HKCU:\Software\Classes\AppUserModelId\$AppId" -Recurse -ErrorAction SilentlyContinue

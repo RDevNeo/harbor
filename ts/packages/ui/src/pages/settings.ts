@@ -1,13 +1,14 @@
 import { basename } from "node:path";
 import { mkdirSync } from "node:fs";
-import { projectsdir, type Store } from "@harbor/store";
+import { admin as osAdmin } from "@harbor/os";
+import { projectsdir, single, type Store } from "@harbor/store";
 import { picker, voiceCtl } from "@harbor/media";
 import { harborVersion, mcp } from "@harbor/mcp";
 import { providers } from "@harbor/agents";
-import { AUTOSTART_DEFAULT_KEY, autostart, installedLauncher, setAutostart } from "../background.ts";
+import { AUTOSTART_DEFAULT_KEY, autostart, BACKGROUND_FLAG, installedLauncher, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
-import { generalSections, navTabs, PROJECTS_DIR, setGeneral, type SettingSection } from "../logic/settings.ts";
+import { type AdminView, generalSections, navTabs, PROJECTS_DIR, RUN_AS_ADMIN, setGeneral, type SettingSection } from "../logic/settings.ts";
 import { parseMode } from "../theme.ts";
 import { type Block } from "../logic/settings-blocks.ts";
 import { type IntData, type IntHost } from "../logic/settings-integrations.ts";
@@ -125,8 +126,38 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const providersTab = await providersFeed(store, { ...deps.providers, modelsFor: providers.staticModels }, logos);
   const blocks = await blockTabs(store, () => show(), deps.copy, deps.runtime);
 
+  // Windows' Run as administrator (@harbor/os admin.ts): its row, and turning it on or off (Windows may ask first).
+  let adminBusy = false;
+  const adminView = (): AdminView | undefined => {
+    const s = osAdmin.state();
+    return s.supported ? { on: s.on, elevated: s.elevated, canElevate: s.canElevate, busy: adminBusy } : undefined;
+  };
+  async function adminToggled(on: boolean): Promise<void> {
+    if (adminBusy) return;
+    const exe = installedLauncher();
+    if (exe === null) {
+      picker.showToast("Run as administrator is for an installed Harbor; this one runs from somewhere else.");
+      show();
+      return;
+    }
+    adminBusy = true;
+    show();
+    if (on && !osAdmin.state().elevated) picker.showToast("Windows asks whether Harbor may make changes to this PC: choose Yes.");
+    let r: osAdmin.SetResult;
+    try {
+      r = await osAdmin.set(on, { exe, login: autostart(), arg: BACKGROUND_FLAG });
+    } catch (e) {
+      r = { ok: false, message: e instanceof Error ? e.message : String(e), restart: false };
+    }
+    adminBusy = false;
+    picker.showToast(r.message);
+    show();
+    // The restart goes through the running Harbor's own restart (as `harbor restart`): the window comes back as it was.
+    if (r.restart && !(await single.restartRunning())) picker.showToast("Quit Harbor and open it again to finish.");
+  }
+
   function sections(t: Tab): SettingSection[] {
-    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion() });
+    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion(), admin: adminView() });
     return [];
   }
 
@@ -188,6 +219,10 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     bus.tabs = navTabs(q);
   };
   bus.toggled = (k, v) => {
+    if (k === RUN_AS_ADMIN) {
+      void adminToggled(v);
+      return;
+    }
     if (k === "autostart") {
       try {
         setAutostart(v, { exe: installedLauncher() ?? (basename(process.execPath) === "bun" ? null : process.execPath), managed: false });
