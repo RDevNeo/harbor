@@ -7,6 +7,7 @@ import { malloc } from "@harbor/store";
 import type { TermKey } from "./logic/terminal.ts";
 import type { PatchChipData } from "./logic/patchchips.ts";
 import { type TipParts, tipParts } from "./logic/tips.ts";
+import type { MdLinkData } from "./markdown.ts";
 import type { TermFrame } from "./terminal.ts";
 import { uiDir } from "./assets.ts";
 import { busOf } from "./pages/bus.ts";
@@ -134,7 +135,7 @@ export interface MdBlockData {
   marker: string;
   depth: number;
   quote: number;
-  cols: { cells: slint.StyledText[] }[];
+  cols: { cells: { text: slint.StyledText; plain: string; links: MdLinkData[] }[] }[];
   rows: number;
   gap: number;
   after: number;
@@ -142,6 +143,8 @@ export interface MdBlockData {
   bar_bottom: number;
   trim: number;
   plain: string;
+  /** Its links a word at a time (markdown.ts `linkWords`). */
+  links: MdLinkData[];
   key: string;
 }
 

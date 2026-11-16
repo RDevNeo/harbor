@@ -18,7 +18,7 @@ export type Block = (
   | { kind: "li"; text: string; plain: string; links: Link[]; marker: string; depth: number }
   | { kind: "code"; text: string; lang: string }
   | { kind: "hr" }
-  | { kind: "table"; rows: string[][] }
+  | { kind: "table"; rows: string[][]; cells: Plain[][] }
 ) & { quote: number; item?: true };
 
 /** `s` as literal text in markdown: every character markdown could read as markup escaped. */
@@ -50,7 +50,13 @@ export function inline(spans: readonly Span[]): string {
   return spans.map(span).join("");
 }
 
-export function plainOf(spans: readonly Span[]): { plain: string; links: Link[] } {
+/** A run of text as drawn, and its links. */
+export interface Plain {
+  plain: string;
+  links: Link[];
+}
+
+export function plainOf(spans: readonly Span[]): Plain {
   let plain = "";
   const links: Link[] = [];
   for (const s of spans) {
@@ -81,7 +87,7 @@ function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Blo
         flatten(b.blocks, quote + 1, depth, out, item);
         break;
       case "table":
-        out.push({ kind: "table", rows: b.rows.map((row) => row.map(inline)), ...at });
+        out.push({ kind: "table", rows: b.rows.map((row) => row.map(inline)), cells: b.rows.map((row) => row.map(plainOf)), ...at });
         break;
       case "list":
         b.items.forEach((it, i) => {
@@ -173,14 +179,13 @@ export function place(bs: readonly Block[]): Placed[] {
   return out;
 }
 
-/** A block's text by the key its selectable text reports with: a click ("at:KEY:OFFSET") or a selection
- * ("sel:KEY:FROM:TO"). A transcript card's blocks have an owner (its chat's `Opened` and the card's seq) and a
- * key from their place in the card ("OWNER.INDEX"): building the card again puts the same keys back, and the
- * card leaving the transcript (`releaseBlocks`) takes them out. Other pages' blocks (PRs, issues) get a number.
- * Whatever a missed release leaves behind, the byte budget (an LRU) bounds: before it, every rebuild of a
- * streaming reply added its whole text again, for the life of the process. */
+/** A block's text by the key its selectable text reports a selection with ("sel:KEY:FROM:TO"). A transcript
+ * card's blocks have an owner (its chat's `Opened` and the card's seq) and a key from their place in the card
+ * ("OWNER.INDEX"): building the card again puts the same keys back, and the card leaving the transcript
+ * (`releaseBlocks`) takes them out; a block with no owner gets a number. Links don't need a key: each block
+ * carries its own (`linkWords`). Whatever a missed release leaves behind, the byte budget (an LRU) bounds:
+ * before it, every rebuild of a streaming reply added its whole text again, for the life of the process. */
 interface Entry {
-  links: Link[];
   plain: string;
   seq: number;
   owner: string | null;
@@ -188,10 +193,10 @@ interface Entry {
 
 /** All blocks' text together: a shown chat's cards hold far less, so only a missed release gets evicted. */
 export const BLOCKS_BUDGET = 16 * 2 ** 20;
-/** One block larger than this isn't clickable or selectable (it still draws). */
+/** A selection in one block larger than this can't be mentioned (it still draws, selects and copies). */
 export const BLOCK_MAX = 2 ** 20;
 
-const entryBytes = (e: Entry, key: string): number => stringBytes(e.plain) + stringBytes(key) + e.links.reduce((n, l) => n + stringBytes(l.url) + 48, 64);
+const entryBytes = (e: Entry, key: string): number => stringBytes(e.plain) + stringBytes(key) + 64;
 /** Each owner's keys, so a card's blocks go together. */
 const owners = new Map<string, Set<string>>();
 const blockTable = new ByteLru<string, Entry>({
@@ -216,14 +221,14 @@ function unown(key: string, owner: string | null): void {
   if (keys?.size === 0) owners.delete(owner);
 }
 
-/** A key for a block with links, or one in transcript item `seq` (its text can be mentioned); "" for neither.
+/** A key for a block in transcript item `seq` (a selection of its text can be mentioned); "" outside one.
  *  `owner`: the card it's in (`releaseBlocks`), `index` its place there. */
-export function registerBlock(plain: string, links: Link[], seq: number, owner: string | null = null, index = 0): string {
-  if (links.length === 0 && seq < 0) return "";
+export function registerBlock(plain: string, seq: number, owner: string | null = null, index = 0): string {
+  if (seq < 0) return "";
   const key = owner === null ? String(++nextKey) : `${owner}.${index}`;
   const had = blockTable.peek(key);
   if (had) unown(key, had.owner);
-  if (!blockTable.set(key, { links, plain, seq, owner })) return "";
+  if (!blockTable.set(key, { plain, seq, owner })) return "";
   if (owner !== null) {
     let keys = owners.get(owner);
     if (!keys) owners.set(owner, (keys = new Set()));
@@ -246,7 +251,6 @@ export function blockStats(): { blocks: number; bytes: number; owners: number } 
 }
 
 const SEL = /^sel:([\w.]+):(\d+):(\d+):(-?[\d.]+):(-?[\d.]+)$/;
-const AT = /^at:([\w.]+):(\d+)$/;
 
 /** A selection reported as "sel:KEY:FROM:TO:X:Y" (byte offsets in either order; where its button goes): its item and the text it covers; null when it isn't one. */
 export function selectionAt(report: string): { seq: number; text: string; x: number; y: number } | null {
@@ -257,10 +261,43 @@ export function selectionAt(report: string): { seq: number; text: string; x: num
   return { seq: b.seq, text: Buffer.from(b.plain).subarray(from, to).toString(), x: Number(m[4]), y: Number(m[5]) };
 }
 
-/** The URL under a click reported as "at:KEY:OFFSET", or null (not one, or not on a link). */
-export function linkAt(report: string): string | null {
-  const m = AT.exec(report);
-  if (!m) return null;
-  const at = Number(m[2]);
-  return blockTable.get(m[1] ?? "")?.links.find((l) => at >= l.from && at < l.to)?.url ?? null;
+/** One word of a link where the window draws it (markdown.slint `MdLink`), by byte offsets in the block's plain
+ *  text. `link`: the link it's in (its words light up together); `to`: the word's end; `next`: where the link's
+ *  next word starts (`to` for its last), so the space between two of its words on one line belongs to it too;
+ *  `tip`: the address, when the words show something else (`[text](url)`), else "". */
+export interface MdLinkData {
+  link: number;
+  from: number;
+  to: number;
+  next: number;
+  url: string;
+  tip: string;
+}
+
+const TIP_MAX = 200;
+
+/** The tooltip of a link whose text is `text`: its address, for a web or mail link whose text doesn't already say it. */
+export function linkTip(text: string, url: string): string {
+  if (!/^(https?|mailto|ftp):/i.test(url)) return "";
+  const t = text.trim();
+  if (t === url || t === url.replace(/^mailto:/i, "")) return "";
+  return url.length > TIP_MAX ? `${url.slice(0, TIP_MAX)}…` : url;
+}
+
+/** `plain`'s links a word at a time: the window finds each word on its line (a link can wrap), and only
+ *  there does the pointer turn into a hand. Inline code isn't a link, so it has none. */
+export function linkWords({ plain, links }: Plain): MdLinkData[] {
+  if (links.length === 0) return [];
+  const bytes = Buffer.from(plain);
+  const out: MdLinkData[] = [];
+  links.forEach((l, i) => {
+    const text = bytes.subarray(l.from, l.to).toString();
+    const tip = linkTip(text, l.url);
+    const words = [...text.matchAll(/\S+/g)].map((m) => {
+      const from = l.from + Buffer.byteLength(text.slice(0, m.index));
+      return { from, to: from + Buffer.byteLength(m[0]) };
+    });
+    words.forEach((w, k) => out.push({ link: i, from: w.from, to: w.to, next: words[k + 1]?.from ?? w.to, url: l.url, tip }));
+  });
+  return out;
 }

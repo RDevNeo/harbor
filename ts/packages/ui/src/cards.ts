@@ -1,12 +1,12 @@
 import { basename } from "node:path";
 import * as slint from "slint-ui";
-import { actions, type Card, CHAT_SCHEME, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer } from "@harbor/net";
+import { actions, type Card, CHAT_SCHEME, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer, webLinks } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
 import { chipHead, chipSnippet, chipTip, isChat, mentionFromJson } from "./logic/mentions.ts";
 import { type Part, parts } from "./logic/usertext.ts";
-import { type Block, blockScope, blocks, escape, type Placed, place, registerBlock, releaseBlocks } from "./markdown.ts";
+import { type Block, blockScope, blocks, escape, type Link, linkWords, type MdLinkData, type Placed, place, registerBlock, releaseBlocks } from "./markdown.ts";
 import type { CardData, CiteData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
@@ -98,22 +98,27 @@ function blockData(b: Block, at: Placed, seq: number, owner: string | null, inde
     bar_bottom: at.barBottom,
     trim: 0,
     plain: "",
+    links: [],
     key: "",
   };
   switch (b.kind) {
     case "p":
-      return { ...base, text: styled(b.text), plain: b.plain, key: registerBlock(b.plain, b.links, seq, owner, index) };
+      return { ...base, text: styled(b.text), plain: b.plain, links: linkWords(b), key: registerBlock(b.plain, seq, owner, index) };
     case "h":
-      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, key: registerBlock(b.plain, b.links, seq, owner, index) };
+      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, links: linkWords(b), key: registerBlock(b.plain, seq, owner, index) };
     case "li":
-      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, key: registerBlock(b.plain, b.links, seq, owner, index) };
+      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, links: linkWords(b), key: registerBlock(b.plain, seq, owner, index) };
     case "code":
       return { ...base, code: b.text };
     case "hr":
       return base;
     case "table": {
       const width = Math.max(0, ...b.rows.map((r) => r.length));
-      const cols = Array.from({ length: width }, (_, c) => ({ cells: b.rows.map((r) => styled(r[c] ?? "")) }));
+      const cell = (r: number, c: number) => {
+        const p = b.cells[r]?.[c] ?? { plain: "", links: [] };
+        return { text: styled(b.rows[r]?.[c] ?? ""), plain: p.plain, links: linkWords(p) };
+      };
+      const cols = Array.from({ length: width }, (_, c) => ({ cells: b.rows.map((_, r) => cell(r, c)) }));
       return { ...base, cols, rows: b.rows.length };
     }
   }
@@ -177,29 +182,43 @@ export function sameBlock(a: MdBlockData, b: MdBlockData): boolean {
   return s !== undefined && s === sources.get(b) && a.trim === b.trim && a.key === b.key;
 }
 
-export function userText(ps: readonly Part[]): slint.StyledText {
-  let md = "";
+/** A user's message as its bubble draws it: a mentioned chat and a bare web address (the rule a reply's text
+ *  follows, `webLinks`) are links; a tag or a command is only coloured as one (`harbor:token`), not clickable. */
+export function userText(ps: readonly Part[]): { text: slint.StyledText; plain: string; links: MdLinkData[] } {
+  const runs: { text: string; url: string | null }[] = [];
   for (const p of ps) {
-    const lines = p.text.split("\n");
-    const one = (s: string) => {
-      if (s === "") return "";
-      switch (p.kind) {
-        case "plain":
-          return escape(s);
-        case "chat":
-          return `[${escape(s)}](harbor:chat/${p.chat})`;
-        default:
-          return `[${escape(s)}](harbor:token)`;
+    if (p.kind === "chat") runs.push({ text: p.text, url: `harbor:chat/${p.chat}` });
+    else if (p.kind !== "plain") runs.push({ text: p.text, url: TOKEN });
+    else {
+      let at = 0;
+      for (const [a, z] of webLinks(p.text)) {
+        if (a > at) runs.push({ text: p.text.slice(at, a), url: null });
+        runs.push({ text: p.text.slice(a, z), url: p.text.slice(a, z) });
+        at = z;
       }
-    };
-    md += lines.map(one).join("\\\n");
+      if (at < p.text.length) runs.push({ text: p.text.slice(at), url: null });
+    }
   }
+  let md = "";
+  let plain = "";
+  const links: Link[] = [];
+  for (const r of runs) {
+    const one = (s: string) => (s === "" ? "" : r.url === null ? escape(s) : `[${escape(s)}](<${r.url.replace(/[<>]/g, "")}>)`);
+    md += r.text.split("\n").map(one).join("\\\n");
+    const from = Buffer.byteLength(plain);
+    plain += r.text;
+    if (r.url !== null && r.url !== TOKEN) links.push({ from, to: Buffer.byteLength(plain), url: r.url });
+  }
+  let text: slint.StyledText;
   try {
-    return slint.StyledText.fromMarkdown(md);
+    text = slint.StyledText.fromMarkdown(md);
   } catch {
-    return slint.StyledText.fromPlainText(ps.map((p) => p.text).join(""));
+    text = slint.StyledText.fromPlainText(plain);
   }
+  return { text, plain, links: linkWords({ plain, links }) };
 }
+
+const TOKEN = "harbor:token";
 
 /** The messages a user's message mentions, as the composer's chips over its text, each with the note written under it
  * (a mentioned chat is a link in the text instead: `parts`). */
@@ -275,7 +294,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "user": {
       // A message of mentions alone has no text line: its bubble is the chips.
       const ps = parts(c.text, c.mentions);
-      const body = ps.length === 0 ? [] : [{ kind: "p", text: userText(ps), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }];
+      const body = ps.length === 0 ? [] : [{ kind: "p", ...userText(ps), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, key: "" }];
       return { ...d, kind: "user", blocks: body, text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "", cites: cites(c.mentions) };
     }
     case "text": {

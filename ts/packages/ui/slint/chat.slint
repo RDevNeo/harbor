@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Glyph, Spinner, Btn, TipArea } from "widgets.slint";
-import { MdBlock, MdBlockView } from "markdown.slint";
+import { MdBlock, MdBlockView, Selectable } from "markdown.slint";
 import { CaptchaCard, ChatCaptchaData } from "captcha.slint";
 
 export struct MediaRow {
@@ -368,14 +368,14 @@ component UserBubble {
                             }
                         }
                     }
-                    // A message of mentions alone has no text line (cards.ts).
-                    if root.card.blocks.length > 0: StyledText {
+                    // A message of mentions alone has no text line (cards.ts). It selects and its links open as
+                    // a reply's do (no key: a selection of it isn't offered for mentioning).
+                    if root.card.blocks.length > 0: Selectable {
                         text: root.card.blocks[0].text;
-                        default-font-size: 14px;
-                        default-font-family: "Geist";
-                        default-color: Theme.fg;
-                        link-color: Theme.blue-900;
-                        link-clicked(u) => {
+                        plain: root.card.blocks[0].plain;
+                        links: root.card.blocks[0].links;
+                        size: 14px;
+                        link(u) => {
                             root.link(u);
                         }
                     }

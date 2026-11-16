@@ -19,6 +19,21 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   `npx`/`npm` run as node.exe and npm's script, without Git Bash in between. The phone app doesn't apply: it runs no
   agents, shells or MCP servers. `HARBOR_NODE=0` turns the download off.
 
+### Changed
+- Links in chats behave like links: the pointer turns into a hand over a link's own words (not the rest of its
+  line), the link tints and its underline thickens while hovered, and one click opens it (a double click opens it
+  once). A drag that starts beside a link still selects across it. A right click on a link offers Open link and
+  Copy link, and a `[text](address)` link shows its address as a tip. This holds in replies (paragraphs, headings,
+  lists, quotes and tables), tool results, PR and issue pages, and your own messages, whose text can now be
+  selected and copied too. Inline code is never a link.
+  - Before, a click on a link in a reply could miss at its edges and didn't open it again on a second click in the
+    same place; links in your own messages and in tables relied on Slint's own link click, which doesn't fire once
+    the text wraps (and counted a wrapped link's last line only); and a click or a selection in a PR
+    or issue description handed the system an address it couldn't open.
+- Web addresses you type in a message (`http://localhost:5173`) are links in it, on the desktop and the phone, with
+  the rule replies already use. The phone has no hover: its links already open on a tap and highlight while
+  pressed.
+
 ### Removed
 - The Omarchy MCP server is gone from Settings › Integrations' MCP servers: agents use Harbor's built-in `computer`
   tool (screenshots, mouse and keyboard) on every OS instead. Harbor's Claude and Codex turns no longer start it,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { blockJson, blocks, markCommits, type Block, type Span } from "../src/markdown.ts";
+import { blockJson, blocks, markCommits, type Block, type Span, webLinks } from "../src/markdown.ts";
 import { wire } from "../src/wire.ts";
 
 const s = (text: string, more: Partial<Span> = {}): Span => ({ text, ...more });
@@ -96,4 +96,15 @@ describe("commit pills (commits.rs)", () => {
     expect(spans[2]?.commit).toBeUndefined();
     expect(b[1]).toEqual({ type: "code", lang: "", text: "35cbb88" });
   });
+});
+
+test("bare web addresses: a reply's rule, which a user's message and the phone's WebLinks.find share", () => {
+  const found = (t: string) => webLinks(t).map(([a, z]) => t.slice(a, z));
+  expect(found("no address here")).toEqual([]);
+  expect(found("see http://localhost:5173, then")).toEqual(["http://localhost:5173"]);
+  expect(found("https://a.dev/x?y=1. and https://b.dev")).toEqual(["https://a.dev/x?y=1", "https://b.dev"]);
+  expect(found('(https://no.dev) xhttps://no.dev "https://no.dev"')).toEqual([]);
+  expect(found("é https://ok.dev\nhttps://next.dev")).toEqual(["https://ok.dev", "https://next.dev"]);
+  expect(found("<https://a.dev>")).toEqual([]);
+  expect(found("https://a.dev`b`")).toEqual(["https://a.dev"]);
 });

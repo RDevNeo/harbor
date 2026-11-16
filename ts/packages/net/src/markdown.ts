@@ -79,36 +79,36 @@ class Conv {
 
   /** Prose text: bare http(s) URLs become links (chat.rs `linkify`), outside links and code. */
   prose(text: string): void {
-    if (this.links.length > 0 || (!text.includes("http://") && !text.includes("https://"))) {
-      this.span(text, false);
-      return;
+    let at = 0;
+    for (const [a, z] of this.links.length > 0 ? [] : webLinks(text)) {
+      if (a > at) this.span(text.slice(at, a), false);
+      this.span(text.slice(a, z), false, text.slice(a, z));
+      at = z;
     }
-    let out = "";
-    let rest = text;
-    while (rest !== "") {
-      const m = rest.search(/https?:\/\//);
-      if (m < 0) {
-        out += rest;
-        break;
-      }
-      out += rest.slice(0, m);
-      rest = rest.slice(m);
-      const prev = Array.from(out).at(-1);
-      if (prev !== undefined && ("(<[\"'".includes(prev) || /[\p{L}\p{N}]/u.test(prev))) {
-        out += rest[0];
-        rest = rest.slice(1);
-        continue;
-      }
-      const end = rest.search(/[\s<>"`]/);
-      const raw = end < 0 ? rest : rest.slice(0, end);
-      const url = raw.replace(/[.,;:!?)'*_]+$/, "");
-      if (out !== "") this.span(out, false);
-      out = "";
-      this.span(url, false, url);
-      rest = rest.slice(url.length);
-    }
-    if (out !== "") this.span(out, false);
+    if (at < text.length) this.span(text.slice(at), false);
   }
+}
+
+/** The bare http(s) URLs in a text, as [start, end) string indices (chat.rs `linkify`): one right after a letter,
+ *  a digit, an opening bracket or a quote isn't one, and trailing punctuation stays outside it. The phone's
+ *  `WebLinks.find` (android/) is the same rule. */
+export function webLinks(text: string): [number, number][] {
+  const out: [number, number][] = [];
+  if (!text.includes("http://") && !text.includes("https://")) return out;
+  const re = /https?:\/\//g;
+  let after = 0;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    const at = m.index;
+    const prev = Array.from(text.slice(after, at)).at(-1);
+    if (prev !== undefined && ("(<[\"'".includes(prev) || /[\p{L}\p{N}]/u.test(prev))) continue;
+    const rest = text.slice(at);
+    const end = rest.search(/[\s<>"`]/);
+    const url = (end < 0 ? rest : rest.slice(0, end)).replace(/[.,;:!?)'*_]+$/, "");
+    after = at + url.length;
+    out.push([at, after]);
+    re.lastIndex = after;
+  }
+  return out;
 }
 
 type Token = ReturnType<typeof md.parse>[number];

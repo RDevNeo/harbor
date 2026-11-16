@@ -5,7 +5,6 @@ import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
 import { parseSteps } from "../src/script.ts";
 import { marksOf } from "../src/shell.ts";
-import { linkAt } from "../src/markdown.ts";
 
 
 const user = (text: string): Item => ({ kind: "user", text, files: ["/tmp/a.txt"], at: 1, mentions: [], sender: "", intent: "" });
@@ -152,9 +151,16 @@ test("a reply's chat links read as their chat's title (markdown links keep their
   const a = card();
   expect(a?.blocks[0]?.plain).toBe(`See Fix [login] or that one, Chat not found; not ${L("g1")}.`);
   expect(a?.text).toBe(items[0]?.kind === "text" ? items[0].text : "");
-  // A click on the title reports the link as written, which the shell opens (chatlink.ts openChatLink).
-  expect(linkAt(`at:${a?.blocks[0]?.key}:5`)).toBe(L("g1"));
-  expect(linkAt(`at:${a?.blocks[0]?.key}:${Buffer.byteLength("See Fix [login] or t")}`)).toBe(L("g2"));
+  // The title's words click through to the link as written, which the shell opens (chatlink.ts openChatLink);
+  // no tip (it isn't a web address), and the inline code isn't a link.
+  const words = a?.blocks[0]?.links ?? [];
+  expect(words.filter((w) => w.link === 0)).toEqual([
+    { link: 0, from: 4, to: 7, next: 8, url: L("g1"), tip: "" },
+    { link: 0, from: 8, to: 15, next: 15, url: L("g1"), tip: "" },
+  ]);
+  expect(words.find((w) => w.link === 1)).toMatchObject({ from: Buffer.byteLength("See Fix [login] or "), url: L("g2") });
+  expect(words.map((w) => w.link)).toEqual([0, 0, 1, 1, 2, 2, 2]);
+  expect(Math.max(...words.map((w) => w.to))).toBe(Buffer.byteLength("See Fix [login] or that one, Chat not found"));
   expect(card()).toBe(a as never);
   titles[L("g1")] = "Fix sign-in";
   expect(card()?.blocks[0]?.plain).toStartWith("See Fix sign-in or that one");

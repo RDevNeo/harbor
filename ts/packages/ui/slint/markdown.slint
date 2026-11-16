@@ -1,14 +1,31 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn } from "widgets.slint";
+import { Btn, MenuItem, PopoverFrame, TipArea } from "widgets.slint";
+
+// One word of a link, by UTF-8 byte offsets in a block's plain text (markdown.ts `MdLinkData`).
+export struct MdLink {
+    link: int,
+    from: int,
+    to: int,
+    next: int,
+    url: string,
+    tip: string,
+}
+
+export struct MdCell {
+    text: styled-text,
+    plain: string,
+    links: [MdLink],
+}
 
 export struct MdCol {
-    cells: [styled-text],
+    cells: [MdCell],
 }
 
 export struct MdBlock {
     kind: string,
     text: styled-text,
+    links: [MdLink],
     code: string,
     level: int,
     marker: string,
@@ -41,11 +58,261 @@ export global MdSizes {
     }
 }
 
-// A read-only TextInput holds the drawn words invisibly, for selecting; StyledText's link-clicked
-// never fires, so a click without a drag reports its offset to the shell.
-component Selectable inherits Rectangle {
+// Where one word of a link lies on one of its lines: the hand cursor and the tip there, and the hover look
+// while any word of its link is under the pointer (`lit`): a tint, and the underline drawn again thicker.
+component LinkSpot {
+    in property <bool> lit;
+    // The text's baseline, from the spot's top.
+    in property <length> base;
+    in property <string> tip;
+    out property <bool> over: area.has-hover;
+    callback clicked;
+    callback menu(length, length);
+    callback hover(bool);
+    changed over => {
+        root.hover(self.over);
+    }
+    Rectangle {
+        x: -1px;
+        width: parent.width + 2px;
+        border-radius: 3px;
+        background: root.lit ? Theme.blue-900.with-alpha(Theme.dark ? 0.16 : 0.1) : transparent;
+    }
+    if root.lit: Rectangle {
+        y: Math.round(root.base / 1px) * 1px + 1px;
+        height: 2px;
+        background: Theme.blue-900;
+    }
+    area := TipArea {
+        tip: root.tip;
+        clicked => {
+            root.clicked();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                root.menu(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+}
+
+// A block's links, over its text. StyledText finds the link under the pointer itself, but under the selectable
+// text it never gets the pointer (and it counted a wrapped link's last line only). So each word of a link is
+// found where it is drawn, from a hidden TextInput laid out as the selectable one: where its cursor goes at the
+// word's ends. Only over a link's own words is the pointer a hand; a click opens the link (once, a double click
+// too), a right click offers to open or copy it, a `[text](url)` shows its address as a tip, and a drag that
+// starts off a link still selects across it.
+component LinkLayer {
+    in property <string> plain;
+    in property <[MdLink]> links;
+    in property <length> size: 16px;
+    in property <TextWrap> wrap: word-wrap;
+    callback open(string);
+    // The hovered link (`MdLink.link`) and the spot that hovered it (word * 3 + line), -1 for none: a spot
+    // leaving clears them only if it's still the one, whichever of two neighbours hears of the move first.
+    property <int> hot: -1;
+    property <int> hot-spot: -1;
+    property <Point> at;
+    property <length> line: one.preferred-height;
+    property <length> ascent: one.font-metrics.ascent;
+    property <string> menu-url;
+    property <length> menu-x;
+    property <length> menu-y;
+    function where(offset: int) -> Point {
+        probe.set-selection-offsets(offset, offset);
+        return root.at;
+    }
+    function hover(link: int, spot: int, on: bool) {
+        if on {
+            root.hot = link;
+            root.hot-spot = spot;
+        } else if root.hot-spot == spot {
+            root.hot = -1;
+            root.hot-spot = -1;
+        }
+    }
+    function click(url: string) {
+        if !cooldown.running {
+            cooldown.running = true;
+            root.open(url);
+        }
+    }
+    function menu(url: string, x: length, y: length) {
+        root.menu-url = url;
+        root.menu-x = x;
+        root.menu-y = y;
+        menu-popup.show();
+    }
+    one := Text {
+        visible: false;
+        text: "X";
+        font-size: root.size;
+        font-family: "Geist";
+    }
+    probe := TextInput {
+        visible: false;
+        enabled: false;
+        read-only: true;
+        width: root.width;
+        height: root.height;
+        text: root.plain;
+        font-size: root.size;
+        font-family: "Geist";
+        wrap: root.wrap;
+        cursor-position-changed(p) => {
+            root.at = p;
+        }
+    }
+    clip := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+    }
+    cooldown := Timer {
+        interval: 500ms;
+        running: false;
+        triggered => {
+            self.running = false;
+        }
+    }
+    for w[i] in root.links: word := Rectangle {
+        // Where the word starts and where it ends: at the link's next word when that's on the same line.
+        property <Point> a;
+        property <Point> b;
+        property <bool> placed;
+        property <bool> same: self.b.y == self.a.y;
+        // Laid out again when any of these change.
+        property <length> w-now: root.width;
+        property <length> size-now: root.size;
+        property <string> text-now: root.plain;
+        property <int> from-now: w.from;
+        property <int> next-now: w.next;
+        function place() {
+            self.a = root.where(w.from);
+            let end = root.where(w.to);
+            let next = root.where(w.next);
+            self.b = next.y == end.y ? next : end;
+            // Before the window can lay text out, every offset is at 0,0: try again shortly.
+            self.placed = root.width > 0 && (self.b.x != self.a.x || self.b.y != self.a.y);
+        }
+        init => {
+            self.place();
+        }
+        changed w-now => {
+            self.place();
+        }
+        changed size-now => {
+            self.place();
+        }
+        changed text-now => {
+            self.place();
+        }
+        changed from-now => {
+            self.place();
+        }
+        changed next-now => {
+            self.place();
+        }
+        Timer {
+            interval: 100ms;
+            running: !word.placed && root.width > 0;
+            triggered => {
+                word.place();
+            }
+        }
+        // Its first line, to the line's end when it goes on.
+        if word.placed: LinkSpot {
+            x: word.a.x;
+            y: word.a.y;
+            width: (word.same ? word.b.x : root.width) - word.a.x;
+            height: root.line;
+            lit: root.hot == w.link;
+            base: root.ascent;
+            tip: w.tip;
+            clicked => {
+                root.click(w.url);
+            }
+            menu(x, y) => {
+                root.menu(w.url, self.x + x, self.y + y);
+            }
+            hover(on) => {
+                root.hover(w.link, i * 3, on);
+            }
+        }
+        // Whole lines between (a long address broken across lines).
+        if word.placed && word.b.y > word.a.y + root.line: LinkSpot {
+            x: 0;
+            y: word.a.y + root.line;
+            width: root.width;
+            height: word.b.y - word.a.y - root.line;
+            lit: root.hot == w.link;
+            base: root.ascent;
+            tip: w.tip;
+            clicked => {
+                root.click(w.url);
+            }
+            menu(x, y) => {
+                root.menu(w.url, self.x + x, self.y + y);
+            }
+            hover(on) => {
+                root.hover(w.link, i * 3 + 1, on);
+            }
+        }
+        // Its last line.
+        if word.placed && !word.same && word.b.x > 0: LinkSpot {
+            x: 0;
+            y: word.b.y;
+            width: word.b.x;
+            height: root.line;
+            lit: root.hot == w.link;
+            base: root.ascent;
+            tip: w.tip;
+            clicked => {
+                root.click(w.url);
+            }
+            menu(x, y) => {
+                root.menu(w.url, self.x + x, self.y + y);
+            }
+            hover(on) => {
+                root.hover(w.link, i * 3 + 2, on);
+            }
+        }
+    }
+    menu-popup := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 180px;
+        PopoverFrame {
+            VerticalLayout {
+                padding: 4px;
+                MenuItem {
+                    icon: Icons.external;
+                    label: "Open link";
+                    clicked => {
+                        root.open(root.menu-url);
+                    }
+                }
+                MenuItem {
+                    icon: Icons.link;
+                    label: "Copy link";
+                    clicked => {
+                        clip.text = root.menu-url;
+                        clip.select-all();
+                        clip.copy();
+                        clip.text = "";
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A read-only TextInput holds the drawn words invisibly, for selecting; the links lie over both (`LinkLayer`).
+// Also a user's bubble: its text selects and copies, its links open.
+export component Selectable inherits Rectangle {
     in property <styled-text> text;
     in property <string> plain;
+    in property <[MdLink]> links;
     in property <string> key;
     in property <length> size: 16px;
     in property <color> ink: Theme.fg;
@@ -60,12 +327,12 @@ component Selectable inherits Rectangle {
         }
     }
     // A selection settles once it rests for a tick: then it can be mentioned, above the block's start
-    // (Slint doesn't say where the drag ended).
+    // (Slint doesn't say where the drag ended). Only a block with a key can be.
     property <string> seen;
     property <string> told;
     Timer {
         interval: 250ms;
-        running: root.chose;
+        running: root.chose && root.key != "";
         triggered => {
             let now = field.anchor-position-byte-offset + ":" + field.cursor-position-byte-offset;
             if now == root.seen && now != root.told {
@@ -104,11 +371,43 @@ component Selectable inherits Rectangle {
             }
             reject
         }
-        changed cursor-position-byte-offset => {
-            if root.key != "" && self.has-focus && self.anchor-position-byte-offset == self.cursor-position-byte-offset {
-                root.link("at:" + root.key + ":" + self.cursor-position-byte-offset);
-            }
+    }
+    if root.links.length > 0: LinkLayer {
+        width: parent.width;
+        height: parent.height;
+        plain: root.plain;
+        links: root.links;
+        size: root.size;
+        open(u) => {
+            root.link(u);
+        }
+    }
+}
 
+// A table cell: its text and its links, not selectable.
+component Linked inherits Rectangle {
+    in property <MdCell> cell;
+    in property <length> size: 16px;
+    in property <color> ink: Theme.fg;
+    callback link(string);
+    preferred-width: shown.preferred-width;
+    preferred-height: shown.preferred-height;
+    shown := Inline {
+        width: parent.width;
+        height: parent.height;
+        text: root.cell.text;
+        size: root.size;
+        ink: root.ink;
+    }
+    if root.cell.links.length > 0: LinkLayer {
+        width: parent.width;
+        height: parent.height;
+        plain: root.cell.plain;
+        links: root.cell.links;
+        size: root.size;
+        wrap: no-wrap;
+        open(u) => {
+            root.link(u);
         }
     }
 }
@@ -140,6 +439,7 @@ export component MdBlockView {
         if root.block.kind == "p": Selectable {
             text: root.block.text;
             plain: root.block.plain;
+            links: root.block.links;
             key: root.block.key;
             size: root.size;
             ink: root.ink;
@@ -150,6 +450,7 @@ export component MdBlockView {
         if root.block.kind == "h": Selectable {
             text: root.block.text;
             plain: root.block.plain;
+            links: root.block.links;
             key: root.block.key;
             size: MdSizes.heading(root.block.level);
             ink: root.ink;
@@ -191,6 +492,7 @@ export component MdBlockView {
                 Selectable {
                     text: root.block.text;
                     plain: root.block.plain;
+                    links: root.block.links;
                     key: root.block.key;
                     size: root.size;
                     ink: root.ink;
@@ -275,13 +577,15 @@ export component MdBlockView {
                         for cell in col.cells: Rectangle {
                             height: 26px;
                             min-width: cell-text.preferred-width;
-                            cell-text := Inline {
+                            cell-text := Linked {
                                 x: 0;
                                 y: 3px;
-                                text: cell;
+                                width: self.preferred-width;
+                                height: self.preferred-height;
+                                cell: cell;
                                 size: root.size;
                                 ink: root.ink;
-                                link-clicked(u) => {
+                                link(u) => {
                                     root.link(u);
                                 }
                             }

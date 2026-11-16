@@ -1890,7 +1890,7 @@ public class Chat extends Base implements Images.Gallery {
     }
 
     /** A user message's `parts` (src/usertext.rs): tags and commands blue, `[Image #N]` marked,
-     *  a mentioned chat's title a blue underlined link that opens it. */
+     *  a mentioned chat's title a blue underlined link that opens it, a bare web address one to the browser. */
     private CharSequence userText(JSONArray parts) {
         android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
         for (int i = 0; i < parts.length(); i++) {
@@ -1920,7 +1920,17 @@ public class Chat extends Base implements Images.Gallery {
                     }, a, z, f);
                     break;
                 }
-                default:
+                default: {
+                    // A bare web address opens in the phone's browser, as on the desktop.
+                    String text = p.optString("text");
+                    for (int[] w : WebLinks.find(text)) {
+                        final String url = text.substring(w[0], w[1]);
+                        sb.setSpan(new android.text.style.ClickableSpan() {
+                            @Override public void onClick(View v) { Ui.openUrl(Chat.this, url); }
+                            @Override public void updateDrawState(android.text.TextPaint tp) { tp.setColor(Ui.BLUE); tp.setUnderlineText(true); }
+                        }, a + w[0], a + w[1], f);
+                    }
+                }
             }
         }
         return sb;

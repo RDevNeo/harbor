@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as slint from "slint-ui";
-import { blocks, escape, inline, place, plainOf, registerBlock, ROW, selectionAt } from "../src/markdown.ts";
+import { blocks, escape, inline, linkTip, linkWords, place, plainOf, registerBlock, ROW, selectionAt } from "../src/markdown.ts";
+import { mdBlocks, userText } from "../src/cards.ts";
 
 test("paragraphs, headings, breaks and rules", () => {
   expect(blocks("# Title\n\nOne\ntwo  \nthree\n\n---\n\nSub\n---")).toMatchObject([
@@ -86,8 +87,60 @@ test("a block's plain text and its links by byte offset, for selecting and click
 });
 
 test("a selection in a reply's block reports its item and the text it covers", () => {
-  const key = registerBlock("Read the Harbor docs", [], 7);
+  const key = registerBlock("Read the Harbor docs", 7);
   expect(selectionAt(`sel:${key}:16:0:298:157`)).toEqual({ seq: 7, text: "Read the Harbor ", x: 298, y: 157 });
-  expect(selectionAt(`sel:${registerBlock("no item", [], -1)}:0:2:0:0`)).toBeNull();
+  expect(selectionAt(`sel:${registerBlock("no item", -1)}:0:2:0:0`)).toBeNull();
   expect(selectionAt("sel:")).toBeNull();
+});
+
+test("a link is hit a word at a time, the space to its next word on the line included; inline code is no link", () => {
+  const p = plainOf([{ text: "See " }, { text: "the  Café docs", link: "https://x.dev/a" }, { text: " and " }, { text: "http://y.dev", link: "http://y.dev" }, { text: " `z`", code: true }]);
+  const at = (s: string) => Buffer.byteLength(p.plain.slice(0, p.plain.indexOf(s)));
+  expect(linkWords(p)).toEqual([
+    { link: 0, from: at("the"), to: at("the") + 3, next: at("Café"), url: "https://x.dev/a", tip: "https://x.dev/a" },
+    { link: 0, from: at("Café"), to: at("Café") + Buffer.byteLength("Café"), next: at("docs"), url: "https://x.dev/a", tip: "https://x.dev/a" },
+    { link: 0, from: at("docs"), to: at("docs") + 4, next: at("docs") + 4, url: "https://x.dev/a", tip: "https://x.dev/a" },
+    { link: 1, from: at("http"), to: at("http") + 12, next: at("http") + 12, url: "http://y.dev", tip: "" },
+  ]);
+  expect(linkWords(plainOf([{ text: "`code` only", code: true }]))).toEqual([]);
+  expect(linkWords(plainOf([{ text: "  ", link: "https://blank.dev" }]))).toEqual([]);
+});
+
+test("a link's tip is its address when its text says something else, for web and mail links only", () => {
+  expect(linkTip("docs", "https://x.dev")).toBe("https://x.dev");
+  expect(linkTip(" https://x.dev ", "https://x.dev")).toBe("");
+  expect(linkTip("me@x.dev", "mailto:me@x.dev")).toBe("");
+  expect(linkTip("Fix login", "harbor://chat/g1?pc=desk")).toBe("");
+  expect(linkTip("x", `https://x.dev/${"a".repeat(300)}`)).toHaveLength(201);
+});
+
+test("every block that draws text carries its links: paragraphs, headings, list items, quotes and table cells", () => {
+  const md = "# [Title](https://h.dev)\n\nSee https://p.dev now\n\n- item [l](https://li.dev)\n\n> quoted https://q.dev\n\n| a | b |\n|---|---|\n| [c](https://c.dev) | `https://code.dev` |";
+  const bs = mdBlocks(md);
+  expect(bs.map((b) => [b.kind, b.links.map((w) => w.url)])).toEqual([
+    ["h", ["https://h.dev"]],
+    ["p", ["https://p.dev"]],
+    ["li", ["https://li.dev"]],
+    ["p", ["https://q.dev"]],
+    ["table", []],
+  ]);
+  const cells = bs[4]?.cols.map((c) => c.cells.map((x) => [x.plain, x.links.map((w) => w.url)]));
+  expect(cells).toEqual([
+    [["a", []], ["c", ["https://c.dev"]]],
+    [["b", []], ["https://code.dev", []]],
+  ]);
+});
+
+test("a user's message: a mentioned chat and a bare web address are links, a command only looks like one", () => {
+  const u = userText([
+    { kind: "command", text: "/review" },
+    { kind: "plain", text: " see http://localhost:5173, and (https://no.dev\nnext " },
+    { kind: "chat", chat: "g7", text: "Other chat" },
+  ]);
+  expect(u.plain).toBe("/review see http://localhost:5173, and (https://no.dev\nnext Other chat");
+  expect(u.links.map((w) => [w.link, Buffer.from(u.plain).subarray(w.from, w.to).toString(), w.url, w.tip])).toEqual([
+    [0, "http://localhost:5173", "http://localhost:5173", ""],
+    [1, "Other", "harbor:chat/g7", ""],
+    [1, "chat", "harbor:chat/g7", ""],
+  ]);
 });

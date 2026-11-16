@@ -45,7 +45,7 @@ import { control } from "@harbor/mcp";
 import { Data, mentionOf as fromStore } from "./data.ts";
 import { web } from "./logic/weburl.ts";
 import { gridSize } from "./logic/terminal.ts";
-import { linkAt, selectionAt } from "./markdown.ts";
+import { selectionAt } from "./markdown.ts";
 import { type Dock, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
@@ -5446,11 +5446,6 @@ export class Shell {
     const scroll = /^scroll:(up|down|home|end)$/.exec(url)?.[1];
     if (scroll === "up" || scroll === "down" || scroll === "home" || scroll === "end") {
       if (!this.win.lb_open && !this.win.vid_open) this.win.transcript_key(scroll);
-      return;
-    }
-    if (url.startsWith("at:")) {
-      const hit = linkAt(url);
-      if (hit !== null) this.openLink(hit);
       return;
     }
     // A chat link in a reply (chatlink.ts): opens that chat here, a copy of another PC's or a
