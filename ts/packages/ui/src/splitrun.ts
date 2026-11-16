@@ -3,8 +3,10 @@
 // pane's transcript is built by the shell, as the usual view's, into that pane's models (`target`); the others' here.
 // So the keyboard going to another pane builds nothing again: both transcripts stay as they are. A pane that isn't on
 // screen (another page, a pane shown alone) holds no cards and its transcript is let go.
+// Splits are stored: several at once, a chat in one at most. The split on screen is the one holding the chat the usual
+// view shows (none: that chat shows alone); opening a chat never changes a split, only dragging and closing do.
 import * as slint from "slint-ui";
-import { type Band, close, type Drop, dropAt, dropped, dividers, MAX_PANES, opened, order, paneDropAt, paneDropped, parse, prune, rects, resize, serialize, single, type Split, SPLIT_KEY, toggleMax } from "./logic/splitpanes.ts";
+import { type Band, close, type Drop, dropAt, dropped, dividers, MAX_PANES, openIn, order, paneDropAt, paneDropped, parse, place, rects, resize, serialize, single, type Split, SPLIT_KEY, splitOf, tidy, toggleMax } from "./logic/splitpanes.ts";
 import type { MediaRows } from "./mediarows.ts";
 import type { Pixels } from "./logos.ts";
 import type { AppWindow, CardData, ComposerState, MdBlockData, PaneBody, StripRow, WorkBarData, PaneDiv, PaneDrop, PaneHead, StatusData } from "./window.ts";
@@ -32,7 +34,8 @@ export interface SplitHost {
   set(key: string, value: string): void;
   /** The chat the usual view shows (null: another view is up). */
   shown(): number | null;
-  exists(chat: number): boolean;
+  /** Chat `chat` can be in a split: it's there and not settled (else its pane closes). */
+  alive(chat: number): boolean;
   info(chat: number): PaneInfo;
   /** A pane's transcript: the cards (as the usual view builds them) and whether a reply streams in it. */
   cards(chat: number, media: MediaRows | null): { cards: CardData[]; running: boolean };
@@ -123,7 +126,10 @@ export function pillOf(s: StatusData | null): { pill: string; tone: PaneHead["to
 }
 
 export class SplitPanes {
-  private state: Split | null;
+  /** Every stored split (logic/splitpanes.ts `place` keeps a chat in one at most, each with two chats or more). */
+  private splits: readonly Split[];
+  /** The chat the usual view opened last: its split is the one on screen, or (another page up) the one to come back. */
+  private last: number | null = null;
   private slots: Slot[] = [];
   private heads = new slint.ArrayModel<PaneHead>([]);
   private bodies = new slint.ArrayModel<PaneBody>([]);
@@ -132,7 +138,7 @@ export class SplitPanes {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private host: SplitHost) {
-    this.state = parse(host.get(SPLIT_KEY));
+    this.splits = parse(host.get(SPLIT_KEY));
     const w = host.win;
     w.split_heads = this.heads;
     w.split_bodies = this.bodies;
@@ -167,10 +173,37 @@ export class SplitPanes {
     };
   }
 
-  /** The panes now, with the usual view's chat as the one pane when nothing is split. */
+  /** The chat whose split is the current one: the usual view's, else (another page up) the one opened last. */
+  private anchor(): number | null {
+    return this.host.shown() ?? this.last;
+  }
+
+  /** The current split's index among the stored ones (-1: the chat shows alone). */
+  private at(): number {
+    const chat = this.anchor();
+    return chat === null ? -1 : splitOf(this.splits, chat);
+  }
+
+  /** The current split: the one holding the usual view's chat (null: that chat isn't in a split). */
+  private get state(): Split | null {
+    return this.splits[this.at()] ?? null;
+  }
+
+  /** The panes now, with the usual view's chat as the one pane when it isn't in a split. */
   private now(): Split {
     const shown = this.host.shown();
     return this.state ?? single(shown ?? -1);
+  }
+
+  /** The stored splits as kv keeps them, for a restart's snapshot (written there as well: kv's write may still wait). */
+  snapshot(): string {
+    return serialize(this.splits);
+  }
+
+  /** The stored splits from a restart's snapshot (`snapshot`'s string). */
+  restore(raw: string): void {
+    this.splits = parse(raw);
+    this.save();
   }
 
   /** How many panes are open (1 when nothing is split). */
@@ -195,23 +228,14 @@ export class SplitPanes {
     return out;
   }
 
-  /** The usual view opens `chat`: its pane takes the keyboard, or it takes the focused pane's place. `alone`: it's
-   * opened from outside the panes (the new-chat draft, a chat started there): it shows by itself, even one a pane
-   * held, and the panes are let go, as nothing on screen would bring them back (a chat is dragged in to split again). */
-  opened(chat: number, alone = false): void {
-    if (alone) {
-      if (this.state === null) return;
-      this.state = null;
-      this.save();
-      return;
-    }
-    const before = this.state;
-    const next = before === null ? null : opened(before, chat);
-    if (before !== null && next !== null && next.chats[next.focus] !== before.chats[before.focus]) {
-      const gone = before.chats.filter((c) => !next.chats.includes(c));
-      this.state = next;
-      for (const c of gone) this.host.release(c);
-    } else this.state = next;
+  /** The usual view opens `chat` (from the sidebar, a link, a notification, the new-chat draft, anywhere): a chat in a
+   * stored split brings that split with its pane focused; any other shows alone. No split changes but for that focus:
+   * the panes left behind wait, stored, for one of their chats to be opened again (`render` lets their transcripts go). */
+  opened(chat: number): void {
+    this.last = chat;
+    const next = openIn(this.splits, chat);
+    if (next === this.splits) return;
+    this.splits = next;
     this.save();
   }
 
@@ -292,14 +316,17 @@ export class SplitPanes {
   render(): void {
     const w = this.host.win;
     const shown = this.host.shown();
-    let s = this.state;
-    if (s !== null) {
-      const p = prune(s, (c) => this.host.exists(c));
-      if (p !== s) {
-        this.state = s = p;
-        this.save();
-      }
+    // Chats deleted or settled leave their splits (one left alone dissolves); the shown chat's pane has the keyboard.
+    let next = tidy(this.splits, (c) => this.host.alive(c));
+    if (shown !== null) {
+      this.last = shown;
+      next = openIn(next, shown);
     }
+    if (next !== this.splits) {
+      this.splits = next;
+      this.save();
+    }
+    const s = this.state;
     const split = s !== null && s.chats.length > 1 && shown !== null && s.chats[s.focus] === shown;
     // A pane maximized is the usual single-chat view (its title bar, full composer, Agents column), with a button in
     // the title bar that brings the other panes back.
@@ -471,12 +498,18 @@ export class SplitPanes {
     this.change(close(s, i));
   }
 
-  /** A new layout: the focused pane's chat opened if it changed, else laid out again. */
+  /** The current split becomes `next` (a new split when the chat on screen had none): its chats leave the others. */
+  private put(next: Split): void {
+    this.splits = place(this.splits, this.at(), next);
+  }
+
+  /** A new layout, made on purpose (a drop, a pane moved, closed, maximized): stored, then the focused pane's chat
+   * opened if it changed, else laid out again. Left with one chat, the split dissolves and that chat shows alone. */
   private change(next: Split): void {
     const before = this.state;
-    if (next === before) return;
+    if (next === before || (before === null && next.chats.length < 2)) return;
     const gone = before === null ? [] : before.chats.filter((c) => !next.chats.includes(c));
-    this.state = next.chats.length === 1 ? null : next;
+    this.put(next);
     this.save();
     const chat = next.chats[next.focus] as number;
     if (chat !== this.host.shown()) this.host.openChat(chat, null);
@@ -490,7 +523,7 @@ export class SplitPanes {
   private resize(path: string, at: number): void {
     const s = this.state;
     if (s === null) return;
-    this.state = resize(s, path, at);
+    this.put(resize(s, path, at));
     this.render();
     this.save(400);
   }
@@ -504,14 +537,21 @@ export class SplitPanes {
     if (!sameJson(next, this.host.win.split_drop)) this.host.win.split_drop = next;
   }
 
+  /** `chat` dragged over the view can go into a split there: both it and the chat shown can be split (not settled). */
+  private droppable(chat: number): boolean {
+    const shown = this.host.shown();
+    return shown !== null && this.host.alive(chat) && this.host.alive(shown);
+  }
+
   private drag(chat: number, u: number, v: number, band: Band): void {
-    if (this.host.shown() === null) return;
+    if (!this.droppable(chat)) return;
     this.show(this.dropAt(chat, u, v, band), this.count() >= MAX_PANES);
   }
 
+  /** `chat` dropped: it joins the split on screen (or makes one with the chat shown alone), leaving its own split. */
   private drop(chat: number, u: number, v: number, band: Band): void {
     this.host.win.split_drop = NO_DROP;
-    if (this.host.shown() === null) return;
+    if (!this.droppable(chat)) return;
     const d = this.dropAt(chat, u, v, band);
     if (d.kind === "none") return;
     this.change(dropped(this.now(), chat, d));
@@ -554,7 +594,7 @@ export class SplitPanes {
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
     const write = () => {
       this.saveTimer = null;
-      this.host.set(SPLIT_KEY, this.state === null ? "" : serialize(this.state));
+      this.host.set(SPLIT_KEY, this.splits.length === 0 ? "" : serialize(this.splits));
     };
     if (ms === 0) write();
     else this.saveTimer = setTimeout(write, ms);

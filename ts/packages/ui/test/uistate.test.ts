@@ -41,6 +41,7 @@ test("a snapshot goes through JSON and back whole", () => {
     panes: { right: { open: true, active: 1, tabs: [{ kind: "devices" }, { kind: "chooser" }] }, bottom: { open: false, active: 0, tabs: [{ kind: "shell", title: "wt", cwd: "/tmp" }] }, max: "right" },
     dialog: { kind: "rename-chat", id: 7, input: "A better tit" },
     revs: [[7, 1234]],
+    splits: JSON.stringify({ v: 3, splits: [{ chats: [7, 3], focus: 0, tree: { dir: "h", ratio: 0.5, a: { pane: 0 }, b: { pane: 1 } }, max: null }] }),
   };
   const back = parseSnapshot(JSON.parse(JSON.stringify(snapshotJson(snap))) as Record<string, unknown>);
   expect(back).toEqual(snap);
@@ -60,6 +61,7 @@ test("junk in a snapshot is dropped, not trusted", () => {
   expect(s?.page).toEqual({ kind: "settings", tab: "general", search: "", scroll: 0, fields: {} });
   expect(s?.transcript).toBeNull();
   expect(s?.dialog).toBeNull();
+  expect(s?.splits).toBeNull();
   expect(parseSnapshot(null)).toBeNull();
 });
 

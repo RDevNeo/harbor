@@ -1,16 +1,16 @@
 // Split chat panes: up to four chats in the window's centre, in any layout a tree of splits gives (each split puts two
 // sides left/right or top/bottom, nested). Pure: the layout, where a chat dragged from the sidebar or a pane dragged by
-// its header would land, presets, and what kv keeps of it. The shell owns the state and draws it; the focused pane is
-// the usual chat view, moved into its place.
+// its header would land, presets, the stored splits (several, a chat in one at most) and what kv keeps of them. The
+// shell owns the state and draws it; the focused pane is the usual chat view, moved into its place.
 
 /** The most panes the centre holds. */
 export const MAX_PANES = 4;
-/** kv: the panes, their layout and the focused one, kept across restarts. */
+/** kv: the stored splits (each its panes, layout, focused and maximized pane), kept across restarts. */
 export const SPLIT_KEY = "split_panes";
 /** A pane's least share of the split it's in, so a divider never squeezes one away. */
 export const MIN_SHARE = 0.15;
-/** What kv holds: 2 since the layout is any tree (v0.175.0 wrote the same shape without `v`). */
-export const SPLIT_VERSION = 2;
+/** What kv holds: 3 since several splits are kept (2: one split, its layout any tree; v0.175.0: that without `v`). */
+export const SPLIT_VERSION = 3;
 
 /** A leaf names its pane by index into `chats`; a split puts `a` left of (h) or above (v) `b`, `ratio` of it to `a`. */
 export type Node = { pane: number } | { dir: "h" | "v"; ratio: number; a: Node; b: Node };
@@ -174,13 +174,12 @@ const swapLeaves = (n: Node, i: number, j: number): Node => {
   return { ...n, a: swapLeaves(n.a, i, j), b: swapLeaves(n.b, i, j) };
 };
 
-/** Opening `chat` (a sidebar click, a link): its pane is focused if it has one, else it takes the focused pane. */
+/** Opening `chat`, one of the split's (a sidebar click, a link): its pane is focused (and shown, if one is maximized).
+ * A chat the split doesn't hold leaves it as it is: that chat shows alone, outside every split. */
 export function opened(s: Split, chat: number): Split {
   const at = s.chats.indexOf(chat);
-  if (at >= 0) return at === s.focus && (s.max === null || s.max === at) ? s : { ...s, focus: at, max: s.max === null ? null : at };
-  const chats = s.chats.slice();
-  chats[s.focus] = chat;
-  return { ...s, chats };
+  if (at < 0) return s;
+  return at === s.focus && (s.max === null || s.max === at) ? s : { ...s, focus: at, max: s.max === null ? null : at };
 }
 
 export function focus(s: Split, i: number): Split {
@@ -412,6 +411,50 @@ export function applyPreset(s: Split, p: Preset): Split {
   return { ...s, tree: presetTree(p, order(s)), max: null };
 }
 
+// --- The stored splits ---
+// Splits are made and changed on purpose only (a chat dragged into the view, a pane moved or closed); opening a chat
+// shows its split if it has one, else the chat alone, and changes none. A chat is in one split at most; a split holds
+// two chats or more.
+
+/** The split holding `chat` (its index), -1: none. */
+export const splitOf = (all: readonly Split[], chat: number): number => all.findIndex((s) => s.chats.includes(chat));
+
+/** `chat` opened: its split (if any) has its pane focused; the rest stay as they are (the same array: nothing changed). */
+export function openIn(all: readonly Split[], chat: number): readonly Split[] {
+  const i = splitOf(all, chat);
+  const s = all[i];
+  if (s === undefined) return all;
+  const next = opened(s, chat);
+  return next === s ? all : all.map((x, k) => (k === i ? next : x));
+}
+
+/** Split `at` (-1: a new one) becomes `next`: its chats leave every other split (one left with a single chat
+ * dissolves), and `next` itself dissolves with fewer than two. */
+export function place(all: readonly Split[], at: number, next: Split): Split[] {
+  const mine = new Set(next.chats);
+  const out: Split[] = [];
+  all.forEach((s, i) => {
+    if (i === at) {
+      if (next.chats.length > 1) out.push(next);
+      return;
+    }
+    const p = s.chats.some((c) => mine.has(c)) ? prune(s, (c) => !mine.has(c)) : s;
+    if (p !== null && p.chats.length > 1) out.push(p);
+  });
+  if ((at < 0 || at >= all.length) && next.chats.length > 1) out.push(next);
+  return out;
+}
+
+/** The splits with the panes of gone chats (deleted, settled) closed, a split left with one chat dissolved; the same
+ * array when nothing changed. */
+export function tidy(all: readonly Split[], alive: (chat: number) => boolean): readonly Split[] {
+  if (all.every((s) => s.chats.every(alive))) return all;
+  return all.flatMap((s) => {
+    const p = prune(s, alive);
+    return p !== null && p.chats.length > 1 ? [p] : [];
+  });
+}
+
 // --- kv ---
 
 /** A saved tree checked: each pane once, ratios within bounds (clamped). Null: not a layout of `count` panes. */
@@ -430,27 +473,47 @@ const readTree = (n: unknown, count: number, seen: Set<number>): Node | null => 
   return { dir: o.dir, ratio: Math.min(1 - MIN_SHARE, Math.max(MIN_SHARE, o.ratio)), a, b };
 };
 
-/** What kv holds, read: this version's, or v0.175.0's (the same fields without `v`; a tree it can't read becomes
- * columns, the chats kept). */
-export function parse(raw: string | null | undefined): Split | null {
-  if (!raw) return null;
-  try {
-    const o = JSON.parse(raw) as Partial<Split> & { v?: number };
-    if (typeof o !== "object" || o === null || (o.v !== undefined && o.v > SPLIT_VERSION)) return null;
-    const chats = o.chats;
-    if (!Array.isArray(chats) || chats.length < 1 || chats.length > MAX_PANES || !chats.every((c) => Number.isInteger(c)) || new Set(chats).size !== chats.length) return null;
-    const seen = new Set<number>();
-    let tree = readTree(o.tree, chats.length, seen);
-    if (tree === null || seen.size !== chats.length) tree = run(chats.map((_, i) => i), "h");
-    const focus = Number.isInteger(o.focus) && (o.focus as number) >= 0 && (o.focus as number) < chats.length ? (o.focus as number) : 0;
-    const max = Number.isInteger(o.max) && (o.max as number) >= 0 && (o.max as number) < chats.length ? (o.max as number) : null;
-    return { chats, focus, tree, max };
-  } catch {
-    return null;
-  }
+/** One saved split checked (a tree it can't read becomes columns, the chats kept). Null: not a split. */
+function readSplit(v: unknown): Split | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Partial<Split>;
+  const chats = o.chats;
+  if (!Array.isArray(chats) || chats.length < 1 || chats.length > MAX_PANES || !chats.every((c) => Number.isInteger(c)) || new Set(chats).size !== chats.length) return null;
+  const seen = new Set<number>();
+  let tree = readTree(o.tree, chats.length, seen);
+  if (tree === null || seen.size !== chats.length) tree = run(chats.map((_, i) => i), "h");
+  const focus = Number.isInteger(o.focus) && (o.focus as number) >= 0 && (o.focus as number) < chats.length ? (o.focus as number) : 0;
+  const max = Number.isInteger(o.max) && (o.max as number) >= 0 && (o.max as number) < chats.length ? (o.max as number) : null;
+  return { chats, focus, tree, max };
 }
 
-export const serialize = (s: Split): string => JSON.stringify({ v: SPLIT_VERSION, chats: s.chats, focus: s.focus, tree: s.tree, max: s.max });
+/** What kv holds, read: this version's splits, or the one split v2 and v0.175.0 kept (the same fields, `v` 2 or
+ * none). A chat in two splits stays in the first; a split with fewer than two chats is dropped. */
+export function parse(raw: string | null | undefined): Split[] {
+  if (!raw) return [];
+  let o: unknown;
+  try {
+    o = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (typeof o !== "object" || o === null) return [];
+  const v = (o as { v?: unknown }).v;
+  if (typeof v === "number" && v > SPLIT_VERSION) return [];
+  const list = typeof v === "number" && v >= 3 ? (o as { splits?: unknown }).splits : [o];
+  if (!Array.isArray(list)) return [];
+  let out: Split[] = [];
+  for (const x of list) {
+    const s = readSplit(x);
+    if (s === null) continue;
+    // Its chats already in a split before it: it keeps the rest.
+    const p = prune(s, (c) => splitOf(out, c) < 0);
+    if (p !== null) out = place(out, -1, p);
+  }
+  return out;
+}
+
+export const serialize = (all: readonly Split[]): string => JSON.stringify({ v: SPLIT_VERSION, splits: all.map((s) => ({ chats: s.chats, focus: s.focus, tree: s.tree, max: s.max })) });
 
 /** A pane's header: its project's name when the chat is that project's main chat (`main`, the one its sidebar row opens),
  *  as that row names it; a subagent's name; else the chat's own title. */

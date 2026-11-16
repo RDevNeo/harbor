@@ -78,6 +78,8 @@ export interface UiSnapshot {
   dialog: DialogSnap | null;
   /** The newest shared draft the window had taken, per chat (logic/shareddraft.ts). */
   revs: [number, number][];
+  /** The stored split panes (kv `split_panes`'s value, logic/splitpanes.ts `serialize`); null: an older Harbor's. */
+  splits: string | null;
 }
 
 const num = (v: unknown, d = 0): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
@@ -233,6 +235,7 @@ export function parseSnapshot(raw: Record<string, unknown> | null): UiSnapshot |
     panes: panes === null ? null : { right: paneSnap(panes.right), bottom: paneSnap(panes.bottom), max: panes.max === "right" || panes.max === "bottom" ? panes.max : null },
     dialog: dialog?.kind === "rename-chat" && dialogId !== null ? { kind: "rename-chat", id: dialogId, input: str(dialog.input) } : null,
     revs: (Array.isArray(raw.revs) ? raw.revs : []).filter((e): e is [number, number] => Array.isArray(e) && Number.isInteger(e[0]) && typeof e[1] === "number" && e[1] >= 0),
+    splits: typeof raw.splits === "string" ? raw.splits : null,
   };
 }
 
@@ -260,6 +263,7 @@ export function snapshotJson(s: UiSnapshot): Record<string, unknown> {
     panes: s.panes,
     dialog: s.dialog,
     revs: s.revs,
+    splits: s.splits,
   };
 }
 

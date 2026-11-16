@@ -9,9 +9,11 @@ import {
   focus,
   type Node,
   opened,
+  openIn,
   order,
   paneDropAt,
   paneDropped,
+  place,
   parse,
   presetEnabled,
   presetOf,
@@ -20,7 +22,9 @@ import {
   resize,
   serialize,
   single,
+  splitOf,
   type Split,
+  tidy,
   toggleMax,
 } from "../src/logic/splitpanes.ts";
 
@@ -172,10 +176,13 @@ describe("split tree", () => {
     expect((inner.b as Extract<Node, { dir: "h" | "v" }>).ratio).toBe(0.5);
   });
 
-  test("open: focus its pane or take the focused one", () => {
+  test("open: its pane is focused; a chat the split doesn't hold leaves it as it is", () => {
     const s = drop(single(1), 2, 0.9, 0.5);
+    expect(s.focus).toBe(1);
     expect(opened(s, 1).focus).toBe(0);
-    expect(opened(s, 7).chats).toEqual([1, 7]);
+    expect(opened(s, 7)).toBe(s);
+    // A pane maximized: the opened one is shown instead.
+    expect(opened(toggleMax(s, 1), 1)).toMatchObject({ focus: 0, max: 0 });
   });
 
   test("resize at every level clamps; maximize hides the rest", () => {
@@ -210,25 +217,81 @@ describe("split tree", () => {
     expect(applyPreset(s, "2x2")).toBe(s);
   });
 
-  test("kv: round trip, v0.175.0's value, bad input, pruning", () => {
+  test("kv: round trip, v2's and v0.175.0's one split, bad input, pruning", () => {
     const s = drop(three(), 4, 0.5, 0.99);
-    const raw = serialize(s);
-    expect(JSON.parse(raw).v).toBe(2);
-    expect(parse(raw)).toEqual(s);
+    const t = toggleMax(drop(single(5), 6, 0.5, 0.95), 0);
+    const raw = serialize([s, t]);
+    expect(JSON.parse(raw).v).toBe(3);
+    expect(parse(raw)).toEqual([s, t]);
+    expect(parse(serialize([]))).toEqual([]);
+    // What v2 wrote: one split, its fields at the top.
+    const v2 = JSON.stringify({ v: 2, chats: s.chats, focus: s.focus, tree: s.tree, max: s.max });
+    expect(parse(v2)).toEqual([s]);
     // What v0.175.0 wrote: no version, the same fields.
     const old = '{"chats":[7,8,9],"focus":2,"tree":{"dir":"h","ratio":0.5,"a":{"pane":0},"b":{"dir":"v","ratio":0.5,"a":{"pane":1},"b":{"pane":2}}},"max":null}';
-    const p = parse(old);
+    const [p] = parse(old);
     expect(p?.chats).toEqual([7, 8, 9]);
     expect(p?.focus).toBe(2);
     expect(p && presetOf(p)).toBe("main");
     // A tree that doesn't fit its chats: columns, the chats kept; a ratio out of bounds: clamped.
-    expect(parse(JSON.stringify({ chats: [1, 2], focus: 0, tree: { pane: 0 } }))?.tree).toEqual({ dir: "h", ratio: 0.5, a: { pane: 0 }, b: { pane: 1 } });
-    expect((parse(JSON.stringify({ chats: [1, 2], focus: 0, tree: { dir: "v", ratio: 0.99, a: { pane: 1 }, b: { pane: 0 } } }))?.tree as { ratio: number }).ratio).toBeCloseTo(0.85);
-    expect(parse("{")).toBeNull();
-    expect(parse(JSON.stringify({ v: 3, chats: [1], focus: 0, tree: { pane: 0 } }))).toBeNull();
-    expect(parse(JSON.stringify({ chats: [1, 1], focus: 0, tree: { pane: 0 } }))).toBeNull();
+    expect(parse(JSON.stringify({ chats: [1, 2], focus: 0, tree: { pane: 0 } }))[0]?.tree).toEqual({ dir: "h", ratio: 0.5, a: { pane: 0 }, b: { pane: 1 } });
+    expect((parse(JSON.stringify({ chats: [1, 2], focus: 0, tree: { dir: "v", ratio: 0.99, a: { pane: 1 }, b: { pane: 0 } } }))[0]?.tree as { ratio: number }).ratio).toBeCloseTo(0.85);
+    expect(parse("{")).toEqual([]);
+    expect(parse("null")).toEqual([]);
+    expect(parse(JSON.stringify({ v: 4, splits: [] }))).toEqual([]);
+    expect(parse(JSON.stringify({ v: 3, splits: "x" }))).toEqual([]);
+    expect(parse(JSON.stringify({ chats: [1, 1], focus: 0, tree: { pane: 0 } }))).toEqual([]);
+    // One chat is no split.
+    expect(parse(JSON.stringify({ chats: [1], focus: 0, tree: { pane: 0 } }))).toEqual([]);
+    // A chat in two splits stays in the first; the second, left with one chat, is dropped; junk entries are skipped.
+    const twice = JSON.stringify({ v: 3, splits: [{ chats: [1, 2], focus: 1, tree: null }, 7, { chats: [2, 3], focus: 0 }, { chats: [4, 5, 2], focus: 2 }] });
+    expect(parse(twice).map((x) => [x.chats, x.focus])).toEqual([
+      [[1, 2], 1],
+      [[4, 5], 1],
+    ]);
     const q = prune(s, (c) => c !== 2);
     expect(q?.chats).toEqual([1, 3, 4]);
     expect(prune(single(1), () => false)).toBeNull();
+  });
+});
+
+describe("stored splits", () => {
+  const ab = drop(single(1), 2, 0.9, 0.5);
+  const cd = drop(single(3), 4, 0.9, 0.5);
+
+  test("opening a chat focuses its pane in its split; one in no split changes nothing", () => {
+    const all = [ab, cd];
+    expect(splitOf(all, 2)).toBe(0);
+    expect(splitOf(all, 3)).toBe(1);
+    expect(splitOf(all, 9)).toBe(-1);
+    expect(openIn(all, 9)).toBe(all);
+    expect(openIn(all, 2)).toBe(all);
+    const next = openIn(all, 3);
+    expect(next[1]?.focus).toBe(0);
+    expect(next[0]).toBe(ab);
+  });
+
+  test("place: a new split is added; its chats leave the others, one left alone dissolves", () => {
+    expect(place([ab], -1, cd)).toEqual([ab, cd]);
+    // 4 dragged next to 1 in A+B: it leaves C+D, which dissolves (C alone).
+    const abd = drop(ab, 4, 0.995, 0.5);
+    expect(place([ab, cd], 0, abd)).toEqual([abd]);
+    // From a split of three, the one taken leaves two behind.
+    const cde = drop(cd, 5, 0.995, 0.5);
+    const out = place([ab, cde], 0, drop(ab, 5, 0.995, 0.5));
+    expect(out.map((x) => x.chats)).toEqual([
+      [1, 2, 5],
+      [3, 4],
+    ]);
+    // A split closed down to one chat dissolves.
+    expect(place([ab, cd], 1, close(cd, 0))).toEqual([ab]);
+    expect(place([], -1, single(9))).toEqual([]);
+  });
+
+  test("tidy: deleted or settled chats leave; a split left with one chat dissolves", () => {
+    const all = [drop(ab, 5, 0.995, 0.5), cd];
+    expect(tidy(all, () => true)).toBe(all);
+    const t = tidy(all, (c) => c !== 2 && c !== 4);
+    expect(t.map((x) => x.chats)).toEqual([[1, 5]]);
   });
 });

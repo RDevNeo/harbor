@@ -1233,6 +1233,7 @@ export class Shell {
       panes: { right: this.paneSnap("right"), bottom: this.paneSnap("bottom"), max: this.surfaces.max },
       dialog: this.renaming !== null && this.win.dialog_id === "dialog" ? { kind: "rename-chat", id: this.renaming, input: this.win.dialog_input } : null,
       revs: this.draftSync.appliedRevs(),
+      splits: this.split.snapshot(),
     };
     return snapshotJson(snap);
   }
@@ -1344,6 +1345,8 @@ export class Shell {
     for (const [chat, rev] of s.revs) this.draftSync.seed(chat, rev);
     for (const [k, e] of s.composers) if (k === DRAFT || this.data.chat(k)) this.putComposer(k, e);
     if (!fresh(s, Date.now())) return null;
+    // The stored splits as the previous process left them (its kv write may not have landed when this one read kv).
+    if (s.splits !== null) this.split.restore(s.splits);
     if (s.sel) this.sel = { ...this.sel, ...s.sel };
     if (s.draftWt) this.draftWt = { ...s.draftWt };
     this.draftHere = new Set(s.draftHere);
@@ -1360,7 +1363,7 @@ export class Shell {
         o.groups = new Set(t.groups);
         o.cards = new Set(t.cards);
       }
-      this.openChat(s.view.id, t && t.chat === s.view.id && !t.follow ? t.fromEnd : null, true);
+      this.openChat(s.view.id, t && t.chat === s.view.id && !t.follow ? t.fromEnd : null);
     } else {
       const repo = s.draftRepo !== null && this.data.repo(s.draftRepo) ? s.draftRepo : null;
       this.newDraft(repo, s.draftMain);
@@ -1394,7 +1397,7 @@ export class Shell {
       this.surfaces.openDevices("right");
       this.refreshPanes();
       this.refreshDevices();
-    } else if (name === "chat" && this.data.chat(id)) this.openChat(id, null, true); // a shot of the view as kept, panes too
+    } else if (name === "chat" && this.data.chat(id)) this.openChat(id, null); // a shot of the view as kept, panes too
     else if (tab !== null) shown = this.pages.openSettings(tab);
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
@@ -1464,13 +1467,12 @@ export class Shell {
 
   private aheadTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** `resume`: the view as it was before an in-place restart, its split panes with it. */
-  openChat(id: number, fromEnd: number | null = null, resume = false): void {
+  /** Chat `id` on screen, from anywhere (the sidebar, a link, a notification, a restart): in a stored split, that
+   * split comes with its pane focused; else it shows alone and every split stays as it is (splitrun.ts `opened`). */
+  openChat(id: number, fromEnd: number | null = null): void {
     if (!this.data.chat(id)) return;
     this.openTok++;
     switchTrace.begin(`open ${id}`);
-    // Opened from the draft screen (the split view was left for a new chat): it shows by itself, never in a pane.
-    const alone = this.view !== "chat" && !resume;
     // A split pane on screen taking the keyboard: its transcript stays as it is, where it was read.
     const inPane = this.view === "chat" && this.page === null && this.split.holds(id);
     if (inPane) fromEnd = null;
@@ -1482,7 +1484,7 @@ export class Shell {
     this.refreshInvite();
     this.view = "chat";
     this.chatId = id;
-    this.split.opened(id, alone);
+    this.split.opened(id);
     this.selection = null;
     this.win.sel_shown = false;
     this.engine.unread.delete(id);
@@ -1525,12 +1527,12 @@ export class Shell {
     switchTrace.end();
   }
 
-  /** A chat started (or joined) from the draft screen comes on screen by itself, as any chat opened from there: the
-   * split view was left for the draft, so it neither takes a pane nor brings the panes back. */
+  /** A chat started (or joined) from the draft screen comes on screen as any chat opened: a new one alone (it's in no
+   * split), every stored split kept for when one of its chats is opened again. */
   private showSent(id: number): void {
     this.view = "chat";
     this.chatId = id;
-    this.split.opened(id, true);
+    this.split.opened(id);
   }
 
   /** The shown composer is left: its text and cursor stay with its key. */
@@ -1637,7 +1639,11 @@ export class Shell {
       // Written at every switch (the focused pane's chat): once the switching stops.
       set: (k, v) => this.data.store.setLater(k, v),
       shown: () => (this.view === "chat" && this.page === null ? this.chatId : null),
-      exists: (id) => this.data.chat(id) !== undefined,
+      // Deleted or settled: out of its split.
+      alive: (id) => {
+        const c = this.data.chat(id);
+        return c !== undefined && !c.settled;
+      },
       info: (id) => this.paneInfo(id),
       cards: (id, media) => this.paneCards(id, media),
       // Every pane draws from the one store of decoded images: a chat that moves to another pane, or comes back, finds them.
@@ -2439,7 +2445,9 @@ export class Shell {
       else this.newDraft(repo);
       return;
     }
-    this.refreshSidebar();
+    // A pane on screen held it: the split closes that pane now (splitrun.ts `render` drops settled chats).
+    if (on && this.split.holds(id)) this.refreshAll();
+    else this.refreshSidebar();
   }
 
 

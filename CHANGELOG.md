@@ -33,6 +33,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 - Web addresses you type in a message (`http://localhost:5173`) are links in it, on the desktop and the phone, with
   the rule replies already use. The phone has no hover: its links already open on a tap and highlight while
   pressed.
+- Split chats are kept as splits. Opening a chat that isn't in a split shows it alone in the full view: it no longer
+  takes the place of the focused pane, and the split you left stays as it was. Opening any chat of a split (from the
+  sidebar, a link, a notification or anywhere else) brings that whole split back, with that chat's pane focused, its
+  layout and a maximized pane as you left them. You can keep several splits at once: A beside B, and C beside D,
+  each coming back with its own chats. A chat is in one split at most; dragging it into another split moves it
+  there. Splits change only when you change them: drag a chat into the view (it joins the split on screen, or makes
+  a new one with the chat shown), move panes, or close a pane (Ctrl+W or its X), which takes that chat out of the
+  split; a split left with one chat ends. A chat started from the new-chat draft opens alone, and every split stays.
+  Deleted and settled chats leave their splits. Splits are kept across restarts. Desktop only (Linux, macOS,
+  Windows): the phone app has no split view.
 
 ### Removed
 - The Omarchy MCP server is gone from Settings › Integrations' MCP servers: agents use Harbor's built-in `computer`
