@@ -17,6 +17,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   sign-in and Harbor keeps waiting, so the real redirect after the consent page still finds it instead of "Unable to
   connect to 127.0.0.1". Only this sign-in's redirect, with a code or an error, ends it. Linux, macOS and Windows
   alike, and the phone app's Gmail sign-in in the browser does the same.
+- Signing in to your Harbor account (Settings › Account, `harbor account login`) gets the same fix: a stray hit on
+  its sign-in page (another sign-in's link, no code or error) no longer ends it with "Sign-in failed: state
+  mismatch"; it gets a "Not this sign-in" page and Harbor keeps waiting for the real redirect. Linux, macOS and
+  Windows alike; the phone app signs in through a `harbor://oauth` link instead of a page on the phone, and a
+  stray link there already left the sign-in waiting, so it needs no change.
 - Windows: Playwright and other MCP servers started by a bare command (`npx`, npm's .cmd shims) start: the command
   is looked up on the server's PATH with Windows' suffixes and an npm shim runs as node and its script, as turns do.
   Before, they failed with "ProtocolError dialing …/playwright". Linux and macOS look the command up the same way.
