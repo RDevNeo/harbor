@@ -255,10 +255,11 @@ interface Pending {
 export const passable = (args: readonly string[]): boolean => args.length === 0 || (args.length === 1 && args[0] === "--background");
 
 /**
- * Starts Harbor through task `name` with `args` and the PASSED_ENV values of `env`. Resolves with the new Harbor's
- * pid once the task started it, or null when it didn't within `waitMs` (the task is gone, Task Scheduler refused).
+ * Asks task `name` to start Harbor with `args` and the PASSED_ENV values of `env`, and returns at once: `schtasks
+ * /run` runs detached, so it goes on when this process leaves right after (a restart). `ran`: whether Task Scheduler
+ * took the request; `waitTaken(id)` then says which process the task started.
  */
-export async function startThrough(name: string, args: readonly string[], env: Env = {}, waitMs = 20_000): Promise<number | null> {
+export function launchThrough(name: string, args: readonly string[], env: Env = {}): { id: string; ran: Promise<boolean> } | null {
   if (!passable(args)) return null;
   const id = `${process.pid}-${Date.now()}`;
   const passed: Record<string, string> = {};
@@ -266,16 +267,43 @@ export async function startThrough(name: string, args: readonly string[], env: E
     const v = env[k];
     if (v !== undefined) passed[k] = v;
   }
-  rmSync(takenPath(), { force: true });
-  writeJson(pendingPath(), { id, args: [...args], env: passed, at: Date.now() } satisfies Pending);
-  // The new window may come to the front: Windows gives that only to the app the user is using (this one).
-  allowAnyForeground();
-  const r = await schtasks(["/run", "/tn", name]);
-  if (r.code !== 0) {
-    rmSync(pendingPath(), { force: true });
-    console.error(`harbor: the task "${name}" didn't start: ${r.out}`);
+  try {
+    rmSync(takenPath(), { force: true });
+    writeJson(pendingPath(), { id, args: [...args], env: passed, at: Date.now() } satisfies Pending);
+  } catch (e) {
+    console.error(`harbor: Run as administrator: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
+  // The new window may come to the front: Windows gives that only to the app the user is using (this one).
+  allowAnyForeground();
+  let ran: Promise<boolean>;
+  try {
+    const p = Bun.spawn([join(system32(), "schtasks.exe"), "/run", "/tn", name], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true, detached: true });
+    ran = p.exited.then((code) => {
+      if (code !== 0) {
+        dropPending(id);
+        console.error(`harbor: the task "${name}" didn't start (schtasks exited with ${code})`);
+      }
+      return code === 0;
+    });
+  } catch (e) {
+    dropPending(id);
+    console.error(`harbor: the task "${name}" didn't start: ${e instanceof Error ? e.message : String(e)}`);
+    ran = Promise.resolve(false);
+  }
+  return { id, ran };
+}
+
+function dropPending(id: string): void {
+  try {
+    if ((JSON.parse(readFileSync(pendingPath(), "utf8")) as Pending).id === id) rmSync(pendingPath(), { force: true });
+  } catch {
+    // gone
+  }
+}
+
+/** The pid of the Harbor the task started for request `id`, or null when none did within `waitMs` (it then won't). */
+export async function waitTaken(id: string, waitMs = 20_000): Promise<number | null> {
   for (const end = Date.now() + waitMs; Date.now() < end; await Bun.sleep(100)) {
     try {
       const t = JSON.parse(readFileSync(takenPath(), "utf8")) as { id?: string; pid?: number };
@@ -288,12 +316,15 @@ export async function startThrough(name: string, args: readonly string[], env: E
     }
   }
   // Nobody took it: it mustn't start a Harbor later.
-  try {
-    if ((JSON.parse(readFileSync(pendingPath(), "utf8")) as Pending).id === id) rmSync(pendingPath(), { force: true });
-  } catch {
-    // gone
-  }
+  dropPending(id);
   return null;
+}
+
+/** `launchThrough` and its wait: the new Harbor's pid, or null when the task didn't start one. */
+export async function startThrough(name: string, args: readonly string[], env: Env = {}, waitMs = 20_000): Promise<number | null> {
+  const l = launchThrough(name, args, env);
+  if (l === null || !(await l.ran)) return null;
+  return waitTaken(l.id, waitMs);
 }
 
 let user32: { AllowSetForegroundWindow: (pid: number) => number } | null | undefined;

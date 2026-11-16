@@ -40,15 +40,6 @@ export function beginAttempt(cfg: UpdateConfig, a: Omit<Attempt, "at" | "stage">
   writeAtomic(join(dirOf(cfg), ATTEMPT), JSON.stringify({ ...a, at: cfg.now(), stage: "trying" } satisfies Attempt));
 }
 
-/**
- * This process leaves its start to another one (Windows' Run as administrator hands it to a scheduled task): its
- * attempt goes, so the watchdog doesn't take its leaving for a failed start and roll the update back.
- */
-export function abandonStart(cfg: UpdateConfig): void {
-  if (cfg.dir === null) return;
-  if (readAttempt(cfg.dir)?.pid === process.pid) remove(join(cfg.dir, ATTEMPT));
-}
-
 export async function confirmStart(cfg: UpdateConfig, settleMs: number = SETTLE_MS): Promise<boolean> {
   if (cfg.dir === null) return false;
   const dir = cfg.dir;

@@ -69,6 +69,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     return 0;
   }
   const adminNow = admin.state();
+  if (adminNow.on) admin.keepHook(cfg.exe);
   if (adminNow.on || adminNow.elevated) console.error(`harbor: Run as administrator is ${adminNow.on ? "on" : "off"}; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`);
   const stopTrims = malloc.trimEvery();
   // A line in the log for every time the main thread stops answering for a quarter second or more (stallwatch.ts).
@@ -193,8 +194,9 @@ export async function runApp(o: RunOptions): Promise<number> {
     handover: join(process.env.XDG_RUNTIME_DIR || runDir(), `harbor-handover-${process.pid}`),
     leaving: () => leave(),
     place: () => single.placeEnv(),
-    // Run as administrator turned on or off, or on and this Harbor lacks the token: the next one starts through a task.
-    via: () => admin.relauncher(cfg.exe),
+    // Windows: Run as administrator turned on or off, or on and this Harbor lacks the token: the next one starts
+    // through a task (admin.ts); otherwise as a child, as everywhere.
+    ...(adminNow.supported ? { spawn: (cmd: string[], env: Record<string, string | undefined>) => admin.restartSpawn(cmd, env, cfg.exe) } : {}),
   });
 
   const bundle = runtimeInfo()?.bundle;

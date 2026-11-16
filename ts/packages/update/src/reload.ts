@@ -74,18 +74,11 @@ export interface ReloaderOptions {
   leaving?: () => void;
   /** Extra environment that puts the new window where this one is (handover.ts `placeEnv`). */
   place?: () => Promise<Record<string, string>>;
-  /**
-   * Asked at each restart: how to start the next process when not as this one's child (Windows' Run as
-   * administrator starts it through a scheduled task, @harbor/os admin.ts). Null: `spawn`, as usual.
-   */
-  via?: () => ((cmd: string[], env: Record<string, string | undefined>) => Spawned) | null;
 }
 
 export interface Spawned {
   /** Resolves when the process ends. */
   exited: Promise<unknown>;
-  /** Resolves false when it never started (a start handed to a task, which refused): the plain way follows. */
-  started?: Promise<boolean>;
 }
 
 function spawnDetached(cmd: string[], env: Record<string, string | undefined>): Spawned {
@@ -149,23 +142,13 @@ export class Reloader {
     for (const k of DEV_HOOKS) delete env[k];
     delete env[HANDOVER];
     const cmd = [cfg.exe, ...(cfg.script === undefined ? [] : [cfg.script]), ...args];
-    const plain = this.o.spawn ?? spawnDetached;
-    let via = this.o.via?.() ?? null;
-    if (!hidden && this.o.handover !== undefined) {
-      if (await this.handOver(cmd, env, this.o.handover, via ?? plain)) return true;
-      // The handover's start failed: the plain way doesn't try the same way again.
-      via = null;
-    }
+    if (!hidden && this.o.handover !== undefined && (await this.handOver(cmd, env, this.o.handover))) return true;
     this.o.kv.set(STATE_KEY, JSON.stringify(this.o.snapshot()));
     try {
       await this.o.beforeExit?.();
       // The Rust app waits for the lock only when it replaced its own pid.
       this.o.release?.();
-      if (via === null) plain(cmd, env);
-      else if (!(await (via(cmd, env).started ?? Promise.resolve(true)))) {
-        cfg.log("reload: the start through a task didn't happen: restarting the plain way");
-        plain(cmd, env);
-      }
+      (this.o.spawn ?? spawnDetached)(cmd, env);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       cfg.log(`reload failed: ${err}`);
@@ -182,7 +165,7 @@ export class Reloader {
    * screen, stops, lets go of the lock, and leaves when the new window shows. False: it ended before it was ready (an
    * older Harbor, which knows no handover, or a start that failed): the plain restart follows.
    */
-  private async handOver(cmd: string[], env: Record<string, string | undefined>, file: string, spawn: (cmd: string[], env: Record<string, string | undefined>) => Spawned | void): Promise<boolean> {
+  private async handOver(cmd: string[], env: Record<string, string | undefined>, file: string): Promise<boolean> {
     const { cfg } = this.o;
     rmSync(file, { force: true });
     try {
@@ -193,7 +176,7 @@ export class Reloader {
     let ended = false;
     this.handingOver = true;
     try {
-      const child = spawn(cmd, { ...env, [HANDOVER]: file });
+      const child = (this.o.spawn ?? spawnDetached)(cmd, { ...env, [HANDOVER]: file });
       void child?.exited.then(() => (ended = true));
     } catch (e) {
       this.handingOver = false;

@@ -39,7 +39,7 @@ export function elevated(): boolean {
 
 const samePath = (a: string, b: string): boolean => a.replaceAll("/", "\\").toLowerCase() === b.replaceAll("/", "\\").toLowerCase();
 
-/** The next restart's task, set by turning the setting on or off (null: the usual choice, see `relauncher`). */
+/** The next restart's task, set by turning the setting on or off (null: the usual choice, see `restartSpawn`). */
 let next: { name: string; after?: () => Promise<unknown> } | null = null;
 
 /** The result of turning it on or off: what to tell the person, and whether Harbor restarts now. */
@@ -169,46 +169,53 @@ export function forgetViaTask(env: Env = process.env): void {
   delete env.HARBOR_VIA_TASK;
 }
 
-/** What a restart through a task gives the reloader: when the process ends, and whether it started at all. */
-export interface Relaunch {
+/** A started process as the reloader sees it (reload.ts `Spawned`): it resolves `exited` when the process ends. */
+export interface Spawned {
   exited: Promise<unknown>;
-  started: Promise<boolean>;
 }
 
+/** The task didn't start a Harbor once in this process: what's left of it starts the next one directly. */
+let refused = false;
+
 /**
- * How the next restart starts Harbor, when a task must: just after turning the setting on (the task) or off from
- * an elevated Harbor (the normal-rights task), or while it's on and this Harbor lacks the token (the task's
- * start was refused once). Null: as usual, a child of this process, which keeps its token.
+ * The next Harbor of a restart (reload.ts `spawn`): through a task just after the setting was turned on (the task)
+ * or off from an elevated Harbor (the normal-rights task), or while it's on and this Harbor lacks the token. Else,
+ * as always, a child of this process, which keeps its token: updates, rollbacks and `harbor restart` of an elevated
+ * Harbor stay elevated so. A task that doesn't start one ends `exited` at once, and the handover's plain retry
+ * comes back here and starts the child.
  */
-export function relauncher(exe: string = process.execPath): ((cmd: string[], env: Env) => Relaunch) | null {
+export function restartSpawn(cmd: string[], env: Env, exe: string = process.execPath): Spawned {
   const a = win();
-  if (a === null) return null;
-  let t = next;
+  let task = next;
   next = null;
-  if (t === null) {
+  if (a !== null && task === null && !refused) {
     const m = a.marker();
-    if (m === null || !samePath(m.exe, exe) || a.elevated() !== false) return null;
-    t = { name: a.TASK };
+    if (m !== null && samePath(m.exe, exe) && a.elevated() === false) task = { name: a.TASK };
   }
-  const task = t;
-  return (cmd, env) => {
-    let ended = (): void => {};
-    const exited = new Promise<void>((r) => (ended = r));
-    const started = (async () => {
-      const pid = await a.startThrough(task.name, cmd.slice(1), env);
-      if (pid === null) {
-        ended();
-        return false;
-      }
-      void task.after?.();
-      void (async () => {
-        while (procExists(pid)) await Bun.sleep(250);
-        ended();
-      })();
-      return true;
-    })();
-    return { exited, started };
-  };
+  const l = a === null || task === null || refused ? null : a.launchThrough(task.name, cmd.slice(1), env);
+  if (a === null || task === null || l === null) return spawnChild(cmd, env);
+  const t = task;
+  let ended = (): void => {};
+  const exited = new Promise<void>((r) => (ended = r));
+  void (async () => {
+    const pid = (await l.ran) ? await a.waitTaken(l.id) : null;
+    if (pid === null) {
+      refused = true;
+      ended();
+      return;
+    }
+    void t.after?.();
+    while (procExists(pid)) await Bun.sleep(250);
+    ended();
+  })();
+  return { exited };
+}
+
+/** As reload.ts starts the next Harbor: detached on Windows, where a child in Bun's kill-on-close job would die with this one. */
+export function spawnChild(cmd: string[], env: Env): Spawned {
+  const p = Bun.spawn(cmd, { env, stdin: "ignore", stdout: "inherit", stderr: "inherit", detached: platform() === "win32" });
+  p.unref();
+  return { exited: p.exited };
 }
 
 const HOOK_BEGIN = "# >>> Harbor: Run as administrator";
@@ -261,4 +268,13 @@ export async function status(): Promise<string[]> {
     `this process: ${el === null ? "unknown" : el ? "elevated (administrator token)" : "not elevated (normal rights)"}; account: ${a.tokenKind() === "default" && el !== true ? "no administrator token to raise" : "administrator"}`,
     `task "${a.TASK}": ${task ? "registered" : "not found"}`,
   ];
+}
+
+/**
+ * At each start while the setting is on: the uninstall hook is still in uninstall.ps1 (installing Harbor again
+ * writes that file anew).
+ */
+export function keepHook(exe: string = process.execPath): void {
+  const m = win()?.marker() ?? null;
+  if (m !== null && samePath(m.exe, exe)) uninstallHook(m.exe, true);
 }
