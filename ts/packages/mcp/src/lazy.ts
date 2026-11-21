@@ -79,6 +79,21 @@ export function flush(): void {
 export function resetCache(at?: string): void {
   mem = null;
   file = at ?? null;
+  twins.clear();
+}
+
+/** A server's key in a folder → its key in no folder (`anyFolder`): a dead mark goes on both, an answer lifts both. */
+const twins = new Map<string, string>();
+
+/**
+ * The key a server has in every folder at once: its key with no folder. A server that never answered in one folder
+ * (an app that isn't running, a launcher that is broken) is taken for dead in a new folder too, so the first turn in
+ * each new folder (a new worktree) isn't held up 30 s for it; it's tried there in the background all the same.
+ */
+export function anyFolder(def: Obj, cwd: string): string {
+  const k = serverKey(def, "");
+  twins.set(serverKey(def, cwd), k);
+  return k;
 }
 
 function stamp(command: string, env: Obj): string {
@@ -150,7 +165,14 @@ export function remember(sk: string, ask: Obj, answer: Obj): void {
   delete q.id;
   e.answers[rk] = { ask: q, answer: keep };
   e.at = Date.now();
-  if (ask.method === "initialize") delete e.dead;
+  if (ask.method === "initialize") {
+    delete e.dead;
+    const twin = twins.get(sk);
+    if (twin !== undefined && c[twin]?.dead) {
+      delete c[twin].dead;
+      if (Object.keys(c[twin].answers).length === 0) delete c[twin];
+    }
+  }
   c[sk] = e;
   save();
 }
@@ -171,6 +193,12 @@ export function dead(sk: string): { since: number; fails: number; next: number }
  *  Only a try again (`again`: the background start) moves the next try further out; the turns' own starts that
  *  overlapped the first one are the same failure. */
 export function markDead(sk: string, again = false, at: number = Date.now()): void {
+  const twin = twins.get(sk);
+  if (twin !== undefined && twin !== sk) markOne(twin, again, at);
+  markOne(sk, again, at);
+}
+
+function markOne(sk: string, again: boolean, at: number): void {
   const c = cache();
   const e = c[sk] ?? { at: 0, answers: {} };
   if (e.dead && !again) return;

@@ -1051,6 +1051,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       },
       owner: () => account.account()?.name ?? "",
     },
+    selfAccount: () => account.account()?.id ?? "",
     projectPlace: (repo) => projectClones.place(repo),
     projectIcon: (repo) => projectIcons.hash(repo),
     store,

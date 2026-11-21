@@ -12,7 +12,7 @@ import { grantFrom, type Grant as MachinesGrant, mcp as machinesMcp, NAME as MAC
 import { hostname } from "@harbor/net";
 import { agentProcessEnv, OUTPUT_MAX, shell, token } from "./shell.ts";
 import { harborVersion } from "./version.ts";
-import { ackFor, asked, cached, dead, flush, initialized, idleFor, limits, markDead, remember, rememberAck, requestKey, serverKey, starts } from "./lazy.ts";
+import { ackFor, anyFolder, asked, cached, dead, flush, initialized, idleFor, limits, markDead, remember, rememberAck, requestKey, serverKey, starts } from "./lazy.ts";
 import { answer as teamAnswer, callApp } from "./mcpshim.ts";
 import * as pwbrowser from "./pwbrowser.ts";
 import { selfExe } from "./sys.ts";
@@ -235,6 +235,8 @@ class Slot {
     /** Its answers in the cache. */
     readonly ckey: string,
     readonly idle: number,
+    /** Its key in no folder (lazy.ts `anyFolder`): dead there, it's taken for dead here until it answers here. */
+    readonly dkey: string = "",
   ) {}
 
   /** Held only to start the server and send to it. */
@@ -303,7 +305,7 @@ function slotFor(live: Live, name: string, def: Obj): Slot {
   let s = SLOTS.get(key);
   if (!s || s.closed) {
     const cwd = shared !== null ? home() : live.grant.cwd;
-    s = new Slot(key, def, cwd, serverKey(def, cwd), idleFor(name, def));
+    s = new Slot(key, def, cwd, serverKey(def, cwd), idleFor(name, def), anyFolder(def, cwd));
     SLOTS.set(key, s);
   }
   s.users.add(live.grant.token);
@@ -613,13 +615,17 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
   // It's tried again in the background when its time comes; once it answers, the next turn gets it.
   const method = typeof msg.method === "string" ? msg.method : "";
   if (method === "initialize" && hasId) inits.set(slot.ckey, structuredClone(msg));
-  const gone = HANDSHAKE.has(method) && hasId && !slot.closed && !slot.proc?.alive() ? dead(slot.ckey) : null;
+  const handshake = HANDSHAKE.has(method) && hasId && !slot.closed && !slot.proc?.alive();
+  const here = handshake ? dead(slot.ckey) : null;
+  // Dead in another folder and never tried in this one (a new worktree): the same, and tried here in the background.
+  const elsewhere = handshake && here === null && slot.dkey !== "" && noInit(slot) ? dead(slot.dkey) : null;
+  const gone = here ?? elsewhere;
   if (gone) {
     if (method === "server/discover") {
       discovers.set(slot.ckey, structuredClone(msg));
       return { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } };
     }
-    if (Date.now() >= gone.next) void probe(slot, msg);
+    if (here === null || Date.now() >= gone.next) void probe(slot, msg);
     const ago = Math.max(1, Math.round((Date.now() - gone.since) / 1000));
     return rpcError(id, `the MCP server on the Harbor PC hasn't answered since it was first tried ${ago} s ago (it isn't running?); Harbor tries it again in the background, and the next turn gets it once it answers`);
   }

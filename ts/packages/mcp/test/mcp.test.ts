@@ -166,6 +166,26 @@ function fakeNpx(): string {
   return bin;
 }
 
+test("a .claude.json read while Claude Code rewrites it (half written) keeps the servers it named last; one that's gone has none", async () => {
+  const f = join(root, ".claude.json");
+  const roblox = { type: "stdio", command: "/opt/roblox-mcp", args: [] };
+  writeFileSync(f, JSON.stringify({ mcpServers: { "Roblox Studio": roblox } }));
+  expect((await mcp.claudeServers())["Roblox Studio"]).toEqual(roblox);
+  writeFileSync(f, JSON.stringify({ mcpServers: { "Roblox Studio": roblox } }).slice(0, 25));
+  resetLocalsCache();
+  expect((await mcp.claudeServers())["Roblox Studio"]).toEqual(roblox);
+  // Read whole again without it: removed for real.
+  writeFileSync(f, JSON.stringify({ mcpServers: {} }));
+  resetLocalsCache();
+  expect((await mcp.claudeServers())["Roblox Studio"]).toBeUndefined();
+  writeFileSync(f, JSON.stringify({ mcpServers: { "Roblox Studio": roblox } }));
+  resetLocalsCache();
+  expect((await mcp.claudeServers())["Roblox Studio"]).toEqual(roblox);
+  rmSync(f);
+  resetLocalsCache();
+  expect((await mcp.claudeServers())["Roblox Studio"]).toBeUndefined();
+});
+
 test("the built-in Playwright is offered only where npx is installed", () => {
   const bin = fakeNpx();
   process.env.PATH = [bin, process.env.PATH ?? ""].join(delimiter);

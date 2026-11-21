@@ -385,6 +385,52 @@ test("a server that never answers holds up one turn, not every one: later turns 
   revoke(g4.token);
 }, 30_000);
 
+test("a server dead in one folder fails at once in a new one too (a new worktree), is tried there in the background, and once it answers anywhere a new folder waits for it again", async () => {
+  waits.wait = 600;
+  limits.deadAfter = 300;
+  limits.retry = [60_000, 60_000];
+  const hang = join(work, "hang");
+  writeFileSync(hang, "");
+  const def = server({ FAKE_HANG: hang });
+  const init = { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "claude-code", version: "x" } } };
+  const folder = (n: string): string => {
+    const d = join(work, n);
+    mkdirSync(d, { recursive: true });
+    return d;
+  };
+  // The first folder pays for finding out.
+  const g1 = base({ cwd: folder("a"), servers: { s: def } });
+  const p = (await grant(g1)) as number;
+  let t = Date.now();
+  expect((await rpc(p, `/${g1.token}/s`, init))?.error).toMatchObject({ code: -32000 });
+  expect(Date.now() - t).toBeGreaterThanOrEqual(550);
+  revoke(g1.token);
+  expect(startsSeen()).toHaveLength(1);
+  // A new folder: no 30 s wait for it, but a try there in the background (it might work in this folder).
+  const g2 = base({ cwd: folder("b"), servers: { s: def } });
+  await grant(g2);
+  t = Date.now();
+  expect(JSON.stringify((await rpc(p, `/${g2.token}/s`, init))?.error)).toContain("Harbor tries it again in the background");
+  expect(Date.now() - t).toBeLessThan(400);
+  await until("it's tried in the new folder", () => startsSeen().length === 2);
+  await until("that try is over", () => dead(serverKey(def as { [k: string]: Json }, join(work, "b"))) !== null);
+  revoke(g2.token);
+  // The app runs now: a third folder still fails at once, but its background try answers...
+  rmSync(hang);
+  const g3 = base({ cwd: folder("c"), servers: { s: def } });
+  await grant(g3);
+  t = Date.now();
+  expect((await rpc(p, `/${g3.token}/s`, init))?.error).toMatchObject({ code: -32000 });
+  expect(Date.now() - t).toBeLessThan(400);
+  await until("it answers in that folder", () => initialized(serverKey(def as { [k: string]: Json }, join(work, "c"))));
+  revoke(g3.token);
+  // ...so it's no longer taken for dead in folders it hasn't been tried in: a new one waits for its answer.
+  const g4 = base({ cwd: folder("d"), servers: { s: def } });
+  await grant(g4);
+  expect((await rpc(p, `/${g4.token}/s`, init))?.result).toMatchObject({ serverInfo: { name: "fake" } });
+  revoke(g4.token);
+}, 30_000);
+
 test("a slow first start taken for dead is lifted once it answers: the next turn gets its handshake and tools from the cache", async () => {
   waits.wait = 4000;
   limits.deadAfter = 300;

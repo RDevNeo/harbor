@@ -327,7 +327,9 @@ export async function freshToken(id: string, force: boolean): Promise<string | u
     try {
       return (await refresh(id, c)).access_token;
     } catch {
-      return undefined;
+      // Renewed early (2 minutes ahead): a refresh that failed now (the network, the server) leaves the token that still
+      // works, so a turn starting meanwhile keeps the app instead of losing its tools until the next one.
+      return !force && c.access_token !== "" && now() < c.expires_at ? c.access_token : undefined;
     }
   }
   return c.access_token;

@@ -82,17 +82,7 @@ export function locals(): LocalDef[] {
   }
   files.push(...extra);
   const servers: [string, Json][] = [];
-  for (const f of files) {
-    let text: string;
-    try {
-      text = readFileSync(f, "utf8");
-    } catch {
-      continue;
-    }
-    const j = parseObject(text);
-    const m = j?.mcpServers;
-    if (isObject(m)) servers.push(...Object.entries(m));
-  }
+  for (const f of files) servers.push(...serversIn(f));
   const defs = LOCAL.map((l): LocalDef => {
     const found = servers.find(([n]) => localFor(n)?.id === l.id);
     if (found) return { local: l, def: found };
@@ -107,6 +97,30 @@ export function locals(): LocalDef[] {
 
 export function resetLocalsCache(): void {
   localsCache = undefined;
+}
+
+/** The servers each `.claude.json` named when it last read whole. */
+const lastGood = new Map<string, [string, Json][]>();
+
+/**
+ * The servers in a `.claude.json`. Claude Code rewrites the file all the time: one read while it's half written (or
+ * can't be read for a moment) gives what it named last, so a turn starting then doesn't lose every local server
+ * (and get told they were removed) until the next one. A file that's gone has none.
+ */
+function serversIn(f: string): [string, Json][] {
+  let text: string;
+  try {
+    text = readFileSync(f, "utf8");
+  } catch (e) {
+    if ((e as { code?: unknown }).code === "ENOENT") lastGood.delete(f);
+    return lastGood.get(f) ?? [];
+  }
+  const j = parseObject(text);
+  if (j === undefined) return lastGood.get(f) ?? [];
+  const m = j.mcpServers;
+  const v: [string, Json][] = isObject(m) ? Object.entries(m) : [];
+  lastGood.set(f, v);
+  return v;
 }
 
 /**

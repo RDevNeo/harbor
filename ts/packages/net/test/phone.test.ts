@@ -8,7 +8,7 @@ import { blankChat, mention, Store, type Chat, type Item, type Mention } from "@
 import { accountDecide, isHarborToken, verifyHarborToken, type AccountKey } from "../src/account.ts";
 import { Api } from "../src/api.ts";
 import { readAnswerHead } from "../src/client.ts";
-import { err } from "../src/http.ts";
+import { err, ok } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
@@ -1040,6 +1040,134 @@ describe("phone: a started chat switched to another PC's account", () => {
     expect(store.chat(lead.id)?.account).toBe("claude");
     refuse = "laptop has no project named x";
     expect(await patch({ account: id })).toMatchObject({ status: 409, body: { error: "can't switch to OpenCode: laptop has no project named x" } });
+    store.close();
+  });
+});
+
+describe("phone: whose context a phone's message runs with when it reaches another PC first", () => {
+  const engineFor = (store: Store, sent: { id: number; from: unknown }[]): PhoneEngine => ({
+    running: () => false,
+    runningSince: () => 0,
+    transcript: () => ({ items: [] }),
+    send: (id: number, _text: string, o: { from?: unknown }) => {
+      sent.push({ id, from: o.from ?? null });
+    },
+    stop: () => {},
+    queued: () => [],
+    takeQueue: () => [],
+    queueJson: () => [],
+    steering: () => "now",
+    followDefault: () => "queue",
+    held: () => false,
+    newThread: (repo: number | null) => store.createChat(blankChat({ repoId: repo })),
+    reload: () => {},
+    queuePromote: () => false,
+    queueMove: () => false,
+    queueUpdate: () => false,
+    queueRemove: () => false,
+    queueResume: () => {},
+    recap: () => [null, null] as [null, null],
+    unread: () => false,
+    failed: () => false,
+    opened: () => false,
+    subsQueued: () => 0,
+    queuedCount: () => 0,
+    mainChat: () => null,
+    forksOf: () => [],
+  });
+
+  test("the owner's own phone, forwarded by a mate's PC it fell back to, runs with this PC's own context; a mate's runs with theirs", async () => {
+    const store = Store.openAt(join(tmp, "ownphone.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.peers.set("pc:mate", newPeer({ id: "pc:mate", name: "mate-pc", online: true }));
+    const sent: { id: number; from: unknown }[] = [];
+    let routes: PhoneRoutes | null = null;
+    const replica = new StoreReplica({ store, hub, version: "t", route: (call) => (routes as PhoneRoutes).route(call) });
+    routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: engineFor(store, sent), selfAccount: () => "u_owner" });
+    const c = store.createChat(blankChat({ title: "mine" }));
+    const path = ["v1", "chats", String(c.id), "send"];
+    const ctx = { v: 1, owner: "Mate", memory: { "MEMORY.md": "the mate's memory" } };
+    const meshCall = (via: string, acct: string) =>
+      replica.route({ method: "POST", path: ["mesh", "v1", "call"], query: [], body: { method: "POST", path, body: { text: "hi" }, sender: "Phone (Owner)", device: "", via, acct, ctx }, token: "", device: "pc:mate", global: false });
+    // Written on the owner's phone: this PC's own context (none adopted), whatever the mate's PC sent along.
+    expect((await meshCall("phone", "u_owner")).status).toBe(200);
+    // The mate's phone, or the mate's own desktop: theirs, as before.
+    expect((await meshCall("phone", "u_mate")).status).toBe(200);
+    expect((await meshCall("pc", "u_owner")).status).toBe(200);
+    // A PC from before accounts (no account said): as before.
+    expect((await meshCall("phone", "")).status).toBe(200);
+    const by = { peer: "pc:mate", name: "mate-pc", ctx };
+    expect(sent.map((s) => s.from)).toEqual([null, by, by, by]);
+    store.close();
+  });
+
+  test("someone else's phone on a copy: its PC on, it goes there without this PC's context; its PC off, the chat doesn't come here", async () => {
+    const store = Store.openAt(join(tmp, "matephone.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.me = { id: "pc:mate", name: "mate-pc" };
+    hub.mesh.peers.set("pc:home", newPeer({ id: "pc:home", name: "home-pc", online: true, addr: "127.0.0.1:1" }));
+    // The owner of chat's home PC signed in on this phone; this PC is the mate's.
+    hub.tokens.push({ token: "tok-owner", name: "Owner's phone", created: 0, group: "fp-owner", fp: "fp-owner", account: "u_owner", account_name: "Owner" });
+    hub.tokens.push({ token: "tok-mate", name: "Mate's phone", created: 0, group: "fp-mate", fp: "fp-mate", account: "u_mate", account_name: "Mate" });
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const copy = store.createChat(blankChat({ title: "the owner's", gid: "g-own", home: "pc:home", homeId: 7, started: true, sessionId: "s1" }));
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const forwarded: { path: string[]; body: Record<string, unknown>; sender: unknown; ctx: Json }[] = [];
+    mesh.forward = async (_d, _name, _method, path, body, _files, sender, ctx) => {
+      forwarded.push({ path, body, sender, ctx });
+      return { status: 200, body: { ok: true } };
+    };
+    const failovers: string[] = [];
+    const adopted: string[] = [];
+    const routes = new PhoneRoutes({
+      store,
+      hub,
+      replica,
+      mesh,
+      version: "t",
+      myFp: () => "",
+      engine: null,
+      selfAccount: () => "u_mate",
+      ctx: () => ({ v: 1, owner: "Mate", memory: { "MEMORY.md": "the mate's memory" } }),
+      failover: {
+        line: () => null,
+        send: async (c) => {
+          failovers.push(c.gid);
+          return ok({ ok: true, failover: "mate-pc" });
+        },
+        claim: async () => ok({ ok: true, here: true }),
+        draft: () => null,
+        startedNotice: () => {},
+        adopt: (c) => {
+          adopted.push(c.gid);
+          return c;
+        },
+      },
+    });
+    const call = (token: string, tail: string, body: Record<string, unknown>) => routes.route({ method: "POST", path: ["v1", "chats", String(copy.id), tail], query: [], body, token, device: "Pixel", global: false });
+    // Its PC is on: the owner's message goes there, with no memory or instructions of this PC's person.
+    expect((await call("tok-owner", "send", { text: "hi" })).status).toBe(200);
+    expect(forwarded[0]?.ctx).toEqual({ v: 1, off: true, owner: "Owner", github: "" });
+    expect(forwarded[0]?.sender).toEqual(["Pixel (Owner)", "", "Owner", "phone", "phone:fp-owner", "u_owner"]);
+    // Not even when it asks for this PC to take it (run anywhere's claim is for this PC's own person).
+    expect((await call("tok-owner", "send", { text: "here?", claim_to: "pc:mate" })).status).toBe(200);
+    expect(forwarded.length).toBe(2);
+    // The mate's own phone: this PC's context, as before.
+    expect((await call("tok-mate", "send", { text: "yo" })).status).toBe(200);
+    expect(forwarded[2]?.ctx).toEqual({ v: 1, owner: "Mate", memory: { "MEMORY.md": "the mate's memory" } });
+    // Its PC goes off: the owner's message and changes don't take the chat over here (or anywhere), and say why.
+    const home = hub.mesh.peers.get("pc:home");
+    if (home) home.online = false;
+    const off = await call("tok-owner", "send", { text: "still there?" });
+    expect(off.status).toBe(503);
+    expect(String((off.body as { error: string }).error)).toContain("home-pc is off or out of reach");
+    expect((await call("tok-owner", "title", { title: "renamed" })).status).toBe(503);
+    expect([failovers, adopted, forwarded.length]).toEqual([[], [], 3]);
+    expect(store.chat(copy.id)?.home).toBe("pc:home");
+    // The mate's own phone still fails over, as before.
+    expect((await call("tok-mate", "send", { text: "mine" })).status).toBe(200);
+    expect(failovers).toEqual(["g-own"]);
     store.close();
   });
 });

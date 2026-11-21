@@ -165,6 +165,21 @@ test("an expiring OAuth token is refreshed and the new one saved", async () => {
   void server.stop(true);
 });
 
+test("a token renewed early whose refresh fails now (the network) is kept while it still works; once it ran out, it isn't", async () => {
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("down", { status: 503 }) });
+  const dir = join(process.env.XDG_DATA_HOME ?? "", "harbor/apps");
+  mkdirSync(dir, { recursive: true });
+  const soon = Math.floor(Date.now() / 1000) + 60;
+  mcp.save("linear", mcp.blankCred({ access_token: "at-1", refresh_token: "rt-1", expires_at: soon, client_id: "cid", token_endpoint: `http://127.0.0.1:${server.port}/t` }));
+  // A turn starting now still gets the app (its token works for another minute).
+  expect(await mcp.freshToken("linear", false)).toBe("at-1");
+  // Asked for a new one (the server refused the old): none.
+  expect(await mcp.freshToken("linear", true)).toBeUndefined();
+  mcp.save("linear", mcp.blankCred({ access_token: "at-1", refresh_token: "rt-1", expires_at: 1, client_id: "cid", token_endpoint: `http://127.0.0.1:${server.port}/t` }));
+  expect(await mcp.freshToken("linear", false)).toBeUndefined();
+  void server.stop(true);
+});
+
 test("a gh device login shows the code and the page, then signs in", async () => {
   const bin = join(root, ".local/bin");
   mkdirSync(bin, { recursive: true });

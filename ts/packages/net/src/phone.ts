@@ -234,6 +234,8 @@ export interface PhoneDeps {
   /** Someone else's phone here (guest.ts): the level that applies to a phone signed in as `account` (null: this PC's
    *  owner's, or one from before accounts: no limit), and the owner's name; absent: no limit. */
   guest?: { level(account: string): string | null; owner(): string };
+  /** The account this PC is signed in to ("" none): a phone signed in to another one is someone else's (`othersPhone`). */
+  selfAccount?: () => string;
 }
 
 /** runon.ts's Auto for the phone's calls. */
@@ -964,7 +966,10 @@ export class PhoneRoutes {
     const p = call.path;
     const m = call.method;
     const body = obj(call.body);
-    const by = call.from ? { peer: call.from.peer, name: call.from.name, ctx: call.from.ctx } : null;
+    // The owner's own phone, forwarded by another PC it fell back to: written by this PC's person, so it runs with this
+    // PC's own context, not the forwarding PC's (whose owner is someone else).
+    const ownPhone = call.from !== undefined && this.ownersPhone(call.from.via, call.from.acct ?? "");
+    const by = call.from && !ownPhone ? { peer: call.from.peer, name: call.from.name, ctx: call.from.ctx } : null;
     const sender = call.from ? call.from.sender || call.from.name : this.d.hub.callerLabel(call.token, call.device);
     const device = call.from?.device ?? "";
     // Who wrote it and on what: a phone here, else as the forwarding PC says (older PCs: unknown).
@@ -1001,6 +1006,8 @@ export class PhoneRoutes {
       const sending = m === "POST" && p.length === 4 && p[3] === "send";
       if (!off || sending || !this.d.failover?.adopt) return this.forward(c, m, p, body, sender, call.global, who);
       if (m === "POST" && p.length === 4 && p[3] === "stop") return ok({ ok: true, returned: [], held: false });
+      // Someone else's phone doesn't make another PC's chat this PC's (it would run with this PC's owner's account).
+      if (m !== "GET" && this.othersPhone(who)) return err(503, this.notForOthers(c));
       // A question (the PCs it can move to, its slash commands…) is answered here without taking it.
       if (m !== "GET") {
         const own = this.d.failover.adopt(c);
@@ -1246,9 +1253,35 @@ export class PhoneRoutes {
     const repos = this.d.store.repos();
     const repo = typeof pref === "string" ? repos.find((r) => r.path === pref) : typeof pref === "number" ? repos.find((r) => r.id === pref) : undefined;
     const { project_id: _p, files: ids, ...rest } = body;
-    const ctx = this.d.ctx?.(repo?.id ?? null) ?? null;
+    const ctx = this.ctxFor(repo?.id ?? null, who);
     const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev, who.account], ctx);
     return this.mapNew(peer.id, r, global);
+  }
+
+  /** A phone signed in to an account other than this PC's (a workspace mate's that fell back to this PC). Not known
+   *  (a phone paired before accounts, this PC signed out): not someone else's. */
+  private othersPhone(who: Who): boolean {
+    const me = this.d.selfAccount?.() ?? "";
+    return who.via === "phone" && who.account !== "" && me !== "" && who.account !== me;
+  }
+
+  /** A forwarded message written on this PC's owner's own phone (it reached another PC first). */
+  private ownersPhone(via: SentVia | null, account: string): boolean {
+    const me = this.d.selfAccount?.() ?? "";
+    return via === "phone" && account !== "" && account === me;
+  }
+
+  /** Why someone else's phone can't go on with chat `c` here while its PC is off. */
+  private notForOthers(c: Chat): string {
+    const home = this.d.hub.mesh.nameOf(c.home);
+    return `${home} is off or out of reach: this chat runs there, and ${this.d.hub.mesh.me.name || "this PC"} doesn't take it over for you. Try again once ${home} is back`;
+  }
+
+  /** The context a forwarded call carries: this PC's person's (meshctx.ts `outgoingCtx`), but none for someone else's
+   *  phone: they aren't this PC's person, and their own PC knows them (it runs the message with its own). */
+  private ctxFor(repo: number | null, who: Who): Json {
+    if (this.othersPhone(who)) return { v: 1, off: true, owner: who.who, github: "" };
+    return this.d.ctx?.(repo) ?? null;
   }
 
   /** mesh.rs `files_of`: a phone's upload ids, as the files here. */
@@ -1439,6 +1472,11 @@ export class PhoneRoutes {
   /** mesh.rs `mesh_proxy`: a call about a copy, made at its home PC and answered with this PC's ids. */
   private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string, global: boolean, who: Who): Promise<Reply> {
     const peer = this.d.hub.mesh.peer(c.home);
+    // Someone else's phone (a workspace mate's that fell back to this PC): their chat never moves here or on to another
+    // PC for it, where it would run with that PC's owner's account, instructions, memory and sign-ins. It says so; the
+    // phone keeps the message to send again.
+    const others = this.othersPhone(who);
+    if (!peer?.online && others) return err(503, this.notForOthers(c));
     // Its PC is off: a message goes on on another PC (failover.ts), or waits here.
     if (!peer?.online && method === "POST" && p.length === 4 && p[3] === "send" && this.d.failover) {
       const files = (Array.isArray(body.files) ? body.files : []).map((f) => (this.d.uploadsDir && typeof f === "string" ? resolveUpload(this.d.uploadsDir, f) : null)).filter((x): x is string => x !== null);
@@ -1447,7 +1485,7 @@ export class PhoneRoutes {
       return this.d.failover.send(c, { text: typeof body.text === "string" ? body.text : "", files, mentions: Array.isArray(body.mentions) ? body.mentions : [] }, to, (own) => this.send(own, rest, sender, "", null, who));
     }
     // Run anywhere: another PC sent the message here to run it here (picked in its Runs on).
-    if (method === "POST" && p.length === 4 && p[3] === "send" && typeof body.claim_to === "string" && body.claim_to === this.d.hub.mesh.me.id && this.d.failover?.claim) {
+    if (method === "POST" && p.length === 4 && p[3] === "send" && typeof body.claim_to === "string" && body.claim_to === this.d.hub.mesh.me.id && this.d.failover?.claim && !others) {
       const { claim_to: _c, ...rest } = body;
       const files = (Array.isArray(body.files) ? body.files : []).map((f) => (this.d.uploadsDir && typeof f === "string" ? resolveUpload(this.d.uploadsDir, f) : null)).filter((x): x is string => x !== null);
       const r = await this.d.failover.claim(c, { text: typeof body.text === "string" ? body.text : "", files, mentions: Array.isArray(body.mentions) ? body.mentions : [] }, (own) => this.send(own, rest, sender, "", null, who));
@@ -1459,7 +1497,7 @@ export class PhoneRoutes {
     if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Harbor that can't move chats: update it first`);
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
     const { files: ids, ...rest } = body;
-    const ctx = startsTurn(method, p.slice(3)) ? (this.d.ctx?.(c.repoId) ?? null) : null;
+    const ctx = startsTurn(method, p.slice(3)) ? this.ctxFor(c.repoId, who) : null;
     let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev, who.account], ctx);
     if (p[3] === "fork") r = await this.mapNew(c.home, r, global);
     const rb = obj(r.body);
