@@ -93,7 +93,17 @@ final class Voice {
     private Object mark;
     private final StringBuilder dictated = new StringBuilder();
 
+    /** Every composer's voice in this process (weakly): a live update waits while one records or
+     *  transcribes (Swap). */
+    private static final java.util.Set<Voice> all = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    static boolean anyActive() {
+        for (Voice v : all.toArray(new Voice[0])) if (v != null && v.active()) return true;
+        return false;
+    }
+
     Voice(Activity a, Hub hub, EditText edit) {
+        all.add(this);
         this.a = a;
         this.hub = hub;
         this.edit = edit;

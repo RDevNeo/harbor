@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- The phone app updates while you use it (Android 9+): within seconds of a release, its new app code is downloaded
+  and checked in the background, and at a quiet moment on screen (no sheet open, nothing recording, playing or
+  sending, a couple of seconds untouched, or a screen that just came up) Harbor restarts in place and opens the
+  same screens again: the open chat at the same place, the composer's text, cursor and keyboard, an open side
+  panel, with a short "Updated to X". No need to close and reopen it. New code that crashes is still rolled back,
+  back to the same place. Settings › App › Update does the same at once. Phone app only, no new APK: it starts with
+  the code update after this one (this release still goes in the old way) (android/README.md, "Live updates").
+
 ## [0.189.0] - 2026-11-22
 
 ### Added

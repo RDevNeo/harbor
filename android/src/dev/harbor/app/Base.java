@@ -41,6 +41,11 @@ abstract class Base extends Activity {
     static volatile long outFor;
     /** This screen is in front (between onResume and onPause). */
     boolean front;
+    /** The screen in front now (Swap), and since when this one is (elapsedRealtime). */
+    static volatile Base top;
+    long resumedAt;
+    /** Harbor's screens in this process, oldest first (Swap writes the task down from it). */
+    static final java.util.List<Base> alive = new java.util.ArrayList<>();
     private int gen;                 // bumped to stop the current poll loop
     private volatile Net.Http polling;
     private long rev = -1;
@@ -51,6 +56,7 @@ abstract class Base extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        alive.add(this);
         Ui.init(this);
         Ui.bars(this);
         myTheme = Ui.themeGen;
@@ -310,6 +316,7 @@ abstract class Base extends Activity {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent e) {
+        Swap.touch(e);
         if (shell == null) return super.dispatchTouchEvent(e); // no drawer on this screen
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
@@ -434,6 +441,9 @@ abstract class Base extends Activity {
         Gmail.sayPending(this);
         Invites.resumed(this);
         Alive.calm(this);
+        top = this;
+        resumedAt = android.os.SystemClock.elapsedRealtime();
+        Swap.resumed(this);
         // A screen that stays up a few seconds proves new app code works (no rollback; Shell).
         Ui.main.postDelayed(() -> { if (front && !isFinishing()) Ui.pool.execute(dev.harbor.shell.Shell::ok); }, 5_000);
         if (myTheme != Ui.themeGen) { recreate(); return; }
@@ -445,6 +455,7 @@ abstract class Base extends Activity {
         super.onPause();
         resumed--;
         front = false;
+        if (top == this) top = null;
         Inbox.paused(this);
         Invites.paused();
         // Left the app (not just another of its screens): listen a few minutes for answers.
@@ -452,6 +463,55 @@ abstract class Base extends Activity {
         gen++;
         Net.Http c = polling;
         if (c != null) Ui.pool.execute(c::close);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        alive.remove(this);
+        if (top == this) top = null;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        Swap.input();
+        return super.dispatchKeyEvent(e);
+    }
+
+    // ---- live updates (Swap, Live) ----
+
+    /** The text field whose text and cursor this screen keeps across a live restart (Chat's
+     *  composer), or null. */
+    View liveField() { return null; }
+
+    /** This screen as a live restart keeps it: its class, the extras it opens with (Live.keep),
+     *  and an open side panel; null when it can't be opened again. Screens add their own place. */
+    Live.Screen liveScreen() {
+        String n = getClass().getSimpleName();
+        String[] keep = Live.keep(n);
+        if (keep == null) return null;
+        Live.Screen s = new Live.Screen(n);
+        Bundle x = getIntent().getExtras();
+        if (x != null) for (String k : keep) {
+            Object v = x.get(k);
+            if (v instanceof String || v instanceof Long || v instanceof Integer || v instanceof Boolean) s.extras.put(k, v);
+        }
+        if (open != NONE) s.state.put("panel", Integer.toString(open));
+        return s;
+    }
+
+    /** A side panel open at once, as a live restart left it (after installDrawer/installRight). */
+    void livePanel(Bundle saved) {
+        String p = Swap.state(this, saved, "panel");
+        int which = p == null ? NONE : "1".equals(p) ? LEFT : "2".equals(p) ? RIGHT : NONE;
+        if (which == NONE || shell == null || (which == RIGHT && right == null)) return;
+        View v = which == LEFT ? side.view : right;
+        open = which;
+        v.setVisibility(View.VISIBLE);
+        v.setTranslationX(0);
+        scrim.setVisibility(View.VISIBLE);
+        scrim.setAlpha(1f);
+        if (which == RIGHT) onRightOpened();
     }
 
     private void startPolling() {

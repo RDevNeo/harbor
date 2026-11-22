@@ -320,12 +320,47 @@ public class Update extends BroadcastReceiver {
     private static final ExecutorService worker = Executors.newSingleThreadExecutor();
     private static volatile long openedAt;
 
-    /** A Harbor screen came on screen with none before (Base.onStart): what's new, at once. */
+    /** A Harbor screen came on screen with none before (Base.onStart): what's new, at once, and
+     *  the news held while a screen is up when Listen isn't holding it. */
     static void opened(Context c) {
         long now = SystemClock.elapsedRealtime();
-        if (Rig.on() || (openedAt != 0 && now - openedAt < 30_000)) return;
+        if (Rig.on()) return;
+        hold(c);
+        if (openedAt != 0 && now - openedAt < 30_000) return;
         openedAt = now;
         worker.execute(() -> catchUp(c));
+    }
+
+    private static final AtomicBoolean holding = new AtomicBoolean();
+
+    /** The release news held (as Listen's thread does) while a Harbor screen is up and Listen
+     *  doesn't run (Android refused its start, no PC yet): a release is heard within seconds and
+     *  its code goes in live (codeRound, Swap). Ends once no screen is up (after the answer it
+     *  waits for, at most HOLD_S). */
+    private static void hold(Context c) {
+        if (Listen.listening() || !holding.compareAndSet(false, true)) return;
+        Thread t = new Thread(() -> {
+            int fails = 0;
+            try {
+                while (Base.started > 0 && !Listen.listening()) {
+                    String v = null;
+                    try {
+                        v = hear(c, HOLD_S);
+                        fails = 0;
+                    } catch (Exception e) {
+                        fails++;
+                    }
+                    if (Base.started <= 0 || Listen.listening()) break;
+                    if (v != null) news(c, v);
+                    else round(c);
+                    if (fails > 0) SystemClock.sleep(Quiet.backoff(fails));
+                }
+            } finally {
+                holding.set(false);
+            }
+        }, "update-news-front");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** The last Harbor screen went out of sight (Base.onStop): a round once the screen is off
@@ -358,6 +393,8 @@ public class Update extends BroadcastReceiver {
     static void prompt(Base a, long offered) {
         SharedPreferences p = Ui.prefs(a);
         if (!a.front || a.isFinishing() || busy || !Quiet.prompt(offered, Settings.myCode(a), p.getLong("prompt_code", 0))) return;
+        // App code goes in by itself, also while Harbor is open (Swap): nothing to ask.
+        if (code(a) && silent(a, offered)) return;
         p.edit().putLong("prompt_code", offered).apply();
         Sheet s = new Sheet(a, "Update available");
         // Installed → new; a second line only when it says something useful (the rig's phone can't
@@ -508,6 +545,8 @@ public class Update extends BroadcastReceiver {
         }
         long waited = System.currentTimeMillis() - Shell.stagedAt(c);
         if (Quiet.restart(quiet(c), Listen.listening(), canRelisten(c), waited)) restartFor(c, false);
+        // On screen: a live restart at the next quiet moment there (Swap), back on the same screen.
+        else Swap.staged(c);
         return true;
     }
 
@@ -579,8 +618,11 @@ public class Update extends BroadcastReceiver {
     }
 
     /** Ends the process for the staged code: the next start opens the chat the user had (resume).
-     *  reopen: from a screen (Settings' Update), Harbor opens again at once. */
+     *  reopen: from a screen (Settings' Update), Harbor opens again at once, on the same screens
+     *  (Swap). */
     private static void restartFor(Context c, boolean reopen) {
+        // From a screen: a live restart, back on that screen (Swap).
+        if (reopen && Swap.now(c)) return;
         Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", Shell.staged(c)).commit();
         Shell.restart(c, reopen);
     }

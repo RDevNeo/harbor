@@ -72,6 +72,13 @@ final class Video {
     // The UI thread's.
     private Images.Src now;
     private boolean playing, shown, ended;
+    /** Every player of this process (weakly): a live update waits while one plays (Swap). */
+    private static final java.util.Set<Video> all = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    static boolean anyPlaying() {
+        for (Video v : all.toArray(new Video[0])) if (v != null && v.playing) return true;
+        return false;
+    }
     /** It's prepared, so the next frame the picture gets is this video's. */
     private boolean live;
     private long position, duration;
@@ -123,6 +130,7 @@ final class Video {
     };
 
     Video(Activity a, Window win, Host host) {
+        all.add(this);
         this.a = a;
         this.win = win;
         this.host = host;

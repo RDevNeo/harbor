@@ -991,6 +991,7 @@ public class Settings extends Base {
         updateBtn.setAlpha(0.5f);
         updateNote.setText("Downloading…");
         installing = true;
+        boolean code = Update.code(this);
         Ui.pool.execute(() -> {
             String err = null;
             try {
@@ -1006,7 +1007,9 @@ public class Settings extends Base {
                 installing = false;
                 updateBtn.setEnabled(true);
                 updateBtn.setAlpha(1f);
-                updateNote.setText(fe == null ? "Installing " + name(available) + "… Harbor closes when it's done: open it again and it's back on your chat." : "Update failed: " + fe);
+                updateNote.setText(fe != null ? "Update failed: " + fe
+                        : code ? "Restarting into " + name(available) + "…"
+                        : "Installing " + name(available) + "… Harbor closes when it's done: open it again and it's back on your chat.");
             });
         });
     }

@@ -92,6 +92,7 @@ public class GhList extends Base {
         sv.addView(list);
         root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
         installDrawer(null);
+        livePanel(b);
         drawStates();
         drawFilters();
         load(false);

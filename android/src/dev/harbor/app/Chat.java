@@ -97,6 +97,11 @@ public class Chat extends Base implements Images.Gallery {
     /** Opened from a captcha's notification: the first load scrolls to its card. */
     private boolean toCaptcha;
     private static final String CAPTCHA = "captcha";
+    /** A live restart's place (Swap): the item at the top of the screen and how far below it
+     *  the view was (-1: none, the end as usual), and the composer's files and mentions still to
+     *  come from the hub's copy of the draft. */
+    private int liveSeq = -1, liveOff;
+    private boolean liveDraft;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -169,6 +174,24 @@ public class Chat extends Base implements Images.Gallery {
         comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
         // What this phone wrote last time; the chat's shared draft takes over when the hub has a newer one (applyDraft).
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
+        String liveText = Swap.state(this, b, "text");
+        if (liveText != null) {
+            // As a live restart left it: the text, its cursor, and whether it was this phone's.
+            composer.setText(liveText);
+            int len = liveText.length();
+            int st = Math.max(0, Math.min(len, parseInt(Swap.state(this, b, "selStart"), len)));
+            int en = Math.max(0, Math.min(len, parseInt(Swap.state(this, b, "selEnd"), len)));
+            composer.setSelection(Math.min(st, en), Math.max(st, en));
+            ownDraft = !"0".equals(Swap.state(this, b, "own"));
+            liveDraft = true;
+        }
+        String liveFrom = Swap.state(this, b, "from");
+        if (liveFrom != null) {
+            from = parseInt(liveFrom, -1);
+            liveSeq = parseInt(Swap.state(this, b, "seq"), -1);
+            liveOff = parseInt(Swap.state(this, b, "off"), 0);
+            if (liveSeq >= 0 && from > liveSeq) from = liveSeq;
+        }
         echoKey = draftKey(hub, chatId);
         echo = echoOf(hub, chatId, echoKey);
         showing.put(echoKey, this);
@@ -233,8 +256,55 @@ public class Chat extends Base implements Images.Gallery {
         installDrawer(chatId);
         team = new Team(this, chatId);
         installRight(team.view);
+        livePanel(b);
+        if ("1".equals(Swap.state(this, b, "focus"))) {
+            // The keyboard was up on the composer: up again.
+            composer.requestFocus();
+            getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+                    | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
 
         showChat(Hub.chat(Hub.states.get(hub.id), chatId));
+    }
+
+    /** Not while a queued message is being edited: that text has no way back (Swap waits). */
+    @Override
+    View liveField() { return editId == 0 ? composer : null; }
+
+    /** The chat as a live restart keeps it (Swap): the composer (text, cursor, focus, whose), and
+     *  the transcript's place: the end, or the item at the top of the screen and its offset. */
+    @Override
+    Live.Screen liveScreen() {
+        Live.Screen s = super.liveScreen();
+        if (s == null || composer == null || gone) return s;
+        String t = composer.getText().toString();
+        if (!t.isEmpty() && editId == 0) {
+            s.state.put("text", t);
+            s.state.put("selStart", Integer.toString(composer.getSelectionStart()));
+            s.state.put("selEnd", Integer.toString(composer.getSelectionEnd()));
+            s.state.put("own", ownDraft ? "1" : "0");
+        }
+        boolean ime = composer.hasFocus();
+        if (ime && android.os.Build.VERSION.SDK_INT >= 30 && composer.getRootWindowInsets() != null)
+            ime = composer.getRootWindowInsets().isVisible(android.view.WindowInsets.Type.ime());
+        if (ime) s.state.put("focus", "1");
+        boolean atEnd = scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(120);
+        if (loaded && !atEnd && from >= 0) {
+            int y = scroll.getScrollY();
+            for (Map.Entry<Integer, View> e : views.entrySet()) {
+                View v = e.getValue();
+                if (v.getParent() != content || v.getBottom() <= y) continue;
+                s.state.put("from", Integer.toString(from));
+                s.state.put("seq", Integer.toString(e.getKey()));
+                s.state.put("off", Integer.toString(v.getTop() - y));
+                break;
+            }
+        }
+        return s;
+    }
+
+    private static int parseInt(String v, int def) {
+        try { return Integer.parseInt(v); } catch (Exception e) { return def; }
     }
 
     @Override
@@ -514,19 +584,25 @@ public class Chat extends Base implements Images.Gallery {
         if (echo != null && !echo.isEmpty() && echo.settle(seen(), System.currentTimeMillis())) saveEcho(echoKey, echo);
         drawBars();
         View cap = toCaptcha ? content.findViewWithTag(CAPTCHA) : null;
+        View live = liveSeq >= 0 ? views.get(liveSeq) : null;
+        if (liveSeq >= 0 && !items.isEmpty()) liveSeq = -1; // once, at the first load
         if (cap != null) { toCaptcha = false; toView(cap); }
+        else if (live != null) toView(live, liveOff);
         else if (atBottom) toEnd();
         if (loaded) toCaptcha = false;
     }
 
     /** Scrolls the transcript to v's top once it's laid out. */
-    private void toView(View v) {
+    private void toView(View v) { toView(v, Ui.dp(8)); }
+
+    /** ... with v's top `off` pixels below the top of the screen (negative: above it). */
+    private void toView(View v, int off) {
         content.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
             @Override public void onGlobalLayout() {
                 content.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                 int y = 0;
                 for (View x = v; x != null && x != content; x = x.getParent() instanceof View ? (View) x.getParent() : null) y += x.getTop();
-                scroll.scrollTo(0, Math.max(0, y - Ui.dp(8)));
+                scroll.scrollTo(0, Math.max(0, y - off));
             }
         });
         content.requestLayout();
@@ -1203,6 +1279,7 @@ public class Chat extends Base implements Images.Gallery {
      *  while it changes (the last one always goes), and every 3 s anyway while the user types;
      *  the lease runs out 6 s after. An emptied composer empties the draft everywhere. */
     private void typed() {
+        Swap.input();
         if (comp != null) comp.again();
         if (applying || composer == null) return;
         // Editing a queued message isn't writing a draft: nothing goes to the other devices.
@@ -1257,7 +1334,18 @@ public class Chat extends Base implements Images.Gallery {
         long rev = d.optLong("rev");
         if (rev <= appliedRev) return;
         String by = d.optString("by");
-        if (!by.isEmpty() && by.equals(you())) { appliedRev = rev; return; }
+        if (!by.isEmpty() && by.equals(you())) {
+            appliedRev = rev;
+            // After a live restart the text is back already; the files and mentions come from here.
+            if (liveDraft) {
+                liveDraft = false;
+                if (d.has("files")) attach.setRemote(d.optJSONArray("files"), chatId);
+                JSONArray ms = d.optJSONArray("mentions");
+                if (ms != null && ms.length() > 0) { mentions = ms; drawMentions(); tags.rehighlight(); }
+            }
+            return;
+        }
+        liveDraft = false;
         long wait = editedAt + 1000 - System.currentTimeMillis();
         // Editing a queued message: the composer holds that message; the draft comes in once the edit ends.
         if (editId != 0) wait = Math.max(wait, 1000);

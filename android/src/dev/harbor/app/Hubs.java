@@ -20,6 +20,9 @@ import java.util.List;
 public class Hubs extends Base {
     private LinearLayout list;
     private boolean busy;
+    /** A live restart's screens are opening over this one (Swap.restore): drawn blank, Harbor's
+     *  background only, until it's out of sight. */
+    boolean restoring;
     private String error;
 
     @Override
@@ -36,6 +39,8 @@ public class Hubs extends Base {
         setContentView(page);
 
         if (b == null && !handleLink(getIntent()) && !Account.needsSignIn(this)) {
+            // Right after a live update (Swap): the same screens as before, at once.
+            if (Swap.restore(this)) return;
             // Right after an update: back to the chat the user had.
             if (Update.resume(this)) return;
             // A cold start goes straight back to the workspace used last.
@@ -106,8 +111,15 @@ public class Hubs extends Base {
     @Override
     void refresh() { if (!busy && !isFinishing()) render(); }
 
+    @Override
+    protected void onStop() {
+        super.onStop();
+        restoring = false;
+    }
+
     private void render() {
         list.removeAllViews();
+        if (restoring) return;
         list.addView(Ui.title(this, "Harbor", 44), Ui.margins(Ui.fill(), 4, 24, 4, 8));
         if (Account.needsSignIn(this)) {
             boolean ran = Account.signedIn(this);

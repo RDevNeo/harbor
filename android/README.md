@@ -16,8 +16,10 @@ desktop's slash menu (commands and skills from the PC). The API is in [PROTOCOL.
    pinned to its own key; there's no pairing code. Owners invite people in Settings (the
    workspace's card) or on the PC (Settings › Account).
 3. Updates come from Harbor's GitHub releases by themselves. On Android 9+ they are the app's code
-   alone (below): nothing installs, so Google Play Protect has nothing to scan, and Harbor restarts
-   into it once you're not looking (Settings › App › **Update** does it at once). Only a release
+   alone (below): nothing installs, so Google Play Protect has nothing to scan, and they go in
+   while you use Harbor: within seconds of a release, at a quiet moment, the app restarts in place
+   and you're back on the same screen ("Updated to X"; see "Live updates"). Settings › App ›
+   **Update** does it at once. Only a release
    that changes the shell installs an APK (Android asks once to allow "Install unknown apps" for
    Harbor; Android 12+ updates silently after that), as every update does on Android 8.
 
@@ -92,6 +94,26 @@ instant-notification service could start again from the background (Android befo
 exempt from battery optimisation) or the code waited 12 hours (`Quiet.restart`); Settings' Update
 restarts at once and reopens Harbor on the chat you had.
 
+**Live updates** (`Swap`, `Live`; code only, shell 1 as it is). A process can't unload the
+classes it runs, so new code on screen is a fast restart that brings the user back. While a Harbor
+screen is up, the release news is held (Listen's thread, or `Update.hold` when Listen doesn't run),
+so a release is heard within seconds; its code is downloaded and staged in the background
+(`Update.codeRound`), and `Swap` waits for a moment that loses nothing (`Live.why`): the window
+has the focus (no sheet, menu, dialog, permission prompt or notification shade over it), nothing
+records, plays a video, writes to a PC (`Hub.writes`: sends, uploads) or waits for another app's
+answer, no finger is down, no text field other than the composer has text, and the screen is one
+that can come back (`Live.keep`: not a form like New chat). Then: a screen that just came up,
+2 s untouched, or, with a message in the composer, 12 s; after 5 minutes waiting, 0.6 s is
+enough. It writes the task's screens down (`Live.Saved` in the preferences: each screen's class
+and kept extras; the chat's composer text, cursor and keyboard, the item at the top of the
+transcript and its offset, an open side panel), starts the shell's `Restart` without animation
+and leaves its own screen as it is; `Restart` ends the process and opens Harbor, whose first
+screen (`Hubs`, drawn blank) opens the same screens again at once (`Swap.restore`), with a short
+"Updated to X" toast. Listen starts again from that screen. The state is kept until a screen has
+stayed up 8 s (at most 10 minutes, 4 restores), so new code that crashes, and is rolled back by
+the shell, still comes back to the same place on the old code. Settings' Update takes the same
+path. Out of sight, the restart is the quiet one below.
+
 **Rollback.** New code starts on trial: the shell counts its starts and uncaught exceptions. It
 proves itself when a screen stays up 5 seconds (`Base.onResume` → `Shell.ok`) or a process runs
 10 minutes without a crash. 2 crashes or 6 starts before that and it's marked bad, never run again,
@@ -103,6 +125,7 @@ the usual way, an APK update with Play Protect's scan if it asks). From then on,
 update without installs until a release bumps the shell.
 
 **Testing.** `test/BootTest.java` (staging and signatures with a throwaway key, the start/trial/
-rollback state machine) and `test/UpdateTest.java` (`Quiet.route`, `Quiet.restart`) run with every
-build. `scripts/boat/phoneshot --code` runs the app on the emulator from a staged code zip one
+rollback state machine), `test/UpdateTest.java` (`Quiet.route`, `Quiet.restart`) and
+`test/LiveTest.java` (when a live restart may happen, and the saved state's round trip) run with
+every build. `scripts/boat/phoneshot --code` runs the app on the emulator from a staged code zip one
 patch version newer than the APK (Settings then shows that version) and prints the shell's log.

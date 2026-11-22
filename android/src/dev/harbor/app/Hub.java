@@ -636,6 +636,16 @@ final class Hub {
 
     /** A JSON call to PC v itself (see openOn). */
     JSONObject callOn(String v, String method, String path, JSONObject body) throws IOException {
+        boolean w = !"GET".equals(method);
+        if (w) writes.incrementAndGet();
+        try {
+            return callOn2(v, method, path, body);
+        } finally {
+            if (w) writes.decrementAndGet();
+        }
+    }
+
+    private JSONObject callOn2(String v, String method, String path, JSONObject body) throws IOException {
         Net.Http c = openOn(v, method, path, TIMEOUT);
         try {
             if (body != null) {
@@ -774,7 +784,21 @@ final class Hub {
         throw last != null ? last : new IOException("not sent");
     }
 
+    /** Writes to a PC under way (a send, an upload, a change): a live update waits for them
+     *  (Swap), so none is cut off halfway. */
+    static final java.util.concurrent.atomic.AtomicInteger writes = new java.util.concurrent.atomic.AtomicInteger();
+
     private JSONObject call1(String method, String path, JSONObject body, int readTimeout) throws IOException {
+        boolean w = !"GET".equals(method);
+        if (w) writes.incrementAndGet();
+        try {
+            return call2(method, path, body, readTimeout);
+        } finally {
+            if (w) writes.decrementAndGet();
+        }
+    }
+
+    private JSONObject call2(String method, String path, JSONObject body, int readTimeout) throws IOException {
         Net.Http c = open(method, path, readTimeout);
         String v = c.pc;
         try {
@@ -812,7 +836,14 @@ final class Hub {
     /** Streams a file to POST /v1/upload; returns {id, path}. */
     JSONObject upload(String name, String chat, InputStream in, long len) throws IOException {
         String q = "/v1/upload?name=" + URLEncoder.encode(name, "UTF-8") + (chat == null ? "" : "&chat=" + URLEncoder.encode(chat, "UTF-8"));
-        Net.Http c = open("POST", q, 120_000);
+        writes.incrementAndGet();
+        Net.Http c;
+        try {
+            c = open("POST", q, 120_000);
+        } catch (IOException | RuntimeException e) {
+            writes.decrementAndGet();
+            throw e;
+        }
         try {
             c.header("Content-Type", "application/octet-stream");
             try (OutputStream o = c.body(len)) {
@@ -824,6 +855,7 @@ final class Hub {
             return reply(c);
         } finally {
             c.close();
+            writes.decrementAndGet();
         }
     }
 
