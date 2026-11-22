@@ -9,7 +9,9 @@
 # tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>,
 # broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>,
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
-# sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults.
+# sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults; CODE=1 runs the app
+# from downloaded app code (the build's harbor-phone-code.zip, one patch version newer than the APK,
+# staged as root where the shell keeps it: android/README.md, "Shell and code").
 #
 # SAVE=1 (scripts/boat/phoneshot --save-snapshot): after the shots, leave this sandbox ready to be
 # saved as harbor-phone: the app uninstalled, the emulator and the hub stopped, the build images
@@ -20,6 +22,9 @@
 s0=$SECONDS
 phase() { echo "<== $1 $((SECONDS - ${2:-$s0}))s"; }
 port=47931 token=rig-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+ver=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' ts/package.json | head -1)
+IFS=.- read -r cma cmi cpa _ <<< "$ver"
+cver=$cma.$cmi.$((cpa + 1)) ccode=$((cma * 1000000 + cmi * 1000 + cpa + 1))
 sdk=$cache/android/sdk adb=$cache/android/sdk/platform-tools/adb
 sysimg=${IMAGE:-system-images;android-34;default;x86_64} gpu=${GPU:-swiftshader_indirect}
 shots=$HOME/out/shots logs=$HOME/out/logs
@@ -92,7 +97,7 @@ echo "==> apk (building in the background)"
     -alias harbor -keyalg RSA -keysize 2048 -validity 10000 -dname CN=rig >/dev/null 2>&1'
   run_in "$andr" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps -e ANDROID_ABIS=x86_64 \
     -e ANDROID_KEYSTORE=/c/android/rig.jks -e ANDROID_KEYSTORE_PASS=rig-only -e HARBOR_RIG_PORT="$port" -e HARBOR_RIG_TOKEN="$token" \
-    -e OUT=/out/harbor-rig.apk -- bash -euo pipefail -c 'ANDROID_HOME=/c/android/sdk android/build.sh'
+    -e HARBOR_CODE_VERSION="$([ -n "${CODE:-}" ] && echo "$cver" || echo "$ver")" -e OUT=/out/harbor-rig.apk -- bash -euo pipefail -c 'ANDROID_HOME=/c/android/sdk android/build.sh'
 ) > "$logs/apk.log" 2>&1 &
 apkjob=$! apk0=$s
 
@@ -141,6 +146,19 @@ timeout 120 "$adb" install -r -g "$HOME/out/harbor-rig.apk" >/dev/null || { echo
 "$adb" reverse "tcp:$port" "tcp:$port" >/dev/null
 ad logcat -c
 phase boot $s
+
+# Downloaded app code, as Shell.stage leaves it (Boot: <code>.zip read-only, <code>.properties,
+# state.properties naming it staged), owned by the app and labelled as its data.
+if [ -n "${CODE:-}" ]; then
+  pkg_name=dev.harbor.app d=/data/data/dev.harbor.app/harbor-code
+  size=$(stat -c %s "$HOME/out/harbor-phone-code.zip")
+  timeout 60 "$adb" push "$HOME/out/harbor-phone-code.zip" /data/local/tmp/code.zip >/dev/null
+  ad "am force-stop $pkg_name; mkdir -p $d && cp /data/local/tmp/code.zip $d/$ccode.zip && chmod 444 $d/$ccode.zip \
+    && printf 'code=$ccode\nversion=$cver\nminShell=0\nsize=$size\n' > $d/$ccode.properties \
+    && printf 'staged=$ccode\nstagedAt=1\n' > $d/state.properties \
+    && chown -R \$(stat -c %u:%g /data/data/$pkg_name) $d && restorecon -RF $d && ls -lZ $d" || { echo "couldn't stage the code"; exit 1; }
+  echo "staged code $cver ($size bytes) for the app's next start"
+fi
 
 pkg=dev.harbor.app
 pid() { ad pidof "$pkg" | tr -d '\r'; }
@@ -225,6 +243,7 @@ for st in "$@"; do
 done
 phase shots $s
 ad logcat -d > "$logs/logcat.txt" 2>/dev/null || true
+[ -z "${CODE:-}" ] || { echo "the shell said:"; grep -E 'harbor-shell' "$logs/logcat.txt" | tail -20 || echo "  (nothing: no harbor-shell lines in logcat)"; }
 tar -czf "$HOME/out/shots.tgz" -C "$HOME/out" shots logs
 [ "$fail" = 0 ] || { phase total; echo "<== phoneshot FAILED"; tail -20 "$logs/hub.log"; exit 1; }
 

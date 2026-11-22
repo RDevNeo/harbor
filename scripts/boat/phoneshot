@@ -31,6 +31,11 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
   --dark           the phone's dark theme
+  --code           run the app from downloaded app code, as a phone on Android 9+ does after an
+                   update (android/README.md, "Shell and code"): the build's harbor-phone-code.zip,
+                   one patch version newer than its APK, is put where the shell keeps staged code
+                   before the first screen; the shell's log lines (harbor-shell) are printed after
+                   the shots, and Settings says the code's version
   --from NAME      the snapshot to start from. Default: harbor-phone (the emulator, its system image
                    and a booted phone already in it) when it exists, else harbor-build (they install
                    first, minutes)
@@ -47,12 +52,13 @@ Time: 3 to 7 minutes from harbor-phone (most of it waits for the restored sandbo
 PHONESHOT_GPU try another system image / -gpu mode (installed on the spot). Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
 EOF2
 }
-steps=() quiet="" dark="" from="" save="" drop=""
+steps=() quiet="" dark="" from="" save="" drop="" code=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
     --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
+    --code) code=1 ;;
     --from) from=$2; shift ;;
     --save-snapshot) save=1 ;;
     --rm-snapshot) drop=1 ;;
@@ -98,7 +104,7 @@ at() { echo "$(( $(date +%s) - started ))"; }
 sandbox; t_ready=$(at)
 upload; t_up=$(at)
 set +e
-remote DARK="$dark" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" \
+remote DARK="$dark" CODE="$code" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" \
   SAVE="$save" -- bash .github/boat/phoneshot.sh "${steps[@]}"
 code=$?
 set -e
