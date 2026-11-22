@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.192.0] - 2026-11-22
+
 ### Added
 - Other apps and browsers on the phone open a Harbor chat with its link, `harbor://chat/<chat id>?pc=<PC name>`
   (`?pc=` optional), the same links agents write in replies: Harbor opens that chat over its workspace's chat list,
