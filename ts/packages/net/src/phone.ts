@@ -400,7 +400,7 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       const known = commits ? commits.ofText(c.text) : new Map<string, CommitRef>();
       if (commits) markCommits(bs, known, (t) => commits.tokens(t));
       v = { markdown: c.text, blocks: bs as Json, images, at: c.at, forkable: c.forkable };
-      // Files it attached (hubs from 0.190): a card each, with Download.
+      // Files it attached (hubs from 0.191): a card each, with Download.
       const att = attachments(c.text);
       // Each after the blocks that come before it (as media's `after`): where its link was.
       if (att.length > 0) v.files = att.map((a) => ({ ...attachJson(a, chat), after: blocks(label(attachBefore(c.text, a))).length }));

@@ -1639,7 +1639,7 @@ public class Chat extends Base implements Images.Gallery {
                 if (shown != null) wrap.addView(shown, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 View imgs = Images.strip(this, hub, notShown(it), 120, seq);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-                // Files the reply attached (hubs from 0.190) not placed among its blocks: a card each, with Download.
+                // Files the reply attached (hubs from 0.191) not placed among its blocks: a card each, with Download.
                 View files = Files.list(this, hub, restFiles);
                 if (files != null) wrap.addView(files, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 break;

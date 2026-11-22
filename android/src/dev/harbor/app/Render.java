@@ -96,7 +96,7 @@ final class Render {
      *  placed (older hubs): draw its media after the text. */
     View text(JSONObject item, java.util.function.Function<JSONArray, View> place) {
         JSONArray blocks = item.optJSONArray("blocks"), media = new JSONArray();
-        // Its media and the files it attached (hubs from 0.190), each placed by its `after`.
+        // Its media and the files it attached (hubs from 0.191), each placed by its `after`.
         for (String k : new String[] { "media", "files" }) {
             JSONArray l = item.optJSONArray(k);
             for (int i = 0; l != null && i < l.length(); i++) if (l.optJSONObject(i) != null) media.put(l.optJSONObject(i));

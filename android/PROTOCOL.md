@@ -538,7 +538,7 @@ plays while it arrives, by `Range` (`/v1/media` below); a media item that can't 
 that `media` draws. A reply's local files are kept by its PC when the reply ends (0.84), so
 their `url`s keep working after the agent deletes them (a screenshot in /tmp).
 
-Optional on `text` cards (0.190): `files: [{name, kind, meta, glyph, url, size?, after?}]`, the files
+Optional on `text` cards (0.191): `files: [{name, kind, meta, glyph, url, size?, after?}]`, the files
 the reply attached: an agent's markdown link (not an image) to a local file that isn't an image or a
 video (`[app-debug.apk](dist/app-debug.apk)`: an APK, a zip, a PDF…), up to 200 MB, which its PC
 copied into the chat's uploads when the reply came, so it downloads after the file changes or goes.
@@ -1434,7 +1434,7 @@ and that part, `416` past the end, and `Accept-Ranges: bytes` says so. A video o
 chat comes at most 8 MB per answer, whatever was asked (and then has no 64 MB limit): ask for the
 rest from where it stopped. A hub before 0.106 ignores the header and answers `200`.
 
-### `GET /v1/file?path=<kept copy>&chat=<gid>` (0.190)
+### `GET /v1/file?path=<kept copy>&chat=<gid>` (0.191)
 
 A file a reply attached (a `text` card's `files[].url`), the bytes as they are
 (`application/octet-stream`, `Content-Length`), with the token like every call. Only the copies a
