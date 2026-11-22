@@ -22,7 +22,7 @@ const PRIVATE = [".ssh", ".gnupg", ".password-store", ".aws", ".kube", ".docker"
 const WIN = sep === "\\";
 const winPath = (p: string): boolean => WIN && /^(?:[A-Za-z]:[\\/]|\\\\)/.test(p);
 /** A full path: `/…`, or on Windows one with a drive letter (or a share). */
-const absolute = (p: string): boolean => p.startsWith("/") || winPath(p);
+export const absolute = (p: string): boolean => p.startsWith("/") || winPath(p);
 
 export interface Media {
   path: string;
@@ -140,7 +140,7 @@ export function parts(md: string): Part[] {
   return out;
 }
 
-function pctDecode(s: string): string {
+export function pctDecode(s: string): string {
   const b = Buffer.from(s, "utf8");
   const out: number[] = [];
   let i = 0;
@@ -174,7 +174,7 @@ export function normalize(p: string): string {
   return abs ? `/${stack.join("/")}` : stack.join("/");
 }
 
-const startsWithPath = (p: string, base: string): boolean => {
+export const startsWithPath = (p: string, base: string): boolean => {
   if (winPath(base)) {
     // Windows' paths: either separator, any case.
     const [a, b] = [p.replaceAll("/", "\\").toLowerCase(), base.replaceAll("/", "\\").toLowerCase()];
@@ -183,7 +183,7 @@ const startsWithPath = (p: string, base: string): boolean => {
   return p === base || p.startsWith(base.endsWith("/") ? base : `${base}/`);
 };
 
-function canon(p: string): string | null {
+export function canon(p: string): string | null {
   try {
     return realpathSync(p);
   } catch {
@@ -223,7 +223,7 @@ export function localVideo(target: string): string | null {
   return r && r[1] === null && isVideo(r[0]) ? r[0] : null;
 }
 
-const isPrivate = (p: string): boolean => p.split(/[\\/]/).some((c) => PRIVATE.includes(c)) || ["/proc", "/sys", "/dev"].some((d) => startsWithPath(p, d));
+export const isPrivate = (p: string): boolean => p.split(/[\\/]/).some((c) => PRIVATE.includes(c)) || ["/proc", "/sys", "/dev"].some((d) => startsWithPath(p, d));
 
 export function allowed(p: string): boolean {
   if (kind(p) === null || isPrivate(p)) return false;

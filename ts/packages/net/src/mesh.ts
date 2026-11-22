@@ -497,6 +497,19 @@ export class Mesh {
     }
   }
 
+  /** A file a reply of a chat that runs on another PC attached (`/v1/file` here for a copy), at most MEDIA_PART of it per ask. */
+  async homeFile(chat: number, path: string, range: string | null): Promise<{ status: number; ctype: string; body: Uint8Array; range?: string } | null> {
+    const d = this.homeOf(chat);
+    if (!d) return null;
+    try {
+      const a = await httpPart(d, "GET", `/mesh/v1/file?path=${encodeURIComponent(path)}`, null, partOf(range ?? "bytes=0-"), 120_000);
+      if (!(a.status === 200 || a.status === 206)) return null;
+      return a.range !== "" ? { status: a.status, ctype: a.ctype, body: a.body, range: a.range } : { status: a.status, ctype: a.ctype, body: a.body };
+    } catch {
+      return null;
+    }
+  }
+
   /** A peer's `GET /mesh/v1/memory` (`chat`: that PC's id for one of its chats); null when it's off, slow or too old to say. */
   async memoryOf(peerId: string, chat: number | null): Promise<Record<string, unknown> | null> {
     const p = this.d.hub.mesh.peer(peerId);

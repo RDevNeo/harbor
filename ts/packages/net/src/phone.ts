@@ -6,6 +6,7 @@ import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftEmpty, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
+import { type Attachment, attachBefore, attachMeta, attachments, fileGlyph, fileKind, stripAttachments } from "./attach.ts";
 import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
 import { forHome, startsTurn, type Mesh } from "./mesh.ts";
 import { Once, sendKey } from "./once.ts";
@@ -310,6 +311,13 @@ function mediaJson(m: Media): Record<string, Json> {
   return v;
 }
 
+/** A reply's attached file for the phone's card (PROTOCOL.md `files`): `url` is `GET /v1/file` (Range) for it. */
+export function attachJson(a: Attachment, chat: string): Record<string, Json> {
+  const v: Record<string, Json> = { name: a.name, kind: fileKind(a.name), meta: attachMeta(a), glyph: fileGlyph(a.name), url: `/v1/file?path=${urlEncode(a.path)}&chat=${urlEncode(chat)}` };
+  if (a.size !== null) v.size = a.size;
+  return v;
+}
+
 function deviceIcon(h: RemoteHost): string {
   if (ICONS.some(([n]) => n === h.icon)) return h.icon;
   if (h.os === "macOS") return "laptop";
@@ -376,7 +384,8 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       const targets = links && c.text.includes(CHAT_SCHEME) ? links(c.text) : {};
       const titled = Object.keys(targets).length > 0;
       const label = (md: string) => {
-        const t = refs ? refs.strip(md) : md;
+        // The paragraphs its file cards stand for go, as on the desktop.
+        const t = stripAttachments(refs ? refs.strip(md) : md);
         return titled ? labelChatLinks(t, (u) => targets[u]?.title ?? u) : t;
       };
       const ps = refs ? refs.parts(c.text) : [];
@@ -391,6 +400,10 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       const known = commits ? commits.ofText(c.text) : new Map<string, CommitRef>();
       if (commits) markCommits(bs, known, (t) => commits.tokens(t));
       v = { markdown: c.text, blocks: bs as Json, images, at: c.at, forkable: c.forkable };
+      // Files it attached (hubs from 0.190): a card each, with Download.
+      const att = attachments(c.text);
+      // Each after the blocks that come before it (as media's `after`): where its link was.
+      if (att.length > 0) v.files = att.map((a) => ({ ...attachJson(a, chat), after: blocks(label(attachBefore(c.text, a))).length }));
       if (titled) v.chat_links = targets;
       if (known.size > 0) v.commits = Object.fromEntries([...known.values()].map((x) => [x.sha, { sha: x.sha, short: x.short, subject: x.subject, author: x.author, at: x.at }]));
       break;

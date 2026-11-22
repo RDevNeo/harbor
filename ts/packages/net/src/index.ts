@@ -37,6 +37,7 @@ export * from "./captchanote.ts";
 export * from "./look.ts";
 export * from "./senders.ts";
 export * from "./markdown.ts";
+export * from "./attach.ts";
 export * from "./phone.ts";
 export * from "./resume.ts";
 export * from "./netcli.ts";

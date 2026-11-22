@@ -16,7 +16,7 @@ import { WorktreeCleaner } from "./worktreeclean.ts";
 import { FolderTracker } from "./foldertrack.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, noderuntime, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
-import { clipboard, devicespeech, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
+import { clipboard, devicespeech, dictate, dictwords, favicon, files, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { computer, discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
@@ -1199,7 +1199,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
     keepMedia: (text, cwd) => media.keep(text, cwd),
-    adoptMedia: (text, cwd, chat) => media.adopt(text, cwd, chat),
+    adoptMedia: (text, cwd, chat) => files.adoptFiles(media.adopt(text, cwd, chat), cwd, chat),
     noteTurn: (id, sub, failed, said) => {
       const c = eng().chat(id);
       if (!c) return;
@@ -1519,6 +1519,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     // Another PC's chat: its images and videos are that PC's files, fetched from it.
     homeImage: (chat, path, max) => mesh.homeImage(chat, path, max),
     homeMedia: (chat, path, range) => mesh.homeMedia(chat, path, range),
+    homeFile: (chat, path, range) => mesh.homeFile(chat, path, range),
+    // A file a reply attached (`[name](path)`, media's files.ts): only its kept copy in the chat's uploads.
+    fileCheck: async (path) => (!files.servable(path) ? "not a file a reply attached" : (await files.fileWait(path)) ? null : "it's gone from this PC"),
     image: (path, max) => media.imageAnswer(path, max),
     mediaCheck: (path) => {
       const c = media.check(path);

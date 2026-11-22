@@ -110,6 +110,10 @@ export interface ApiDeps {
   /** An image of another PC's chat, from that PC. */
   homeImage?: (chat: number, path: string, max: number | null) => Promise<FileAnswer | null>;
   homeMedia?: (chat: number, path: string, range: string | null) => Promise<FileAnswer | null>;
+  /** A file a reply of another PC's chat attached, from that PC (at most MEDIA_PART of it per ask). */
+  homeFile?: (chat: number, path: string, range: string | null) => Promise<FileAnswer | null>;
+  /** `/v1/file`'s check (media's files.ts): null when `path` is an attached file's kept copy that's here, else why not. */
+  fileCheck?: (path: string) => Promise<string | null>;
   /** `/v1/image`: a card's image, scaled (media package). */
   image?: (path: string, max: number | null) => Promise<FileAnswer>;
   /** `/v1/media`'s checks (media.rs `check`): null when the file may be served, else why not. */
@@ -376,6 +380,10 @@ export class Api {
       if (!(hub.mesh.on && this.d.meshAdmitted(peer, req))) return onlyPaired();
       return this.serveMedia(w, query(req, "path") ?? "", header(req, "range"));
     }
+    if (is("mesh", "v1", "file") && req.method === "GET") {
+      if (!(hub.mesh.on && this.d.meshAdmitted(peer, req))) return onlyPaired();
+      return this.serveFile(w, query(req, "path") ?? "", header(req, "range"));
+    }
     if (segs[0] === "mesh") {
       const reply = await this.d.mesh(peer, req, r);
       if (reply.status === 401 || reply.status === 403) this.fails.hit(ip);
@@ -491,6 +499,17 @@ export class Api {
       }
       return this.serveMedia(w, path, range);
     }
+    // A file a reply attached (net's attach.ts): its kept copy, by Range; another PC's chat's from that PC.
+    if (m === "GET" && is("v1", "file")) {
+      const path = query(req, "path") ?? "";
+      const chat = chatOf(hub, query(req, "chat"));
+      const range = header(req, "range");
+      if (chat !== null && this.d.homeFile) {
+        const a = await this.d.homeFile(chat, path, range);
+        if (a) return sendBytes(w, a.status, a.ctype, a.body, a.range ? `Accept-Ranges: bytes\r\nContent-Range: ${a.range}\r\n` : "");
+      }
+      return this.serveFile(w, path, range);
+    }
     if (m === "POST" && is("v1", "transcribe") && this.d.transcribe) {
       if (req.len > MAX_AUDIO) return sendJson(w, 413, { error: "recording too long" });
       const wav = await r.take(req.len);
@@ -603,13 +622,24 @@ export class Api {
     const why = this.d.mediaCheck ? this.d.mediaCheck(path) : "media isn't served by this Harbor yet";
     if (why !== null) return sendJson(w, 404, { error: `no such media: ${why}` });
     const file = this.d.located?.(path) ?? path;
+    this.sendRange(w, file, this.d.mime?.(path) ?? "application/octet-stream", range);
+  }
+
+  /** An attached file's kept copy (`/v1/file`, `/mesh/v1/file`), whole or the part a Range asks for. */
+  private async serveFile(w: Duplex, path: string, range: string | null): Promise<void> {
+    const why = this.d.fileCheck ? await this.d.fileCheck(path) : "files aren't served by this Harbor yet";
+    if (why !== null) return sendJson(w, 404, { error: `no such file: ${why}` });
+    return this.sendRange(w, path, "application/octet-stream", range);
+  }
+
+  /** A file of this PC, whole or the part a Range header asks for, streamed. */
+  private sendRange(w: Duplex, file: string, mime: string, range: string | null): void {
     let len: number;
     try {
       len = statSync(file).size;
     } catch {
       return sendJson(w, 404, { error: "unreadable file" });
     }
-    const mime = this.d.mime?.(path) ?? "application/octet-stream";
     const br = byteRange(range, len);
     if (br === "past") {
       w.end(response(416, mime, 0, `Content-Range: bytes */${len}\r\n`));

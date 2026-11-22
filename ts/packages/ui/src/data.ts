@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Account, Engine, type EngineHost, providers } from "@harbor/agents";
-import { media } from "@harbor/media";
+import { files, media } from "@harbor/media";
 import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { dictate } from "@harbor/media";
 import { repoDir, sidebartree, type Chat, type Item, type Mention as StoreMention, type Repo, type Store, type Timer } from "@harbor/store";
@@ -66,7 +66,8 @@ export class Data {
       noteResumed: (id, account, text) => this.notifier.noteResumed(this.chat(id) ?? null, account, this.engine.accountLabel(account), text, this.engine.limits.limitSettings().notify),
       notify: (kind, key, title, body, chat) => this.notifier.post(kind, key, title, body, chat ?? "", false),
       keepMedia: (text, cwd) => media.keep(text, cwd),
-      adoptMedia: (text, cwd, chat) => media.adopt(text, cwd, chat),
+      // A reply's images and videos, and the other files it links to (attached: a card with Download), kept in its chat.
+      adoptMedia: (text, cwd, chat) => files.adoptFiles(media.adopt(text, cwd, chat), cwd, chat),
     });
   }
 
