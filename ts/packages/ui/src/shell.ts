@@ -4881,6 +4881,9 @@ export class Shell {
     // Account pins (pins.ts): this chat's own; a copy's goes to its home PC.
     const pinned = this.engine.pinOf(id);
     if (!c.retired) items.push({ ...native(PIN_LABEL, () => {}, { badge: "submenu", desc: pinned === null ? "Harbor may switch its account at a limit" : `Pinned to ${this.pinName(pinned)}` }), sub: () => this.chatPinMenu(id) });
+    // Its chat link (harbor://chat/<gid>?pc=<PC>): pasted in a chat it reads as the chat's title; another app or a
+    // browser on the phone opens the chat with it. Not a change: offered while syncing too.
+    items.push({ ...this.item("Copy link", () => void this.media?.clipboard.copyTextNoticed(this.engine.chatLink(c))), kind: "native" as const });
     items.push(native("Delete", () => this.deleteDialog(id)));
     if (sync !== null) {
       for (const it of items) delete (it as { sub?: unknown }).sub;

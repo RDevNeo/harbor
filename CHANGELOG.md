@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Other apps and browsers on the phone open a Harbor chat with its link, `harbor://chat/<chat id>?pc=<PC name>`
+  (`?pc=` optional), the same links agents write in replies: Harbor opens that chat over its workspace's chat list,
+  from a cold start or while running; before sign-in it waits (15 minutes at most) and opens the chat once signed
+  in; a chat none of your PCs has opens Harbor as usual with a short notice. The PC resolves the link as it does a
+  link in a reply (new `GET /v1/chat_link`; PCs before this release are asked for their chat list instead). This
+  adds an intent filter to the phone app's manifest, so the shell goes to version 2: phones install the new APK once
+  (Android 12+ silently once "Install unknown apps" is allowed), then code-only updates resume. Desktop: no
+  system-wide `harbor://` handler yet (links inside Harbor's window already open there), so only the PC's
+  resolver and the menu item below.
+- Copy link in a chat's menu (desktop: right-click a chat; phone: the chat's menu): the chat's `harbor://chat/…`
+  link, to open it from another app or paste it in a chat.
+
 ## [0.191.0] - 2026-11-22
 
 ### Changed

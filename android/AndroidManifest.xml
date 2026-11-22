@@ -4,7 +4,8 @@
      account's workspaces, each with its PCs; Chats lists one workspace's
      chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
      one (its team slides in from the right), NewChat starts one, GhList and GhItem show the
-     PC's pull requests and issues, Settings updates the app and sets the color mode.
+     PC's pull requests and issues, Settings updates the app and sets the color mode. Other apps
+     and browsers open a chat with its link (harbor://chat/<gid>?pc=<PC name>) through Hubs.
      This file is part of the shell (android/README.md, "Shell and code"): a change here needs
      android/shell/lock.sh bump, and phones get it only by installing the new APK. The app's
      components below are made by dev.harbor.shell.Factory from the newest good app code the phone
@@ -56,6 +57,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="harbor" android:host="oauth" />
+            </intent-filter>
+            <!-- A chat's link, harbor://chat/<gid>?pc=<PC name>, as agents write them, from another
+                 app or a browser (shell 2): Hubs opens that chat (ChatLink) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="harbor" android:host="chat" />
             </intent-filter>
         </activity>
         <activity android:name=".Chats" android:exported="false" />

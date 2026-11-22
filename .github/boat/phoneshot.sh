@@ -236,6 +236,9 @@ for st in "$@"; do
     text:*) t=${st#text:}; ad input text "$(printf %q "${t// /%s}")" ;;
     key:*) ad input keyevent "KEYCODE_${st#key:}" ;;
     broadcast:*) ad am broadcast -a "${st#broadcast:}" -p "$pkg" >/dev/null ;;
+    # A chat link from another app: CHAT[@PC], CHAT a rig chat's name (its gid) or a gid as it is.
+    view:*) v=${st#view:}; c=${v%%@*}; g=$(gid "$c"); u="harbor://chat/${g:-$c}"; [ "$v" = "$c" ] || u="$u?pc=${v#*@}"
+      echo "view $u"; ad am start -W -a android.intent.action.VIEW -d "'$u'" >/dev/null || { echo "could not open $u"; fail=1; break; } ;;
     wait:*) sleep "${st#wait:}" ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;
     *) echo "unknown step: $st"; fail=1; break ;;

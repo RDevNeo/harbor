@@ -32,6 +32,13 @@ Keystore key ([PROTOCOL.md](PROTOCOL.md#transport)); no other software is needed
 Web links in chats open in the phone's own browser (Harbor had a built-in Servo browser until
 0.176; it was removed).
 
+Other apps and browsers open a chat with its link, the one agents write in replies:
+`harbor://chat/<chat id>?pc=<PC name>` (`?pc=` optional; Harbor › a chat's Copy link gives it).
+Harbor opens that chat over its workspace's chat list, from a cold start too; before sign-in it
+waits (15 minutes at most) and opens the chat once you're signed in. A chat none of your PCs has
+opens Harbor as usual with a short notice. From an Android app it's an `ACTION_VIEW` intent with
+that URI; from a web page or a Capacitor/WebView app, a link or `window.location.href` to it.
+
 ## Build
 
 `android/build.sh` builds `android/build/harbor-android.apk` and `harbor-phone-code.zip` beside it

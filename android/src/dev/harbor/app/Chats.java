@@ -119,6 +119,17 @@ public class Chats extends Base {
 
     /** Rename / settle / delete, shared with the chat screen's menu. after runs on success;
      *  deleted (if any) runs instead after a delete. */
+    /** Copy link: the chat's link by its gid (the same on every PC; no `?pc=`, so it opens from
+     *  whichever of the account's PCs has the chat). */
+    static void copyLink(Base a, JSONObject c) {
+        String gid = c.optString("gid", "");
+        if (gid.isEmpty()) gid = c.optString("id");
+        ((android.content.ClipboardManager) a.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                .setPrimaryClip(android.content.ClipData.newPlainText("Harbor chat link", ChatLink.SCHEME + gid));
+        // Android 13+ shows its own "Copied" bubble.
+        if (android.os.Build.VERSION.SDK_INT < 33) Ui.toast(a, "Link copied");
+    }
+
     static void menu(Base a, Hub hub, JSONObject c, Runnable after, Runnable deleted) {
         String id = c.optString("id");
         // Syncing: every change waits (the PC refuses them too), as the desktop's menu greys them out.
@@ -145,6 +156,9 @@ public class Chats extends Base {
         if (!sub && c.has("workspace")) items.add("Move to workspace…");
         // Hubs from 0.122 say which workspaces a chat is shared with.
         if (!sub && c.has("shared")) items.add(SHARE);
+        // Its chat link: other apps and browsers open the chat with it (ChatLink), and pasted in a
+        // chat it reads as the chat's title.
+        items.add("Copy link");
         items.add("Delete");
         Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items.toArray(new String[0]), (d, w) -> {
             String it = items.get(w);
@@ -153,6 +167,7 @@ public class Chats extends Base {
                     r -> { if (settled) after.run(); else landAfterSettle(a, hub, id, after); });
             else if (it.startsWith("Snooze")) Snooze.sheet(a, hub, c, after);
             else if (it.equals("Move to PC…")) movePc(a, hub, c, after);
+            else if (it.equals("Copy link")) copyLink(a, c);
             else if (it.equals("Move to workspace…")) moveWorkspace(a, hub, "/v1/chats/" + id + "/workspaces", c.optString("title", "Chat"),
                     ws -> hub.call("POST", "/v1/chats/" + id + "/workspace", new JSONObject().put("workspace", ws)), after);
             else if (it.equals(SHARE)) Ui.bg(a, () -> hub.call("GET", "/v1/chats/" + id + "/shares", null), m -> shareWorkspace(a, m, c.optString("title", "Chat"),

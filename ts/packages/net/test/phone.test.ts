@@ -227,6 +227,24 @@ describe("the phone API's chats (api.rs App side)", () => {
     store.close();
   });
 
+  test("a chat link another app hands the phone resolves as a reply's would (GET /v1/chat_link)", async () => {
+    const store = Store.openAt(join(tmp, "chatlink-get.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.peers.set("pc:laptop", newPeer({ id: "pc:laptop", name: "laptop", online: false }));
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null });
+    const lead = store.createChat(blankChat({ title: "Fix login", role: "lead", name: "lead" }));
+    const sub = store.createChat(blankChat({ title: "Check the API", role: "sub", parent: lead.id, name: "api" }));
+    const get = async (url: string, global = true) => (await routes.route({ method: "GET", path: ["v1", "chat_link"], query: [["url", url]], body: null, token: "", device: "Pixel", global })).body;
+    expect(await get(`harbor://chat/${sub.gid}?pc=desk`)).toEqual({ title: "Fix login › api", chat: sub.gid, missing: "" });
+    expect(await get(`harbor://chat/${lead.gid}`, false)).toEqual({ title: "Fix login", chat: lead.id, missing: "" });
+    expect(await get("harbor://chat/nope?pc=laptop")).toEqual({ title: "laptop is offline", chat: null, missing: "laptop is offline" });
+    expect(await get("harbor://chat/gone")).toEqual({ title: "Chat not found", chat: null, missing: "Chat not found" });
+    expect(await get("https://example.com/")).toEqual({ title: "https://example.com/", chat: null, missing: "Not a chat link" });
+    store.close();
+  });
+
   test("each card's look is the desktop's; an earlier card comes again when its look changes", () => {
     const store = Store.openAt(join(tmp, "looks.db"));
     const hub = new Hub([], 0);

@@ -1,5 +1,6 @@
 package dev.harbor.app;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -11,12 +12,16 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.util.ArrayList;
 import java.util.List;
 
 /** The start screen: "Sign in with Google" until this phone is signed in (Account), then the
  *  account's workspaces, each with its PCs (one Hub per workspace). The browser comes back
  *  here after the sign-in (harbor://oauth). There's no pairing: a PC shows up once its owner
- *  signed in on it, in a workspace this account is in. */
+ *  signed in on it, in a workspace this account is in. Another app or a browser opens a chat
+ *  with its link, harbor://chat/<gid>?pc=<PC name> (ChatLink). */
 public class Hubs extends Base {
     private LinearLayout list;
     private boolean busy;
@@ -24,6 +29,8 @@ public class Hubs extends Base {
      *  background only, until it's out of sight. */
     boolean restoring;
     private String error;
+    /** A chat link is being looked up (openPending). */
+    private boolean resolving;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -43,12 +50,16 @@ public class Hubs extends Base {
             if (Swap.restore(this)) return;
             // Right after an update: back to the chat the user had.
             if (Update.resume(this)) return;
-            // A cold start goes straight back to the workspace used last.
-            String last = Hub.last(this);
-            List<Hub> all = Hub.all(this);
-            if (last == null && all.size() == 1) last = all.get(0).id;
-            if (last != null && Hub.get(this, last) != null) open(last);
+            openLast();
         }
+    }
+
+    /** A cold start goes straight back to the workspace used last. */
+    private void openLast() {
+        String last = Hub.last(this);
+        List<Hub> all = Hub.all(this);
+        if (last == null && all.size() == 1) last = all.get(0).id;
+        if (last != null && Hub.get(this, last) != null) open(last);
     }
 
     @Override
@@ -61,18 +72,28 @@ public class Hubs extends Base {
     protected void onResume() {
         super.onResume();
         render();
+        openPending();
         if (!Account.needsSignIn(this) && !busy) {
             // A newer directory (PCs added, invitations) and token, when due.
             Ui.pool.execute(() -> {
                 try { Account.renew(this, false); } catch (Exception ignored) { }
-                Ui.main.post(() -> { if (!isFinishing() && !busy) render(); });
+                Ui.main.post(() -> { if (!isFinishing() && !busy) { render(); openPending(); } });
             });
         }
     }
 
-    /** harbor://oauth: the sign-in's answer. A pairing link (before 0.85) gets a note. */
+    /** harbor://oauth: the sign-in's answer. harbor://chat/…: a chat another app or a browser
+     *  opens (openPending). A pairing link (before 0.85) gets a note. */
     private boolean handleLink(Intent i) {
         if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return false;
+        if ("harbor".equalsIgnoreCase(i.getData().getScheme()) && "chat".equalsIgnoreCase(i.getData().getHost())) {
+            ChatLink link = ChatLink.parse(i.getDataString());
+            setIntent(new Intent(this, Hubs.class));
+            if (link == null) { Ui.toast(this, "That isn't a Harbor chat link"); return false; }
+            keepLink(this, link);
+            openPending();
+            return true;
+        }
         if (Account.isCallback(i)) {
             Uri u = i.getData();
             setIntent(new Intent(this, Hubs.class));
@@ -88,7 +109,8 @@ public class Hubs extends Base {
                     error = fe;
                     render();
                     List<Hub> all = Hub.all(this);
-                    if (fe == null && all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
+                    if (fe == null && pending(this)) openPending();
+                    else if (fe == null && all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
                 });
             });
             return true;
@@ -214,7 +236,8 @@ public class Hubs extends Base {
             render();
             if (err == null) {
                 List<Hub> all = Hub.all(this);
-                if (all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
+                if (pending(this)) openPending();
+                else if (all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
             }
         });
     }
@@ -226,7 +249,93 @@ public class Hubs extends Base {
             String e = null;
             try { Account.renew(this, true); } catch (Exception x) { e = Hub.why(x); }
             final String fe = e;
-            Ui.main.post(() -> { busy = false; error = fe; render(); });
+            Ui.main.post(() -> { busy = false; error = fe; render(); openPending(); });
+        });
+    }
+
+    // ---- chat links from other apps and browsers ----
+
+    /** A chat link waits this long at most for the phone to be ready (signed in, its PCs known),
+     *  so a sign-in much later doesn't jump to a chat nobody asked for any more. */
+    private static final long PENDING_FOR = 15 * 60_000;
+
+    /** Keeps `link` until it can open (openPending takes it). */
+    static void keepLink(Context c, ChatLink link) {
+        Ui.prefs(c).edit().putString("chat_link", link.url()).putLong("chat_link_at", System.currentTimeMillis()).apply();
+    }
+
+    /** A chat link is waiting to open. */
+    static boolean pending(Context c) {
+        android.content.SharedPreferences p = Ui.prefs(c);
+        long at = p.getLong("chat_link_at", 0);
+        return p.getString("chat_link", null) != null && System.currentTimeMillis() - at < PENDING_FOR;
+    }
+
+    /** The waiting chat link, taken (null when none, or it waited too long). */
+    private ChatLink takeLink() {
+        boolean fresh = pending(this);
+        String url = Ui.prefs(this).getString("chat_link", null);
+        Ui.prefs(this).edit().remove("chat_link").remove("chat_link_at").apply();
+        return fresh ? ChatLink.parse(url) : null;
+    }
+
+    /** Opens the waiting chat link once the phone can: signed in, with its workspaces' PCs
+     *  known. Each workspace is asked where the link leads (GET /v1/chat_link, the PC's own
+     *  resolver, as a link in a reply), the one with the link's PC first; the chat opens over
+     *  its workspace's chat list, as a tap on the link in a reply opens it. A chat no PC has
+     *  opens the app as usual, with the PC's reason in a short notice. */
+    private void openPending() {
+        if (resolving || busy || Account.needsSignIn(this) || !pending(this)) return;
+        List<Hub> hubs = Hub.all(this);
+        if (hubs.isEmpty()) return; // kept until the account's PCs show up (onResume's renew)
+        ChatLink link = takeLink();
+        if (link == null) return;
+        resolving = true;
+        Ui.pool.execute(() -> {
+            List<List<String>> names = new ArrayList<>();
+            for (Hub h : hubs) {
+                List<String> n = new ArrayList<>();
+                n.add(h.pcName);
+                synchronized (h.eps) { for (Hub.Ep e : h.eps) n.add(e.label()); }
+                names.add(n);
+            }
+            List<Integer> order = ChatLink.order(names, link.pc);
+            Hub found = null, down = null;
+            String chat = null, missing = null;
+            for (int idx : order) {
+                Hub h = hubs.get(idx);
+                try {
+                    JSONObject r = h.call("GET", "/v1/chat_link?url=" + URLEncoder.encode(link.url(), "UTF-8"), null, 10_000);
+                    String to = r.isNull("chat") ? "" : r.optString("chat", "");
+                    if (!to.isEmpty()) { found = h; chat = to; break; }
+                    if (missing == null) missing = r.optString("missing", "");
+                } catch (Hub.ApiError e) {
+                    // A PC before 0.192 has no /v1/chat_link: its chat list says whether the chat is there.
+                    if (e.code != 404) { if (missing == null) missing = e.getMessage(); continue; }
+                    try {
+                        JSONObject c = Hub.chat(h.state(), link.gid);
+                        if (c != null) { found = h; chat = c.optString("id", link.gid); break; }
+                    } catch (IOException ignored) { if (down == null) down = h; }
+                } catch (IOException e) {
+                    if (down == null) down = h;
+                }
+            }
+            // No PC answered at all: the chat opens where it most likely is, and loads once its
+            // PC answers (Chat says when it's gone).
+            if (found == null && missing == null && down != null && (down == hubs.get(order.get(0)))) { found = down; chat = link.gid; }
+            final Hub fh = found; final String fc = chat;
+            final String why = missing == null || missing.isEmpty() ? "Chat not found" : missing;
+            Ui.main.post(() -> {
+                resolving = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (fh == null) {
+                    Ui.toast(this, why);
+                    openLast();
+                    return;
+                }
+                open(fh.id);
+                Chat.open(this, fh, fc);
+            });
         });
     }
 

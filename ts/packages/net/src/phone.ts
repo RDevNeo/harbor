@@ -3,11 +3,11 @@ import { allowedAccounts, checkRun, isRunError, lockLeads } from "./runsettings.
 import type { providers, SentBy } from "@harbor/agents";
 import { blankChat, githead, itemHash, liveSince, mention, parseAccess, projectpath, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
-import { err, ok, urlEncode, type Reply } from "./http.ts";
+import { err, ok, query, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftEmpty, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { type Attachment, attachBefore, attachMeta, attachments, fileGlyph, fileKind, stripAttachments } from "./attach.ts";
-import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
+import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
 import { forHome, startsTurn, type Mesh } from "./mesh.ts";
 import { Once, sendKey } from "./once.ts";
 import { sameRemote } from "./meshstore.ts";
@@ -919,6 +919,15 @@ export class PhoneRoutes {
     return { chats: this.chats(), peers: m.on ? [...m.peers.values()].map((p) => ({ name: p.name, online: p.online })) : [], me: m.me.name === "" ? hostname() : m.me.name };
   }
 
+  /** GET /v1/chat_link?url=: where chat link `url` leads, as a reply's `chat_links` entry (`{title, chat, missing}`,
+   *  `chat` in the caller's ids): the phone opens a link another app or a browser handed it with this. */
+  chatLink(url: string, global: boolean): Json {
+    const world = this.linkWorld();
+    const t = chatLinkTarget(world, url);
+    const chat = t.id === null ? null : global ? (world.chats.find((y) => y.id === t.id)?.gid ?? null) : t.id;
+    return { title: t.title, chat, missing: t.missing };
+  }
+
   items(c: Chat, since: number, viewer: Viewer | null = null, global = false): Json {
     const hub = this.d.hub;
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
@@ -990,6 +999,7 @@ export class PhoneRoutes {
       ? { who: call.from.who, via: call.from.via, dev: call.from.dev, account: call.from.acct ?? "", pc: call.from.via === "pc" ? call.from.peer : "" }
       : { who: this.d.hub.callerWho(call.token), via: "phone", dev: phoneDev(this.d.hub.groupOf(call.token)), account: this.d.hub.callerAccount(call.token), pc: "" };
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global, call.from ? "" : who.account));
+    if (m === "GET" && p.length === 2 && p[1] === "chat_link") return ok(this.chatLink(query(call, "url") ?? "", call.global));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
     const found = this.chatOf(p[2] ?? "");

@@ -559,6 +559,12 @@ key of `chat_links`: a tap opens `chat` in the app, or shows `missing` as a shor
 `chat` is null. Never hand any other non-web link (`harbor://pair`, `intent:`…) to the system.
 Older hubs send no `chat_links`: the link stays plain text.
 
+`GET /v1/chat_link?url=<link, URL-encoded>` (0.192): the same `{title, chat, missing}` for one chat
+link, for a link another app or a browser hands the phone (the manifest's `harbor://chat` filter,
+`Hubs`/`ChatLink`). The phone asks each workspace, the one with the link's PC first, and opens
+`chat` over that workspace's chat list; when none has it, `missing` shows as a short notice and the
+app opens as usual. Older hubs answer 404: the phone looks for the gid in `/v1/state`'s chats.
+
 Optional on every card the desktop gives a hover bar or an "@" button (0.69): `actions`, what
 that bar offers, in its order, and `time` ("11:40 AM", the hub's clock, on cards with an `at`).
 A long-press opens them in a bottom sheet with `time` on top: `user` sends `["copy", "quote",
