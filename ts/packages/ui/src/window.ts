@@ -268,6 +268,20 @@ export interface CardData {
   media: MediaRow[];
   /** The messages a user card mentions (cards.ts `cites`). */
   cites: CiteData[];
+  /** The files a reply attached (net's attach.ts): a card each, with Download. */
+  attach: AttachData[];
+}
+
+/** chat.slint `Attach`: a file a reply attached, as its card draws it. */
+export interface AttachData {
+  name: string;
+  /** Size and kind: `12.4 MB · APK`. */
+  meta: string;
+  icon: string;
+  /** The kept copy's path on the chat's PC (what Download asks for). */
+  path: string;
+  /** Drawn after this many of the reply's blocks (where its link was). */
+  after: number;
 }
 
 /** chat.slint `Cite`: a message a user's message mentions, as its chip, and the note written about it. */
@@ -754,6 +768,9 @@ export interface AppWindow extends slint.ComponentHandle {
   voice_note: string;
   mic_tip: string;
   toast: string;
+  /** A button at the toast's end ("": none), e.g. "Show in folder"; `toast_act` runs it. */
+  toast_action: string;
+  toast_act: () => void;
   inv_open: boolean;
   inv_title: string;
   inv_body: string;

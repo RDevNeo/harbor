@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Glyph, Spinner, Btn, TipArea } from "widgets.slint";
+import { Glyph, Spinner, Btn, BtnSize, TipArea } from "widgets.slint";
 import { MdBlock, MdBlockView, Selectable } from "markdown.slint";
 import { CaptchaCard, ChatCaptchaData } from "captcha.slint";
 
@@ -23,6 +23,15 @@ export struct Cite {
     snippet: string,
     tip: string,
     note: string,
+}
+
+// A file a reply attached (cards.ts, net's attach.ts): its card, with Download.
+export struct Attach {
+    name: string,
+    meta: string,
+    icon: string,
+    path: string,
+    after: int,
 }
 
 export struct CardData {
@@ -48,6 +57,95 @@ export struct CardData {
     time: string,
     media: [MediaRow],
     cites: [Cite],
+    attach: [Attach],
+}
+
+// A file a reply attached: its icon, name, size and kind, and Download (shell.ts saves it into Downloads).
+component AttachCard {
+    in property <Attach> file;
+    in property <length> avail;
+    callback download();
+    width: min(root.avail, 440px);
+    height: 60px;
+    Rectangle {
+        background: Theme.bg200;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 12px;
+        alignment: stretch;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 38px;
+                height: 38px;
+                border-radius: Theme.radius-md;
+                background: Theme.gray-100;
+                Glyph {
+                    width: parent.width;
+                    height: parent.height;
+                    icon: root.file.icon;
+                    size: 18px;
+                    color: Theme.fg;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.file.name;
+                font-size: 14px;
+                font-weight: 600;
+                color: Theme.fg;
+                overflow: elide;
+            }
+            Text {
+                text: root.file.meta;
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                text: "Download";
+                icon: Icons.download;
+                size: BtnSize.sm;
+                tip: "Save it in your Downloads folder";
+                clicked => {
+                    root.download();
+                }
+            }
+        }
+    }
+}
+
+// An attached file's card in a reply, with the room around it.
+component AttachRow {
+    in property <Attach> file;
+    in property <length> avail;
+    callback download();
+    VerticalLayout {
+        padding-top: 6px;
+        padding-bottom: 4px;
+        HorizontalLayout {
+            alignment: start;
+            AttachCard {
+                file: root.file;
+                avail: root.avail;
+                download => {
+                    root.download();
+                }
+            }
+        }
+    }
 }
 
 component ToolCard {
@@ -493,7 +591,7 @@ export component CardView inherits TouchArea {
                 root.open-media(p);
             }
         }
-        if root.card.kind == "text": VerticalLayout {
+        if root.card.kind == "text" && root.card.attach.length == 0: VerticalLayout {
             spacing: 0px;
             for b in root.card.seq == root.live-seq ? root.live-blocks : root.card.blocks: Rectangle {
                 // Sized from a property: Slint's interpreter otherwise measures every block again, at every
@@ -512,6 +610,48 @@ export component CardView inherits TouchArea {
                     }
                     copy(t) => {
                         root.copy-text(t);
+                    }
+                }
+            }
+        }
+        // A reply that attached files: each card after the blocks before its link (cards.ts `after`).
+        if root.card.kind == "text" && root.card.attach.length > 0: VerticalLayout {
+            spacing: 0px;
+            for f in root.card.attach: VerticalLayout {
+                if f.after <= 0: AttachRow {
+                    file: f;
+                    avail: root.avail;
+                    download => {
+                        root.link("harbor:file/" + f.path);
+                    }
+                }
+            }
+            for b[i] in root.card.blocks: VerticalLayout {
+                Rectangle {
+                    property <length> h: attached-block.preferred-height;
+                    min-height: h;
+                    max-height: h;
+                    attached-block := MdBlockView {
+                        y: 0;
+                        width: parent.width;
+                        height: h;
+                        block: b;
+                        size: 16px;
+                        link(u) => {
+                            root.link(u);
+                        }
+                        copy(t) => {
+                            root.copy-text(t);
+                        }
+                    }
+                }
+                for f in root.card.attach: VerticalLayout {
+                    if f.after == i + 1 || (i == root.card.blocks.length - 1 && f.after > i + 1): AttachRow {
+                        file: f;
+                        avail: root.avail;
+                        download => {
+                            root.link("harbor:file/" + f.path);
+                        }
                     }
                 }
             }

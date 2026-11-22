@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import * as slint from "slint-ui";
-import { actions, type Card, CHAT_SCHEME, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer, webLinks } from "@harbor/net";
+import { actions, attachBefore, attachMeta, attachments, type Card, CHAT_SCHEME, fileGlyph, stripAttachments, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer, webLinks } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
@@ -237,7 +237,7 @@ export function citesLabel(ms: readonly unknown[]): string {
 }
 
 function blank(seq: number): CardData {
-  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [], cites: [] };
+  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [], cites: [], attach: [] };
 }
 
 /** The row over the bubble for a message written elsewhere: a phone or PC icon and the person (net's look.ts `senderLook`). */
@@ -298,8 +298,12 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
       return { ...d, kind: "user", blocks: body, text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "", cites: cites(c.mentions) };
     }
     case "text": {
-      const md = labelLinks(stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path)), linkTitle);
-      return { ...d, kind: "text", blocks: mdBlocks(md, seq, blockOwner(open, seq)), text: c.text };
+      // A paragraph of attached files alone is their cards (net's attach.ts), drawn under the text.
+      const drawn = d.media.filter((m) => m.large).map((m) => m.path);
+      const md = labelLinks(stripAttachments(stripDrawn(c.text, drawn)), linkTitle);
+      // Each card after the blocks before its link (net's attach.ts `attachBefore`): where the link was.
+      const attach = attachments(c.text).map((a) => ({ name: a.name, meta: attachMeta(a), icon: fileGlyph(a.name), path: a.path, after: blocks(stripAttachments(stripDrawn(attachBefore(c.text, a), drawn))).length }));
+      return { ...d, kind: "text", blocks: mdBlocks(md, seq, blockOwner(open, seq)), text: c.text, attach };
     }
     case "thinking":
       return { ...d, kind: "thinking", text: c.text, open: open.cards.has(seq) };
@@ -441,7 +445,7 @@ export function guessHeight(c: Card): number {
     case "user":
       return 32 + 22 * lines(c.text) + (c.images.length > 0 ? 104 : 0);
     case "text":
-      return 16 + 22 * lines(c.text) + 240 * (c.text.split("![").length - 1);
+      return 16 + 22 * lines(c.text) + 240 * (c.text.split("![").length - 1) + 64 * attachments(c.text).length;
     default:
       return 36;
   }

@@ -1,8 +1,8 @@
 // The desktop around Harbor's window: opening files and links, the Downloads folder, raising the window.
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { elevated } from "./admin.ts";
 import { platform } from "./platform.ts";
 import { win } from "./win32/load.ts";
@@ -50,6 +50,51 @@ export function downloadsDir(env: Env = process.env): string {
     }
   }
   return join(home, "Downloads");
+}
+
+/** `downloadsDir` without blocking: for the window's main thread (xdg-user-dir runs as a child it doesn't wait on). */
+export function downloadsDirAsync(env: Env = process.env): Promise<string> {
+  const home = env.HOME ?? homedir();
+  const fallback = join(home, "Downloads");
+  if (platform() !== "linux") return Promise.resolve(fallback);
+  return new Promise((resolve) => {
+    try {
+      execFile("xdg-user-dir", ["DOWNLOAD"], { encoding: "utf8", timeout: 5_000 }, (e, out) => {
+        const d = e ? "" : String(out).trim();
+        resolve(d !== "" && d !== home && existsSync(d) ? d : fallback);
+      });
+    } catch {
+      resolve(fallback);
+    }
+  });
+}
+
+/** Shows a file in the desktop's file manager, selected where it can be (else its folder opens). */
+export function reveal(file: string): void {
+  const p = platform();
+  const run = (cmd: string, args: string[]): boolean => {
+    try {
+      const c = spawn(cmd, args, { stdio: "ignore", detached: true });
+      c.on("error", () => {});
+      c.unref();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (p === "darwin" && run("open", ["-R", file])) return;
+  if (p === "win32" && run(join(process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows", "explorer.exe"), [`/select,${file}`])) return;
+  if (p === "linux") {
+    // The freedesktop file manager interface (Nautilus, Dolphin, Nemo, Thunar…) selects it; else its folder opens.
+    const uri = `file://${file.split("/").map(encodeURIComponent).join("/")}`;
+    const c = spawn("dbus-send", ["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems", `array:string:${uri}`, "string:"], { stdio: "ignore" });
+    c.on("error", () => open(dirname(file)));
+    c.on("exit", (code) => {
+      if (code !== 0) open(dirname(file));
+    });
+    return;
+  }
+  open(dirname(file));
 }
 
 /**

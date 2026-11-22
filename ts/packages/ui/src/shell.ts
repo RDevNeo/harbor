@@ -420,6 +420,7 @@ export class Shell {
   private images: import("@harbor/media").images.Images | null = null;
   private voiceTimer: ReturnType<typeof setInterval> | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private toastAction: (() => void) | null = null;
   private zoomer!: Zoom;
   private zoomCards: ReturnType<typeof setTimeout> | null = null;
   private readonly surfaces = new Surfaces<Terminal>({
@@ -773,6 +774,11 @@ export class Shell {
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
     w.reorder = (id, target, above) => this.reorder(id, target, above);
+    w.toast_act = () => {
+      const a = this.toastAction;
+      this.toast("");
+      a?.();
+    };
     w.sel_mention = () => {
       const s = this.selection;
       this.selection = null;
@@ -3969,13 +3975,50 @@ export class Shell {
     return this.surfaces.terminalIn(dir);
   }
 
-  toast(message: string): void {
+  /** `action`: a button at the toast's end (its label and what it does), e.g. "Show in folder". */
+  toast(message: string, action: { label: string; run: () => void } | null = null): void {
     this.win.toast = message;
+    this.win.toast_action = message === "" ? "" : (action?.label ?? "");
+    this.toastAction = message === "" ? null : (action?.run ?? null);
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => {
       this.win.toast = "";
+      this.win.toast_action = "";
+      this.toastAction = null;
       this.toastTimer = null;
     }, 8000);
+  }
+
+  /** Download on a file a reply attached (`harbor:file/<path>`, net's attach.ts): saved into the Downloads folder under
+   * its own name, never over another file. Copied when it's on this PC; a copy of another PC's chat fetches it from that
+   * PC, part by part. Nothing of it runs on the main thread's time but the toasts. */
+  private async downloadFile(path: string): Promise<void> {
+    const pkg = this.media;
+    if (pkg === null) return this.toast("Harbor is still starting: try again in a moment");
+    const name = path.split(/[\\/]/).pop() ?? "file";
+    const homeFile = this.hub.homeFile;
+    // The chats on screen that run on another PC: one of them has it.
+    const foreign = [this.view === "chat" ? this.chatId : -1, ...this.split.onScreenChats()].map((id) => this.data.chat(id)).filter((c): c is Chat => this.meshChat.foreign(c));
+    const fetch =
+      homeFile && foreign.length > 0
+        ? async (from: number) => {
+            for (const c of foreign) {
+              const a = await homeFile(c.id, path, `bytes=${from}-`);
+              if (a === null || (a.status !== 200 && a.status !== 206)) continue;
+              const total = /\/(\d+)$/.exec(a.range ?? "")?.[1];
+              return { body: a.body, total: total !== undefined ? Number(total) : a.status === 200 ? from + a.body.length : null };
+            }
+            return null;
+          }
+        : null;
+    this.toast(`Downloading ${name}…`);
+    try {
+      const to = await pkg.files.saveTo(await osDesktop.downloadsDirAsync(), path, name, fetch);
+      const base = to.split(/[\\/]/).pop() ?? name;
+      this.toast(`Saved ${base} in Downloads`, { label: "Show in folder", run: () => osDesktop.reveal(to) });
+    } catch (e) {
+      this.toast(`Couldn't download ${name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** The window's dictation, for the Voice settings tab; null until the media package has loaded. */
@@ -5658,6 +5701,11 @@ export class Shell {
       this.openChat(Number(byId[1]));
       return;
     }
+    // A reply's attached file: its card's Download.
+    if (url.startsWith("harbor:file/")) {
+      void this.downloadFile(url.slice("harbor:file/".length));
+      return;
+    }
     if (url.startsWith("harbor:")) return;
     this.openExternal(url);
   }
@@ -5784,6 +5832,8 @@ export interface ShellHub extends PageHub {
   player?: import("@harbor/media").video.PlayerSource;
   /** An image of a chat that runs on another PC, from that PC (null: it's off or hasn't got it). */
   homeImage?: (chat: number, path: string) => Promise<Uint8Array | null>;
+  /** Part of a file a reply of a chat that runs on another PC attached, from that PC (`range`: a Range header's value). */
+  homeFile?: (chat: number, path: string, range: string) => Promise<{ status: number; body: Uint8Array; range?: string } | null>;
   /** Chats homed on other PCs and the leases (mesh.rs); none without a hub. */
   mesh?: ShellMesh;
   /** Move to workspace… (workspacemoves.ts); none without a hub. */

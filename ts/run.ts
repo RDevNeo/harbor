@@ -368,6 +368,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
       homeImage: async (chat: number, path: string) => (await run.mesh.homeImage(chat, path, null))?.body ?? null,
+      homeFile: (chat: number, path: string, range: string) => run.mesh.homeFile(chat, path, range),
     };
     let late = (): void => {};
     let adminFirstAsked = false;
