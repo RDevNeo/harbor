@@ -5,7 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.189.0] - 2026-11-22
+
 ### Added
+- The phone app updates without installing anything (Android 9+): the installed app is now a small shell that
+  rarely changes, and each release's app code (`harbor-phone-code.zip`, signed with Harbor's release key) is
+  downloaded, checked and run from the next start, so Google Play Protect has nothing to scan. Harbor restarts into
+  it once nobody is looking (Settings › App › Update at once); new code that crashes on start is rolled back to the
+  last good one. An APK only installs when a release changes the shell (a new permission, screen or native
+  library), and on Android 8 as before. Install this release's APK once. Phone app only: the desktop updates as
+  before (android/README.md, "Shell and code").
 - Rename project…: the project row's menu (desktop, and the phone's project sheet) gives a project a name of its
   own, in every PC's sidebar; its folder stays as it is. The latest rename wins on every PC: it's carried with the
   project in its chats' data and the workspace cloud, and sent to the PC that holds the folder (that PC being off
