@@ -184,7 +184,7 @@ final class Inbox {
 
     /** Into the shared Pictures/Harbor or Download/Harbor (Android 10+, no permission needed);
      *  older Androids keep it in the app's own folder, shared through CamProvider. */
-    private static Uri save(Context c, File f, String name, String mime, boolean image) throws IOException {
+    static Uri save(Context c, File f, String name, String mime, boolean image) throws IOException {
         if (Build.VERSION.SDK_INT >= 29) {
             ContentResolver cr = c.getContentResolver();
             ContentValues cv = new ContentValues();

@@ -128,6 +128,12 @@ const chat = (over: Partial<import("../packages/store/src/index.ts").Chat>, item
   return c;
 };
 
+// A debug build for the file card: made-up bytes, 3.1 MB.
+const APK_REPLY = "APK_REPLY";
+const apkPath = join(home, "code", "acme-web", "dist", "acme-web-debug.apk");
+mkdirSync(join(home, "code", "acme-web", "dist"), { recursive: true });
+writeFileSync(apkPath, Buffer.alloc(3_250_000, 7));
+
 // The chat with every card kind (a plain chat shows its tool calls; a lead hides them).
 const cards = chat({ repoId: web, title: "Speed up the checkout page", updated: ago(3) }, [
   user("The checkout page takes 4 s to show the total. Can you find out why and fix it? Here's the funnel from last week:", ago(40), [shot, join(home, "code", "acme-web", "README.md")]),
@@ -152,12 +158,23 @@ const cards = chat({ repoId: web, title: "Speed up the checkout page", updated: 
   { kind: "user", text: "", files: [], at: ago(8), mentions: [{ item: 10, from: "Claude", at: ago(10), text: "put behind `fast_total` (off by default)", len: 40, excerpt: true, note: "Turn it on for 10% of users first.", kind: "", chat: "", title: "" }], sender: "", intent: "" },
   // An excerpt with a note that wraps, then the message's own text (the bubble holds all three).
   { kind: "user", text: "Can you show me how it looks?", files: [], at: ago(7), mentions: [{ item: 10, from: "Claude", at: ago(10), text: "Committed as `4f2a9c1` and put behind `fast_total` (off by default).", len: 70, excerpt: true, note: "It shouldn't be off for everyone: staff accounts should get the fast total right away.", kind: "", chat: "", title: "" }], sender: "", intent: "" },
+  // A reply that attaches a file (media's files.ts): its link is the kept copy's, filled in below once the chat has an id.
+  say(APK_REPLY, ago(6)),
   notice("process", "dev server", "http://127.0.0.1:5173"),
   notice("clock", "Wakes up at 9:00 to check the error rate"),
   notice("wake", "Woke up: the error rate is back under 1%", "Checked the dashboard at 9:00."),
   { kind: "message", from: "reviewer", to: "this chat", text: "Looks good; one nit on the flag name." },
   { kind: "error", text: "The usage limit was reached; the next turn starts at 14:00." },
 ]);
+
+{
+  // The reply as the engine keeps it (data.ts `adoptMedia`): the link names the copy in the chat's uploads.
+  const { files } = await import("../packages/media/src/index.ts");
+  const items = seed.items(cards.id).map((it) => (it.kind === "text" && it.text === APK_REPLY ? { ...it, text: files.adoptFiles(`Here's a debug build with the flag on, to try on your phone:\n\n[acme-web-debug.apk](${apkPath})`, null, cards.id) } : it));
+  seed.saveItems(cards.id, items);
+  const kept = items.flatMap((it) => (it.kind === "text" ? [...it.text.matchAll(/\]\((\S+) "/g)].map((m) => m[1] ?? "") : [])).find((p) => p.includes("/files/"));
+  if (kept) await files.fileWait(kept);
+}
 
 // A lead with its team (its own transcript shows the user's words and its answers).
 const lead = chat({ repoId: api, title: "Rate limits for the public API", role: "lead", name: "lead", updated: ago(1) }, [
@@ -405,7 +422,11 @@ const front = Bun.serve({
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
     const headers = new Headers(req.headers);
     headers.delete("host");
-    return fetch(`http://127.0.0.1:${inner}${u.pathname}${u.search}`, { method: req.method, headers, body, redirect: "manual", decompress: false } as RequestInit);
+    const a = await fetch(`http://127.0.0.1:${inner}${u.pathname}${u.search}`, { method: req.method, headers, body, redirect: "manual", decompress: false } as RequestInit);
+    // Files and videos with their Content-Length, as the hub sends them (a streamed answer would go out chunked,
+    // which the phone's own HTTP doesn't read: it never gets one from a hub).
+    if (u.pathname === "/v1/file" || u.pathname === "/v1/media") return new Response(await a.arrayBuffer(), { status: a.status, headers: a.headers });
+    return a;
   },
 });
 console.log(`phonehub ready ${port}`);

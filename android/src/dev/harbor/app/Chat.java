@@ -1473,6 +1473,33 @@ public class Chat extends Base implements Images.Gallery {
     }
 
     /** A card's `images` without those its `media` already draws large. */
+    /** What a reply draws at one place among its blocks (Render.text): its images and videos,
+     *  then the files it attached there (theirs have `meta`). */
+    private View placed(Hub hub, JSONArray here, JSONArray media, int seq) {
+        JSONArray shown = new JSONArray(), files = new JSONArray();
+        for (int i = 0; i < here.length(); i++) {
+            JSONObject m = here.optJSONObject(i);
+            if (m != null) (m.has("meta") ? files : shown).put(m);
+        }
+        View a = shown.length() == 0 ? null : Media.list(this, hub, shown, media, seq);
+        View b = Files.list(this, hub, files);
+        if (a == null || b == null) return a != null ? a : b;
+        LinearLayout col = Ui.col(this);
+        col.addView(a, Ui.fill());
+        col.addView(b, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        return col;
+    }
+
+    /** The items of a card's list that carry no place among its blocks (no `after`). */
+    private static JSONArray unplaced(JSONArray all) {
+        JSONArray out = new JSONArray();
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject m = all.optJSONObject(i);
+            if (m != null && !m.has("after")) out.put(m);
+        }
+        return out;
+    }
+
     private static JSONArray notShown(JSONObject it) {
         JSONArray images = it.optJSONArray("images"), media = it.optJSONArray("media");
         if (images == null || media == null) return images;
@@ -1595,17 +1622,15 @@ public class Chat extends Base implements Images.Gallery {
                 Render r = new Render(this, lp).reply().commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info))
                         .chats(it.optJSONObject("chat_links"), this::openLink)
                         .select(t -> selectMenu(it, md, t));
-                // Images on their own line sit next to their text; the rest go after it.
-                JSONArray media = it.optJSONArray("media");
-                View body = r.text(it, here -> Media.list(this, hub, here, media, seq));
-                JSONArray rest = media;
+                // Images on their own line sit next to their text, and attached files where their link
+                // was; the rest go after it.
+                JSONArray media = it.optJSONArray("media"), attached = it.optJSONArray("files");
+                View body = r.text(it, here -> placed(hub, here, media, seq));
+                JSONArray rest = media, restFiles = attached;
                 if (body == null) body = r.text(it);
                 else {
-                    rest = new JSONArray();
-                    for (int i = 0; i < media.length(); i++) {
-                        JSONObject m = media.optJSONObject(i);
-                        if (m != null && !m.has("after")) rest.put(m);
-                    }
+                    rest = unplaced(media);
+                    restFiles = unplaced(attached);
                 }
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
@@ -1614,6 +1639,9 @@ public class Chat extends Base implements Images.Gallery {
                 if (shown != null) wrap.addView(shown, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 View imgs = Images.strip(this, hub, notShown(it), 120, seq);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+                // Files the reply attached (hubs from 0.190) not placed among its blocks: a card each, with Download.
+                View files = Files.list(this, hub, restFiles);
+                if (files != null) wrap.addView(files, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 break;
             }
             case "thinking":

@@ -538,6 +538,16 @@ plays while it arrives, by `Range` (`/v1/media` below); a media item that can't 
 that `media` draws. A reply's local files are kept by its PC when the reply ends (0.84), so
 their `url`s keep working after the agent deletes them (a screenshot in /tmp).
 
+Optional on `text` cards (0.190): `files: [{name, kind, meta, glyph, url, size?, after?}]`, the files
+the reply attached: an agent's markdown link (not an image) to a local file that isn't an image or a
+video (`[app-debug.apk](dist/app-debug.apk)`: an APK, a zip, a PDF…), up to 200 MB, which its PC
+copied into the chat's uploads when the reply came, so it downloads after the file changes or goes.
+Draw each as a card: `glyph` (a Lucide glyph by type), `name`, `meta` (size and kind: `12 MB · APK`)
+and Download. `url` is `/v1/file?…&chat=<gid>` (below), by `Range`; `size` is in bytes when known.
+`after` places it like a medium's: after that many `blocks` (a paragraph of such links alone isn't
+in `blocks`; a link inside a sentence stays a link there and its card goes under it). Older apps
+ignore `files` and show the links as text.
+
 Optional on `text` cards (0.70): `chat_links: {"<link as written>": {title, chat, missing}}`, the
 chat links the reply names (`harbor://chat/<gid>`, optionally `?pc=<PC name>`; agents write them
 to point at a chat, sub-agent chats included). The hub resolves them: `title` is the chat's title
@@ -1423,6 +1433,16 @@ From 0.106 it takes `Range: bytes=N-` or `bytes=N-M`: `206` with `Content-Range:
 and that part, `416` past the end, and `Accept-Ranges: bytes` says so. A video of another PC's
 chat comes at most 8 MB per answer, whatever was asked (and then has no 64 MB limit): ask for the
 rest from where it stopped. A hub before 0.106 ignores the header and answers `200`.
+
+### `GET /v1/file?path=<kept copy>&chat=<gid>` (0.190)
+
+A file a reply attached (a `text` card's `files[].url`), the bytes as they are
+(`application/octet-stream`, `Content-Length`), with the token like every call. Only the copies a
+PC kept of attached files (`…/uploads/<chat>/files/<id>/<name>`); `404` otherwise, or when it's gone.
+`Range` as `/v1/media`: `206` with `Content-Range: bytes N-M/total`, `416` past the end. Through
+another PC of the mesh (a copy of that PC's chat) it comes from the chat's own PC
+(`/mesh/v1/file`), at most 8 MB per answer whatever was asked: ask for the rest from where it
+stopped (the app always does, so a dropped connection goes on where it was).
 
 ### `GET /v1/chats/{id}/team`
 

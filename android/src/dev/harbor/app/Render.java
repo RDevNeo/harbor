@@ -91,12 +91,17 @@ final class Render {
         return col;
     }
 
-    /** A reply's blocks with the media it shows on their own line drawn among them: an item
+    /** A reply's blocks with the media it shows on their own line (and the files it attached) drawn among them: an item
      *  with `after` (0.84) right after that many blocks, by {@code place}. Null when none is
      *  placed (older hubs): draw its media after the text. */
     View text(JSONObject item, java.util.function.Function<JSONArray, View> place) {
-        JSONArray blocks = item.optJSONArray("blocks"), media = item.optJSONArray("media");
-        if (blocks == null || media == null) return null;
+        JSONArray blocks = item.optJSONArray("blocks"), media = new JSONArray();
+        // Its media and the files it attached (hubs from 0.190), each placed by its `after`.
+        for (String k : new String[] { "media", "files" }) {
+            JSONArray l = item.optJSONArray(k);
+            for (int i = 0; l != null && i < l.length(); i++) if (l.optJSONObject(i) != null) media.put(l.optJSONObject(i));
+        }
+        if (blocks == null || media.length() == 0) return null;
         boolean any = false;
         for (int j = 0; j < media.length(); j++) {
             JSONObject m = media.optJSONObject(j);
