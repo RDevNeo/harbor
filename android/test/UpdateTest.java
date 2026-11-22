@@ -78,6 +78,28 @@ public class UpdateTest {
                 .startsWith("This version wasn't built for this phone's processor"), "ABI reason in plain words");
         same(Quiet.reason(42, " "), "status 42", "unknown status");
 
+        // App code or APK (shell 3 here, running 0.189.0): code whenever it can run, the APK only
+        // for a shell the newest code needs, on Android 8, or for a release without code.
+        long mine = 189000;
+        same(Quiet.route(mine, 3, true, 190000, 3, 190000, 3), Quiet.CODE, "newer code on this shell: code, no install");
+        same(Quiet.route(mine, 3, true, 190000, 4, 190000, 3), Quiet.CODE, "a newer shell nobody needs yet: still code");
+        same(Quiet.route(mine, 3, true, 190000, 4, 190000, 4), Quiet.APK, "code that needs the newer shell: the APK");
+        same(Quiet.route(mine, 3, false, 190000, 3, 190000, 3), Quiet.APK, "Android 8 can't load code: the APK");
+        same(Quiet.route(mine, 3, true, 190000, 0, 0, 0), Quiet.APK, "a release from before shells: the APK");
+        same(Quiet.route(mine, 3, true, 190000, 3, 0, Integer.MAX_VALUE), Quiet.APK, "a release naming no code: the APK");
+        same(Quiet.route(mine, 3, true, 189000, 3, 189000, 3), Quiet.KEEP, "up to date");
+        same(Quiet.route(mine, 3, true, 190000, 3, 189000, 3), Quiet.KEEP, "only the APK is newer, same shell: nothing to install");
+        same(Quiet.route(mine, 3, true, 188000, 3, 190000, 3), Quiet.CODE, "an older APK (kept from a release) and newer code");
+        same(Quiet.route(190500, 3, true, 190000, 4, 190000, 4), Quiet.KEEP, "running newer than the release: nothing");
+
+        // Restarting for staged code: only when nobody sees Harbor, and not at the cost of the
+        // instant notifications (until they've waited long enough).
+        check(Quiet.restart(true, false, false, 0), "quiet, no listener: at once");
+        check(Quiet.restart(true, true, true, 0), "quiet, the listener can start again: at once");
+        check(!Quiet.restart(true, true, false, 0), "quiet, the listener couldn't start again: waits");
+        check(Quiet.restart(true, true, false, Quiet.STAGED_MAX_MS), "until it has waited long enough");
+        check(!Quiet.restart(false, false, true, Long.MAX_VALUE), "never while someone sees Harbor");
+
         if (failed > 0) { System.err.println(failed + " update checks failed"); System.exit(1); }
         System.out.println("UpdateTest ok");
     }

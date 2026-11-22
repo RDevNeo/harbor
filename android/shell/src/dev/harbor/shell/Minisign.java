@@ -1,4 +1,4 @@
-package dev.harbor.app;
+package dev.harbor.shell;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -11,22 +11,23 @@ import java.util.Base64;
  *  updater uses (ts/packages/update/src/minisign.ts, packaging/minisign.pub). Prehashed
  *  signatures only (BLAKE2b-512 of the file, then Ed25519), as minisign makes by default.
  *  Plain Java with nothing from Android: the phone supports Android 8, which has neither
- *  BLAKE2b nor Ed25519 (MinisignTest). */
-final class Minisign {
+ *  BLAKE2b nor Ed25519 (MinisignTest). Part of the shell (android/README.md): the app (Update)
+ *  and the shell's own staging of new app code (Boot.stage) both use it. */
+public final class Minisign {
     private Minisign() { }
 
-    static final String PUBKEY = "RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh";
+    public static final String PUBKEY = "RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh";
 
     private static final String TRUSTED = "trusted comment: ";
 
     /** A .minisig file: the key that made it, the signature over the file's BLAKE2b-512, the
      *  trusted comment ("harbor vX.Y.Z <file>") and the signature over both. */
-    static final class Sig {
-        byte[] keyId, sig, global;
-        String trusted;
+    public static final class Sig {
+        public byte[] keyId, sig, global;
+        public String trusted;
     }
 
-    static Sig parse(String text) throws GeneralSecurityException {
+    public static Sig parse(String text) throws GeneralSecurityException {
         String[] l = text.split("\r?\n");
         if (l.length < 4 || !l[0].startsWith("untrusted comment:") || !l[2].startsWith(TRUSTED))
             throw new GeneralSecurityException("unreadable signature");
@@ -49,7 +50,7 @@ final class Minisign {
 
     /** Throws unless `s` signs a file whose BLAKE2b-512 is `digest` with key `pubkey` (the bare
      *  base64 line), its trusted comment included. */
-    static void verify(String pubkey, byte[] digest, Sig s) throws GeneralSecurityException {
+    public static void verify(String pubkey, byte[] digest, Sig s) throws GeneralSecurityException {
         byte[] raw;
         try { raw = Base64.getDecoder().decode(pubkey.trim()); } catch (IllegalArgumentException e) { throw new GeneralSecurityException("unreadable public key"); }
         if (raw.length != 42 || raw[0] != 'E' || raw[1] != 'd') throw new GeneralSecurityException("unreadable public key");
@@ -64,13 +65,13 @@ final class Minisign {
 
     /** Throws unless the trusted comment says release `version` (no "v") and file `name`, as the
      *  release workflow signs them: "harbor v0.156.0 harbor-android.apk". */
-    static void signedFor(Sig s, String version, String name) throws GeneralSecurityException {
+    public static void signedFor(Sig s, String version, String name) throws GeneralSecurityException {
         if (!s.trusted.contains("v" + version + " ") || !s.trusted.endsWith(name))
             throw new GeneralSecurityException(name + ": signed for another release (" + s.trusted + ")");
     }
 
     /** All three for a whole file in memory. */
-    static void check(String pubkey, byte[] data, String sigText, String version, String name) throws GeneralSecurityException {
+    public static void check(String pubkey, byte[] data, String sigText, String version, String name) throws GeneralSecurityException {
         Sig s = parse(sigText);
         Blake2b h = new Blake2b();
         h.update(data, 0, data.length);
@@ -80,7 +81,7 @@ final class Minisign {
 
     // ---- BLAKE2b-512 (RFC 7693), unkeyed ----
 
-    static final class Blake2b {
+    public static final class Blake2b {
         private static final long[] IV = {
             0x6a09e667f3bcc908L, 0xbb67ae8584caa73bL, 0x3c6ef372fe94f82bL, 0xa54ff53a5f1d36f1L,
             0x510e527fade682d1L, 0x9b05688c2b3e6c1fL, 0x1f83d9abfb41bd6bL, 0x5be0cd19137e2179L };
@@ -101,9 +102,9 @@ final class Minisign {
         private int n;
         private long t0, t1;
 
-        Blake2b() { h[0] ^= 0x01010000L ^ 64; }
+        public Blake2b() { h[0] ^= 0x01010000L ^ 64; }
 
-        void update(byte[] b, int off, int len) {
+        public void update(byte[] b, int off, int len) {
             while (len > 0) {
                 if (n == 128) { // full, and more comes: not the last block
                     count(128);
@@ -116,7 +117,7 @@ final class Minisign {
             }
         }
 
-        byte[] digest() {
+        public byte[] digest() {
             count(n);
             Arrays.fill(buf, n, 128, (byte) 0);
             compress(true);
@@ -165,7 +166,7 @@ final class Minisign {
 
     // ---- Ed25519 verification (RFC 8032 §5.1.7), the reference arithmetic ----
 
-    static final class Ed25519 {
+    public static final class Ed25519 {
         private static final BigInteger P = BigInteger.ONE.shiftLeft(255).subtract(BigInteger.valueOf(19));
         private static final BigInteger L = BigInteger.ONE.shiftLeft(252).add(new BigInteger("27742317777372353535851937790883648493"));
         private static final BigInteger D = BigInteger.valueOf(-121665).multiply(BigInteger.valueOf(121666).modInverse(P)).mod(P);
@@ -178,7 +179,7 @@ final class Minisign {
             B = new BigInteger[] { x, y, BigInteger.ONE, x.multiply(y).mod(P) };
         }
 
-        static boolean verify(byte[] pub, byte[] msg, byte[] sig) {
+        public static boolean verify(byte[] pub, byte[] msg, byte[] sig) {
             if (pub.length != 32 || sig.length != 64) return false;
             BigInteger[] a = decompress(pub), r = decompress(Arrays.copyOfRange(sig, 0, 32));
             if (a == null || r == null) return false;

@@ -434,6 +434,8 @@ abstract class Base extends Activity {
         Gmail.sayPending(this);
         Invites.resumed(this);
         Alive.calm(this);
+        // A screen that stays up a few seconds proves new app code works (no rollback; Shell).
+        Ui.main.postDelayed(() -> { if (front && !isFinishing()) Ui.pool.execute(dev.harbor.shell.Shell::ok); }, 5_000);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
     }

@@ -1,8 +1,8 @@
 package dev.harbor.app;
 
+import dev.harbor.shell.Shell;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -44,18 +44,11 @@ public class Settings extends Base {
     private boolean installWhenAllowed;
     /** Why the version on offer didn't install by itself ("" none). */
 
-    static long myCode(Context c) {
-        try {
-            PackageInfo p = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
-            return Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
+    /** The version of the code running (dev.harbor.shell.Shell: a downloaded one, or the APK's
+     *  own), in versionCode's numbering. */
+    static long myCode(Context c) { return Shell.code(); }
 
-    static String myName(Context c) {
-        try { return c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
-    }
+    static String myName(Context c) { return Shell.name(); }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -989,7 +982,8 @@ public class Settings extends Base {
 
     private void update() {
         if (installing) return;
-        if (!getPackageManager().canRequestPackageInstalls()) {
+        // App code alone (Update.code) needs no install, so no "Install unknown apps" either.
+        if (!Update.code(this) && !getPackageManager().canRequestPackageInstalls()) {
             allowInstalls();
             return;
         }

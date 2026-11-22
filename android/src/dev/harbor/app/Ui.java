@@ -1,5 +1,6 @@
 package dev.harbor.app;
 
+import dev.harbor.shell.Shell;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -90,10 +91,10 @@ final class Ui {
         if (sans != null) return;
         // Once per process: an older app's offline dictation model goes (Asr).
         pool.execute(() -> Asr.dropModel(app));
-        sans = Typeface.createFromAsset(c.getAssets(), "fonts/Geist-Regular.ttf");
-        semi = Typeface.createFromAsset(c.getAssets(), "fonts/Geist-SemiBold.ttf");
-        mono = Typeface.createFromAsset(c.getAssets(), "fonts/GeistMono-Regular.ttf");
-        icons = Typeface.createFromAsset(c.getAssets(), "fonts/lucide.ttf");
+        sans = font(c, "fonts/Geist-Regular.ttf");
+        semi = font(c, "fonts/Geist-SemiBold.ttf");
+        mono = font(c, "fonts/GeistMono-Regular.ttf");
+        icons = font(c, "fonts/lucide.ttf");
         serif = Typeface.create(Typeface.SERIF, Typeface.NORMAL);
         serifBold = Typeface.create(Typeface.SERIF, Typeface.BOLD);
     }
@@ -365,6 +366,37 @@ final class Ui {
     /** Side-panel rows sit 8 dp in from the edges, so their pressed and selected fill is rounded. */
     static LinearLayout.LayoutParams inset() { return margins(fill(), 8, 0, 8, 0); }
 
+    // ---- the code's own files and the shell's resources ----
+
+    /** One of the fonts or logos (assets/): the downloaded code's own copy when it runs
+     *  (Shell.asset: an icon added since the APK was built is there), else the APK's. */
+    static java.io.InputStream asset(Context c, String path) throws java.io.IOException {
+        java.io.InputStream in = Shell.asset(path);
+        return in != null ? in : c.getAssets().open(path);
+    }
+
+    static Typeface font(Context c, String path) {
+        java.io.File f = Shell.assetFile(c, path);
+        if (f != null) {
+            try { return Typeface.createFromFile(f); } catch (RuntimeException ignored) { }
+        }
+        return Typeface.createFromAsset(c.getAssets(), path);
+    }
+
+    private static int statIcon;
+
+    /** The notifications' small icon: the shell's resource, found by name (the app's code has no
+     *  R: the shell it runs on may number its resources otherwise). */
+    static int statIcon(Context c) {
+        if (statIcon == 0) statIcon = res(c, "drawable", "ic_stat");
+        return statIcon != 0 ? statIcon : android.R.drawable.stat_notify_more;
+    }
+
+    /** A resource of the shell's (android/res), by type and name; 0 when it has none. */
+    static int res(Context c, String type, String name) {
+        return c.getResources().getIdentifier(name, type, c.getPackageName());
+    }
+
     // ---- provider logos (assets/logos, shared with the desktop's src/logos.rs) ----
 
     private static final java.util.Map<String, android.graphics.Bitmap> logos = new java.util.HashMap<>();
@@ -375,7 +407,7 @@ final class Ui {
         String key = file + "|" + FG;
         if (logos.containsKey(key)) return logos.get(key);
         android.graphics.Bitmap b = null;
-        try (java.io.InputStream in = c.getAssets().open("logos/" + file)) {
+        try (java.io.InputStream in = asset(c, "logos/" + file)) {
             byte[] d = new byte[48 * 48 * 4];
             int n = 0, r;
             while (n < d.length && (r = in.read(d, n, d.length - n)) > 0) n += r;

@@ -246,7 +246,7 @@ final class Inbox {
         nm.createNotificationChannel(new NotificationChannel("received", "Sent from your PCs", NotificationManager.IMPORTANCE_DEFAULT));
         int id = u.hashCode();
         PendingIntent pi = PendingIntent.getActivity(c, id, view(u, mime), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        nm.notify(id, new Notification.Builder(c, "received").setSmallIcon(R.drawable.ic_stat)
+        nm.notify(id, new Notification.Builder(c, "received").setSmallIcon(Ui.statIcon(c))
                 .setContentTitle(title).setContentText(text).setContentIntent(pi).setAutoCancel(true).build());
     }
 

@@ -4,7 +4,11 @@
      account's workspaces, each with its PCs; Chats lists one workspace's
      chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
      one (its team slides in from the right), NewChat starts one, GhList and GhItem show the
-     PC's pull requests and issues, Settings updates the app and sets the color mode. -->
+     PC's pull requests and issues, Settings updates the app and sets the color mode.
+     This file is part of the shell (android/README.md, "Shell and code"): a change here needs
+     android/shell/lock.sh bump, and phones get it only by installing the new APK. The app's
+     components below are made by dev.harbor.shell.Factory from the newest good app code the phone
+     has (Android 9+), so their class names must stay. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.app">
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Tailnet: finds Tailscale's VPN network, the only way to a hub -->
@@ -32,6 +36,7 @@
     <!-- Harbor talks plain HTTP, but only inside the tailnet (WireGuard encrypts every hop):
          Tailnet.java checks that; the platform HTTP stack gets no cleartext at all -->
     <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher"
+        android:appComponentFactory="dev.harbor.shell.Factory"
         android:allowBackup="false" android:networkSecurityConfig="@xml/network"
         android:theme="@style/Harbor">
         <activity android:name=".Hubs" android:exported="true" android:launchMode="singleTask">
@@ -66,6 +71,11 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name=".GhList" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".GhItem" android:exported="false" />
+        <!-- The shell's: opens Harbor again in a fresh process after an update of its code tapped
+             on a screen (Shell.restart), from a process of its own that runs no app code -->
+        <activity android:name="dev.harbor.shell.Restart" android:exported="false" android:process=":restart"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true"
+            android:excludeFromRecents="true" />
         <!-- The install's result; and MY_PACKAGE_REPLACED, after an update: jobs and Listen again -->
         <receiver android:name=".Update" android:exported="false">
             <intent-filter>

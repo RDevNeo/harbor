@@ -105,4 +105,35 @@ final class Quiet {
                 : "";
         return hint + (m.isEmpty() ? s : m + " (" + s + ")");
     }
+
+    // ---- app code or APK (dev.harbor.shell; android/README.md, "Shell and code") ----
+
+    static final int KEEP = 0, CODE = 1, APK = 2;
+
+    /** How this phone gets to the newest release: its app code alone (no install: nothing for
+     *  Play Protect to scan), the APK, or nothing. mine: the code running; shell: this APK's shell
+     *  version; loads: Android can run downloaded code (9+); apkCode/apkShell: the APK the latest
+     *  release names and its shell (0: a release from before shells); code/minShell: its app code
+     *  and the shell that needs (code 0: none named). Code goes first whenever it can run here: an
+     *  APK only installs for a shell the newest code needs, or where code can't load, or when the
+     *  release names no code. */
+    static int route(long mine, int shell, boolean loads, long apkCode, int apkShell, long code, int minShell) {
+        if (loads && code > mine && minShell <= shell) return CODE;
+        if (apkCode <= mine) return KEEP;
+        if (!loads || code <= 0 || apkShell == 0) return APK;
+        return apkShell > shell && minShell > shell ? APK : KEEP;
+    }
+
+    /** How long staged code may wait for a moment when restarting costs nothing before it restarts
+     *  anyway (once nobody sees Harbor). */
+    static final long STAGED_MAX_MS = 12 * 3600_000L;
+
+    /** Whether to end the process now so the next start runs staged code. quiet: nobody sees
+     *  Harbor (now()); listening: the instant-notification service runs; canRelisten: Android lets
+     *  it start again from the background (older than 12, or Harbor exempt from battery
+     *  optimisation); waitedMs: since the code was staged. Restarting can stop the service until
+     *  Harbor next opens on newer phones, so then only after STAGED_MAX_MS. */
+    static boolean restart(boolean quiet, boolean listening, boolean canRelisten, long waitedMs) {
+        return quiet && (!listening || canRelisten || waitedMs >= STAGED_MAX_MS);
+    }
 }

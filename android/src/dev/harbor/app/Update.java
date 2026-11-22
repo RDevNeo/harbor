@@ -36,6 +36,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import dev.harbor.shell.Boot;
+import dev.harbor.shell.Minisign;
+import dev.harbor.shell.Shell;
+
 
 /** Updates this app from Harbor's GitHub releases (RDevNeo/harbor), never from a PC: the
  *  latest release's harbor-app.json (signed) names the phone app it ships, and its
@@ -55,7 +59,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *  then downloaded and its signature checked at once ({@link #fetch}, into the app's storage),
  *  so installing is a copy and a commit; it installs as soon as nobody sees Harbor (Quiet: the
  *  screen off or locked, or Harbor out of sight for a few seconds), and the next start opens
- *  the chat the user had ({@link #resume}). Also gets MY_PACKAGE_REPLACED. */
+ *  the chat the user had ({@link #resume}). Also gets MY_PACKAGE_REPLACED.
+ *
+ *  Since shell 1 (android/README.md, "Shell and code") a release also names its app code alone
+ *  (harbor-app.json `phone`: harbor-phone-code.zip). On Android 9+ that's how this app updates
+ *  ({@link Quiet#route}): the code is downloaded, checked and staged by the shell (Shell.stage),
+ *  and runs from the next process start, which {@link #round} brings about when nobody sees
+ *  Harbor (Shell.restart; Settings' Update does it at once and opens Harbor again). No install,
+ *  so Play Protect has nothing to scan. The APK only installs when the newest code needs a newer
+ *  shell (a new permission, screen or native library), on Android 8, or for a release that names
+ *  no code. */
 public class Update extends BroadcastReceiver {
     static volatile boolean busy;
     /** Settings while it's open: shown again when an install's result comes (a failure). */
@@ -68,16 +81,57 @@ public class Update extends BroadcastReceiver {
     /** How long the release news holds a question when nothing's new (seconds; the service
      *  allows 240). Each answer wakes the radio: fewer is less battery. */
     static final int HOLD_S = 240;
-    static final String APK = "harbor-android.apk", MANIFEST = "harbor-app.json";
+    static final String APK = "harbor-android.apk", MANIFEST = "harbor-app.json", CODE = Boot.ASSET;
     /** Between two looks at GitHub (a HEAD of releases/latest, ~5 KB: the website, not the API
      *  with its 60 calls an hour), unless forced. */
     static final long GAP = 5 * 60_000;
 
     /** The newest app the latest release ships (versionCode) and the release whose files hold it
-     *  (a release that didn't change the app carries an earlier one's), from the last {@link #check}. */
+     *  (a release that didn't change the app carries an earlier one's), from the last {@link #check}:
+     *  its code alone (bestKind Quiet.CODE) or its APK (Quiet.APK). */
     static volatile long bestCode;
     static volatile String bestRelease;
+    static volatile int bestKind = Quiet.APK;
     private static volatile long checked;
+
+    /** What the latest release names (harbor-app.json): its APK (versionCode, release, shell
+     *  version; shell 0 before shells) and its app code (version, release, the shell it needs;
+     *  code 0: none named). */
+    static final class Offer {
+        long apkCode, code;
+        String apkRelease = "", codeRelease = "";
+        int apkShell, minShell;
+    }
+
+    private static volatile Offer offer;
+
+    static Offer offerFrom(JSONObject manifest, String tag) {
+        Offer o = new Offer();
+        JSONObject apk = manifest.optJSONObject("apk"), code = manifest.optJSONObject("phone");
+        if (apk != null) {
+            o.apkCode = apk.optLong("code");
+            o.apkRelease = apk.optString("release", tag).replaceFirst("^v", "");
+            o.apkShell = apk.optInt("shell");
+        }
+        if (code != null) {
+            o.code = code.optLong("code");
+            o.codeRelease = code.optString("release", tag).replaceFirst("^v", "");
+            o.minShell = code.optInt("minShell", Integer.MAX_VALUE);
+        }
+        return o;
+    }
+
+    /** Where this phone goes from the offer (Quiet.route): sets bestCode, bestRelease and bestKind.
+     *  Code that failed here (the shell rolled it back) isn't taken again: the next release. */
+    private static long pick(Context c, Offer o) {
+        long mine = Settings.myCode(c);
+        int r = Quiet.route(mine, Shell.VERSION, Shell.loads(), o.apkCode, o.apkShell, o.code, o.minShell);
+        if (r == Quiet.CODE && Shell.bad(c, o.code)) r = Quiet.KEEP;
+        if (r == Quiet.CODE) { bestRelease = o.codeRelease; bestKind = Quiet.CODE; bestCode = o.code; }
+        else if (r == Quiet.APK) { bestRelease = o.apkRelease; bestKind = Quiet.APK; bestCode = o.apkCode; }
+        else { bestRelease = null; bestKind = Quiet.KEEP; bestCode = mine; }
+        return bestCode;
+    }
 
     /** Looks at GitHub's latest release, at most every {@link #GAP} unless forced. Only a new tag
      *  costs more: its harbor-app.json and signature (a few KB), checked before anything is
@@ -98,39 +152,51 @@ public class Update extends BroadcastReceiver {
         SharedPreferences p = Ui.prefs(c);
         String tag = latestTag();
         if (tag == null) throw new IOException("GitHub didn't name a latest release");
-        if (tag.equals(p.getString("gh_tag", "")) && known(c) > 0) return bestCode;
+        // (an app from before shells kept no code offer: it reads the manifest again once)
+        if (tag.equals(p.getString("gh_tag", "")) && p.contains("known_min_shell") && known(c) > 0) return bestCode;
         byte[] json = get(REPO + "/releases/download/v" + tag + "/" + MANIFEST, 1 << 20);
         byte[] sigBytes = json == null ? null : get(REPO + "/releases/download/v" + tag + "/" + MANIFEST + ".minisig", 4096);
         if (json == null || sigBytes == null) return known(c); // the release is still uploading its files: next look
         String sig = new String(sigBytes, StandardCharsets.UTF_8);
-        long code;
-        String release;
+        Offer o;
         try {
             Minisign.check(Minisign.PUBKEY, json, sig, tag, MANIFEST);
-            JSONObject apk = new JSONObject(new String(json, StandardCharsets.UTF_8)).optJSONObject("apk");
-            code = apk == null ? 0 : apk.optLong("code");
-            release = apk == null ? tag : apk.optString("release", tag).replaceFirst("^v", "");
+            o = offerFrom(new JSONObject(new String(json, StandardCharsets.UTF_8)), tag);
         } catch (GeneralSecurityException | org.json.JSONException e) {
             throw new IOException("the latest release's " + MANIFEST + ": " + e.getMessage());
         }
-        if (code <= 0) return known(c);
-        bestCode = code; bestRelease = release;
+        if (o.apkCode <= 0 && o.code <= 0) return known(c);
+        offer = o;
         // Kept for the next start: Settings and the sheet know the version on offer at once.
-        p.edit().putString("gh_tag", tag).putLong("known_code", code).putString("known_release", release).apply();
-        return code;
+        p.edit().putString("gh_tag", tag).putLong("known_code", o.apkCode).putString("known_release", o.apkRelease)
+                .putInt("known_shell", o.apkShell).putLong("known_phone", o.code).putString("known_phone_release", o.codeRelease)
+                .putInt("known_min_shell", o.minShell).apply();
+        return pick(c, o);
     }
 
     /** The newest app known to be on offer, without asking GitHub: the last {@link #check}'s,
      *  this run's or the one before the process last ended. 0: none known. */
     static long known(Context c) {
-        if (bestCode <= 0 && Rig.on()) Rig.update(c);
-        if (bestCode <= 0) {
-            SharedPreferences p = Ui.prefs(c);
-            long code = p.getLong("known_code", 0);
-            String r = p.getString("known_release", "");
-            if (code > 0 && !r.isEmpty()) { bestRelease = r; bestCode = code; }
+        if (Rig.on()) {
+            if (bestCode <= 0) Rig.update(c);
+            return bestCode;
         }
-        return bestCode;
+        Offer o = offer;
+        if (o == null) {
+            SharedPreferences p = Ui.prefs(c);
+            o = new Offer();
+            o.apkCode = p.getLong("known_code", 0);
+            o.apkRelease = p.getString("known_release", "");
+            o.apkShell = p.getInt("known_shell", 0);
+            o.code = p.getLong("known_phone", 0);
+            o.codeRelease = p.getString("known_phone_release", "");
+            o.minShell = p.getInt("known_min_shell", Integer.MAX_VALUE);
+            if (o.apkRelease.isEmpty()) o.apkCode = 0;
+            if (o.codeRelease.isEmpty()) o.code = 0;
+            if (o.apkCode <= 0 && o.code <= 0) return bestCode;
+            offer = o;
+        }
+        return pick(c, o);
     }
 
     /** releases/latest answers with a redirect to the latest tag's page: the tag without "v". */
@@ -297,7 +363,7 @@ public class Update extends BroadcastReceiver {
         // Installed → new; a second line only when it says something useful (the rig's phone can't
         // allow installs, so it shows the silent phones' line).
         String hint = !failure(a, offered).isEmpty() ? "It didn't install by itself."
-                : blocked(a) ? "Google Play Protect may ask to scan it first."
+                : !code(a) && blocked(a) ? "Google Play Protect may ask to scan it first."
                 : silent(a, offered) || Rig.on() ? "Or it installs by itself once you leave Harbor."
                 : "";
         LinearLayout c = s.card();
@@ -351,6 +417,7 @@ public class Update extends BroadcastReceiver {
      *  stays away): Android lets Harbor install, the verifier hasn't refused one, and the
      *  version on offer didn't fail. */
     static boolean silent(Context c, long offered) {
+        if (code(c)) return Ui.prefs(c).getLong("auto_fail_code", 0) != offered;
         if (!c.getPackageManager().canRequestPackageInstalls() || blocked(c)) return false;
         return Ui.prefs(c).getLong("auto_fail_code", 0) != offered;
     }
@@ -384,7 +451,9 @@ public class Update extends BroadcastReceiver {
     private static void roundOnce(Context c) {
         long best = 0;
         try {
-            if (busy || !c.getPackageManager().canRequestPackageInstalls()) return;
+            if (busy) return;
+            if (codeRound(c)) return;
+            if (!c.getPackageManager().canRequestPackageInstalls()) return;
             SharedPreferences p = Ui.prefs(c);
             boolean blocked = blocked(c);
             try { best = check(c, false); } catch (IOException e) { return; } // GitHub away: the next round
@@ -417,6 +486,103 @@ public class Update extends BroadcastReceiver {
             // The app downloaded isn't the release's, or Android couldn't take it: offered instead.
             failed(c, best > 0 ? best : bestCode, why(e));
         }
+    }
+
+    /** The latest release's update is its app code (Quiet.CODE): downloaded and staged now, run
+     *  from a restart once nobody sees Harbor (Quiet.restart). False: it's not, the APK's round
+     *  goes on. Blocking. */
+    private static boolean codeRound(Context c) {
+        long best;
+        try { best = check(c, false); } catch (IOException e) { return true; } // GitHub away: the next round
+        if (bestKind != Quiet.CODE || best <= Settings.myCode(c)) return false;
+        if (Ui.prefs(c).getLong("auto_fail_code", 0) == best) return true; // didn't check out: the next release
+        try {
+            if (Shell.staged(c) != best) stage(c, null);
+        } catch (Bad e) {
+            Log.i(TAG, "code " + best + ": " + e.getMessage());
+            failed(c, best, why(e));
+            return true;
+        } catch (IOException e) {
+            Log.i(TAG, "download: " + why(e));
+            return true; // the network: the next round
+        }
+        long waited = System.currentTimeMillis() - Shell.stagedAt(c);
+        if (Quiet.restart(quiet(c), Listen.listening(), canRelisten(c), waited)) restartFor(c, false);
+        return true;
+    }
+
+    /** The update on offer is app code, not an APK. */
+    static boolean code(Context c) {
+        known(c);
+        return bestKind == Quiet.CODE;
+    }
+
+    /** Android lets Listen start again from the background after a restart: before 12, or with
+     *  Harbor exempt from battery optimisation. */
+    private static boolean canRelisten(Context c) {
+        if (Build.VERSION.SDK_INT < 31) return true;
+        PowerManager pm = c.getSystemService(PowerManager.class);
+        return pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName());
+    }
+
+    /** Blocking: the app code on offer, downloaded from its GitHub release and handed to the shell,
+     *  which checks it against Harbor's release key and keeps it for the next start (Shell.stage):
+     *  at once when it already is. Throws Bad when it isn't the release key's, or can't run here. */
+    static void stage(Context c, Progress progress) throws IOException {
+        synchronized (fetching) {
+            long to = known(c);
+            String release = bestRelease;
+            if (bestKind != Quiet.CODE || to <= Settings.myCode(c) || release == null) throw new IOException("no newer version is known");
+            if (Shell.staged(c) == to) {
+                if (progress != null) progress.at(1, 1);
+                return;
+            }
+            File d = dir(c), part = new File(d, "code-" + to + ".part");
+            drop(c, null);
+            if (!d.isDirectory() && !d.mkdirs()) throw new IOException("can't make " + d);
+            long t0 = SystemClock.elapsedRealtime();
+            String base = REPO + "/releases/download/v" + release + "/" + CODE;
+            byte[] sigBytes = get(base + ".minisig", 4096);
+            if (sigBytes == null) throw new IOException("the release has no signature for the app code");
+            HttpURLConnection http = open(base);
+            try {
+                int code = http.getResponseCode();
+                if (code != 200) throw new IOException("GitHub has no app code to send (HTTP " + code + ")");
+                long size = http.getContentLengthLong();
+                if (size <= 0) throw new IOException("GitHub sent no size for the app code");
+                try (InputStream in = http.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+                    byte[] buf = new byte[1 << 16];
+                    long done = 0;
+                    while (done < size) {
+                        int n = in.read(buf, 0, (int) Math.min(buf.length, size - done));
+                        if (n < 0) throw new IOException("the download stopped early");
+                        out.write(buf, 0, n);
+                        done += n;
+                        if (progress != null) progress.at(done, size);
+                    }
+                    out.getFD().sync();
+                }
+                // The shell checks it (Harbor's release key, this release, this shell) and keeps it.
+                try {
+                    Shell.stage(c, part, new String(sigBytes, StandardCharsets.UTF_8), release);
+                } catch (GeneralSecurityException e) {
+                    throw new Bad("the downloaded app code isn't Harbor's (" + e.getMessage() + ")");
+                } catch (Boot.Unusable e) {
+                    throw new Bad(e.getMessage());
+                }
+                Log.i(TAG, "app code " + to + " downloaded and staged (" + size + " bytes, " + (SystemClock.elapsedRealtime() - t0) + " ms)");
+            } finally {
+                http.disconnect();
+                part.delete();
+            }
+        }
+    }
+
+    /** Ends the process for the staged code: the next start opens the chat the user had (resume).
+     *  reopen: from a screen (Settings' Update), Harbor opens again at once. */
+    private static void restartFor(Context c, boolean reopen) {
+        Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", Shell.staged(c)).commit();
+        Shell.restart(c, reopen);
     }
 
     /** The automatic try of `code` didn't go in: never again in the background (it's offered). */
@@ -491,7 +657,7 @@ public class Update extends BroadcastReceiver {
         synchronized (fetching) {
             long to = known(c);
             String release = bestRelease;
-            if (to <= Settings.myCode(c) || release == null) throw new IOException("no newer version is known");
+            if (bestKind != Quiet.APK || to <= Settings.myCode(c) || release == null) throw new IOException("no newer version is known");
             File d = dir(c), apk = new File(d, "harbor-" + to + ".apk"), part = new File(d, "harbor-" + to + ".part");
             SharedPreferences p = Ui.prefs(c);
             if (apk.isFile() && apk.length() == p.getLong("apk_size", -1) && (to + "@" + release).equals(p.getString("apk_ready", ""))) {
@@ -553,6 +719,11 @@ public class Update extends BroadcastReceiver {
      *  background's, which gives up quietly if Harbor came back on screen meanwhile. */
     static void install(Context c, Progress progress, boolean auto) throws Exception {
         if (busy) throw new IOException("already updating");
+        if (code(c)) {
+            stage(c, progress);
+            restartFor(c, !auto);
+            return;
+        }
         commit(c, fetch(c, progress), auto);
     }
 
@@ -661,7 +832,7 @@ public class Update extends BroadcastReceiver {
             Intent home = new Intent(c, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             Intent install = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("install", code);
             PendingIntent pi = PendingIntent.getActivities(c, 12, new Intent[] { home, install }, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-            Notification n = new Notification.Builder(c, "update").setSmallIcon(R.drawable.ic_stat)
+            Notification n = new Notification.Builder(c, "update").setSmallIcon(Ui.statIcon(c))
                     .setContentTitle("Harbor " + Settings.name(code) + " is ready")
                     .setContentText("It couldn't install by itself: tap to install it.")
                     .setStyle(new Notification.BigTextStyle().bigText(blocked(c)
@@ -680,7 +851,7 @@ public class Update extends BroadcastReceiver {
             nm.createNotificationChannel(new NotificationChannel("update", "App updates", NotificationManager.IMPORTANCE_LOW));
             PendingIntent pi = PendingIntent.getActivity(c, 11, confirm, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             String v = to > 0 ? " " + Settings.name(to) : "";
-            Notification n = new Notification.Builder(c, "update").setSmallIcon(R.drawable.ic_stat)
+            Notification n = new Notification.Builder(c, "update").setSmallIcon(Ui.statIcon(c))
                     .setContentTitle("Harbor" + v + " is ready")
                     .setContentText("Android asks you to confirm the update: tap to install it.")
                     .setContentIntent(pi).setAutoCancel(true).build();

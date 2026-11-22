@@ -44,11 +44,21 @@ public class Listen extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel("listen", "Instant notifications (running)", NotificationManager.IMPORTANCE_MIN));
         PendingIntent pi = PendingIntent.getActivity(this, 7, new Intent(this, Hubs.class), PendingIntent.FLAG_IMMUTABLE);
-        Notification n = new Notification.Builder(this, "listen").setSmallIcon(R.drawable.ic_stat)
+        Notification n = new Notification.Builder(this, "listen").setSmallIcon(Ui.statIcon(this))
                 .setContentTitle("Listening for your PCs").setContentText("So notifications arrive within seconds.")
                 .setContentIntent(pi).setOngoing(true).build();
-        if (Build.VERSION.SDK_INT >= 34) startForeground(9, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        else startForeground(9, n);
+        // Android may refuse it when it restarts the service by itself (START_STICKY, after Harbor's
+        // process ended for new app code: Shell.restart) without the app in front: no crash then,
+        // the next time Harbor opens starts it (Base) and the 15-minute pings carry on (Alive).
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(9, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            else startForeground(9, n);
+        } catch (RuntimeException e) {
+            android.util.Log.i("harbor-listen", "can't run in the foreground now: " + e);
+            running = false;
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (loop == null || !loop.isAlive() || news == null || !news.isAlive()) {
             running = true;
             int my = ++gen;

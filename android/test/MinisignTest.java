@@ -1,4 +1,4 @@
-package dev.harbor.app;
+package dev.harbor.shell;
 
 import java.nio.charset.StandardCharsets;
 
