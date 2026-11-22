@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.188.2] - 2026-11-22
+
+### Changed
+- Someone else's phone can no longer make their PC run your chat with their account and memory; integrations no longer drop out of a chat on a sign-in refresh blip or a half-written .claude.json; a dead local MCP server no longer holds a new worktree's first turn 30 s.
+
 ## [0.188.1] - 2026-11-16
 
 ### Added
