@@ -118,15 +118,20 @@ jobs:
           # release} carried over), so phones don't download and install the same app again. A run
           # by hand builds it (input apk=build, the default: the dry run tries the job, and its
           # download cache saved on main is the one tags can restore); apk=auto plans as a tag does.
+          # The APK and the app code alone (harbor-phone-code.zip) build together, from the same
+          # tree: the manifest names the APK with its shell version (phones on Android 9+ install it
+          # only for a newer shell) and the code with the shell it needs (android/shell/shell.lock;
+          # android/README.md, "Shell and code").
           apk=build apkcode=()
           auto=false
           if [[ "$GITHUB_REF" == refs/tags/v* ]] || [ "${{ inputs.apk }}" = auto ]; then auto=true; fi
-          if [ "$auto" = true ] && [ -n "$prev" ] && jq -e '.apk.code' prev/harbor-app.json >/dev/null \
+          if [ "$auto" = true ] && [ -n "$prev" ] && jq -e '.apk.code and .phone.code' prev/harbor-app.json >/dev/null \
             && git diff --quiet "$tag" HEAD -- android/ assets/fonts/ assets/logos/; then
             apk=keep
           else
             IFS=.- read -r ma mi pa _ <<< "$ver"
-            apkcode=(--apk-code $((ma * 1000000 + mi * 1000 + pa)))
+            code=$((ma * 1000000 + mi * 1000 + pa)) shell=$(android/shell/lock.sh version)
+            apkcode=(--apk-code "$code" --apk-shell "$shell" --phone-code "$code" --phone-min-shell "$shell")
           fi
           # Where the desktop builds run: a bundle-only release has nothing to build for the PCs but
           # JavaScript, so a tag builds it on the runner (jobs quick, quick-aarch64); a new runtime, and
@@ -374,6 +379,12 @@ jobs:
           name: harbor-android
           path: out/harbor-android/harbor-android.apk
           compression-level: 0
+      # The same app code alone, which phones on Android 9+ update from (minisigned in package).
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-phone-code
+          path: out/harbor-phone-code.zip
+          compression-level: 0
 
   # Saves the snapshot and deletes the build's sandbox, beside the packaging: a release doesn't wait
   # for it, and it never fails one. Runs also when the build failed: then it only deletes.
@@ -607,6 +618,9 @@ jobs:
           cp packaging/install.sh dist/install.sh
           cp packaging/install.ps1 dist/install.ps1
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
+          # A release that kept the phone app has no code of its own: the manifest names the
+          # release that holds it (phone.release). Signed and attested with dist/*.zip.
+          [ ! -f art/harbor-phone-code/harbor-phone-code.zip ] || cp art/harbor-phone-code/harbor-phone-code.zip dist/
           (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
           ls -la dist
           tar -tzf dist/harbor-x86_64-linux.tar.gz | grep SHA256SUMS

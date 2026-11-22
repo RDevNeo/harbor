@@ -76,16 +76,24 @@ export async function releaseCli(argv: string[], d: ReleaseDeps = nodeDeps()): P
     let previous: Manifest | null = null;
     if (prevText !== null) previous = parseManifest(prevText);
     const code = o.get("apk-code");
+    const shell = o.get("apk-shell");
+    const phone = o.get("phone-code");
+    const minShell = o.get("phone-min-shell");
+    if ((phone === undefined) !== (minShell === undefined)) {
+      d.err("--phone-code and --phone-min-shell go together");
+      return 2;
+    }
     const manifest = buildManifest({
       version,
       lane: chosen,
       previous,
       ...(o.has("video-id") ? { video: { id: o.get("video-id") ?? "" } } : {}),
-      ...(code === undefined ? {} : { apk: { code: Number(code) } }),
+      ...(code === undefined ? {} : { apk: { code: Number(code), ...(shell === undefined ? {} : { shell: Number(shell) }) } }),
+      ...(phone === undefined ? {} : { phone: { code: Number(phone), minShell: Number(minShell) } }),
     });
     d.writeFile(out, JSON.stringify(manifest));
     return 0;
   }
-  d.err("usage: release.ts lane --base REF [--force LANE] [--first] | manifest --version V --lane LANE --out FILE [--previous FILE] [--video-id ID] [--apk-code N]");
+  d.err("usage: release.ts lane --base REF [--force LANE] [--first] | manifest --version V --lane LANE --out FILE [--previous FILE] [--video-id ID] [--apk-code N [--apk-shell N]] [--phone-code N --phone-min-shell N]");
   return 2;
 }

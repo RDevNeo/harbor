@@ -72,6 +72,23 @@ test("a runtime release whose phone app didn't change names the latest release's
   expect(buildManifest({ version: "1.3.0", lane: "runtime", previous, apk: { code: 1003000 } }).apk).toEqual({ code: 1003000, release: "1.3.0" });
 });
 
+test("the phone app's shell and code are named, and carried over when the phone app didn't change", () => {
+  const previous = parseManifest(
+    JSON.stringify({ version: "1.2.1", minRuntime: "1.2.0", runtime: "1.2.0", apk: { code: 1002001, release: "1.2.1", shell: 2 }, phone: { code: 1002001, release: "1.2.1", minShell: 2 } }),
+  );
+  expect(previous.apk).toEqual({ code: 1002001, release: "1.2.1", shell: 2 });
+  expect(previous.phone).toEqual({ code: 1002001, release: "1.2.1", minShell: 2 });
+  const kept = buildManifest({ version: "1.2.2", lane: "bundle", previous });
+  expect(kept.apk).toEqual(previous.apk);
+  expect(kept.phone).toEqual(previous.phone);
+  const built = buildManifest({ version: "1.2.2", lane: "bundle", previous, apk: { code: 1002002, shell: 2 }, phone: { code: 1002002, minShell: 2 } });
+  expect(built.apk).toEqual({ code: 1002002, release: "1.2.2", shell: 2 });
+  expect(built.phone).toEqual({ code: 1002002, release: "1.2.2", minShell: 2 });
+  expect(parseManifest(JSON.stringify(built))).toEqual(built);
+  // A phone entry without the shell it needs isn't one (a phone would run it anywhere).
+  expect(parseManifest(JSON.stringify({ version: "1.0.0", minRuntime: "1.0.0", runtime: "1.0.0", phone: { code: 1, release: "1.0.0" } })).phone).toBeUndefined();
+});
+
 test("the manifest is read strictly", () => {
   expect(() => parseManifest("junk")).toThrow("unreadable");
   expect(() => parseManifest("[]")).toThrow("unreadable");
@@ -129,4 +146,9 @@ test("the manifest command writes harbor-app.json", async () => {
   expect(await releaseCli(["manifest", "--version", "1.0.1", "--lane", "bundle", "--previous", "prev.json", "--out", "m.json", "--apk-code", "1000001", "--video-id", "v2"], a.d)).toBe(0);
   expect(JSON.parse(a.written["m.json"] ?? "")).toEqual({ version: "1.0.1", minRuntime: "1.0.0", runtime: "1.0.0", video: { id: "v2", release: "1.0.1" }, apk: { code: 1000001, release: "1.0.1" } });
   expect(await releaseCli(["manifest", "--version", "1.0.1"], a.d)).toBe(2);
+  const b = deps({ "prev.json": prev }, {});
+  const args = ["manifest", "--version", "1.0.1", "--lane", "bundle", "--previous", "prev.json", "--out", "m.json", "--apk-code", "1000001", "--apk-shell", "1"];
+  expect(await releaseCli([...args, "--phone-code", "1000001", "--phone-min-shell", "1"], b.d)).toBe(0);
+  expect(JSON.parse(b.written["m.json"] ?? "")).toEqual({ version: "1.0.1", minRuntime: "1.0.0", runtime: "1.0.0", apk: { code: 1000001, release: "1.0.1", shell: 1 }, phone: { code: 1000001, release: "1.0.1", minShell: 1 } });
+  expect(await releaseCli([...args, "--phone-code", "1000001"], b.d)).toBe(2);
 });

@@ -13,7 +13,9 @@ is installed.
 The sandbox is always deleted, also on error, Ctrl+C or kill (see scripts/boat/check --help).
 
 Options:
-  --out DIR    copy the APK to DIR/harbor-android-unsigned.apk
+  --out DIR    copy the APK to DIR/harbor-android-unsigned.apk and the app code alone (what phones
+               on Android 9+ update from, android/README.md "Shell and code") to
+               DIR/harbor-phone-code.zip
   -q, --quiet  print only progress and the summary (what failed included); the full output stays
                in /tmp/<sandbox name>.log
   -h, --help   this help
@@ -40,6 +42,7 @@ summary() {
   say "summary"
   grep -E '^<== |^built |^FAIL |check\(s\) failed|: error: ' "$log" | sed 's/^<== //; s/^/  /'
   [ -z "$out" ] || [ ! -f "$out/harbor-android-unsigned.apk" ] || echo "  apk: $out/harbor-android-unsigned.apk"
+  [ -z "$out" ] || [ ! -f "$out/harbor-phone-code.zip" ] || echo "  code: $out/harbor-phone-code.zip"
 }
 
 sandbox
@@ -47,4 +50,5 @@ upload
 remote -- bash .github/boat/apk.sh
 if [ -n "$out" ]; then
   "$boat" scp "$id:/home/user/out/harbor-android-unsigned.apk" "$out/" >/dev/null
+  "$boat" scp "$id:/home/user/out/harbor-phone-code.zip" "$out/" >/dev/null
 fi

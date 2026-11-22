@@ -7,6 +7,9 @@
 #
 #   android.sh OUT.apk
 #
+# The app code alone (harbor-phone-code.zip: what phones on Android 9+ update from, android/README.md
+# "Shell and code") lands beside OUT.apk; package minisigns it with the rest.
+#
 # android/build.sh's unit tests (android/test) run as part of it. Its downloads (sherpa-onnx, the
 # Play services libraries), pinned by SHA-256, are kept in $HARBOR_ANDROID_DEPS (release.yml caches
 # them). HARBOR_GOOGLE_WEB_CLIENT_ID passes through when set.
@@ -37,4 +40,4 @@ fi
 mkdir -p "$(dirname "$out")"
 ANDROID_BUILD=/nonexistent ANDROID_HOME="$sdk" UNSIGNED=1 OUT="$out" \
   HARBOR_ANDROID_DEPS="${HARBOR_ANDROID_DEPS:-$HOME/.cache/harbor-android-deps}" android/build.sh
-ls -la "$out"
+ls -la "$out" "$(dirname "$out")/harbor-phone-code.zip"

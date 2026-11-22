@@ -8,6 +8,17 @@ export interface Extra {
 export interface ApkExtra {
   code: number;
   release: string;
+  /** The phone app's shell version (android/shell/shell.lock): phones on Android 9+ install this
+   *  APK only for a newer shell. Absent before shells. */
+  shell?: number;
+}
+
+/** The phone app's code alone (harbor-phone-code.zip, android/README.md "Shell and code"): its
+ *  version (versionCode's numbering), the release whose files hold it, and the shell it needs. */
+export interface PhoneCode {
+  code: number;
+  release: string;
+  minShell: number;
 }
 
 export interface Manifest {
@@ -16,6 +27,7 @@ export interface Manifest {
   runtime: string;
   video?: Extra;
   apk?: ApkExtra;
+  phone?: PhoneCode;
 }
 
 export const MANIFEST = "harbor-app.json";
@@ -49,6 +61,12 @@ export function parseManifest(text: string): Manifest {
   const video = extra(o, "video");
   if (video !== undefined) m.video = video;
   const apk = record(o.apk);
-  if (apk !== null && typeof apk.code === "number" && Number.isInteger(apk.code)) m.apk = { code: apk.code, release: version(apk, "release") };
+  if (apk !== null && typeof apk.code === "number" && Number.isInteger(apk.code)) {
+    m.apk = { code: apk.code, release: version(apk, "release") };
+    if (typeof apk.shell === "number" && Number.isInteger(apk.shell)) m.apk.shell = apk.shell;
+  }
+  const phone = record(o.phone);
+  if (phone !== null && typeof phone.code === "number" && Number.isInteger(phone.code) && typeof phone.minShell === "number" && Number.isInteger(phone.minShell))
+    m.phone = { code: phone.code, release: version(phone, "release"), minShell: phone.minShell };
   return m;
 }

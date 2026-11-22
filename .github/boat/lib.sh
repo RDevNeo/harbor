@@ -169,8 +169,8 @@ android_sdk() {
     "$sm" --sdk_root="$sdk" --install "${want[@]}" >/dev/null' bash "$@"
 }
 
-# apk_unsigned <image> <path under /out>: android/build.sh, unsigned, with the SDK in ~/cache. Its
-# unit tests (android/test) run as part of it.
+# apk_unsigned <image> <path under /out>: android/build.sh, unsigned, with the SDK in ~/cache (and
+# the app code alone, harbor-phone-code.zip, beside it). Its unit tests (android/test) run as part of it.
 apk_unsigned() {
   android_sdk "$1"
   # HARBOR_GOOGLE_WEB_CLIENT_ID passes through when set (the release's repository variable): the
