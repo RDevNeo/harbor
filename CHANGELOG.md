@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.191.0] - 2026-11-22
+
+### Changed
+- Files an agent links in a reply (APK, zip, PDF…) show as a file card with Download, on the desktop and the phone; on the phone an APK then opens the installer.
+
 ## [0.190.0] - 2026-11-22
 
 ### Added
