@@ -60,6 +60,7 @@ export function chatCloud(h: CloudSyncHost): ChatCloud {
         list.push({
           path: dir,
           name: r.name,
+          named: r.named ?? 0,
           remote: r.remote,
           branch: githead.branchLabel(githead.branchOf(dir)),
           workspace: place.repos.get(r.id) ?? "",

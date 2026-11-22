@@ -5,18 +5,18 @@
 // keeps its row, its chats their place, Claude its sessions, Git its worktree links. Gone means
 // deleted or in the Trash. Looked at every few seconds (a stat per folder), when a watched parent
 // folder changes, and when a chat's turn is about to start in a folder that isn't there.
-import { existsSync, statSync, watch, type FSWatcher } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, renameSync, statSync, watch, type FSWatcher } from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { folders, platform } from "./packages/os/src/index.ts";
-import { type Chat, projectsdir, repoDir, type Store } from "./packages/store/src/index.ts";
+import { type Chat, projectpath, projectsdir, repoDir, type Store } from "./packages/store/src/index.ts";
 import { type Engine, foldermove as fm, worktree as wt } from "./packages/agents/src/index.ts";
 import { workspace } from "./packages/mcp/src/index.ts";
 
 export const KEY = "folder_id:";
 /** follow-main's checkout (followmain.ts CHECKOUT_KEY): a path that moves with its folder. */
 const PATH_VALUES = ["follow_main_checkout", projectsdir.KEY];
-/** kv keys named after a folder: renamed with it. */
-const PATH_KEYS = ["untrusted:", KEY];
+/** kv keys named after a folder: renamed with it (continuehere.ts `chainKey` too). */
+const PATH_KEYS = ["untrusted:", KEY, "carry_chain:"];
 /** kv keys whose values are folders, one per chat. */
 const PATH_PREFIXES = ["worktree:", "chat_dir:"];
 
@@ -115,7 +115,8 @@ export class FolderTracker {
     const out = new Map<string, Kind>();
     const chosen = projectsdir.chosen(s, this.h.home);
     if (chosen !== null) out.set(chosen, "projects");
-    for (const r of s.repos()) out.set(repoDir(r), "project");
+    // Full paths only: another system's (a Windows PC's C:\… on Linux) would be read against Harbor's own folder.
+    for (const r of s.repos()) if (isAbsolute(repoDir(r))) out.set(repoDir(r), "project");
     // Full paths only (C:\… on Windows too).
     for (const [, v] of s.withPrefix("worktree:")) if (isAbsolute(v)) out.set(v, "worktree");
     for (const [, v] of s.withPrefix("chat_dir:")) if (isAbsolute(v) && !out.has(v)) out.set(v, "chats");
@@ -187,6 +188,7 @@ export class FolderTracker {
   }
 
   private async pass(force: boolean): Promise<Moved[]> {
+    const fixed = await this.renameForeign();
     const s = this.h.store;
     const gone = new Map<string, fm.Ident>();
     const kinds = new Map<string, Kind>();
@@ -210,7 +212,7 @@ export class FolderTracker {
       gone.set(f.path, was);
     }
     this.watchParents();
-    if (gone.size === 0) return [];
+    if (gone.size === 0) return fixed;
     const moved = await fm.locate(gone, this.roots([...gone.keys()]), this.h.limits ?? fm.LIMITS);
     const at = Date.now();
     for (const p of gone.keys()) {
@@ -224,7 +226,7 @@ export class FolderTracker {
         s.del(KEY + p);
       }
     }
-    if (moved.size === 0) return [];
+    if (moved.size === 0) return fixed;
     const done: Moved[] = [];
     for (const [from, to] of [...moved].sort((a, b) => a[0].length - b[0].length)) {
       // Moved along with a folder it was in, re-homed just before.
@@ -235,7 +237,72 @@ export class FolderTracker {
     for (const m of done) this.rehome(m);
     await this.repair(done);
     this.afterMoves(done);
-    return done;
+    return [...fixed, ...done];
+  }
+
+  /** Projects whose folder waits to be renamed while a turn runs in it (logged once each). */
+  private waiting = new Set<string>();
+
+  /**
+   * Projects named, and cloned here, after another system's whole path (a Windows PC's project on Linux became
+   * "C:\Users\sam\Projects\app", its folder `<Projects>/C:\Users\sam\Projects\app`: Bun can't run in such a
+   * folder and Node won't import from it): the name becomes the path's last part ("app"), and the folder is renamed
+   * to it (made free with -2, -3… when taken) and followed like any folder moved by hand. Never while a turn of
+   * Harbor's runs in it: it waits for the next look after the turn.
+   */
+  private async renameForeign(): Promise<Moved[]> {
+    const s = this.h.store;
+    const moves: Moved[] = [];
+    let named = false;
+    for (const r of s.repos()) {
+      // A name someone picked stays; one made from a path is its last part.
+      if ((r.named ?? 0) === 0 && projectpath.isForeignPathName(r.name)) {
+        s.setRepoName(r.id, projectpath.pathTail(r.name) || r.name);
+        named = true;
+      }
+      const dir = repoDir(r);
+      const seg = basename(dir);
+      if (!isAbsolute(dir) || !projectpath.isForeignPathName(seg) || !isDir(dir)) continue;
+      const busy = this.busyIn(dir);
+      if (busy !== null) {
+        if (!this.waiting.has(dir)) console.error(`harbor: ${dir} gets a plain name once ${busy} stops running in it`);
+        this.waiting.add(dir);
+        continue;
+      }
+      this.waiting.delete(dir);
+      const parent = dirname(dir);
+      const to = join(parent, projectpath.freeName(projectpath.folderName(seg), (n) => existsSync(join(parent, n))));
+      try {
+        // In the same folder: one rename, all or nothing; what's in it isn't touched.
+        renameSync(dir, to);
+      } catch (x) {
+        console.error(`harbor: renaming ${dir} to ${to}: ${say(x)}`);
+        continue;
+      }
+      moves.push({ from: dir, to, kind: "project" });
+    }
+    if (moves.length === 0) {
+      if (named) {
+        this.e.reload();
+        this.h.touch();
+      }
+      return [];
+    }
+    // Its records follow it (its fingerprint too: the same folder, renamed in place).
+    for (const m of moves) this.rehome(m);
+    await this.repair(moves);
+    this.afterMoves(moves, "Harbor gave it a plain name: the one it had was another system's whole path, which tools can't work in");
+    return moves;
+  }
+
+  /** What of Harbor's runs in folder `dir` or under it now (a chat's title), null: nothing. */
+  private busyIn(dir: string): string | null {
+    const e = this.e;
+    for (const c of e.chats) {
+      if (!e.running(c.id)) continue;
+      if (fm.under(e.chatCwd(c), dir)) return `“${c.title}”`;
+    }
+    return null;
   }
 
   /** Where a gone folder could be, nearest first: next to where it was, the Projects folder, Documents, the parents of every project, the home folder. */
@@ -361,8 +428,8 @@ export class FolderTracker {
     }
   }
 
-  /** Chats told, sessions brought, Harbor's lists read again. */
-  private afterMoves(moves: readonly Moved[]): void {
+  /** Chats told, sessions brought, Harbor's lists read again. `why`: Harbor moved them itself, and why. */
+  private afterMoves(moves: readonly Moved[], why: string | null = null): void {
     const e = this.e;
     e.reload();
     const configs = this.h.configs();
@@ -380,10 +447,11 @@ export class FolderTracker {
       if (was !== m.from) fm.copySessions(configs, was, now);
       for (const id of [c.id, ...e.subsOf(c.id).map((x) => x.id)]) workspace.forget(id);
       if (!c.started) continue;
-      e.noteWorktree(c.id, `this chat's folder moved from ${was} to ${now} (moved outside Harbor): work there now, nothing is left under the old path.`);
+      e.noteWorktree(c.id, `this chat's folder moved from ${was} to ${now} (${why === null ? "moved outside Harbor" : "renamed by Harbor"}): work there now, nothing is left under the old path.`);
       if (c.settled) continue;
       const what = e.worktreeOf(c) !== null ? "Worktree" : c.repoId !== null ? "Project" : "Folder";
-      e.notice(c.id, "folder", `${what} moved to ${wt.tilde(now)}`, `Was ${wt.tilde(was)}. Harbor follows a folder that's moved or renamed: its chats, sessions and worktrees go on there.`);
+      const detail = why === null ? "Harbor follows a folder that's moved or renamed: its chats, sessions and worktrees go on there." : `${why}. Its chats, sessions and worktrees go on there.`;
+      e.notice(c.id, "folder", `${what} moved to ${wt.tilde(now)}`, `Was ${wt.tilde(was)}. ${detail}`);
     }
     this.h.touch();
   }

@@ -5,7 +5,7 @@ import { ICONS } from "../icons.ts";
  * phone's project sheet are both built from this list, so they offer the same things in the
  * same order with the same words.
  */
-export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "clean_worktrees" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "pin_account" | "remove";
+export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_project" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "clean_worktrees" | "settle_project" | "unsettle_project" | "move_workspace" | "share_workspace" | "move_pc" | "pin_account" | "remove";
 
 export const CLEAN_LABEL = "Clean up merged worktrees";
 export const PIN_LABEL = "Keep on one account…";
@@ -64,8 +64,9 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
     sep = true;
     add("clean_worktrees", CLEAN_LABEL, ICONS.GIT_MERGE, "Its chats' worktrees whose PR was merged, unless something would be lost");
   }
+  sep = true;
+  add("rename_project", RENAME_PROJECT.label, "", "Its name in the sidebar on every PC; its folder stays as it is");
   if (p.main) {
-    sep = true;
     add("rename_main", "Rename main chat");
     add("settle_main", "Settle main chat", "", "It goes to Settled; the project's next message starts a new main chat");
   }
@@ -88,6 +89,9 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
 export function projectMoveTitle(state: string, name: string, to: string): string {
   return state === "done" ? `Moved ${name} to ${to}` : state === "partial" ? `${name} partly moved to ${to}` : `Couldn't move ${name} to ${to}`;
 }
+
+/** Rename's dialog (desktop and phone alike). */
+export const RENAME_PROJECT = { label: "Rename project…", title: "Rename project", ok: "Rename" } as const;
 
 /** The confirmation Remove from Harbor asks first. */
 export const REMOVE_PROJECT = { title: "Remove project?", text: "Its chats are removed from Harbor. Nothing on disk is touched.", ok: "Remove" } as const;

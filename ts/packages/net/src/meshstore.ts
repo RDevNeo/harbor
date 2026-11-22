@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { blankChat, digest, DROPPED_KEY, type Dropped, githead, parseDropped, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
+import { blankChat, digest, DROPPED_KEY, type Dropped, githead, parseDropped, NO_PLACEMENT, type Placement, shareList, itemHash, itemJson, parseAccess, parseItem, parseRole, projectpath, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, type Reply } from "./http.ts";
 import { draftFromJson, draftJson, previewTail, type Hub, type SharedDraft } from "./hub.ts";
@@ -221,7 +221,8 @@ export class StoreReplica implements MeshApp {
       gid: c.gid,
       title: c.title,
       // `main`: the project's main chat here, by gid ("" none): a PC this project was shared or moved to opens the same one.
-      project: r ? { name: r.name, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])], main: mains.get(r.id) ?? "", ...this.wasOf(r.id) } : null,
+      // `named`: when its name was picked by someone (Rename, ms; 0: its folder's): the latest rename wins on every PC.
+      project: r ? { name: r.name, named: r.named ?? 0, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])], main: mains.get(r.id) ?? "", ...this.wasOf(r.id) } : null,
       workspace: this.place.chats.get(c.id) ?? "",
       // Share with workspace…: the extra workspaces it shows in (its own; the project's go in `project`).
       shared: [...(this.place.shared?.chats.get(c.id) ?? [])],
@@ -267,7 +268,7 @@ export class StoreReplica implements MeshApp {
       id: c.id,
       gid: c.gid,
       title: c.title,
-      project: r ? { name: r.name, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])], main } : null,
+      project: r ? { name: r.name, named: r.named ?? 0, path: r.path, remote: r.remote, workspace: this.place.repos.get(r.id) ?? "", shared: [...(this.place.shared?.repos.get(r.id) ?? [])], main } : null,
       workspace: this.place.chats.get(c.id) ?? "",
       shared: [...(this.place.shared?.chats.get(c.id) ?? [])],
       account: c.account,
@@ -303,9 +304,9 @@ export class StoreReplica implements MeshApp {
   }
 
   /** A project of PC `peer` the workspace cloud lists (chatcloud.ts): made here when missing, remembered as that PC's. */
-  applyProject(peer: string, p: { path: string; name: string; remote: string; workspace: string; shared: string[] }): void {
+  applyProject(peer: string, p: { path: string; name: string; named?: number; remote: string; workspace: string; shared: string[] }): void {
     this.reload();
-    const repo = this.repoFor({ path: p.path, name: p.name, remote: p.remote, workspace: p.workspace, shared: p.shared });
+    const repo = this.repoFor({ path: p.path, name: p.name, named: p.named ?? 0, remote: p.remote, workspace: p.workspace, shared: p.shared });
     if (repo !== null) this.rememberPc(repo, peer, p.path);
   }
 
@@ -397,7 +398,10 @@ export class StoreReplica implements MeshApp {
     return { epoch: hub.epoch, rev: hub.rev(), count: items.length, items: out };
   }
 
-  /** The project a copy goes in: by the same folder, else remote, else name, else a new entry. */
+  /**
+   * The project a copy goes in: by the same folder (as PCs of any system write it: a Windows PC's
+   * `C:\Users\…` in either case and separator), else remote, else name, else a new entry.
+   */
   private repoFor(p: Record<string, unknown>): number | null {
     const path = s(p, "path");
     if (path === "") return null;
@@ -405,12 +409,23 @@ export class StoreReplica implements MeshApp {
     const remote = s(p, "remote");
     // Its PC moved or renamed the folder (foldertrack.ts, `was`: the paths it had): the project here follows it.
     const was = Array.isArray(p.was) ? p.was.filter((x): x is string => typeof x === "string") : [];
-    if (was.length > 0 && !this.repos.some((r) => r.path === path)) {
-      const old = this.repos.find((r) => r.local === null && was.includes(r.path) && !existsSync(r.path));
+    if (was.length > 0 && !this.repos.some((r) => projectpath.samePath(r.path, path))) {
+      const old = this.repos.find((r) => r.local === null && was.some((w) => projectpath.samePath(w, r.path)) && !existsSync(r.path));
       if (old && this.o.store.setRepoPath(old.id, path)) this.repos = this.o.store.repos();
     }
     const found =
-      this.repos.find((r) => r.path === path) ?? this.repos.find((r) => sameRemote(r.remote, remote)) ?? this.repos.find((r) => name !== "" && r.name === name);
+      this.repos.find((r) => r.path === path) ??
+      this.repos.find((r) => projectpath.samePath(r.path, path)) ??
+      this.repos.find((r) => sameRemote(r.remote, remote)) ??
+      this.repos.find((r) => name !== "" && r.name === name);
+    // Renamed on its PC (or on another that told it) after it was here: the latest name wins.
+    const named = typeof p.named === "number" && Number.isFinite(p.named) ? p.named : 0;
+    const rename = (r: Repo) => {
+      if (named > (r.named ?? 0) && name.trim() !== "") {
+        this.o.store.renameRepo(r.id, name.trim(), named);
+        this.repos = this.o.store.repos();
+      }
+    };
     // A project whose folder is another PC's takes the workspace that PC moved it to; one here keeps its own.
     const ws = typeof p.workspace === "string" ? p.workspace : null;
     // Its shares the same way (an older PC sends none: left as they are).
@@ -426,6 +441,7 @@ export class StoreReplica implements MeshApp {
       }
     };
     if (found) {
+      rename(found);
       if (!existsSync(repoDir(found))) {
         if (remote !== "" && found.remote !== remote) {
           this.o.store.setRepoRemote(found.id, remote);
@@ -438,6 +454,8 @@ export class StoreReplica implements MeshApp {
     const id = this.o.store.addRepo(path);
     if (remote !== "") this.o.store.setRepoRemote(id, remote);
     this.repos = this.o.store.repos();
+    const made = this.repos.find((r) => r.id === id);
+    if (made) rename(made);
     if (!existsSync(path)) adopt(id);
     return id;
   }
@@ -449,7 +467,8 @@ export class StoreReplica implements MeshApp {
   private rememberPc(repo: number, peer: string, path: string): void {
     const was = this.o.store.projectPc(repo);
     if (was === peer) return;
-    if (was === "" || this.repos.find((r) => r.id === repo)?.path === path) this.o.store.setProjectPc(repo, peer);
+    const mine = this.repos.find((r) => r.id === repo)?.path;
+    if (was === "" || (mine !== undefined && projectpath.samePath(mine, path))) this.o.store.setProjectPc(repo, peer);
   }
 
   private upsert(peer: string, m: Record<string, unknown>): number | null {

@@ -1,7 +1,7 @@
 import { paths as osPaths } from "@harbor/os";
 import { basename, sep } from "node:path";
 import { statSync } from "node:fs";
-import { type Repo, repoDir, type Store } from "@harbor/store";
+import { projectpath, type Repo, repoDir, type Store } from "@harbor/store";
 import { cloneSame, homeRelative } from "./clone.ts";
 
 /**
@@ -43,7 +43,9 @@ export function folderOf(away: Pick<Repo, "path" | "name" | "remote">, dir: stri
   const base = basename(dir);
   // As paths: on Windows either separator, any case, a trailing "\" or "/".
   const here = dir.replace(sep === "\\" ? /[\\/]+$/ : /\/+$/, "");
-  return base === away.name && osPaths.under(homeRelative(away.path, home, away.name), here) === "";
+  // Its name, or (renamed, or another system's path) its folder's name as Harbor gives it here.
+  const named = base === away.name || base === projectpath.folderName(away.path);
+  return named && osPaths.under(homeRelative(away.path, home, away.name), here) === "";
 }
 
 /** Another PC's project known here only by its copies: its folder isn't on this PC and the mesh says whose it is. */

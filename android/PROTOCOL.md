@@ -1210,6 +1210,11 @@ project is gone.
   id `POST /v1/upload` gave the picked image), `remove` (as the desktop's Remove from Harbor:
   chats out of Harbor, nothing on disk), `snooze` (`until_ms`, or `text` + `off` as a chat's
   snooze, or `wake: true`). `200 {ok}`; `400`/`409 {error}` says why.
+- Rename project: item `rename_project`; the app asks for the name and sends `do` with `act`
+  `rename` and `name` (one line, 1 to 120 characters). `200 {ok, name, said}`. It's the project's
+  name in every PC's sidebar (its folder stays as it is): kept with when it was picked (`at`, ms;
+  `do` takes one too), carried in its chats' JSON (`project.named`) and the workspace cloud's
+  project rows, and sent to the PC whose folder it is; the latest rename wins everywhere.
 - Settle project (0.113): `do` with `act` `settle_project` or `unsettle_project` answers
   `200 {ok, settled}`. Settling settles the project's own unsettled leads too (remembered:
   Unsettle brings back those); a new chat of the PC in it, or a chat of it with newer activity,

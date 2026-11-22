@@ -233,6 +233,28 @@ export class WorkspaceMoves {
     return ok({ ok: true, shared: [...(this.h.store.placement().shared?.repos.get(r.id) ?? [])], notice: sharedNotice(this.h.workspaces().all, ws, on === true) });
   }
 
+  /**
+   * Rename: project `r`'s name in every PC's sidebar, its folder left as it is. It's the latest rename that wins
+   * (`at`, ms; repos.named): kept here, carried in its chats' JSON and the workspace cloud's project rows, and sent to
+   * the PC whose folder it is, whose chats carry it to every copy. That PC being off or older doesn't stop it here.
+   */
+  async renameProject(r: Repo, nameIn: unknown, atIn: unknown, forwarded = false): Promise<Reply> {
+    const name = projectName(nameIn);
+    if (name === null) return err(400, 'send {"name": text}, 1 to 120 characters on one line');
+    const at = typeof atIn === "number" && Number.isFinite(atIn) && atIn > 0 ? atIn : Date.now();
+    // An older rename (forwarded late) doesn't undo a newer one.
+    if (at < (r.named ?? 0)) return ok({ ok: true, name: r.name, said: `It's called ${r.name}` });
+    this.h.store.renameRepo(r.id, name, at);
+    this.touchProject(r);
+    const home = forwarded ? "" : this.projectHome(r);
+    let said = `Renamed to ${name}`;
+    if (home !== "") {
+      const f = await this.h.forward(home, "POST", ["v1", "projects", "do"], { project: r.path, act: "rename", name, at }).catch(() => null);
+      if (f === null || f.status >= 300) said += `; ${this.h.pcName(home)} hears of it when it can`;
+    }
+    return ok({ ok: true, name, said });
+  }
+
   /** `GET /v1/chats/{id}/workspaces` and `POST /v1/chats/{id}/workspace`, or null for another call. */
   async route(call: Call, c: Chat): Promise<Reply | null> {
     const p = call.path;
@@ -249,6 +271,13 @@ export class WorkspaceMoves {
     }
     return null;
   }
+}
+
+/** A project name as Rename takes it: trimmed, one line, 1 to 120 characters; null when it isn't one. */
+export function projectName(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return t === "" || t.length > 120 ? null : t;
 }
 
 export function choiceJson(m: MoveChoice): Json {

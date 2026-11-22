@@ -9,7 +9,7 @@ import { type Act, AddProject, type Disk, type GhList, nameProblem, type Row, ST
 import { cloneProject, createProject, ghRepos, localClones, realDisk } from "./packages/ui/src/addproject.ts";
 import { type ProjectAct, projectMenu } from "./packages/ui/src/logic/projectmenu.ts";
 import { parseSnooze } from "./packages/ui/src/logic/sidebar.ts";
-import { type pins, projectsdir, sidebartree } from "./packages/store/src/index.ts";
+import { type pins, projectpath, projectsdir, sidebartree } from "./packages/store/src/index.ts";
 import { webUrl } from "./packages/agents/src/git.ts";
 import { githubRepo } from "./packages/agents/src/worktree.ts";
 import { choiceJson, shareJson, type WorkspaceMoves } from "./workspacemoves.ts";
@@ -111,7 +111,7 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.LOCK, "lock"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "clean_worktrees", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "pin_account", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_project", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "clean_worktrees", "settle_project", "unsettle_project", "move_workspace", "share_workspace", "move_pc", "pin_account", "remove"];
 /** A pin's name for the project menu's line (pins.ts `PinJson`), null when there is none. */
 const pinLabel = (p: pins.PinJson | null): string | null => p?.label ?? null;
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -367,7 +367,8 @@ export class ProjectsApi {
     if (typeof v === "number") return repos.find((r) => r.id === v) ?? null;
     if (typeof v !== "string" || v === "") return null;
     if (/^\d+$/.test(v)) return repos.find((r) => r.id === Number(v)) ?? null;
-    return repos.find((r) => r.path === v) ?? repos.find((r) => repoDir(r) === v) ?? null;
+    // Another PC names it by its own path for it, of whatever system that is (a Windows PC's in any case or separator).
+    return repos.find((r) => r.path === v) ?? repos.find((r) => repoDir(r) === v) ?? repos.find((r) => projectpath.samePath(r.path, v)) ?? null;
   }
 
   /** The project of a chat, by its id here or its gid. */
@@ -459,6 +460,9 @@ export class ProjectsApi {
       case "share":
         if (!this.h.moves) return err(409, "this Harbor can't share projects with a workspace");
         return this.h.moves.shareProject(r, b.workspace, b.on, forwarded);
+      case "rename":
+        if (!this.h.moves) return err(409, "this Harbor can't rename projects");
+        return this.h.moves.renameProject(r, b.name, b.at, forwarded);
       case "refresh_icon":
       case "website_icon":
       case "choose_icon": {
@@ -525,7 +529,7 @@ export class ProjectsApi {
         return ok({ ok: true, snoozed_until_ms: until * 1000, snoozed_label: sidebartree.snoozeLabel(until, at, off) });
       }
       default:
-        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, clean_worktrees, snooze, settle_project, unsettle_project, workspace, share or remove");
+        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, clean_worktrees, snooze, settle_project, unsettle_project, workspace, share, rename or remove");
     }
   }
 

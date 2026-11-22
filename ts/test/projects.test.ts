@@ -191,7 +191,8 @@ test("the_phones_project_sheet_lists_what_the_desktops_project_menu_does", async
     ["Pull requests", "pr", false, true],
     ["Issues", "circle-dot", false, true],
     ["Open remote", "external", false, true],
-    ["Rename main chat", "", true, true],
+    ["Rename project…", "", true, true],
+    ["Rename main chat", "", false, true],
     ["Settle main chat", "", false, true],
     ["Refresh icon", "", true, true],
     ["Choose icon…", "", false, true],
@@ -213,7 +214,7 @@ test("a_chat_less_project_without_a_remote_still_has_its_menu", async () => {
   const { api: a } = api();
   const m = body(await a.route(call("v1/projects/menu", { project: dir })));
   expect(m.main).toBeNull();
-  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename project…", "Refresh icon", "Choose icon…", "Settle project", "Move to PC…", "Remove from Harbor"]);
 });
 
 test("the_project_sheets_acts_run_on_the_pc", async () => {

@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import type { Item } from "@harbor/store";
+import { type Item, projectpath } from "@harbor/store";
 import { gitText, tildeOf } from "./movepc.ts";
 import { outputWithin, type Spawner } from "./proc.ts";
 import type { Json } from "./wire.ts";
@@ -122,9 +122,12 @@ export function homeRelative(owner: string, home: string, name: string): string 
   let skip: number | null = null;
   if ((second === "home" || second === "Users") && parts.length > 3) skip = 3;
   else if (second === "root" && parts.length > 2) skip = 2;
-  if (skip !== null) return join(home, ...parts.slice(skip));
+  // A part some system can't have in a folder's name (a Linux PC's "a:b" on Windows) is made one every system can.
+  const clean = (x: string): string => (/[<>:"\\|?*\u0000-\u001f]/.test(x) ? projectpath.folderName(x) : x);
+  if (skip !== null) return join(home, ...parts.slice(skip).map(clean));
   const last = segs[segs.length - 1];
-  return join(home, last === undefined || last === "" ? name : last);
+  // Never another system's whole path as one folder's name.
+  return join(home, last === undefined || last === "" ? projectpath.folderName(name) : clean(last));
 }
 
 /** This PC's folder for `remote` among its projects' folders and remotes, if one is here. */

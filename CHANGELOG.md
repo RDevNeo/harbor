@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Rename project…: the project row's menu (desktop, and the phone's project sheet) gives a project a name of its
+  own, in every PC's sidebar; its folder stays as it is. The latest rename wins on every PC: it's carried with the
+  project in its chats' data and the workspace cloud, and sent to the PC that holds the folder (that PC being off
+  or older doesn't stop it here). Linux, macOS, Windows and the phone app.
+
+### Fixed
+- A project from a Windows PC is no longer named after its whole path (`C:\Users\…\app`) on Linux and macOS: it's
+  "app", as on Windows, and cloned into a folder of that name (made free with -2, -3… when taken), never one named
+  after the whole path, where Bun ("CouldntReadCurrentDirectory") and Node ("ERR_INVALID_MODULE_SPECIFIER") can't
+  work. One already named and cloned that way gets the plain name, and its folder is renamed in place once no turn
+  runs in it and followed like a folder moved by hand (its chats, sessions, worktrees and settings go with it). A
+  project's path from another PC is matched whatever system wrote it (either separator, a Windows path in any case),
+  so one project doesn't become two. Every platform; the folder rename only applies on Linux and macOS, as Windows
+  can't have such a folder.
+
 ## [0.188.2] - 2026-11-22
 
 ### Changed

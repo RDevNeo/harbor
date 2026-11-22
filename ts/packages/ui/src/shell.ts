@@ -52,7 +52,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ModalOpacity } from "./modalopacity.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
-import { PIN_LABEL, projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
+import { PIN_LABEL, projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, RENAME_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
 import { chipPin, type PinAct, pinNotice, pinRows } from "./logic/pinmenu.ts";
 import { agoLabel, carriedProjects, chatIdle, dragChat, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
@@ -4962,6 +4962,7 @@ export class Shell {
       prs: () => this.pages.openPrs(id),
       issues: () => this.pages.openIssues(id),
       remote: () => remote !== null && this.openExternal(remote),
+      rename_project: () => this.renameProjectDialog(id),
       rename_main: () => main !== null && this.renameDialog(main),
       settle_main: () => main !== null && this.setSettled(main, true),
       refresh_icon: () => this.loadIcon(id, true),
@@ -5356,6 +5357,32 @@ export class Shell {
     this.dialogAction = act;
     this.renaming = null;
     w.dialog_id = "dialog";
+  }
+
+  /** Rename project…: its name in every PC's sidebar (`POST /v1/projects/do` act `rename`, workspacemoves.ts); its folder stays. */
+  private renameProjectDialog(id: number): void {
+    const r = this.data.repo(id);
+    if (!r) return;
+    this.dialog(RENAME_PROJECT.title, "Its name in the sidebar, on every PC. Its folder keeps its own.", RENAME_PROJECT.ok, false, r.name, (ok, input) => {
+      const name = input.trim();
+      if (!ok || name === "" || name === r.name) return;
+      const call = this.hub.call;
+      if (!call) {
+        this.data.store.renameRepo(id, name);
+        this.data.reload();
+        this.refreshAll();
+        return;
+      }
+      void call("POST", "v1/projects/do", {}, { project: id, act: "rename", name })
+        .catch((e: unknown) => ({ status: 500, body: { error: e instanceof Error ? e.message : String(e) } }))
+        .then((res) => {
+          const b = typeof res.body === "object" && res.body !== null ? (res.body as Record<string, unknown>) : {};
+          if (res.status >= 300) this.toast(`Couldn't rename it: ${typeof b.error === "string" ? b.error : "it didn't work"}`);
+          else if (typeof b.said === "string" && b.said.includes(";")) this.toast(b.said);
+          this.data.reload();
+          this.refreshAll();
+        });
+    });
   }
 
   private renameDialog(id: number): void {

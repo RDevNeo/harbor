@@ -23,3 +23,4 @@ export { ByteLru, type ByteLruOptions, stringBytes } from "./bytelru.ts";
 export * as stallwatch from "./stallwatch.ts";
 export * as projectsdir from "./projectsdir.ts";
 export * as pins from "./pins.ts";
+export * as projectpath from "./projectpath.ts";

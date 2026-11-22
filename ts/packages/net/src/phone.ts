@@ -1,7 +1,7 @@
 import { paths as osPaths } from "@harbor/os";
 import { allowedAccounts, checkRun, isRunError, lockLeads } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
-import { blankChat, githead, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
+import { blankChat, githead, itemHash, liveSince, mention, parseAccess, projectpath, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftEmpty, draftJson, resolveUpload, type Hub } from "./hub.ts";
@@ -1214,7 +1214,11 @@ export class PhoneRoutes {
       const p = body.project as Record<string, unknown>;
       const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
       const [path, name, remote] = [str("path"), str("name"), str("remote")];
-      const found = repos.find((r) => r.path === path) ?? repos.find((r) => sameRemote(r.remote, remote)) ?? repos.find((r) => name !== "" && r.name === name);
+      const found =
+        repos.find((r) => r.path === path) ??
+        repos.find((r) => path !== "" && projectpath.samePath(r.path, path)) ??
+        repos.find((r) => sameRemote(r.remote, remote)) ??
+        repos.find((r) => name !== "" && r.name === name);
       if (found) {
         if (!existsSync(repoDir(found)) && remote !== "" && found.remote !== remote) this.d.store.setRepoRemote(found.id, remote);
         return { repo: found.id };
@@ -1231,7 +1235,7 @@ export class PhoneRoutes {
     }
     if (pref === undefined || pref === null) return { repo: null };
     if (typeof pref === "string") {
-      const r = repos.find((x) => x.path === pref);
+      const r = repos.find((x) => x.path === pref) ?? repos.find((x) => projectpath.samePath(x.path, pref));
       return r ? { repo: r.id } : err(400, "no such project");
     }
     const r = typeof pref === "number" && Number.isInteger(pref) ? repos.find((x) => x.id === pref) : undefined;

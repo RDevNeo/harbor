@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, openSync, readdirSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { type Item, digest, digestOf, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
 import { dataDir, newUuid, now, privateDir } from "./paths.ts";
 import { DROPPED_KEY, parseDropped, takenKey, withDropped } from "./dropped.ts";
 import { changed as settingChanged } from "./settingsync.ts";
 import { SHARED, changed as sharedChanged } from "./wssettings.ts";
+import { pathTail } from "./projectpath.ts";
 
 const SHARED_KEYS: ReadonlySet<string> = new Set(SHARED);
 /** How long `Store.setLater` holds a value before writing it. */
@@ -21,6 +22,8 @@ export interface Repo {
   remote: string;
   /** This PC's own folder for a project another PC shares; null: `path`. */
   local: string | null;
+  /** When someone renamed it (ms; 0: still its folder's name). The latest rename wins on every PC (meshstore.ts). */
+  named?: number;
 }
 
 /** Where Move to workspace… put chats and projects (`Store.placement`): only those it moved. */
@@ -274,6 +277,8 @@ function migrate(db: Database): void {
   if (!has("chats", "shared")) db.exec("ALTER TABLE chats ADD COLUMN shared TEXT NOT NULL DEFAULT '';");
   if (!has("chats", "project_shared")) db.exec("ALTER TABLE chats ADD COLUMN project_shared TEXT NOT NULL DEFAULT '';");
   if (!has("repos", "shared")) db.exec("ALTER TABLE repos ADD COLUMN shared TEXT NOT NULL DEFAULT '';");
+  // Rename: when the project's name was picked by someone (ms), 0 while it's its folder's.
+  if (!has("repos", "named")) db.exec("ALTER TABLE repos ADD COLUMN named INTEGER NOT NULL DEFAULT 0;");
 }
 
 function chatFrom(r: Row): Chat {
@@ -377,7 +382,7 @@ export class Store {
   }
 
   repos(): Repo[] {
-    const rows = this.db.query("SELECT id, path, name, sort, remote, local FROM repos ORDER BY sort, name COLLATE NOCASE").all() as Row[];
+    const rows = this.db.query("SELECT id, path, name, sort, remote, local, named FROM repos ORDER BY sort, name COLLATE NOCASE").all() as Row[];
     return rows.map((r) => ({
       id: num(r.id),
       path: text(r.path),
@@ -385,11 +390,13 @@ export class Store {
       sort: num(r.sort),
       remote: text(r.remote),
       local: text(r.local) === "" ? null : text(r.local),
+      named: num(r.named),
     }));
   }
 
   addRepo(path: string): number {
-    const name = basename(path);
+    // Its folder's name, read as the path's own system writes it: a Windows PC's project is "app" here too, not its whole path.
+    const name = pathTail(path) || path;
     this.db
       .query("INSERT OR IGNORE INTO repos(path, name, sort) VALUES(?1, ?2, (SELECT COALESCE(MAX(sort), 0) + 1 FROM repos))")
       .run(path, name);
@@ -437,6 +444,11 @@ export class Store {
   /** The project's name in the sidebar (its folder's name when added). */
   setRepoName(id: number, name: string): void {
     this.db.query("UPDATE repos SET name=?2 WHERE id=?1").run(id, name);
+  }
+
+  /** Rename: the name someone picked for the project, at `at` (ms): the latest one wins on every PC (meshstore.ts). */
+  renameRepo(id: number, name: string, at: number = Date.now()): void {
+    this.db.query("UPDATE repos SET name=?2, named=?3 WHERE id=?1").run(id, name, at);
   }
 
   /** The project's folder moved (foldertrack.ts): false when another project has that path already. */

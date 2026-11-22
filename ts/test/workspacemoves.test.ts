@@ -188,6 +188,32 @@ test("a_project_is_shared_where_its_folder_is_and_its_chats_get_its_shares", asy
   expect(store.placement().shared?.repos.get(away)).toEqual(["org_a"]);
 }, SLOW);
 
+test("a_project_is_renamed_here_and_where_its_folder_is_the_latest_rename_wins", async () => {
+  const { store, moves, sent, touched } = rig();
+  const here = store.addRepo(tmp);
+  const a = store.createChat(blankChat({ repoId: here, title: "a", role: "lead" }));
+  const repo = () => store.repos().find((x) => x.id === here)!;
+  expect((await moves.renameProject(repo(), "  ", undefined)).status).toBe(400);
+  expect((await moves.renameProject(repo(), "x".repeat(121), undefined)).status).toBe(400);
+  const r = await moves.renameProject(repo(), " Marketing\n site ", 1000);
+  expect(r.body).toMatchObject({ ok: true, name: "Marketing site", said: "Renamed to Marketing site" });
+  expect(repo()).toMatchObject({ name: "Marketing site", named: 1000 });
+  expect(touched).toContain(a.id);
+  expect(sent).toEqual([]);
+  // An older rename, forwarded late, doesn't undo it.
+  await moves.renameProject(repo(), "Old", 500, true);
+  expect(repo().name).toBe("Marketing site");
+  // A project whose folder is another PC's: renamed here at once, and there too.
+  const away = store.addRepo("C:\\Users\\sam\\Projects\\crm");
+  store.createChat(blankChat({ repoId: away, title: "copy", role: "lead", home: "pc:other", homeId: 9 }));
+  const there = store.repos().find((x) => x.id === away)!;
+  expect(there.name).toBe("crm");
+  const f = await moves.renameProject(there, "Crm", 2000);
+  expect(f.body).toMatchObject({ ok: true, name: "Crm" });
+  expect(store.repos().find((x) => x.id === away)?.name).toBe("Crm");
+  expect(sent).toEqual([{ peer: "pc:other", method: "POST", path: ["v1", "projects", "do"], body: { project: "C:\\Users\\sam\\Projects\\crm", act: "rename", name: "Crm", at: 2000 } }]);
+}, SLOW);
+
 test("a_project_whose_folder_is_another_pcs_is_in_that_pcs_workspace", () => {
   const { store, moves } = rig();
   // Its chats' copies say which PC; with none left, the PC its copies last came from.

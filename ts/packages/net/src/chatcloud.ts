@@ -45,6 +45,8 @@ export interface CloudProject {
   /** Its folder on the PC that publishes it. */
   path: string;
   name: string;
+  /** When its name was picked by someone (Rename, ms); 0 or left out: its folder's. */
+  named?: number;
   remote: string;
   branch: string;
   workspace: string;
@@ -1213,6 +1215,7 @@ export class ChatCloud {
     const p: CloudProject = {
       path: v.path,
       name: str(v, "name"),
+      named: typeof v.named === "number" && Number.isFinite(v.named) ? v.named : 0,
       remote: str(v, "remote"),
       branch: str(v, "branch"),
       workspace: str(v, "workspace"),

@@ -6,7 +6,7 @@
 // fetches them, finds or clones the project, puts the work in place without losing anything here, writes the session
 // where its provider looks for it with every path moved to this PC's folders, and resumes it. When something can't
 // come, the chat still goes on, with a new session holding the conversation so far, and the notice says why.
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { platform } from "./packages/os/src/index.ts";
@@ -36,7 +36,7 @@ import {
   type WorkIndex,
   workLines,
 } from "./packages/net/src/index.ts";
-import { type Chat, home, newUuid, projectsdir, repoDir, type Store } from "./packages/store/src/index.ts";
+import { type Chat, home, newUuid, projectpath, projectsdir, repoDir, type Store } from "./packages/store/src/index.ts";
 
 /** A Claude chat with no session id yet (a copy that never ran) gets one before its first turn here. */
 export function freshSession(store: Store, e: Engine, id: number): void {
@@ -53,6 +53,16 @@ const CHAIN = 8;
 const isDir = (p: string): boolean => {
   try {
     return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Nothing at `p`, or an empty folder: a clone or the carried files can go there. */
+const emptyOrMissing = (p: string): boolean => {
+  if (!existsSync(p)) return true;
+  try {
+    return statSync(p).isDirectory() && readdirSync(p).length === 0;
   } catch {
     return false;
   }
@@ -294,9 +304,13 @@ export class ContinueHere {
         setLocal(found);
       }
     }
+    // Named after its folder there, as every system can name one (a Windows PC's C:\Users\sam\app is "app"), and
+    // beside what's in the Projects folder already rather than into it.
     const want = (): string => {
       const chosen = projectsdir.chosen(this.h.store, home());
-      return chosen !== null ? join(chosen, r.name) : homeRelative(r.path, home(), r.name);
+      const at = chosen !== null ? join(chosen, projectpath.folderName(r.path)) : homeRelative(r.path, home(), r.name);
+      const parent = dirname(at);
+      return join(parent, projectpath.freeName(basename(at), (n) => !emptyOrMissing(join(parent, n))));
     };
     try {
       if (base === null && w.kind === "git" && cloneable(remote)) {

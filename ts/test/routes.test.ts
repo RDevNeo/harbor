@@ -257,7 +257,7 @@ test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
   const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
   expect(st).toBe(200);
   expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
-  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Share with workspace…", "Settle project", "Keep on one account…", "Move to PC…", "Remove from Harbor"]);
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename project…", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Share with workspace…", "Settle project", "Keep on one account…", "Move to PC…", "Remove from Harbor"]);
   // Keep on one account… (pins.ts): not pinned yet, with the accounts to pick from.
   expect(menu.pin).toBeNull();
   expect(Array.isArray(menu.pin_choices)).toBe(true);

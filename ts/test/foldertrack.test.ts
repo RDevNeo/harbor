@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { type Chat, Store } from "../packages/store/src/index.ts";
 import { Engine, foldermove as fm, movechat, worktree as wt } from "../packages/agents/src/index.ts";
 import { FolderTracker } from "../foldertrack.ts";
@@ -219,4 +219,61 @@ test("a chat without a project runs in the Projects folder's chats folder once o
     if (h === undefined) delete process.env.HOME;
     else process.env.HOME = h;
   }
+});
+
+// A folder name with "\" and a drive's ":" exists only where Harbor made it by mistake: Linux and macOS.
+const posix = sep === "/";
+
+test.skipIf(!posix)("a Windows PC's project cloned under its whole path: renamed to its last part once no turn runs in it", async () => {
+  const x = setup();
+  const winPath = "C:\\Users\\sam\\Projects\\crm";
+  // As an older Harbor left it: named after the whole path, cloned into a folder of that name.
+  const id = x.store.addRepo(winPath);
+  expect(x.store.repos().find((r) => r.id === id)?.name).toBe("crm");
+  x.store.setRepoName(id, winPath);
+  const bad = join(x.projects, winPath);
+  mkdirSync(bad);
+  git(bad, "init", "-q", "-b", "main");
+  writeFileSync(join(bad, "package.json"), "{}");
+  x.store.setRepoLocal(id, bad);
+  x.store.set(`carry_chain:${bad}`, "[]");
+  // "crm" is taken by something else: it goes beside it.
+  mkdirSync(join(x.projects, "crm"));
+  const c = chat(x.store, id);
+  x.e.reload();
+  const sessions = movechat.sessionDir(x.cfg, bad);
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, `${c.sessionId}.jsonl`), "{}\n");
+  // A turn runs in it: the name is fixed, the folder waits.
+  const running = x.e.running.bind(x.e);
+  x.e.running = (cid: number) => cid === c.id || running(cid);
+  expect(await x.t.check()).toEqual([]);
+  expect(existsSync(bad)).toBe(true);
+  expect(x.store.repos().find((r) => r.id === id)?.name).toBe("crm");
+  // The turn ended: renamed in place, and everything Harbor knew of it follows.
+  x.e.running = running;
+  const to = join(x.projects, "crm-2");
+  expect(await x.t.check()).toEqual([{ from: bad, to, kind: "project" }]);
+  expect(existsSync(bad)).toBe(false);
+  expect(existsSync(join(to, "package.json"))).toBe(true);
+  const r = x.store.repos().find((r) => r.id === id);
+  expect(r?.local).toBe(to);
+  // Its path stays the Windows PC's own: that's how the mesh knows it.
+  expect(r?.path).toBe(winPath);
+  expect(x.e.chatCwd(x.e.chat(c.id) as Chat)).toBe(to);
+  expect(x.store.get(`carry_chain:${to}`)).toBe("[]");
+  expect(x.store.get(`carry_chain:${bad}`)).toBeNull();
+  expect(existsSync(join(movechat.sessionDir(x.cfg, to), `${c.sessionId}.jsonl`))).toBe(true);
+  expect(notices(x.e, c.id)).toEqual([`Project moved to ${wt.tilde(to)}`]);
+  expect(await x.t.check()).toEqual([]);
+});
+
+test("a name someone picked stays, even one that looks like a path", async () => {
+  const x = setup();
+  const id = x.store.addRepo("C:\\Users\\sam\\Projects\\web");
+  x.store.renameRepo(id, "C:\\web", 5);
+  // Another system's path is never followed here: on Linux it would read as a folder under Harbor's own.
+  if (posix) expect(x.t.followed().some((f) => f.path.includes("\\"))).toBe(false);
+  await x.t.check();
+  expect(x.store.repos().find((r) => r.id === id)?.name).toBe("C:\\web");
 });

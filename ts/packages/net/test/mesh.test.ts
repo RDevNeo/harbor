@@ -352,6 +352,45 @@ describe("mesh.rs", () => {
     home.close();
   }, SLOW);
 
+  test("a Windows PC's project: named after its folder, one project however that PC writes its path", async () => {
+    const store = Store.openAt(join(tmp, "winpath.db"));
+    const replica = new StoreReplica({ store, hub: new Hub([], 0), version: "t" });
+    const copy = (id: number, path: string, project: Record<string, unknown> = {}) => ({ id, gid: `w${id}`, title: "t", role: "lead", project: { path, name: "crm", remote: "", ...project } });
+    await replica.applyChats("pc:win", 1, { chats: [copy(1, "C:\\Users\\Sam\\Projects\\crm")] });
+    const made = store.repos().filter((r) => r.path.endsWith("crm"));
+    expect(made.map((r) => r.name)).toEqual(["crm"]);
+    // Another chat of it, its path in other case and separators (an older Harbor, Git Bash): the same project.
+    await replica.applyChats("pc:win", 1, { chats: [copy(1, "C:\\Users\\Sam\\Projects\\crm"), copy(2, "c:/users/sam/projects/crm/")] });
+    const repos = store.repos().filter((r) => r.path.toLowerCase().endsWith("crm") || r.path.endsWith("crm/"));
+    expect(repos.length).toBe(1);
+    expect(new Set(store.chats().map((c) => c.repoId))).toEqual(new Set([made[0]?.id ?? null]));
+    store.close();
+  }, SLOW);
+
+  test("Rename goes with the chat JSON: the latest rename wins on every PC, an older one doesn't undo it", async () => {
+    const home = Store.openAt(join(tmp, "rename-home.db"));
+    const repo = home.addRepo("/nowhere/home/site");
+    home.createChat(blankChat({ repoId: repo, title: "lead", role: "lead" }));
+    home.renameRepo(repo, "Marketing site", 2000);
+    const sent = (await new StoreReplica({ store: home, hub: new Hub([], 0), version: "t" }).chats(0, true)).chats as { project: { name: string; named: number } }[];
+    expect(sent[0]?.project).toMatchObject({ name: "Marketing site", named: 2000 });
+    const copy = Store.openAt(join(tmp, "rename-copy.db"));
+    const mine = copy.addRepo("/nowhere/home/site");
+    expect(copy.repos()[0]?.name).toBe("site");
+    const replica = new StoreReplica({ store: copy, hub: new Hub([], 0), version: "t" });
+    await replica.applyChats("pc:home", 1, { full: true, chats: sent as unknown as Json[] });
+    expect(copy.repos().find((r) => r.id === mine)).toMatchObject({ name: "Marketing site", named: 2000 });
+    // Renamed here since: the home PC's older name doesn't come back.
+    copy.renameRepo(mine, "Site", 3000);
+    await replica.applyChats("pc:home", 2, { full: true, chats: sent as unknown as Json[] });
+    expect(copy.repos().find((r) => r.id === mine)?.name).toBe("Site");
+    // A name never picked (0) doesn't replace one that was.
+    await replica.applyChats("pc:home", 3, { full: true, chats: sent.map((c) => ({ ...c, project: { ...c.project, name: "site", named: 0 } })) as unknown as Json[] });
+    expect(copy.repos().find((r) => r.id === mine)?.name).toBe("Site");
+    home.close();
+    copy.close();
+  }, SLOW);
+
   test("a project made from another PC's chats remembers that PC, even once no copy is left", async () => {
     const store = Store.openAt(join(tmp, "place.db"));
     const replica = new StoreReplica({ store, hub: new Hub([], 0), version: "t" });

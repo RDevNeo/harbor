@@ -4,6 +4,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
 import org.json.JSONArray;
@@ -18,7 +20,7 @@ import java.util.List;
 
 /** A project's sheet: what the desktop's project row offers, in its order and words. The row's
  *  own buttons first (New chat in this project, Snooze), then its right-click menu (Open
- *  terminal, Pull requests, Issues, Open remote, Rename/Settle main chat, the icon, Move to PC…,
+ *  terminal, Pull requests, Issues, Open remote, Rename project…, Rename/Settle main chat, the icon, Move to PC…,
  *  Remove from Harbor). The hub lists them (`POST /v1/projects/menu`, logic/projectmenu.ts, the desktop's own
  *  list) and runs what happens on the PC (`POST /v1/projects/do`). */
 final class ProjectMenu {
@@ -119,6 +121,9 @@ final class ProjectMenu {
                 try { a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception e) { Ui.copy(a, url); }
                 break;
             }
+            case "rename_project":
+                renameProject(a, hub, pid, m, after);
+                break;
             case "rename_main":
                 if (main != null) Chats.rename(a, hub, main, after);
                 break;
@@ -175,6 +180,25 @@ final class ProjectMenu {
             default:
                 break;
         }
+    }
+
+    /** Rename project…: its name in every PC's sidebar (`do` act `rename`); its folder stays as it is. */
+    private static void renameProject(Base a, Hub hub, String pid, JSONObject m, Runnable after) {
+        String was = m.optString("name");
+        EditText e = Ui.input(a, "Name", false);
+        e.setText(was);
+        e.setSelectAllOnFocus(true);
+        FrameLayout f = new FrameLayout(a);
+        f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        f.addView(e);
+        Ui.dialog(a).setTitle("Rename project").setView(f).setNegativeButton("Cancel", null)
+                .setPositiveButton("Rename", (d, w) -> {
+                    String t = e.getText().toString().trim();
+                    if (t.isEmpty() || t.equals(was)) return;
+                    Ui.bg(a, () -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "rename").put("name", t)),
+                            r -> { Ui.toast(a, r.optString("said", "Renamed")); after.run(); });
+                }).show();
+        e.requestFocus();
     }
 
     /** Not an account id: the chooser's Unpin. */
