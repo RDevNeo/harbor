@@ -15,6 +15,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   (Android 12+ silently once "Install unknown apps" is allowed), then code-only updates resume. Desktop: no
   system-wide `harbor://` handler yet (links inside Harbor's window already open there), so only the PC's
   resolver and the menu item below.
+- A chat link may carry context for the chat: `harbor://chat/<id>?pc=<PC>&context=<text>&from=<label>` (each value
+  `encodeURIComponent`'d; at most 4 KB of UTF-8; control characters but newline and tab dropped). The chat shows a
+  folded "Context from <app>" card (desktop and phone; tap or click to read it), named after the app Android says
+  opened the link, else the link's `from` marked unverified, else "another app". It starts no turn and never goes
+  into the composer: the agent gets it with the user's next message, quoted line by line and marked as written by
+  that app, not by the user, and as untrusted data. A second context before the user writes replaces the first. A
+  context that is too long or can't be read is left out with a short notice; the chat still opens. Only for a chat
+  that exists, kept on the chat's own PC (new `POST /v1/chats/{id}/context`).
 - Copy link in a chat's menu (desktop: right-click a chat; phone: the chat's menu): the chat's `harbor://chat/…`
   link, to open it from another app or paste it in a chat.
 

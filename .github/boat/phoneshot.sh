@@ -237,7 +237,10 @@ for st in "$@"; do
     key:*) ad input keyevent "KEYCODE_${st#key:}" ;;
     broadcast:*) ad am broadcast -a "${st#broadcast:}" -p "$pkg" >/dev/null ;;
     # A chat link from another app: CHAT[@PC], CHAT a rig chat's name (its gid) or a gid as it is.
-    view:*) v=${st#view:}; c=${v%%@*}; g=$(gid "$c"); u="harbor://chat/${g:-$c}"; [ "$v" = "$c" ] || u="$u?pc=${v#*@}"
+    # ~BASE64 after it: more of the query (scripts/boat/phoneshot --context/--from), percent-encoded.
+    view:*) v=${st#view:}; q=""; case "$v" in *~*) q=$(printf %s "${v#*~}" | base64 -d); v=${v%%~*} ;; esac
+      c=${v%%@*}; g=$(gid "$c"); u="harbor://chat/${g:-$c}"; [ "$v" = "$c" ] || u="$u?pc=${v#*@}"
+      [ -z "$q" ] || { case "$u" in *\?*) u="$u&$q" ;; *) u="$u?$q" ;; esac; }
       echo "view $u"; ad am start -W -a android.intent.action.VIEW -d "'$u'" >/dev/null || { echo "could not open $u"; fail=1; break; } ;;
     wait:*) sleep "${st#wait:}" ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;

@@ -45,6 +45,8 @@ const utcOffset = (at: number): number => -new Date(at * 1000).getTimezoneOffset
 
 /** `@harbor/agents`' Engine as far as the phone routes use it. */
 export interface PhoneEngine {
+  /** Context another app handed this chat with its link (agents linkcontext.ts): null when kept, else why not. */
+  linkContext?(id: number, text: unknown, src: { app: { label: string; pkg: string } | null; from: string }): string | null;
   running(id: number): boolean;
   runningSince(id: number): number | null;
   transcript(id: number): { items: Item[] };
@@ -919,6 +921,20 @@ export class PhoneRoutes {
     return { chats: this.chats(), peers: m.on ? [...m.peers.values()].map((p) => ({ name: p.name, online: p.online })) : [], me: m.me.name === "" ? hostname() : m.me.name };
   }
 
+  /** POST /v1/chats/{id}/context `{text, app: {label, package} | null, from}`: the chat shows it folded and the
+   *  agent gets it with the user's next message (agents linkcontext.ts); it starts nothing. 400 with why when the
+   *  text is empty or over 4 KB. */
+  private linkContext(c: Chat, body: Record<string, unknown>): Reply {
+    const e = this.d.engine;
+    if (!e?.linkContext) return err(503, "agents aren't available in this build");
+    const a = body.app;
+    const app = typeof a === "object" && a !== null && !Array.isArray(a) ? { label: String((a as Record<string, unknown>).label ?? ""), pkg: String((a as Record<string, unknown>).package ?? "") } : null;
+    const why = e.linkContext(c.id, body.text, { app, from: typeof body.from === "string" ? body.from : "" });
+    if (why !== null) return err(why === "no such chat" ? 404 : 400, why);
+    this.d.hub.touch(c.id, true);
+    return ok({ ok: true });
+  }
+
   /** GET /v1/chat_link?url=: where chat link `url` leads, as a reply's `chat_links` entry (`{title, chat, missing}`,
    *  `chat` in the caller's ids): the phone opens a link another app or a browser handed it with this. */
   chatLink(url: string, global: boolean): Json {
@@ -1008,6 +1024,12 @@ export class PhoneRoutes {
     // A chat syncing (its newest version on its way, handed on or taken over): no change races the sync.
     const syncing = changesSync(m, p) ? (this.d.syncing?.(found.id) ?? null) : null;
     if (syncing !== null) return syncingReply(syncing);
+    // Context another app handed the phone with this chat's link: kept on the chat's own PC, for its next message.
+    if (m === "POST" && p.length === 4 && p[3] === "context") {
+      if (found.home === "") return this.linkContext(found, body);
+      if (!this.d.hub.mesh.on || this.d.hub.mesh.peer(found.home)?.online !== true) return err(503, `${this.d.hub.mesh.nameOf(found.home)} is offline`);
+      return this.forward(found, m, p, body, sender, call.global, who);
+    }
     // A send the phone repeats (it never got the answer) is answered, not run again; a copy's
     // send goes on to its home PC with the same client id, which does the same there.
     if (m === "POST" && p.length === 4 && p[3] === "send") {

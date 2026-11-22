@@ -110,6 +110,8 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   // The Projects folder (projectsdir.ts) and the folder each chat without a project runs in.
   ["projects_dir", D],
   ["chat_dir:", D],
+  // Context another app handed a chat with its link, waiting for its next message (agents linkcontext.ts).
+  ["link_context:", D],
   // Folders Harbor follows when they're moved or renamed (foldertrack.ts): what each is, by path.
   ["folder_id:", D],
   // A project's paths before its folder moved, told to other PCs (meshstore.ts `was`).

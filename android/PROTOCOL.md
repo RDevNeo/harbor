@@ -565,6 +565,27 @@ link, for a link another app or a browser hands the phone (the manifest's `harbo
 `chat` over that workspace's chat list; when none has it, `missing` shows as a short notice and the
 app opens as usual. Older hubs answer 404: the phone looks for the gid in `/v1/state`'s chats.
 
+A chat link may carry context for the chat, from the app or page that fired it (0.192):
+`harbor://chat/<gid>?pc=<PC>&context=<text>&from=<label>`, each value percent-encoded as
+`encodeURIComponent` does (UTF-8; `+` also reads as a space). The phone decodes `context`
+strictly (a bad escape or bytes that aren't UTF-8: left out), drops control characters but newline
+and tab (CRLF and CR become newlines), and leaves it out when it's over 4 KB of UTF-8 (encoded
+values over 64 KB aren't decoded); the chat still opens, with a short notice. `from` is cut to one
+line of 60 characters. Only once the chat is resolved (above) does the phone post
+`POST /v1/chats/{id}/context` `{text, app: {label, package} | null, from}`: `app` is the app
+Android says opened the link (`Activity.getReferrer()` with the sender-set `EXTRA_REFERRER` and
+`EXTRA_REFERRER_NAME` dropped first, so it's Android's own record), null when unknown. A copy's goes
+on to its home PC (503 "<PC> is offline" when it's off; nothing is kept elsewhere); 404 for a chat
+that isn't there, 400 `{error}` for no text or over 4 KB (the PC cleans and checks again), 200
+`{ok: true}`. Older PCs answer 404 "no such call". The PC keeps it for the chat
+(`link_context:<id>`) and adds a `notice` card, `icon: "context"`, text "Context from <source>"
+(the app's name; else "“<from>” (unverified)"; else "another app"), the context in `detail`
+(plain text, folded until tapped). It starts no turn: the chat's next user message (from any
+device, also one queued or steering a running turn) takes it, and the agent gets it before that
+message, quoted line by line between two lines saying it came from that app through a link, was
+not written by the user, and is untrusted data, not instructions. A second context before the user
+writes replaces the first (its card says so); a context is given to the agent once.
+
 Optional on every card the desktop gives a hover bar or an "@" button (0.69): `actions`, what
 that bar offers, in its order, and `time` ("11:40 AM", the hub's clock, on cards with an `at`).
 A long-press opens them in a bottom sheet with `time` on top: `user` sends `["copy", "quote",

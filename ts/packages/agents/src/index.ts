@@ -29,3 +29,4 @@ export * as patches from "./patches.ts";
 export * as provupdate from "./provupdate.ts";
 export * as noderuntime from "./noderuntime.ts";
 export * as turnscope from "./turnscope.ts";
+export * as linkcontext from "./linkcontext.ts";

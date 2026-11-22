@@ -51,6 +51,8 @@ export interface Queued {
   editing: string;
   /** Sent by another chat's agent; the user's own have none. */
   agent?: FromAgent;
+  /** Context another app handed the chat with its link (linkcontext.ts `contextBlock`), taken by this message. */
+  context?: string;
 }
 
 /** Where a message was written, for the agent (which otherwise takes the user to be at this PC).
@@ -69,8 +71,10 @@ export function queuedPrompt(q: Queued, said: string, mentions: string): string 
   if (q.agent) return `${q.agent.tag}${q.text}`;
   const from = sentFrom(q.sender, q.device, false, undefined, q.via);
   // A slash command only runs at the start: where it came from follows it.
+  const ctx = q.context ?? "";
+  if (said.startsWith("/") && ctx !== "") return `${said}\n\n${ctx}${mentions}${from}`.trimEnd();
   if (said.startsWith("/") && from !== "") return `${mentions}${said}\n\n${from.trimEnd()}`;
-  return `${from}${mentions}${said}`;
+  return `${from}${ctx}${mentions}${said}`;
 }
 
 export function queuedItem(q: Queued): Item {

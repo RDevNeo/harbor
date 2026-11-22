@@ -2,6 +2,7 @@ package dev.harbor.app;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
@@ -88,9 +89,10 @@ public class Hubs extends Base {
         if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return false;
         if ("harbor".equalsIgnoreCase(i.getData().getScheme()) && "chat".equalsIgnoreCase(i.getData().getHost())) {
             ChatLink link = ChatLink.parse(i.getDataString());
+            String[] app = link == null ? null : referrerApp(i);
             setIntent(new Intent(this, Hubs.class));
             if (link == null) { Ui.toast(this, "That isn't a Harbor chat link"); return false; }
-            keepLink(this, link);
+            keepLink(this, i.getDataString(), app);
             openPending();
             return true;
         }
@@ -259,9 +261,31 @@ public class Hubs extends Base {
      *  so a sign-in much later doesn't jump to a chat nobody asked for any more. */
     private static final long PENDING_FOR = 15 * 60_000;
 
-    /** Keeps `link` until it can open (openPending takes it). */
-    static void keepLink(Context c, ChatLink link) {
-        Ui.prefs(c).edit().putString("chat_link", link.url()).putLong("chat_link_at", System.currentTimeMillis()).apply();
+    /** The app that opened link intent `i`, as Android saw it: {name, package}, null when unknown.
+     *  Activity.getReferrer() returns what the sender wrote into the intent (EXTRA_REFERRER, which
+     *  anyone can set) before what Android knows, so those extras are dropped first. An app that
+     *  starts one of ours is visible to us (package visibility), so its name can be read. */
+    private String[] referrerApp(Intent i) {
+        Intent bare = new Intent(i);
+        bare.removeExtra(Intent.EXTRA_REFERRER);
+        bare.removeExtra(Intent.EXTRA_REFERRER_NAME);
+        setIntent(bare);
+        Uri r = getReferrer();
+        if (r == null || !"android-app".equals(r.getScheme()) || r.getHost() == null || r.getHost().isEmpty()) return null;
+        String pkg = r.getHost();
+        if (pkg.equals(getPackageName())) return null;
+        String label = "";
+        try {
+            PackageManager pm = getPackageManager();
+            label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
+        } catch (Exception ignored) { }
+        return new String[] { label, pkg };
+    }
+
+    /** Keeps link `raw` (and the app that opened it, null unknown) until it can open (openPending takes it). */
+    static void keepLink(Context c, String raw, String[] app) {
+        Ui.prefs(c).edit().putString("chat_link", raw).putLong("chat_link_at", System.currentTimeMillis())
+                .putString("chat_link_app", app == null ? "" : app[0]).putString("chat_link_pkg", app == null ? "" : app[1]).apply();
     }
 
     /** A chat link is waiting to open. */
@@ -274,9 +298,12 @@ public class Hubs extends Base {
     /** The waiting chat link, taken (null when none, or it waited too long). */
     private ChatLink takeLink() {
         boolean fresh = pending(this);
-        String url = Ui.prefs(this).getString("chat_link", null);
-        Ui.prefs(this).edit().remove("chat_link").remove("chat_link_at").apply();
-        return fresh ? ChatLink.parse(url) : null;
+        android.content.SharedPreferences p = Ui.prefs(this);
+        String url = p.getString("chat_link", null);
+        ChatLink l = fresh ? ChatLink.parse(url) : null;
+        if (l != null) { l.appLabel = p.getString("chat_link_app", ""); l.appPkg = p.getString("chat_link_pkg", ""); }
+        p.edit().remove("chat_link").remove("chat_link_at").remove("chat_link_app").remove("chat_link_pkg").apply();
+        return l;
     }
 
     /** Opens the waiting chat link once the phone can: signed in, with its workspaces' PCs
@@ -322,8 +349,27 @@ public class Hubs extends Base {
             }
             // No PC answered at all: the chat opens where it most likely is, and loads once its
             // PC answers (Chat says when it's gone).
-            if (found == null && missing == null && down != null && (down == hubs.get(order.get(0)))) { found = down; chat = link.gid; }
-            final Hub fh = found; final String fc = chat;
+            boolean guessed = false;
+            if (found == null && missing == null && down != null && (down == hubs.get(order.get(0)))) { found = down; chat = link.gid; guessed = true; }
+            // The link's context (untrusted, from whichever app opened it) goes to the chat's PC, which
+            // shows it folded and gives it to the agent with the user's next message; only to a chat
+            // that's there.
+            String note = null;
+            if (link.contextError != null) note = "The link's context was left out: " + ("too long".equals(link.contextError) ? "it's over 4 KB" : "it couldn't be read");
+            else if (link.context != null && found != null && guessed) note = "The link's context wasn't passed on: no PC answered";
+            else if (link.context != null && found != null) {
+                try {
+                    JSONObject body = new JSONObject().put("text", link.context).put("from", link.from)
+                            .put("app", link.appPkg.isEmpty() ? JSONObject.NULL : new JSONObject().put("label", link.appLabel).put("package", link.appPkg));
+                    found.call("POST", "/v1/chats/" + chat + "/context", body, 15_000);
+                } catch (Hub.ApiError e) {
+                    note = "no such call".equals(e.getMessage()) ? "The link's context wasn't passed on: update Harbor on that PC"
+                            : "The link's context wasn't passed on: " + e.getMessage();
+                } catch (Exception e) {
+                    note = "The link's context wasn't passed on: " + Hub.why(e);
+                }
+            }
+            final Hub fh = found; final String fc = chat; final String fnote = note;
             final String why = missing == null || missing.isEmpty() ? "Chat not found" : missing;
             Ui.main.post(() -> {
                 resolving = false;
@@ -335,6 +381,7 @@ public class Hubs extends Base {
                 }
                 open(fh.id);
                 Chat.open(this, fh, fc);
+                if (fnote != null) Ui.toast(this, fnote);
             });
         });
     }

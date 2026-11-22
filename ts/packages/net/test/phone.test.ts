@@ -245,6 +245,36 @@ describe("the phone API's chats (api.rs App side)", () => {
     store.close();
   });
 
+  test("a link's context goes to the chat's own PC (POST /v1/chats/{id}/context), never to a chat that isn't there", async () => {
+    const store = Store.openAt(join(tmp, "linkcontext.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.peers.set("pc:laptop", newPeer({ id: "pc:laptop", name: "laptop", online: false }));
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const got: [number, unknown, unknown][] = [];
+    const engine = {
+      linkContext: (id: number, text: unknown, src: unknown) => {
+        got.push([id, text, src]);
+        return typeof text === "string" && text.length > 4096 ? "context over 4 KB" : null;
+      },
+    } as unknown as PhoneEngine;
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
+    const c = store.createChat(blankChat({ title: "Coach" }));
+    const copy = store.createChat(blankChat({ title: "Laptop's chat", home: "pc:laptop" }));
+    const post = async (id: string, body: unknown) => {
+      const r = await routes.route({ method: "POST", path: ["v1", "chats", id, "context"], query: [], body, token: "", device: "Pixel", global: true });
+      return [r.status, r.body];
+    };
+    expect(await post(String(c.id), { text: "Weight 80 kg", app: { label: "Schedule Fixer", package: "com.example.fixer" }, from: "x" })).toEqual([200, { ok: true }]);
+    expect(got[0]).toEqual([c.id, "Weight 80 kg", { app: { label: "Schedule Fixer", pkg: "com.example.fixer" }, from: "x" }]);
+    expect(await post(String(c.id), { text: "y".repeat(5000), app: null, from: "" })).toEqual([400, { error: "context over 4 KB" }]);
+    expect((await post("nope", { text: "hi" }))[0]).toBe(404);
+    // A copy's goes to its home PC: off, so it says so and nothing is kept here.
+    expect(await post(String(copy.id), { text: "hi" })).toEqual([503, { error: "laptop is offline" }]);
+    expect(got).toHaveLength(2);
+    store.close();
+  });
+
   test("each card's look is the desktop's; an earlier card comes again when its look changes", () => {
     const store = Store.openAt(join(tmp, "looks.db"));
     const hub = new Hub([], 0);

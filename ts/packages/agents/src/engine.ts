@@ -18,6 +18,7 @@ import { home, newUuid, now } from "./paths.ts";
 import { alive as aliveNow } from "./procfs.ts";
 import * as procs from "./procs.ts";
 import { access as accessLevels, type Account, accountEnv, applyUsage, binStr, efforts as effortLevels, installed, type Kind, kindOf, knownAccount, short, staticModels } from "./providers.ts";
+import * as linkctx from "./linkcontext.ts";
 import * as team from "./team.ts";
 import * as toolsModule from "./tools.ts";
 import { fromJson as waitFromJson, type Waiting, waitingOf } from "./waiting.ts";
@@ -474,6 +475,36 @@ export class Engine {
     const t = this.transcripts.get(id);
     if (t) this.store.saveItems(id, t.items);
     this.changed(id);
+  }
+
+  /** Context another app handed chat `id` with its link (linkcontext.ts): a folded card now ("Context from …"); the
+   *  agent gets it with the user's next message, never on its own. A newer one replaces one still waiting. Null when
+   *  kept, else why not (no such chat, empty, too big). */
+  linkContext(id: number, text: unknown, src: linkctx.ContextSource): string | null {
+    if (!this.chat(id)) return "no such chat";
+    const t = linkctx.cleanContext(text);
+    if ("error" in t) return t.error;
+    const d = linkctx.describeSource(src);
+    const replaces = this.pendingLinkContext(id) !== null;
+    const kept: linkctx.LinkContext = { label: d.label, source: d.source, text: t.text, at: now() };
+    this.store.set(`link_context:${id}`, JSON.stringify(kept));
+    const head = `Not written by you. It goes to the agent with your next message, quoted and marked as untrusted, and starts nothing by itself.${replaces ? " It replaces the context that was waiting." : ""}`;
+    this.notice(id, "context", `Context from ${d.label}`, `${head}\n\n${t.text}`);
+    this.changed(id);
+    return null;
+  }
+
+  /** The link context waiting for chat `id`'s next user message, if any. */
+  pendingLinkContext(id: number): linkctx.LinkContext | null {
+    return linkctx.parseLinkContext(this.store.get(`link_context:${id}`));
+  }
+
+  /** The waiting link context as the block before the user's message (gone from the chat once taken); "" when none. */
+  private takeLinkContext(id: number): string {
+    const c = this.pendingLinkContext(id);
+    if (c === null) return "";
+    this.store.del(`link_context:${id}`);
+    return linkctx.contextBlock(c);
   }
 
   notice(id: number, icon: string, text: string, detail = ""): void {
@@ -1269,8 +1300,11 @@ export class Engine {
     }
     this.host.adopt?.(id, opts.from ?? null);
     this.resumeAuto(id);
+    // Context another app handed the chat with its link goes with this message (to the agent only).
+    const context = this.takeLinkContext(id);
     if (this.turns.has(id)) {
       const q: Queued = { id: this.queue.id(), text, files, mentions, written: false, sender, device, intent: "", note: "", editing: "" };
+      if (context !== "") q.context = context;
       if (sender !== "" && opts.who) q.who = opts.who;
       if (sender !== "" && opts.via) q.via = opts.via;
       if (sender !== "" && opts.dev) q.dev = opts.dev;
@@ -1299,7 +1333,7 @@ export class Engine {
     const from = sentFrom(sender, device, back, this.host.hostname?.(), sender !== "" ? opts.via : undefined);
     const at = now();
     tr.items.push(withWho({ kind: "user", text, files: [...files], at, mentions, sender, intent: "" }, opts.who, opts.via, opts.dev));
-    const quoted = `${from}${this.mentions(mentions)}`;
+    const quoted = `${from}${context}${this.mentions(mentions)}`;
     // Anything queued for an idle chat goes first; a fork's context before all.
     const fork = this.takeForkPreamble(id);
     const queued = this.pending.get(id);

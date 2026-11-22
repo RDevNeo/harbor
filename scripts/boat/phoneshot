@@ -30,6 +30,9 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --view CHAT[@PC]  opens a chat link as another app or a browser does (an ACTION_VIEW intent of
                    harbor://chat/<gid>?pc=<PC>, through the manifest's filter, not by class):
                    CHAT is a rig chat (cards, lead, composer, waiting…) or a made-up gid
+  --context TEXT   with the next --view: &context=TEXT (percent-encoded here, as
+                   encodeURIComponent does), the text another app hands the chat
+  --from LABEL     with the next --view: &from=LABEL
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
@@ -55,11 +58,16 @@ Time: 3 to 7 minutes from harbor-phone (most of it waits for the restored sandbo
 PHONESHOT_GPU try another system image / -gpu mode (installed on the spot). Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
 EOF2
 }
-steps=() quiet="" dark="" from="" save="" drop="" code=""
+steps=() quiet="" dark="" from="" save="" drop="" code="" extra=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
-    --tap|--press|--swipe|--text|--key|--broadcast|--view|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
+    # A link's query rides along base64'd (its & % = and quotes reach the phone as they are).
+    --context|--from) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+      extra="${extra:+$extra&}${1#--}=$(jq -rn --arg t "$2" '$t|@uri')"; shift ;;
+    --view) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+      steps+=("view:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra=""; shift ;;
+    --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --code) code=1 ;;
     --from) from=$2; shift ;;

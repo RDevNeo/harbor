@@ -1400,6 +1400,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   phone.d.syncing = (id) => syncing.why(id);
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc, want) => mover.movePc(chat, pc, false, want ?? null) };
   phone.d.engine = {
+    linkContext: (id, text, src) => live.linkContext(id, text, src),
     running: (id) => live.running(id),
     runningSince: (id) => live.runningSince(id),
     transcript: (id) => live.transcript(id),

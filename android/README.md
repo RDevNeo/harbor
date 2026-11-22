@@ -39,6 +39,12 @@ waits (15 minutes at most) and opens the chat once you're signed in. A chat none
 opens Harbor as usual with a short notice. From an Android app it's an `ACTION_VIEW` intent with
 that URI; from a web page or a Capacitor/WebView app, a link or `window.location.href` to it.
 
+A link may hand the chat some text too: `&context=<text>` (at most 4 KB, `encodeURIComponent`'d),
+optionally `&from=<your app's name>`. It never starts anything: the chat shows a folded "Context
+from …" card, named after the app Android says opened the link (else your `from`, marked
+unverified), and the agent gets the text with your next message, quoted and marked as written by
+that app, not by you ([PROTOCOL.md](PROTOCOL.md), `POST /v1/chats/{id}/context`).
+
 ## Build
 
 `android/build.sh` builds `android/build/harbor-android.apk` and `harbor-phone-code.zip` beside it

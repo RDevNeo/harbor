@@ -30,6 +30,8 @@ const NOTICE_GLYPHS: Record<string, GlyphName> = {
   monitor: "MONITOR",
   lock: "LOCK",
   captcha: "USER_CHECK",
+  // Context another app handed the chat with its link (agents linkcontext.ts).
+  context: "EXTERNAL",
   // A lead's hand-offs (hubs 0.84 to 0.107 wrote them; old transcripts still have them).
   started: "PLAY",
   sent: "SEND",
