@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.190.0] - 2026-11-22
+
 ### Added
 - The phone app updates while you use it (Android 9+): within seconds of a release, its new app code is downloaded
   and checked in the background, and at a quiet moment on screen (no sheet open, nothing recording, playing or
