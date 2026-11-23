@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.193.2] - 2026-11-23
+
 ### Fixed
 - Phone: an app that asks to chat through Harbor's local API (a Capacitor app doing `window.location.href = <approve
   link>`) got "Harbor couldn't tell which app allowed to chat" and stayed in Harbor. When Harbor is already running,
