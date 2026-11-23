@@ -41,6 +41,12 @@ public final class LocalApiTest {
         return i < 0 ? null : r.answer.body.substring(i + 8, r.answer.body.indexOf('"', i + 8));
     }
 
+    static String resCode(LocalHttp.Res r) {
+        if (r == null || r.body == null) return null;
+        int i = r.body.indexOf("\"code\":\"");
+        return i < 0 ? null : r.body.substring(i + 8, r.body.indexOf('"', i + 8));
+    }
+
     static int badStatus(String raw) {
         try {
             LocalHttp.read(new ByteArrayInputStream(raw.getBytes(StandardCharsets.UTF_8)), LocalGate.MAX_HEAD, LocalGate.MAX_BODY);
@@ -337,6 +343,35 @@ public final class LocalApiTest {
         eq(l.approve, "0123456789abcdef0123456789abcdef", "approve= in a chat link");
         eq(ChatLink.parse("harbor://chat/" + chat + "?approve=XYZ").approve, null, "a malformed code is no approval");
         eq(ChatLink.parse("harbor://chat/" + chat).approve, null, "a plain link");
+
+        // ---- where a chat is: no workspace has it ----
+        java.util.List<LocalGate.Probe> ps = new java.util.ArrayList<>();
+        ps.add(new LocalGate.Probe("Sam's workspace", LocalGate.ABSENT, "", 0));
+        ps.add(new LocalGate.Probe("Team", LocalGate.ABSENT, "", 0));
+        LocalHttp.Res nf = LocalGate.notFound(ps);
+        eq(nf.status + " " + resCode(nf), "404 unknown_chat", "every workspace answered without it: unknown chat");
+        ps.add(new LocalGate.Probe("Team 2", LocalGate.REFUSED, "This PC's workspace doesn't take this account", 403));
+        nf = LocalGate.notFound(ps);
+        eq(nf.status + " " + resCode(nf), "502 pc_error", "an error answer is the PC's, not offline");
+        eq(nf.body.contains("Team 2: This PC's workspace doesn't take this account."), true, "pc_error names the workspace and its words");
+        ps.add(new LocalGate.Probe("Home", LocalGate.DOWN, "desk is offline or out of reach. Last answered 5 min ago.", 0));
+        nf = LocalGate.notFound(ps);
+        eq(nf.status + " " + resCode(nf), "503 pc_offline", "a workspace that didn't answer may hold it: pc_offline");
+        eq(nf.body.contains("Home: desk is offline or out of reach. Last answered 5 min ago."), true, "pc_offline says which PC and why: " + nf.body);
+        java.util.List<LocalGate.Probe> si = new java.util.ArrayList<>();
+        si.add(new LocalGate.Probe("Home", LocalGate.REFUSED, "This PC refused the sign-in. Sign in again.", 401));
+        eq(resCode(LocalGate.notFound(si)), "signed_out", "a refused sign-in is signed_out");
+        java.util.List<LocalGate.Probe> late = new java.util.ArrayList<>();
+        late.add(new LocalGate.Probe("", LocalGate.DOWN, "", 0));
+        eq(LocalGate.notFound(late).body.contains("No PC answered."), true, "a silent workspace still gets a why");
+
+        // ---- the chat's own PC, as Hub names it ----
+        java.util.List<String> eps = java.util.Arrays.asList("ts:laptop", "fp:abc");
+        eq(LocalGate.endpointFor("ts:desk", "ts:desk", eps), "", "home is the workspace's first PC");
+        eq(LocalGate.endpointFor("ts:laptop", "ts:desk", eps), "ts:laptop", "home is another PC of the workspace");
+        eq(LocalGate.endpointFor("ts:mac", "ts:desk", eps), null, "a PC the phone doesn't know: through the PC in use");
+        eq(LocalGate.endpointFor("", "ts:desk", eps), null, "no home said");
+        eq(LocalGate.endpointFor("ts:desk", "", eps), null, "an old pairing without the first PC's id");
 
         if (fails > 0) { System.out.println(fails + " local API checks failed"); System.exit(1); }
         System.out.println("LocalApiTest ok");

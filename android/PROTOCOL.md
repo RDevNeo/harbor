@@ -2369,8 +2369,24 @@ own connection to its PCs (`LocalApi`, `LocalGate`, `LocalHttp`). Nothing about 
 network: it listens on `127.0.0.1:47999` only (plain HTTP, `Connection: close`, JSON bodies in
 UTF-8), while Harbor's process runs (any screen, or the background notification service `Listen`,
 which is always on). When Harbor isn't running, the port is closed: the client says so and tries
-later. No PC changes: the phone uses the PC calls above (`/v1/chat_link`, `/v1/chats/{id}/context`,
-`/send`, `/items`, `/events`).
+later. No PC changes: the phone uses the PC calls above (`/v1/state`, `/v1/chat_link`,
+`/v1/chats/{id}/context`, `/send`, `/items`, `/events`).
+
+**Reaching the chat (0.193.3).** Every call works the same with Harbor in the background, or with
+its process started only by `Listen` (no Harbor screen ever shown): nothing depends on a screen
+having connected first. The phone finds the chat as its chat list does: every workspace's
+`GET /v1/state` at once (the workspace that had the chat last first; it also refreshes that
+workspace's PCs), then `GET /v1/chat_link` for a chat the list doesn't show; at most 12 s, then
+remembered for a minute. The chat's `home` there names the PC it lives on: when the phone knows
+that PC (the workspace's first PC or one of its endpoints), the chat's calls (context, send, items,
+events) go **to that PC itself**, not through the PC the phone's other calls use, which would
+forward them and answers `503 "<PC> is offline"` when its own view of the mesh doesn't see that
+PC (it did for `/context`, which has no failover: the send never happened). When the chat's PC
+can't be reached directly, calls go through the workspace's PC in use as before (Hub's route tries
+each PC that answers); a send carries its `client_id`, so one repeated that way runs once. Each
+lookup logs `LOCALAPI resolve <chat> in N ms: on <PC>, called directly | through the PC in use |
+<workspace>: has it | hasn't it | down (why) | error (why)`, and each step that fails says which
+(`LOCALAPI context didn't reach …`, `LOCALAPI send refused by the PC (503): …`).
 
 **Who may call.** Android doesn't tell an ordinary app which app owns a loopback connection
 (`ConnectivityManager.getConnectionOwnerUid` is for the active VPN app only, and `/proc/net` is
@@ -2464,7 +2480,9 @@ its network security config if it refuses `http://127.0.0.1`.
 
 - `GET /local/v1/status` (token optional) → `{"ok": true, "api": 1, "version": "0.193.0",
   "signed_in": bool, "allowed": bool, "pc_online": bool}`; with a valid token also
-  `"chat": {"id", "title", "online", "pc"?, "why"?}` (`why`: the PC's reason when it's off) and
+  `"chat": {"id", "title", "online", "pc"?, "why"?}` (`pc`: the PC the chat lives on; `why`, when
+  `online` is false: which workspace didn't answer and why, e.g. "Home: desk is offline or out of
+  reach. Last answered 5 min ago.") and
   `"app": {"label", "package", "verified"}`. `signed_in`: Harbor on this phone is signed in and knows a PC.
   `pc_online`: with a token, the chat's PC answers; without, some PC of the phone's does.
 - `POST /local/v1/chats/<gid>/messages` `{"text": "…", "context"?: "…", "client_id"?: "…"}` →
@@ -2501,9 +2519,11 @@ text, …), `400 bad_cursor`, `400 bad_host`, `400 origin_not_allowed`, `403 not
 `405 method_not_allowed`, `409 busy` (the PC can't take it now), `411 length_required` (chunked),
 `413 too_large` (body over 64 KB), `413 text_too_large`, `413 context_too_large`,
 `415 bad_request` (not JSON), `429 rate_limited` with `Retry-After: <s>`, `431 headers_too_large`,
-`502 pc_error` (the PC answered with an error), `503 pc_offline` (no PC answered, or the chat's PC is
-off: `error` says which), `503 signed_out` (Harbor on this phone isn't signed in), `503 busy` (16
-connections at once).
+`502 pc_error` (the PC answered with an error; also when no workspace that answered has the chat
+and one answered with an error: `error` names it and its words), `503 pc_offline` (no PC of a
+workspace that may hold the chat answered within 12 s, or the chat's PC is off: `error` names the
+workspace and PC and says why, with when it last answered), `503 signed_out` (Harbor on this phone
+isn't signed in, or a PC refused its sign-in), `503 busy` (16 connections at once).
 
 **Rates.** Per allowed app and chat: 6 messages at once, then one every 10 s; 2 long polls at once
 and 30 reads at once, then one a second. Pairings: 3 at once then one every 20 s, at most 4

@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Phone: an app chatting through Harbor's local API got `503 pc_offline` ("chat offline") while Harbor was in the
+  background, though the chat's PC was on, and its message never arrived. The API sent the app's context and message
+  through whichever PC the phone's other calls use, which forwards them to the chat's own PC and answers "… is offline"
+  when it doesn't see that PC itself (the context step has no failover, so the send never happened), and a lookup
+  error from any one workspace was reported as the chat being offline. Harbor now finds
+  the chat as its chat list does (every workspace at once, up to 12 s, with no Harbor screen needed: also when only its
+  notification service started it) and calls the chat's own PC directly, falling back to the other PCs; when it
+  really can't, the error says which workspace and PC didn't answer and why. Code only: no new APK.
+
 ## [0.193.2] - 2026-11-23
 
 ### Fixed

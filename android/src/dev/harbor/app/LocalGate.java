@@ -483,6 +483,58 @@ final class LocalGate {
         return s != null && s.matches("[A-Za-z0-9_-]{1,64}");
     }
 
+    // ---- where a chat is (LocalApi.resolve) ----
+
+    /** What one workspace said about a chat: it has it, it answered without it, it didn't answer
+     *  (DOWN: the chat may well be there), or it answered with an error (REFUSED). */
+    static final int FOUND = 0, ABSENT = 1, DOWN = 2, REFUSED = 3;
+
+    static final class Probe {
+        final String ws;
+        final int state;
+        /** DOWN, REFUSED: why, for the user ("desk is offline or out of reach."). */
+        final String why;
+        /** REFUSED: the PC's HTTP status. */
+        final int code;
+        Probe(String ws, int state, String why, int code) { this.ws = ws; this.state = state; this.why = why == null ? "" : why; this.code = code; }
+    }
+
+    /** The answer when no workspace has the chat (none said FOUND): a workspace that didn't
+     *  answer may hold it, so that comes first (503 pc_offline, naming each one and why); then one
+     *  that answered with an error (a refused sign-in: 503 signed_out; else 502 pc_error, its
+     *  words); only when every workspace answered without it, 404 unknown_chat. */
+    static LocalHttp.Res notFound(List<Probe> ps) {
+        StringBuilder down = new StringBuilder(), refused = new StringBuilder();
+        boolean signin = false;
+        for (Probe p : ps) {
+            if (p.state == DOWN) down.append(down.length() == 0 ? "" : " ").append(line(p));
+            else if (p.state == REFUSED) {
+                if (p.code == 401) signin = true;
+                refused.append(refused.length() == 0 ? "" : " ").append(line(p));
+            }
+        }
+        if (down.length() > 0) return LocalHttp.error(503, "pc_offline", down.toString());
+        if (signin) return LocalHttp.error(503, "signed_out", "Harbor on this phone isn't signed in: open Harbor and sign in");
+        if (refused.length() > 0) return LocalHttp.error(502, "pc_error", refused.toString());
+        return LocalHttp.error(404, "unknown_chat", "None of your PCs has that chat");
+    }
+
+    private static String line(Probe p) {
+        String w = p.why.trim().isEmpty() ? (p.state == DOWN ? "No PC answered." : "It answered with an error.") : p.why.trim();
+        if (!w.endsWith(".") && !w.endsWith("?") && !w.endsWith("!")) w += ".";
+        return p.ws.isEmpty() ? w : p.ws + ": " + w;
+    }
+
+    /** The PC of a workspace (Hub) a chat lives on, as Hub names its PCs: "" its first PC, an
+     *  endpoint's mesh id, null when the phone doesn't know that PC (no way to reach it directly:
+     *  calls then go through the PC in use, which forwards them). home: the chat's `home` in
+     *  /v1/state (a mesh id); first: the first PC's mesh id; eps: the others'. */
+    static String endpointFor(String home, String first, List<String> eps) {
+        if (home == null || home.isEmpty()) return null;
+        if (home.equals(first)) return "";
+        return eps.contains(home) ? home : null;
+    }
+
     // ---- cursors ----
 
     /** Where a client is in a chat's messages: the revision of the PC that answered (each PC counts

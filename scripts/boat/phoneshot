@@ -42,6 +42,10 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
                    startActivity, as a Capacitor WebView app does; shared = with Android 14's
                    ActivityOptions.setShareIdentityEnabled(true)
   --front          prints the activity in front now (did Harbor step back to the app?)
+  --cold           Harbor's process ends, the test caller comes in front, then Harbor's notification
+                   service (Listen) alone starts it again: no Harbor screen in that process, as on a
+                   phone where Android restarted it in the background (--broadcast
+                   dev.harbor.app.RIG_LOCAL_BG then runs the local API's chat calls there)
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
@@ -78,6 +82,7 @@ while [ $# -gt 0 ]; do
     --view) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       steps+=("${via:+via-}${via:-view}:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra="" via=""; shift ;;
     --front) steps+=("front:now") ;;
+    --cold) steps+=("cold:now") ;;
     --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --code) code=1 ;;

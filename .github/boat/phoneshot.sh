@@ -8,7 +8,7 @@
 # Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|home>,
 # tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>,
 # broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>, front:now (prints the
-# activity in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
+# activity in front), cold:now (Harbor's process restarted by its service Listen alone, the test caller in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
 # the test caller app android/rigcaller),
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults; CODE=1 runs the app
@@ -252,6 +252,11 @@ for st in "$@"; do
       if [ "$mode" = view ]; then echo "view $u"; ad am start -W -a android.intent.action.VIEW -d "'$u'" >/dev/null || { echo "could not open $u"; fail=1; break; }
       else echo "$mode $u"; ad am start -W -n dev.harbor.rigcaller/.Open --es link "'$u'" $([ "$mode" = via-shared ] && echo --ez share true) >/dev/null ||
         { echo "could not open $u from the test caller"; fail=1; break; }; fi ;;
+    # Harbor's process ends; the test caller comes in front; Listen alone starts Harbor again (as root: it
+    # isn't exported), so the process has no screen at all.
+    cold:*) ad am force-stop "$pkg"; ad am start -W -n dev.harbor.rigcaller/.Open >/dev/null
+      ad am start-foreground-service -n "$pkg/.Listen" >/dev/null || { echo "could not start Listen"; fail=1; break; }
+      sleep 3; echo "cold: pid $(pid), front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     front:*) echo "front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     wait:*) sleep "${st#wait:}" ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;

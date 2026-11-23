@@ -26,7 +26,10 @@ import java.nio.charset.StandardCharsets;
  *  RIG_LOCAL_ALLOW / RIG_LOCAL_DENY tap Allow / Don't allow on the approval dialog (and check that
  *  Harbor stepped back to the app); RIG_LOCAL_CLOSE closes every Harbor screen, so the next link
  *  starts Hubs afresh. The app that opens the link can be the test caller (android/rigcaller,
- *  phoneshot --via), as a Capacitor app does. */
+ *  phoneshot --via), as a Capacitor app does. RIG_LOCAL_BG runs the chat calls again with the
+ *  token the pairing gave (kept in the rig's prefs), with no Harbor screen: after phoneshot
+ *  --cold (Harbor's process ended, then started by its notification service Listen alone, the
+ *  test caller in front), as a backgrounded Harbor on a phone is; logs "LOCALAPI PASS|FAIL BG …". */
 final class LocalRig {
     private LocalRig() { }
 
@@ -47,6 +50,10 @@ final class LocalRig {
                             + " back to the app (Harbor screens in front: " + Base.resumed + ")"), 2_500);
                     return;
                 }
+                if (in.getAction().endsWith("RIG_LOCAL_BG")) {
+                    new Thread(LocalRig::background, "local-rig-bg").start();
+                    return;
+                }
                 if (in.getAction().endsWith("RIG_LOCAL_CLOSE")) {
                     // Every Harbor screen closes (the process and the local API stay): the next
                     // approval link starts Hubs afresh instead of reaching it through onNewIntent.
@@ -60,6 +67,7 @@ final class LocalRig {
         f.addAction("dev.harbor.app.RIG_LOCAL_ALLOW");
         f.addAction("dev.harbor.app.RIG_LOCAL_DENY");
         f.addAction("dev.harbor.app.RIG_LOCAL_CLOSE");
+        f.addAction("dev.harbor.app.RIG_LOCAL_BG");
         if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(r, f, Context.RECEIVER_EXPORTED);
         else app.registerReceiver(r, f);
     }
@@ -117,6 +125,49 @@ final class LocalRig {
         return a;
     }
 
+    /** The chat calls with no Harbor screen (RIG_LOCAL_BG, after phoneshot --cold): status,
+     *  the recent messages, a send with context, and the long poll that sees it. */
+    private static void background() {
+        pass = 0; fail = 0;
+        try {
+            android.content.SharedPreferences p = Ui.app.getSharedPreferences("localrig", Context.MODE_PRIVATE);
+            String token = p.getString("token", null), chat = p.getString("chat", null);
+            check(token != null && chat != null, "BG token from the pairing", "none kept: run RIG_LOCAL_PAIR and allow it first");
+            if (token == null || chat == null) return;
+            Log.i(LocalApi.TAG, "LOCALAPI BG Harbor screens: " + Base.alive.size() + " alive, " + Base.resumed + " in front; Listen "
+                    + (Listen.listening() ? "running" : "not running") + "; process up " + (android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()) + " ms");
+            check(Base.alive.isEmpty(), "BG no Harbor screen in this process", Base.alive.size() + " screens");
+            // As Hub.learn does on a real mesh: the rig's PC knows its own mesh id, so the chat's own
+            // PC is one the phone can call directly (LocalApi.on), not only through the PC in use.
+            for (Hub h : Hub.all(Ui.app)) {
+                JSONObject c = Hub.chat(h.state(), chat);
+                String home = c == null ? "" : c.optString("home", "");
+                Log.i(LocalApi.TAG, "LOCALAPI BG the chat's home: " + (home.isEmpty() ? "(none said)" : home));
+                if (!home.isEmpty() && h.pid.isEmpty()) { h.pid = home; Hub.put(Ui.app, h); }
+            }
+            String base = "/local/v1/chats/" + chat + "/messages";
+            Ans st = call("GET", "/local/v1/status", "https://localhost", token, null);
+            JSONObject sj = st.json();
+            check(st.status == 200 && sj.optBoolean("pc_online") && sj.optJSONObject("chat") != null && sj.optJSONObject("chat").optBoolean("online"),
+                    "BG status: the chat's PC online", st.status + " " + st.body);
+            Ans first = call("GET", base, "https://localhost", token, null);
+            String cursor = first.json().optString("cursor");
+            check(first.status == 200 && !cursor.isEmpty(), "BG recent messages", first.status + " " + first.body.substring(0, Math.min(300, first.body.length())));
+            String text = "From the background " + System.currentTimeMillis();
+            Ans sent = call("POST", base, "https://localhost", token, "{\"text\":\"" + text + "\",\"context\":\"Stats: 4 shifts, no gaps\"}");
+            check(sent.status == 200 && sent.json().optBoolean("ok"), "BG send with context", sent.status + " " + sent.body);
+            Ans after = call("GET", base + "?after=" + cursor + "&wait=15", "https://localhost", token, null);
+            JSONArray am = after.json().optJSONArray("messages");
+            boolean seen = false;
+            for (int i = 0; am != null && i < am.length(); i++) if (text.equals(am.optJSONObject(i).optString("text"))) seen = true;
+            check(after.status == 200 && seen, "BG long poll sees the message", after.status + " " + after.body.substring(0, Math.min(600, after.body.length())));
+        } catch (Exception e) {
+            check(false, "BG selftest", String.valueOf(e));
+        } finally {
+            Log.i(LocalApi.TAG, "LOCALAPI BG SELFTEST " + pass + " passed, " + fail + " failed");
+        }
+    }
+
     private static void run() {
         pass = 0; fail = 0;
         try {
@@ -158,6 +209,8 @@ final class LocalRig {
                 check(state.equals("allowed") && w.json().optString("token").length() == 64, "pairing allowed", w.status + " " + w.body);
                 Log.i(LocalApi.TAG, "LOCALAPI paired app " + w.json().optJSONObject("app"));
                 token = w.json().optString("token");
+                // For RIG_LOCAL_BG, in a later process.
+                Ui.app.getSharedPreferences("localrig", Context.MODE_PRIVATE).edit().putString("token", token).putString("chat", chat).commit();
                 break;
             }
             if (token == null) { check(false, "pairing allowed", "no answer in 5 minutes"); return; }

@@ -340,59 +340,172 @@ final class LocalApi {
 
     // ---- the chat ----
 
-    /** Where a chat is: its workspace (hub) and title, or the error to answer. */
+    /** Where a chat is: its workspace (hub), title and own PC, or the error to answer. */
     static final class Found {
         Hub hub;
         String title = "", pc = "";
+        /** The chat's own PC as hub names its PCs ("" its first, else a mesh id); null when the
+         *  phone can't reach that PC itself: calls then go through the PC in use, which forwards. */
+        String home;
         LocalHttp.Res error;
         long at;
     }
 
     private static final Map<String, Found> found = new HashMap<>();
+    /** The longest a lookup takes (every workspace asked at once), as opening the chat would wait. */
+    static final long RESOLVE_WAIT = 12_000;
 
-    /** Which of the phone's workspaces has chat (GET /v1/chat_link, the PC's own resolver, as a
-     *  link from another app), remembered for a minute. */
+    /** Which of the phone's workspaces has chat, and which of its PCs it lives on: each
+     *  workspace's /v1/state (what the chat list shows; it also brings that workspace's PCs up to
+     *  date, Hub.learn), then GET /v1/chat_link (the PC's own resolver, as a link from another
+     *  app). Every workspace at once, the one that had it last first, for at most RESOLVE_WAIT;
+     *  remembered for a minute (the workspace across restarts). The same with no Harbor screen
+     *  open (Listen alone keeps the process up): each call connects by itself, Hub's Route trying
+     *  every PC of the workspace that answers. Each lookup logs a "LOCALAPI resolve" line with
+     *  every workspace's answer. */
     static Found resolve(String chat) {
         synchronized (found) {
             Found f = found.get(chat);
             if (f != null && System.currentTimeMillis() - f.at < 60_000) return f;
         }
-        Found f = new Found();
-        String missing = null;
-        boolean down = false;
-        String link = "harbor://chat/" + chat;
-        for (Hub h : Hub.all(app)) {
-            try {
-                JSONObject r = h.call("GET", "/v1/chat_link?url=" + URLEncoder.encode(link, "UTF-8"), null, 10_000);
-                String to = r.isNull("chat") ? "" : r.optString("chat", "");
-                if (!to.isEmpty()) { f.hub = h; f.title = r.optString("title", ""); break; }
-                if (missing == null || missing.isEmpty()) missing = r.optString("missing", "");
-            } catch (Hub.ApiError e) {
-                if (e.code != 404) { down = true; if (missing == null) missing = e.getMessage(); continue; }
-                try {
-                    JSONObject c = Hub.chat(h.state(), chat);
-                    if (c != null) { f.hub = h; f.title = c.optString("title", ""); break; }
-                } catch (IOException x) { down = true; }
-            } catch (IOException e) {
-                down = true;
+        long t0 = System.currentTimeMillis();
+        List<Hub> hubs = new ArrayList<>(Hub.all(app));
+        String hint = prefs().getString("ws-" + chat, "");
+        for (int i = 0; i < hubs.size(); i++) if (hubs.get(i).id.equals(hint)) { hubs.add(0, hubs.remove(i)); break; }
+        int n = hubs.size();
+        Found[] fs = new Found[n];
+        LocalGate.Probe[] ps = new LocalGate.Probe[n];
+        Object lock = new Object();
+        for (int i = 0; i < n; i++) {
+            final int k = i;
+            Ui.pool.execute(() -> {
+                Found f = new Found();
+                LocalGate.Probe p = probe(hubs.get(k), chat, f);
+                synchronized (lock) { fs[k] = f; ps[k] = p; lock.notifyAll(); }
+            });
+        }
+        Found hit = null;
+        List<LocalGate.Probe> all = new ArrayList<>();
+        synchronized (lock) {
+            while (true) {
+                int done = 0;
+                for (int i = 0; i < n; i++) if (ps[i] != null) { done++; if (hit == null && ps[i].state == LocalGate.FOUND) hit = fs[i]; }
+                long left = t0 + RESOLVE_WAIT - System.currentTimeMillis();
+                if (hit != null || done == n || left <= 0) break;
+                try { lock.wait(left); } catch (InterruptedException e) { break; }
             }
+            for (int i = 0; i < n; i++)
+                all.add(ps[i] != null ? ps[i] : new LocalGate.Probe(hubs.get(i).label(), LocalGate.DOWN, "No answer within " + RESOLVE_WAIT / 1000 + " s.", 0));
         }
-        if (f.hub != null) {
-            f.pc = f.hub.viaName().isEmpty() ? f.hub.pcName : f.hub.viaName();
-            f.at = System.currentTimeMillis();
-            synchronized (found) { found.put(chat, f); }
-            return f;
+        StringBuilder log = new StringBuilder();
+        for (LocalGate.Probe p : all)
+            log.append(" | ").append(p.ws).append(": ").append(new String[] { "has it", "hasn't it", "down", "error" }[p.state]).append(p.why.isEmpty() ? "" : " (" + p.why + ")");
+        Log.i(TAG, "LOCALAPI resolve " + chat + " in " + (System.currentTimeMillis() - t0) + " ms"
+                + (hit == null ? ": not found" : ": on " + hit.pc + (hit.home != null ? ", called directly" : ", through the PC in use")) + log);
+        if (hit != null) {
+            hit.at = System.currentTimeMillis();
+            synchronized (found) { found.put(chat, hit); }
+            prefs().edit().putString("ws-" + chat, hit.hub.id).apply();
+            return hit;
         }
-        if (missing != null && !missing.isEmpty() && !missing.toLowerCase().contains("not found"))
-            f.error = LocalHttp.error(503, "pc_offline", missing);
-        else if (missing == null && down)
-            f.error = LocalHttp.error(503, "pc_offline", "No PC answered: is Harbor running on the PC, and is this phone on its network?");
-        else
-            f.error = LocalHttp.error(404, "unknown_chat", "None of your PCs has that chat");
+        Found f = new Found();
+        f.error = LocalGate.notFound(all);
         return f;
     }
 
+    /** What workspace h says about chat; f filled in when it has it. */
+    private static LocalGate.Probe probe(Hub h, String chat, Found f) {
+        String ws = h.label();
+        try {
+            JSONObject c = Hub.chat(h.state(), chat);
+            if (c != null) {
+                f.title = c.optString("title", "");
+                List<String> eps = new ArrayList<>();
+                for (String v : h.endpoints()) if (!v.isEmpty()) eps.add(v);
+                f.home = LocalGate.endpointFor(c.optString("home", ""), h.pid, eps);
+                f.pc = c.optString("home_name", "");
+            } else {
+                try {
+                    JSONObject r = h.call("GET", "/v1/chat_link?url=" + URLEncoder.encode("harbor://chat/" + chat, "UTF-8"), null, 10_000);
+                    String to = r.isNull("chat") ? "" : r.optString("chat", "");
+                    if (to.isEmpty()) return new LocalGate.Probe(ws, LocalGate.ABSENT, "", 0);
+                    f.title = r.optString("title", "");
+                } catch (Hub.ApiError e) {
+                    if (e.code == 404) return new LocalGate.Probe(ws, LocalGate.ABSENT, "", 0); // a PC from before chat links
+                    throw e;
+                }
+            }
+            f.hub = h;
+            if (f.pc.isEmpty()) f.pc = h.viaName().isEmpty() ? h.pcName : h.viaName();
+            return new LocalGate.Probe(ws, LocalGate.FOUND, "", 0);
+        } catch (Hub.ApiError e) {
+            return new LocalGate.Probe(ws, LocalGate.REFUSED, e.getMessage(), e.code);
+        } catch (IOException e) {
+            return new LocalGate.Probe(ws, LocalGate.DOWN, h.whyDown(e), 0);
+        }
+    }
+
     private static void forget(String chat) { synchronized (found) { found.remove(chat); } }
+
+    // ---- calls about the chat ----
+
+    /** A connection for a call about the chat: to its own PC when the phone can reach it (no PC
+     *  in between to forward it, or to think that PC is off: a copy's PC answers 503 "… is
+     *  offline" when its mesh doesn't see the chat's), else through the workspace's PC in use
+     *  (Hub's Route tries each PC that answers). Its pc says which PC took it. */
+    private static Net.Http open(Found f, String method, String path, int timeout) throws IOException {
+        if (f.home != null) {
+            try {
+                return on(f.hub, f.home, method, path, timeout);
+            } catch (IOException e) {
+                Log.i(TAG, "LOCALAPI " + f.pc + " not reached directly (" + Hub.why(e) + "): through the PC in use");
+            }
+        }
+        return f.hub.open(method, path, timeout, true, false);
+    }
+
+    /** A connection to PC v of h itself ("" its first), chats named by their gid. */
+    private static Net.Http on(Hub h, String v, String method, String path, int timeout) throws IOException {
+        Net.Http c = h.openOn(v, method, path, timeout);
+        c.header("X-Harbor-Ids", "global");
+        c.pc = v;
+        return c;
+    }
+
+    /** A write about the chat on its own PC (see open). One that didn't get through there (no
+     *  answer: an answer, an error too, is final) is made again through the PC in use: a send
+     *  carries its client_id (the PCs run it once), a context replaces the last. */
+    private static JSONObject write(Found f, String chat, String path, JSONObject body, int timeout) throws IOException {
+        if (f.home != null) {
+            try {
+                return json(on(f.hub, f.home, "POST", path, timeout), body);
+            } catch (Hub.ApiError e) {
+                throw e;
+            } catch (IOException e) {
+                Log.i(TAG, "LOCALAPI " + f.pc + " didn't take " + path + " directly (" + Hub.why(e) + "): through the PC in use");
+            }
+        }
+        if (path.endsWith("/send")) return f.hub.send(chat, body);
+        return f.hub.call("POST", path, body, timeout);
+    }
+
+    private static JSONObject json(Net.Http c, JSONObject body) throws IOException {
+        try {
+            if (body != null) {
+                byte[] b = body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                c.header("Content-Type", "application/json");
+                try (OutputStream o = c.body(b.length)) { o.write(b); }
+            }
+            int code = c.code();
+            String text = Hub.read(c.in());
+            if (code >= 400) throw Hub.error(c, code, text);
+            return text.trim().isEmpty() ? new JSONObject() : new JSONObject(text);
+        } catch (JSONException e) {
+            throw new IOException("the PC's answer isn't JSON");
+        } finally {
+            c.close();
+        }
+    }
 
     private static LocalHttp.Res post(LocalHttp.Req r, LocalGate.Grant g) throws Exception {
         JSONObject b = body(r);
@@ -416,42 +529,50 @@ final class LocalApi {
         if (Account.needsSignIn(app) || Hub.all(app).isEmpty()) return signedOut();
         Found f = resolve(g.chat);
         if (f.hub == null) return f.error;
-        Hub h = f.hub;
+        String step = "context";
         try {
             if (context != null) {
                 JSONObject cb = new JSONObject().put("text", context).put("from", g.label)
                         .put("app", new JSONObject().put("label", g.label).put("package", g.pkg));
-                h.call("POST", "/v1/chats/" + g.chat + "/context", cb, 15_000);
+                write(f, g.chat, "/v1/chats/" + g.chat + "/context", cb, 15_000);
             }
+            step = "send";
             // Where the transcript ends now: the message's card comes right after (its id).
             int count0 = -1;
             long rev0 = 0;
+            String pc0 = null;
             try {
-                Got pre = get(h, "/v1/chats/" + g.chat + "/items?since=999999999999999", 15_000);
+                Got pre = get(f, "/v1/chats/" + g.chat + "/items?since=999999999999999", 15_000);
                 count0 = pre.j.optInt("count", -1);
                 rev0 = pre.j.optLong("rev", 0);
+                pc0 = pre.pc;
             } catch (IOException ignored) { }
-            JSONObject res = h.send(g.chat, new JSONObject().put("text", text).put("client_id", cid));
+            JSONObject res = write(f, g.chat, "/v1/chats/" + g.chat + "/send", new JSONObject().put("text", text).put("client_id", cid), 15_000);
             boolean queued = res.optBoolean("queued");
             Object id = JSONObject.NULL;
-            if (!queued && count0 >= 0) id = findSent(h, g.chat, rev0, count0, text);
+            if (!queued && count0 >= 0) id = findSent(f, g.chat, pc0, rev0, count0, text);
+            Log.i(TAG, "LOCALAPI sent to " + f.pc + (context != null ? " with context" : "") + (queued ? ", queued" : ""));
             return ok(new JSONObject().put("ok", true).put("id", id).put("client_id", cid)
                     .put("queued", queued).put("steering", res.optBoolean("steering")));
         } catch (Hub.ApiError e) {
+            Log.i(TAG, "LOCALAPI " + step + " refused by the PC (" + e.code + "): " + e.getMessage());
             return pcError(e, g.chat);
         } catch (IOException e) {
             forget(g.chat);
-            return LocalHttp.error(503, "pc_offline", Hub.why(e));
+            Log.i(TAG, "LOCALAPI " + step + " didn't reach " + f.pc + ": " + Hub.why(e));
+            return LocalHttp.error(503, "pc_offline", f.hub.whyDown(e));
         }
     }
 
     /** The seq of the user card a send just made (the first at or after count0 with its text),
-     *  NULL when it doesn't show within a second or so. */
-    private static Object findSent(Hub h, String chat, long rev0, int count0, String text) {
+     *  NULL when it doesn't show within a second or so, or another PC answers than the one that
+     *  counted (each counts its own revisions). */
+    private static Object findSent(Found f, String chat, String pc0, long rev0, int count0, String text) {
         for (int i = 0; i < 3; i++) {
             try {
                 if (i > 0) Thread.sleep(400L * i);
-                Got g = get(h, "/v1/chats/" + chat + "/items?since=" + rev0, 15_000);
+                Got g = get(f, "/v1/chats/" + chat + "/items?since=" + rev0, 15_000);
+                if (!g.pc.equals(pc0)) return JSONObject.NULL;
                 JSONArray items = g.j.optJSONArray("items");
                 int best = -1;
                 for (int k = 0; items != null && k < items.length(); k++) {
@@ -483,25 +604,31 @@ final class LocalApi {
         }
         Found f = resolve(g.chat);
         if (f.hub == null) return f.error;
-        Hub h = f.hub;
         String base = "/v1/chats/" + g.chat + "/items?since=";
         try {
-            if (cur == null) return recent(h, base, limit, false);
+            if (cur == null) return recent(f, base, limit, false);
             long end = System.currentTimeMillis() + waitMs(r, 25);
             long since = cur.rev;
             while (true) {
-                Got got = get(h, base + since, 20_000);
+                Got got = get(f, base + since, 20_000);
                 long rev = got.j.optLong("rev", 0);
                 // Another PC answers now (its revisions are its own) or this one started over:
                 // the client starts over too.
-                if (!got.pc.equals(cur.via) || rev < cur.rev) return recent(h, base, limit, true);
+                if (!got.pc.equals(cur.via) || rev < cur.rev) return recent(f, base, limit, true);
                 boolean running = got.j.optBoolean("running");
                 JSONArray ms = project(got.j, Integer.MAX_VALUE);
                 long left = end - System.currentTimeMillis();
                 if (ms.length() > 0 || running != cur.running || left <= 0) return page(ms, got, false);
                 since = rev;
                 // Wait for the chat to change: the events long-poll, on the PC that answered.
-                Net.Http c = h.open("GET", "/v1/events?since=" + since, (int) Math.max(1_000, Math.min(left, 21_000)), true, true);
+                Net.Http c;
+                try {
+                    c = on(f.hub, got.pc, "GET", "/v1/events?since=" + since, (int) Math.max(1_000, Math.min(left, 21_000)));
+                } catch (IOException e) {
+                    // That PC went away a moment ago: the next round asks whichever answers.
+                    Thread.sleep(Math.min(1_000, Math.max(0, left)));
+                    continue;
+                }
                 try {
                     int code = c.code();
                     if (code >= 400) throw Hub.error(c, code);
@@ -516,12 +643,12 @@ final class LocalApi {
             return pcError(e, g.chat);
         } catch (IOException e) {
             forget(g.chat);
-            return LocalHttp.error(503, "pc_offline", Hub.why(e));
+            return LocalHttp.error(503, "pc_offline", f.hub.whyDown(e));
         }
     }
 
-    private static LocalHttp.Res recent(Hub h, String base, int limit, boolean reset) throws Exception {
-        Got got = get(h, base + "0", 25_000);
+    private static LocalHttp.Res recent(Found f, String base, int limit, boolean reset) throws Exception {
+        Got got = get(f, base + "0", 25_000);
         return page(project(got.j, limit), got, reset);
     }
 
@@ -575,9 +702,10 @@ final class LocalApi {
         String pc;
     }
 
-    /** A GET on the PC calls go to, kept there (stick: each PC counts its own revisions). */
-    private static Got get(Hub h, String path, int timeout) throws IOException {
-        Net.Http c = h.open("GET", path, timeout, true, true);
+    /** A GET about the chat (see open): its own PC, else the PC in use. pc: the PC that
+     *  answered (each counts its own revisions: a cursor holds it). */
+    private static Got get(Found f, String path, int timeout) throws IOException {
+        Net.Http c = open(f, "GET", path, timeout);
         try {
             int code = c.code();
             if (code >= 400) throw Hub.error(c, code);
