@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.193.0] - 2026-11-23
+
 ### Added
 - Phone: other apps on the phone can chat with a Harbor chat without opening Harbor. While it runs, Harbor serves
   a small JSON API on `127.0.0.1:47999` (loopback only; nothing new reaches the network): send a message (with
