@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.193.3] - 2026-11-23
+
 ### Fixed
 - Phone: an app chatting through Harbor's local API got `503 pc_offline` ("chat offline") while Harbor was in the
   background, though the chat's PC was on, and its message never arrived. The API sent the app's context and message
