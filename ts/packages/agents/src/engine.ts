@@ -846,6 +846,8 @@ export class Engine {
     // A stopped turn's end that came after the chat's next turn started: that one goes on.
     const current = this.turns.get(id);
     if (ev.type === "exited" && current !== undefined && current !== from) return;
+    // Harbor cut the request short (a steer written into it, or Stop): steering isn't an error, Stop says so itself.
+    if (ev.type === "error" && ev.interrupted && (current !== from || this.queued(id).some((q) => q.written && steering(q)))) return;
     if (this.queueEvent(id, ev, from) || this.limits.limitEvent(id, limitEvent(ev))) return;
     const exited = ev.type === "exited" ? !this.turns.has(id) : null;
     this.applyEvent(id, ev);
@@ -1634,8 +1636,8 @@ export class Engine {
       if (r) this.swallow.add(r);
       if (r?.turn) {
         void r.turn.stopWait().then(() => {
+          // Not an error: the steer's own message shows where the turn was cut.
           const tr = this.transcript(id);
-          tr.items.push({ kind: "error", text: "Interrupted by a steer." });
           tr.pendingText = null;
           tr.pendingThinking = null;
           this.sendQueued(id, [q]);

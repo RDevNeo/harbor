@@ -334,6 +334,9 @@ describe("event streams", () => {
       { type: "error", text: "error_max_turns" },
       { type: "result", costUsd: null, durationMs: 9, turns: 2, inputTokens: 6, outputTokens: 4, cached: 5 },
     ]);
+    // A cut-short request: a bare error_during_execution is marked, one with text of its own is a plain error.
+    expect(agent.parseClaude({ type: "result", subtype: "error_during_execution", is_error: true, usage: {} })[0]).toEqual({ type: "error", text: "error_during_execution", interrupted: true });
+    expect(agent.parseClaude({ type: "result", subtype: "error_during_execution", is_error: true, result: "You've hit your limit", usage: {} })[0]).toEqual({ type: "error", text: "You've hit your limit" });
     expect(agent.parseClaude({ type: "assistant", error: "rate_limit", quotaLimits: { rateLimitType: "five_hour", resetsAt: 77 }, message: { content: [{ type: "text", text: "limit" }, { type: "text", text: "hit" }] } })).toEqual([
       { type: "limit", kind: "five_hour", resetsAt: 77, text: "limit hit" },
     ]);

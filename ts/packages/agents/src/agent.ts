@@ -26,7 +26,8 @@ export type Event =
   | { type: "tool"; id: string; name: string; summary: string; input: string; result: string | null; isError: boolean }
   /** `cached`: of the input tokens, those read from or written to the prompt cache. */
   | { type: "result"; costUsd: number | null; durationMs: number; turns: number; inputTokens: number; outputTokens: number; cached: number }
-  | { type: "error"; text: string }
+  /** `interrupted`: Claude's bare error_during_execution (no text of its own), what an interrupted request ends with. */
+  | { type: "error"; text: string; interrupted?: boolean }
   | { type: "stderr"; text: string }
   /** The turn in `dir` ended (a chat's stopped turn can end after its next one started). */
   | { type: "exited"; ok: boolean; dir: string }
@@ -784,7 +785,12 @@ export function parseClaude(v: unknown): Event[] {
   if (ty === "result") {
     const u = at(v, "usage");
     const e: Event[] = [];
-    if (at(v, "is_error") === true || at(v, "subtype") !== "success") e.push({ type: "error", text: optStr(at(v, "result")) ?? str(at(v, "subtype")) });
+    if (at(v, "is_error") === true || at(v, "subtype") !== "success") {
+      const said = optStr(at(v, "result"));
+      const subtype = str(at(v, "subtype"));
+      if ((said ?? "").trim() === "" && subtype === "error_during_execution") e.push({ type: "error", text: subtype, interrupted: true });
+      else e.push({ type: "error", text: said ?? subtype });
+    }
     const cache = n0(at(u, "cache_read_input_tokens")) + n0(at(u, "cache_creation_input_tokens"));
     e.push({
       type: "result",

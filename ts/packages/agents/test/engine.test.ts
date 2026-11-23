@@ -167,6 +167,10 @@ for (;;) {
     continue;
   }
   if (m.text.includes("nostream")) echo(m.text);
+  if (m.text.includes("fail")) {
+    result(false);
+    continue;
+  }
   reply(m.text);
 }
 process.exit(0);
@@ -388,10 +392,20 @@ describe("a chat's turn", () => {
     await until("the steer written", () => e.queued(c.id)[0]?.written === true || texts(e.transcript(c.id).items).includes("user: and the square"), 20000);
     await until("the turn's end", () => !e.running(c.id), 20000);
     expect(gotBy(c)).toEqual(["takein slow first", "and the square"]);
-    expect(texts(e.transcript(c.id).items)).toEqual(["user: takein slow first", "error: error_during_execution", "user: and the square", "echo: and the square"]);
+    expect(texts(e.transcript(c.id).items)).toEqual(["user: takein slow first", "user: and the square", "echo: and the square"]);
     const steer = e.transcript(c.id).items.find((i) => i.kind === "user" && i.text === "and the square");
     expect(steer?.kind === "user" && steer.intent).toBe(STEER);
     expect(e.queued(c.id)).toEqual([]);
+    store.close();
+  }, 60000);
+
+  test("an error_during_execution Harbor didn't cause by a steer still shows", async () => {
+    const { e, store } = setup(race);
+    const c = newChat(store);
+    e.reload();
+    e.send(c.id, "fail now");
+    await until("the turn's end", () => !e.running(c.id), 20000);
+    expect(texts(e.transcript(c.id).items)).toEqual(["user: fail now", "error: error_during_execution"]);
     store.close();
   }, 60000);
 
