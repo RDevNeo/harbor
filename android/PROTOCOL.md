@@ -2381,22 +2381,65 @@ closed to apps from Android 10), and an `Origin` proves nothing (every Capacitor
    `{"pair": "<32 hex>", "link": "harbor://chat/<gid>?approve=<32 hex>", "expires_in": 600}`. `pair`
    is the app's secret to fetch the answer with; `app` is only what it calls itself.
 2. The app opens `link` (`window.location.href = link` in a WebView; an `ACTION_VIEW` intent from
-   Java). Harbor comes up once with "Let *App* chat with “*chat title*”?", **Allow** / **Don't
-   allow**, naming the app Android says opened the link: Android 14+'s
-   `Activity.getLaunchedFromPackage()`/`getLaunchedFromUid()` when that app shares its identity
-   (`ActivityOptions.setShareIdentityEnabled`), else Android's record of the launching package
-   (`getReferrer()` with the sender-set `EXTRA_REFERRER`/`EXTRA_REFERRER_NAME` dropped first), which
-   Android checks against the caller's uid from Android 11. Before Android 11 the dialog says "an
-   app that says it is *X*". A link whose sender Android doesn't name is refused. After the answer,
-   Harbor steps back (`moveTaskToBack`) to the app.
+   Java). Harbor comes up once and asks, **Allow** / **Don't allow**. It names the app with every
+   source it has, best first (logged as `LOCALAPI who: …`):
+   - Android 14+'s `Activity.getLaunchedFromPackage()`/`getLaunchedFromUid()`, when the app shared
+     its identity (`ActivityOptions.setShareIdentityEnabled(true)`) and the link started Harbor's
+     screen. On a link that reaches Harbor while it runs (`onNewIntent`, the usual case: the
+     notification service keeps it running) these name whoever opened Harbor before, so they are
+     not used then.
+   - Android 15+'s `Activity.getCurrentCaller()` (package and uid) on a link that reaches the running
+     screen, when the app shared its identity.
+   - `getCallingPackage()` (only for `startActivityForResult`).
+   - Android's record of the launching package, `getReferrer()` with the sender-set
+     `EXTRA_REFERRER`/`EXTRA_REFERRER_NAME` dropped first (`android-app://<package>`), which Android
+     checks against the caller's uid from Android 11. Android leaves it out when Harbor can't see
+     that package (package visibility): a Capacitor app's plain `startActivity` while Harbor runs
+     gives no referrer at all on Android 14, even on a cold start (measured; see below).
+   - Only as what the app says: `EXTRA_REFERRER`/`EXTRA_REFERRER_NAME`, a referrer before Android
+     11, and the pairing's own `app` name.
+
+   A confirmed app: "Let *App* chat with “*chat title*”?" with its package. Otherwise Harbor still
+   asks (the approval is the user's, once), by the name the app gave itself: "Let “*Name*” chat with
+   “*chat title*”?", "An app calling itself “*Name*”…" and a line that Harbor couldn't confirm which
+   app it is; such a grant has no package. After the answer (and after an error, such as a pairing
+   that ran out), Harbor steps back to the app: `moveTaskToBack(true)` (Harbor's `Hubs` is
+   `singleTask`, so the link brought Harbor's own task over the app's); if Harbor is still in front
+   0.8 s later, a confirmed app is opened by its launch intent.
+
+   What each source returned on the Android 14 emulator (`scripts/boat/phoneshot --via
+   plain|shared`, a test app that opens the link as Capacitor's Bridge does: `new
+   Intent(ACTION_VIEW, uri)` and `startActivity` from its Activity):
+
+   | Opened by | Harbor's screen | `getLaunchedFrom*` | `getReferrer()` | `getCallingPackage()` | `EXTRA_REFERRER(_NAME)` | Prompt |
+   |---|---|---|---|---|---|---|
+   | plain `startActivity` (Capacitor) | running (`onNewIntent`) | not used (null) | null | null | null | unconfirmed |
+   | plain `startActivity` | started by the link | null | null | null | null | unconfirmed |
+   | shared identity | running (`onNewIntent`) | not used (null) | null | null | null | unconfirmed |
+   | shared identity | started by the link | the app (package and uid) | `android-app://` the app | null | null | confirmed |
+
+   So on Android 14 a plain `startActivity` gives Harbor nothing at all, even on a cold start:
+   Android leaves the referrer out because Harbor can't see the app's package. On the Android 15 emulator, with Harbor running:
+   shared identity gave `getCurrentCaller()` = the app (package and uid) and the referrer
+   (confirmed); a plain `startActivity` right after it gave no current caller but the referrer
+   (confirmed), very likely because the shared launch had just made the app visible to Harbor.
+
+   To be named, an app shares its identity when it opens the link (a small native plugin:
+   `startActivity(intent, ActivityOptions.makeBasic().setShareIdentityEnabled(true).toBundle())`):
+   always on Android 15+, on Android 14 only when its link is what starts Harbor's screen. Otherwise
+   the prompt says the app is unconfirmed.
+
 3. `GET /local/v1/pair/<pair>?wait=<0-25 s, default 25>` (long poll) →
    `{"state": "pending"}` | `{"state": "denied"}` |
-   `{"state": "allowed", "token": "<64 hex>", "chat": "<gid>", "app": {"label", "package"}}`.
+   `{"state": "allowed", "token": "<64 hex>", "chat": "<gid>", "app": {"label", "package", "verified"}}`
+   (`package` `""` and `verified` false when Android didn't confirm the app; `label` is then the
+   name it gave itself).
    An answer is handed out once; then, and 10 minutes after the request, `404 unknown_pair`.
 4. Every chat call carries `Authorization: Bearer <token>`. The token (256 random bits; the phone
    keeps only its SHA-256, checked in constant time) works for that chat only. Allowing the same
    app for the same chat again replaces the old token. Settings › **Other apps** lists each app
-   and chat ("Chats with “Weekly plan” · tap to remove"); removing one ends its token at once. Where
+   and chat ("com.example.app · chats with “Weekly plan” · tap to remove", "Not confirmed by Android"
+   in place of the package for an unconfirmed app); removing one ends its token at once. Where
    Android does name a connection's owner (it tries both ways above on every chat call), a
    token used by another app is refused (403).
 
@@ -2422,7 +2465,7 @@ its network security config if it refuses `http://127.0.0.1`.
 - `GET /local/v1/status` (token optional) → `{"ok": true, "api": 1, "version": "0.193.0",
   "signed_in": bool, "allowed": bool, "pc_online": bool}`; with a valid token also
   `"chat": {"id", "title", "online", "pc"?, "why"?}` (`why`: the PC's reason when it's off) and
-  `"app": {"label", "package"}`. `signed_in`: Harbor on this phone is signed in and knows a PC.
+  `"app": {"label", "package", "verified"}`. `signed_in`: Harbor on this phone is signed in and knows a PC.
   `pc_online`: with a token, the chat's PC answers; without, some PC of the phone's does.
 - `POST /local/v1/chats/<gid>/messages` `{"text": "…", "context"?: "…", "client_id"?: "…"}` →
   `{"ok": true, "id": <message id> | null, "client_id": "…", "queued": bool, "steering": bool}`.

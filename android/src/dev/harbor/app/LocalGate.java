@@ -105,8 +105,10 @@ final class LocalGate {
         return null;
     }
 
-    /** The user allowed it: the app Android says opened the link (pkg, label) gets a token for
-     *  the pairing's chat, in place of any it had for that chat. False when it ran out. */
+    /** The user allowed it: the app that opened the link gets a token for the pairing's chat, in
+     *  place of any it had for that chat. pkg: its package when Android confirmed it, "" when not
+     *  (then label is the name it gave itself, and an earlier unconfirmed grant of that name for
+     *  that chat is the one replaced). False when it ran out. */
     boolean approve(String code, String pkg, String label, String title) {
         synchronized (this) {
             Pair p = pairByCode(code);
@@ -114,7 +116,7 @@ final class LocalGate {
             String token = hex(32);
             for (Iterator<Grant> it = grants.values().iterator(); it.hasNext(); ) {
                 Grant g = it.next();
-                if (g.pkg.equals(pkg) && g.chat.equals(p.chat)) it.remove();
+                if (g.chat.equals(p.chat) && g.pkg.equals(pkg) && (!pkg.isEmpty() || g.label.equals(label))) it.remove();
             }
             Grant g = new Grant(sha256(token), pkg, label, p.chat, title == null ? "" : title, clock.now());
             grants.put(g.hash, g);
@@ -198,6 +200,121 @@ final class LocalGate {
         String d = ChatLink.decode(s);
         if (d == null) throw new IllegalArgumentException("bad field");
         return d;
+    }
+
+    // ---- who opened an approval link ----
+
+    /** What Android (and the sender) told Hubs about the app that opened an approval link, and
+     *  what the pairing says (LocalApi.ask): every source, best first in identify. */
+    static final class Sources {
+        int sdk;
+        /** The link started the screen (onCreate), not a new intent to a running one (onNewIntent):
+         *  only then is getLaunchedFrom* about this link (else it names who opened Harbor before). */
+        boolean fresh;
+        /** Activity.getLaunchedFromPackage (Android 14+; set when the app shared its identity,
+         *  ActivityOptions.setShareIdentityEnabled), and the one package of getLaunchedFromUid. */
+        String launchedPkg, launchedUidPkg;
+        /** Android 15+'s Activity.getCurrentCaller() package (and its uid's one package) for a new
+         *  intent: set, as launched-from, only when the app shared its identity. */
+        String currentPkg, currentUidPkg;
+        /** Activity.getCallingPackage: only for startActivityForResult. */
+        String callingPkg;
+        /** Activity.getReferrer() with the sender's extras dropped: Android's record of the
+         *  launching package (android-app://<package>), which it checks against the caller's uid
+         *  from Android 11; null when Android leaves it out (Harbor can't see that package). */
+        String referrer;
+        /** Intent.EXTRA_REFERRER and EXTRA_REFERRER_NAME as sent: anyone may write anything there. */
+        String extraReferrer, extraReferrerName;
+        /** The pairing's `app` (POST /local/v1/pair): the name the app gives itself. */
+        String claimed = "";
+
+        @Override public String toString() {
+            return "sdk=" + sdk + " fresh=" + fresh + " launchedFromPackage=" + launchedPkg + " launchedFromUid=" + launchedUidPkg
+                    + " currentCaller=" + currentPkg + " currentCallerUid=" + currentUidPkg
+                    + " callingPackage=" + callingPkg + " referrer=" + referrer + " EXTRA_REFERRER=" + extraReferrer
+                    + " EXTRA_REFERRER_NAME=" + extraReferrerName + " claimed=" + claimed;
+        }
+    }
+
+    /** Who opened an approval link, as identify found it. */
+    static final class Who {
+        /** The package Android confirmed; "" when it didn't. */
+        final String pkg;
+        /** The package the sender itself named (an extra, or a referrer Android doesn't check
+         *  before Android 11), shown as what it says; "" when none or when pkg is set. */
+        final String hint;
+        /** The name the app gives itself (the pairing's `app`), "" when none. */
+        final String claimed;
+        /** Which source said so: launched-from-package, launched-from-uid, current-caller(-uid),
+         *  calling-package, referrer; or none. */
+        final String how;
+        /** The app's name on this phone, when pkg is set and Android shows it (LocalApi.ask). */
+        String label = "";
+        Who(String pkg, String hint, String claimed, String how) { this.pkg = pkg; this.hint = hint; this.claimed = claimed; this.how = how; }
+        boolean verified() { return !pkg.isEmpty(); }
+        /** What to call it: the app's name (else its package) when confirmed, else what it calls
+         *  itself (else what it says its package is), else "An app". */
+        String name() {
+            if (verified()) return label.isEmpty() ? pkg : label;
+            if (!claimed.isEmpty()) return claimed;
+            return hint.isEmpty() ? "An app" : hint;
+        }
+        @Override public String toString() { return verified() ? "verified " + pkg + " (" + how + ")" : "unverified claimed=" + claimed + " hint=" + hint; }
+    }
+
+    /** The app that opened an approval link, from every source, best first: Android 14's
+     *  launched-from (only on a fresh launch), Android 15's current caller (only on a new
+     *  intent), the calling package, Android's referrer (checked
+     *  from Android 11); the sender's own extras and the pairing's name only as what it says.
+     *  own: Harbor's package (never the answer). Never null: unknown is an unverified Who. */
+    static Who identify(Sources s, String own) {
+        String claimed = s.claimed == null ? "" : s.claimed;
+        String p;
+        if (s.sdk >= 34 && s.fresh) {
+            if ((p = pkg(s.launchedPkg, own)) != null) return new Who(p, "", claimed, "launched-from-package");
+            if ((p = pkg(s.launchedUidPkg, own)) != null) return new Who(p, "", claimed, "launched-from-uid");
+        }
+        if (s.sdk >= 35 && !s.fresh) {
+            if ((p = pkg(s.currentPkg, own)) != null) return new Who(p, "", claimed, "current-caller");
+            if ((p = pkg(s.currentUidPkg, own)) != null) return new Who(p, "", claimed, "current-caller-uid");
+        }
+        if ((p = pkg(s.callingPkg, own)) != null) return new Who(p, "", claimed, "calling-package");
+        String ref = appUri(s.referrer, own);
+        if (ref != null && s.sdk >= 30) return new Who(ref, "", claimed, "referrer");
+        String hint = ref != null ? ref : appUri(s.extraReferrer, own);
+        if (hint == null) hint = appUri(s.extraReferrerName, own);
+        return new Who("", hint == null ? "" : hint, claimed, "none");
+    }
+
+    /** s when it is a package name other than own, else null. */
+    static String pkg(String s, String own) {
+        return s != null && !s.equals(own) && s.length() <= 255 && s.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+") ? s : null;
+    }
+
+    /** The package of an android-app://<package>[/...] referrer, other than own; else null. */
+    static String appUri(String s, String own) {
+        if (s == null || !s.startsWith("android-app://")) return null;
+        String rest = s.substring("android-app://".length());
+        int slash = rest.indexOf('/');
+        return pkg(slash < 0 ? rest : rest.substring(0, slash), own);
+    }
+
+    /** The approval dialog's title and message for who and the chat's title. A confirmed app by
+     *  its name (and package); an unconfirmed one by the name it gives itself, saying Harbor
+     *  couldn't confirm which app it is. */
+    static String[] prompt(Who who, String title) {
+        String name = who.name();
+        String rest = " asks to send messages to this chat and read its messages, through Harbor on this phone. It can't see your other chats.";
+        String back = "\n\nYou can take this back in Settings › Other apps.";
+        if (who.verified()) {
+            String said = who.claimed.isEmpty() || who.claimed.equals(name) ? "" : " It calls itself “" + who.claimed + "”.";
+            return new String[] { "Let " + name + " chat with “" + title + "”?", name + " (" + who.pkg + ")" + rest + said + back };
+        }
+        String what = !who.claimed.isEmpty() ? "An app calling itself “" + who.claimed + "”"
+                : !who.hint.isEmpty() ? "An app that says it is " + who.hint : "An app that didn't give its name";
+        String says = !who.claimed.isEmpty() && !who.hint.isEmpty() ? " (it says it is " + who.hint + ")" : "";
+        String head = who.claimed.isEmpty() ? "Let an app chat with “" + title + "”?" : "Let “" + who.claimed + "” chat with “" + title + "”?";
+        return new String[] { head, what + says + rest + "\n\nHarbor couldn't confirm which app it is: allow it only if you just asked for this in that app." + back };
     }
 
     // ---- rates ----

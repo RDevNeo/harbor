@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A test-only app (never shipped): "Shift Planner", a made-up app that opens Harbor's links the
+     way a Capacitor WebView app does (phoneshot via plain or shared, android/rigcaller/build.sh). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.rigcaller"
+    android:versionCode="1" android:versionName="1">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <application android:label="Shift Planner" android:allowBackup="false">
+        <activity android:name=".Open" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

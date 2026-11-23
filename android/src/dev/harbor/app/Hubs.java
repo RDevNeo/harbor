@@ -46,7 +46,7 @@ public class Hubs extends Base {
         page.addView(sv, new LinearLayout.LayoutParams(-1, -1));
         setContentView(page);
 
-        if (b == null && !handleLink(getIntent()) && !Account.needsSignIn(this)) {
+        if (b == null && !handleLink(getIntent(), true) && !Account.needsSignIn(this)) {
             // Right after a live update (Swap): the same screens as before, at once.
             if (Swap.restore(this)) return;
             // Right after an update: back to the chat the user had.
@@ -66,7 +66,7 @@ public class Hubs extends Base {
     @Override
     protected void onNewIntent(Intent i) {
         super.onNewIntent(i);
-        handleLink(i);
+        handleLink(i, false);
     }
 
     @Override
@@ -84,16 +84,17 @@ public class Hubs extends Base {
     }
 
     /** harbor://oauth: the sign-in's answer. harbor://chat/…: a chat another app or a browser
-     *  opens (openPending). A pairing link (before 0.85) gets a note. */
-    private boolean handleLink(Intent i) {
+     *  opens (openPending). A pairing link (before 0.85) gets a note. fresh: i started this
+     *  screen (onCreate), else it came to the running one (onNewIntent). */
+    private boolean handleLink(Intent i, boolean fresh) {
         if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return false;
         if ("harbor".equalsIgnoreCase(i.getData().getScheme()) && "chat".equalsIgnoreCase(i.getData().getHost())) {
             ChatLink link = ChatLink.parse(i.getDataString());
             // Another app asks to chat with a chat through the local API (LocalApi): Allow or not.
             if (link != null && link.approve != null) {
-                LocalApi.Who who = launcher(i);
+                LocalGate.Sources src = launcher(i, fresh);
                 setIntent(new Intent(this, Hubs.class));
-                LocalApi.ask(this, link.gid, link.approve, who);
+                LocalApi.ask(this, link.gid, link.approve, src);
                 return true;
             }
             String[] app = link == null ? null : referrerApp(i);
@@ -289,30 +290,53 @@ public class Hubs extends Base {
         return new String[] { label, pkg };
     }
 
-    /** The app that opened approval link intent `i`. Android 14+ names it outright when that
-     *  app shares its identity (ActivityOptions.setShareIdentityEnabled); else Android's record
-     *  of the launching package (referrerApp, the sender's own EXTRA_REFERRER dropped), which
-     *  Android checks against the caller's uid from Android 11 on: verified there, only what the
-     *  app says before. Null when unknown. */
-    private LocalApi.Who launcher(Intent i) {
-        if (android.os.Build.VERSION.SDK_INT >= 34) {
-            String pkg = getLaunchedFromPackage();
+    /** What Android and the sender say about the app that opened approval link intent `i`
+     *  (LocalGate.identify weighs them). Read here, while i is the intent being handled: on a
+     *  new intent Android sets the referrer only for the call to onNewIntent. Android leaves the
+     *  referrer out when Harbor can't see the launching package (package visibility), as for an
+     *  app that starts it with a plain startActivity while Harbor runs; getLaunchedFrom* (14+)
+     *  speak of this link only when it started the screen (fresh). */
+    private LocalGate.Sources launcher(Intent i, boolean fresh) {
+        LocalGate.Sources s = new LocalGate.Sources();
+        s.sdk = android.os.Build.VERSION.SDK_INT;
+        s.fresh = fresh;
+        Object er = i.getParcelableExtra(Intent.EXTRA_REFERRER);
+        s.extraReferrer = er instanceof Uri ? er.toString() : null;
+        s.extraReferrerName = i.getStringExtra(Intent.EXTRA_REFERRER_NAME);
+        if (s.sdk >= 34) {
+            s.launchedPkg = getLaunchedFromPackage();
             int uid = getLaunchedFromUid();
-            if (pkg == null && uid >= 0) {
+            if (uid >= 0) {
                 String[] p = getPackageManager().getPackagesForUid(uid);
-                if (p != null && p.length == 1) pkg = p[0];
-            }
-            if (pkg != null && !pkg.equals(getPackageName())) {
-                String label = "";
-                try {
-                    PackageManager pm = getPackageManager();
-                    label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
-                } catch (Exception ignored) { }
-                return new LocalApi.Who(pkg, label, true);
+                if (p != null && p.length == 1) s.launchedUidPkg = p[0];
             }
         }
-        String[] app = referrerApp(i);
-        return app == null ? null : new LocalApi.Who(app[1], app[0], android.os.Build.VERSION.SDK_INT >= 30);
+        // Android 15+: who sent this new intent (ComponentCaller), read before setIntent below
+        // replaces it. By reflection: the app compiles against Android 14.
+        if (s.sdk >= 35 && !fresh) {
+            try {
+                Object c = android.app.Activity.class.getMethod("getCurrentCaller").invoke(this);
+                if (c != null) {
+                    Object pk = c.getClass().getMethod("getPackage").invoke(c);
+                    if (pk instanceof String) s.currentPkg = (String) pk;
+                    Object uid = c.getClass().getMethod("getUid").invoke(c);
+                    if (uid instanceof Integer && (Integer) uid >= 0) {
+                        String[] p = getPackageManager().getPackagesForUid((Integer) uid);
+                        if (p != null && p.length == 1) s.currentUidPkg = p[0];
+                    }
+                }
+            } catch (Exception | LinkageError e) {
+                android.util.Log.i(LocalApi.TAG, "LOCALAPI getCurrentCaller: " + e);
+            }
+        }
+        s.callingPkg = getCallingPackage();
+        Intent bare = new Intent(i);
+        bare.removeExtra(Intent.EXTRA_REFERRER);
+        bare.removeExtra(Intent.EXTRA_REFERRER_NAME);
+        setIntent(bare);
+        Uri r = getReferrer();
+        s.referrer = r == null ? null : r.toString();
+        return s;
     }
 
     /** Keeps link `raw` (and the app that opened it, null unknown) until it can open (openPending takes it). */

@@ -23,7 +23,10 @@ import java.nio.charset.StandardCharsets;
  *  app's client would over 127.0.0.1:47999 (raw sockets, so each header is the one written
  *  here), pairing with the rig chat "Speed up the checkout page" (code LocalApi.RIG_CODE: the
  *  approval link is `--view cards --approve <it>`), and logs "LOCALAPI PASS|FAIL …" lines;
- *  RIG_LOCAL_ALLOW taps Allow on the approval dialog. */
+ *  RIG_LOCAL_ALLOW / RIG_LOCAL_DENY tap Allow / Don't allow on the approval dialog (and check that
+ *  Harbor stepped back to the app); RIG_LOCAL_CLOSE closes every Harbor screen, so the next link
+ *  starts Hubs afresh. The app that opens the link can be the test caller (android/rigcaller,
+ *  phoneshot --via), as a Capacitor app does. */
 final class LocalRig {
     private LocalRig() { }
 
@@ -32,12 +35,22 @@ final class LocalRig {
     static void hook(Context app) {
         BroadcastReceiver r = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent in) {
-                if (in.getAction().endsWith("RIG_LOCAL_ALLOW")) {
+                if (in.getAction().endsWith("RIG_LOCAL_ALLOW") || in.getAction().endsWith("RIG_LOCAL_DENY")) {
+                    boolean allow = in.getAction().endsWith("RIG_LOCAL_ALLOW");
                     Ui.main.post(() -> {
                         AlertDialog d = LocalApi.asking;
-                        if (d != null) d.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
-                        else Log.i(LocalApi.TAG, "LOCALAPI FAIL allow: no dialog on screen");
+                        if (d != null) d.getButton(allow ? AlertDialog.BUTTON_POSITIVE : AlertDialog.BUTTON_NEGATIVE).performClick();
+                        else Log.i(LocalApi.TAG, "LOCALAPI FAIL " + (allow ? "allow" : "deny") + ": no dialog on screen");
                     });
+                    // Then Harbor steps back to the app that asked: no Harbor screen in front.
+                    Ui.main.postDelayed(() -> Log.i(LocalApi.TAG, "LOCALAPI " + (Base.resumed == 0 ? "PASS" : "FAIL")
+                            + " back to the app (Harbor screens in front: " + Base.resumed + ")"), 2_500);
+                    return;
+                }
+                if (in.getAction().endsWith("RIG_LOCAL_CLOSE")) {
+                    // Every Harbor screen closes (the process and the local API stay): the next
+                    // approval link starts Hubs afresh instead of reaching it through onNewIntent.
+                    Ui.main.post(() -> { for (Base b : new java.util.ArrayList<>(Base.alive)) b.finishAndRemoveTask(); });
                     return;
                 }
                 new Thread(LocalRig::run, "local-rig").start();
@@ -45,6 +58,8 @@ final class LocalRig {
         };
         IntentFilter f = new IntentFilter("dev.harbor.app.RIG_LOCAL_PAIR");
         f.addAction("dev.harbor.app.RIG_LOCAL_ALLOW");
+        f.addAction("dev.harbor.app.RIG_LOCAL_DENY");
+        f.addAction("dev.harbor.app.RIG_LOCAL_CLOSE");
         if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(r, f, Context.RECEIVER_EXPORTED);
         else app.registerReceiver(r, f);
     }
@@ -139,7 +154,9 @@ final class LocalRig {
                 Ans w = call("GET", "/local/v1/pair/" + pair + "?wait=25", "https://localhost", null, null);
                 String state = w.json().optString("state");
                 if (state.equals("pending")) continue;
+                if (state.equals("denied")) { Log.i(LocalApi.TAG, "LOCALAPI pairing denied (RIG_LOCAL_DENY): the rest skipped"); return; }
                 check(state.equals("allowed") && w.json().optString("token").length() == 64, "pairing allowed", w.status + " " + w.body);
+                Log.i(LocalApi.TAG, "LOCALAPI paired app " + w.json().optJSONObject("app"));
                 token = w.json().optString("token");
                 break;
             }

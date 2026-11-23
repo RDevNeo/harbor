@@ -7,7 +7,9 @@
 #
 # Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|home>,
 # tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>,
-# broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>,
+# broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>, front:now (prints the
+# activity in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
+# the test caller app android/rigcaller),
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults; CODE=1 runs the app
 # from downloaded app code (the build's harbor-phone-code.zip, one patch version newer than the APK,
@@ -98,6 +100,9 @@ echo "==> apk (building in the background)"
   run_in "$andr" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps -e ANDROID_ABIS=x86_64 \
     -e ANDROID_KEYSTORE=/c/android/rig.jks -e ANDROID_KEYSTORE_PASS=rig-only -e HARBOR_RIG_PORT="$port" -e HARBOR_RIG_TOKEN="$token" \
     -e HARBOR_CODE_VERSION="$([ -n "${CODE:-}" ] && echo "$cver" || echo "$ver")" -e OUT=/out/harbor-rig.apk -- bash -euo pipefail -c 'ANDROID_HOME=/c/android/sdk android/build.sh'
+  # The test caller ("Shift Planner", android/rigcaller): opens links as a Capacitor app does (via: steps).
+  run_in "$andr" -e ANDROID_BUILD=/c/android -e ANDROID_KEYSTORE=/c/android/rig.jks -e ANDROID_KEYSTORE_PASS=rig-only \
+    -e OUT=/out/rigcaller.apk -- bash -euo pipefail -c 'ANDROID_HOME=/c/android/sdk android/rigcaller/build.sh'
 ) > "$logs/apk.log" 2>&1 &
 apkjob=$! apk0=$s
 
@@ -143,6 +148,7 @@ ad wm dismiss-keyguard >/dev/null 2>&1 || true
 ad input keyevent KEYCODE_WAKEUP
 ad cmd uimode night "$([ -n "${DARK:-}" ] && echo yes || echo no)" >/dev/null
 timeout 120 "$adb" install -r -g "$HOME/out/harbor-rig.apk" >/dev/null || { echo "the APK didn't install"; exit 1; }
+timeout 60 "$adb" install -r "$HOME/out/rigcaller.apk" >/dev/null || { echo "the test caller didn't install"; exit 1; }
 "$adb" reverse "tcp:$port" "tcp:$port" >/dev/null
 ad logcat -c
 phase boot $s
@@ -238,10 +244,15 @@ for st in "$@"; do
     broadcast:*) ad am broadcast -a "${st#broadcast:}" -p "$pkg" >/dev/null ;;
     # A chat link from another app: CHAT[@PC], CHAT a rig chat's name (its gid) or a gid as it is.
     # ~BASE64 after it: more of the query (scripts/boat/phoneshot --context/--from), percent-encoded.
-    view:*) v=${st#view:}; q=""; case "$v" in *~*) q=$(printf %s "${v#*~}" | base64 -d); v=${v%%~*} ;; esac
+    # via-plain: / via-shared: the same link, opened by the test caller app (android/rigcaller) with a
+    # plain startActivity as Capacitor does, or sharing its identity (Android 14's ActivityOptions).
+    view:*|via-plain:*|via-shared:*) mode=${st%%:*} v=${st#*:}; q=""; case "$v" in *~*) q=$(printf %s "${v#*~}" | base64 -d); v=${v%%~*} ;; esac
       c=${v%%@*}; g=$(gid "$c"); u="harbor://chat/${g:-$c}"; [ "$v" = "$c" ] || u="$u?pc=${v#*@}"
       [ -z "$q" ] || { case "$u" in *\?*) u="$u&$q" ;; *) u="$u?$q" ;; esac; }
-      echo "view $u"; ad am start -W -a android.intent.action.VIEW -d "'$u'" >/dev/null || { echo "could not open $u"; fail=1; break; } ;;
+      if [ "$mode" = view ]; then echo "view $u"; ad am start -W -a android.intent.action.VIEW -d "'$u'" >/dev/null || { echo "could not open $u"; fail=1; break; }
+      else echo "$mode $u"; ad am start -W -n dev.harbor.rigcaller/.Open --es link "'$u'" $([ "$mode" = via-shared ] && echo --ez share true) >/dev/null ||
+        { echo "could not open $u from the test caller"; fail=1; break; }; fi ;;
+    front:*) echo "front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     wait:*) sleep "${st#wait:}" ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;
     *) echo "unknown step: $st"; fail=1; break ;;
@@ -249,6 +260,7 @@ for st in "$@"; do
 done
 phase shots $s
 ad logcat -d > "$logs/logcat.txt" 2>/dev/null || true
+grep -E 'LOCALAPI|RIGCALLER' "$logs/logcat.txt" | sed 's/^[^:]*: //' | tail -80 || true
 [ -z "${CODE:-}" ] || { echo "the shell said:"; grep -E 'harbor-shell' "$logs/logcat.txt" | tail -20 || echo "  (nothing: no harbor-shell lines in logcat)"; }
 tar -czf "$HOME/out/shots.tgz" -C "$HOME/out" shots logs
 [ "$fail" = 0 ] || { phase total; echo "<== phoneshot FAILED"; tail -20 "$logs/hub.log"; exit 1; }

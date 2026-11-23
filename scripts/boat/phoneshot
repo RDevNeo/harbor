@@ -35,7 +35,13 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --from LABEL     with the next --view: &from=LABEL
   --approve CODE   with the next --view: &approve=CODE, a local API pairing's approval link
                    (a test build pairs with code 0123456789abcdef0123456789abcdef: --broadcast
-                   dev.harbor.app.RIG_LOCAL_PAIR first, RIG_LOCAL_ALLOW taps Allow; LocalRig.java)
+                   dev.harbor.app.RIG_LOCAL_PAIR first, RIG_LOCAL_ALLOW / RIG_LOCAL_DENY tap Allow /
+                   Don't allow, RIG_LOCAL_CLOSE closes Harbor's screens; LocalRig.java)
+  --via plain|shared  the next --view is opened by a test app, "Shift Planner"
+                   (android/rigcaller), not by adb: plain = new Intent(ACTION_VIEW, uri) and
+                   startActivity, as a Capacitor WebView app does; shared = with Android 14's
+                   ActivityOptions.setShareIdentityEnabled(true)
+  --front          prints the activity in front now (did Harbor step back to the app?)
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
@@ -61,15 +67,17 @@ Time: 3 to 7 minutes from harbor-phone (most of it waits for the restored sandbo
 PHONESHOT_GPU try another system image / -gpu mode (installed on the spot). Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
 EOF2
 }
-steps=() quiet="" dark="" from="" save="" drop="" code="" extra=""
+steps=() quiet="" dark="" from="" save="" drop="" code="" extra="" via=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
     # A link's query rides along base64'd (its & % = and quotes reach the phone as they are).
     --context|--from|--approve) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       extra="${extra:+$extra&}${1#--}=$(jq -rn --arg t "$2" '$t|@uri')"; shift ;;
+    --via) case "${2:-}" in plain|shared) via=$2 ;; *) echo "--via plain or --via shared" >&2; exit 2 ;; esac; shift ;;
     --view) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
-      steps+=("view:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra=""; shift ;;
+      steps+=("${via:+via-}${via:-view}:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra="" via=""; shift ;;
+    --front) steps+=("front:now") ;;
     --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --code) code=1 ;;

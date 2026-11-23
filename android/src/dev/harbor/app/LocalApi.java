@@ -196,7 +196,7 @@ final class LocalApi {
             chat.put("online", false);
             o.put("pc_online", false);
         }
-        return ok(o.put("chat", chat).put("app", new JSONObject().put("label", g.label).put("package", g.pkg)));
+        return ok(o.put("chat", chat).put("app", appJson(g.label, g.pkg)));
     }
 
     private static boolean anyPcAnswers() {
@@ -225,37 +225,38 @@ final class LocalApi {
                 .put("expires_in", LocalGate.PAIR_TTL / 1000));
     }
 
+    /** An allowed app as the API shows it: package "" and verified false when Android didn't
+     *  confirm which app it is (label is then the name it gave itself). */
+    private static JSONObject appJson(String label, String pkg) throws JSONException {
+        return new JSONObject().put("label", label).put("package", pkg).put("verified", !pkg.isEmpty());
+    }
+
     private static LocalHttp.Res pairGet(LocalHttp.Req r, String id) throws Exception {
         LocalGate.Pair p = gate.awaitPair(id, waitMs(r, 25));
         if (p == null) return LocalHttp.error(404, "unknown_pair", "No such pairing (it was answered, or ran out after 10 minutes)");
         JSONObject o = new JSONObject().put("state", p.state);
         if (p.state.equals("allowed"))
-            o.put("token", p.token).put("chat", p.chat).put("app", new JSONObject().put("label", p.label).put("package", p.pkg));
+            o.put("token", p.token).put("chat", p.chat).put("app", appJson(p.label, p.pkg));
         return ok(o);
-    }
-
-    /** Who opened an approval link, as Hubs found it. */
-    static final class Who {
-        final String pkg, label;
-        /** Android itself said so (else it's what the link's sender may have written). */
-        final boolean verified;
-        Who(String pkg, String label, boolean verified) { this.pkg = pkg; this.label = label; this.verified = verified; }
     }
 
     /** The dialog on screen (the rig's RIG_LOCAL_ALLOW taps its Allow). */
     static volatile AlertDialog asking;
 
-    /** An approval link (harbor://chat/<chat>?approve=<code>) opened Harbor: asks the user
-     *  whether that app may chat with that chat, then steps back to it. */
-    static void ask(Activity a, String chat, String code, Who who) {
+    /** An approval link (harbor://chat/<chat>?approve=<code>) opened Harbor (Hubs): asks the
+     *  user whether the app that opened it may chat with that chat, then steps back to it.
+     *  src: what Android and the sender said about that app (LocalGate.identify picks). An app
+     *  Android doesn't name is still asked about, by the name it gives itself and said to be
+     *  unconfirmed: the answer is the user's, once. */
+    static void ask(Base a, String chat, String code, LocalGate.Sources src) {
         LocalGate.Pair p = gate.pairByCode(code);
+        src.claimed = p == null ? "" : p.claimed;
+        LocalGate.Who who = LocalGate.identify(src, a.getPackageName());
+        if (who.verified()) who.label = appLabel(a, who.pkg);
+        Log.i(TAG, "LOCALAPI who: " + src + " -> " + who);
         if (p == null || !p.chat.equals(chat)) {
             Ui.toast(a, "That request to chat has run out: ask again from the app.");
-            return;
-        }
-        if (who == null) {
-            gate.deny(code);
-            Ui.toast(a, "Harbor couldn't tell which app asked to chat, so it didn't let it.");
+            back(a, who);
             return;
         }
         Ui.pool.execute(() -> {
@@ -263,29 +264,56 @@ final class LocalApi {
             String title = f.title == null || f.title.isEmpty() ? chat : f.title;
             Ui.main.post(() -> {
                 if (a.isFinishing() || a.isDestroyed()) { gate.deny(code); return; }
-                String name = who.label.isEmpty() ? who.pkg : who.label;
-                String said = p.claimed.isEmpty() || p.claimed.equals(name) ? "" : " It calls itself “" + p.claimed + "”.";
-                String what = (who.verified ? name + " (" + who.pkg + ")" : "An app that says it is " + name + " (" + who.pkg + "; Android couldn't confirm it)")
-                        + " asks to send messages to this chat and read its messages, through Harbor on this phone." + said
-                        + " It can't see your other chats.\n\nYou can take this back in Settings › Other apps.";
+                String[] t = LocalGate.prompt(who, title);
                 boolean[] done = { false };
-                AlertDialog d = Ui.dialog(a).setTitle("Let " + name + " chat with “" + title + "”?").setMessage(what)
+                AlertDialog d = Ui.dialog(a).setTitle(t[0]).setMessage(t[1])
                         .setNegativeButton("Don't allow", (x, w) -> {
                             done[0] = true;
                             gate.deny(code);
-                            a.moveTaskToBack(true);
+                            back(a, who);
                         })
                         .setPositiveButton("Allow", (x, w) -> {
                             done[0] = true;
-                            if (gate.approve(code, who.pkg, name, title)) a.moveTaskToBack(true);
-                            else Ui.toast(a, "That request ran out: ask again from the app.");
+                            if (!gate.approve(code, who.pkg, who.name(), title)) Ui.toast(a, "That request ran out: ask again from the app.");
+                            back(a, who);
                         })
-                        .setOnDismissListener(x -> { asking = null; if (!done[0]) gate.deny(code); })
+                        .setOnDismissListener(x -> {
+                            asking = null;
+                            if (done[0]) return;
+                            gate.deny(code);
+                            back(a, who);
+                        })
                         .create();
                 asking = d;
                 d.show();
             });
         });
+    }
+
+    /** The app's name on this phone, "" when Android doesn't show it to Harbor. */
+    private static String appLabel(Context c, String pkg) {
+        try {
+            android.content.pm.PackageManager pm = c.getPackageManager();
+            return String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Back to the app that asked, after an answer or an error: Harbor's task steps behind it
+     *  (Hubs is singleTask, so the link brought Harbor's own task to the front, over the app's).
+     *  When Harbor is still in front a moment later (a launcher that keeps it there), the
+     *  confirmed app is opened by its launch intent, which brings its task back as it was. */
+    static void back(Base a, LocalGate.Who who) {
+        boolean moved = a.moveTaskToBack(true);
+        Log.i(TAG, "LOCALAPI back: moveTaskToBack " + moved);
+        Ui.main.postDelayed(() -> {
+            if (a.isDestroyed() || !a.front) { Log.i(TAG, "LOCALAPI back: Harbor left the front"); return; }
+            android.content.Intent l = who.verified() ? a.getPackageManager().getLaunchIntentForPackage(who.pkg) : null;
+            Log.i(TAG, "LOCALAPI back: Harbor still in front; " + (l == null ? "no app to open" : "opening " + who.pkg));
+            if (l == null) return;
+            try { a.startActivity(l.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (RuntimeException ignored) { }
+        }, 800);
     }
 
     /** Settings › Other apps: each app allowed to chat, tap to take it back. Nothing when none. */
@@ -296,14 +324,16 @@ final class LocalApi {
         Prims.section(a, box, "Other apps");
         LinearLayout card = Prims.card(a, box);
         for (LocalGate.Grant g : gs) {
-            String name = g.label.isEmpty() ? g.pkg : g.label;
-            LinearLayout row = Ui.cardRow(a, Ui.I_PLUG, name, "Chats with “" + (g.title.isEmpty() ? g.chat : g.title) + "” · tap to remove", Ui.FG,
+            String name = g.label.isEmpty() ? (g.pkg.isEmpty() ? "An app" : g.pkg) : g.label;
+            // The package when Android confirmed it; else the name is only what the app said.
+            String which = g.pkg.isEmpty() ? "Not confirmed by Android" : g.pkg;
+            LinearLayout row = Ui.cardRow(a, Ui.I_PLUG, name, which + " · chats with “" + (g.title.isEmpty() ? g.chat : g.title) + "” · tap to remove", Ui.FG,
                     v -> Ui.dialog(a).setTitle("Stop " + name + " chatting with “" + (g.title.isEmpty() ? g.chat : g.title) + "”?")
                             .setMessage(name + " won't be able to send or read messages of that chat through Harbor any more. It can ask again.")
                             .setNegativeButton("Cancel", null)
                             .setPositiveButton("Remove", (d, w) -> { gate.revoke(g.hash); settingsRows(a, box); })
                             .show());
-            Ui.wrapSub(row, 2);
+            Ui.wrapSub(row, 3);
             card.addView(row, Ui.fill());
         }
     }

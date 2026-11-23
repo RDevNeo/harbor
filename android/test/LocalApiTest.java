@@ -186,6 +186,91 @@ public final class LocalApiTest {
         eq(gReal.awaitPair(waited.id, 5_000).state, "allowed", "a long poll wakes on the answer");
         eq(System.currentTimeMillis() - t0 < 4_000, true, "at once");
 
+        // Unconfirmed apps (Android didn't name them): package "", told apart by the name they give.
+        LocalGate.Pair u1 = gate.pairStart(chat, "Shift Planner", null);
+        eq(gate.approve(u1.code, "", "Shift Planner", "Weekly plan"), true, "an unconfirmed app may be allowed");
+        LocalGate.Pair u1b = gate.pairTake(u1.id);
+        eq(u1b.pkg + "|" + u1b.label, "|Shift Planner", "with no package");
+        LocalGate.Pair u2 = gate.pairStart(chat, "Rota Board", null);
+        gate.approve(u2.code, "", "Rota Board", "Weekly plan");
+        String ut2 = gate.pairTake(u2.id).token;
+        LocalGate.Pair u3 = gate.pairStart(chat, "Shift Planner", null);
+        gate.approve(u3.code, "", "Shift Planner", "Weekly plan");
+        String ut3 = gate.pairTake(u3.id).token;
+        eq(gate.byToken(u1b.token), null, "the same name again replaces its token");
+        eq(gate.byToken(ut2) != null && gate.byToken(ut3) != null, true, "another name keeps its own");
+        LocalGate gu = new LocalGate(() -> now);
+        gu.load(gate.save());
+        eq(gu.byToken(ut3) != null && gu.byToken(ut3).pkg.isEmpty(), true, "an unconfirmed grant round trips");
+        gate.revoke(gate.byToken(ut2).hash);
+        gate.revoke(gate.byToken(ut3).hash);
+
+        // ---- who opened the approval link ----
+        String own = "dev.harbor.app";
+        LocalGate.Sources capacitor = new LocalGate.Sources();
+        // What a Capacitor app's window.location.href gives on Android 14 while Harbor runs: a new
+        // intent, no shared identity, the referrer left out (Harbor can't see the app).
+        capacitor.sdk = 34; capacitor.fresh = false; capacitor.launchedPkg = own; capacitor.claimed = "Shift Planner";
+        LocalGate.Who wh = LocalGate.identify(capacitor, own);
+        eq(wh.verified() + " " + wh.name() + " " + wh.how, "false Shift Planner none", "Capacitor, no referrer: unverified, by its own name");
+        String[] pr = LocalGate.prompt(wh, "Weekly plan");
+        eq(pr[0], "Let “Shift Planner” chat with “Weekly plan”?", "unverified title");
+        eq(pr[1].startsWith("An app calling itself “Shift Planner” asks to send messages"), true, "unverified message: " + pr[1]);
+        eq(pr[1].contains("Harbor couldn't confirm which app it is"), true, "says it couldn't confirm");
+        LocalGate.Sources ref = new LocalGate.Sources();
+        ref.sdk = 34; ref.referrer = "android-app://com.example.shifts"; ref.claimed = "Shift Planner";
+        wh = LocalGate.identify(ref, own);
+        eq(wh.pkg + " " + wh.how, "com.example.shifts referrer", "Android's referrer: verified");
+        wh.label = "Shift Planner";
+        pr = LocalGate.prompt(wh, "Weekly plan");
+        eq(pr[0], "Let Shift Planner chat with “Weekly plan”?", "verified title");
+        eq(pr[1].startsWith("Shift Planner (com.example.shifts) asks"), true, "verified message: " + pr[1]);
+        eq(pr[1].contains("couldn't confirm"), false, "no doubt when verified");
+        wh.label = "";
+        eq(LocalGate.prompt(wh, "T")[0], "Let com.example.shifts chat with “T”?", "a verified app Harbor can't see by its package");
+        eq(LocalGate.prompt(wh, "T")[1].contains("It calls itself “Shift Planner”."), true, "and the name it gives");
+        LocalGate.Sources shared = new LocalGate.Sources();
+        shared.sdk = 34; shared.fresh = true; shared.launchedPkg = "com.example.shifts"; shared.referrer = "android-app://com.example.other";
+        eq(LocalGate.identify(shared, own).how, "launched-from-package", "a fresh launch that shared its identity comes first");
+        shared.fresh = false;
+        eq(LocalGate.identify(shared, own).pkg, "com.example.other", "on a new intent launched-from is about an older launch");
+        shared.referrer = null;
+        eq(LocalGate.identify(shared, own).verified(), false, "and isn't trusted then");
+        LocalGate.Sources caller = new LocalGate.Sources();
+        caller.sdk = 35; caller.fresh = false; caller.launchedPkg = "com.example.launcher"; caller.currentPkg = "com.example.shifts";
+        eq(LocalGate.identify(caller, own).pkg + " " + LocalGate.identify(caller, own).how, "com.example.shifts current-caller", "Android 15's caller of a new intent");
+        caller.sdk = 34;
+        eq(LocalGate.identify(caller, own).verified(), false, "not before Android 15");
+        caller.sdk = 35; caller.fresh = true; caller.launchedPkg = null;
+        eq(LocalGate.identify(caller, own).verified(), false, "nor on a fresh launch (launched-from speaks then)");
+        LocalGate.Sources uid = new LocalGate.Sources();
+        uid.sdk = 34; uid.fresh = true; uid.launchedUidPkg = "com.example.shifts";
+        eq(LocalGate.identify(uid, own).how, "launched-from-uid", "the uid's one package");
+        LocalGate.Sources call = new LocalGate.Sources();
+        call.sdk = 34; call.callingPkg = "com.example.shifts";
+        eq(LocalGate.identify(call, own).how, "calling-package", "startActivityForResult's caller");
+        LocalGate.Sources self = new LocalGate.Sources();
+        self.sdk = 34; self.fresh = true; self.launchedPkg = own; self.referrer = "android-app://" + own;
+        eq(LocalGate.identify(self, own).verified(), false, "Harbor itself is never the answer");
+        LocalGate.Sources fake = new LocalGate.Sources();
+        fake.sdk = 34; fake.extraReferrer = "android-app://com.example.bank"; fake.claimed = "Shift Planner";
+        wh = LocalGate.identify(fake, own);
+        eq(wh.verified() + " " + wh.hint, "false com.example.bank", "EXTRA_REFERRER is only what the sender says");
+        eq(LocalGate.prompt(wh, "T")[1].startsWith("An app calling itself “Shift Planner” (it says it is com.example.bank)"), true, "shown as such");
+        LocalGate.Sources name = new LocalGate.Sources();
+        name.sdk = 34; name.extraReferrerName = "android-app://com.example.bank/path";
+        wh = LocalGate.identify(name, own);
+        eq(wh.name() + " | " + LocalGate.prompt(wh, "T")[0], "com.example.bank | Let an app chat with “T”?", "EXTRA_REFERRER_NAME, no name given");
+        LocalGate.Sources old10 = new LocalGate.Sources();
+        old10.sdk = 29; old10.referrer = "android-app://com.example.shifts";
+        eq(LocalGate.identify(old10, own).verified(), false, "before Android 11 the referrer isn't checked");
+        LocalGate.Sources nothing = new LocalGate.Sources();
+        nothing.sdk = 34;
+        wh = LocalGate.identify(nothing, own);
+        eq(wh.name() + " | " + LocalGate.prompt(wh, "T")[1].substring(0, 32), "An app | An app that didn't give its name", "nothing known at all: still asked");
+        eq(LocalGate.pkg("not a package", own), null, "a package name is checked");
+        eq(LocalGate.appUri("https://example.com", own), null, "only android-app:// referrers");
+
         // ---- limits ----
         eq(LocalGate.checkMessage("hi", null), null, "a message");
         eq(LocalGate.checkMessage("  \n", null).status, 400, "an empty message");

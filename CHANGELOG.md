@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Phone: an app that asks to chat through Harbor's local API (a Capacitor app doing `window.location.href = <approve
+  link>`) got "Harbor couldn't tell which app allowed to chat" and stayed in Harbor. When Harbor is already running,
+  Android doesn't tell it which app opened the link (it leaves the referrer out for an app Harbor can't see, and
+  Android 14's launched-from names whoever opened Harbor before). Harbor now weighs every source (Android 14's
+  launched-from on a fresh start, Android 15's caller of a new intent, the calling package, Android's referrer, then what the app says: the referrer extras
+  and the name it gave when pairing) and never refuses for not knowing: it asks "Let *App* chat with “*chat*”?" for an
+  app Android confirmed, else "Let “*Name*” chat with “*chat*”?" saying Harbor couldn't confirm which app it is.
+  After Allow, Don't allow or an error, Harbor steps back to the app (and opens a confirmed app if it didn't get
+  there). Settings › Other apps shows each app's package, or that Android didn't confirm it; the API's `app` object
+  gains `verified`. Code only: no new APK.
+
 ## [0.193.1] - 2026-11-23
 
 ### Changed
