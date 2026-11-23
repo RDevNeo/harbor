@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.194.0] - 2026-11-23
+
 ### Added
 - Phone: apps that chat through Harbor's local API can send **photos and PDFs** with a message (JPEG, PNG, WebP,
   PDF; up to 4 files, 10 MB together, as base64 in the JSON). Harbor checks each file's first bytes against its type
