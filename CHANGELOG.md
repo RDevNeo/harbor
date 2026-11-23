@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.193.1] - 2026-11-23
+
+### Changed
+- Steering a turn no longer shows an error card
+
 ## [0.193.0] - 2026-11-23
 
 ### Added
