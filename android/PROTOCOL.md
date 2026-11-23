@@ -2370,7 +2370,8 @@ network: it listens on `127.0.0.1:47999` only (plain HTTP, `Connection: close`, 
 UTF-8), while Harbor's process runs (any screen, or the background notification service `Listen`,
 which is always on). When Harbor isn't running, the port is closed: the client says so and tries
 later. No PC changes: the phone uses the PC calls above (`/v1/state`, `/v1/chat_link`,
-`/v1/chats/{id}/context`, `/send`, `/items`, `/events`).
+`/v1/chats/{id}/context`, `/send`, `/items`, `/events`; for attachments `/v1/upload`, `/v1/image`,
+`/v1/file`, `/v1/media`; for voice messages `/v1/transcribe`).
 
 **Reaching the chat (0.193.3).** Every call works the same with Harbor in the background, or with
 its process started only by `Listen` (no Harbor screen ever shown): nothing depends on a screen
@@ -2485,8 +2486,11 @@ its network security config if it refuses `http://127.0.0.1`.
   reach. Last answered 5 min ago.") and
   `"app": {"label", "package", "verified"}`. `signed_in`: Harbor on this phone is signed in and knows a PC.
   `pc_online`: with a token, the chat's PC answers; without, some PC of the phone's does.
-- `POST /local/v1/chats/<gid>/messages` `{"text": "…", "context"?: "…", "client_id"?: "…"}` →
-  `{"ok": true, "id": <message id> | null, "client_id": "…", "queued": bool, "steering": bool}`.
+- `POST /local/v1/chats/<gid>/messages` `{"text": "…", "context"?: "…", "client_id"?: "…",
+  "attachments"?: [{"name", "mime", "data_base64"}]}` →
+  `{"ok": true, "id": <message id> | null, "client_id": "…", "queued": bool, "steering": bool,
+  "transcript"?: "…"}`. Files and voice messages: see **Attachments** below; `text` may then be
+  empty or left out.
   Sends `text` to the chat as the user's message from this phone (as the phone's own composer
   does: a running turn queues it, `queued: true`, and `id` is null until it runs). `context`
   (optional, at most 4 KB of UTF-8) is untrusted app context, posted first exactly like a chat
@@ -2494,8 +2498,10 @@ its network security config if it refuses `http://127.0.0.1`.
   "Context from *App*" card, given to the agent with this message, quoted and marked as written by
   that app, not by the user. Text and context are cleaned first (control characters but newline
   and tab dropped); text at most 16 KB of UTF-8. `client_id` (8-80 letters, digits, `-`, `_`; a
-  UUID is made when absent) makes a repeated send run once. `id` is the message's id in `GET`
-  below.
+  UUID is made when absent) makes a repeated send run once: a repeat the phone has seen (for 15
+  minutes) gets the first one's answer at once, uploads nothing and transcribes nothing again (one
+  still under way: the repeat waits for it, up to 60 s, else `409 busy`). `id` is the message's id
+  in `GET` below.
 - `GET /local/v1/chats/<gid>/messages[?limit=1-200]` (no `after`) → the last `limit` (default 50)
   messages and a cursor:
   `{"messages": [...], "cursor": "<opaque>", "running": bool, "count": N}`.
@@ -2511,22 +2517,117 @@ its network security config if it refuses `http://127.0.0.1`.
   written (it comes again, same `id`, as it grows: replace by `id`), and every reply is done once
   `running` is false. `error`: an error the chat showed (a usage limit, a failed turn). Tool
   calls, thinking and notices aren't messages. If `count` drops below an `id` you hold, that
-  message was taken back.
+  message was taken back. A message with files also has `"attachments": [...]` (below); a user's
+  message of files alone has `text` `""` (or its `[Image #k]` tokens).
+- `GET /local/v1/chats/<gid>/files/<id>[?thumb=1]` → the file's bytes (below).
+
+**Attachments (0.194).** A message may carry up to **4 files**, **10 MB together** (decoded), each
+`{"name": "…", "mime": "…", "data_base64": "…"}`:
+
+- Taken: `image/jpeg` (`image/jpg` too), `image/png`, `image/webp`, `application/pdf`, and one voice
+  message per message, `audio/webm`, `audio/mp4` (`audio/x-m4a`, `audio/m4a`) or `audio/ogg`
+  (`audio/opus`); parameters such as `;codecs=opus` are ignored. Each file's first bytes must be
+  what `mime` says (JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF….WEBP`, PDF
+  `%PDF-`, WebM `1A 45 DF A3` (EBML), MP4 `….ftyp`, Ogg `OggS`); without `mime` the bytes decide.
+  Anything else: `415 bad_attachment`.
+- `data_base64`: standard or URL-safe base64, padding optional, line breaks allowed; a data URL
+  (`data:image/jpeg;base64,…`) works too.
+- `name` is cleaned: its last path part only, no control characters or `\ / : * ? " < > |` (each
+  `_`), no dots in front, at most 120 characters, and an extension that fits the type (added when
+  it has none of them: `photo` as a JPEG is `photo.jpg`); empty gives `photo.jpg`, `document.pdf`,
+  `voice.webm`.
+- The body (only this call's: the others stay at 64 KB) may be up to **15 MB** (`Content-Length`;
+  over it `413 attachments_too_large` before a byte is read). It is read as it arrives (the token is
+  checked first, from the headers): base64 is decoded straight into files in Harbor's cache, never
+  whole in memory, and a limit is refused the moment it is crossed (the rest of the body is then read and dropped, so the
+app gets the error answer rather than a connection reset mid-upload). One such body per app at a time
+  (`429`), two in all (`503 busy`), each within 60 s (`408 too_slow`).
+- Delivery is the phone composer's: each file is uploaded (`POST /v1/upload?name=&chat=`) to the
+  PC that takes the send, then `POST /v1/chats/{id}/send` with `{"text", "files": [upload ids],
+  "client_id"}`; each image gets an `[Image #k]` token after the text (one space between, as the
+  composer places them; a token the text has already isn't added), so the agent gets them exactly
+  as from Harbor's own composer. The chat's own PC is called directly when the phone reaches it
+  (uploads and send both there); if it doesn't answer, everything goes through the workspace's PC
+  in use, which hands the files to the chat's PC with the send (the uploads are made again there:
+  that PC can't use the other's). The send's `client_id` makes it run once either way.
+- Each file the app sent is also kept on this phone (`files/localapi-files/<gid>/`, under the
+  PC's name for it, at most 200 MB in all and 30 days each), so `GET …/files` serves it without the
+  PC, and a PDF at all (the PC serves a user's images but no other file of a user's message).
+
+In `GET …/messages`, a message with files has `"attachments": [{"id", "name", "mime", "size",
+"url", "kind", "thumb_url"?}]`:
+
+- `kind`: `image`, `video` or `file`. `size`: bytes, `null` when unknown (a PC's image). `name`: as
+  the user gave it (a user's upload without the PC's `<ms>-` stamp). `mime`: by the name's
+  extension (`image/*` for an image without one). `thumb_url`: images only.
+- `url` = `/local/v1/chats/<gid>/files/<id>` on this server. `id` is opaque, made by the phone and
+  signed (HMAC-SHA256, a key of this install) for that chat alone: it can't be made up, edited or
+  used for another chat, and no path in it is ever taken from a client.
+- A user's message (any device): its images (the PC's `/v1/image`), and its other files when an app
+  sent them through this API (kept here); a user's other file sent elsewhere (a PDF from the
+  desktop) has `"id": null, "url": null`.
+- An agent's reply: its images and videos (the card's `images` and `media`) and the files it
+  attached (`files`, the PC's `/v1/file`, with `size`).
+
+`GET /local/v1/chats/<gid>/files/<id>` with the chat's `Authorization: Bearer <token>` → `200`, the
+bytes, streamed as they come: `Content-Type` (an image's from its first bytes; a file's by its
+name, and only images, video, PDF and plain text as such: anything else is
+`application/octet-stream`), `Content-Length` (when the PC says it), `Content-Disposition` (`inline`
+for images, video and PDF, else `attachment`; `filename*=UTF-8''…`), `Cache-Control: private,
+max-age=86400`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox;
+default-src 'none'` on anything not an image, video or PDF, and CORS as every answer
+(`Content-Disposition` exposed). A file kept here is read from the phone; else from the chat's PC as
+the phone's own screens fetch media (pinned TLS, the chat's own PC first, else the PC in use; a
+reply's file and video by `Range` parts, 8 MB at a time from a copy's PC, sent on as one answer).
+`?thumb=1` (images only, else `400 no_thumb`): a JPEG at most 512 px on its longer side (the PC's
+`/v1/image?max=512`, or made on the phone for a kept copy). An id that isn't this chat's: `404
+unknown_file`; a file gone from the PC (or its PC off): `404 unknown_file` / `503 pc_offline`.
+Another chat's token: `403 not_allowed`. A fetch() with the header, then a blob URL, shows one in a
+WebView (`<img src>` can't send the token).
+
+**Voice messages (0.194).** A recording from the app (a WebView's `MediaRecorder`: WebM/Opus,
+MP4/AAC or Ogg/Opus; at most **4 MB** and about **2 minutes**: `413 audio_too_large`,
+`413 audio_too_long`) is turned into words exactly as the phone composer's mic does, and the words
+are what's sent:
+
+1. The phone decodes it with Android's own decoders (`MediaExtractor`/`MediaCodec`) into a 16 kHz
+   mono 16-bit WAV (channels averaged, linear resampling), what the PC's `POST /v1/transcribe`
+   takes: that call takes WAV only, so no PC change is needed.
+2. `POST /v1/transcribe` (the whole recording, as the composer's mic sends one: no `cleanup=0`, so
+   the PC's cleanup setting applies) to the workspace's PC in use, which hands it to the PC picked
+   in Settings › Voice (`voice_host`).
+3. The words go after the typed `text` (a space between), and the message is sent as above with
+   those words as its text; the response says them (`"transcript"`). The audio is neither uploaded
+   nor kept (the composer doesn't attach its recordings either), so `GET …/messages` shows the
+   words as that user message's `text`, with no attachment for it.
+
+If it can't be transcribed **nothing is sent** (no context card either): `415 bad_attachment` (the
+phone can't decode it), `503 transcribe_unavailable` (the PC answered that no PC can transcribe
+now, e.g. the voice host is off or its model is still downloading: its words follow),
+`502 transcribe_failed` (no words heard, or another error from the PC), `503 pc_offline`,
+`503 signed_out`. A repeat with the same `client_id` after a later step failed reuses the words.
 
 **Errors.** `{"error": "<for the user>", "code": "<below>"}`: `400 bad_request` (bad JSON, empty
-text, …), `400 bad_cursor`, `400 bad_host`, `400 origin_not_allowed`, `403 not_allowed` (above),
-`404 unknown_chat` (none of the phone's PCs has it), `404 unknown_pair`, `404 no_route`,
-`405 method_not_allowed`, `409 busy` (the PC can't take it now), `411 length_required` (chunked),
-`413 too_large` (body over 64 KB), `413 text_too_large`, `413 context_too_large`,
-`415 bad_request` (not JSON), `429 rate_limited` with `Retry-After: <s>`, `431 headers_too_large`,
+text, …), `400 bad_cursor`, `400 bad_host`, `400 origin_not_allowed`, `400 too_many_attachments`
+(over 4 files, or two voice messages), `400 no_thumb`, `403 not_allowed` (above),
+`404 unknown_chat` (none of the phone's PCs has it), `404 unknown_pair`, `404 unknown_file`,
+`404 no_route`, `405 method_not_allowed`, `408 too_slow` (a body that took over 60 s),
+`409 busy` (the PC can't take it now; or a repeat of a send still under way),
+`411 length_required` (chunked), `413 too_large` (body over 64 KB),
+`413 attachments_too_large` (a message's body over 15 MB, or its files over 10 MB decoded),
+`413 audio_too_large`, `413 audio_too_long`, `413 text_too_large`, `413 context_too_large`,
+`415 bad_request` (not JSON), `415 bad_attachment`, `429 rate_limited` with `Retry-After: <s>`,
+`431 headers_too_large`, `502 transcribe_failed`, `503 transcribe_unavailable`,
 `502 pc_error` (the PC answered with an error; also when no workspace that answered has the chat
 and one answered with an error: `error` names it and its words), `503 pc_offline` (no PC of a
 workspace that may hold the chat answered within 12 s, or the chat's PC is off: `error` names the
 workspace and PC and says why, with when it last answered), `503 signed_out` (Harbor on this phone
 isn't signed in, or a PC refused its sign-in), `503 busy` (16 connections at once).
 
-**Rates.** Per allowed app and chat: 6 messages at once, then one every 10 s; 2 long polls at once
-and 30 reads at once, then one a second. Pairings: 3 at once then one every 20 s, at most 4
+**Rates.** Per allowed app and chat: 6 messages at once, then one every 10 s; of them, messages
+with attachments 4 at once, then one every 15 s, and one large body (over 64 KB) at a time (two in
+all apps); 2 long polls at once and 30 reads at once, then one a second; files: 4 read at once, 60
+at once then 4 a second. Pairings: 3 at once then one every 20 s, at most 4
 waiting for an answer. Bad tokens: 20, then one every 3 s.
 
 **Example** (a WebView client):
@@ -2550,8 +2651,29 @@ async function pair(chat) {
 }
 ```
 
+Sending a photo, and reading files back:
+
+```js
+const toB64 = (blob) => new Promise((ok) => { const r = new FileReader();
+  r.onload = () => ok(r.result.split(',')[1]); r.readAsDataURL(blob); });
+await call('POST', `/chats/${chat}/messages`, { text: 'This week', client_id: crypto.randomUUID(),
+  attachments: [{ name: 'shift.jpg', mime: 'image/jpeg', data_base64: await toB64(photoBlob) }] });
+// a voice note: MediaRecorder's blob (audio/webm;codecs=opus in Android's WebView)
+await call('POST', `/chats/${chat}/messages`, { text: '', client_id: crypto.randomUUID(),
+  attachments: [{ name: 'note.webm', mime: recorder.mimeType, data_base64: await toB64(voiceBlob) }] });
+async function fileUrl(att) {                 // for <img src>, <a href>
+  const r = await fetch(H.replace('/local/v1', '') + att.url, { headers: { Authorization: 'Bearer ' + token } });
+  return URL.createObjectURL(await r.blob());
+}
+```
+
 The test build's self-test (`LocalRig`, `scripts/boat/phoneshot --broadcast
-dev.harbor.app.RIG_LOCAL_PAIR`) runs all of this on the emulator against the rig hub.
+dev.harbor.app.RIG_LOCAL_PAIR`) runs all of this on the emulator against the rig hub: pairing,
+messages, then attachments (refusals, an image and a PDF sent and read back byte for byte, a repeat
+that uploads nothing, the files route's checks, a reply's file and a user's image from the PC) and
+voice messages (MP4/AAC, WebM/Opus, Ogg/Opus made by the emulator's encoders; the rig hub stands in
+for the transcriber, answering with the WAV's length, and "" for silence: `502 transcribe_failed`,
+nothing sent). Lines `LOCALAPI PASS|FAIL FILES …` / `VOICE …`.
 
 ## The APK in releases
 

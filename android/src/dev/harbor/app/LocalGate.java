@@ -50,8 +50,10 @@ final class LocalGate {
     static final class Grant {
         final String hash, pkg, label, chat, title;
         final long at;
-        int polls;
+        int polls, bodies, streams;
         final Bucket sends = new Bucket(6, 10_000), reads = new Bucket(30, 1_000);
+        /** Messages with attachments: 4 at once, then one every 15 s. Files read: 60 at once, then 4 a second. */
+        final Bucket uploads = new Bucket(4, 15_000), files = new Bucket(60, 250);
         Grant(String hash, String pkg, String label, String chat, String title, long at) {
             this.hash = hash; this.pkg = pkg; this.label = label; this.chat = chat; this.title = title; this.at = at;
         }
@@ -361,15 +363,93 @@ final class LocalGate {
 
     synchronized void pollDone(Grant g) { if (g.polls > 0) g.polls--; }
 
+    /** Large message bodies (attachments) being read at once: one per app, BODIES in all. */
+    static final int BODIES = 2;
+    /** Files one app may be reading at once. */
+    static final int MAX_STREAMS = 4;
+    private int bodies;
+
+    /** A large body may be read now: null (then bodyDone after it), or the 429 / 503 to answer. */
+    synchronized LocalHttp.Res bodyStart(Grant g) {
+        if (g.bodies >= 1) return LocalHttp.error(429, "rate_limited", "One message with attachments at a time: wait for the last one's answer").header("Retry-After", "2");
+        if (bodies >= BODIES) return LocalHttp.error(503, "busy", "Harbor is taking other attachments: try again").header("Retry-After", "2");
+        g.bodies++;
+        bodies++;
+        return null;
+    }
+
+    synchronized void bodyDone(Grant g) {
+        if (g.bodies > 0) g.bodies--;
+        if (bodies > 0) bodies--;
+    }
+
+    /** A message with attachments may go: null, or the 429 to answer. */
+    LocalHttp.Res takeUpload(Grant g) {
+        long w = g.uploads.take(clock.now());
+        return w == 0 ? null : tooMany(w, "Too many messages with attachments");
+    }
+
+    /** A file may be read: null (then fileDone after it), or the 429. */
+    LocalHttp.Res fileStart(Grant g) {
+        synchronized (this) {
+            if (g.streams >= MAX_STREAMS) return LocalHttp.error(429, "rate_limited", "Too many files being read at once").header("Retry-After", "1");
+            long w = g.files.take(clock.now());
+            if (w > 0) return tooMany(w, "Too many files read");
+            g.streams++;
+        }
+        return null;
+    }
+
+    synchronized void fileDone(Grant g) { if (g.streams > 0) g.streams--; }
+
+    // ---- a send repeated with its client_id ----
+
+    /** A message being sent or sent, by its app's client_id: a repeat (the app didn't get the
+     *  answer) gets the first one's answer, and its files aren't uploaded (nor its voice message
+     *  transcribed) again. `res` the answer
+     *  once it was sent; `ups` what was uploaded on the way (per attachment: where to, its name and
+     *  size, the PC's upload id and path), kept for a repeat after a failed send. */
+    static final class Sent {
+        final long at;
+        boolean running;
+        LocalHttp.Res res;
+        final Map<Integer, String[]> ups = new java.util.HashMap<>();
+        /** The voice message's words, once transcribed (a repeat doesn't transcribe again). */
+        String transcript;
+        Sent(long at) { this.at = at; }
+    }
+
+    private final Map<String, Sent> sent = new LinkedHashMap<>();
+    /** How long a send's answer is kept for its repeats. */
+    static final long SENT_TTL = 15 * 60_000;
+
+    /** The record of the message g sends with client id cid: the one there is (a repeat), else a new one. */
+    synchronized Sent sent(Grant g, String cid) {
+        long now = clock.now();
+        sent.values().removeIf(s -> !s.running && now - s.at > SENT_TTL);
+        if (sent.size() > 512) {
+            Iterator<Sent> it = sent.values().iterator();
+            while (sent.size() > 512 && it.hasNext()) if (!it.next().running) it.remove();
+        }
+        String k = g.hash + "\n" + cid;
+        Sent s = sent.get(k);
+        if (s == null) { s = new Sent(now); sent.put(k, s); }
+        return s;
+    }
+
     // ---- requests ----
 
-    enum Kind { STATUS, PAIR_START, PAIR_GET, MESSAGES_GET, MESSAGES_POST }
+    enum Kind { STATUS, PAIR_START, PAIR_GET, MESSAGES_GET, MESSAGES_POST, FILE_GET }
+
+    /** The largest body a request of kind k may have: a message's may carry attachments. */
+    static long maxBody(Kind k) { return k == Kind.MESSAGES_POST ? LocalFiles.MAX_POST_BODY : MAX_BODY; }
 
     /** Where a request goes: `answer` set means answer that now (an error, a preflight);
      *  else `kind` with `arg` (the chat or pairing id) and, for a chat's routes, `grant`. */
     static final class Route {
         Kind kind;
-        String arg = "", origin;
+        /** FILE_GET: the file's id as the path gives it (LocalFiles.open checks it). */
+        String arg = "", origin, file = "";
         Grant grant;
         LocalHttp.Res answer;
     }
@@ -404,6 +484,12 @@ final class LocalGate {
             out.arg = p[1];
             out.kind = r.method.equals("POST") ? Kind.MESSAGES_POST : Kind.MESSAGES_GET;
             want = r.method.equals("POST") ? "POST" : "GET";
+        } else if (p.length == 4 && p[0].equals("chats") && p[2].equals("files")) {
+            if (!chatId(p[1])) { out.answer = cors(LocalHttp.error(404, "unknown_chat", "No such chat"), out.origin); return out; }
+            out.arg = p[1];
+            out.file = p[3];
+            out.kind = Kind.FILE_GET;
+            want = "GET";
         } else { out.answer = cors(LocalHttp.error(404, "no_route", "No such call"), out.origin); return out; }
         if (!r.method.equals(want)) {
             out.answer = cors(LocalHttp.error(405, "method_not_allowed", "Use " + want), out.origin).header("Allow", want + ", OPTIONS");
@@ -419,7 +505,7 @@ final class LocalGate {
         // Who calls: a chat's routes need its token; status tells more with one.
         String auth = r.header("authorization");
         String token = auth != null && auth.regionMatches(true, 0, "Bearer ", 0, 7) ? auth.substring(7).trim() : null;
-        if (out.kind == Kind.MESSAGES_GET || out.kind == Kind.MESSAGES_POST || (out.kind == Kind.STATUS && token != null)) {
+        if (out.kind == Kind.MESSAGES_GET || out.kind == Kind.MESSAGES_POST || out.kind == Kind.FILE_GET || (out.kind == Kind.STATUS && token != null)) {
             Grant g = token == null ? null : byToken(token);
             if (g == null && out.kind != Kind.STATUS) {
                 if (token != null && badTokens.take(clock.now()) > 0) { out.answer = cors(tooMany(3_000, "Too many bad tokens"), out.origin); return out; }
@@ -449,7 +535,7 @@ final class LocalGate {
     static LocalHttp.Res cors(LocalHttp.Res res, String origin) {
         if (origin == null) return res;
         return res.header("Access-Control-Allow-Origin", origin).header("Vary", "Origin")
-                .header("Access-Control-Expose-Headers", "Retry-After");
+                .header("Access-Control-Expose-Headers", "Retry-After, Content-Disposition");
     }
 
     /** A CORS preflight, with Private Network Access's (a secure page calling a loopback address). */
@@ -462,9 +548,13 @@ final class LocalGate {
     }
 
     /** A message's text and context are fine: null, else the error to answer. Both are cleaned
-     *  first (control characters but newline and tab dropped, as a chat link's context). */
-    static LocalHttp.Res checkMessage(String text, String context) {
-        if (text == null || text.trim().isEmpty()) return LocalHttp.error(400, "bad_request", "`text` is empty");
+     *  first (control characters but newline and tab dropped, as a chat link's context). The text
+     *  may be empty when the message has files. */
+    static LocalHttp.Res checkMessage(String text, String context) { return checkMessage(text, context, 0); }
+
+    static LocalHttp.Res checkMessage(String text, String context, int files) {
+        if (files == 0 && (text == null || text.trim().isEmpty())) return LocalHttp.error(400, "bad_request", "`text` is empty");
+        if (text == null) text = "";
         if (text.getBytes(StandardCharsets.UTF_8).length > MAX_TEXT)
             return LocalHttp.error(413, "text_too_large", "`text` is over " + (MAX_TEXT / 1024) + " KB");
         if (context != null && context.getBytes(StandardCharsets.UTF_8).length > MAX_CONTEXT)

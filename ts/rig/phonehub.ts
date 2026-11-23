@@ -419,6 +419,24 @@ const front = Bun.serve({
       const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       return Response.json(await captcha(body));
     }
+    // No speech model on a rig PC: a voice message's WAV (the phone's local API decodes it to 16 kHz mono, as the
+    // composer's mic records) is checked and answered with its length, "" for silence (as a transcriber hears it).
+    if (req.method === "POST" && u.pathname === "/v1/transcribe") {
+      if (req.headers.get("authorization") !== `Bearer ${token}`) return Response.json({ error: "Sign in again." }, { status: 401 });
+      const b = new Uint8Array(await req.arrayBuffer());
+      const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+      const tag = (at: number) => String.fromCharCode(...b.subarray(at, at + 4));
+      if (b.length < 44 || tag(0) !== "RIFF" || tag(8) !== "WAVE" || tag(36) !== "data") return Response.json({ error: "The recording isn't a 16-bit PCM WAV file." }, { status: 409 });
+      const channels = v.getUint16(22, true), rate = v.getUint32(24, true), bits = v.getUint16(34, true);
+      if (channels !== 1 || rate !== 16000 || bits !== 16) return Response.json({ error: `rig: expected 16 kHz mono 16-bit, got ${rate} Hz ${channels} ch ${bits} bit` }, { status: 409 });
+      const n = Math.floor((b.length - 44) / 2);
+      let sum = 0;
+      for (let i = 0; i < n; i++) sum += v.getInt16(44 + 2 * i, true) ** 2;
+      const rms = n === 0 ? 0 : Math.sqrt(sum / n);
+      const secs = (n / 16000).toFixed(1);
+      console.log(`phonehub transcribe: ${secs} s, rms ${Math.round(rms)}`);
+      return Response.json({ text: rms < 50 ? "" : `Voice note of ${secs} seconds`, host: "rig" });
+    }
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
     const headers = new Headers(req.headers);
     headers.delete("host");

@@ -53,7 +53,9 @@ and passes the messages over its own connection to the PCs. The app asks once: i
 link, Harbor shows "Let *App* chat with “*chat*”?" (or, when Android doesn't say which app opened
 the link, names it by what it calls itself and says it couldn't confirm it), steps back to the app,
 and an allowed app gets a token for that chat.
-Settings › Other apps lists them and takes one back with a tap. The API, CORS and limits are in
+Settings › Other apps lists them and takes one back with a tap. Since 0.194 an app can send
+photos and PDFs with a message (delivered as the composer's attachments) and read a chat's files
+back, and send a voice message, which Harbor transcribes as the composer's mic does. The API, CORS and limits are in
 [PROTOCOL.md](PROTOCOL.md#local-api-for-other-apps-phone-0193).
 
 ## Build

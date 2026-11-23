@@ -5,6 +5,21 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Phone: apps that chat through Harbor's local API can send **photos and PDFs** with a message (JPEG, PNG, WebP,
+  PDF; up to 4 files, 10 MB together, as base64 in the JSON). Harbor checks each file's first bytes against its type
+  and cleans its name, then delivers them exactly as its own composer does: uploaded to the chat's PC, each image
+  named `[Image #N]` in the text. A send repeated with the same `client_id` uploads nothing again. The message's body is
+  read as it arrives and decoded straight into files (never whole in memory), and only this call takes more than 64 KB.
+- Phone: the local API's messages list their files (`attachments`: the user's images and the files an app sent, a
+  reply's images, videos and files), and `GET /local/v1/chats/<chat>/files/<id>` streams one (`?thumb=1`: a small
+  JPEG of an image), for that chat's token only: ids are signed for their chat, so no path or other chat's file can be
+  asked for.
+- Phone: apps can send a **voice message** (a WebView's recording: WebM/Opus, MP4/AAC or Ogg/Opus, about 2 minutes
+  at most). The phone decodes it and the PC transcribes it as the composer's mic does; the words go after the typed
+  text as the user's message, and when it can't be transcribed nothing is sent (`502 transcribe_failed`,
+  `503 transcribe_unavailable`). Code only: no new APK, no change on the PCs.
+
 ## [0.193.3] - 2026-11-23
 
 ### Fixed

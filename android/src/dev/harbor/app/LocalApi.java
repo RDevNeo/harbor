@@ -14,6 +14,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,6 +35,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Harbor's local API for other apps on this phone (PROTOCOL.md, "Local API for other apps"):
  *  plain HTTP on 127.0.0.1:47999 only, so an app (a Capacitor WebView too) can hold a chat with
@@ -55,6 +60,11 @@ final class LocalApi {
 
     private static SharedPreferences prefs() { return app.getSharedPreferences("localapi", Context.MODE_PRIVATE); }
 
+    /** What the files' ids are signed with (LocalFiles.mint), made once per install. */
+    private static byte[] fileKey;
+    /** Files uploaded to a PC and voice messages transcribed, since the start (the rig counts them). */
+    static final AtomicInteger uploads = new AtomicInteger(), transcribed = new AtomicInteger();
+
     /** Starts listening, once per process (any screen, Listen); again after a failed bind,
      *  30 s later at the earliest (another app held the port). */
     static synchronized void start(Context c) {
@@ -62,6 +72,13 @@ final class LocalApi {
             app = c.getApplicationContext();
             gate.load(prefs().getString("grants", null));
             gate.changed = () -> prefs().edit().putString("grants", gate.save()).apply();
+            String k = prefs().getString("file-key", "");
+            if (!k.matches("[0-9a-f]{64}")) { k = LocalGate.hex(32); prefs().edit().putString("file-key", k).apply(); }
+            fileKey = new byte[32];
+            for (int i = 0; i < 32; i++) fileKey[i] = (byte) Integer.parseInt(k.substring(2 * i, 2 * i + 2), 16);
+            // Attachments a request left half-read when the process ended.
+            File[] left = spool().listFiles();
+            if (left != null) for (File f : left) f.delete();
             if (Rig.on()) LocalRig.hook(app);
         }
         if (server != null && !server.isClosed()) return;
@@ -98,32 +115,43 @@ final class LocalApi {
         synchronized (LocalApi.class) { if (server == s) server = null; }
     }
 
+    /** One connection: the head first, routed and its token checked before any body is read; then
+     *  the body (64 KB at most; a message's up to 15 MB, read as it arrives: LocalFiles.read). */
     private static void serve(Socket so) throws IOException {
         so.setSoTimeout(15_000);
         InputStream in = so.getInputStream();
         OutputStream out = so.getOutputStream();
         LocalHttp.Req r;
         try {
-            r = LocalHttp.read(in, LocalGate.MAX_HEAD, LocalGate.MAX_BODY);
+            r = LocalHttp.readHead(in, LocalGate.MAX_HEAD);
         } catch (LocalHttp.Bad b) {
             LocalHttp.write(out, LocalHttp.error(b.status, b.code, b.getMessage()));
             return;
         }
         LocalGate.Route rt = gate.route(r);
         LocalHttp.Res res = rt.answer;
+        if (res == null && r.length > LocalGate.maxBody(rt.kind)) {
+            res = LocalGate.cors(rt.kind == LocalGate.Kind.MESSAGES_POST
+                    ? LocalHttp.error(413, "attachments_too_large", "The request is over " + (LocalFiles.MAX_POST_BODY >> 20) + " MB: attachments may be "
+                            + (LocalFiles.MAX_BYTES >> 20) + " MB together")
+                    : LocalHttp.error(413, "too_large", "the request is over " + (LocalGate.MAX_BODY / 1024) + " KB"), rt.origin);
+        }
         if (res == null) {
             try {
-                res = handle(r, rt, so);
+                if (rt.kind != LocalGate.Kind.MESSAGES_POST) LocalHttp.readBody(in, r, LocalGate.MAX_BODY);
+                res = handle(r, rt, so, in, out);
+            } catch (LocalHttp.Bad b) {
+                res = LocalHttp.error(b.status, b.code, b.getMessage());
             } catch (Exception e) {
                 Log.i(TAG, rt.kind + ": " + e);
                 res = LocalHttp.error(500, "internal", "Harbor couldn't do that: " + e.getClass().getSimpleName());
             }
-            LocalGate.cors(res, rt.origin);
+            if (!res.sent) LocalGate.cors(res, rt.origin);
         }
-        LocalHttp.write(out, res);
+        if (!res.sent) LocalHttp.write(out, res);
     }
 
-    private static LocalHttp.Res handle(LocalHttp.Req r, LocalGate.Route rt, Socket so) throws Exception {
+    private static LocalHttp.Res handle(LocalHttp.Req r, LocalGate.Route rt, Socket so, InputStream in, OutputStream out) throws Exception {
         switch (rt.kind) {
             case STATUS: return status(rt.grant);
             case PAIR_START: return pairStart(r);
@@ -133,7 +161,12 @@ final class LocalApi {
         // A chat's routes: the token's app must be the one calling, when Android lets us tell.
         Set<String> pk = callerPackages(so);
         if (pk != null && !pk.contains(rt.grant.pkg)) return LocalGate.notAllowed("This token belongs to another app");
-        if (rt.kind == LocalGate.Kind.MESSAGES_POST) return post(r, rt.grant);
+        if (rt.kind == LocalGate.Kind.MESSAGES_POST) return post(r, rt.grant, in);
+        if (rt.kind == LocalGate.Kind.FILE_GET) {
+            LocalHttp.Res busy = gate.fileStart(rt.grant);
+            if (busy != null) return busy;
+            try { return file(r, rt.grant, rt.file, rt.origin, out); } finally { gate.fileDone(rt.grant); }
+        }
         LocalHttp.Res busy = gate.pollStart(rt.grant);
         if (busy != null) return busy;
         try { return messages(r, rt.grant); } finally { gate.pollDone(rt.grant); }
@@ -507,30 +540,120 @@ final class LocalApi {
         }
     }
 
-    private static LocalHttp.Res post(LocalHttp.Req r, LocalGate.Grant g) throws Exception {
-        JSONObject b = body(r);
-        if (b == null) return LocalHttp.error(400, "bad_request", "The body isn't a JSON object");
-        Object t = b.opt("text");
-        if (!(t instanceof String)) return LocalHttp.error(400, "bad_request", "`text` must be a string");
-        String text = ChatLink.clean((String) t);
-        Object cx = b.opt("context");
+    /** A message from the app: read as it arrives (attachments decoded into files on the way),
+     *  then sent as Harbor's own composer sends one (post below). */
+    private static LocalHttp.Res post(LocalHttp.Req r, LocalGate.Grant g, InputStream in) throws Exception {
+        boolean big = r.length > LocalGate.MAX_BODY;
+        if (big) {
+            LocalHttp.Res busy = gate.bodyStart(g);
+            if (busy != null) return busy;
+        }
+        LocalFiles.Post p;
+        try {
+            File dir = spool();
+            dir.mkdirs();
+            InputStream body = LocalHttp.bodyStream(new BufferedInputStream(in, 1 << 16), r, gate.clock, gate.clock.now() + LocalFiles.BODY_TIME);
+            try {
+                p = LocalFiles.read(body, dir);
+            } catch (LocalHttp.Bad b) {
+                // Refused partway: the rest of the body (15 MB at most, within its 60 s) is read and
+                // dropped first, so the app gets the answer, not a connection reset mid-upload.
+                if (b.status != 408) {
+                    byte[] skip = new byte[1 << 16];
+                    try { while (body.read(skip) >= 0) { } } catch (IOException ignored) { }
+                }
+                throw b;
+            }
+        } finally {
+            if (big) gate.bodyDone(g);
+        }
+        try { return post(p, g); } finally { p.drop(); }
+    }
+
+    private static LocalHttp.Res post(LocalFiles.Post p, LocalGate.Grant g) throws Exception {
+        if (p.textBad) return LocalHttp.error(400, "bad_request", "`text` must be a string");
+        if (p.contextBad) return LocalHttp.error(400, "bad_request", "`context` must be a string");
+        String text = ChatLink.clean(p.text == null ? "" : p.text);
         String context = null;
-        if (cx != null && cx != JSONObject.NULL) {
-            if (!(cx instanceof String)) return LocalHttp.error(400, "bad_request", "`context` must be a string");
-            context = ChatLink.clean((String) cx).trim();
+        if (p.context != null) {
+            context = ChatLink.clean(p.context).trim();
             if (context.isEmpty()) context = null;
         }
-        LocalHttp.Res bad = LocalGate.checkMessage(text, context);
+        LocalHttp.Res bad = LocalGate.checkMessage(text, context, p.atts.size());
         if (bad != null) return bad;
-        String cid = b.optString("client_id", "");
+        String cid = p.clientId;
         if (!cid.matches("[A-Za-z0-9_-]{8,80}")) cid = UUID.randomUUID().toString();
+        // A repeat of a message (the app didn't get the answer) gets the first one's answer.
+        LocalGate.Sent s = gate.sent(g, cid);
+        synchronized (s) {
+            long until = System.currentTimeMillis() + 60_000;
+            while (s.running) {
+                long left = until - System.currentTimeMillis();
+                if (left <= 0) return LocalHttp.error(409, "busy", "This message (its client_id) is still being sent");
+                s.wait(left);
+            }
+            if (s.res != null) {
+                Log.i(TAG, "LOCALAPI repeat of " + cid + ": answered as the first");
+                return copy(s.res);
+            }
+            s.running = true;
+        }
+        LocalHttp.Res res = null;
+        try {
+            res = send(p, g, text, context, cid, s);
+            return res;
+        } finally {
+            synchronized (s) {
+                s.running = false;
+                if (res != null && res.status == 200) s.res = copy(res);
+                s.notifyAll();
+            }
+        }
+    }
+
+    private static LocalHttp.Res copy(LocalHttp.Res r) {
+        LocalHttp.Res c = new LocalHttp.Res(r.status, r.body);
+        c.headers.putAll(r.headers);
+        return c;
+    }
+
+    /** The message to the chat as Harbor's phone composer sends one: a voice message transcribed
+     *  first (as the composer's mic: the PC's /v1/transcribe; nothing goes when that fails, and the
+     *  audio itself isn't kept), the context, the files uploaded (POST /v1/upload) to the PC that
+     *  takes the send, then the send with their ids and an `[Image #k]` for each image. To the
+     *  chat's own PC when the phone reaches it, else through the PC in use; uploads made already for
+     *  this client_id aren't made again. */
+    private static LocalHttp.Res send(LocalFiles.Post p, LocalGate.Grant g, String text, String context, String cid, LocalGate.Sent s) throws Exception {
+        if (!p.atts.isEmpty()) {
+            LocalHttp.Res slow = gate.takeUpload(g);
+            if (slow != null) return slow;
+        }
         LocalHttp.Res slow = gate.takeSend(g);
         if (slow != null) return slow;
         if (Account.needsSignIn(app) || Hub.all(app).isEmpty()) return signedOut();
         Found f = resolve(g.chat);
         if (f.hub == null) return f.error;
-        String step = "context";
+        List<LocalFiles.Att> ups = new ArrayList<>();
+        int images = 0;
+        for (LocalFiles.Att a : p.atts) {
+            if (a.audio()) continue;
+            ups.add(a);
+            if (a.image()) images++;
+        }
+        String step = "transcribe";
         try {
+            String said = text;
+            LocalFiles.Att voice = p.audio();
+            if (voice != null) {
+                String words = s.transcript;
+                if (words == null) {
+                    words = transcribe(f, voice);
+                    s.transcript = words;
+                }
+                said = LocalFiles.withTranscript(text, words);
+            }
+            if (images > 0) said = LocalFiles.withImageTokens(said, images);
+            step = "context";
             if (context != null) {
                 JSONObject cb = new JSONObject().put("text", context).put("from", g.label)
                         .put("app", new JSONObject().put("label", g.label).put("package", g.pkg));
@@ -547,13 +670,22 @@ final class LocalApi {
                 rev0 = pre.j.optLong("rev", 0);
                 pc0 = pre.pc;
             } catch (IOException ignored) { }
-            JSONObject res = write(f, g.chat, "/v1/chats/" + g.chat + "/send", new JSONObject().put("text", text).put("client_id", cid), 15_000);
+            JSONObject res = ups.isEmpty()
+                    ? write(f, g.chat, "/v1/chats/" + g.chat + "/send", new JSONObject().put("text", said).put("client_id", cid), 15_000)
+                    : sendFiles(f, g.chat, ups, s, said, cid);
+            if (!ups.isEmpty()) keep(g.chat, ups, s);
             boolean queued = res.optBoolean("queued");
             Object id = JSONObject.NULL;
-            if (!queued && count0 >= 0) id = findSent(f, g.chat, pc0, rev0, count0, text);
-            Log.i(TAG, "LOCALAPI sent to " + f.pc + (context != null ? " with context" : "") + (queued ? ", queued" : ""));
-            return ok(new JSONObject().put("ok", true).put("id", id).put("client_id", cid)
-                    .put("queued", queued).put("steering", res.optBoolean("steering")));
+            if (!queued && count0 >= 0) id = findSent(f, g.chat, pc0, rev0, count0, said);
+            Log.i(TAG, "LOCALAPI sent to " + f.pc + (context != null ? " with context" : "") + (ups.isEmpty() ? "" : " with " + ups.size() + " files")
+                    + (voice != null ? " and a voice message" : "") + (queued ? ", queued" : ""));
+            JSONObject o = new JSONObject().put("ok", true).put("id", id).put("client_id", cid)
+                    .put("queued", queued).put("steering", res.optBoolean("steering"));
+            if (voice != null) o.put("transcript", s.transcript);
+            return ok(o);
+        } catch (LocalHttp.Bad b) {
+            Log.i(TAG, "LOCALAPI " + step + ": " + b.status + " " + b.code + " " + b.getMessage());
+            throw b;
         } catch (Hub.ApiError e) {
             Log.i(TAG, "LOCALAPI " + step + " refused by the PC (" + e.code + "): " + e.getMessage());
             return pcError(e, g.chat);
@@ -562,6 +694,351 @@ final class LocalApi {
             Log.i(TAG, "LOCALAPI " + step + " didn't reach " + f.pc + ": " + Hub.why(e));
             return LocalHttp.error(503, "pc_offline", f.hub.whyDown(e));
         }
+    }
+
+    /** A voice message's words, as the composer's mic gets them: decoded here (LocalVoice) into a
+     *  16 kHz WAV, then the PC's POST /v1/transcribe (the workspace's PC in use, which hands it to
+     *  the PC Settings › Voice picked). LocalHttp.Bad when there are none: 415 (can't decode), 413
+     *  (too long), 503 transcribe_unavailable (no PC could transcribe now: their words), 502
+     *  transcribe_failed (no words heard, or another error), 503 pc_offline. */
+    private static String transcribe(Found f, LocalFiles.Att voice) throws IOException {
+        long t0 = System.currentTimeMillis();
+        LocalFiles.Wav16k w = LocalVoice.decode(voice.file);
+        JSONObject j;
+        try {
+            j = f.hub.transcribe(w.wav(), "", false, 120_000);
+        } catch (Hub.ApiError e) {
+            Log.i(TAG, "LOCALAPI transcribe refused (" + e.code + "): " + e.getMessage());
+            if (e.code == 401 || e.code == 403) throw new LocalHttp.Bad(503, "signed_out", "Harbor on this phone isn't signed in: open Harbor and sign in");
+            if (e.code == 404 || e.code == 409 || e.code == 503)
+                throw new LocalHttp.Bad(503, "transcribe_unavailable", "No PC can transcribe the voice message now" + (e.getMessage() == null || e.getMessage().isEmpty() ? "" : ": " + e.getMessage()));
+            if (e.code == 413) throw new LocalHttp.Bad(413, "audio_too_long", "The voice message is too long for the PC");
+            throw new LocalHttp.Bad(502, "transcribe_failed", "The voice message couldn't be transcribed: " + e.getMessage());
+        } catch (IOException e) {
+            Log.i(TAG, "LOCALAPI transcribe didn't reach the PC: " + Hub.why(e));
+            throw new LocalHttp.Bad(503, "pc_offline", f.hub.whyDown(e));
+        }
+        transcribed.incrementAndGet();
+        String words = j.optString("text", "").trim();
+        Log.i(TAG, "LOCALAPI transcribed " + String.format(java.util.Locale.ROOT, "%.1f", w.seconds()) + " s of " + voice.mime + " on "
+                + j.optString("host", "?") + " in " + (System.currentTimeMillis() - t0) + " ms: " + words.length() + " characters");
+        if (words.isEmpty()) throw new LocalHttp.Bad(502, "transcribe_failed", "Harbor didn't hear any words in the voice message");
+        return words;
+    }
+
+    /** The send with files: on the chat's own PC when the phone reaches it (the files uploaded
+     *  there), else through the PC in use (uploaded there: it hands them to the chat's PC with the
+     *  send). A send that got no answer on the chat's PC is made again the other way, the files
+     *  uploaded again there (that PC can't use the other's uploads). */
+    private static JSONObject sendFiles(Found f, String chat, List<LocalFiles.Att> ups, LocalGate.Sent s, String text, String cid) throws IOException, JSONException {
+        if (f.home != null) {
+            try {
+                return sendFilesVia(f, chat, ups, s, text, cid, true);
+            } catch (Hub.ApiError | LocalHttp.Bad e) {
+                throw e;
+            } catch (IOException e) {
+                Log.i(TAG, "LOCALAPI " + f.pc + " didn't take the files directly (" + Hub.why(e) + "): through the PC in use");
+            }
+        }
+        return sendFilesVia(f, chat, ups, s, text, cid, false);
+    }
+
+    private static JSONObject sendFilesVia(Found f, String chat, List<LocalFiles.Att> ups, LocalGate.Sent s, String text, String cid, boolean direct) throws IOException, JSONException {
+        String where = direct ? "home " + f.hub.id + " " + f.home : "route " + f.hub.id;
+        JSONArray ids = new JSONArray();
+        for (int i = 0; i < ups.size(); i++) {
+            LocalFiles.Att a = ups.get(i);
+            String[] u;
+            synchronized (s) { u = s.ups.get(i); }
+            if (u == null || !u[0].equals(where) || !u[1].equals(a.name + "\n" + a.size)) {
+                JSONObject r = direct ? uploadOn(f, chat, a) : uploadRoute(f, chat, a);
+                String id = r.optString("id", "");
+                if (id.isEmpty()) throw new Hub.ApiError(502, "The PC didn't say where it put " + a.name);
+                u = new String[] { where, a.name + "\n" + a.size, id, r.optString("path", "") };
+                synchronized (s) { s.ups.put(i, u); }
+                uploads.incrementAndGet();
+                Log.i(TAG, "LOCALAPI uploaded " + a.name + " (" + a.size + " bytes) " + (direct ? "to " + f.pc : "through the PC in use"));
+            }
+            ids.put(u[2]);
+        }
+        JSONObject body = new JSONObject().put("text", text).put("files", ids).put("client_id", cid);
+        return direct ? json(on(f.hub, f.home, "POST", "/v1/chats/" + chat + "/send", 15_000), body) : f.hub.send(chat, body);
+    }
+
+    /** POST /v1/upload on the chat's own PC: the file streamed from its decoded copy. */
+    private static JSONObject uploadOn(Found f, String chat, LocalFiles.Att a) throws IOException {
+        Net.Http c = on(f.hub, f.home, "POST", "/v1/upload?name=" + URLEncoder.encode(a.name, "UTF-8") + "&chat=" + URLEncoder.encode(chat, "UTF-8"), 120_000);
+        Hub.writes.incrementAndGet();
+        try {
+            c.header("Content-Type", "application/octet-stream");
+            try (OutputStream o = c.body(a.size); InputStream in = new FileInputStream(a.file)) {
+                byte[] buf = new byte[1 << 16];
+                for (int n; (n = in.read(buf)) > 0; ) o.write(buf, 0, n);
+            }
+            return json(c, null);
+        } finally {
+            c.close();
+            Hub.writes.decrementAndGet();
+        }
+    }
+
+    /** The composer's own upload (Hub.upload): through the workspace's PC in use. */
+    private static JSONObject uploadRoute(Found f, String chat, LocalFiles.Att a) throws IOException {
+        try (InputStream in = new FileInputStream(a.file)) { return f.hub.upload(a.name, chat, in, a.size); }
+    }
+
+    // ---- files kept on this phone ----
+
+    /** Where a message's attachments arrive before they go (the cache: gone with a restart). */
+    private static File spool() { return new File(app.getCacheDir(), "localapi-up"); }
+
+    /** The files an app sent to chat, kept on this phone under the name the PC gave them (the
+     *  transcript names them so: GET .../files serves them from here, a PDF too, which the PC
+     *  doesn't serve for a user's message). At most KEEP_BYTES in all and KEEP_DAYS each. */
+    static File keptDir(String chat) { return new File(new File(app.getFilesDir(), "localapi-files"), chat); }
+
+    static final long KEEP_BYTES = 200L * 1024 * 1024;
+    static final int KEEP_DAYS = 30;
+
+    private static void keep(String chat, List<LocalFiles.Att> ups, LocalGate.Sent s) {
+        File dir = keptDir(chat);
+        dir.mkdirs();
+        for (int i = 0; i < ups.size(); i++) {
+            LocalFiles.Att a = ups.get(i);
+            String[] u;
+            synchronized (s) { u = s.ups.get(i); }
+            String name = u == null ? "" : LocalFiles.baseName(u[3]);
+            if (!LocalFiles.keptName(name)) name = System.currentTimeMillis() + "-" + a.name;
+            File to = new File(dir, name);
+            if (to.exists() || a.file == null || !a.file.exists()) continue;
+            if (!a.file.renameTo(to)) {
+                try (InputStream in = new FileInputStream(a.file); OutputStream o = new FileOutputStream(to)) {
+                    byte[] buf = new byte[1 << 16];
+                    for (int n; (n = in.read(buf)) > 0; ) o.write(buf, 0, n);
+                } catch (IOException e) {
+                    to.delete();
+                    Log.i(TAG, "LOCALAPI couldn't keep " + a.name + ": " + e);
+                }
+            }
+        }
+        prune();
+    }
+
+    private static synchronized void prune() {
+        File root = new File(app.getFilesDir(), "localapi-files");
+        File[] chats = root.listFiles();
+        if (chats == null) return;
+        List<File> all = new ArrayList<>();
+        long now = System.currentTimeMillis(), total = 0;
+        for (File c : chats) {
+            File[] fs = c.listFiles();
+            if (fs == null) continue;
+            for (File f : fs) {
+                if (now - f.lastModified() > KEEP_DAYS * 86_400_000L) { f.delete(); continue; }
+                all.add(f);
+                total += f.length();
+            }
+            String[] rest = c.list();
+            if (rest != null && rest.length == 0) c.delete();
+        }
+        all.sort((x, y) -> Long.compare(x.lastModified(), y.lastModified()));
+        for (File f : all) {
+            if (total <= KEEP_BYTES) break;
+            total -= f.length();
+            f.delete();
+        }
+    }
+
+    private static List<String> keptNames(String chat) {
+        String[] n = keptDir(chat).list();
+        return n == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(n));
+    }
+
+    /** A kept file of chat by its name, null when there's none (or the name could reach outside). */
+    private static File keptFile(String chat, String name) {
+        if (!LocalFiles.keptName(name)) return null;
+        try {
+            File dir = keptDir(chat).getCanonicalFile();
+            File f = new File(dir, name).getCanonicalFile();
+            return dir.equals(f.getParentFile()) && f.isFile() ? f : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    // ---- GET .../files/<id> ----
+
+    /** A file of the chat by its id (LocalFiles.mint: made by GET messages, for this chat alone):
+     *  a file kept here, else the PC's image (whole, or `?thumb=1`: a JPEG of 512 px at most),
+     *  reply file or video, streamed as it comes (by parts from the chat's PC, as Files does). */
+    private static LocalHttp.Res file(LocalHttp.Req r, LocalGate.Grant g, String id, String origin, OutputStream out) throws Exception {
+        String[] kp = LocalFiles.open(fileKey, g.chat, id);
+        if (kp == null) return LocalHttp.error(404, "unknown_file", "No such file in this chat");
+        boolean thumb = "1".equals(r.param("thumb"));
+        char k = kp[0].charAt(0);
+        String p = kp[1];
+        if (k == LocalFiles.LOCAL) {
+            File f = keptFile(g.chat, p);
+            if (f == null) return LocalHttp.error(404, "unknown_file", "That file is no longer on this phone");
+            return local(f, LocalFiles.shownName(p), thumb, origin, out);
+        }
+        String name = LocalFiles.baseName(LocalFiles.pathOf(p));
+        if (k == LocalFiles.IMAGE) {
+            // An image an app sent: the copy kept here, without asking the PC.
+            String m = LocalFiles.match(name, keptNames(g.chat));
+            File f = m == null ? null : keptFile(g.chat, m);
+            if (f != null) return local(f, LocalFiles.shownName(m), thumb, origin, out);
+        } else if (thumb) {
+            return LocalHttp.error(400, "no_thumb", "Only images have a thumbnail");
+        }
+        if (Account.needsSignIn(app) || Hub.all(app).isEmpty()) return signedOut();
+        Found f = resolve(g.chat);
+        if (f.hub == null) return f.error;
+        try {
+            if (k == LocalFiles.IMAGE) return pcImage(f, LocalFiles.imageUrl(p, thumb), name, thumb, origin, out);
+            return pcFile(f, p, name, origin, out);
+        } catch (Hub.ApiError e) {
+            if (e.code == 404) return LocalHttp.error(404, "unknown_file", "It's gone from the PC, or the PC that has it is off");
+            return pcError(e, g.chat);
+        } catch (IOException e) {
+            forget(g.chat);
+            return LocalHttp.error(503, "pc_offline", f.hub.whyDown(e));
+        }
+    }
+
+    /** A file's answer headers: CORS (as every answer), its name, a day in the app's cache, and
+     *  nothing in it may run (anything not an image, video or PDF). */
+    private static Map<String, String> fileHeaders(String origin, String name, String mime) {
+        LocalHttp.Res h = LocalGate.cors(new LocalHttp.Res(200, null), origin);
+        boolean shown = mime.startsWith("image/") || mime.startsWith("video/") || mime.equals(LocalFiles.PDF);
+        String enc;
+        try { enc = URLEncoder.encode(name, "UTF-8").replace("+", "%20"); } catch (IOException e) { enc = "file"; }
+        h.header("Content-Disposition", (shown ? "inline" : "attachment") + "; filename*=UTF-8''" + enc);
+        h.header("Cache-Control", "private, max-age=86400");
+        if (!shown || mime.equals("image/svg+xml")) h.header("Content-Security-Policy", "sandbox; default-src 'none'");
+        return h.headers;
+    }
+
+    private static LocalHttp.Res local(File f, String name, boolean thumb, String origin, OutputStream out) throws IOException {
+        String mime = LocalFiles.mimeOf(f.getName());
+        if (thumb) {
+            if (!mime.startsWith("image/")) return LocalHttp.error(400, "no_thumb", "Only images have a thumbnail");
+            byte[] j = thumbJpeg(f);
+            if (j == null) return LocalHttp.error(415, "no_thumb", "Harbor couldn't make a thumbnail of that image");
+            LocalHttp.head(out, 200, "image/jpeg", j.length, fileHeaders(origin, name, "image/jpeg"));
+            out.write(j);
+            out.flush();
+            return LocalHttp.sent(200);
+        }
+        LocalHttp.head(out, 200, LocalFiles.servedType(mime), f.length(), fileHeaders(origin, name, mime));
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[1 << 16];
+            for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+        } catch (IOException e) {
+            Log.i(TAG, "LOCALAPI file cut off: " + e);
+        }
+        out.flush();
+        return LocalHttp.sent(200);
+    }
+
+    /** A JPEG of an image at most 512 px on its longer side, null when Android can't read it. */
+    private static byte[] thumbJpeg(File f) {
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+        int sample = 1;
+        while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= 512) sample *= 2;
+        android.graphics.BitmapFactory.Options d = new android.graphics.BitmapFactory.Options();
+        d.inSampleSize = sample;
+        android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeFile(f.getPath(), d);
+        if (b == null) return null;
+        float scale = Math.min(1f, 512f / Math.max(b.getWidth(), b.getHeight()));
+        android.graphics.Bitmap t = scale < 1f ? android.graphics.Bitmap.createScaledBitmap(b, Math.max(1, Math.round(b.getWidth() * scale)), Math.max(1, Math.round(b.getHeight() * scale)), true) : b;
+        java.io.ByteArrayOutputStream o2 = new java.io.ByteArrayOutputStream();
+        t.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, o2);
+        if (t != b) t.recycle();
+        b.recycle();
+        return o2.toByteArray();
+    }
+
+    /** The PC's image (GET /v1/image, the transcript's URL): its type from its first bytes. */
+    private static LocalHttp.Res pcImage(Found f, String url, String name, boolean thumb, String origin, OutputStream out) throws IOException {
+        Net.Http c = open(f, "GET", url, 30_000);
+        try {
+            int code = c.code();
+            if (code >= 400) throw Hub.error(c, code);
+            InputStream in = c.in();
+            byte[] head = new byte[16];
+            int n = 0;
+            for (int x; n < head.length && (x = in.read(head, n, head.length - n)) > 0; ) n += x;
+            String mime = thumb ? "image/jpeg" : LocalFiles.sniff(head, n);
+            if (mime == null || !mime.startsWith("image/")) mime = n >= 4 && head[0] == 'G' && head[1] == 'I' && head[2] == 'F' && head[3] == '8' ? "image/gif" : LocalFiles.mimeOf(name);
+            if (!mime.startsWith("image/") || mime.equals("image/svg+xml")) mime = "application/octet-stream";
+            LocalHttp.head(out, 200, mime, c.length(), fileHeaders(origin, name, mime));
+            try {
+                out.write(head, 0, n);
+                byte[] buf = new byte[1 << 16];
+                for (int x; (x = in.read(buf)) > 0; ) out.write(buf, 0, x);
+            } catch (IOException e) {
+                Log.i(TAG, "LOCALAPI image cut off: " + e);
+            }
+            out.flush();
+            return LocalHttp.sent(200);
+        } finally {
+            c.close();
+        }
+    }
+
+    /** A reply's file or video from the PC (GET /v1/file, /v1/media), by Range parts as Files
+     *  fetches them (a copy's PC hands on 8 MB at a time): the whole file to the app. */
+    private static LocalHttp.Res pcFile(Found f, String url, String name, String origin, OutputStream out) throws IOException {
+        String mime = LocalFiles.mimeOf(name);
+        long at = 0, total = -1;
+        boolean headed = false;
+        int fails = 0;
+        byte[] buf = new byte[1 << 16];
+        while (true) {
+            Net.Http c = null;
+            try {
+                c = open(f, "GET", url, 30_000);
+                c.header("Range", "bytes=" + at + "-");
+                int code = c.code();
+                if (!headed) {
+                    if (code >= 400 && code != 416) throw Hub.error(c, code);
+                    total = code == 416 ? 0 : code == 206 ? Blocks.total(c.range()) : c.length();
+                    LocalHttp.head(out, 200, LocalFiles.servedType(mime), total, fileHeaders(origin, name, mime));
+                    headed = true;
+                    if (code == 416) break;
+                } else if (code != 206) {
+                    Log.i(TAG, "LOCALAPI file part answered " + code + ": cut off");
+                    break;
+                }
+                InputStream in = c.in();
+                long began = at;
+                for (int n; (n = in.read(buf)) > 0; ) {
+                    out.write(buf, 0, n);
+                    at += n;
+                }
+                if (code == 200 || total < 0 || at >= total) break;
+                if (at == began) throw new IOException("the PC stopped sending it");
+                fails = 0;
+            } catch (Hub.ApiError e) {
+                if (!headed) throw e;
+                break;
+            } catch (IOException e) {
+                if (headed || ++fails >= 3) {
+                    if (!headed) throw e;
+                    Log.i(TAG, "LOCALAPI file cut off: " + e);
+                    break;
+                }
+                try { Thread.sleep(500L * fails); } catch (InterruptedException x) { throw e; }
+            } finally {
+                if (c != null) c.close();
+            }
+        }
+        out.flush();
+        return LocalHttp.sent(200);
     }
 
     /** The seq of the user card a send just made (the first at or after count0 with its text),
@@ -606,7 +1083,7 @@ final class LocalApi {
         if (f.hub == null) return f.error;
         String base = "/v1/chats/" + g.chat + "/items?since=";
         try {
-            if (cur == null) return recent(f, base, limit, false);
+            if (cur == null) return recent(f, g.chat, base, limit, false);
             long end = System.currentTimeMillis() + waitMs(r, 25);
             long since = cur.rev;
             while (true) {
@@ -614,9 +1091,9 @@ final class LocalApi {
                 long rev = got.j.optLong("rev", 0);
                 // Another PC answers now (its revisions are its own) or this one started over:
                 // the client starts over too.
-                if (!got.pc.equals(cur.via) || rev < cur.rev) return recent(f, base, limit, true);
+                if (!got.pc.equals(cur.via) || rev < cur.rev) return recent(f, g.chat, base, limit, true);
                 boolean running = got.j.optBoolean("running");
-                JSONArray ms = project(got.j, Integer.MAX_VALUE);
+                JSONArray ms = project(got.j, Integer.MAX_VALUE, g.chat);
                 long left = end - System.currentTimeMillis();
                 if (ms.length() > 0 || running != cur.running || left <= 0) return page(ms, got, false);
                 since = rev;
@@ -647,9 +1124,9 @@ final class LocalApi {
         }
     }
 
-    private static LocalHttp.Res recent(Found f, String base, int limit, boolean reset) throws Exception {
+    private static LocalHttp.Res recent(Found f, String chat, String base, int limit, boolean reset) throws Exception {
         Got got = get(f, base + "0", 25_000);
-        return page(project(got.j, limit), got, reset);
+        return page(project(got.j, limit, chat), got, reset);
     }
 
     private static LocalHttp.Res page(JSONArray ms, Got got, boolean reset) throws JSONException {
@@ -663,11 +1140,12 @@ final class LocalApi {
 
     /** A chat's cards as plain messages: the user's (`user`), the agent's replies (`agent`, the
      *  markdown; `done` false while it's still being written) and errors (`error`). The last
-     *  `limit` of them. */
-    static JSONArray project(JSONObject items, int limit) throws JSONException {
+     *  `limit` of them. Those with files say so (`attachments`, see attachments). */
+    static JSONArray project(JSONObject items, int limit, String chat) throws JSONException {
         JSONArray a = items.optJSONArray("items");
         boolean running = items.optBoolean("running");
         int count = items.optInt("count", 0);
+        List<String> kept = null;
         List<JSONObject> out = new ArrayList<>();
         for (int i = 0; a != null && i < a.length(); i++) {
             JSONObject c = a.optJSONObject(i);
@@ -675,17 +1153,24 @@ final class LocalApi {
             String kind = c.optString("kind");
             int seq = c.optInt("seq", -1);
             JSONObject m = new JSONObject().put("id", seq);
+            JSONArray files = null;
+            if (kind.equals("user") || kind.equals("text")) {
+                boolean any = has(c, "images") || has(c, "files") || has(c, "media");
+                if (any && kept == null) kept = keptNames(chat);
+                files = any ? attachments(c, kind.equals("user"), chat, kept) : new JSONArray();
+            }
             if (kind.equals("user")) {
                 String t = c.optString("text", "");
-                if (t.trim().isEmpty()) continue;
+                if (t.trim().isEmpty() && files.length() == 0) continue;
                 m.put("role", "user").put("text", t).put("from", c.optString("sender", ""));
             } else if (kind.equals("text")) {
                 String t = c.optString("markdown", "");
-                if (t.trim().isEmpty()) continue;
+                if (t.trim().isEmpty() && files.length() == 0) continue;
                 m.put("role", "agent").put("text", t).put("done", !running || seq < count - 1);
             } else if (kind.equals("error")) {
                 m.put("role", "error").put("text", c.optString("text", ""));
             } else continue;
+            if (files != null && files.length() > 0) m.put("attachments", files);
             if (c.has("at")) m.put("at", c.optLong("at"));
             out.add(m);
         }
@@ -693,6 +1178,72 @@ final class LocalApi {
         JSONArray r = new JSONArray();
         for (int i = Math.max(0, out.size() - limit); i < out.size(); i++) r.put(out.get(i));
         return r;
+    }
+
+    private static boolean has(JSONObject c, String k) {
+        JSONArray x = c.optJSONArray(k);
+        return x != null && x.length() > 0;
+    }
+
+    /** A message's files as the API shows them: {id, name, mime, size, url, kind, thumb_url?}.
+     *  A user's: its images (the PC's /v1/image; a copy kept here when an app sent it) and other
+     *  files (only those an app sent through here, kept on this phone: the PC serves no user's
+     *  file but images, so others have id and url null). A reply's: its images and videos (the
+     *  card's `images` and `media`) and the files it attached (`files`, the PC's /v1/file). `url`
+     *  is GET /local/v1/chats/<chat>/files/<id>, an id signed for this chat alone. */
+    static JSONArray attachments(JSONObject c, boolean user, String chat, List<String> kept) throws JSONException {
+        JSONArray out = new JSONArray();
+        java.util.Set<String> seen = new HashSet<>();
+        JSONArray im = c.optJSONArray("images");
+        for (int i = 0; im != null && i < im.length(); i++) {
+            JSONObject x = im.optJSONObject(i);
+            String url = x == null ? "" : x.optString("url", "");
+            if (url.isEmpty() || !seen.add(LocalFiles.imageUrl(url, false))) continue;
+            String pcName = x.optString("name", LocalFiles.baseName(LocalFiles.pathOf(url)));
+            Object size = JSONObject.NULL;
+            if (user) {
+                String k = LocalFiles.match(LocalFiles.baseName(LocalFiles.pathOf(url)), kept);
+                if (k != null) size = new File(keptDir(chat), k).length();
+            }
+            out.put(att(chat, LocalFiles.IMAGE, url, user ? LocalFiles.shownName(pcName) : pcName, size, "image"));
+        }
+        JSONArray media = c.optJSONArray("media");
+        for (int i = 0; media != null && i < media.length(); i++) {
+            JSONObject x = media.optJSONObject(i);
+            String url = x == null ? "" : x.optString("url", "");
+            if (url.isEmpty()) continue;
+            boolean video = "video".equals(x.optString("kind"));
+            if (!video && !seen.add(LocalFiles.imageUrl(url, false))) continue;
+            if (video && !seen.add(url)) continue;
+            out.put(att(chat, video ? LocalFiles.VIDEO : LocalFiles.IMAGE, url, x.optString("name", ""), JSONObject.NULL, video ? "video" : "image"));
+        }
+        JSONArray fs = c.optJSONArray("files");
+        for (int i = 0; fs != null && i < fs.length(); i++) {
+            if (user) {
+                String pcName = fs.optString(i, "");
+                if (pcName.isEmpty()) continue;
+                String k = LocalFiles.match(pcName, kept);
+                if (k != null) out.put(att(chat, LocalFiles.LOCAL, k, LocalFiles.shownName(pcName), new File(keptDir(chat), k).length(), "file"));
+                else out.put(new JSONObject().put("id", JSONObject.NULL).put("name", LocalFiles.shownName(pcName)).put("mime", LocalFiles.mimeOf(pcName))
+                        .put("size", JSONObject.NULL).put("url", JSONObject.NULL).put("kind", "file"));
+            } else {
+                JSONObject x = fs.optJSONObject(i);
+                String url = x == null ? "" : x.optString("url", "");
+                if (url.isEmpty() || !seen.add(url)) continue;
+                out.put(att(chat, LocalFiles.FILE, url, x.optString("name", ""), x.has("size") ? (Object) x.optLong("size") : JSONObject.NULL, "file"));
+            }
+        }
+        return out;
+    }
+
+    private static JSONObject att(String chat, char k, String payload, String name, Object size, String kind) throws JSONException {
+        String id = LocalFiles.mint(fileKey, chat, k, payload);
+        String url = "/local/v1/chats/" + chat + "/files/" + id;
+        String mime = LocalFiles.mimeOf(name);
+        if (kind.equals("image") && !mime.startsWith("image/")) mime = "image/*";
+        JSONObject o = new JSONObject().put("id", id).put("name", name).put("mime", mime).put("size", size).put("url", url).put("kind", kind);
+        if (kind.equals("image")) o.put("thumb_url", url + "?thumb=1");
+        return o;
     }
 
     // ---- plumbing ----
