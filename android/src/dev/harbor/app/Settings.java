@@ -176,6 +176,11 @@ public class Settings extends Base {
         LinearLayout nt = card(col);
         notifyRows(nt);
 
+        // Other apps allowed to chat through Harbor on this phone (LocalApi): shown when there are any.
+        LinearLayout others = Ui.col(this);
+        col.addView(others, Ui.fill());
+        LocalApi.settingsRows(this, others);
+
         // This app: one row for its version and its update (the latest GitHub release's),
         // with whatever keeps the automatic install from going in said on its line.
         section(col, "App");

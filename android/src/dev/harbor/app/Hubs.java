@@ -89,6 +89,13 @@ public class Hubs extends Base {
         if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return false;
         if ("harbor".equalsIgnoreCase(i.getData().getScheme()) && "chat".equalsIgnoreCase(i.getData().getHost())) {
             ChatLink link = ChatLink.parse(i.getDataString());
+            // Another app asks to chat with a chat through the local API (LocalApi): Allow or not.
+            if (link != null && link.approve != null) {
+                LocalApi.Who who = launcher(i);
+                setIntent(new Intent(this, Hubs.class));
+                LocalApi.ask(this, link.gid, link.approve, who);
+                return true;
+            }
             String[] app = link == null ? null : referrerApp(i);
             setIntent(new Intent(this, Hubs.class));
             if (link == null) { Ui.toast(this, "That isn't a Harbor chat link"); return false; }
@@ -280,6 +287,32 @@ public class Hubs extends Base {
             label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
         } catch (Exception ignored) { }
         return new String[] { label, pkg };
+    }
+
+    /** The app that opened approval link intent `i`. Android 14+ names it outright when that
+     *  app shares its identity (ActivityOptions.setShareIdentityEnabled); else Android's record
+     *  of the launching package (referrerApp, the sender's own EXTRA_REFERRER dropped), which
+     *  Android checks against the caller's uid from Android 11 on: verified there, only what the
+     *  app says before. Null when unknown. */
+    private LocalApi.Who launcher(Intent i) {
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            String pkg = getLaunchedFromPackage();
+            int uid = getLaunchedFromUid();
+            if (pkg == null && uid >= 0) {
+                String[] p = getPackageManager().getPackagesForUid(uid);
+                if (p != null && p.length == 1) pkg = p[0];
+            }
+            if (pkg != null && !pkg.equals(getPackageName())) {
+                String label = "";
+                try {
+                    PackageManager pm = getPackageManager();
+                    label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
+                } catch (Exception ignored) { }
+                return new LocalApi.Who(pkg, label, true);
+            }
+        }
+        String[] app = referrerApp(i);
+        return app == null ? null : new LocalApi.Who(app[1], app[0], android.os.Build.VERSION.SDK_INT >= 30);
     }
 
     /** Keeps link `raw` (and the app that opened it, null unknown) until it can open (openPending takes it). */

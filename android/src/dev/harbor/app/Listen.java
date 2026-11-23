@@ -41,6 +41,8 @@ public class Listen extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int id) {
         if (Ui.app == null) Ui.app = getApplicationContext();
+        // It keeps Harbor's process up in the background: the local API for other apps with it.
+        LocalApi.start(this);
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel("listen", "Instant notifications (running)", NotificationManager.IMPORTANCE_MIN));
         PendingIntent pi = PendingIntent.getActivity(this, 7, new Intent(this, Hubs.class), PendingIntent.FLAG_IMMUTABLE);

@@ -69,6 +69,8 @@ abstract class Base extends Activity {
             requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 42);
         }
         if (paired) Listen.apply(this);
+        // Other apps' chats through this phone (LocalApi), while Harbor's process runs.
+        LocalApi.start(this);
     }
 
     /** True (and finishes) when the screen needs a hub that was unpaired meanwhile. */

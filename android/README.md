@@ -45,6 +45,15 @@ from …" card, named after the app Android says opened the link (else your `fro
 unverified), and the agent gets the text with your next message, quoted and marked as written by
 that app, not by you ([PROTOCOL.md](PROTOCOL.md), `POST /v1/chats/{id}/context`).
 
+## Other apps chat through Harbor
+
+An app on the phone (a Capacitor/WebView app too) can hold a chat with one Harbor chat without
+opening Harbor: Harbor serves a small JSON API on `127.0.0.1:47999` (this phone only) while it runs,
+and passes the messages over its own connection to the PCs. The app asks once: it opens an approval
+link, Harbor shows "Let *App* chat with “*chat*”?", and an allowed app gets a token for that chat.
+Settings › Other apps lists them and takes one back with a tap. The API, CORS and limits are in
+[PROTOCOL.md](PROTOCOL.md#local-api-for-other-apps-phone-0193).
+
 ## Build
 
 `android/build.sh` builds `android/build/harbor-android.apk` and `harbor-phone-code.zip` beside it

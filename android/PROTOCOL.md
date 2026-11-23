@@ -2361,6 +2361,135 @@ a PC it shares `full` access with (`machines`), which may run anything on it any
 - `GET /mesh/v1/preview/file?kind=patch|binary&id=<id>`: the patch (`zstd --patch-from`, window 2^28)
   or the whole binary, `404` once a newer build is on offer. The result must hash to `sha256`.
 
+## Local API for other apps (phone, 0.193)
+
+The phone app serves a small JSON API to **other apps on the same phone**, so an app (a Capacitor
+or WebView app too) can hold a chat with one Harbor chat without opening Harbor, over the phone's
+own connection to its PCs (`LocalApi`, `LocalGate`, `LocalHttp`). Nothing about it reaches the
+network: it listens on `127.0.0.1:47999` only (plain HTTP, `Connection: close`, JSON bodies in
+UTF-8), while Harbor's process runs (any screen, or the background notification service `Listen`,
+which is always on). When Harbor isn't running, the port is closed: the client says so and tries
+later. No PC changes: the phone uses the PC calls above (`/v1/chat_link`, `/v1/chats/{id}/context`,
+`/send`, `/items`, `/events`).
+
+**Who may call.** Android doesn't tell an ordinary app which app owns a loopback connection
+(`ConnectivityManager.getConnectionOwnerUid` is for the active VPN app only, and `/proc/net` is
+closed to apps from Android 10), and an `Origin` proves nothing (every Capacitor app is
+`https://localhost`). So an app is allowed once, for one chat, by the user, and gets a token:
+
+1. `POST /local/v1/pair` `{"chat": "<chat gid>", "app": "My App"}` →
+   `{"pair": "<32 hex>", "link": "harbor://chat/<gid>?approve=<32 hex>", "expires_in": 600}`. `pair`
+   is the app's secret to fetch the answer with; `app` is only what it calls itself.
+2. The app opens `link` (`window.location.href = link` in a WebView; an `ACTION_VIEW` intent from
+   Java). Harbor comes up once with "Let *App* chat with “*chat title*”?", **Allow** / **Don't
+   allow**, naming the app Android says opened the link: Android 14+'s
+   `Activity.getLaunchedFromPackage()`/`getLaunchedFromUid()` when that app shares its identity
+   (`ActivityOptions.setShareIdentityEnabled`), else Android's record of the launching package
+   (`getReferrer()` with the sender-set `EXTRA_REFERRER`/`EXTRA_REFERRER_NAME` dropped first), which
+   Android checks against the caller's uid from Android 11. Before Android 11 the dialog says "an
+   app that says it is *X*". A link whose sender Android doesn't name is refused. After the answer,
+   Harbor steps back (`moveTaskToBack`) to the app.
+3. `GET /local/v1/pair/<pair>?wait=<0-25 s, default 25>` (long poll) →
+   `{"state": "pending"}` | `{"state": "denied"}` |
+   `{"state": "allowed", "token": "<64 hex>", "chat": "<gid>", "app": {"label", "package"}}`.
+   An answer is handed out once; then, and 10 minutes after the request, `404 unknown_pair`.
+4. Every chat call carries `Authorization: Bearer <token>`. The token (256 random bits; the phone
+   keeps only its SHA-256, checked in constant time) works for that chat only. Allowing the same
+   app for the same chat again replaces the old token. Settings › **Other apps** lists each app
+   and chat ("Chats with “Weekly plan” · tap to remove"); removing one ends its token at once. Where
+   Android does name a connection's owner (it tries both ways above on every chat call), a
+   token used by another app is refused (403).
+
+Without the token, or with one that is unknown, removed or for another chat, the chat calls answer
+**403** `{"error", "code": "not_allowed", "pair": true}`: show "Allow *App* in Harbor" and pair. 403
+means only that.
+
+**CORS.** Allowed origins: `https://localhost` (Capacitor on Android), `http://localhost` and
+`http://localhost:5173` (a Vite dev server in the phone's browser). Any other `Origin` gets `400
+origin_not_allowed` with no CORS headers. A request with no `Origin` (an app's own HTTP client)
+goes on to the token check. To an allowed origin, every answer has `Access-Control-Allow-Origin:
+<that origin>`, `Vary: Origin`, `Access-Control-Expose-Headers: Retry-After`. `OPTIONS` on any
+`/local/v1/` path is the preflight: `204` with those plus `Access-Control-Allow-Methods: GET,
+POST, OPTIONS`, `Access-Control-Allow-Headers: Authorization, Content-Type`,
+`Access-Control-Allow-Private-Network: true` (Private Network Access: a secure page calling a
+loopback address) and `Access-Control-Max-Age: 600`. The `Host` header must be `127.0.0.1:47999` or
+`localhost:47999` (`400 bad_host` otherwise: DNS rebinding). POSTs must be `Content-Type:
+application/json` (`415`). A Capacitor app's WebView needs cleartext allowed for `127.0.0.1` in
+its network security config if it refuses `http://127.0.0.1`.
+
+**Calls.**
+
+- `GET /local/v1/status` (token optional) → `{"ok": true, "api": 1, "version": "0.193.0",
+  "signed_in": bool, "allowed": bool, "pc_online": bool}`; with a valid token also
+  `"chat": {"id", "title", "online", "pc"?, "why"?}` (`why`: the PC's reason when it's off) and
+  `"app": {"label", "package"}`. `signed_in`: Harbor on this phone is signed in and knows a PC.
+  `pc_online`: with a token, the chat's PC answers; without, some PC of the phone's does.
+- `POST /local/v1/chats/<gid>/messages` `{"text": "…", "context"?: "…", "client_id"?: "…"}` →
+  `{"ok": true, "id": <message id> | null, "client_id": "…", "queued": bool, "steering": bool}`.
+  Sends `text` to the chat as the user's message from this phone (as the phone's own composer
+  does: a running turn queues it, `queued: true`, and `id` is null until it runs). `context`
+  (optional, at most 4 KB of UTF-8) is untrusted app context, posted first exactly like a chat
+  link's (`POST /v1/chats/{id}/context` with `app` = the allowed app's label and package): a folded
+  "Context from *App*" card, given to the agent with this message, quoted and marked as written by
+  that app, not by the user. Text and context are cleaned first (control characters but newline
+  and tab dropped); text at most 16 KB of UTF-8. `client_id` (8-80 letters, digits, `-`, `_`; a
+  UUID is made when absent) makes a repeated send run once. `id` is the message's id in `GET`
+  below.
+- `GET /local/v1/chats/<gid>/messages[?limit=1-200]` (no `after`) → the last `limit` (default 50)
+  messages and a cursor:
+  `{"messages": [...], "cursor": "<opaque>", "running": bool, "count": N}`.
+- `GET /local/v1/chats/<gid>/messages?after=<cursor>[&wait=0-25]` (long poll, default 25 s) → the
+  messages that are new or changed since that cursor, as soon as there are any or as soon as
+  `running` differs from the cursor's; else after `wait` seconds with `"messages": []`. Always a new
+  `cursor`: pass it to the next call. `"reset": true` (with the last 50 messages instead) when the
+  cursor's PC no longer answers for the workspace or started over: replace what you show.
+  A message: `{"id": N, "role": "user" | "agent" | "error", "text": "…", "at": <unix s>,
+  "from"?: "…", "done"?: bool}`. `id` is the item's index in the transcript (0-based, stable;
+  sort by it). `user`: the user's messages, from any device (`from`: where it was written, "" on
+  this phone or the chat's PC). `agent`: a reply's markdown, `done: false` while it is still being
+  written (it comes again, same `id`, as it grows: replace by `id`), and every reply is done once
+  `running` is false. `error`: an error the chat showed (a usage limit, a failed turn). Tool
+  calls, thinking and notices aren't messages. If `count` drops below an `id` you hold, that
+  message was taken back.
+
+**Errors.** `{"error": "<for the user>", "code": "<below>"}`: `400 bad_request` (bad JSON, empty
+text, …), `400 bad_cursor`, `400 bad_host`, `400 origin_not_allowed`, `403 not_allowed` (above),
+`404 unknown_chat` (none of the phone's PCs has it), `404 unknown_pair`, `404 no_route`,
+`405 method_not_allowed`, `409 busy` (the PC can't take it now), `411 length_required` (chunked),
+`413 too_large` (body over 64 KB), `413 text_too_large`, `413 context_too_large`,
+`415 bad_request` (not JSON), `429 rate_limited` with `Retry-After: <s>`, `431 headers_too_large`,
+`502 pc_error` (the PC answered with an error), `503 pc_offline` (no PC answered, or the chat's PC is
+off: `error` says which), `503 signed_out` (Harbor on this phone isn't signed in), `503 busy` (16
+connections at once).
+
+**Rates.** Per allowed app and chat: 6 messages at once, then one every 10 s; 2 long polls at once
+and 30 reads at once, then one a second. Pairings: 3 at once then one every 20 s, at most 4
+waiting for an answer. Bad tokens: 20, then one every 3 s.
+
+**Example** (a WebView client):
+
+```js
+const H = 'http://127.0.0.1:47999/local/v1';
+let token = localStorage.harborToken;
+async function call(method, path, body) {
+  const r = await fetch(H + path, { method, headers: { 'Content-Type': 'application/json',
+    ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body && JSON.stringify(body) });
+  return { status: r.status, json: await r.json().catch(() => ({})) };
+}
+async function pair(chat) {
+  const { json } = await call('POST', '/pair', { chat, app: 'My App' });
+  window.location.href = json.link;            // Harbor asks the user once
+  for (;;) {
+    const r = await call('GET', `/pair/${json.pair}?wait=25`);
+    if (r.json.state === 'allowed') return (localStorage.harborToken = token = r.json.token);
+    if (r.json.state !== 'pending') throw new Error('not allowed');
+  }
+}
+```
+
+The test build's self-test (`LocalRig`, `scripts/boat/phoneshot --broadcast
+dev.harbor.app.RIG_LOCAL_PAIR`) runs all of this on the emulator against the rig hub.
+
 ## The APK in releases
 
 The release workflow attaches `harbor-android.apk` and `harbor-android.apk.minisig`

@@ -29,6 +29,9 @@ final class ChatLink {
     String contextError;
     /** `from=`: the name the link gives its sender; anyone can write anything there (unverified). */
     String from = "";
+    /** `approve=`: a pairing of Harbor's local API to answer (LocalApi.ask): another app asks to
+     *  chat with this chat. Null when the link has none (or a malformed one). */
+    String approve;
 
     /** The app Android said opened the link (Hubs.referrerApp): its name and package; "" unknown. */
     String appLabel = "", appPkg = "";
@@ -61,17 +64,19 @@ final class ChatLink {
             char c = path.charAt(i);
             if (!(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-')) return null;
         }
-        String pc = null, ctx = null, from = null;
+        String pc = null, ctx = null, from = null, approve = null;
         if (q >= 0) {
             // The first of each; other parameters are ignored.
             for (String kv : rest.substring(q + 1).split("&")) {
                 if (pc == null && kv.startsWith("pc=")) pc = kv.substring(3);
                 else if (ctx == null && kv.startsWith("context=")) ctx = kv.substring(8);
                 else if (from == null && kv.startsWith("from=")) from = kv.substring(5);
+                else if (approve == null && kv.startsWith("approve=")) approve = kv.substring(8);
             }
         }
         String p = pc == null ? null : decode(pc);
         ChatLink l = new ChatLink(path, p == null ? "" : p.trim());
+        if (approve != null && approve.matches("[0-9a-f]{32}")) l.approve = approve;
         if (from != null) {
             String f = decode(from);
             l.from = f == null ? "" : label(f);

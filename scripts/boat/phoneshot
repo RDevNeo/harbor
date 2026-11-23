@@ -33,6 +33,9 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --context TEXT   with the next --view: &context=TEXT (percent-encoded here, as
                    encodeURIComponent does), the text another app hands the chat
   --from LABEL     with the next --view: &from=LABEL
+  --approve CODE   with the next --view: &approve=CODE, a local API pairing's approval link
+                   (a test build pairs with code 0123456789abcdef0123456789abcdef: --broadcast
+                   dev.harbor.app.RIG_LOCAL_PAIR first, RIG_LOCAL_ALLOW taps Allow; LocalRig.java)
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
@@ -63,7 +66,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
     # A link's query rides along base64'd (its & % = and quotes reach the phone as they are).
-    --context|--from) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+    --context|--from|--approve) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       extra="${extra:+$extra&}${1#--}=$(jq -rn --arg t "$2" '$t|@uri')"; shift ;;
     --view) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       steps+=("view:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra=""; shift ;;

@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Phone: other apps on the phone can chat with a Harbor chat without opening Harbor. While it runs, Harbor serves
+  a small JSON API on `127.0.0.1:47999` (loopback only; nothing new reaches the network): send a message (with
+  optional untrusted app context, shown and given to the agent like a chat link's), read the chat's messages with a
+  long poll and a cursor, and a status call. CORS for Capacitor/WebView apps (`https://localhost`) with Private
+  Network Access. An app is allowed once per chat: it opens an approval link, Harbor asks "Let *App* chat with
+  “*chat*”?" naming the app Android says opened it, and the app gets a token for that chat; Settings › Other apps
+  lists and removes them. Limits on sizes and rates. Code only: no new APK. Phone only: the need was
+  an app on the phone with no other way to the PC; a desktop equivalent can follow if asked for. API in `android/PROTOCOL.md`, "Local API for other apps".
+
 ## [0.192.0] - 2026-11-22
 
 ### Added
