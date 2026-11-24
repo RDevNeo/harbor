@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- A table in a reply stays inside the message column: wider than the reply, its columns narrow (the longest the
+  most, short ones keep their width) and their cells wrap onto more lines, instead of running under the right
+  panel with its last column cut off. Also in split panes and narrow windows.
+- Sidebar: a list scrolled a little and then shortened (a search, a folded project, settled chats, a restart)
+  no longer stays scrolled with "PROJECTS" half under the search row; it is kept in range whenever its rows
+  or its height change.
+
 ## [0.194.0] - 2026-11-23
 
 ### Added

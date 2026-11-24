@@ -720,7 +720,7 @@ export component Sidebar inherits Rectangle {
     in property <bool> pages-back;
     // The row Alt+Up / Alt+Down opened ("kind:id"): scrolled into view.
     in property <string> reveal;
-    in-out property <length> scroll-y <=> list.viewport-y;
+    in-out property <length> scroll-y <=> list.content-y;
     callback open-chat(int);
     callback open-project(int);
     callback fold-project(int);
@@ -873,9 +873,24 @@ export component Sidebar inherits Rectangle {
             height: 7px;
         }
         // The wheel scrolls it; a drag doesn't, so a chat row can be dragged out to the centre (split panes).
+        // Kept in range when its rows or its height change (a search, a fold, settled chats, a restored
+        // scroll): Slint doesn't, and ignores the wheel once the rows fit, so a list scrolled a little and then
+        // shortened stayed scrolled for good, "PROJECTS" half under the search row.
         list := Flickable {
             interactive: false;
             vertical-stretch: 1;
+            function keep-in() {
+                self.content-y = max(min(self.content-y, 0), min(0, self.height - self.content-height));
+            }
+            changed content-height => {
+                self.keep-in();
+            }
+            changed height => {
+                self.keep-in();
+            }
+            changed content-y => {
+                self.keep-in();
+            }
             VerticalLayout {
                 alignment: start;
                 spacing: 2px;
@@ -899,7 +914,7 @@ export component Sidebar inherits Rectangle {
                     property <bool> revealed: root.reveal == r.kind + ":" + r.id;
                     changed revealed => {
                         if self.revealed {
-                            list.viewport-y = max(min(list.viewport-y, list.height - self.y - self.height), -self.y);
+                            list.content-y = max(min(list.content-y, list.height - self.y - self.height), -self.y);
                         }
                     }
                     if r.kind == "project": VerticalLayout {
@@ -1030,6 +1045,19 @@ export component Sidebar inherits Rectangle {
         if root.settled-count > 0 && root.settled-open: settled-list := Flickable {
             interactive: false;
             height: min(root.settled-count * 46px, 230px);
+            // As the list above: in range when its rows change.
+            function keep-in() {
+                self.content-y = max(min(self.content-y, 0), min(0, self.height - self.content-height));
+            }
+            changed content-height => {
+                self.keep-in();
+            }
+            changed height => {
+                self.keep-in();
+            }
+            changed content-y => {
+                self.keep-in();
+            }
             VerticalLayout {
                 alignment: start;
                 spacing: 2px;
@@ -1038,7 +1066,7 @@ export component Sidebar inherits Rectangle {
                     property <bool> revealed: root.reveal == r.kind + ":" + r.id;
                     changed revealed => {
                         if self.revealed {
-                            settled-list.viewport-y = max(min(settled-list.viewport-y, settled-list.height - self.y - self.height), -self.y);
+                            settled-list.content-y = max(min(settled-list.content-y, settled-list.height - self.y - self.height), -self.y);
                         }
                     }
                     open => {

@@ -90,8 +90,7 @@ function blockData(b: Block, at: Placed, seq: number, owner: string | null, inde
     marker: "",
     depth: 0,
     quote: b.quote,
-    cols: [],
-    rows: 0,
+    table: [],
     gap: at.gap,
     after: at.after,
     bar_top: at.barTop,
@@ -114,14 +113,25 @@ function blockData(b: Block, at: Placed, seq: number, owner: string | null, inde
       return base;
     case "table": {
       const width = Math.max(0, ...b.rows.map((r) => r.length));
+      const weights = columnWeights(Array.from({ length: width }, (_, c) => b.cells.map((r) => r[c]?.plain ?? "")));
       const cell = (r: number, c: number) => {
         const p = b.cells[r]?.[c] ?? { plain: "", links: [] };
-        return { text: styled(b.rows[r]?.[c] ?? ""), plain: p.plain, links: linkWords(p) };
+        return { text: styled(b.rows[r]?.[c] ?? ""), plain: p.plain, links: linkWords(p), weight: weights[c] ?? 1 };
       };
-      const cols = Array.from({ length: width }, (_, c) => ({ cells: b.rows.map((_, r) => cell(r, c)) }));
-      return { ...base, cols, rows: b.rows.length };
+      const table = b.rows.map((_, r) => ({ cells: Array.from({ length: width }, (_, c) => cell(r, c)) }));
+      return { ...base, table };
     }
   }
+}
+
+/** How much of the shrinking each table column takes when the table is wider than the message column (its cells'
+ * `horizontal-stretch`): by the cube of its longest cell, so a long column wraps first and short ones keep their
+ * width (Slint shrinks every column by the same amount times its stretch, down to its minimum). At most 1: a grid
+ * column's stretch is the least of 1 and its cells'. */
+export function columnWeights(cols: string[][]): number[] {
+  const longest = cols.map((cells) => Math.max(1, ...cells.map((c) => [...c].length)));
+  const most = Math.max(1, ...longest);
+  return longest.map((n) => Math.max(0.001, (n / most) ** 3));
 }
 
 const sources = new WeakMap<MdBlockData, string>();
@@ -294,7 +304,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "user": {
       // A message of mentions alone has no text line: its bubble is the chips.
       const ps = parts(c.text, c.mentions);
-      const body = ps.length === 0 ? [] : [{ kind: "p", ...userText(ps), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, key: "" }];
+      const body = ps.length === 0 ? [] : [{ kind: "p", ...userText(ps), code: "", level: 0, marker: "", depth: 0, quote: 0, table: [], gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, key: "" }];
       return { ...d, kind: "user", blocks: body, text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "", cites: cites(c.mentions) };
     }
     case "text": {

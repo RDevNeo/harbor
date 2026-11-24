@@ -124,10 +124,10 @@ test("every block that draws text carries its links: paragraphs, headings, list 
     ["p", ["https://q.dev"]],
     ["table", []],
   ]);
-  const cells = bs[4]?.cols.map((c) => c.cells.map((x) => [x.plain, x.links.map((w) => w.url)]));
+  const cells = bs[4]?.table.map((r) => r.cells.map((x) => [x.plain, x.links.map((w) => w.url)]));
   expect(cells).toEqual([
-    [["a", []], ["c", ["https://c.dev"]]],
-    [["b", []], ["https://code.dev", []]],
+    [["a", []], ["b", []]],
+    [["c", ["https://c.dev"]], ["https://code.dev", []]],
   ]);
 });
 

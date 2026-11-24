@@ -135,8 +135,8 @@ export interface MdBlockData {
   marker: string;
   depth: number;
   quote: number;
-  cols: { cells: { text: slint.StyledText; plain: string; links: MdLinkData[] }[] }[];
-  rows: number;
+  /** A table's rows of cells; `weight`: its column's share of the shrinking (`columnWeights`). */
+  table: { cells: { text: slint.StyledText; plain: string; links: MdLinkData[]; weight: number }[] }[];
   gap: number;
   after: number;
   bar_top: number;

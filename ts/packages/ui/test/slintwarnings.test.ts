@@ -3,7 +3,7 @@ import { uiDir } from "../src/assets.ts";
 
 // Harbor's windows load their .slint files quietly (slint-ui printed each warning as "[object Object]").
 // The warnings are kept here instead, readable, and may only go down: they're deprecations to clear.
-const MAX_WARNINGS = 115;
+const MAX_WARNINGS = 109;
 
 test("app.slint's compile warnings are listed here and don't grow", async () => {
   const { ComponentCompiler } = require("slint-ui/rust-module.cjs") as {

@@ -16,9 +16,11 @@ export struct MdCell {
     text: styled-text,
     plain: string,
     links: [MdLink],
+    // Its column's share of the shrinking when the table is wider than the reply (cards.ts `columnWeights`).
+    weight: float,
 }
 
-export struct MdCol {
+export struct MdRow {
     cells: [MdCell],
 }
 
@@ -31,8 +33,7 @@ export struct MdBlock {
     marker: string,
     depth: int,
     quote: int,
-    cols: [MdCol],
-    rows: int,
+    table: [MdRow],
     gap: length,
     after: length,
     bar-top: length,
@@ -384,7 +385,7 @@ export component Selectable inherits Rectangle {
     }
 }
 
-// A table cell: its text and its links, not selectable.
+// A table cell: its text and its links, not selectable; it wraps when its column is narrowed.
 component Linked inherits Rectangle {
     in property <MdCell> cell;
     in property <length> size: 16px;
@@ -405,7 +406,6 @@ component Linked inherits Rectangle {
         plain: root.cell.plain;
         links: root.cell.links;
         size: root.size;
-        wrap: no-wrap;
         open(u) => {
             root.link(u);
         }
@@ -551,42 +551,44 @@ export component MdBlockView {
                 background: Theme.border;
             }
         }
+        // As wide as its cells' text, but never wider than the reply: then its columns narrow (the longest the
+        // most, by `weight`, no cell below a few words' width) and their cells wrap onto more lines.
         if root.block.kind == "table": HorizontalLayout {
             alignment: start;
             Rectangle {
+                horizontal-stretch: 1;
+                max-width: grid.preferred-width;
                 min-height: grid.min-height;
                 preferred-height: grid.preferred-height;
-                width: grid.preferred-width;
                 border-width: 1px;
                 border-color: Theme.border;
                 border-radius: 4px;
-                for i in root.block.rows: Rectangle {
-                    x: 6px;
-                    y: 5px + i * 26px;
-                    width: parent.width - 12px;
-                    height: 26px;
-                    background: Math.mod(i, 2) == 1 ? Theme.bg200 : transparent;
-                }
-                grid := HorizontalLayout {
-                    padding-left: 7px;
+                grid := GridLayout {
+                    padding-left: 6px;
                     padding-right: 6px;
                     padding-top: 5px;
                     padding-bottom: 12px;
-                    spacing: 8px;
-                    for col in root.block.cols: VerticalLayout {
-                        for cell in col.cells: Rectangle {
-                            height: 26px;
-                            min-width: cell-text.preferred-width;
-                            cell-text := Linked {
-                                x: 0;
-                                y: 3px;
-                                width: self.preferred-width;
-                                height: self.preferred-height;
-                                cell: cell;
-                                size: root.size;
-                                ink: root.ink;
-                                link(u) => {
-                                    root.link(u);
+                    for row[i] in root.block.table: Row {
+                        for cell[j] in row.cells: Rectangle {
+                            property <length> pad: j == 0 ? 1px : 8px;
+                            property <length> natural: cell-text.preferred-width;
+                            min-width: self.pad + min(self.natural, root.size * 7);
+                            preferred-width: self.pad + self.natural;
+                            horizontal-stretch: cell.weight;
+                            min-height: 26px;
+                            background: Math.mod(i, 2) == 1 ? Theme.bg200 : transparent;
+                            VerticalLayout {
+                                alignment: start;
+                                padding-left: parent.pad;
+                                padding-top: 3px;
+                                padding-bottom: 3px;
+                                cell-text := Linked {
+                                    cell: cell;
+                                    size: root.size;
+                                    ink: root.ink;
+                                    link(u) => {
+                                        root.link(u);
+                                    }
                                 }
                             }
                         }
