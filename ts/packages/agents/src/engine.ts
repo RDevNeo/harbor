@@ -439,6 +439,20 @@ export class Engine {
     return this.limits.ctl.readings(accounts.map((a) => ({ id: a.id, kind: a.kind, short: short(a), email: a.email, plan: a.plan, installed: installed(a), loggedIn: a.loggedIn })));
   }
 
+  /**
+   * A message reached chat `id` (typed on a desktop or phone, forwarded from another PC, from another agent, a
+   * webhook, a wake-up, a Resume): settled, it's active again. Every send path comes through here (send, deliver,
+   * trigger, queueResume). The store's settled hook tells the hub, so other PCs and phones see it at once. A copy
+   * of another PC's chat is left alone: the message goes to its home PC, which unsettles it there.
+   */
+  private unsettle(id: number): void {
+    const c = this.chat(id);
+    if (!c?.settled || this.foreign(id)) return;
+    c.settled = false;
+    this.store.saveChat(c);
+    this.changed(null);
+  }
+
   private foreign(id: number): boolean {
     return this.host.isForeign?.(id) ?? (this.chat(id)?.home ?? "") !== "";
   }
@@ -1059,6 +1073,7 @@ export class Engine {
     /** Runs `prompt` as the chat's next turn now, or after the current one. `auto`: Harbor starts it on its own (rate limited). */
   trigger(id: number, prompt: string, auto: boolean): void {
     if (this.chat(id)?.retired) return;
+    this.unsettle(id);
     if (auto && !this.countAuto(id, prompt)) return;
     if (this.turns.has(id) || this.subsBusy(id)) this.pushPending(id, prompt);
     else this.startTurn(id, prompt);
@@ -1094,6 +1109,7 @@ export class Engine {
    *  read_messages takes. */
   deliver(id: number, text: string, by: FromAgent, mode: Mode = "queue"): Delivery {
     const prompt = `${by.tag}${text}`;
+    this.unsettle(id);
     if (!this.turns.has(id) || this.host.moving?.(id)) {
       this.transcript(id).items.push({ kind: "message", from: by.from, to: by.to, text });
       this.persist(id);
@@ -1301,6 +1317,7 @@ export class Engine {
       return;
     }
     this.host.adopt?.(id, opts.from ?? null);
+    this.unsettle(id);
     this.resumeAuto(id);
     // Context another app handed the chat with its link goes with this message (to the agent only).
     const context = this.takeLinkContext(id);
@@ -1795,6 +1812,7 @@ export class Engine {
   }
 
   queueResume(id: number): void {
+    this.unsettle(id);
     this.queue.held.delete(id);
     this.changed(id);
   }

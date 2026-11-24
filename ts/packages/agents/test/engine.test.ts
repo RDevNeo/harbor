@@ -1248,6 +1248,82 @@ describe("team.rs", () => {
   });
 });
 
+describe("a message to a settled chat unsettles it", () => {
+  /** A settled chat of this PC, and what the store's settled hook (the hub's announcement to other PCs and phones) heard. */
+  function settled(over: Partial<Chat> = {}): { e: Engine; store: Store; c: Chat; heard: (number | null)[] } {
+    const { e, store } = setup();
+    const c = newChat(store, { settled: true, ...over });
+    const heard: (number | null)[] = [];
+    store.onSettled((id) => heard.push(id));
+    e.reload();
+    return { e, store, c, heard };
+  }
+  const isSettled = (store: Store, id: number): boolean | undefined => store.chat(id)?.settled;
+
+  test("sent from a composer, desktop or phone (Engine.send)", async () => {
+    const { e, store, c, heard } = settled();
+    e.send(c.id, "hi", { sender: "Phone", device: "phone" });
+    expect(e.chat(c.id)?.settled).toBe(false);
+    expect(isSettled(store, c.id)).toBe(false);
+    expect(heard).toEqual([c.id]);
+    await until("the turn's end", () => !e.running(c.id));
+    store.close();
+  });
+
+  test("queued or steered into a running turn", async () => {
+    const { e, store, c } = settled();
+    e.send(c.id, "slow");
+    e.chat(c.id)!.settled = true;
+    store.saveChat(e.chat(c.id)!);
+    e.send(c.id, "more", { mode: "queue" });
+    expect(isSettled(store, c.id)).toBe(false);
+    e.chat(c.id)!.settled = true;
+    store.saveChat(e.chat(c.id)!);
+    e.send(c.id, "now", { mode: "steer" });
+    expect(isSettled(store, c.id)).toBe(false);
+    await until("the turns' end", () => !e.running(c.id) && e.queued(c.id).length === 0);
+    store.close();
+  });
+
+  test("from another agent or chat (message_agent, message_chat: Engine.deliver)", async () => {
+    const { e, store, c } = settled();
+    e.deliver(c.id, "a report", { chat: 999, from: "lead", to: "x", tag: "[message from lead] " });
+    expect(isSettled(store, c.id)).toBe(false);
+    await until("the turn's end", () => !e.running(c.id));
+    store.close();
+  });
+
+  test("a webhook, a wake-up or an agent's report (Engine.trigger)", async () => {
+    const { e, store, c } = settled();
+    e.trigger(c.id, "[webhook deploys] POST request received.", true);
+    expect(isSettled(store, c.id)).toBe(false);
+    await until("the turn's end", () => !e.running(c.id));
+    store.close();
+  });
+
+  test("Resume of a held queue", () => {
+    const { e, store, c } = settled();
+    e.queueResume(c.id);
+    expect(isSettled(store, c.id)).toBe(false);
+    store.close();
+  });
+
+  test("Harbor's own notices leave it settled", () => {
+    const { e, store, c, heard } = settled();
+    e.notice(c.id, "alert", "Automatic turns paused");
+    expect(isSettled(store, c.id)).toBe(true);
+    expect(heard).toEqual([]);
+    store.close();
+  });
+
+  test("a copy of another PC's chat is left to its home PC, where the message goes", () => {
+    const { e, store, c } = settled({ home: "pc:laptop", homeId: 7 });
+    e.send(c.id, "hi");
+    expect(isSettled(store, c.id)).toBe(true);
+    store.close();
+  });
+});
+
 describe("a chat being handed to another PC", () => {
   function withHost(over: Partial<EngineHost>): { e: Engine; store: Store } {
     process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
