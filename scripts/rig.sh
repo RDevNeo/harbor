@@ -43,7 +43,7 @@ rig_install() {
 # real one changed and the copy is over 10 minutes old. Prints its path; nothing when there's no harbor.db.
 rig_db() {
   local bun=$1 ts=$2 fresh=$3 real db key
-  real="${XDG_DATA_HOME:-$HOME/.local/share}/harbor/harbor.db"
+  real="${XDG_DATA_HOME:-$HOME/.local/share}/hub/harbor.db"
   [ -f "$real" ] || return 0
   db=$rig_base/.db/harbor.db
   key="$(stat -c '%Y %s' "$real" "$real-wal" 2>/dev/null | tr '\n' ' ')"
