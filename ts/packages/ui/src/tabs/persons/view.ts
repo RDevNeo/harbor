@@ -249,6 +249,12 @@ export interface MsgRow {
   parts: AiPartJson[];
   /** A site request card (kind "proposal" / "proposing"): its title, the line under it, its state, a note. */
   card: { title: string; sub: string; state: string; note: string; why: string; chat: boolean };
+  /** An AI answer folded to its header, a short preview and its first draft (`aiFolds`). */
+  folded: boolean;
+  /** A folded answer's text as one plain paragraph (markdown marks dropped), for its first lines. */
+  preview: string;
+  /** Its first ```reply draft ("" none): the folded bubble keeps "Use as reply" on one line. */
+  draft: string;
 }
 
 const hhmm = (iso: string): string => {
@@ -284,7 +290,7 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
-  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false } });
+  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "" });
   let lastThread: string | null = null;
   for (const m of c.messages) {
     const r = blank("msg", m.id);
@@ -318,7 +324,11 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
       r.reply = `${a.forwarded.from}: ${a.forwarded.text || "…"}`;
       r.text = a.text || "What should I reply to this?";
     }
-    if (a.role !== "user") r.parts = a.parts ?? (r.text ? [{ type: "text", text: r.text }] : []);
+    if (a.role !== "user") {
+      r.parts = a.parts ?? (r.text ? [{ type: "text", text: r.text }] : []);
+      r.preview = aiPreview(r.parts);
+      r.draft = r.parts.find((p) => p.type === "draft")?.text ?? "";
+    }
     r.time = hhmm(a.at);
     r.streaming = !!a.streaming;
     items.push({ at: a.at, row: r });
@@ -368,6 +378,34 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     out.push(it.row);
   }
   return out;
+}
+
+/** An answer's text parts as one plain paragraph for a folded bubble's first lines: markdown marks, links' urls,
+ *  code fences and line breaks dropped (the bubble elides it after two lines). */
+export function aiPreview(parts: readonly AiPartJson[], max = 400): string {
+  const text = parts
+    .filter((p) => p.type !== "draft")
+    .map((p) => p.text)
+    .join("\n")
+    .replace(/^```.*$/gm, "")
+    .replace(/^\s{0,3}(#{1,6}|>+|[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|`)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/** Folds the AI's answers: the newest one stays open, older ones fold, and the user's own toggle (by row id, kept for
+ *  the session) wins. One still being written never folds. Returns the rows, changed in place. */
+export function aiFolds(rows: MsgRow[], toggled: ReadonlyMap<string, boolean>): MsgRow[] {
+  let newest = "";
+  for (const r of rows) if (r.kind === "ai") newest = r.id;
+  for (const r of rows) {
+    if (r.kind !== "ai") continue;
+    r.folded = !r.streaming && (toggled.get(r.id) ?? r.id !== newest);
+  }
+  return rows;
 }
 
 const CATEGORY: Record<string, string> = { website: "Website", catalog: "Catalog", delivery: "Delivery", dashboard: "Dashboard", other: "Other" };

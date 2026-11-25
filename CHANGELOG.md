@@ -6,6 +6,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- Hub Persons: the Person AI's answers fold. A chevron next to Copy in the bubble's header (on Android: a tap on the
+  header) folds an answer to "AI · time", its first two lines (a click opens it again) and its first reply draft on
+  one line with **Use as reply**. The newest answer in a chat starts open and older ones folded; a fold or unfold the
+  user makes is kept for the session (`view.ts` `aiFolds`, unit tested).
 - Hub: one text-input path for every tab (DESIGN.md "Text input"): Persons' composer and Routine's Coach use the shared
   `ComposeField` (Enter sends, Shift+Enter is a new line; Persons' composer inserted a new line on Enter), the key
   decisions live in one tested function (`logic/keys.ts` `textKey`: AltGr as Ctrl+Alt typed again in any field, Space

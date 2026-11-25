@@ -61,6 +61,10 @@ export struct PMsg {
     // The Person AI's thread: its answers' parts (markdown blocks and ```reply drafts) and the user's questions.
     to-ai: bool,
     parts: [PPart],
+    // A folded answer (its chevron; older answers start folded): the header, its first lines and its first draft.
+    folded: bool,
+    preview: string,
+    draft: string,
     // A SpokPay site request card (kind "proposal": proposed from a message; "proposing": the agent drafting it).
     card-title: string,
     card-sub: string,
@@ -203,6 +207,7 @@ export global PersonsBus {
     callback md-link(string);
     // a draft's "Use as reply": into the composer, to the person
     callback use-draft(string);
+    callback ai-fold(string); // an AI answer's chevron (or a click on it folded): fold / unfold it
     callback menu-pick(string);
     callback menu-close();
     callback dialog-ok();
@@ -557,6 +562,53 @@ component DraftCard inherits Rectangle {
     }
 }
 
+// A folded answer's draft on one line: the same colours as DraftCard, its first words and "Use as reply".
+component DraftLine inherits Rectangle {
+    in property <string> text;
+    callback open();
+    height: 34px;
+    border-radius: Ds.radius-md;
+    background: Theme.dark ? #1f2a44 : #e6f0ff;
+    border-width: 1px;
+    border-color: Theme.dark ? #2d3d63 : #c9dcfa;
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.open();
+        }
+    }
+    HorizontalLayout {
+        padding-left: Ds.sp5;
+        padding-right: Ds.sp2;
+        padding-top: Ds.sp2;
+        padding-bottom: Ds.sp2;
+        spacing: Ds.sp4;
+        Glyph {
+            icon: Icons.corner-up-right;
+            size: Ds.icon-xs;
+            color: Ds.caps-fg;
+        }
+        Text {
+            text: root.text;
+            font-size: Ds.t-sm;
+            color: Theme.fg;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Btn {
+            text: "Use as reply";
+            icon: Icons.corner-up-right;
+            size: BtnSize.xs;
+            variant: Variant.outline;
+            tip: "Put it in the message box, to send to them";
+            clicked => {
+                PersonsBus.use-draft(root.text);
+            }
+        }
+    }
+}
+
 // A message, the user's note to the Person AI, or the AI's answer. The AI's thread has its own tint and a small
 // caps label with the time ("AI · 10:35", "TO THE AI · 10:33"); an answer is as wide as the column and draws its
 // markdown as Projects' chat does (markdown.slint), its ```reply drafts as DraftCards.
@@ -617,6 +669,16 @@ component Bubble {
                     }
                     Rectangle {
                         horizontal-stretch: 1;
+                    }
+                    if root.ai && !root.m.streaming: Btn {
+                        height: 16px;
+                        icon: root.m.folded ? Icons.down : Icons.up;
+                        size: BtnSize.icon-xs;
+                        variant: Variant.ghost-muted;
+                        tip: root.m.folded ? "Show the whole answer" : "Fold the answer";
+                        clicked => {
+                            PersonsBus.ai-fold(root.m.id);
+                        }
                     }
                     if root.ai && !root.m.streaming: Btn {
                         height: 16px;
@@ -705,7 +767,33 @@ component Bubble {
                     color: Theme.fg;
                     wrap: word-wrap;
                 }
-                if root.ai: VerticalLayout {
+                // Folded: its first two lines (a click opens it) and its first draft on one line.
+                if root.ai && root.m.folded && root.m.preview != "": Rectangle {
+                    height: min(pv.preferred-height, 2 * Ds.t-body * 1.45);
+                    pv := Text {
+                        width: parent.width;
+                        height: parent.height;
+                        vertical-alignment: top;
+                        text: root.m.preview;
+                        font-size: Ds.t-body;
+                        color: Theme.fg.with-alpha(0.72);
+                        wrap: word-wrap;
+                        overflow: elide;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            PersonsBus.ai-fold(root.m.id);
+                        }
+                    }
+                }
+                if root.ai && root.m.folded && root.m.draft != "": DraftLine {
+                    text: root.m.draft;
+                    open => {
+                        PersonsBus.ai-fold(root.m.id);
+                    }
+                }
+                if root.ai && !root.m.folded: VerticalLayout {
                     for p in root.m.parts: VerticalLayout {
                         padding-top: p.gap;
                         if !p.draft: MdBlockView {
