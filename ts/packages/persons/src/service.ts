@@ -131,12 +131,13 @@ export class PersonsService {
 
   /** A connection's conversations from its cache file, without starting it (offline: the screenshot rig). */
   private cachedConvos(m: ConnMeta): Record<string, Conversation> {
-    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : "";
-    if (!name) return {};
+    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : join(`whatsapp-${m.id}`, "chats.json");
     try {
-      const raw = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as { conversations?: Record<string, Conversation> };
+      const raw = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as { conversations?: Record<string, Conversation>; chats?: Record<string, Message[]> };
       const out: Record<string, Conversation> = {};
       for (const [k, v] of Object.entries(raw.conversations ?? {})) if (v && Array.isArray(v.messages)) out[k] = { channelId: v.channelId ?? null, messages: v.messages };
+      // WhatsApp's cache: the messages per number
+      for (const [k, v] of Object.entries(raw.chats ?? {})) if (Array.isArray(v)) out[k] = { channelId: k, messages: v };
       return out;
     } catch {
       return {};

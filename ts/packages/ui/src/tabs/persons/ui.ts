@@ -538,7 +538,7 @@ class PersonsTab {
       a_key: r.audio?.key ?? "",
       a_dur: r.audio?.duration ?? 0,
       a_bars: r.audio?.bars ?? [],
-      a_played: r.audio ? r.audio.played || this.audioSt?.key === r.audio.key : true,
+      a_played: r.audio ? r.audio.played || (this.audioSt?.key === r.audio.key && this.audioSt.playing) : true,
       a_voice: !!r.audio?.voice,
       a_transcript: r.audio?.transcript ?? "",
       a_transcribing: !!r.audio && this.transcribing.has(r.audio.key),
@@ -905,7 +905,7 @@ class PersonsTab {
     const s = this.state;
     const me = this.linkFor ? this.person(this.linkFor) : undefined;
     if (!s || !me) return;
-    const first = (n: string): string => n.trim().split(/\s+/)[0]?.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() ?? "";
+    const first = (n: string): string => n.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^\p{L}\p{N}]+/u)[0] ?? "";
     const mine = first(me.name);
     const rank = (p: PersonJson): number => (this.picks.has(p.id) ? 0 : mine && first(p.name) === mine ? 1 : 2);
     const people = s.people

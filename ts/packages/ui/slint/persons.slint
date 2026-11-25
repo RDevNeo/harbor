@@ -2119,6 +2119,8 @@ component Dialog inherits DialogFrame {
                     for p in PersonsBus.f-picks: Rectangle {
                         height: Ds.row2-h;
                         ListRow {
+                            width: parent.width;
+                            height: parent.height;
                             lead: "avatar";
                             letter: p.initials;
                             tint: p.color;
