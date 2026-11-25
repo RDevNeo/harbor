@@ -1,4 +1,3 @@
-import { discord } from "@harbor/mcp";
 import type { Pixels } from "./logos.ts";
 import { type CaptchaData, noPixels } from "./window.ts";
 
@@ -12,9 +11,18 @@ export interface CaptchaWindow {
   cap_data: CaptchaData;
 }
 
+/** A captcha frame as the overlay draws it (JPEG, base64; `rect`: where the captcha is, the only place clicks go). */
+export interface CaptchaFrame {
+  guild: string | null;
+  data?: string;
+  width: number;
+  height: number;
+  rect: { x: number; y: number; width: number; height: number } | null;
+}
+
 export interface CaptchaApi {
   signedIn(): boolean;
-  frame(): Promise<discord.CaptchaFrame | undefined>;
+  frame(): Promise<CaptchaFrame | undefined>;
   input(kind: "move" | "down" | "up" | "wheel", x: number, y: number, dy?: number): Promise<void>;
   cancel(): Promise<void>;
 }
@@ -26,13 +34,14 @@ export function inChat(status: unknown): boolean {
   return typeof c === "object" && c !== null && typeof (c as { chat?: unknown }).chat === "number";
 }
 
+// Hub's Discord has no page any more (agents use the Persons connection over Discord's API), so no captcha ever
+// waits here: a join Discord gates behind one is the user's to make in their own Discord app. The overlay stays
+// for older hubs' notices only and never looks for one.
 const real: CaptchaApi = {
-  // Nothing to look for unless the captcha view is on.
-  signedIn: () => discord.captchaViewOn() && discord.signedIn(),
-  // Only a captcha with no chat comes up over the window.
-  frame: async () => (inChat(await discord.status()) ? undefined : discord.captchaFrame()),
-  input: discord.captchaInput,
-  cancel: discord.captchaCancel,
+  signedIn: () => false,
+  frame: async () => undefined,
+  input: async () => {},
+  cancel: async () => {},
 };
 
 export const noCaptcha: CaptchaData = { image: noPixels, width: 0, height: 0, rect_x: 0, rect_y: 0, rect_w: 0, rect_h: 0, guild: "" };

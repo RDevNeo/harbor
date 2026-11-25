@@ -7,12 +7,11 @@
 //   Linear, Sentry, Supabase, Context7), and which MCP servers are off;
 // - "s:<name>": each key the user saved for agents (secrets.json). Agents still need the user's
 //   approval for each use on each PC: the grants are this PC's (kv `secret_grants`), not synced;
-// - "b:whatsapp", "b:discord": a single-host integration's session (WhatsApp's linked-device keys,
-//   Discord's local storage, where its token is), sent only by the PC that runs it.
+// - "b:whatsapp": a single-host integration's session (WhatsApp's linked-device keys), sent only by
+//   the PC that runs it. (Discord's login is the Persons tab's, in this PC's keyring: not in the vault.)
 //
 // Single host: WhatsApp's linked-device keys must not run on two PCs at once (WhatsApp drops or
-// bans a device whose keys show up twice), and Discord's session neither (one token from two
-// places looks stolen). One PC of the account runs each: the one holding the vault's lease for it
+// bans a device whose keys show up twice). One PC of the account runs each: the one holding the vault's lease for it
 // (renewed every minute, free after three minutes without). The others don't run it: their tools
 // reach the host PC over the mesh (`POST /mesh/v1/app`, answered only for PCs signed in to the
 // same account), and Settings shows "Runs on <PC>". A sign-in or link on a PC takes it over at
@@ -21,7 +20,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { createConnection } from "node:net";
 import { dirname, join, relative } from "node:path";
-import { apps, discord, discordsetup, remotehost, whatsapp, whatsappsetup } from "./packages/mcp/src/index.ts";
+import { apps, remotehost, whatsapp, whatsappsetup } from "./packages/mcp/src/index.ts";
 import { type Dest, type Vault, type VaultLocal, type VaultSource, vaultcrypto } from "./packages/net/src/index.ts";
 import { secrets } from "./packages/store/src/index.ts";
 
@@ -224,40 +223,6 @@ export function whatsappApp(): SingleApp {
   };
 }
 
-export function discordApp(): SingleApp {
-  const root = () => discordsetup.root();
-  const profileRel = () => relative(root(), discordsetup.profile());
-  return {
-    name: discord.NAME,
-    root,
-    linkedHere: () => existsSync(discordsetup.accountPath()),
-    accountHere: () => discord.accountName() ?? "",
-    sessionFiles: () => {
-      const p = profileRel();
-      const out = walk(join(root(), p, "Local Storage")).map((n) => `${p}/Local Storage/${n}`);
-      for (const f of ["Cookies", "Preferences"]) if (isFile(join(root(), p, f))) out.push(`${p}/${f}`);
-      if (isFile(discordsetup.accountPath())) out.push(relative(root(), discordsetup.accountPath()));
-      return out;
-    },
-    running: () => canConnect(discordsetup.socket()),
-    stop: async () => {
-      await discord.ask(discordsetup.socket(), { op: "stop" }, 15_000).catch(() => {});
-    },
-    wipe: (extra) => {
-      rmSync(discordsetup.accountPath(), { force: true });
-      const p = discordsetup.profile();
-      if (extra) rmSync(p, { recursive: true, force: true });
-      else {
-        rmSync(join(p, "Local Storage"), { recursive: true, force: true });
-        for (const f of ["Cookies", "Cookies-journal"]) rmSync(join(p, f), { force: true });
-      }
-    },
-    request: (req, waitMs) => discord.requestHere(req as never, waitMs),
-    ops: ["status", "call", "signout", "cancel"],
-    gapMs: 30 * 60_000,
-  };
-}
-
 /** The account's newest session while another PC runs it: taken when this PC takes over. */
 const stagingPath = (a: SingleApp): string => join(a.root(), "vault-session.bin");
 
@@ -288,7 +253,7 @@ export class SingleHost {
   private claimedAt = new Map<string, number>();
   private blocked = new Set<string>();
 
-  constructor(o: SingleHostOptions, list: readonly SingleApp[] = [whatsappApp(), discordApp()]) {
+  constructor(o: SingleHostOptions, list: readonly SingleApp[] = [whatsappApp()]) {
     this.o = o;
     this.apps = list;
   }

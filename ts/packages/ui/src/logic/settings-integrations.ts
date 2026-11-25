@@ -160,7 +160,8 @@ function card(a: mcp.App, i: IntInput): IntApp {
     has_url: pending?.url !== undefined,
     qr: pending?.qr !== undefined ? i.qr(pending.qr) : blank,
     has_qr: pending?.qr !== undefined,
-    window_btn: pending !== undefined && discord && pending.window !== true,
+    // Discord signs in by QR code only (Persons' connection): no sign-in window to open.
+    window_btn: false,
     builtin_hint: pending !== undefined && !discord && !wa && builtin,
     builtin: view.googleBuiltin(),
     client_id: form?.kind === "google" ? form.clientId : "",
@@ -219,8 +220,6 @@ export interface IntHost {
   changed(): void;
   openUrl(url: string): void;
   copy(text: string): void;
-  /** Discord's own sign-in window. */
-  discordWindow(): void;
 }
 
 /** The sign-in side of `mcp`, as a card's buttons use it. */
@@ -294,9 +293,6 @@ export function integrationsAct(api: AppsApi, forms: Map<string, Form>, host: In
     case "discord-ok":
       api.signIn(id, changed);
       forms.delete(id);
-      break;
-    case "discord-window":
-      host.discordWindow();
       break;
     case "get-key":
       if (app?.auth.kind === "key") host.openUrl(app.auth.get);

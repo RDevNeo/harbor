@@ -328,35 +328,20 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     return ok({ ...done, ...gmailInfo() });
   };
 
-  /** Discord's status as the phone shows it: the desktop card's line, and the sign-in's QR drawn as rows. */
+  /** Discord's status as the phone shows it: the agents' Persons connection (the desktop card's line), and its sign-in's QR drawn as rows. */
   const discordInfo = async (): Promise<Json> => {
-    const raw = await discord.status();
-    const s = plain(raw) as Record<string, Json>;
+    const s = discord.phoneInfo(mcp.app("discord")?.about ?? "") as Record<string, Json>;
     const url = (s.signin as Record<string, Json> | null)?.qr;
     const qr = typeof url === "string" && url !== "" ? ((await qrRows(url)) ?? null) : null;
-    return { ...s, qr, card: discord.cardLine(raw, mcp.app("discord")?.about ?? "") };
-  };
-
-  const discordCaptcha = async (action: string, b: Record<string, unknown>): Promise<Reply> => {
-    if (action === "captcha_cancel") await discord.captchaCancel();
-    else {
-      const kind = b.kind;
-      if ((kind !== "down" && kind !== "up" && kind !== "move") || typeof b.x !== "number" || typeof b.y !== "number") return err(400, "kind (down, up or move), x and y");
-      await discord.captchaInput(kind, b.x, b.y);
-    }
-    return ok({});
+    return { ...s, qr };
   };
 
   const discordCall = async (action: string, b: Record<string, unknown>): Promise<Reply> => {
-    if (action === "captcha_input" || action === "captcha_cancel") return discordCaptcha(action, b);
     try {
       switch (action) {
         case "signin":
           if (b.accept !== true) throw new Error("Sign-in needs the warning accepted first.");
-          await discord.signin();
-          break;
-        case "window":
-          await discord.window();
+          await discord.signIn();
           break;
         case "cancel":
           await discord.cancel();
@@ -365,6 +350,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
           discord.signOut();
           break;
         default:
+          // window, captcha_input, captcha_cancel: there's no Discord page any more
           return err(404, "no such call");
       }
     } catch (x) {
@@ -706,12 +692,6 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 4) {
       const moved = ["workspace", "workspaces", "share", "shares"].includes(name) && h.moves ? await h.moves.route(call, chat) : null;
       if (moved) return moved;
-      // The chat's Discord captcha card (frame, pointer, Don't join): only where the chat's content may go.
-      if (m === "POST" && name === "captcha") {
-        if (chat.home !== "") return err(404, `This chat's captcha is on ${h.hub.mesh.nameOf(chat.home)}.`);
-        const r = await discord.chatCaptcha(chat.id, body(call));
-        return r.status === 200 ? ok(plain(r.body)) : err(r.status, String((r.body as { error?: unknown } | null)?.error ?? "no captcha"));
-      }
       if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "pin", "use_other", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
       if (m === "GET" && ["mention", "team", "slash", "tags"].includes(name)) return action(chat, name, call);
       if (m === "GET" && name === "move_targets") return ok(await moveTargets(chat));
@@ -737,10 +717,6 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       if (p[2] === "gmail") return ok(gmailInfo());
       if (p[2] === "discord") return ok(await discordInfo());
       if (p[2] === "whatsapp") return ok(await whatsappInfo());
-    }
-    if (p[1] === "apps" && p[2] === "discord" && p[3] === "captcha" && p.length === 4 && m === "GET") {
-      const f = await discord.captchaFrame();
-      return f === undefined ? err(404, "No captcha is waiting.") : ok(plain(f));
     }
     if (p[1] === "apps" && p.length === 4 && m === "POST") {
       if (p[2] === "gmail") return gmail(p[3] ?? "", body(call));

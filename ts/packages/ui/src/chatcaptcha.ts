@@ -1,4 +1,3 @@
-import { discord } from "@harbor/mcp";
 import type { Chat } from "@harbor/store";
 import type { Pixels } from "./logos.ts";
 import { type Box, clampTo, type Frame, frame, inBox, rectOnImage, type Solver, solver, solvingLine, toPage } from "./logic/captchacard.ts";
@@ -16,8 +15,8 @@ export const FRAME_W = 460;
 /** One call for a chat's captcha, here or at the chat's home PC: `{action: "frame" | "input" | "cancel", ...}`. */
 export type CaptchaCall = (c: Chat, body: Record<string, unknown>) => Promise<{ status: number; body: unknown }>;
 
-/** This PC's own chat: the Discord host here answers. */
-export const hereCaptcha = (chatId: number, body: Record<string, unknown>): Promise<{ status: number; body: unknown }> => discord.chatCaptcha(chatId, body);
+/** This PC's own chat: no captcha waits here any more (Hub's Discord has no page), so a card from an older Hub's notice ends at once. */
+export const hereCaptcha = async (_chatId: number, _body: Record<string, unknown>): Promise<{ status: number; body: unknown }> => ({ status: 404, body: { error: "No captcha is waiting in this chat." } });
 
 export interface ChatCaptchaDeps {
   call: CaptchaCall;

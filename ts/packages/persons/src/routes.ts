@@ -1,5 +1,6 @@
 // `v1/persons/…`: the Persons tab's API (API.md). The Slint window calls it in-process and Hub for Android over the
 // phone API, so both see and change the same state. JSON only (pictures and files as base64).
+import type { AgentDiscord } from "./agent/index.ts";
 import { statSync } from "node:fs";
 import { KIND_LABEL, peerOf, isSection, normWhatsApp, validPeer } from "./model/accounts.ts";
 import { attachmentKind } from "./model/conversation.ts";
@@ -44,7 +45,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[]) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null> } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[]) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -85,12 +86,30 @@ export class PersonsRoutes {
         }
         if (m === "DELETE" && rest[1]) return await this.connRemove(rest[1]);
       }
+      if (rest[0] === "agent" && rest[1] === "discord" && rest.length === 2) return await this.agentDiscord(m, obj(c.body));
       if (m === "GET" && rest[0] === "img") return await this.img(rest, c);
       if (m === "GET" && rest[0] === "file") return await this.file(c);
     } catch (e) {
       return err(500, e instanceof Error ? e.message : String(e));
     }
     return err(404, "no such call");
+  }
+
+  /**
+   * The agents' Discord (agent/index.ts): POST {tool, args, chat} runs a tool (`hub app discord` calls it over the
+   * control socket), GET says which connection they use and how it is, PUT {connection} picks another (null: default).
+   */
+  private async agentDiscord(m: string, b: Record<string, unknown>): Promise<Reply> {
+    const a = this.extra.agent;
+    if (!a) return err(503, "Hub's agents have no Discord here");
+    if (m === "GET") return ok(a.info() as unknown as Json);
+    if (m === "PUT") {
+      a.pick(typeof b.connection === "string" && b.connection !== "" ? b.connection : null);
+      return ok(a.info() as unknown as Json);
+    }
+    if (m !== "POST") return err(405, "GET, PUT or POST");
+    const chat = typeof b.chat === "number" && Number.isInteger(b.chat) ? b.chat : null;
+    return ok((await a.run(String(b.tool ?? ""), b.args ?? null, chat)) as unknown as Json);
   }
 
   /** A QR code as rows of "0"/"1" for the phone to draw (computed once per code by the engine's encoder). */

@@ -19,7 +19,7 @@ import { FolderTracker } from "./foldertrack.ts";
 import { statusBars, waitJson } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, memory, noderuntime, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, devicespeech, dictate, dictwords, favicon, files, media, parakeet, voice } from "./packages/media/src/index.ts";
-import { computer, discord, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
+import { computer, Funnel, hookcert, machines, mcp, whatsapp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
   type ChatCloud,
@@ -176,9 +176,7 @@ export interface HubOptions {
   hookPort?: number | false;
   /** Live previews between PCs (update's preview.ts, run by the process that can restart into one). */
   preview?: HubPreview;
-  /** Posts what the Discord host wants the user to know (signed out, a captcha to solve): the real app only, a test hub would take the user's. */
-  discordNotices?: boolean;
-  /** Keeps a linked WhatsApp's host running and posts its notices: the real app only, like discordNotices. */
+  /** Keeps a linked WhatsApp's host running and posts its notices: the real app only, a test hub would take the user's. */
   whatsappKeep?: boolean;
 }
 
@@ -317,21 +315,6 @@ async function updateRoute(u: Updater | null, call: Call, store: Store): Promise
 }
 
 const downloadsDir = (): string => desktop.downloadsDir();
-
-/** The one chat whose running turn waits on a Discord join (its call has no result yet): where a captcha from a server that didn't name its chat belongs. Two or none: unknown. */
-export function discordCaller(e: Pick<Engine, "turns" | "transcript" | "chat">): Chat | undefined {
-  const waiting: number[] = [];
-  for (const id of e.turns.keys()) {
-    const items = e.transcript(id).items;
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      if (it?.kind !== "tool") continue;
-      if (it.result === null && /discord_join$/.test(it.name)) waiting.push(id);
-      break;
-    }
-  }
-  return waiting.length === 1 ? e.chat(waiting[0] as number) : undefined;
-}
 
 /** Harbor without its window (Rust's `--background`): the phone API, the mesh, discovery, port mapping and the account loop. */
 export async function startHub(o: HubOptions): Promise<RunningHub> {
@@ -1279,27 +1262,6 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (Date.now() - asks.at > 1000) asks = { at: Date.now(), list: secrets.loadAsks(store) };
     return asks.list;
   };
-  // A captcha the chat's agent hit goes into that chat's transcript (its card, then its outcome), and the notification opens that chat.
-  const stopDiscord =
-    o.discordNotices === true && !offline
-      ? (() => {
-          // Captcha cards this PC's chats show as waiting: one whose captcha no host holds any more ends as expired.
-          const captchas = new discord.PendingCaptchas();
-          captchas.seed(store.noticeDetails("captcha").filter(([id]) => live.chat(id)?.home === ""));
-          const post = (n: discord.NoticeOf): void => {
-            const at = discord.postNotice(n, {
-              chat: (id) => live.chat(id),
-              caller: () => discordCaller(live),
-              adopt: (captcha, chat) => void discord.adoptCaptcha(captcha, chat),
-              notice: (id, icon, text, detail) => live.notice(id, icon, text, detail),
-              changed: (id) => live.host.changed?.(id),
-              notify: (kind, key, title, body, chat) => live.host.notify?.(kind, key, title, body, chat),
-            });
-            if (at !== undefined && n.captcha !== undefined) captchas.note(at, n.captcha);
-          };
-          return discord.watch(post, 5000, () => void captchas.check(post));
-        })()
-      : () => {};
   const stopWhatsapp = o.whatsappKeep === true && !offline ? whatsapp.keep((n) => live.host.notify?.("whatsapp", n.key, n.title, n.body)) : () => {};
   const funnel = new Funnel(() => providers.which("tailscale") !== null, () => live.hookPort);
   const moveAccounts = (): MovePcAccount[] =>
@@ -1763,7 +1725,6 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       clearInterval(refresh);
       clearInterval(providerCheck);
       services?.stop();
-      stopDiscord();
       stopWhatsapp();
       stopSettled();
       mesh.stop();

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { git, providers, type Account, type Work } from "@harbor/agents";
 import { type voiceCtl } from "@harbor/media";
 import { Desktop, hostname, spawnNotifySend, testNote } from "@harbor/net";
-import { control, discord, type ghapi, prs as ghprs } from "@harbor/mcp";
+import { control, type ghapi, prs as ghprs } from "@harbor/mcp";
 import { type Chat } from "@harbor/store";
 import { type Data } from "../data.ts";
 import { fixOnPeer, localDevice } from "../logic/hubseam.ts";
@@ -94,7 +94,6 @@ export class PageHost {
           theme: { dark: () => s.dark(), set: (dark) => s.theme(dark) },
           back: () => s.leave(),
           providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), changed: () => this.s.data.rediscoverAccounts() },
-          integrations: { discordWindow: () => void discord.window().catch(() => {}) },
           qr,
           notify: { sendTest: () => void new Desktop({ send: spawnNotifySend }).testPopup(testNote()) },
           copy: (text) => s.win.copy_text(text),

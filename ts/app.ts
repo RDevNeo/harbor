@@ -247,7 +247,7 @@ const commands: Record<string, Command> = {
     // Embedded (Person Hub's engine, an unmanaged copy): its bundle is the one beside the runtime, replaced by Person Hub's installs.
     const own = process.env.HARBOR_EMBEDDED === "1" ? runtimeInfo()?.bundle : undefined;
     const bundle = dir !== null && existsSync(join(dir, "harbor-app.js")) ? join(dir, "harbor-app.js") : own !== undefined && existsSync(own) ? own : undefined;
-    return (await import("./packages/mcp/src/index.ts")).serve.serve(args, { version, shellRef: repoRef(), bundle });
+    return (await import("./packages/mcp/src/index.ts")).serve.serve(args, { version, buildRef: repoRef(), bundle });
   },
   net: async (args) => {
     const { lanPortmapNet, Portmap } = await import("./packages/net/src/index.ts");
