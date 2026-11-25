@@ -65,7 +65,8 @@ def member_json(m):
     u = S["users"][m["user_id"]]
     o = S["orgs"][m["org"]]
     return {"id": m["id"], "role": m["role"],
-            "organization": {"id": o["id"], "name": o["name"], "public_metadata": o["public_metadata"]},
+            "organization": {"id": o["id"], "name": o["name"], "public_metadata": o["public_metadata"],
+                             "created_at": o.get("created_at", 0)},
             "public_user_data": {"user_id": u["id"], "first_name": u["first_name"], "last_name": u["last_name"],
                                  "identifier": uemail(u), "image_url": u["image_url"],
                                  "has_image": u.get("has_image", False)}}
@@ -135,7 +136,9 @@ def api(method, parts, body):
         S["orgs"][oid] = {"id": oid, "name": name, "slug": name.lower().replace(" ", "-") + "-" + oid[-4:],
                           "public_metadata": body.get("public_metadata") or {},
                           "max_allowed_memberships": body.get("max_allowed_memberships", 5),
-                          "created_by": body["created_by"]}
+                          "created_by": body["created_by"],
+                          # Like Clerk: ms since the epoch. `created_at` in the body is the fake's own (tests: an older org).
+                          "created_at": int(body.get("created_at") or time.time() * 1000)}
         add_member(oid, body["created_by"], "org:admin")
         return 200, S["orgs"][oid]
     if parts[:1] == ["organizations"] and len(parts) >= 2:

@@ -102,6 +102,8 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["auto_handled", D],
   ["account", D],
   ["account_ws", D],
+  // This PC was moved back from a duplicate personal workspace once (account.ts `unstrand`).
+  ["account_ws_unstranded", D],
   ["account_dir", D],
   ["account_keys", D],
   ["account_sync", D],

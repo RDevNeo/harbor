@@ -70,6 +70,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
 
 ### Fixed
+- Accounts: signing in to Hub no longer moves the PC into a second, empty "Sam's Workspace" with every chat hidden.
+  Hub's account service (its own D1) made a new personal workspace for an account that already had one from Harbor;
+  it now adopts the one Clerk has (`harbor_personal`, the oldest) and makes one only when there is none (worker
+  `ensurePersonal`: needs `wrangler deploy`). A PC signing in to an account with several personal workspaces lands in
+  the one its sidebar filter shows, else the one with the most members and PCs, else the oldest, instead of asking to
+  pick between two identical names. Moving the PC (sign-in, Settings › Workspace) carries a sidebar filter on its old
+  workspace to the new one, and a filter that would hide every chat of this PC while showing nothing else shows this
+  PC's workspace too. A PC already stranded alone in such a duplicate goes back once, by itself, to the personal
+  workspace its filter shows (as Settings › Workspace would; kv `account_ws_unstranded`). PC only: phones have no
+  workspace of their own and no workspace filter.
 - A table in a reply stays inside the message column: wider than the reply, its columns narrow (the longest the
   most, short ones keep their width) and their cells wrap onto more lines, instead of running under the right
   panel with its last column cut off. Also in split panes and narrow windows.

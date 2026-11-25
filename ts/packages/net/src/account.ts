@@ -472,15 +472,82 @@ function peersOf(d: AccountDirectory, mine: string, ws = ""): Allowed[] {
  * The workspace a PC lands in at sign-in: the one it's registered in, else the one it was in, else the account's
  * only one, else the account's own personal workspace (a new PC of someone also in others' workspaces goes where
  * their other PCs usually are; Settings › Workspace moves it). "": none, the person picks.
+ *
+ * An account can have several personal workspaces (a service without the account's row made a second one: worker
+ * ensurePersonal before it adopted the one Clerk has): never a new, empty one over the one in use. `prefer` names workspaces this PC
+ * used (its sidebar filter): the first of them that is one of them wins; else the one with the most members and
+ * PCs in `dir` (when known), else the oldest (Clerk's ids grow with time).
  */
-export function signInWorkspace(workspaces: readonly AccountWorkspace[], registered: string | null, current: string): string {
+export function signInWorkspace(
+  workspaces: readonly AccountWorkspace[],
+  registered: string | null,
+  current: string,
+  prefer: readonly string[] = [],
+  dir: AccountDirectory | null = null,
+): string {
   if (registered !== null) return registered;
   if (workspaces.some((w) => w.id === current)) return current;
   const only = workspaces.length === 1 ? workspaces[0] : undefined;
   if (only) return only.id;
-  const own = workspaces.filter((w) => w.personal && w.role === "owner");
-  return own.length === 1 ? (own[0]?.id ?? "") : "";
+  return ownPersonal(workspaces, prefer, dir) ?? "";
 }
+
+/** The account's own personal workspaces (`personal`, owner). */
+export function personalWorkspaces(workspaces: readonly AccountWorkspace[]): AccountWorkspace[] {
+  return workspaces.filter((w) => w.personal && w.role === "owner");
+}
+
+/** How much a workspace holds in `dir`: its members and PCs (0 when the directory doesn't list it). */
+function heft(dir: AccountDirectory | null, ws: string): number {
+  const d = dir ? directoryOf(dir, ws) : undefined;
+  return d ? d.members.length + d.pcs.length : 0;
+}
+
+/** The account's own personal workspace to use (see `signInWorkspace`); null: it has none. */
+function ownPersonal(workspaces: readonly AccountWorkspace[], prefer: readonly string[], dir: AccountDirectory | null): string | null {
+  const own = personalWorkspaces(workspaces);
+  if (own.length <= 1) return own[0]?.id ?? null;
+  const named = prefer.find((id) => own.some((w) => w.id === id));
+  if (named !== undefined) return named;
+  const best = [...own].sort((a, b) => heft(dir, b.id) - heft(dir, a.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return best[0]?.id ?? null;
+}
+
+/**
+ * A PC stranded in a duplicate personal workspace (Hub's service made a second "Sam's Workspace" at the first
+ * sign-in, and the PC landed in it): the account's other personal workspace to move it back to, else null. Only when
+ * this PC's workspace `ws` is one of the account's own personal ones, holds nobody but `me` and no PC but `fp`, and
+ * another of them holds more members and is the one the sidebar filter `filter` (ids joined by commas) shows.
+ */
+export function strandedIn(dir: AccountDirectory, me: string, ws: string, fp: string, filter: string): string | null {
+  const own = personalWorkspaces(dir.workspaces);
+  const here = own.find((w) => w.id === ws);
+  const d = here ? directoryOf(dir, ws) : undefined;
+  if (!d || own.length < 2) return null;
+  if (d.members.some((m) => m.id !== me) || d.pcs.some((p) => p.fp !== fp)) return null;
+  const shown = filter.split(",");
+  const to = own.find((w) => w.id !== ws && shown.includes(w.id) && (directoryOf(dir, w.id)?.members.length ?? 0) > d.members.length);
+  return to?.id ?? null;
+}
+
+/** The sidebar filter `stored` (workspace ids joined by commas) after this PC moved from workspace `from` to `to`:
+ *  the old workspace's id names the new one (it stood for "this PC's"), once. Unchanged when it didn't name `from`. */
+export function filterAfterMove(stored: string, from: string, to: string): string {
+  if (stored === "" || from === "" || to === "" || from === to) return stored;
+  const ids = stored.split(",");
+  if (!ids.includes(from)) return stored;
+  const out: string[] = [];
+  for (const id of ids) {
+    const x = id === from ? to : id;
+    if (!out.includes(x)) out.push(x);
+  }
+  return out.join(",");
+}
+
+/** The sidebar's workspace filter (kv, ids joined by commas; "" = All): ui shell.ts `setWsFilter`. */
+export const SIDEBAR_FILTER = "sidebar_workspace";
+/** "1" once `unstrand` moved this PC back from a duplicate personal workspace (tried once, never again). */
+const UNSTRANDED = "account_ws_unstranded";
 
 /** Rigs and tests: a one-workspace directory in kv, as the account loop leaves it after a sign-in, listing these PCs
  * (this PC among them or not): they are the PCs this one trusts. */
@@ -1483,7 +1550,7 @@ export class AccountService {
     sec.token_exp = s.exp;
     sec.token_at = this.nowSec();
     this.saveSecrets(sec);
-    const ws = signInWorkspace(s.account.workspaces, s.pc?.ws ?? null, this.ws);
+    const ws = await this.landing(s);
     const pick = ws === "" && s.account.workspaces.length > 1;
     // Everything before the account is published: a running Harbor takes over from there.
     this.o.settings?.signedIn();
@@ -1492,6 +1559,22 @@ export class AccountService {
     this.setStatus((st) => (st.pick = pick));
     this.pendingInvites = s.invites;
     this.enable = true;
+  }
+
+  /** Where this PC goes at sign-in (`signInWorkspace`): with several personal workspaces of its own, the one its
+   *  sidebar filter shows, else the fullest (the directory is fetched for that), never a new empty duplicate. */
+  private async landing(s: Session): Promise<string> {
+    const prefer = (this.o.kv.get(SIDEBAR_FILTER) ?? "").split(",").filter((x) => x !== "");
+    const first = signInWorkspace(s.account.workspaces, s.pc?.ws ?? null, this.ws, prefer);
+    const own = personalWorkspaces(s.account.workspaces);
+    if (s.pc || s.account.workspaces.some((w) => w.id === this.ws) || own.length < 2 || prefer.some((id) => own.some((w) => w.id === id))) return first;
+    let dir: AccountDirectory | null = null;
+    try {
+      dir = parseDirectory(await this.service("GET", "/v1/directory", s.token));
+    } catch {
+      // Unknown sizes: the oldest.
+    }
+    return signInWorkspace(s.account.workspaces, null, this.ws, prefer, dir);
   }
 
   /** Waits for the browser's `GET <want>?code&state` on the loopback listener. */
@@ -1558,6 +1641,10 @@ export class AccountService {
       if (ws !== this.ws) {
         this.dir = emptyDirectory();
         kv.set("account_dir", "");
+        // A sidebar filter on the workspace this PC left meant "this PC's": it follows the PC, or every chat hides.
+        const f = kv.get(SIDEBAR_FILTER) ?? "";
+        const moved = filterAfterMove(f, this.ws, ws);
+        if (moved !== f) kv.set(SIDEBAR_FILTER, moved);
       }
       this.ws = ws;
     }
@@ -1605,6 +1692,20 @@ export class AccountService {
       await this.fetchInvites(t).catch(() => {});
     }
     this.poke();
+  }
+
+  /** Once per install: a PC left in a duplicate personal workspace of its own (`strandedIn`) goes back to the one its
+   *  sidebar filter shows, the way Settings › Workspace moves it. */
+  private async unstrand(): Promise<void> {
+    const kv = this.o.kv;
+    if (!this.acct || this.ws === "" || kv.get(UNSTRANDED) === "1") return;
+    const to = strandedIn(this.dir, this.acct.id, this.ws, this.myFp(), kv.get(SIDEBAR_FILTER) ?? "");
+    if (to === null) return;
+    kv.set(UNSTRANDED, "1");
+    const from = this.ws;
+    await this.chooseWorkspace(to);
+    const how = this.ws === to ? "ok" : this.st.error || "failed";
+    this.log(() => `workspace: back from the duplicate ${from} to ${to}: ${how}`);
   }
 
   /** Puts this PC in workspace `ws` (Settings › Account, the picker after sign-in). */
@@ -1999,6 +2100,7 @@ export class AccountService {
       });
       this.log(() => `directory: ${r ? r.text() : "ok"}`);
       result(r);
+      if (r === null) await this.unstrand();
     } else if (t.inv === null || (!this.pushing && this.due(t.inv, INVITES_FALLBACK))) {
       t.inv = this.nowMs();
       const r = await attempt(() => this.fetchInvites(token));

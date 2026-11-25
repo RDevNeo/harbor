@@ -10,6 +10,7 @@ import {
   carriedProjects,
   chatWorkspace,
   dragChat,
+  filteredTree,
   inWorkspaces,
   isMainOf,
   moveMenu,
@@ -82,6 +83,26 @@ test("several_workspaces_show_what_each_of_them_has", () => {
   got = inWorkspaces(t, ["b", "gone"], "a", pcs, chats);
   // This PC's workspace isn't among them.
   expect(got.projects).toEqual([place(1, false, null, [2])]);
+});
+
+test("a_filter_that_would_hide_every_chat_of_this_pc_shows_them_with_it", () => {
+  // This PC's chats only, and this PC is in "dup" while the filter names "old" (it landed in a duplicate workspace).
+  const chats = [fromPc(1, 1, ""), fromPc(3, null, "")];
+  const t = emptyTree({ projects: [place(1, false, null, [1])], threads: [3] });
+  const by = (mine: string) => (ws: readonly string[]) => inWorkspaces(t, ws, mine, new Map(), chats);
+  expect(filteredTree(t, ["old"], "dup", by("dup"))).toEqual(t);
+  // A PC in no workspace: everything, as All.
+  expect(filteredTree(t, ["old"], "", by(""))).toEqual(t);
+  // All, or a filter naming this PC's workspace: as it is.
+  expect(filteredTree(t, [], "dup", by("dup"))).toEqual(t);
+  expect(filteredTree(t, ["dup"], "dup", by("dup"))).toEqual(t);
+  // A filter that leaves something (another PC's chats) is kept: the person picked it.
+  const [wt, wchats, pcs] = workspaceTree();
+  const other = (ws: readonly string[]) => inWorkspaces(wt, ws, "a", pcs, wchats);
+  expect(filteredTree(wt, ["b"], "a", other).projects).toEqual([place(1, false, null, [2])]);
+  // Nothing anywhere: nothing.
+  const none = emptyTree({});
+  expect(filteredTree(none, ["old"], "dup", () => none)).toEqual(none);
 });
 
 test("a_moved_chat_or_project_shows_under_the_workspace_it_was_moved_to", () => {

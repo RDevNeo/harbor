@@ -559,25 +559,42 @@ async function wsInfo(env, ws, knownName) {
   return { name, owner: admin?.name || '' };
 }
 
-/** One personal workspace per account; races resolve through the D1 primary key. */
+/** The account's personal workspace that Clerk already has (`public_metadata.harbor_personal`), oldest first:
+ *  made by another deployment of this service (Harbor's, before Hub's own D1) or before a lost D1 row. null: none. */
+async function knownPersonal(env, sub) {
+  const d = must(await clerk(env, 'GET', `/users/${enc2(sub)}/organization_memberships?limit=100`), 'Could not load your workspaces.');
+  const own = (d.data || [])
+    .map((m) => m.organization)
+    .filter((o) => o && typeof o.id === 'string' && o.public_metadata?.harbor_personal === sub)
+    .sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return own[0]?.id ?? null;
+}
+
+/** One personal workspace per account: the one Clerk already has is adopted, else one is made; races resolve
+ *  through the D1 primary key. */
 async function ensurePersonal(env, sub, first) {
   const read = () => env.DB.prepare(`SELECT personal_ws FROM accounts WHERE user_id=?`).bind(sub).first('personal_ws');
   const have = await read();
   if (have) return have;
-  const org = must(
-    await clerk(env, 'POST', '/organizations', {
-      name: `${first}'s Workspace`.slice(0, 80),
-      created_by: sub,
-      public_metadata: { harbor_personal: sub },
-      max_allowed_memberships: 20,
-    }),
-    'Could not create your workspace.',
-  );
+  const known = await knownPersonal(env, sub);
+  const made = known
+    ? null
+    : must(
+        await clerk(env, 'POST', '/organizations', {
+          name: `${first}'s Workspace`.slice(0, 80),
+          created_by: sub,
+          public_metadata: { harbor_personal: sub },
+          max_allowed_memberships: 20,
+        }),
+        'Could not create your workspace.',
+      );
+  const mine = known ?? made.id;
   await env.DB.prepare(`INSERT INTO accounts (user_id,personal_ws,created) VALUES (?,?,?) ON CONFLICT(user_id) DO NOTHING`)
-    .bind(sub, org.id, now())
+    .bind(sub, mine, now())
     .run();
   const id = await read();
-  if (id !== org.id) await clerk(env, 'DELETE', `/organizations/${enc2(org.id)}`).catch(() => {});
+  // Another session of this account won the race: the workspace made here goes (an adopted one stays, it was there before).
+  if (made && id !== made.id) await clerk(env, 'DELETE', `/organizations/${enc2(made.id)}`).catch(() => {});
   return id;
 }
 

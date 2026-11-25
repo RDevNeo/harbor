@@ -254,7 +254,7 @@ def vault_check(key, epoch):
 
 def d1(sql):
     """Runs SQL on the local D1 the Worker uses; returns the rows of its last statement."""
-    r = subprocess.run(["npx", "wrangler", "d1", "execute", "harbor-accounts", "--local", "--json", "--command", sql],
+    r = subprocess.run(["npx", "wrangler", "d1", "execute", "hub-accounts", "--local", "--json", "--command", sql],
                        cwd=WORKER, env=ENV, capture_output=True, text=True, timeout=120)
     if r.returncode:
         raise RuntimeError(r.stdout[-1000:] + r.stderr[-1000:])
@@ -281,7 +281,7 @@ def serve():
                 f"HARBOR_SIGNING_KEY={pkcs8}\nPUBLIC_URL={W}\nVAULT_SECRET={VAULT_SECRET}\n"
                 f"GOOGLE_WEB_CLIENT_ID=web-client.apps.example\nGOOGLE_JWKS_URL={CLERK}/google/certs\n")
     shutil.rmtree(os.path.join(WORKER, ".wrangler/state"), ignore_errors=True)
-    m = subprocess.run(["nice", "-n", "19", "npx", "wrangler", "d1", "migrations", "apply", "harbor-accounts", "--local"],
+    m = subprocess.run(["nice", "-n", "19", "npx", "wrangler", "d1", "migrations", "apply", "hub-accounts", "--local"],
                        cwd=WORKER, env=ENV, capture_output=True, text=True, timeout=300)
     if m.returncode:
         print(m.stdout[-2000:], m.stderr[-2000:])
@@ -377,6 +377,31 @@ def main():
     ids = {o[1]["workspaces"][0]["id"] for o in out if o[0] == 200}
     check("concurrent first sessions: one personal workspace, same id everywhere",
           len(personal) == 1 and len(ids) == 1 and all(o[0] == 200 for o in out), (len(personal), ids, [o[0] for o in out]))
+
+    # An account whose personal workspace Clerk already has (made by another deployment of the service, e.g. Harbor's,
+    # before this D1): its first session here adopts the oldest of them instead of making a duplicate.
+    http("POST", CLERK + "/test/users", {"email": "legacy@example.com", "first_name": "Lee"})
+    _, st_all, _, _ = http("GET", CLERK + "/test/state")
+    luid = [u for u in st_all["users"].values() if u["first_name"] == "Lee"][0]["id"]
+    def mkorg(name, meta, created):
+        st, o, _, _ = http("POST", CLERK + "/v1/organizations", {"name": name, "created_by": luid, "public_metadata": meta,
+                                                               "created_at": created}, token="sk_test_fake")
+        assert st == 200, o
+        return o["id"]
+    newer = mkorg("Lee's Workspace", {"harbor_personal": luid}, 1_700_000_100_000)
+    older = mkorg("Lee's Workspace", {"harbor_personal": luid}, 1_700_000_000_000)
+    mkorg("Lee's Team", {}, 1_600_000_000_000)
+    lct = login("legacy@example.com")[0]
+    out = []
+    ths = [threading.Thread(target=lambda: out.append(session(lct, Device("pc", "l")))) for _ in range(3)]
+    [t.start() for t in ths]
+    [t.join() for t in ths]
+    _, st_all, _, _ = http("GET", CLERK + "/test/state")
+    lorgs = [o for o in st_all["orgs"].values() if o["public_metadata"].get("harbor_personal") == luid]
+    check("existing personal workspace: adopted (the oldest), none made, every session agrees",
+          all(o[0] == 200 for o in out) and sorted(o["id"] for o in lorgs) == sorted([newer, older])
+          and d1(f"SELECT personal_ws FROM accounts WHERE user_id='{luid}'") == [{"personal_ws": older}],
+          ([o[0] for o in out], [o["id"] for o in lorgs], older))
 
     # pcs and directory
     st, js, _, _ = http("POST", W + "/v1/pcs", {"ws": sam_ws, "id": "fp:abcd", "name": "desk", "addrs": ["10.0.0.5:47930"], "version": "0.80.0"},

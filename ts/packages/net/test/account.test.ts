@@ -30,6 +30,8 @@ import {
   type AccountSettingsSync,
   type HarborClaims,
   signInWorkspace,
+  strandedIn,
+  filterAfterMove,
 } from "../src/account.ts";
 import { Vault } from "../src/vault.ts";
 import * as vaultcrypto from "../src/vaultcrypto.ts";
@@ -685,6 +687,99 @@ describe("sign-in through Clerk", () => {
     r.svc.load();
     await signedIn(r);
     expect(r.svc.workspace()).toBe("org_b");
+  });
+
+  // Hub's service once made a second personal "Sam's Workspace" for an account that had one from Harbor's.
+  const twoPersonal = [
+    { id: "org_3new", name: "Sam's Workspace", role: "owner", personal: true },
+    { id: "org_3old", name: "Sam's Workspace", role: "owner", personal: true },
+    { id: "org_team", name: "Team", role: "member", personal: false },
+  ];
+
+  test("two personal workspaces: a PC lands in the one its sidebar filter shows, not the new duplicate", async () => {
+    const r = rig();
+    r.world.session.workspaces = twoPersonal;
+    r.kv.set("sidebar_workspace", "org_3old");
+    await signedIn(r);
+    expect(r.svc.workspace()).toBe("org_3old");
+    expect(r.svc.status().pick).toBe(false);
+    expect(r.kv.get("sidebar_workspace")).toBe("org_3old");
+  });
+
+  test("two personal workspaces and no filter: the PC lands in the fuller one (the directory says)", async () => {
+    const r = rig();
+    r.world.session.workspaces = twoPersonal;
+    const people = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `user_${i + 1}`, name: "", email: "", role: "member" as const }));
+    r.world.directory = {
+      at: Date.now(),
+      workspaces: [workspaceDir(r, { id: "org_3new", members: people(1), pcs: [] }), workspaceDir(r, { id: "org_3old", members: people(3), pcs: [] })],
+    };
+    await r.svc.signIn();
+    expect(r.svc.workspace()).toBe("org_3old");
+    expect(get(r.calls.find((c) => c.path === "/v1/pcs")?.json, "ws")).toBe("org_3old");
+  });
+
+  test("moving the PC carries a sidebar filter on its old workspace to the new one", async () => {
+    const r = rig();
+    r.world.session.workspaces = [...twoPersonal.slice(1), { id: "org_b", name: "B", role: "member", personal: false }];
+    await signedIn(r);
+    expect(r.svc.workspace()).toBe("org_3old");
+    r.kv.set("sidebar_workspace", "org_3old,org_team");
+    r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r, { id: "org_3old" }), workspaceDir(r, { id: "org_b" }), workspaceDir(r, { id: "org_team" })] };
+    await r.svc.chooseWorkspace("org_b");
+    expect(r.svc.workspace()).toBe("org_b");
+    expect(r.kv.get("sidebar_workspace")).toBe("org_b,org_team");
+    // A filter that didn't name the PC's workspace stays as it was.
+    r.kv.set("sidebar_workspace", "org_team");
+    await r.svc.chooseWorkspace("org_3old");
+    expect(r.kv.get("sidebar_workspace")).toBe("org_team");
+  });
+
+  test("a PC stranded in a duplicate personal workspace goes back to the one its filter shows, once", async () => {
+    const r = rig();
+    r.world.session.workspaces = twoPersonal;
+    r.world.session.pc = { ws: "org_3new", ws_name: "Sam's Workspace", owner: "Sam", member: true };
+    await signedIn(r);
+    expect(r.svc.workspace()).toBe("org_3new");
+    r.kv.set("sidebar_workspace", "org_3old");
+    const sam = { id: "user_1", name: "Sam", email: "sam@example.com", role: "owner" as const };
+    const mate = (id: string) => ({ id, name: id, email: "", role: "member" as const });
+    const me = workspaceDir(r).pcs[0]!;
+    r.world.directory = {
+      at: Date.now(),
+      workspaces: [
+        workspaceDir(r, { id: "org_3new", members: [sam], pcs: [me] }),
+        workspaceDir(r, { id: "org_3old", members: [sam, mate("user_2"), mate("user_3")], pcs: [] }),
+        workspaceDir(r, { id: "org_team", role: "member", personal: false }),
+      ],
+    };
+    await r.svc.tick(true);
+    expect(r.svc.workspace()).toBe("org_3old");
+    expect(r.kv.get("account_ws")).toBe("org_3old");
+    expect(r.calls.filter((c) => c.path === "/v1/pcs").map((c) => get(c.json, "ws"))).toEqual(["org_3new", "org_3old"]);
+    // Moved back to the duplicate by hand: it stays there.
+    await r.svc.chooseWorkspace("org_3new");
+    r.calls.length = 0;
+    await r.svc.tick(true);
+    expect(r.svc.workspace()).toBe("org_3new");
+  });
+
+  test("a personal workspace with another PC in it isn't a stranded duplicate", async () => {
+    const r = rig();
+    r.world.session.workspaces = twoPersonal;
+    r.world.session.pc = { ws: "org_3new", ws_name: "Sam's Workspace", owner: "Sam", member: true };
+    await signedIn(r);
+    r.kv.set("sidebar_workspace", "org_3old");
+    const sam = { id: "user_1", name: "Sam", email: "sam@example.com", role: "owner" as const };
+    r.world.directory = {
+      at: Date.now(),
+      workspaces: [
+        workspaceDir(r, { id: "org_3new", members: [sam] }),
+        workspaceDir(r, { id: "org_3old", members: [sam, { ...sam, id: "user_2" }], pcs: [] }),
+      ],
+    };
+    await r.svc.tick(true);
+    expect(r.svc.workspace()).toBe("org_3new");
   });
 
   test("a registration refused for someone else's workspace says so", async () => {
@@ -1423,4 +1518,66 @@ test("a PC signing in lands in its workspace, else the account's only or own per
   expect(signInWorkspace([igors, mine], null, "")).toBe("org_mine");
   // Nothing of their own to go to: they pick.
   expect(signInWorkspace([igors, ws("org_other", "member", false)], null, "")).toBe("");
+  // Two personal workspaces of their own (a duplicate made by a service without the account's row): never "".
+  const dup = ws("org_3Mby", "owner", true);
+  const old = ws("org_3LLZ", "owner", true);
+  // The one the sidebar filter shows…
+  expect(signInWorkspace([dup, old, igors], null, "", ["org_igor", "org_3LLZ"])).toBe("org_3LLZ");
+  expect(signInWorkspace([old, dup, igors], null, "", ["org_3Mby"])).toBe("org_3Mby");
+  // …else the one with the most members and PCs…
+  const dir = (id: string, members: number, pcs: number): AccountDir => ({
+    ...ws(id, "owner", true),
+    members: Array.from({ length: members }, (_, i) => ({ id: `u${i}`, name: "", email: "", role: "member" as const })),
+    pcs: Array.from({ length: pcs }, (_, i) => ({ fp: `f${i}`, id: "", name: "", addrs: [], owner: "", owner_name: "", seen: 0, version: "" })),
+    devices: [],
+    invites: [],
+  });
+  expect(signInWorkspace([dup, old], null, "", [], { at: 0, peers: [], workspaces: [dir("org_3Mby", 1, 1), dir("org_3LLZ", 3, 0)] })).toBe("org_3LLZ");
+  expect(signInWorkspace([old, dup], null, "", [], { at: 0, peers: [], workspaces: [dir("org_3Mby", 2, 3), dir("org_3LLZ", 3, 0)] })).toBe("org_3Mby");
+  // …else the oldest (Clerk's ids grow with time).
+  expect(signInWorkspace([dup, old], null, "", [])).toBe("org_3LLZ");
+  // The PC's own still wins over all of that.
+  expect(signInWorkspace([dup, old], null, "org_3Mby", ["org_3LLZ"])).toBe("org_3Mby");
+});
+
+test("a PC stranded alone in a duplicate personal workspace is found, with where to go back", () => {
+  const member = (id: string) => ({ id, name: "", email: "", role: "member" as const });
+  const pc = (fp: string) => ({ fp, id: "", name: "", addrs: [], owner: "", owner_name: "", seen: 0, version: "" });
+  const w = (id: string, members: string[], pcs: string[], personal = true, role: "owner" | "member" = "owner"): AccountDir => ({
+    id,
+    name: "Sam's Workspace",
+    role,
+    personal,
+    members: members.map(member),
+    pcs: pcs.map(pc),
+    devices: [],
+    invites: [],
+  });
+  const d = (...workspaces: AccountDir[]): AccountDirectory => ({ at: 0, peers: [], workspaces });
+  const dup = w("org_new", ["me"], ["fpme"]);
+  const old = w("org_old", ["me", "pat", "kim"], []);
+  expect(strandedIn(d(dup, old), "me", "org_new", "fpme", "org_old")).toBe("org_old");
+  expect(strandedIn(d(dup, old), "me", "org_new", "fpme", "org_team,org_old")).toBe("org_old");
+  // The filter doesn't show it: nothing says this PC was there.
+  expect(strandedIn(d(dup, old), "me", "org_new", "fpme", "")).toBeNull();
+  // Someone else, or another PC, in this PC's workspace: it's in use.
+  expect(strandedIn(d(w("org_new", ["me", "pat"], ["fpme"]), old), "me", "org_new", "fpme", "org_old")).toBeNull();
+  expect(strandedIn(d(w("org_new", ["me"], ["fpme", "fpother"]), old), "me", "org_new", "fpme", "org_old")).toBeNull();
+  // The other holds no more people, isn't personal, or isn't the account's own.
+  expect(strandedIn(d(dup, w("org_old", ["me"], ["fpx"])), "me", "org_new", "fpme", "org_old")).toBeNull();
+  expect(strandedIn(d(dup, w("org_old", ["me", "pat"], [], false)), "me", "org_new", "fpme", "org_old")).toBeNull();
+  expect(strandedIn(d(dup, w("org_old", ["me", "pat"], [], true, "member")), "me", "org_new", "fpme", "org_old")).toBeNull();
+  // This PC isn't in a personal workspace of its own.
+  expect(strandedIn(d(w("org_new", ["me"], ["fpme"], false), old), "me", "org_new", "fpme", "org_old")).toBeNull();
+  expect(strandedIn(d(dup, old), "me", "", "fpme", "org_old")).toBeNull();
+});
+
+test("a sidebar filter on the workspace a PC left follows it to the new one", () => {
+  expect(filterAfterMove("org_a", "org_a", "org_b")).toBe("org_b");
+  expect(filterAfterMove("org_x,org_a", "org_a", "org_b")).toBe("org_x,org_b");
+  expect(filterAfterMove("org_a,org_b", "org_a", "org_b")).toBe("org_b");
+  expect(filterAfterMove("org_x", "org_a", "org_b")).toBe("org_x");
+  expect(filterAfterMove("", "org_a", "org_b")).toBe("");
+  expect(filterAfterMove("org_a", "", "org_b")).toBe("org_a");
+  expect(filterAfterMove("org_a", "org_a", "")).toBe("org_a");
 });

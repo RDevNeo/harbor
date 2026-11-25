@@ -55,7 +55,7 @@ import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { PIN_LABEL, projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, RENAME_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
 import { chipPin, type PinAct, pinNotice, pinRows } from "./logic/pinmenu.ts";
-import { agoLabel, carriedProjects, chatIdle, dragChat, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { agoLabel, carriedProjects, chatIdle, dragChat, FOLDED_KEY, foldedOf, foldedStatus, foldToggled, chatWorkspace, filteredTree, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, parseSidebarWidth, picked, SIDEBAR_W_KEY, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, pastedCopy, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -2144,7 +2144,7 @@ export class Shell {
     const placed = d.store.placement();
     // A project's PC: null for this one, else the one its folder is on ("" none known).
     const pcOf = (id: number): string | null => this.placeOf(id)?.pc ?? null;
-    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, placed, pcOf);
+    const tr = filteredTree(whole, shown, ws.mine, (on) => inWorkspaces(whole, on, ws.mine, ws.pcs, d.chats, placed, pcOf));
     const list = sidebarList(tr, d.chats, d.repos, this.query);
     // Share with workspace…'s mark: a chat's own shares (a project's chats show it on the project's row).
     const byId = new Map(d.chats.map((c) => [c.id, c]));

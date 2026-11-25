@@ -88,6 +88,21 @@ export function inWorkspaces(
 }
 
 /**
+ * The sidebar under the workspace filter `shown` ([] = All): `filter(ids)` is `inWorkspaces` on those ids. A filter
+ * that leaves nothing while `whole` has rows and doesn't name this PC's workspace `mine` (the PC moved, or landed in
+ * another workspace at sign-in) would hide every chat of this PC: this PC's workspace shows too then ("" for a PC in
+ * none: everything, as All).
+ */
+export function filteredTree(whole: Tree, shown: readonly string[], mine: string, filter: (ws: readonly string[]) => Tree): Tree {
+  if (shown.length === 0) return whole;
+  const t = filter(shown);
+  if (!treeEmpty(t) || treeEmpty(whole) || shown.includes(mine)) return t;
+  return mine === "" ? whole : filter([...shown, mine]);
+}
+
+const treeEmpty = (t: Tree): boolean => t.projects.length === 0 && t.threads.length === 0 && t.settled.length === 0 && t.settledProjects.length === 0;
+
+/**
  * The workspace project `id` shows in: where Move to workspace… put it (here, or as its PC says it
  * in its chats' copies, `carried`), else the workspace of the PC its folder is on. `pc` is that PC:
  * null for this one (`mine`), a mesh id for another (`pcs`), "" when none is known; another PC's
