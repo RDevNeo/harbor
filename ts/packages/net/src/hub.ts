@@ -726,7 +726,7 @@ export class Hub {
   auth(token: string, via: Via): Level {
     let hit = false;
     for (const t of this.tokens) if (t.account === "") hit = same(t.token, token) || hit;
-    if (!hit) throw new Error("unknown token: sign in with Google in Hub for Android");
+    if (!hit) throw new Error("unknown token: pair this phone again in Hub for Android");
     if (via.kind === "loopback") return "loopback";
     if (via.kind === "refused") throw new Error("plain HTTP isn't answered here: use TLS");
     return "legacy";

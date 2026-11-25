@@ -1615,6 +1615,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const bound = await api.listen();
     hub.net = { addrs: addrs(), bound, error: hub.net.error };
     if (!offline && !STANDALONE) mesh.start();
+    // Hub without its account service shares chats with no PC: nothing may read "on" as a mesh to go to.
+    if (STANDALONE) hub.mesh.on = false;
   }
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
   const disc = offline || STANDALONE || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });

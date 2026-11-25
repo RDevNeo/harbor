@@ -150,7 +150,7 @@ function noteRefused(ip: string, why: string): void {
 
 export function refusedText(status: number, why: string): string {
   const w = why.length > 0 ? why[0]?.toUpperCase() + why.slice(1) : why;
-  return status === 401 && !w.includes("sign in") ? `${w}. Sign in again in Hub for Android.` : `${w}.`;
+  return status === 401 && !w.includes("sign in") && !w.includes("pair") ? `${w}. Pair this phone again in Hub for Android.` : `${w}.`;
 }
 
 /** Whether `/app.apk` is served: to anyone on this network, from the internet to a signed-in phone or an old pairing. */
