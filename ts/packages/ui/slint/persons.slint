@@ -1,0 +1,17 @@
+// Persons tab (owned by the Persons port; this is the placeholder it replaces). Exports PersonsBus and PersonsPage;
+// app.slint draws PersonsPage inside a TabFrame when TabsBus.current == "persons".
+import { Theme } from "theme.slint";
+
+export global PersonsBus {
+    in-out property <bool> ready;
+}
+
+export component PersonsPage {
+    Text {
+        text: "Persons";
+        font-size: 15px;
+        color: Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

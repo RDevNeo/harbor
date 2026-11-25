@@ -1,7 +1,7 @@
 import { SecretTools } from "./secrettools.ts";
 import * as teamui from "./packages/ui/src/logic/teamui.ts";
 import { provupdate } from "./packages/agents/src/index.ts";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
@@ -149,6 +149,7 @@ import {
   pairLink,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
+import { TAB_ENGINES } from "./tabs/index.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
 import { type Chat, dataDir, home, pins, repoDir, secrets, settingsync, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
@@ -1548,9 +1549,26 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
       return ok({ text: await dictate.cleanupText(typeof b.text === "string" ? b.text : "") });
     }
+    // Hub's tabs (Persons, Routine…): `v1/<tab>/…`, before the phone routes.
+    for (const t of TAB_ENGINES) {
+      const r = await t.route(call);
+      if (r !== null) return r;
+    }
     return (await services?.routePhone(call)) ?? phone.route(call);
   };
   phoneRoute = route;
+  // Hub's tabs start once the routes they may call exist (a tab's failure is logged, never the hub's).
+  const callHere = (method: string, path: string, query: Record<string, string> = {}, body: unknown = null): Promise<Reply> =>
+    route({ method, path: path.split("/").filter((x) => x !== ""), query: Object.entries(query), body, token: "", device: "", global: false });
+  for (const t of TAB_ENGINES) {
+    const dir = join(dataDir(env), t.id);
+    try {
+      mkdirSync(dir, { recursive: true });
+      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere });
+    } catch (e) {
+      console.error(`hub: the ${t.id} tab didn't start: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   const apk = () => apkInfo()?.path ?? null;
   // A recording to text the way this PC dictates (its voice host, cleanup and commands): a phone's, or `harbor api`'s.
   const transcribeHere = async (wav: Uint8Array, q: [string, string][], from: string): Promise<Reply> => {
@@ -1755,6 +1773,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       stopMap();
       stopSpeech();
       clearInterval(voiceKv);
+      for (const t of TAB_ENGINES) await Promise.resolve(t.stop?.()).catch(() => {});
       speech?.stop();
       if (signIn) await account.stop();
       api?.close();

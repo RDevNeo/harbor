@@ -1,0 +1,14 @@
+import { Theme } from "theme.slint";
+
+export global RoutineBus {
+    in-out property <bool> ready;
+}
+
+export component RoutinePage {
+    Text {
+        text: "Routine";
+        color: Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

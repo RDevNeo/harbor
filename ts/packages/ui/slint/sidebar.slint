@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { AppTabs } from "tabs.slint";
 import { Icons } from "icons.slint";
 import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
 import { MemGauge } from "memory.slint";
@@ -785,14 +786,12 @@ export component Sidebar inherits Rectangle {
                     root.hide();
                 }
             }
-            Text {
+            // Hub's tabs (tabs.slint): Projects | Persons | Routine.
+            AppTabs {
+                compact: true;
+            }
+            Rectangle {
                 horizontal-stretch: 1;
-                text: "Hub";
-                font-size: 16px;
-                font-weight: 600;
-                letter-spacing: -0.32px;
-                color: Theme.fg;
-                vertical-alignment: center;
             }
             Btn {
                 icon: Icons.refresh;

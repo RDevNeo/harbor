@@ -27,8 +27,12 @@ import { PaletteBus, PaletteOverlay } from "palette.slint";
 import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 import { MemPill, MiniBar, MemLine } from "memory.slint";
 import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, Panes, PaneHeader, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
+// Hub's top-level tabs: the bar (tabs.slint) and every tab besides Projects (its own file and global).
+import { TabsBus, AppTabs, TabFrame } from "tabs.slint";
+import { PersonsBus, PersonsPage } from "persons.slint";
+import { RoutineBus, RoutinePage } from "routine.slint";
 
-export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, PinRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
+export { Theme, Icons, Spin, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, PinRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus, TabsBus, PersonsBus, RoutineBus }
 
 export struct PopItem {
     kind: string,
@@ -172,6 +176,11 @@ component TopBar {
             clicked => {
                 root.show-sidebar();
             }
+        }
+        // Hub's tabs: in the sidebar's header, here while the sidebar is hidden.
+        if !root.sidebar-open: AppTabs {
+            y: 1px;
+            compact: true;
         }
         HorizontalLayout {
             horizontal-stretch: 1;
@@ -2832,6 +2841,26 @@ export component AppWindow inherits Window {
             }
         }
 
+        if TabsBus.current == "persons": TabFrame {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            PersonsPage {
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+        if TabsBus.current == "routine": TabFrame {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            RoutinePage {
+                width: parent.width;
+                height: parent.height;
+            }
+        }
         if root.palette-open: PaletteOverlay {
             x: 0;
             y: 0;
