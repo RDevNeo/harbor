@@ -26,9 +26,9 @@ final class Pair {
      *  goes to Harbor's account service (Account checks this). */
     static final boolean ON = true;
     static final String SCHEME = "hub";
-    /** Hub's phone API port on the PC when a link's address names none (Harbor's is 47930, so
+    /** Hub's phone API port on the PC when a link's address names none (Harbor's is 47930, 47940 is the PC's MCP bridge; so
      *  both run on one PC). */
-    static final int PORT = 47940;
+    static final int PORT = 47950;
     /** The id prefix of a paired PC's entry. */
     static final String ID = "pc:";
 

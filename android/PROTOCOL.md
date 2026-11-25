@@ -63,7 +63,7 @@ paired with it, so Harbor apps never see Hub's chats. Everything else in this fi
 calls, mutual TLS pinned to each side's key) is unchanged. Phone code: `Pair.java`,
 `PairLink.java` (`Pair.ON`), `Hubs.java` (start screen), `Settings.java` (Forget this PC).
 
-- **Port.** A Hub PC listens on **47940** by default (Harbor keeps 47930), so both run on one PC.
+- **Port.** A Hub PC listens on **47950** by default (Harbor keeps 47930; 47940 is the PC's MCP bridge), so both run on one PC.
   The phone's local API for other apps is on `127.0.0.1:47998` (Harbor's app keeps 47999).
 - **The link.** Hub › Settings › Phones › Pair a phone shows a QR code of
   `hub://pair?fp=<64 hex: SHA-256 of the PC's certificate SPKI>&addrs=<host:port>,<host:port>…&name=<PC name>&id=<mesh id>&code=<one-time code>`

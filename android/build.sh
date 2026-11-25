@@ -144,12 +144,12 @@ LIBCP=$(IFS=:; echo "${LIBS[*]}")
 # Where the app signs in (Config.java): RDevNeo's Clerk app and account service by default.
 # Hub: accounts come from Hub's own account service only (a deploy of worker/ as hub-accounts,
 # its phone redirect bouncing to hub://oauth), never Harbor's. HUB_ACCOUNTS_URL empty (the
-# default): the phone only pairs by QR code (Pair.java); set: it also signs in and shows its
+# set (default Hub's hub-accounts.rdevneo.workers.dev): it also signs in; HUB_ACCOUNTS_URL= (empty): it only pairs by QR code (Pair.java) and shows its
 # workspaces, and pairing keeps working. Clerk defaults to the same instance as Harbor's (the
 # same Google sign-in and workspaces); HUB_CLERK_CLIENT_ID names Hub's own OAuth app there.
 CLERK_URL=${HUB_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
 CLERK_CLIENT=${HUB_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}
-ACCOUNTS_URL=${HUB_ACCOUNTS_URL-}
+ACCOUNTS_URL=${HUB_ACCOUNTS_URL-https://hub-accounts.rdevneo.workers.dev}
 case "$ACCOUNTS_URL" in *harbor-accounts.rdevneo*) echo "HUB_ACCOUNTS_URL is Harbor's account service: Hub needs its own" >&2; exit 1 ;; esac
 # Harbor's Google Cloud Web client id: set, Android 14+ signs in with its own account picker
 # (Credential Manager); empty, the browser through Clerk. Fill it once the Google Cloud clients exist.
