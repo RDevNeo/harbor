@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["harbor.ts", "hub.ts", "tabs", "services.ts", "wire.ts", "proto", "test", "packages/*/src", "packages/*/test"]
+  "include": ["harbor.ts", "hub.ts", "tabs/*.ts", "tabs/*/*.ts", "tabs/*/lib", "services.ts", "wire.ts", "proto", "test", "packages/*/src", "packages/*/test"]
 }
