@@ -72,6 +72,8 @@ export global PersonsBus {
     in property <string> list-sub;
     in property <[PRow]> list;
     in-out property <string> query;
+    // The sidebar's search button asked for the list's search field (set in Slint; the list focuses it and clears it).
+    in-out property <bool> want-search;
     // chat
     in property <string> c-name;
     in property <string> c-initials;
@@ -301,6 +303,7 @@ component Sidebar inherits SideSurface {
                 variant: ghost-muted;
                 tip: "Search people";
                 clicked => {
+                    PersonsBus.want-search = true;
                     PersonsBus.all-people();
                 }
             }
@@ -349,6 +352,20 @@ component Sidebar inherits SideSurface {
 // ---------- the list (All people) ----------
 
 component ListPane inherits Rectangle {
+    // The sidebar's search button: focus the search field, now (the list was showing) or as the list appears.
+    property <bool> want: PersonsBus.want-search;
+    function take-search() {
+        if PersonsBus.want-search {
+            PersonsBus.want-search = false;
+            search.focus-field();
+        }
+    }
+    changed want => {
+        self.take-search();
+    }
+    init => {
+        self.take-search();
+    }
     VerticalLayout {
         padding-left: Ds.page-pad;
         padding-right: Ds.page-pad;
