@@ -162,7 +162,7 @@ export function sideRows(s: StateJson, ui: UiState): Row[] {
       const members = s.people.filter((p) => p.storeIds.includes(st.id) && p.id !== owner?.id && !settledIn(p, "stores")).sort(byRecent);
       const expanded = ui.stores.has(st.id);
       const unread = [shownOwner, ...members].reduce((n, p) => n + (p?.rows.stores?.unread ?? 0), 0);
-      out.push({ ...base("store"), id: st.id, section: "stores", store: st.id, name: st.name, color: st.color, avatarPath: st.imagePath ?? (owner?.avatarPath ?? ""), count: st.count, expanded, unread: expanded ? 0 : unread });
+      out.push({ ...base("store"), id: st.id, section: "stores", store: st.id, name: st.name, initials: st.name.trim().charAt(0).toUpperCase(), color: st.color, avatarPath: st.imagePath ?? (owner?.avatarPath ?? ""), count: st.count, expanded, unread: expanded ? 0 : unread });
       if (!expanded) continue;
       if (!shownOwner && !members.length) out.push({ ...base("empty"), name: "No one yet.", depth: 1 });
       if (shownOwner) out.push({ ...personRow(shownOwner, "stores", st.id, 1, ui.open), owner: true });

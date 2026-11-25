@@ -389,6 +389,13 @@ export component Chip {
     }
 }
 
+/** Secondary text that wraps (a note under a title, a card's second line). */
+export component Muted inherits Text {
+    font-size: Ds.t-sm;
+    color: Theme.subtle;
+    wrap: word-wrap;
+}
+
 /** An empty or loading line in a list or page: centred, quiet. */
 export component Hint inherits Text {
     font-size: Ds.t-sm;

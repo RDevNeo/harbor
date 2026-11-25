@@ -1,8 +1,8 @@
 // Routine tab (Schedule Fixer, moved into Hub): Today, History, Sleep, Goals and Coach, as its React screens were
 // (creators-hub src/routine), drawn natively. RoutineBus is driven by src/tabs/routine/ui.ts; the data is the
 // engine's (ts/tabs/routine), shared with Hub for Android.
-import { Theme } from "theme.slint";
-import { Btn, Variant, BtnSize, Input, TipArea, Card } from "widgets.slint";
+// Built on Hub's design system (ds.slint, DESIGN.md): the sidebar, headings, chips, buttons and dialogs are the shared ones.
+import { Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted } from "ds.slint";
 
 export struct RtQuick { label: string, amount: int }
 export struct RtGoal {
@@ -146,110 +146,20 @@ component Ring {
     @children
 }
 
-component Mark inherits Text {
-    in property <string> glyph;
-    in property <length> size: 18px;
-    text: glyph;
-    font-family: "lucide";
-    font-size: size;
-    horizontal-alignment: center;
-    vertical-alignment: center;
-}
-
-/** A pill button (quick adds, Start/Pause/Stop). */
-component Chip {
-    in property <string> text;
-    in property <string> glyph;
-    in property <bool> on;
-    in property <bool> enabled: true;
-    in property <bool> danger;
-    callback clicked();
-    height: 32px;
-    min-width: 40px;
-    Rectangle {
-        border-radius: 16px;
-        background: !root.enabled ? Theme.gray-100 : root.danger ? Theme.red-200 : root.on ? Theme.gray-1000 : area.has-hover ? Theme.gray-300 : Theme.gray-200;
-    }
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 6px;
-        alignment: center;
-        if root.glyph != "": Mark {
-            glyph: root.glyph;
-            size: 15px;
-            color: root.on ? Theme.bg100 : Theme.fg;
-        }
-        if root.text != "": Text {
-            text: root.text;
-            font-size: 13px;
-            font-weight: 600;
-            color: !root.enabled ? Theme.gray-700 : root.danger ? Theme.red-900 : root.on ? Theme.bg100 : Theme.fg;
-            vertical-alignment: center;
-        }
-    }
-    area := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: root.enabled ? pointer : default;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
-
-/** A round icon button (undo, reset, edit, delete). */
-component IconBtn {
-    in property <string> glyph;
-    in property <bool> enabled: true;
-    in property <string> tip;
-    callback clicked();
-    width: 32px;
-    height: 32px;
-    Rectangle {
-        border-radius: 16px;
-        background: area.has-hover && root.enabled ? Theme.gray-200 : transparent;
-    }
-    Mark {
-        glyph: root.glyph;
-        size: 16px;
-        color: root.enabled ? Theme.subtle : Theme.gray-500;
-    }
-    area := TipArea {
-        tip: root.tip;
-        enabled: root.enabled;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
-
-component Title inherits Text {
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: -0.4px;
-    color: Theme.fg;
-}
-
-component Muted inherits Text {
-    font-size: 13px;
-    color: Theme.subtle;
-    wrap: word-wrap;
-}
-
 component TodayScreen inherits VerticalLayout {
     spacing: 12px;
     HorizontalLayout {
         VerticalLayout {
             alignment: center;
             spacing: 2px;
-            Title {
-                text: "Today";
+            PageHead {
+                title: "Today";
             }
             if RoutineBus.walk != "": HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
-                Mark {
-                    glyph: "\u{e3b9}";
+                Glyph {
+                    icon: "\u{e3b9}";
                     size: 14px;
                     color: Theme.subtle;
                 }
@@ -316,8 +226,8 @@ component TodayScreen inherits VerticalLayout {
                     tint: RoutineBus.palette[g.color];
                     size: RoutineBus.dense ? 36px : 46px;
                     stroke: RoutineBus.dense ? 4px : 5px;
-                    Mark {
-                        glyph: g.done ? "\u{e06c}" : g.glyph;
+                    Glyph {
+                        icon: g.done ? "\u{e06c}" : g.glyph;
                         size: RoutineBus.dense ? 16px : 20px;
                         color: RoutineBus.palette[g.color];
                     }
@@ -382,8 +292,8 @@ component TodayScreen inherits VerticalLayout {
                 if g.streak > 0: HorizontalLayout {
                     spacing: 3px;
                     alignment: start;
-                    Mark {
-                        glyph: "\u{e0d2}";
+                    Glyph {
+                        icon: "\u{e0d2}";
                         size: 13px;
                         color: Theme.amber-800;
                     }
@@ -455,8 +365,10 @@ component TodayScreen inherits VerticalLayout {
                 Rectangle {
                     horizontal-stretch: 1;
                 }
-                if g.session == "idle": IconBtn {
-                    glyph: "\u{e2a1}";
+                if g.session == "idle": Btn {
+                    size: icon-sm;
+                    variant: ghost-muted;
+                    icon: "\u{e2a1}";
                     tip: "Undo last";
                     enabled: g.can-undo;
                     clicked => {
@@ -470,8 +382,10 @@ component TodayScreen inherits VerticalLayout {
                         RoutineBus.reset(g.id);
                     }
                 }
-                if RoutineBus.confirm-reset != g.id: IconBtn {
-                    glyph: "\u{e148}";
+                if RoutineBus.confirm-reset != g.id: Btn {
+                    size: icon-sm;
+                    variant: ghost-muted;
+                    icon: "\u{e148}";
                     tip: "Reset today";
                     enabled: g.can-reset;
                     clicked => {
@@ -485,32 +399,21 @@ component TodayScreen inherits VerticalLayout {
 
 component HistoryScreen inherits VerticalLayout {
     spacing: 12px;
-    Title {
-        text: "History";
+    PageHead {
+        title: "History";
     }
     // The goal picker: All, each goal, Walking (when the phone reads it)
     Flickable {
-        height: 34px;
-        viewport-width: seg-row.preferred-width;
+        height: 28px;
+        content-width: seg-row.preferred-width;
         seg-row := HorizontalLayout {
             spacing: 4px;
-            for s in RoutineBus.segs: Rectangle {
-                property <bool> on: RoutineBus.hsel == s.id;
-                width: seg-text.preferred-width + 24px;
-                height: 30px;
-                border-radius: 15px;
-                background: on ? Theme.gray-1000 : seg-area.has-hover ? Theme.gray-300 : Theme.gray-200;
-                seg-text := Text {
-                    text: s.label;
-                    font-size: 13px;
-                    font-weight: 500;
-                    color: on ? Theme.bg100 : Theme.fg;
-                }
-                seg-area := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
-                        RoutineBus.pick-history(s.id);
-                    }
+            for s in RoutineBus.segs: Chip {
+                text: s.label;
+                on: RoutineBus.hsel == s.id;
+                sm: true;
+                clicked => {
+                    RoutineBus.pick-history(s.id);
                 }
             }
         }
@@ -570,8 +473,8 @@ component HistoryScreen inherits VerticalLayout {
                 padding-left: 14px;
                 padding-right: 14px;
                 spacing: 12px;
-                Mark {
-                    glyph: s.glyph;
+                Glyph {
+                    icon: s.glyph;
                     size: 18px;
                     color: RoutineBus.palette[s.color];
                     width: 24px;
@@ -704,11 +607,11 @@ component HistoryScreen inherits VerticalLayout {
 component SleepScreen inherits VerticalLayout {
     spacing: 12px;
     HorizontalLayout {
-        Title {
-            text: "Sleep";
+        PageHead {
+            title: "Sleep";
         }
-        Mark {
-            glyph: "\u{e11e}";
+        Glyph {
+            icon: "\u{e11e}";
             size: 36px;
             color: Theme.subtle;
             horizontal-alignment: right;
@@ -728,8 +631,8 @@ component SleepScreen inherits VerticalLayout {
         HorizontalLayout {
             padding-left: 14px;
             spacing: 12px;
-            Mark {
-                glyph: "\u{e03a}";
+            Glyph {
+                icon: "\u{e03a}";
                 size: 20px;
                 color: Theme.fg;
                 width: 24px;
@@ -782,8 +685,8 @@ component SleepScreen inherits VerticalLayout {
 component GoalsScreen inherits VerticalLayout {
     spacing: 12px;
     HorizontalLayout {
-        Title {
-            text: "Goals";
+        PageHead {
+            title: "Goals";
         }
         Btn {
             text: "New";
@@ -815,8 +718,8 @@ component GoalsScreen inherits VerticalLayout {
                 vertical-alignment: center;
                 horizontal-stretch: 1;
             }
-            Mark {
-                glyph: "\u{e06d}";
+            Glyph {
+                icon: "\u{e06d}";
                 size: 15px;
                 color: Theme.subtle;
             }
@@ -834,8 +737,8 @@ component GoalsScreen inherits VerticalLayout {
             padding-left: 14px;
             padding-right: 8px;
             spacing: 12px;
-            Mark {
-                glyph: g.glyph;
+            Glyph {
+                icon: g.glyph;
                 size: 18px;
                 color: RoutineBus.palette[g.color];
                 width: 24px;
@@ -854,9 +757,11 @@ component GoalsScreen inherits VerticalLayout {
                     font-size: 12px;
                 }
             }
-            IconBtn {
+            Btn {
+                size: icon-sm;
+                variant: ghost-muted;
                 y: 15px;
-                glyph: "\u{e1f9}";
+                icon: "\u{e1f9}";
                 tip: "Edit";
                 clicked => {
                     RoutineBus.goal-edit(g.id);
@@ -870,9 +775,11 @@ component GoalsScreen inherits VerticalLayout {
                     RoutineBus.del(g.id);
                 }
             }
-            if RoutineBus.confirm-del != g.id: IconBtn {
+            if RoutineBus.confirm-del != g.id: Btn {
+                size: icon-sm;
+                variant: ghost-muted;
                 y: 15px;
-                glyph: "\u{e18e}";
+                icon: "\u{e18e}";
                 tip: "Delete";
                 clicked => {
                     RoutineBus.del-ask(g.id);
@@ -900,8 +807,8 @@ component GoalsScreen inherits VerticalLayout {
 
 component PickerScreen inherits VerticalLayout {
     spacing: 12px;
-    Title {
-        text: "Choose a plan";
+    PageHead {
+        title: "Choose a plan";
     }
     for p in RoutineBus.plans: Card {
         height: 74px;
@@ -942,10 +849,12 @@ component PickerScreen inherits VerticalLayout {
 
 component CoachScreen {
     in property <length> avail-h;
-    Title {
+    PageHead {
         x: 0;
         y: 0;
-        text: "Coach";
+        width: root.width;
+        height: 32px;
+        title: "Coach";
     }
     if RoutineBus.coach-running: Muted {
         x: root.width - 120px;
@@ -966,8 +875,8 @@ component CoachScreen {
         y: root.list-y;
         width: root.width;
         height: root.height - root.list-y - 52px;
-        viewport-width: root.width;
-        viewport-height: max(msgs.preferred-height, self.height);
+        content-width: root.width;
+        content-height: max(msgs.preferred-height, self.height);
         msgs := VerticalLayout {
             x: 0;
             y: max(0px, list.height - self.preferred-height);
@@ -1003,7 +912,7 @@ component CoachScreen {
                         }
                         if c.can-undo: Chip {
                             text: "Undo";
-                            height: 24px;
+                            sm: true;
                             clicked => {
                                 RoutineBus.coach-undo(c.key);
                             }
@@ -1038,60 +947,9 @@ component CoachScreen {
     }
 }
 
-/** A sheet over the page: a title, the content, a close button; a click outside closes it. */
-component Sheet inherits Rectangle {
-    in property <string> title;
-    in property <length> body-h: 300px;
-    background: #00000088;
-    TouchArea {
-        clicked => {
-            RoutineBus.close-sheet();
-        }
-    }
-    Rectangle {
-        width: min(480px, parent.width - 32px);
-        height: min(root.body-h + 64px, parent.height - 32px);
-        border-radius: 14px;
-        background: Theme.bg100;
-        border-width: 1px;
-        border-color: Theme.border;
-        TouchArea { }
-        Text {
-            x: 18px;
-            y: 16px;
-            text: root.title;
-            font-size: 17px;
-            font-weight: 700;
-            color: Theme.fg;
-        }
-        IconBtn {
-            x: parent.width - 44px;
-            y: 10px;
-            glyph: "\u{e1b2}";
-            tip: "Close";
-            clicked => {
-                RoutineBus.close-sheet();
-            }
-        }
-        Rectangle {
-            x: 18px;
-            y: 52px;
-            width: parent.width - 36px;
-            height: parent.height - 64px;
-            @children
-        }
-    }
-}
-
-component Label inherits Text {
-    font-size: 12px;
-    font-weight: 600;
-    color: Theme.subtle;
-}
-
 component GoalForm inherits VerticalLayout {
     spacing: 8px;
-    Label {
+    FieldLabel {
         text: "Name";
     }
     Input {
@@ -1112,7 +970,7 @@ component GoalForm inherits VerticalLayout {
         spacing: 8px;
         VerticalLayout {
             spacing: 4px;
-            Label {
+            FieldLabel {
                 text: RoutineBus.f-type >= 2 ? "Daily target (min)" : RoutineBus.f-type == 1 ? "Daily target (ml)" : "Daily target";
             }
             Input {
@@ -1122,7 +980,7 @@ component GoalForm inherits VerticalLayout {
         }
         if RoutineBus.f-type == 0: VerticalLayout {
             spacing: 4px;
-            Label {
+            FieldLabel {
                 text: "Unit";
             }
             Input {
@@ -1131,7 +989,7 @@ component GoalForm inherits VerticalLayout {
             }
         }
     }
-    Label {
+    FieldLabel {
         text: "Days (a click cycles: on, bonus, off)";
     }
     HorizontalLayout {
@@ -1156,7 +1014,7 @@ component GoalForm inherits VerticalLayout {
             }
         }
     }
-    Label {
+    FieldLabel {
         text: "Icon";
     }
     HorizontalLayout {
@@ -1165,8 +1023,8 @@ component GoalForm inherits VerticalLayout {
             height: 32px;
             border-radius: 8px;
             background: RoutineBus.f-icon == i ? RoutineBus.palette[RoutineBus.f-color].with-alpha(0.2) : icon-area.has-hover ? Theme.gray-200 : transparent;
-            Mark {
-                glyph: g;
+            Glyph {
+                icon: g;
                 size: 16px;
                 color: RoutineBus.f-icon == i ? RoutineBus.palette[RoutineBus.f-color] : Theme.subtle;
             }
@@ -1178,7 +1036,7 @@ component GoalForm inherits VerticalLayout {
             }
         }
     }
-    Label {
+    FieldLabel {
         text: "Color";
     }
     HorizontalLayout {
@@ -1214,67 +1072,121 @@ component GoalForm inherits VerticalLayout {
     }
 }
 
-export component RoutinePage {
-    Rectangle {
-        background: Theme.bg100;
-    }
-    property <length> col-w: min(640px, root.width - 32px);
-    property <length> col-x: (root.width - col-w) / 2;
-    // The sections (not while choosing the first plan)
-    if !RoutineBus.picking && !RoutineBus.loading: HorizontalLayout {
-        x: col-x;
-        y: 12px;
-        width: col-w;
-        height: 40px;
-        spacing: 4px;
-        for s in [{ id: "today", label: "Today", glyph: "\u{e178}" }, { id: "history", label: "History", glyph: "\u{e063}" }, { id: "sleep", label: "Sleep", glyph: "\u{e11e}" }, { id: "goals", label: "Goals", glyph: "\u{e180}" }, { id: "coach", label: "Coach", glyph: "\u{e116}" }]: Rectangle {
-            property <bool> on: RoutineBus.section == s.id;
-            border-radius: 8px;
-            background: on ? Theme.gray-200 : sec-area.has-hover ? Theme.gray-100 : transparent;
-            HorizontalLayout {
-                alignment: center;
-                spacing: 6px;
-                Mark {
-                    glyph: s.glyph;
-                    size: 16px;
-                    color: on ? Theme.fg : Theme.subtle;
-                }
-                Text {
-                    text: s.label;
-                    font-size: 13px;
-                    font-weight: on ? 600 : 500;
-                    color: on ? Theme.fg : Theme.subtle;
-                    vertical-alignment: center;
+struct RtNav { id: string, label: string, glyph: string }
+
+/** Routine's sidebar, as Projects' and Persons': its screens as rows (Today with its %), then the plan. */
+component Sidebar inherits SideSurface {
+    property <[RtNav]> screens: [
+        { id: "today", label: "Today", glyph: "\u{e178}" },
+        { id: "history", label: "History", glyph: "\u{e063}" },
+        { id: "sleep", label: "Sleep", glyph: "\u{e11e}" },
+        { id: "goals", label: "Goals", glyph: "\u{e180}" },
+        { id: "coach", label: "Coach", glyph: "\u{e116}" },
+    ];
+    VerticalLayout {
+        padding-top: Ds.side-pad-top;
+        spacing: 2px;
+        SideHead {
+            padding-left: Ds.side-pad;
+            padding-right: Ds.side-pad;
+            can-hide: false;
+            Btn {
+                icon: Icons.plus;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "New goal";
+                enabled: !RoutineBus.picking && !RoutineBus.loading;
+                clicked => {
+                    RoutineBus.goal-new();
                 }
             }
-            sec-area := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    RoutineBus.pick-section(s.id);
+        }
+        VerticalLayout {
+            padding: Ds.side-pad;
+            padding-top: 6px;
+            spacing: 2px;
+            alignment: start;
+            vertical-stretch: 1;
+            if RoutineBus.picking: ListRow {
+                lead: "glyph";
+                glyph: Icons.list-checks;
+                title: "Choose a plan";
+                active: true;
+            }
+            if !RoutineBus.picking && !RoutineBus.loading: VerticalLayout {
+                spacing: 2px;
+                for s in root.screens: ListRow {
+                    lead: "glyph";
+                    glyph: s.glyph;
+                    title: s.label;
+                    active: RoutineBus.section == s.id;
+                    meta: s.id == "today" ? Math.round(RoutineBus.pct * 100) + "%" : s.id == "coach" && RoutineBus.coach-running ? "writing…" : "";
+                    clicked => {
+                        RoutineBus.pick-section(s.id);
+                    }
+                }
+                SectionHead {
+                    title: "PLAN";
+                }
+                ListRow {
+                    lead: "glyph";
+                    glyph: Icons.list-checks;
+                    title: RoutineBus.plan-label;
+                    tip: "Change the plan";
+                    clicked => {
+                        RoutineBus.plans-open();
+                    }
+                }
+                ListRow {
+                    lead: "glyph";
+                    glyph: "\u{e19e}";
+                    title: "Import from Schedule Fixer";
+                    clicked => {
+                        RoutineBus.import-open();
+                    }
                 }
             }
         }
     }
-    property <length> top: RoutineBus.picking || RoutineBus.loading ? 16px : 64px;
+}
+
+export component RoutinePage {
+    Rectangle {
+        background: Theme.bg100;
+    }
+    Sidebar {
+        x: 0;
+        y: 0;
+        width: Ds.side-w;
+        height: root.height;
+    }
+    // The page beside the sidebar: one centred column, as wide as a page goes (Ds.page-max-w).
+    property <length> main-x: Ds.side-w;
+    property <length> main-w: root.width - main-x;
+    property <length> col-w: min(Ds.page-max-w, main-w - 2 * Ds.page-pad);
+    property <length> col-x: (main-w - col-w) / 2;
+    property <length> top: Ds.sp8;
     if RoutineBus.loading: Text {
+        x: root.main-x;
+        width: root.main-w;
         text: RoutineBus.error != "" ? RoutineBus.error : "Loading…";
         color: Theme.subtle;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
     if !RoutineBus.loading && RoutineBus.section == "coach" && !RoutineBus.picking: CoachScreen {
-        x: col-x;
+        x: main-x + col-x;
         y: top;
         width: col-w;
         height: root.height - top - 16px;
         avail-h: root.height - top;
     }
     if !RoutineBus.loading && (RoutineBus.section != "coach" || RoutineBus.picking): Flickable {
-        x: 0;
+        x: main-x;
         y: top;
-        width: root.width;
+        width: main-w;
         height: root.height - top;
-        viewport-height: screen.preferred-height + 32px;
+        content-height: screen.preferred-height + 32px;
         screen := VerticalLayout {
             x: col-x;
             y: 0;
@@ -1286,16 +1198,18 @@ export component RoutinePage {
             if !RoutineBus.picking && RoutineBus.section == "goals": GoalsScreen { }
         }
     }
-    if RoutineBus.sheet == "form": Sheet {
+    if RoutineBus.sheet == "form": DialogFrame {
         title: RoutineBus.f-title;
-        body-h: 470px;
-        GoalForm {
-            width: parent.width;
+        dismiss => {
+            RoutineBus.close-sheet();
         }
+        GoalForm { }
     }
-    if RoutineBus.sheet == "plans": Sheet {
+    if RoutineBus.sheet == "plans": DialogFrame {
         title: "Plan";
-        body-h: RoutineBus.plans.length * 66px;
+        dismiss => {
+            RoutineBus.close-sheet();
+        }
         VerticalLayout {
             spacing: 6px;
             for p in RoutineBus.plans: Rectangle {
@@ -1325,9 +1239,11 @@ export component RoutinePage {
             }
         }
     }
-    if RoutineBus.sheet == "wake": Sheet {
+    if RoutineBus.sheet == "wake": DialogFrame {
         title: "Wake me up at…";
-        body-h: RoutineBus.wakes.length * 62px + 30px;
+        dismiss => {
+            RoutineBus.close-sheet();
+        }
         VerticalLayout {
             spacing: 6px;
             for w[i] in RoutineBus.wakes: Rectangle {
@@ -1371,9 +1287,11 @@ export component RoutinePage {
             }
         }
     }
-    if RoutineBus.sheet == "import": Sheet {
+    if RoutineBus.sheet == "import": DialogFrame {
         title: "Import from Schedule Fixer";
-        body-h: 300px;
+        dismiss => {
+            RoutineBus.close-sheet();
+        }
         VerticalLayout {
             spacing: 8px;
             Muted {

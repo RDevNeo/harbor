@@ -40,6 +40,8 @@ describe("Persons sidebar", () => {
   test("stores sorted by name, folded until opened; an opened store lists its owner first, then members by last message", () => {
     const folded = sideRows(state(), ui()).map((r) => `${r.kind}:${r.name}`);
     expect(folded.slice(0, 4)).toEqual(["all:All people", "section:STORES", "store:Meoow Store", "store:Shark Store"]);
+    // A store's lead square shows its initial when it has no picture (ds-list.slint LeadLetter).
+    expect(sideRows(state(), ui()).filter((r) => r.kind === "store").map((r) => r.initials)).toEqual(["M", "S"]);
     const open = sideRows(state(), ui({ stores: new Set(["s2"]) }));
     const shark = open.findIndex((r) => r.kind === "store" && r.id === "s2");
     expect(open.slice(shark + 1, shark + 3).map((r) => [r.name, r.owner, r.depth])).toEqual([["Owner", true, 1], ["Member", false, 1]]);

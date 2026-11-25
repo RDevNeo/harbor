@@ -657,6 +657,8 @@ export component MenuItem {
     in property <string> desc;
     in property <bool> checked;
     in property <bool> enabled: true;
+    // A destructive entry (Delete…): its label and icon in red.
+    in property <bool> danger;
     callback clicked;
     height: (desc != "" ? 44px : 32px);
     opacity: enabled ? 1 : 0.5;
@@ -671,7 +673,7 @@ export component MenuItem {
         height: 16px;
         icon: root.icon;
         size: 16px;
-        color: Theme.subtle;
+        color: root.danger ? Theme.red-900 : Theme.subtle;
     }
     Text {
         x: root.icon != "" ? 32px : 8px;
@@ -679,7 +681,7 @@ export component MenuItem {
         width: parent.width - self.x - (root.checked ? 32px : 8px);
         text: root.label;
         font-size: 14px;
-        color: Theme.fg;
+        color: root.danger ? Theme.red-900 : Theme.fg;
         overflow: elide;
     }
     if root.desc != "": Text {
