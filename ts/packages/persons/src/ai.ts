@@ -163,7 +163,7 @@ export class PersonAi implements AiPort {
       return chat;
     }
     if (!project) throw new Error("No project for Person AI: add the folder creators-hub/tabs/Persons as a project in Projects");
-    const r = await this.call("POST", "v1/chats", {}, { text: full, project_id: project, title: aiTitle(p, s) });
+    const r = await this.call("POST", "v1/chats", {}, { text: full, project_id: /^\d+$/.test(project) ? Number(project) : project, title: aiTitle(p, s) });
     const id = (r.body as { id?: string | number | null } | null)?.id;
     if (r.status >= 400 || id == null) throw new Error(String((r.body as { error?: string } | null)?.error ?? "Hub didn't start the chat"));
     this.remember(this.key(p, s), String(id));
