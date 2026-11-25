@@ -221,6 +221,22 @@ const CHAR_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** Keys that type a character: bound without Ctrl or Alt they'd steal typing. */
+/** Ctrl+Alt that types (a layout's AltGr): on Brazilian ABNT2 and others, AltGr is Ctrl+Alt, and the user's compositor
+ *  turns Ctrl+Alt+Q into "/" and Ctrl+Alt+W into "?" while Ctrl and Alt are still held. Slint's text inputs drop any text
+ *  that comes with Ctrl, so such a key is typed text, not a shortcut, when Ctrl and Alt are both held and it carries one
+ *  printable character from the layout that is not a cased letter or a digit (Ctrl+Alt+letter or digit stays a shortcut, e.g.
+ *  Ctrl+Alt+B) and is not one of Slint's special keys (private use area) or a control character. */
+export function ctrlAltTyped(text: string, m: { control: boolean; alt: boolean; meta?: boolean }): boolean {
+  if (!m.control || !m.alt || m.meta) return false;
+  const chars = [...text];
+  if (chars.length !== 1) return false;
+  const c = chars[0]!;
+  const code = c.codePointAt(0)!;
+  if (code < 0x20 || code === 0x7f || (code >= 0x80 && code < 0xa0)) return false;
+  if (code >= 0xe000 && code <= 0xf8ff) return false;
+  return !/[\p{Lu}\p{Ll}\p{Lt}\p{Nd}\s]/u.test(c);
+}
+
 export function isChar(key: string): boolean {
   return key.length === 1 || key.startsWith("Num") || CHAR_KEYS.has(key);
 }

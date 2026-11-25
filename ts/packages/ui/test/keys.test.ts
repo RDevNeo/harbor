@@ -26,3 +26,16 @@ test("alt_up_down_move_between_chats_and_share_alt_up_with_edit_queued", () => {
   expect(keys.conflicts("chat_next")).toEqual([]);
   expect(keys.conflicts("edit_queued")).toEqual([]);
 });
+
+test("ctrl_alt_types_a_layouts_altgr_character_but_stays_a_shortcut_otherwise", async () => {
+  const { ctrlAltTyped } = await import("../src/logic/keys.ts");
+  const ca = { control: true, alt: true, shift: false, meta: false };
+  // ABNT2: Ctrl+Alt+Q is "/", Ctrl+Alt+W is "?"; other AltGr symbols too.
+  for (const t of ["/", "?", "°", "@", "€", "\\", "|", "[", "ª", "º", "¹", "²", "£", "¬"]) expect(ctrlAltTyped(t, ca)).toBe(true);
+  // Ctrl+Alt+letter or digit stays a shortcut (Ctrl+Alt+B), and so do Slint's special keys and control characters.
+  for (const t of ["b", "B", "q", "1", "ç", " ", "", "\n", "\t", "\u{1b}", "\u{f700}", "\u{11}", "ab"]) expect(ctrlAltTyped(t, ca)).toBe(false);
+  // Only with both Ctrl and Alt held, and no Super.
+  expect(ctrlAltTyped("/", { control: true, alt: false })).toBe(false);
+  expect(ctrlAltTyped("/", { control: false, alt: true })).toBe(false);
+  expect(ctrlAltTyped("/", { ...ca, meta: true })).toBe(false);
+});

@@ -763,6 +763,8 @@ export component AppWindow inherits Window {
     callback global-key(KeyEvent) -> bool;
     // Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken.
     callback nav-key(KeyEvent) -> bool;
+    // Ctrl+Alt that types a character (a layout's AltGr): the app types it instead (shell.ts typeCtrlAlt).
+    callback ctrl-alt-text(KeyEvent) -> bool;
     // Ctrl+C anywhere, before any widget sees it (a transcript selection still copies as ever): the shell adds the message's images.
     callback copy-key();
     // Esc, ← and → while the image viewer shows (Esc for a video), before any widget sees them; true = taken.
@@ -916,6 +918,9 @@ export component AppWindow inherits Window {
                 root.drag-pane = -1;
                 root.drag-dead = true;
                 root.split-drag-end();
+                return accept;
+            }
+            if e.modifiers.alt && e.modifiers.control && root.ctrl-alt-text(e) {
                 return accept;
             }
             if (e.modifiers.alt || e.modifiers.control) && root.nav-key(e) {
@@ -1120,9 +1125,10 @@ export component AppWindow inherits Window {
                         // Split panes: each one is drawn by Panes; the focused one has this usual composer under it.
                         property <bool> split: root.panes-on;
                         // chat.rs: the panel docks while the chat keeps its 440px minimum.
-                        // Hub: no docked column; the panel floats over the chat while its corner badge has it open.
-                        property <bool> team-docked: false;
+                        // Hub: the team panel shows while its corner badge has it open; the chat narrows beside it while it keeps
+                        // its 440px minimum, else the panel lies over it.
                         property <bool> team-float: root.view == "chat" && root.team-enabled && root.team-pop;
+                        property <bool> team-docked: team-float && self.width - 300px >= 440px;
                         // The panes' area: the centre left of the docked panel.
                         property <length> area-w: self.width - (team-docked ? 300px : 0px);
                         property <length> fx: split ? floor(root.split-fx * area-w / 1phx) * 1phx : 0px;
@@ -1138,28 +1144,25 @@ export component AppWindow inherits Window {
                         property <bool> centred: root.view == "draft" || root.hero;
                         // chat.rs: (h/2 - 170 - growth), clamped at 24px; fitted to the Rust app at 853 and 553px.
                         property <length> hero-top: fy + top + max((fh - top) * 0.5 - 375px, 24px) + 7px;
+                        // Flush: right under the header's line, down to the window's bottom and right edges, a 1px line on its left;
+                        // the badge sits in its head row.
                         if body.team-float: Rectangle {
-                            x: parent.width - 316px;
-                            y: 52px;
+                            x: parent.width - 300px;
+                            y: 0;
                             z: 10;
-                            width: 304px;
-                            height: max(120px, parent.height - 64px);
-                            border-radius: 12px;
-                            border-width: 1px;
-                            border-color: Theme.border;
-                            background: Theme.bg200;
-                            drop-shadow-blur: 18px;
-                            drop-shadow-color: #00000055;
+                            width: 300px;
+                            height: parent.height;
+                            background: Theme.bg100;
                             clip: true;
                             TouchArea { }
                             TeamPanel {
-                            x: 0;
-                            y: 1px;
+                            x: 1px;
+                            y: 0;
                             width: parent.width - 1px;
-                            height: parent.height - 2px;
-                            split: body.split;
-                            head-h: body.top;
-                            head-trail: body.split ? split-tools.width : 0px;
+                            height: parent.height;
+                            split: true;
+                            head-h: 54px;
+                            head-trail: team-badge.width + 4px;
                             chat-title: root.team-chat-title;
                             agents: root.team-agents;
                             settled: root.team-settled;
@@ -1209,9 +1212,15 @@ export component AppWindow inherits Window {
                                 root.team-settled-toggled(on);
                             }
                             }
+                            Rectangle {
+                                x: 0;
+                                width: 1px;
+                                background: Theme.border;
+                            }
                         }
                         // The team's corner badge: agents (and how many work now); a click opens the panel, another closes it.
-                        if root.view == "chat" && root.team-enabled: Rectangle {
+                        team-badge := Rectangle {
+                            visible: root.view == "chat" && root.team-enabled;
                             x: parent.width - self.width - 12px;
                             y: 12px;
                             z: 12;

@@ -878,6 +878,7 @@ export interface AppWindow extends slint.ComponentHandle {
   global_key: (e: KeyEvent) => boolean;
   /** Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken. */
   nav_key: (e: KeyEvent) => boolean;
+  ctrl_alt_text: (e: KeyEvent) => boolean;
   /** Ctrl+C, before any widget sees it (it goes on to them). */
   copy_key: () => void;
   /** The sidebar row Alt+Up / Alt+Down last opened ("kind:id"): the sidebar scrolls it into view. */

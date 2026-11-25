@@ -30,7 +30,7 @@ import { TAB_UIS, type TabCtx } from "./tabs/index.ts";
 import { tabFromSlug } from "./logic/pages.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
-import { Keys, label as keyLabel } from "./logic/keys.ts";
+import { Keys, ctrlAltTyped, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { richTip } from "./logic/tips.ts";
@@ -1018,6 +1018,7 @@ export class Shell {
     };
     w.global_key = (e) => this.globalKey(e);
     w.nav_key = (e) => this.navKey(e, true);
+    w.ctrl_alt_text = (e) => this.typeCtrlAlt(e);
     // Ctrl+C on a transcript selection: the selection's own copy happens first, then its message's images join it.
     w.copy_key = () => {
       const s = this.selection;
@@ -3209,6 +3210,22 @@ export class Shell {
    * widget sees the key (`yield` then leaves Alt+Up to the composer while it would edit a queued message), and again
    * by the window's own keys for what nothing else took.
    */
+  /** Ctrl+Alt that types (ctrlAltTyped): Slint's text inputs would drop the character as a Ctrl shortcut, so it is sent
+   *  again with Ctrl let go for that one key (Alt stays, which text inputs accept), then Ctrl is down again as the user
+   *  still holds it. On the next turn of the loop: Slint is in the middle of this key's event. */
+  private typeCtrlAlt(e: KeyEvent): boolean {
+    if (!ctrlAltTyped(e.text, e.modifiers)) return false;
+    const w = this.win.window;
+    const text = e.text;
+    setTimeout(() => {
+      w.dispatchEvent({ type: "key-released", text: "\u{11}" });
+      w.dispatchEvent({ type: "key-pressed", text });
+      w.dispatchEvent({ type: "key-released", text });
+      w.dispatchEvent({ type: "key-pressed", text: "\u{11}" });
+    }, 0);
+    return true;
+  }
+
   private navKey(e: KeyEvent, yieldQueued: boolean): boolean {
     if (this.keys.capture !== null || this.win.lb_open || this.win.vid_open || this.menu.length > 0) return false;
     const p = pressOf(e.text, e.modifiers);
