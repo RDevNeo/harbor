@@ -16,6 +16,7 @@ import type { WorkspaceMoves } from "./workspacemoves.ts";
 import type { Target, Worktrees } from "./worktrees.ts";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { commits } from "./packages/agents/src/index.ts";
 import { ghapi, prdetail } from "./packages/mcp/src/index.ts";
 import { repoDir } from "./packages/store/src/index.ts";
@@ -50,6 +51,8 @@ export interface RouteHost {
 }
 
 const now = (): number => Math.floor(Date.now() / 1000);
+/** An id the phone API carries for a patch's button or file: a hash of its own id. */
+const shortId = (id: string): string => createHash("sha1").update(id).digest("hex").slice(0, 16);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 const query = (c: Call, k: string): string | null => c.query.find(([q]) => q === k)?.[1] ?? null;
 const plain = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
@@ -281,7 +284,9 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         const [local, pub] = e.hookUrl(w.token);
         return { id: w.id, name: w.name, description: w.description, hits: w.hits, last_ms: w.lastHit * 1000, public: pub !== null, url: pub ?? local };
       });
-    return plain({ lead: idOf(lc, lead), project_id: global && lc?.repoId != null ? (e.repo(lc.repoId)?.path ?? repo) : repo, home, agents, processes, wakeups, webhooks });
+    // What Person Hub may do in this team (its own PC's only): the calls under /v1/chats/{lead}/team and PATCH {settled}.
+    const actions = home === "" ? ["stop_process", "cancel_wakeup", "wake_now", "delete_webhook", "settle_agent"] : [];
+    return plain({ lead: idOf(lc, lead), project_id: global && lc?.repoId != null ? (e.repo(lc.repoId)?.path ?? repo) : repo, home, agents, processes, wakeups, webhooks, actions });
   };
 
   const gmailInfo = (): Record<string, Json> => ({
@@ -643,6 +648,26 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       h.hub.touch(chat.id, false);
       return ok({ ok: true });
     }
+    // A trusted patch's button (the patch shelf): a command runs in the chat's folder (10 s at most, what it printed comes
+    // back), a message goes to the chat as the desktop's button sends it.
+    if (p[0] === "v1" && p[1] === "chats" && chat !== null && m === "POST" && p.length === 6 && p[3] === "patches" && p[4] === "buttons") {
+      const files = await patchFiles(chat);
+      const a = files.flatMap((f) => f.actions.map((x) => ({ x, root: f.root }))).find(({ x }) => x.kind !== "url" && shortId(x.id) === p[5]);
+      if (a === undefined) return err(404, "No such button (the patch may have changed: look again).");
+      const e = h.engine();
+      if (a.x.kind === "prompt") {
+        if (chat.home !== "") return err(409, `This chat runs on ${h.hub.mesh.nameOf(chat.home)}.`);
+        e.send(chat.id, a.x.value, { files: [], mentions: [], mode: e.followDefault() });
+        h.hub.touch(chat.id, false);
+        return ok({ ok: true, text: "Sent." });
+      }
+      try {
+        const out = await patches.sh(chat.home === "" ? e.chatCwd(chat) : a.root, a.x.value);
+        return ok({ ok: true, text: out.length > 4000 ? `…${out.slice(-4000)}` : out });
+      } catch (x) {
+        return err(409, x instanceof Error ? x.message : String(x));
+      }
+    }
     // A lead's team (GET /v1/chats/{id}/team): stop a process, cancel a wake-up, delete a webhook, as the desktop's team panel does.
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p[3] === "team" && (p.length === 6 || p.length === 7)) {
       const e = h.engine();
@@ -650,7 +675,8 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       const lc = e.chat(lead);
       const id = Number(p[5]);
       const what = p[4] ?? "";
-      const known = (what === "processes" && m === "POST" && p.length === 7 && p[6] === "stop") || (["wakeups", "webhooks"].includes(what) && m === "DELETE" && p.length === 6);
+      const wakeVerb = what === "wakeups" && m === "POST" && p.length === 7 && (p[6] === "cancel" || p[6] === "now") ? p[6] : what === "wakeups" && m === "DELETE" && p.length === 6 ? "cancel" : null;
+      const known = (what === "processes" && m === "POST" && p.length === 7 && p[6] === "stop") || wakeVerb !== null || (what === "webhooks" && m === "DELETE" && p.length === 6);
       if (known && lc && lc.home !== "") return err(409, `This team runs on ${h.hub.mesh.nameOf(lc.home)}.`);
       if (known && !Number.isInteger(id)) return err(404, "no such id");
       if (known && what === "processes") {
@@ -658,9 +684,15 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         if (!proc) return err(404, "That process isn't running.");
         proc.stop();
       } else if (known && what === "wakeups") {
-        if (!e.timers.some((t) => t.id === id && t.chatId === lead)) return err(404, "No such wake-up.");
-        h.store.deleteTimer(id);
-        e.timers = e.timers.filter((t) => t.id !== id);
+        const t = e.timers.find((x) => x.id === id && x.chatId === lead);
+        if (!t) return err(404, "No such wake-up.");
+        if (wakeVerb === "now") {
+          t.at = now();
+          e.fireTimers();
+        } else {
+          h.store.deleteTimer(id);
+          e.timers = e.timers.filter((x) => x.id !== id);
+        }
       } else if (known && what === "webhooks") {
         if (!e.webhooks.some((w) => w.id === id && w.repoId === (lc?.repoId ?? null))) return err(404, "No such webhook in this project.");
         h.store.deleteWebhook(id);
@@ -683,7 +715,17 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "pin", "use_other", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
       if (m === "GET" && ["mention", "team", "slash", "tags"].includes(name)) return action(chat, name, call);
       if (m === "GET" && name === "move_targets") return ok(await moveTargets(chat));
-      if (m === "GET" && name === "patches") return ok({ links: await patchLinks(chat) });
+      if (m === "GET" && name === "patches") {
+        // Person Hub's patch shelf: the links, the patches waiting for trust (or failing) and the trusted buttons.
+        const files = await patchFiles(chat);
+        return ok(
+          plain({
+            links: await patchLinks(chat),
+            untrusted: files.filter((f) => f.state !== "trusted").map((f) => ({ id: f.hash.slice(0, 16) || shortId(f.path), title: f.name, path: f.path, why: f.error, state: f.state })),
+            buttons: files.flatMap((f) => f.actions.filter((a) => a.kind !== "url").map((a) => ({ id: shortId(a.id), title: a.title, kind: a.kind === "run" ? "command" : "message", desc: a.kind === "run" ? `Runs ${a.value}` : `Sends: ${a.value}` }))),
+          }),
+        );
+      }
       return null;
     }
     if (p[0] !== "v1") return null;
@@ -748,6 +790,26 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       }
     }
     if (p.length !== 2) return null;
+    // Person Hub's tree order (state `reorder: true`): {projects: [ids]} is the projects' whole order (the desktop's
+    // drag, repos.sort); {project, chats: [ids]} a project's chats' order (kv chat_order:<project>, phone.ts state).
+    if (m === "POST" && p[1] === "order") {
+      const b = body(call);
+      const repos = h.store.repos();
+      const repoOf = (v: unknown): number | null => (typeof v === "number" ? (repos.find((r) => r.id === v)?.id ?? null) : typeof v === "string" ? (repos.find((r) => r.path === v || String(r.id) === v)?.id ?? null) : null);
+      if (Array.isArray(b.projects)) {
+        const ids = b.projects.map(repoOf).filter((x): x is number => x !== null);
+        const rest = repos.map((r) => r.id).filter((id) => !ids.includes(id));
+        [...new Set(ids), ...rest].forEach((id, sort) => h.store.saveRepoMeta({ id, sort }));
+      } else if (Array.isArray(b.chats)) {
+        const r = repoOf(b.project);
+        if (r === null) return err(404, "no such project");
+        const ids = b.chats.map((c) => (typeof c === "number" || typeof c === "string" ? resolve(String(c))?.id : undefined)).filter((x): x is number => x !== undefined);
+        h.store.set(`chat_order:${r}`, JSON.stringify([...new Set(ids)]));
+      } else return err(400, "projects: [ids], or project and chats: [ids]");
+      h.engine().reload();
+      h.hub.touch(null, true);
+      return ok({ ok: true });
+    }
     if (m === "GET" && p[1] === "workspace") return workspaceInfo(call);
     if (m === "GET" && p[1] === "branches") return branchList(call);
     if (m === "POST" && p[1] === "branches") return switchBranch(call);

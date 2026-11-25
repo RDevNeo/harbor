@@ -1,4 +1,5 @@
 import { SecretTools } from "./secrettools.ts";
+import * as teamui from "./packages/ui/src/logic/teamui.ts";
 import { provupdate } from "./packages/agents/src/index.ts";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1053,6 +1054,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const phone = new PhoneRoutes({
     ctx: ctxFor,
+    settleAgent: (chat, on) => {
+      const marks = teamui.mark(teamui.loadMarks(store.get("agent_settle")), chat, on, Math.floor(Date.now() / 1000), (x) => store.chat(x) !== undefined);
+      store.set("agent_settle", teamui.saveMarks(marks));
+    },
     shareLevel: (peer) => machines.levelFor(store, peer),
     // Someone else's phone (its own PC may be off): what this PC's owner lets that person's PCs' chats do here.
     guest: {

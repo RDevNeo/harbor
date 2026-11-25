@@ -2697,10 +2697,21 @@ Calls only the Harbor inside Person Hub answers (other Harbors say 404, which hi
   with no use), `{"span"?}` (use; default the minutes asked), `{}` (env: write it) or
   `{"deny": true}` → `{"ok": true}`; `400 {error}` (a value under 4 characters, a bad span or .env
   file), `404` when it's answered already. The agent gets a `[secret NAME]` message.
-- `GET /v1/chats/{id}/patches/untrusted` → `{"patches": [{"id", "title", "path", "state":
-  "untrusted"|"blocked", "error"}]}`; `POST /v1/chats/{id}/patches/{id}/trust {"trust": bool}` →
-  `{"ok": true}` (`409` for a blocked one, `404` when it changed: look again).
-- A lead's team: `POST /v1/chats/{id}/team/processes/{pid}/stop`, `DELETE
-  /v1/chats/{id}/team/wakeups/{wid}`, `DELETE /v1/chats/{id}/team/webhooks/{hid}` → `{"ok": true}`;
-  `404` when it isn't the team's, `409` when the team runs on another PC. The lead goes in
-  `changed_chats`.
+- Patches: `GET /v1/chats/{id}/patches` → `{"links": [{title, url}], "untrusted": [{"id", "title",
+  "path", "why", "state": "untrusted"|"blocked"|"error"}], "buttons": [{"id", "title", "kind":
+  "command"|"message", "desc"}]}` (Harbors elsewhere: `links` only). `GET
+  /v1/chats/{id}/patches/untrusted` → `{"patches": [{"id", "title", "path", "state", "error"}]}`.
+  `POST /v1/chats/{id}/patches/{id}/trust {"trust": bool}` → `{"ok": true}` (`409` blocked, `404`
+  changed: look again). `POST /v1/chats/{id}/patches/buttons/{bid}` → `{"ok": true, "text"}`: a
+  command runs in the chat's folder for 10 s at most (`text`: what it printed; `409 {error}` when
+  it failed), a message is sent to the chat.
+- A lead's team: `GET /v1/chats/{id}/team` has `actions` (`stop_process`, `cancel_wakeup`,
+  `wake_now`, `delete_webhook`, `settle_agent`; none for a team on another PC).
+  `POST /v1/chats/{id}/team/processes/{pid}/stop`, `POST …/team/wakeups/{wid}/cancel` (or `DELETE
+  …/team/wakeups/{wid}`), `POST …/team/wakeups/{wid}/now`, `DELETE …/team/webhooks/{hid}` →
+  `{"ok": true}`; `404` when it isn't the team's, `409` when the team runs on another PC. The lead
+  goes in `changed_chats`. `PATCH /v1/chats/{sub} {"settled": bool}` settles a sub-agent in its team
+  too.
+- Order: `/v1/state` has `reorder: true`. `POST /v1/order {"projects": [ids]}` (the projects'
+  whole order; ones left out follow) or `{"project": id, "chats": [ids]}` (that project's chats in
+  `tree`; new ones come first) → `{"ok": true}`, `400` for neither.

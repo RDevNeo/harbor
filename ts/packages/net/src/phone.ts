@@ -193,6 +193,8 @@ export interface PhoneDeps {
   profileCheck?: () => Json;
   /** The calls the app around answers beyond chats' core: a chat's actions, the snooze sheet, usage, people, palette…; null when the call is not one of them. */
   more?: (call: Call, chat: Chat | null) => Promise<Reply | null>;
+  /** A sub-agent settled or not in its team (kv `agent_settle`, the desktop's team panel). */
+  settleAgent?: (chat: number, on: boolean) => void;
   /** A chat an agent opened: its first notice names the chat that opened it (openchat.rs). */
   openedFrom?: (chat: number, gid: string, title: string) => void;
   /** "Move to PC…"; without it the two calls answer 404. */
@@ -762,7 +764,7 @@ export class PhoneRoutes {
       projects: placed.projects.map((p) => ({
         id: pid(p.id),
         main: p.main === null ? null : idsOf([p.main])[0] ?? null,
-        chats: idsOf(p.chats),
+        chats: idsOf(chatOrder(p.chats, this.d.store.get(`chat_order:${p.id}`) ?? null)),
         snoozed_label: p.snoozed ? sidebartree.snoozedLabel(this.snoozeUntil(`r${p.id}`), t, utcOffset(t)) : null,
       })),
       threads: idsOf(placed.threads),
@@ -853,6 +855,8 @@ export class PhoneRoutes {
       hubs: [{ id: me.id, name: me.name, online: true }, ...peers.map((x) => ({ id: x.id, name: x.name, online: x.online }))],
       hub_name: me.name === "" ? hostname() : me.name,
       you,
+      // Person Hub: projects and chats may be put in order (POST /v1/order).
+      reorder: true,
       rev: hub.rev(),
       projects: repos.map((r) => {
         const at = this.placeJson(r.id);
@@ -1141,6 +1145,8 @@ export class PhoneRoutes {
       if (typeof body.settled === "boolean") {
         n = { ...n, settled: body.settled };
         this.d.engine?.opened(c.id);
+        // A sub-agent: settled in its lead's team too, as the desktop's team panel marks it.
+        if (c.role === "sub") this.d.settleAgent?.(c.id, body.settled);
       }
       // A pick by hand on the phone moves a pin that governs the chat (pins.ts), as on the desktop.
       const repinned = n.account !== c.account && c.home === "" && (eng?.pickedByHand?.(c.id, n.account) ?? false);
@@ -1630,4 +1636,17 @@ export function catalogOf<K extends string>(p: ProvidersModule<K>, accounts: () 
     defaults: () => sel,
     fast: () => kv.get("fast_mode") === "1",
   };
+}
+
+/** A project's chats in the order the user put them (kv `chat_order:<project>`, Person Hub): ones not in it (new) first, as they came. */
+export function chatOrder(chats: readonly number[], raw: string | null): number[] {
+  let order: unknown = null;
+  try {
+    order = raw === null ? null : JSON.parse(raw);
+  } catch {
+    order = null;
+  }
+  if (!Array.isArray(order)) return [...chats];
+  const at = new Map(order.filter((x): x is number => typeof x === "number").map((id, i) => [id, i]));
+  return [...chats.filter((c) => !at.has(c)), ...chats.filter((c) => at.has(c)).sort((a, b) => (at.get(a) ?? 0) - (at.get(b) ?? 0))];
 }
