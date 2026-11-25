@@ -19,6 +19,9 @@ public final class PairTest {
                 "abab|192.168.1.5:47940,100.64.0.2:47940|Igor-Omarchy|ts:desk|k7Q2", "a full link");
         eq(parsed("HUB://Pair/?fp=" + fp.toUpperCase() + "&addrs=%5Bfd00%3A%3A1%5D%3A47940&code=x#y"), "abab|[fd00::1]:47940|||x", "case, slash, IPv6, fragment");
         eq(parsed("hub://pair?fp=AB:" + fp.substring(2) + "&addrs=h&code=c&name=My+PC"), "abab|h|My PC||c", "colons in fp, + as space");
+        // As Hub's PC writes it (ts hubpair.ts pairLink: URLSearchParams, so ':' and ',' encoded, ' ' as '+').
+        eq(parsed("hub://pair?fp=" + fp + "&addrs=192.168.1.5%3A47940%2C%5Bfd7a%3A%3A1%5D%3A47940&name=Igor+Omarchy&id=ts%3Adesk&code=ABCDEFGH23"),
+                "abab|192.168.1.5:47940,[fd7a::1]:47940|Igor Omarchy|ts:desk|ABCDEFGH23", "the PC's own encoding");
         eq(parsed("hub://pair?fp=" + fp + "&addrs=h"), null, "no code");
         eq(parsed("hub://pair?fp=" + fp + "&code=c"), null, "no address");
         eq(parsed("hub://pair?fp=abc&addrs=h&code=c"), null, "a bad key");
