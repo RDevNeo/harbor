@@ -80,3 +80,24 @@ On the PC (in-process) rows also carry `avatarPath` / `imagePath`: a local file 
 - `POST /v1/persons/connections/{id}/connect` starts a sign-in (Discord, WhatsApp: a QR code appears in the state's
   `qr` / `qrRows`; Discord's is scanned in the Discord app: You › Scan QR code).
 - `POST /v1/persons/connections/{id}/cancel` stops a sign-in under way. `DELETE /v1/persons/connections/{id}` signs out and removes it.
+
+## Linked people (Link with… / Unlink)
+A person may hold others linked into them (`links` in data.json: each one kept whole, with what the link added), so one
+human on several channels is one person. data.json is copied to `data.before-link.json` before the first link.
+- `POST /v1/persons/person/{id}/link { ids: [...] }` → `{ ok, linked, person }`: they leave the list and join `id`.
+- `POST /v1/persons/person/{id}/unlink { id }` → `{ ok, person }`: that one is their own person again (same id).
+- State: each person has `linked: [{ id, name }]`; the panel (`GET person/{id}`) has `linked: [{ id, name, at, ids, aiChats }]`.
+- Chat: `accounts` are the person's chats (a connection and who they are on it): `id` = "<connection>:<identifier>" (what
+  `account` takes; a bare connection id still works), `conn`, `kind`, `label`, `to`. `messages` (and `outgoing`) are
+  every chat's, by time, each with `channel: { key, kind, label }`. `account` (the composer's) defaults to the chat of
+  their latest message. `read` marks every chat of the page; `before` pages through all of them.
+
+## Audio (voice messages and audio files)
+An audio attachment in `files` has `kind: "audio"`, `audio` (its key "<connection>:<message id>:<index>"), `bars`
+(0..1, the platform's waveform or measured once played), `played`, `transcript` (null until made).
+- `POST /v1/persons/audio/play { key, account, url: <files[].raw>, name, at?, speed?, duration? }` plays it on the PC
+  (ffmpeg into PipeWire / PulseAudio / ALSA, else mpv / ffplay); one at a time. `pause`, `stop`, `seek { key, pos }`,
+  `speed { speed, url? }` (1, 1.5, 2) → the player's state `{ key, playing, pos, speed, duration, at, error }`
+  (also `audio` in `GET state`). `GET /v1/persons/audio` → the same.
+- `POST /v1/persons/audio/played { key }`: the phone played it itself (MediaPlayer, file through `/v1/persons/file`).
+- `POST /v1/persons/audio/transcribe { key, account, url, name }` → `{ ok, text }` (the PC's local speech to text; kept).
