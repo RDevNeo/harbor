@@ -60,15 +60,17 @@ export function newPairCode(bytes: (n: number) => Uint8Array = (n) => randomByte
 
 export interface PairLinkInfo {
   name: string;
+  /** The PC's mesh id. */
+  id: string;
   fp: string;
-  port: number;
+  /** "host:port" each ("[v6]:port"). */
   addrs: string[];
   code: string;
 }
 
-/** The link the phone scans or opens: hub://pair?v=1&n=…&fp=…&p=…&a=…,…&c=… */
+/** The link the phone scans (android/PROTOCOL.md "Hub pairing"): hub://pair?fp=…&addrs=host:port,…&name=…&id=…&code=… */
 export function pairLink(i: PairLinkInfo): string {
-  const q = new URLSearchParams({ v: "1", n: i.name, fp: i.fp, p: String(i.port), a: i.addrs.join(","), c: i.code });
+  const q = new URLSearchParams({ fp: i.fp, addrs: i.addrs.join(","), name: i.name, id: i.id, code: i.code });
   return `hub://pair?${q.toString()}`;
 }
 
@@ -76,10 +78,9 @@ export function parsePairLink(link: string): PairLinkInfo | null {
   if (!link.startsWith("hub://pair?")) return null;
   const q = new URLSearchParams(link.slice("hub://pair?".length));
   const fp = q.get("fp") ?? "";
-  const port = Number(q.get("p"));
-  const code = normalizePairCode(q.get("c") ?? "");
-  if (q.get("v") !== "1" || !FP.test(fp) || !Number.isInteger(port) || port <= 0 || port > 65535 || code.length !== CODE_LEN) return null;
-  return { name: q.get("n") ?? "", fp, port, addrs: (q.get("a") ?? "").split(",").filter((a) => a !== ""), code };
+  const code = normalizePairCode(q.get("code") ?? "");
+  if (!FP.test(fp) || code === "" || code.length > 128) return null;
+  return { name: q.get("name") ?? "", id: q.get("id") ?? "", fp, addrs: (q.get("addrs") ?? "").split(",").filter((a) => a !== ""), code };
 }
 
 export class HubPairing {
@@ -141,6 +142,12 @@ export class HubPairing {
     return true;
   }
 
+  /** A call with no token from a paired phone's own key (android/PROTOCOL.md "Hub pairing": the key is the pairing). */
+  byKey(fp: string): PhoneClaims | null {
+    const d = this.devices().find((x) => x.fp === fp);
+    return d ? { sub: `hub:${d.fp}`, email: "", name: d.name } : null;
+  }
+
   auth(): PhoneAuth {
     return {
       isToken: (t) => t.startsWith(TOKEN_PREFIX),
@@ -157,12 +164,21 @@ export class HubPairing {
 }
 
 /** The addresses a pairing link offers: the network's IPv4 first, then Tailscale's (100.64/10), then IPv6 in brackets; no loopback. */
-export function pairAddrs(all: readonly string[]): string[] {
+export function pairAddrs(all: readonly string[], port: number): string[] {
   const v4 = all.filter((a) => !a.includes(":") && !a.startsWith("127."));
   const tail = (a: string): boolean => {
     const m = /^100\.(\d+)\./.exec(a);
     return m !== null && Number(m[1]) >= 64 && Number(m[1]) <= 127;
   };
   const v6 = all.filter((a) => a.includes(":") && a !== "::1" && !a.toLowerCase().startsWith("fe80")).map((a) => `[${a}]`);
-  return [...v4.filter((a) => !tail(a)), ...v4.filter(tail), ...v6];
+  return [...v4.filter((a) => !tail(a)), ...v4.filter(tail), ...v6].map((a) => `${a}:${port}`);
+}
+
+/** A phone's call is let in by its pairing token (`hubd_…`) or, once Hub has its account service, by a sign-in token. */
+export function hubPhoneAuth(paired: PhoneAuth, account: PhoneAuth | null): PhoneAuth {
+  return {
+    isToken: (t) => paired.isToken(t) || (account?.isToken(t) ?? false),
+    admit: (t, fp) => (paired.isToken(t) || account === null ? paired.admit(t, fp) : account.admit(t, fp)),
+    knownDevice: (fp) => paired.knownDevice(fp) || (account?.knownDevice(fp) ?? false),
+  };
 }

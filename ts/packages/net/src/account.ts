@@ -153,8 +153,18 @@ export interface AccountStatus {
   notice: string;
 }
 
-/** Hub (its own world, hub.ts STANDALONE): Harbor's account service and Clerk are never called, nobody signs in to them. */
-export const HUB_NO_ACCOUNT = true;
+/**
+ * Hub's own account service: our deploy of worker/ ("hub-accounts"), with its own device directory, tokens (signing
+ * key), workspace cloud and vault, and Harbor's Clerk instance and OAuth client, so the same Google sign-ins and the
+ * same workspaces (Clerk organizations, members, invitations). Harbor's service is never called. Empty until it's
+ * deployed (or HUB_ACCOUNTS_URL): then Hub runs without accounts, and phones pair with the PC directly (hubpair.ts).
+ */
+export const HUB_ACCOUNTS_URL = "";
+export function hubAccountsUrl(env: Record<string, string | undefined> = process.env): string {
+  return env.HUB_ACCOUNTS_URL ?? HUB_ACCOUNTS_URL;
+}
+/** No account service for Hub yet: nothing is sent to one, nobody signs in. */
+export const HUB_NO_ACCOUNT = hubAccountsUrl() === "";
 export const HUB_NO_ACCOUNT_TEXT = "Hub doesn't use Harbor accounts: phones pair with this PC directly (run `hub pair`).";
 
 /** What a Harbor token says. */
@@ -914,7 +924,9 @@ export class AccountService {
   }
 
   serviceUrl(): string {
-    return this.conf("HARBOR_ACCOUNTS_URL", ACCOUNTS_URL);
+    // Hub: its own service only, never Harbor's (ACCOUNTS_URL stays for reference and tests).
+    const hub = hubAccountsUrl(this.o.env ?? process.env);
+    return this.conf("HARBOR_ACCOUNTS_URL", hub === "" ? "https://accounts.hub.invalid" : hub);
   }
 
   /** This build talks to a real account service (not the placeholders): only then does the desktop ask to sign in first. */

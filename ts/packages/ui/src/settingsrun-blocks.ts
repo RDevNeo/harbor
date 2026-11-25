@@ -11,7 +11,7 @@ export async function blockTabs(store: Store, refresh: () => void, copy: (text: 
   const tabs = new Map<Tab, BlockTab>();
   let ready = false;
   const now = () => Math.floor(Date.now() / 1000);
-  const port = Number(store.get("hub_api_port") ?? "47950");
+  const port = Number(store.get("hub_api_port") ?? "47940");
   const account = runtime?.account ?? new AccountService({
     kv: store,
     stateDir: stateDir(),

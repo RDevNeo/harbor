@@ -142,6 +142,8 @@ import {
   fakePeerDevices,
   newPeer,
   Syncing,
+  HUB_NO_ACCOUNT,
+  hubPhoneAuth,
   HubPairing,
   pairAddrs,
   pairLink,
@@ -195,11 +197,12 @@ export function isOffline(env: Record<string, string | undefined> = process.env)
 }
 
 /**
- * Hub is its own world, not a Harbor PC: no Harbor account (sign-in, workspace cloud, settings sync), no mesh with
- * Harbor's PCs, no relay, no network discovery and no port mapping for phones. Its phones pair with it directly
- * (packages/net/src/hubpair.ts, `hub pair`); its agents reach other PCs through their own MCP tools.
+ * Hub is its own world, never a Harbor PC: Harbor's account service is never used (account.ts HUB_ACCOUNTS_URL is
+ * Hub's own). Until Hub's service exists (STANDALONE): no sign-in, workspace cloud or settings sync, no mesh, relay,
+ * network discovery or port mapping. Phones pair with the PC directly either way (packages/net/src/hubpair.ts,
+ * `hub pair`); agents reach other PCs through their own MCP tools.
  */
-export const STANDALONE = true;
+export const STANDALONE = HUB_NO_ACCOUNT;
 
 /** Keys of Harbor's world a copied database carries, dropped once at Hub's first start (kv `hub_forked`). */
 export const HARBOR_WORLD_KEYS = ["api_tokens", "api_revoked", "phones_seen", "mesh_peers", "mesh_remembered", "account_settings_rev"];
@@ -340,7 +343,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }
   const pairing = new HubPairing(store);
   const portText = store.get("hub_api_port") ?? "";
-  const port = /^\d+$/.test(portText) ? Number(portText) : 47950;
+  const port = /^\d+$/.test(portText) ? Number(portText) : 47940;
   // Screenshots only: a signed-in look (account.ts fakeAccount), written before the phones' tokens are read.
   const fakeOnline = env.HARBOR_FAKE_ACCOUNT ? fakeAccount(store, env.HARBOR_FAKE_ACCOUNT, id.fp) : [];
   const hub = new Hub(loadTokens(store), port);
@@ -1533,8 +1536,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         return ok({ removed: pairing.revoke(typeof b.fp === "string" ? b.fp : "") });
       }
       const c = pairing.start();
-      const info = { name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrs(lanAddrs(env)), code: c.code };
-      return ok(asJson({ ...info, expires_ms: c.expires_ms, link: pairLink(info) }));
+      const info = { name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, id: hub.mesh.me.id, fp: id.fp, addrs: pairAddrs(lanAddrs(env), port), code: c.code };
+      return ok(asJson({ ...info, port, expires_ms: c.expires_ms, link: pairLink(info) }));
     }
     if (at === "POST v1/voice/cleanup") {
       const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
@@ -1565,12 +1568,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     id: () => id,
     uploadsDir,
     route,
-    account: STANDALONE ? pairing.auth() : account.phoneAuth(),
+    account: hubPhoneAuth(pairing.auth(), STANDALONE ? null : account.phoneAuth()),
     pair: (code, fp, name) => {
       const r = pairing.pair(code, fp, name);
       if (!r.ok) return r;
       hub.touch(null, true);
-      return { ok: true, token: r.token, pc: asJson({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrs(lanAddrs(env)) }) };
+      return { ok: true, token: r.token, pc: asJson({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrs(lanAddrs(env), port) }) };
+    },
+    pairedKey: (fp) => pairing.byKey(fp),
+    unpair: (fp) => {
+      const gone = pairing.revoke(fp);
+      if (gone) hub.touch(null, true);
+      return gone;
     },
     appInfo: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
     apk,

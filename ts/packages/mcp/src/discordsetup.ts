@@ -17,7 +17,7 @@ export const ELECTRON_SUMS: Record<string, string> = {
   arm64: "64b78d93d1129ab805cdc0f2710f446716afbe814a1d08e639dab3175d2285a1",
   "darwin-arm64": "002b71efcf90e247317d3da486f2d4e51860e9c2889d49f33e229ab2268b0f3b",
   "win32-x64": "55eaba17abff7b5bba6c3bbc85068967379024fe742fe9c7fdba9118922ccbe2",
-  "win32-arm64": "c0adce10031826896060bba848777bf9f059bfe4a2f7f9d4795008498eeeb248",
+  "win32-arm64": "c0adce10031826896060bba848777bf9f059bfe4a2f7f9d4794008498eeeb248",
 };
 const VENCORD_URL = "https://github.com/Vendicated/Vencord/releases/download/devbuild";
 export const VENCORD_FILES = ["vencordDesktopMain.js", "vencordDesktopPreload.js", "vencordDesktopRenderer.js", "vencordDesktopRenderer.css"];

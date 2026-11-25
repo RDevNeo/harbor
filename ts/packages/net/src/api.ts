@@ -92,6 +92,10 @@ export interface ApiDeps {
   account: Account | null;
   /** Hub's pairing (hubpair.ts): `POST /v1/pair {code, name}` from a phone's own key, with no token yet. */
   pair?: (code: string, fp: string, name: string) => { ok: true; token: string; pc: Json } | { ok: false; error: string };
+  /** A phone paired by its key alone (Hub for Android sends no token): its claims, or null. */
+  pairedKey?: (fp: string) => PhoneClaims | null;
+  /** `POST /v1/unpair` from a paired phone's key: forgets it. */
+  unpair?: (fp: string) => boolean;
   /** `GET /v1/app`: {version_code, url, hub}. */
   appInfo: () => Json;
   /** The APK this PC serves, if any. */
@@ -203,7 +207,12 @@ export class Api {
   /** Who makes a call: a signed-in phone (level null) or a pairing token from before accounts. */
   caller(peer: ConnPeer, req: Request): { token: string; level: Level | null } {
     const t = bearer(req);
-    if (t === null) throw new HttpError(401, "no token");
+    if (t === null) {
+      const fp = peer.via.kind === "tls" ? peer.via.fp : null;
+      const c = fp !== null ? (this.d.pairedKey?.(fp) ?? null) : null;
+      if (fp !== null && c !== null) return { token: this.d.hub.accountPhone(c, fp), level: null };
+      throw new HttpError(401, this.d.pairedKey ? "This phone isn't paired with this PC: pair this phone again" : "no token");
+    }
     if (this.d.account?.isToken(t)) {
       if (peer.via.kind !== "tls" || peer.via.fp === null) throw new HttpError(401, "a sign-in needs the phone's own key (TLS)");
       const fp = peer.via.fp;
@@ -407,9 +416,15 @@ export class Api {
       if (!res.ok) {
         this.fails.hit(ip);
         noteRefused(ip, res.error);
-        return sendJson(w, 401, { error: res.error });
+        return sendJson(w, 401, { error: res.error, pair: true });
       }
-      return sendJson(w, 200, { token: res.token, pc: res.pc });
+      const pc = res.pc as Record<string, Json>;
+      return sendJson(w, 200, { ok: true, name: pc.name ?? "", peers: [], token: res.token, pc: res.pc });
+    }
+    if (is("v1", "unpair") && req.method === "POST" && this.d.unpair) {
+      if (peer.via.kind !== "tls" || peer.via.fp === null) return sendJson(w, 401, { error: "no key", pair: true });
+      this.d.unpair(peer.via.fp);
+      return sendJson(w, 200, { ok: true });
     }
     let who: { token: string; level: Level | null } | null = null;
     let refusal: HttpError | null = null;
@@ -423,7 +438,7 @@ export class Api {
       const e = refusal ?? new HttpError(401, "no token");
       this.fails.hit(ip);
       noteRefused(ip, e.message);
-      return sendJson(w, e.status, { error: refusedText(e.status, e.message), signin: e.status === 401 });
+      return sendJson(w, e.status, { error: refusedText(e.status, e.message), signin: e.status === 401, ...(e.status === 401 && this.d.pairedKey ? { pair: true } : {}) });
     }
     const { token, level } = who;
     if (level === "legacy") {

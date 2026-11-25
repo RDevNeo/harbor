@@ -18,9 +18,9 @@ import { connect as tlsConnect, TLSSocket } from "node:tls";
 import { canonical, ipString, isLoopback, isUnspecified, linkLocal, parseIp, word, type Ip } from "./ip.ts";
 import { sys } from "@harbor/os";
 
-export const DEFAULT_PORT = 47950;
+export const DEFAULT_PORT = 47940;
 /** discover.rs's UDP port. */
-export const DISCOVER_PORT = 47950;
+export const DISCOVER_PORT = 47940;
 
 
 export interface Identity {
