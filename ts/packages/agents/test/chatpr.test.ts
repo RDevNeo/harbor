@@ -24,8 +24,8 @@ test("picks_the_branch_owners_pr_open_first", () => {
     { number: 7, state: "CLOSED", isDraft: false, url: "u7", title: "old", headRefName: "feat", headRepositoryOwner: { login: "Sam" } },
     { number: 8, state: "OPEN", isDraft: true, url: "u8", title: "new", headRefName: "feat", headRepositoryOwner: { login: "sam" } },
   ];
-  const p = pr.pick(list, "feat", "sam", "harbor/abc123");
-  expect(p && [p.number, p.state, p.branch]).toEqual([8, "draft", "harbor/abc123"]);
+  const p = pr.pick(list, "feat", "sam", "hub/abc123");
+  expect(p && [p.number, p.state, p.branch]).toEqual([8, "draft", "hub/abc123"]);
   expect(p && pr.label(p)).toBe("PR #8 · Draft");
   const merged = [{ number: 3, state: "MERGED", isDraft: false, url: "u3", title: "t", headRefName: "feat", headRepositoryOwner: { login: "sam" } }];
   expect(pr.pick(merged, "feat", "sam", "feat")?.state).toBe("merged");
@@ -59,29 +59,29 @@ test("only_pushed_branches_off_the_default_have_a_place", async () => {
   sh(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
   // The default branch never has one.
   expect(await pr.place(dir, "main", false)).toBeNull();
-  sh(dir, "switch", "-q", "-c", "harbor/abc123");
+  sh(dir, "switch", "-q", "-c", "hub/abc123");
   // Not pushed yet: none, unless a PR was found for it before.
-  expect(await pr.place(dir, "harbor/abc123", false)).toBeNull();
-  expect((await pr.place(dir, "harbor/abc123", true))?.head).toBe("harbor/abc123");
+  expect(await pr.place(dir, "hub/abc123", false)).toBeNull();
+  expect((await pr.place(dir, "hub/abc123", true))?.head).toBe("hub/abc123");
   // Pushed under another name with an upstream: that name, in the fork's parent first.
   sh(dir, "update-ref", "refs/remotes/origin/fix-it", "HEAD");
   sh(dir, "config", "branch.harbor/abc123.remote", "origin");
   sh(dir, "config", "branch.harbor/abc123.merge", "refs/heads/fix-it");
   sh(dir, "remote", "add", "upstream", "https://github.com/acme/proj");
-  expect(await pr.place(dir, "harbor/abc123", false)).toEqual({ head: "fix-it", repos: ["acme/proj", "sam/proj"], owner: "sam" });
+  expect(await pr.place(dir, "hub/abc123", false)).toEqual({ head: "fix-it", repos: ["acme/proj", "sam/proj"], owner: "sam" });
 });
 
 test("a lookup that lands after stop leaves the closed store alone", async () => {
   const dir = join(base, "stopped");
   mkdirSync(dir, { recursive: true });
-  sh(dir, "init", "-q", "-b", "harbor/gone");
+  sh(dir, "init", "-q", "-b", "hub/gone");
   sh(dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "one");
   const store = Store.openTemp();
   const chat = { id: 1, role: "lead", home: "", device: "" } as unknown as Chat;
   let changed = 0;
   const prs = new pr.ChatPrs({ store, chats: () => store.chats(), chat: (id) => (id === 1 ? chat : undefined), folders: () => ({ repo: dir, dir }), changed: () => void changed++ });
   // Known before; the lookup finds none now (no remote), so landing would save and read the chats.
-  prs.found.set(1, { number: 5, state: "open", url: "u", title: "t", branch: "harbor/gone" });
+  prs.found.set(1, { number: 5, state: "open", url: "u", title: "t", branch: "hub/gone" });
   const errors: string[] = [];
   const was = console.error;
   console.error = (...a: unknown[]) => void errors.push(a.join(" "));

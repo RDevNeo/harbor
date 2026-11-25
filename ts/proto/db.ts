@@ -27,7 +27,7 @@ interface BodyRow {
 
 export function liveDb(env: Record<string, string | undefined> = process.env): string {
   const data = env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share");
-  return join(data, "harbor", "harbor.db");
+  return join(data, "hub", "harbor.db");
 }
 
 export function openCopy(path: string): Database {

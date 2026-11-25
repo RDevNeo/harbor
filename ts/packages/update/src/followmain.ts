@@ -330,8 +330,7 @@ export class FollowMain {
     this.run = d.run ?? defaultRunner;
     this.commit = d.commit === undefined ? GIT_COMMIT : d.commit;
     this.pid = d.pid ?? process.pid;
-    // Hub never follows Harbor's public repository.
-    this.remote = d.remote === REMOTE ? null : (d.remote ?? null);
+    this.remote = d.remote ?? null;
     this.st = readJson<FollowStatus>(join(this.home, "status.json")) ?? { state: "off", checkout: "", commit: "", subject: "", version: "", reason: "", at: 0 };
   }
 

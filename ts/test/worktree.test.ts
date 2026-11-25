@@ -99,8 +99,8 @@ test("a_chat_moves_to_a_worktree_is_renamed_there_and_the_worktree_goes_with_the
   expect((await json("POST", `${base}/worktree`))[1].error).toBe("it already has its own worktree");
   const [, after] = await json("GET", `/v1/workspace?chat=${id}`);
   expect(after).toMatchObject({ mode: "worktree", can_move: false, can_rename: true, can_rename_folder: true, name: basename(dir) });
-  const [, renamed] = await json("POST", `${base}/worktree/rename`, { branch: "harbor/renamed", remote: false });
-  expect(renamed).toMatchObject({ ok: true, branch: "harbor/renamed", name: "proj-renamed", folder_waits: null });
+  const [, renamed] = await json("POST", `${base}/worktree/rename`, { branch: "hub/renamed", remote: false });
+  expect(renamed).toMatchObject({ ok: true, branch: "hub/renamed", name: "proj-renamed", folder_waits: null });
   expect(existsSync(join(dirname(dir), "proj-renamed"))).toBe(true);
   expect(h.engine.takeNote(id, "next")).toContain("renamed this worktree's branch");
   expect(h.engine.takeNote(id, "next")).toBe("");

@@ -24,7 +24,7 @@ let n = 0;
 let repo = "";
 let bare = "";
 
-/** A project pushed to a bare origin, and a worktree on `harbor/x<n>` with two commits, pushed; GitHub squash-merges it into main. */
+/** A project pushed to a bare origin, and a worktree on `hub/x<n>` with two commits, pushed; GitHub squash-merges it into main. */
 function project(): { dir: string; branch: string; pr: wc.Merged } {
   const root = join(base, `p${++n}`);
   bare = join(root, "origin.git");
@@ -37,7 +37,7 @@ function project(): { dir: string; branch: string; pr: wc.Merged } {
   git(repo, "commit", "-q", "-m", "one");
   git(repo, "remote", "add", "origin", bare);
   git(repo, "push", "-q", "-u", "origin", "main");
-  const branch = `harbor/x${n}`;
+  const branch = `hub/x${n}`;
   const dir = join(root, "worktrees", `proj-x${n}`);
   git(repo, "worktree", "add", "-q", "-b", branch, dir);
   for (const f of ["b", "c"]) {

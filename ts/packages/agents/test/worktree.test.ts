@@ -72,7 +72,7 @@ test("a_new_worktree_says_its_branch_and_base", async () => {
   const root = `${d}.wts`;
   // From the checkout's branch (""): that's its base.
   let m = await wt.makeIn(root, d, "", "Fix the login bug", null);
-  expect([m.branch, m.base]).toEqual(["harbor/fix-login-bug", "main"]);
+  expect([m.branch, m.base]).toEqual(["hub/fix-login-bug", "main"]);
   const [text, detail] = wt.madeNotice(m, "Working in a new worktree");
   expect(text).toBe(`Working in a new worktree · ${wt.madeName(m)} on branch harbor/fix-login-bug (from main)`);
   expect(detail).toContain("Branch: harbor/fix-login-bug (from main)");
@@ -89,22 +89,22 @@ test("claude_names_new_worktrees", async () => {
   const say = (a: string): wt.Namer => async () => wt.cleanName(a);
   // In time: made with Claude's name, folder and branch.
   let m = await wt.makeIn(root, d, "", "Remove this, i only want the worktree here", say("worktree-menu-cleanup"));
-  expect([m.branch, wt.madeName(m)]).toEqual(["harbor/worktree-menu-cleanup", `${proj}-worktree-menu-cleanup`]);
+  expect([m.branch, wt.madeName(m)]).toEqual(["hub/worktree-menu-cleanup", `${proj}-worktree-menu-cleanup`]);
   expect(m.late).toBeNull();
   expect(existsSync(join(root, `${proj}-remove-only-want-worktree`))).toBe(false);
-  expect((await wt.head(m.dir))?.branch).toBe("harbor/worktree-menu-cleanup");
+  expect((await wt.head(m.dir))?.branch).toBe("hub/worktree-menu-cleanup");
   expect(await wt.git(d, ["worktree", "list", "--porcelain"])).toContain(`worktree ${m.dir.replaceAll("\\", "/")}`);
   // Taken: a number, as for slugs.
-  expect((await wt.makeIn(root, d, "", "Something else", say("worktree-menu-cleanup"))).branch).toBe("harbor/worktree-menu-cleanup-2");
+  expect((await wt.makeIn(root, d, "", "Something else", say("worktree-menu-cleanup"))).branch).toBe("hub/worktree-menu-cleanup-2");
   // No answer (offline, no account, nonsense): the slug.
-  expect((await wt.makeIn(root, d, "", "Fix the login bug", async () => null)).branch).toBe("harbor/fix-login-bug");
-  expect((await wt.makeIn(root, d, "", "Fix the login bug", say("I can't name this: it's not a task."))).branch).toBe("harbor/fix-login-bug-2");
+  expect((await wt.makeIn(root, d, "", "Fix the login bug", async () => null)).branch).toBe("hub/fix-login-bug");
+  expect((await wt.makeIn(root, d, "", "Fix the login bug", say("I can't name this: it's not a task."))).branch).toBe("hub/fix-login-bug-2");
   // Late: the slug now, the answer still to come.
   const slow: wt.Namer = () => new Promise((r) => setTimeout(() => r("late-name"), wt.timing.nameWaitMs + 500));
   const t = Date.now();
   m = await wt.makeIn(root, d, "", "Sidebar chips", slow);
   expect(Date.now() - t).toBeLessThan(wt.timing.nameWaitMs + (win ? 1500 : 400));
-  expect(m.branch).toBe("harbor/sidebar-chips");
+  expect(m.branch).toBe("hub/sidebar-chips");
   expect(await m.late).toBe("late-name");
 });
 
@@ -150,7 +150,7 @@ test("names_come_from_what_the_chat_is_about", () => {
     expect(wt.slug(s).split("-").length).toBeLessThanOrEqual(4);
     expect(wt.slug(s).length).toBeLessThanOrEqual(28);
   }
-  expect(wt.folderPart("harbor/fix-login")).toBe("fix-login");
+  expect(wt.folderPart("hub/fix-login")).toBe("fix-login");
   expect(wt.folderPart("Feature/A b")).toBe("feature-a-b");
   expect(wt.isNamed("app-fix", "app-fix") && wt.isNamed("app-fix-2", "app-fix") && !wt.isNamed("app-fix-it", "app-fix")).toBe(true);
 });
@@ -160,30 +160,30 @@ test("named_worktrees_are_unique_and_their_folder_follows_a_rename", async () =>
   const root = `${d}.wts`;
   const proj = wt.projectPart(d);
   const a = await wt.makeIn(root, d, "", "Main thread per project", null);
-  expect([a.branch, wt.madeName(a)]).toEqual(["harbor/main-thread-per-project", `${proj}-main-thread-per-project`]);
+  expect([a.branch, wt.madeName(a)]).toEqual(["hub/main-thread-per-project", `${proj}-main-thread-per-project`]);
   const b = await wt.makeIn(root, d, "", "Main thread per project", null);
-  expect([b.branch, wt.madeName(b)]).toEqual(["harbor/main-thread-per-project-2", `${proj}-main-thread-per-project-2`]);
+  expect([b.branch, wt.madeName(b)]).toEqual(["hub/main-thread-per-project-2", `${proj}-main-thread-per-project-2`]);
   // A branch only on a remote is taken too.
   await wt.git(d, ["update-ref", "refs/remotes/origin/harbor/sidebar", "HEAD"]);
-  expect((await wt.makeIn(root, d, "", "Sidebar", null)).branch).toBe("harbor/sidebar-2");
+  expect((await wt.makeIn(root, d, "", "Sidebar", null)).branch).toBe("hub/sidebar-2");
   // Bad and taken names are refused, plainly.
   await expect(wt.renameBranch(a.dir, "bad..name", false)).rejects.toThrow("isn't a valid branch name");
   await expect(wt.renameBranch(a.dir, "main", false)).rejects.toThrow("already exists");
   const r = await wt.renameBranch(a.dir, " harbor/per-project-lead ", false);
-  expect(r).toEqual({ old: "harbor/main-thread-per-project", branch: "harbor/per-project-lead", remote: null });
-  expect((await wt.head(a.dir))?.branch).toBe("harbor/per-project-lead");
+  expect(r).toEqual({ old: "hub/main-thread-per-project", branch: "hub/per-project-lead", remote: null });
+  expect((await wt.head(a.dir))?.branch).toBe("hub/per-project-lead");
   // The folder follows: git finds it at its new place, and removes it from there.
   const to = wt.folderFor(d, a.dir, r.branch) ?? "";
   expect(basename(to)).toBe(`${proj}-per-project-lead`);
   wt.moveDir(a.dir, to);
   expect(existsSync(a.dir)).toBe(false);
-  expect((await wt.head(to))?.branch).toBe("harbor/per-project-lead");
+  expect((await wt.head(to))?.branch).toBe("hub/per-project-lead");
   // git lists it with "/" on Windows too.
   expect(await wt.git(d, ["worktree", "list", "--porcelain"])).toContain(`worktree ${to.replaceAll("\\", "/")}`);
   // Already named for it.
   expect(wt.folderFor(d, to, r.branch)).toBeNull();
   // A taken folder gets a number.
-  expect(basename(wt.folderFor(d, b.dir, "harbor/per-project-lead") ?? "")).toBe(`${proj}-per-project-lead-2`);
+  expect(basename(wt.folderFor(d, b.dir, "hub/per-project-lead") ?? "")).toBe(`${proj}-per-project-lead-2`);
   await wt.remove(d, to);
   expect(existsSync(to)).toBe(false);
 });
@@ -196,17 +196,17 @@ test("a_pushed_branch_is_renamed_on_its_remote_or_let_go", async () => {
   const root = `${d}.wts`;
   const m = await wt.makeIn(root, d, "", "Ship branch", null);
   expect(await wt.pushedAs(m.dir)).toBeNull();
-  await wt.git(m.dir, ["push", "-q", "-u", "origin", "harbor/ship-branch"]);
+  await wt.git(m.dir, ["push", "-q", "-u", "origin", "hub/ship-branch"]);
   expect(await wt.pushedAs(m.dir)).toBe("origin/harbor/ship-branch");
   // Not GitHub: the new name is pushed and tracked; the old one stays there.
-  let r = await wt.renameBranch(m.dir, "harbor/pushed", true);
+  let r = await wt.renameBranch(m.dir, "hub/pushed", true);
   expect(r.remote?.startsWith("Pushed as origin/harbor/pushed; origin/harbor/ship-branch is still there")).toBe(true);
   expect(await wt.pushedAs(m.dir)).toBe("origin/harbor/pushed");
   const there = await wt.git(bare, ["branch", "--format=%(refname:short)"]);
-  expect(there).toContain("harbor/pushed");
-  expect(there).toContain("harbor/ship-branch");
+  expect(there).toContain("hub/pushed");
+  expect(there).toContain("hub/ship-branch");
   // Here only: it stops tracking the remote branch, which keeps its name.
-  r = await wt.renameBranch(m.dir, "harbor/local-only", false);
+  r = await wt.renameBranch(m.dir, "hub/local-only", false);
   expect(r.remote).toBe("origin/harbor/pushed keeps its name; push again to publish harbor/local-only");
   expect(await wt.pushedAs(m.dir)).toBeNull();
 });
@@ -232,7 +232,7 @@ test("GitHub remotes and what a rename says", () => {
   expect(wt.githubRepo("git@github.com:o/r.git")).toBe("o/r");
   expect(wt.githubRepo("https://x-token@github.com/o/r/")).toBe("o/r");
   expect(wt.githubRepo("https://gitlab.com/o/r")).toBeNull();
-  const renamed = { old: "harbor/a", branch: "harbor/b", remote: "Pushed as origin/harbor/b" };
+  const renamed = { old: "hub/a", branch: "hub/b", remote: "Pushed as origin/harbor/b" };
   expect(wt.renameSaid({ kind: "branch", renamed, folder: "p-b", waits: null })).toBe("Renamed to harbor/b · folder p-b. Pushed as origin/harbor/b");
   expect(wt.renameSaid({ kind: "folder", renamed, folder: "p-b", waits: "a turn runs" })).toBe("The worktree folder is renamed once nothing works in it (a turn runs)");
 });

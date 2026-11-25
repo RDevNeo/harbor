@@ -64,7 +64,7 @@ test("an MCP OAuth sign-in discovers, registers, follows the redirect and saves 
   });
   await done;
   expect(opened).toEqual([authUrl]);
-  const c = JSON.parse(readFileSync(join(process.env.XDG_DATA_HOME ?? "", "harbor/apps/vercel.json"), "utf8")) as Record<string, string | number>;
+  const c = JSON.parse(readFileSync(join(process.env.XDG_DATA_HOME ?? "", "hub/apps/vercel.json"), "utf8")) as Record<string, string | number>;
   expect(c.access_token).toBe("at-1");
   expect(c.refresh_token).toBe("rt-1");
   expect(c.client_id).toBe("cid-1");
@@ -155,7 +155,7 @@ test("an expiring OAuth token is refreshed and the new one saved", async () => {
       return Response.json({ access_token: "at-2", expires_in: 3600 });
     },
   });
-  const dir = join(process.env.XDG_DATA_HOME ?? "", "harbor/apps");
+  const dir = join(process.env.XDG_DATA_HOME ?? "", "hub/apps");
   mkdirSync(dir, { recursive: true });
   const old = mcp.blankCred({ access_token: "at-1", refresh_token: "rt-1", expires_at: 1, client_id: "cid", token_endpoint: `http://127.0.0.1:${server.port}/t` });
   mcp.save("linear", old);
@@ -167,7 +167,7 @@ test("an expiring OAuth token is refreshed and the new one saved", async () => {
 
 test("a token renewed early whose refresh fails now (the network) is kept while it still works; once it ran out, it isn't", async () => {
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("down", { status: 503 }) });
-  const dir = join(process.env.XDG_DATA_HOME ?? "", "harbor/apps");
+  const dir = join(process.env.XDG_DATA_HOME ?? "", "hub/apps");
   mkdirSync(dir, { recursive: true });
   const soon = Math.floor(Date.now() / 1000) + 60;
   mcp.save("linear", mcp.blankCred({ access_token: "at-1", refresh_token: "rt-1", expires_at: soon, client_id: "cid", token_endpoint: `http://127.0.0.1:${server.port}/t` }));
@@ -205,7 +205,7 @@ test("a gh device login shows the code and the page, then signs in", async () =>
   const get = (k: string): string | undefined => env.find(([n]) => n === k)?.[1];
   expect(get("GH_TOKEN")).toBeUndefined();
   expect(env.some(([n, v]) => n === "GH_TOKEN" && v === undefined)).toBe(true);
-  expect(get("GH_CONFIG_DIR")).toBe(join(process.env.XDG_DATA_HOME ?? "", "harbor/apps/github"));
+  expect(get("GH_CONFIG_DIR")).toBe(join(process.env.XDG_DATA_HOME ?? "", "hub/apps/github"));
   expect(get("GIT_CONFIG_VALUE_3")).toContain("auth git-credential");
   mcp.signOut("github");
   expect(mcp.signedIn("github")).toBe(false);
@@ -214,7 +214,7 @@ test("a gh device login shows the code and the page, then signs in", async () =>
 test("signed out, agents get a placeholder gh config and a refusing git helper", async () => {
   const env = await mcp.agentEnvAs(false);
   const get = (k: string): string | undefined => env.find(([n]) => n === k)?.[1];
-  expect(get("GH_CONFIG_DIR")).toBe(join(process.env.XDG_DATA_HOME ?? "", "harbor/apps/github-signed-out"));
+  expect(get("GH_CONFIG_DIR")).toBe(join(process.env.XDG_DATA_HOME ?? "", "hub/apps/github-signed-out"));
   expect(readFileSync(join(get("GH_CONFIG_DIR") ?? "", "hosts.yml"), "utf8")).toContain("sign-in-to-github-in-hub");
   expect(get("GIT_CONFIG_VALUE_3")).toContain("Hub: GitHub is not signed in");
   expect(get("CONVEX_OVERRIDE_ACCESS_TOKEN")).toBe("sign-in-to-convex-in-hub");

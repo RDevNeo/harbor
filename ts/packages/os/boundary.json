@@ -10,7 +10,7 @@
   },
   "packages/agents/src/turnscope.ts": {
     "platform": 1,
-    "systemd": 7,
+    "systemd": 6,
     "xdg": 2
   },
   "packages/mcp/src/discordfreeze.ts": {

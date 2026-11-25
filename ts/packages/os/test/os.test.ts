@@ -399,8 +399,8 @@ describe("autostart", () => {
   test.if(process.platform !== "win32")("Linux: an XDG autostart entry; macOS: a LaunchAgent in the user's session", () => {
     const linux = { HARBOR_TEST_PLATFORM: "linux", HOME: "/h" };
     const mac = { HARBOR_TEST_PLATFORM: "darwin", HOME: "/Users/sam" };
-    expect(autostart.entryPath(linux)).toBe("/h/.config/autostart/harbor.desktop");
-    expect(autostart.entryPath({ ...linux, XDG_CONFIG_HOME: "/c" })).toBe("/c/autostart/harbor.desktop");
+    expect(autostart.entryPath(linux)).toBe("/h/.config/autostart/hub.desktop");
+    expect(autostart.entryPath({ ...linux, XDG_CONFIG_HOME: "/c" })).toBe("/c/autostart/hub.desktop");
     expect(autostart.entryPath(mac)).toBe("/Users/sam/Library/LaunchAgents/dev.harbor.Hub.plist");
     const d = autostart.entry("/opt/my apps/harbor", "--background", linux);
     expect(d).toContain('Exec="/opt/my apps/harbor" --background');

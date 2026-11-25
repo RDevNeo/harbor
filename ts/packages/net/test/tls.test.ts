@@ -247,8 +247,8 @@ describe("addresses (tls.rs)", () => {
     expect(tailnetIp(v4(100, 128, 0, 1)) || tailnetIp("10.0.0.1") || tailnetIp("fd7a:115c:a1e1::1")).toBe(false);
     expect(tailnetIp(`::ffff:${v4(100, 100, 1, 1)}`)).toBe(true);
     expect(legacy("10.0.0.2", v4(100, 64, 0, 1))).toBe(false);
-    expect(hostPort("fd00::1", 47930)).toBe("[fd00::1]:47930");
-    expect(hostPort("10.0.0.1", 47930)).toBe("10.0.0.1:47930");
+    expect(hostPort("fd00::1", 47950)).toBe("[fd00::1]:47950");
+    expect(hostPort("10.0.0.1", 47950)).toBe("10.0.0.1:47950");
     for (const a of ["10.1.2.3", "172.16.0.1", "fd00::1", "fe80::1", "127.0.0.1", v4(100, 100, 1, 1), "::ffff:10.0.0.1"]) {
       expect(privateIp(a)).toBe(true);
     }
@@ -272,20 +272,20 @@ describe("addresses (tls.rs)", () => {
     const drop = 'IPV6=yes\nDEFAULT_INPUT_POLICY="DROP"\n';
     const ts =
       "### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0 comment=7461\n### tuple ### allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in\n";
-    expect(ufwBlocks(on, drop, ts, 47930, false)).toBe(true);
-    expect(ufwBlocks("ENABLED=no\n", drop, ts, 47930, false)).toBe(false);
-    expect(ufwBlocks(on, 'DEFAULT_INPUT_POLICY="ACCEPT"\n', ts, 47930, false)).toBe(false);
+    expect(ufwBlocks(on, drop, ts, 47950, false)).toBe(true);
+    expect(ufwBlocks("ENABLED=no\n", drop, ts, 47950, false)).toBe(false);
+    expect(ufwBlocks(on, 'DEFAULT_INPUT_POLICY="ACCEPT"\n', ts, 47950, false)).toBe(false);
     const lan = `${v4(192, 168, 0, 0)}/16`;
-    const mine = `${ts}### tuple ### allow tcp 47930 0.0.0.0/0 any ${lan} in comment=6861\n`;
-    expect(ufwBlocks(on, drop, mine, 47930, false)).toBe(false);
-    expect(ufwBlocks(on, drop, "### tuple ### allow any 47900:47999 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false)).toBe(false);
-    expect(ufwBlocks(on, drop, "### tuple ### allow udp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false)).toBe(true);
-    expect(ufwBlocks(on, drop, "### tuple ### allow udp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, true)).toBe(false);
-    expect(ufwBlocks(on, drop, mine, 47930, true)).toBe(true);
-    expect(ufwBlocks(on, drop, "### tuple ### deny tcp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false)).toBe(true);
-    expect(ufwBlocks(on, drop, "### tuple ### allow tcp 80,47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false)).toBe(false);
-    expect(firewallFix(47930)).toContain(`from ${lan} to any port 47930 `);
-    expect(firewallFix(47931)).toContain("to any port 47930 ");
+    const mine = `${ts}### tuple ### allow tcp 47950 0.0.0.0/0 any ${lan} in comment=6861\n`;
+    expect(ufwBlocks(on, drop, mine, 47950, false)).toBe(false);
+    expect(ufwBlocks(on, drop, "### tuple ### allow any 47900:47999 0.0.0.0/0 any 0.0.0.0/0 in\n", 47950, false)).toBe(false);
+    expect(ufwBlocks(on, drop, "### tuple ### allow udp 47950 0.0.0.0/0 any 0.0.0.0/0 in\n", 47950, false)).toBe(true);
+    expect(ufwBlocks(on, drop, "### tuple ### allow udp 47950 0.0.0.0/0 any 0.0.0.0/0 in\n", 47950, true)).toBe(false);
+    expect(ufwBlocks(on, drop, mine, 47950, true)).toBe(true);
+    expect(ufwBlocks(on, drop, "### tuple ### deny tcp 47950 0.0.0.0/0 any 0.0.0.0/0 in\n", 47950, false)).toBe(true);
+    expect(ufwBlocks(on, drop, "### tuple ### allow tcp 80,47950 0.0.0.0/0 any 0.0.0.0/0 in\n", 47950, false)).toBe(false);
+    expect(firewallFix(47950)).toContain(`from ${lan} to any port 47950 `);
+    expect(firewallFix(47931)).toContain("to any port 47950 ");
     expect(firewallFix(47931)).toContain("to any port 47931 ");
   });
 

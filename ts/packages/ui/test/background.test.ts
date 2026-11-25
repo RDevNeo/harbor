@@ -121,7 +121,7 @@ test("the desktop entry has every line Hub writes", () => {
 });
 
 test.if(linuxLike)("autostart is written into XDG_CONFIG_HOME, read back, and removed", () => {
-  expect(autostartFile()).toBe(join(tmp, "config", "autostart/harbor.desktop"));
+  expect(autostartFile()).toBe(join(tmp, "config", "autostart/hub.desktop"));
   expect(autostart()).toBe(false);
   setAutostart(false, { exe: null, managed: false });
   setAutostart(true, { exe: "/opt/harbor/harbor", managed: false });
@@ -140,9 +140,9 @@ test.if(linuxLike)("autostart is written into XDG_CONFIG_HOME, read back, and re
 test.if(linuxLike)("autostart without a known executable says so, and a relative XDG_CONFIG_HOME falls back to HOME", () => {
   expect(() => setAutostart(true, { exe: null, managed: true })).toThrow("Hub can't tell where its own file is");
   process.env.XDG_CONFIG_HOME = "relative/dir";
-  expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/harbor.desktop"));
+  expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/hub.desktop"));
   delete process.env.XDG_CONFIG_HOME;
-  expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/harbor.desktop"));
+  expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/hub.desktop"));
 });
 
 test.if(linuxLike)("autostart runs the launcher only when it leads to this install", () => {
@@ -164,7 +164,7 @@ test.if(linuxLike)("autostart runs the launcher only when it leads to this insta
 test.if(linuxLike)("autostart reports a path it cannot write", () => {
   writeFileSync(join(tmp, "blocker"), "");
   process.env.XDG_CONFIG_HOME = join(tmp, "blocker");
-  expect(() => setAutostart(true, { exe: "/opt/h", managed: false })).toThrow(join(tmp, "blocker", "autostart/harbor.desktop"));
+  expect(() => setAutostart(true, { exe: "/opt/h", managed: false })).toThrow(join(tmp, "blocker", "autostart/hub.desktop"));
 });
 
 test("keep running ignores the retired bg_keep preference", () => {

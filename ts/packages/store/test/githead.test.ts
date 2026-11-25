@@ -14,7 +14,7 @@ test("a checkout's and a worktree's branch are read from their HEAD files", () =
   writeFileSync(join(wt, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "wt")}\n`);
   writeFileSync(join(repo, ".git", "worktrees", "wt", "HEAD"), "ref: refs/heads/harbor/fix-login\n");
   expect(branchOf(repo, 1)).toBe("main");
-  expect(branchOf(wt, 1)).toBe("harbor/fix-login");
+  expect(branchOf(wt, 1)).toBe("hub/fix-login");
   // Detached, or no git at all: none.
   const det = join(root, "det");
   mkdirSync(join(det, ".git"), { recursive: true });
@@ -28,7 +28,7 @@ test("a checkout's and a worktree's branch are read from their HEAD files", () =
 });
 
 test("the sidebar names a branch without Hub's harbor/", () => {
-  expect(branchLabel("harbor/video-transcription")).toBe("video-transcription");
+  expect(branchLabel("hub/video-transcription")).toBe("video-transcription");
   expect(branchLabel("feature/x")).toBe("feature/x");
   expect(branchLabel("harbor/")).toBe("harbor/");
   expect(branchLabel("main")).toBe("main");

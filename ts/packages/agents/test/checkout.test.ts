@@ -117,7 +117,7 @@ test("an_unmerged_unpushed_branch_is_deleted_only_with_force", async () => {
 
 test("a_worktree_with_uncommitted_changes_is_removed_only_with_force", async () => {
   const d = repo("remove");
-  const dir = await co.addTree(d, join(base, "trees-rm"), "harbor/x", "main");
+  const dir = await co.addTree(d, join(base, "trees-rm"), "hub/x", "main");
   writeFileSync(join(dir, "a.txt"), "changed\n");
   await expect(co.removeTree(d, dir, false)).rejects.toThrow("1 uncommitted change");
   expect(existsSync(dir)).toBe(true);
@@ -128,26 +128,26 @@ test("a_worktree_with_uncommitted_changes_is_removed_only_with_force", async () 
 
 test("merges_fast_forward_or_with_a_commit_where_the_branch_is_or_isnt_checked_out", async () => {
   const d = repo("merge");
-  const dir = await co.addTree(d, join(base, "trees-m"), "harbor/work", "main");
+  const dir = await co.addTree(d, join(base, "trees-m"), "hub/work", "main");
   commit(dir, "w.txt", "w\n", "w");
   // main is checked out in the project's checkout: it's fast-forwarded there.
-  const ff = await co.merge(d, "harbor/work", "main", "auto", join(base, "scratch"));
+  const ff = await co.merge(d, "hub/work", "main", "auto", join(base, "scratch"));
   expect(ff).toMatchObject({ how: "fast-forward" });
   expect(readFileSync(join(d, "w.txt"), "utf8").replaceAll("\r\n", "\n")).toBe("w\n");
-  expect((await co.merge(d, "harbor/work", "main", "auto", join(base, "scratch"))).how).toBe("up to date");
+  expect((await co.merge(d, "hub/work", "main", "auto", join(base, "scratch"))).how).toBe("up to date");
   // Into a branch checked out nowhere: a fast-forward moves the ref, a merge commit happens in a scratch worktree that goes after.
   g(d, "branch", "release", "main~1");
   expect((await co.merge(d, "main", "release", "auto", join(base, "scratch"))).how).toBe("fast-forward");
   g(d, "branch", "release2", "main~1");
   commit(dir, "w2.txt", "w2\n", "w2");
-  const mc = await co.merge(d, "harbor/work", "release2", "no-ff", join(base, "scratch"));
+  const mc = await co.merge(d, "hub/work", "release2", "no-ff", join(base, "scratch"));
   expect(mc).toMatchObject({ how: "merge commit", dir: null });
   expect(g(d, "show", "release2:w2.txt")).toBe("w2");
   expect((await co.trees(d)).length).toBe(2);
   // ff-only refuses when the branches went apart.
   commit(d, "m.txt", "m\n", "m");
-  await expect(co.merge(d, "harbor/work", "main", "ff-only", join(base, "scratch"))).rejects.toThrow("can't be fast-forwarded");
-  expect((await co.merge(d, "harbor/work", "main", "auto", join(base, "scratch"))).how).toBe("merge commit");
+  await expect(co.merge(d, "hub/work", "main", "ff-only", join(base, "scratch"))).rejects.toThrow("can't be fast-forwarded");
+  expect((await co.merge(d, "hub/work", "main", "auto", join(base, "scratch"))).how).toBe("merge commit");
 });
 
 test("a_conflicting_merge_is_aborted_and_leaves_the_checkout_as_it_was", async () => {

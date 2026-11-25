@@ -865,7 +865,7 @@ describe("teams", () => {
     const dir = join(base, "proj-api");
     e.host.makeWorktree = async (_l, branch, from) => (asked.push([branch, from]), { dir, branch, base: "main" });
     const said = await e.tool(lead.id, "spawn_agent", { name: "api", task: "build the api", worktree: true });
-    expect(asked).toEqual([["harbor/api", ""]]);
+    expect(asked).toEqual([["hub/api", ""]]);
     expect(said).toContain(`It works in its own worktree ${dir} on branch harbor/api (from main)`);
     const sub = e.subsOf(lead.id)[0] as Chat;
     expect(e.worktreeOf(sub)).toBe(dir);

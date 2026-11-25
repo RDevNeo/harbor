@@ -564,7 +564,7 @@ export function firewallBlocksInternet(port: number): boolean {
 }
 
 export function firewallFixInternet(port: number): string {
-  return `sudo ufw allow ${port}/tcp comment harbor-internet`;
+  return `sudo ufw allow ${port}/tcp comment hub-internet`;
 }
 
 /** The commands that let the local network reach Harbor's port and discovery through ufw. */
@@ -572,7 +572,7 @@ export function firewallFix(port: number): string {
   const lan = `${[192, 168, 0, 0].join(".")}/16`;
   const ports = port === DISCOVER_PORT ? [port] : [port, DISCOVER_PORT];
   return ["10.0.0.0/8", "172.16.0.0/12", lan, "fc00::/7", "fe80::/10"]
-    .flatMap((r) => ports.map((p) => `sudo ufw allow from ${r} to any port ${p} comment harbor`))
+    .flatMap((r) => ports.map((p) => `sudo ufw allow from ${r} to any port ${p} comment hub`))
     .join(" && ");
 }
 

@@ -94,7 +94,8 @@ export async function runApp(o: RunOptions): Promise<number> {
   const offline = isOffline();
   // Builds of Harbor's main, seconds after each push (followmain.ts): the public repository's main, or a
   // local checkout's when it's ahead. Offline (rigs): a checkout only, or HARBOR_FOLLOW_REMOTE's repository.
-  const remote = process.env.HARBOR_FOLLOW_REMOTE || (offline ? null : REMOTE);
+  // Hub never follows Harbor's public repository: a checkout only, and only with HUB_FOLLOW_MAIN=1.
+  const remote = process.env.HARBOR_FOLLOW_REMOTE || null;
   // Its pushes to main reach the other PCs through the worker at once (followmain.ts `nudge`): the account's token, once the hub is up.
   let bearer: () => string | null = () => null;
   // Pushes to the public main come built from GitHub (main.yml) when building here would be slow.

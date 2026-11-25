@@ -174,21 +174,21 @@ describe("movepc beyond the Rust tests", () => {
       git(src, "commit", "-q", "--allow-empty", "-m", "base");
       git(src, "remote", "add", "origin", remote);
       git(src, "push", "-q", "origin", "main");
-      git(src, "checkout", "-q", "-b", "harbor/ab12cd");
+      git(src, "checkout", "-q", "-b", "hub/ab12cd");
       writeFileSync(join(src, "f.txt"), "work");
       git(src, "add", "f.txt");
       git(src, "commit", "-q", "-m", "work");
       expect(await remoteUrl(src)).toBe(remote);
-      expect((await gitHead(src))?.branch).toBe("harbor/ab12cd");
-      await pushBranch(src, "harbor/ab12cd", remote);
+      expect((await gitHead(src))?.branch).toBe("hub/ab12cd");
+      await pushBranch(src, "hub/ab12cd", remote);
       execFileSync("git", ["clone", "-q", remote, dst]);
-      const dir = await fetchWorktree({ root: wtRoot, newId: () => "ffffff" }, dst, "harbor/ab12cd", remote);
+      const dir = await fetchWorktree({ root: wtRoot, newId: () => "ffffff" }, dst, "hub/ab12cd", remote);
       expect(dir).toBe(join(wtRoot, "dst-ab12cd"));
       expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("work");
       const head = await gitHead(dir);
-      expect(head && gitHeadLabel(head)).toBe("harbor/ab12cd");
+      expect(head && gitHeadLabel(head)).toBe("hub/ab12cd");
       // The folder name is taken: a fresh id.
-      const again = await fetchWorktree({ root: wtRoot, newId: () => "ffffff" }, dst, "harbor/ab12cd", remote).catch((e: Error) => e.message);
+      const again = await fetchWorktree({ root: wtRoot, newId: () => "ffffff" }, dst, "hub/ab12cd", remote).catch((e: Error) => e.message);
       expect(again).toContain("couldn't check out harbor/ab12cd");
       await expect(pushBranch(src, "nope", remote)).rejects.toThrow("couldn't push nope");
     } finally {

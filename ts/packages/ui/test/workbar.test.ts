@@ -4,14 +4,14 @@ import { tipParts } from "../src/logic/tips.ts";
 import { branchClick, folderChip, prChip, renameBranchNote, renameFolderNote, workBar, type WsInfo, wsClick } from "../src/logic/workbar.ts";
 
 const checkout: WsInfo = { git: true, mode: "checkout", name: null, path: "/src/app", branch: "main", dirty: 0, base: "", can_move: true, can_rename: false, can_rename_folder: false, pending: null };
-const own: WsInfo = { ...checkout, mode: "worktree", name: "app-fix-login", path: "/data/worktrees/app-fix-login", branch: "harbor/fix-login", can_rename: true, can_rename_folder: true, pushed: "origin" };
+const own: WsInfo = { ...checkout, mode: "worktree", name: "app-fix-login", path: "/data/worktrees/app-fix-login", branch: "hub/fix-login", can_rename: true, can_rename_folder: true, pushed: "origin" };
 const o = { draft: false, marker: null, pr: null, home: "", pending: null };
 
 test("a chat in the checkout, one in its own worktree, a new chat's picks", () => {
   const a = workBar(checkout, o);
   expect([a.shown, a.ws?.text, a.ws?.icon, a.branch?.text, a.live]).toEqual([true, "Current checkout", ICONS.FOLDER, "main", true]);
   const b = workBar(own, o);
-  expect([b.ws?.text, b.ws?.icon, b.branch?.text]).toEqual(["Worktree · app-fix-login", ICONS.FOLDER_GIT, "harbor/fix-login"]);
+  expect([b.ws?.text, b.ws?.icon, b.branch?.text]).toEqual(["Worktree · app-fix-login", ICONS.FOLDER_GIT, "hub/fix-login"]);
   const c = workBar({ ...checkout, mode: "worktree", base: "main" }, { ...o, draft: true });
   expect([c.ws?.text, c.branch?.text]).toEqual(["New worktree", "from main"]);
   expect(workBar({ git: false }, o).shown).toBe(false);

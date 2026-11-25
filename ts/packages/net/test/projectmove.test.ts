@@ -576,7 +576,7 @@ describe("projectmove: two PCs", () => {
       git(app, "remote", "add", "origin", remote);
       git(app, "push", "-q", "-u", "origin", "main");
       const wt = join(a.root, "worktrees", "app-abc123");
-      git(app, "worktree", "add", "-q", "-b", "harbor/abc123", wt);
+      git(app, "worktree", "add", "-q", "-b", "hub/abc123", wt);
       writeFileSync(join(wt, "feature.txt"), "on the branch\n");
       git(wt, "add", ".");
       git(wt, "commit", "-qm", "feature");
@@ -595,7 +595,7 @@ describe("projectmove: two PCs", () => {
       const there = b.store.get(`worktree:${bl?.id ?? -1}`) ?? "";
       expect(there.startsWith(join(b.root, "worktrees"))).toBe(true);
       expect(git(there, "rev-parse", "HEAD")).toBe(tip);
-      expect(git(there, "symbolic-ref", "--short", "HEAD")).toBe("harbor/abc123");
+      expect(git(there, "symbolic-ref", "--short", "HEAD")).toBe("hub/abc123");
       expect(textOf(join(there, "feature.txt"))).toBe("on the branch\n");
       // The branch never went to the remote.
       expect(execFileSync("git", ["-C", remote, "branch", "--list", "harbor/*"], { encoding: "utf8" }).trim()).toBe("");

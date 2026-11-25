@@ -74,12 +74,12 @@ describe("harbor mesh (mesh.rs cli)", () => {
     const deps = (x: ReturnType<typeof io>) => ({ kv, id, io: x.io, ask: async () => [], addrs: () => ["10.0.0.5"], env: {} });
     let x = io();
     expect(await meshCli([], deps(x))).toBe(0);
-    expect(x.o.out.filter((l) => !l.startsWith("firewall:"))).toEqual(["this PC: desk (pc:desk)", `key:     ${id.fp}`, "listens: 10.0.0.5:47930", "this workspace's PCs:", "  none (other PCs join this PC's workspace in Settings › Workspace)"]);
+    expect(x.o.out.filter((l) => !l.startsWith("firewall:"))).toEqual(["this PC: desk (pc:desk)", `key:     ${id.fp}`, "listens: 10.0.0.5:47950", "this workspace's PCs:", "  none (other PCs join this PC's workspace in Settings › Workspace)"]);
     const fp = "ab".repeat(32);
-    inWorkspace(kv, [{ name: "laptop", fp, id: "pc:laptop", addrs: ["10.0.0.7:47930"] }, { name: "desk", fp: id.fp, id: "pc:desk", addrs: [] }]);
+    inWorkspace(kv, [{ name: "laptop", fp, id: "pc:laptop", addrs: ["10.0.0.7:47950"] }, { name: "desk", fp: id.fp, id: "pc:desk", addrs: [] }]);
     x = io();
     expect(await meshCli(["status"], deps(x))).toBe(0);
-    expect(x.o.out.filter((l) => !l.startsWith("firewall:")).slice(3)).toEqual(["this workspace's PCs:", `  laptop               key ${short(fp)}  10.0.0.7:47930`]);
+    expect(x.o.out.filter((l) => !l.startsWith("firewall:")).slice(3)).toEqual(["this workspace's PCs:", `  laptop               key ${short(fp)}  10.0.0.7:47950`]);
     for (const old of [["pair"], ["join", "10.0.0.7", "ABCDE-FGHIJ"], ["allow", fp], ["remove", fp], ["on"]]) {
       x = io();
       expect(await meshCli(old, deps(x))).toBe(2);

@@ -130,7 +130,7 @@ test("unmerged_work_and_uncommitted_changes_are_kept_unless_forced", async () =>
   await expect(tool("delete_branch", { branch: "spike-2" })).rejects.toThrow("1 commit that aren't merged into main or pushed");
   expect(await tool("delete_branch", { branch: "spike-2", force: true })).toContain("Deleted branch spike-2");
   // A worktree with uncommitted changes, and one another chat works in.
-  const out = await tool("create_branch", { name: "harbor/side", switch: false });
+  const out = await tool("create_branch", { name: "hub/side", switch: false });
   expect(out).toContain("Nothing works there yet");
   const side = /in a new worktree (.+)\. Nothing/.exec(out)?.[1] ?? "";
   expect(basename(side)).toBe("proj-side");
@@ -143,7 +143,7 @@ test("unmerged_work_and_uncommitted_changes_are_kept_unless_forced", async () =>
   expect(await tool("delete_branch", { worktree: "proj-side", force: true })).toContain("discarded its 1 uncommitted change");
   expect(h.store.get(`worktree:${other.id}`)).toBe("");
   // The branch stayed: only the worktree was named.
-  expect(sh(repoDir, "branch", "--list", "harbor/side")).toContain("harbor/side");
+  expect(sh(repoDir, "branch", "--list", "hub/side")).toContain("hub/side");
 });
 
 test("a_conflicting_merge_stops_and_leaves_the_checkout_clean", async () => {
@@ -160,8 +160,8 @@ test("a_conflicting_merge_stops_and_leaves_the_checkout_clean", async () => {
 });
 
 test("a_subagent_gets_its_own_worktree_and_only_the_lead_has_the_tools", async () => {
-  const made = await h.engine.host.makeWorktree?.(lead, "harbor/tests", "");
-  expect(made?.branch).toBe("harbor/tests");
+  const made = await h.engine.host.makeWorktree?.(lead, "hub/tests", "");
+  expect(made?.branch).toBe("hub/tests");
   expect(made?.base).toBe("main");
   const sub = h.store.createChat(blankChat({ repoId, title: "Tests", role: "sub", parent: lead.id, name: "tests", account: "claude", updated: 3 }));
   h.engine.chats.push(sub);
@@ -172,9 +172,9 @@ test("a_subagent_gets_its_own_worktree_and_only_the_lead_has_the_tools", async (
   expect(h.engine.chatCwd(lead)).toBe(repoDir);
   expect(await tool("checkout_status", { agent: "tests" })).toContain(`Agent tests works in its own worktree proj-tests`);
   // A second one of that name gets the next free branch.
-  expect((await h.engine.host.makeWorktree?.(lead, "harbor/tests", ""))?.branch).toBe("harbor/tests-2");
+  expect((await h.engine.host.makeWorktree?.(lead, "hub/tests", ""))?.branch).toBe("hub/tests-2");
   commit(made?.dir ?? "", "t.txt", "t\n");
-  expect(await tool("merge_branch", { branch: "harbor/tests", into: "main" })).toContain("Merged harbor/tests into main");
+  expect(await tool("merge_branch", { branch: "hub/tests", into: "main" })).toContain("Merged harbor/tests into main");
   // Back to sharing the lead's folder.
   expect(await tool("switch_branch", { agent: "tests", worktree: "checkout" })).toContain(`Agent tests works in ${repoDir} now`);
   expect(h.store.get(`worktree:${sub.id}`)).toBe("");
