@@ -101,8 +101,8 @@ export function fnv1a(s: string): bigint {
 export function root(): string {
   const base = stateDir();
   const data = dataDir();
-  // The system's own data folder: ~/.local/share/harbor, on Windows %APPDATA%\harbor.
-  if (data === join(osPaths.systemDataHome({ ...process.env, HOME: home() }), "harbor")) return join(base, "turns");
+  // The system's own data folder: ~/.local/share/hub, on Windows %APPDATA%\hub.
+  if (data === join(osPaths.systemDataHome({ ...process.env, HOME: home() }), "hub")) return join(base, "turns");
   return join(base, `turns-${(fnv1a(data) & 0xffffffffffffn).toString(16).padStart(12, "0")}`);
 }
 
