@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { attachBefore, attachMeta, attachments, fileKind, fileSize, isAttachPath, stripAttachments } from "../src/attach.ts";
 
-const KEPT = "/home/u/.local/share/harbor/uploads/12/files/0123456789abcdef0123/app-debug.apk";
+const KEPT = "/home/u/.local/share/hub/uploads/12/files/0123456789abcdef0123/app-debug.apk";
 
 test("a reply's attached files are read from its text alone", () => {
   const md = `Here it is:\n\n[app-debug.apk](${KEPT} "12345678 bytes")\n\nAnd [the notes](</d/uploads/-3/files/aaaaaaaaaaaaaaaaaaaa/release notes.pdf> "900 bytes") too.`;

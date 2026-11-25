@@ -149,6 +149,8 @@ export interface FollowDeps {
   /** Harbor's data folder: the clone, the builds, health.json and status.json go in `follow-main/`. */
   dataDir: string;
   repos: () => { path: string; remote: string; local: string | null }[];
+  /** Hub: following main is off (run.ts turns it on only with HUB_FOLLOW_MAIN=1). */
+  off?: boolean;
   /** The updater is installing a release: nothing is installed beside it. */
   busy: () => boolean;
   /** Extra build environment (the running build's Google clients, so a build of main keeps them). */
@@ -328,7 +330,8 @@ export class FollowMain {
     this.run = d.run ?? defaultRunner;
     this.commit = d.commit === undefined ? GIT_COMMIT : d.commit;
     this.pid = d.pid ?? process.pid;
-    this.remote = d.remote ?? null;
+    // Hub never follows Harbor's public repository.
+    this.remote = d.remote === REMOTE ? null : (d.remote ?? null);
     this.st = readJson<FollowStatus>(join(this.home, "status.json")) ?? { state: "off", checkout: "", commit: "", subject: "", version: "", reason: "", at: 0 };
   }
 
@@ -396,8 +399,8 @@ export class FollowMain {
   }
 
   start(): void {
-    // Hub: Harbor's main is never followed (HUB_FOLLOW_MAIN=1 only for a checkout of Hub's own, by hand).
-    if (process.env.HUB_FOLLOW_MAIN !== "1") return;
+    // Hub: off unless asked (run.ts: HUB_FOLLOW_MAIN=1, for a checkout of Hub's own, by hand).
+    if (this.d.off === true) return;
     if (!this.possible() || this.toggleTimer !== null) return;
     this.toggleTimer = setInterval(() => this.sync(), TOGGLE_MS);
     this.toggleTimer.unref?.();
@@ -777,7 +780,7 @@ export class FollowMain {
   // ---- the look ----
 
   async check(): Promise<void> {
-    if (process.env.HUB_FOLLOW_MAIN !== "1") return;
+    if (this.d.off === true) return;
     if (!this.on() || !this.possible()) return;
     this.looked = true;
     const checkout = this.checkout();

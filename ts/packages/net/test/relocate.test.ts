@@ -43,7 +43,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 describe("relocate", () => {
   test("profile_lines_follow_the_turn_setup", () => {
     expect(configLines([])).toBe('c="$HOME/.claude"');
-    expect(configLines([{ kind: "token" }, { kind: "guest", rel: ".local/state/harbor/guests/pc-a" }]).startsWith("c=\"$HOME\"/'.local/state/harbor/guests/pc-a'")).toBe(true);
+    expect(configLines([{ kind: "token" }, { kind: "guest", rel: ".local/state/hub/guests/pc-a" }]).startsWith("c=\"$HOME\"/'.local/state/hub/guests/pc-a'")).toBe(true);
     expect(configLines([{ kind: "profile", rel: ".claude2" }])).toContain("[ -d \"$HOME\"/'.claude2' ] && c=\"$HOME\"/'.claude2'");
   });
 
@@ -74,12 +74,12 @@ describe("relocate", () => {
       // Back onto a device, in the folder its turn runs in, under the guest profile.
       mkdirSync(join(other, "code/app"), { recursive: true });
       const packed = (await outputWithin("tar", ["-cf", "-", "-C", here, `${SID}.jsonl`, SID], { timeoutMs: 20_000 })).stdout;
-      const lines = configLines([{ kind: "guest", rel: ".local/state/harbor/guests/pc-a" }]);
+      const lines = configLines([{ kind: "guest", rel: ".local/state/hub/guests/pc-a" }]);
       const put = await sh(pushScript("~/code/app", lines), other, packed);
       expect(put.stderr.toString()).toBe("");
       expect(put.code).toBe(0);
       const slug = realpathSync(join(other, "code/app")).replace(/[^A-Za-z0-9]/g, "-");
-      const placed = join(other, ".local/state/harbor/guests/pc-a/projects", slug);
+      const placed = join(other, ".local/state/hub/guests/pc-a/projects", slug);
       expect(readFileSync(join(placed, `${SID}.jsonl`), "utf8")).toBe("new\n");
       expect(existsSync(join(placed, SID, "subagents/a.jsonl"))).toBe(true);
       // A folder that isn't there: exit 97, said.

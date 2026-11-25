@@ -198,7 +198,7 @@ describe("the phone API's chats (api.rs App side)", () => {
     const sub = store.createChat(blankChat({ title: "Check the API", role: "sub", parent: lead.id, name: "api" }));
     const copy = store.createChat(blankChat({ title: "Laptop's chat", home: "pc:laptop" }));
     const where = store.createChat(blankChat({ title: "where" }));
-    const L = (gid: string, pc = "") => `harbor://chat/${gid}${pc === "" ? "" : `?pc=${pc}`}`;
+    const L = (gid: string, pc = "") => `hub://chat/${gid}${pc === "" ? "" : `?pc=${pc}`}`;
     const text = `See ${L(sub.gid, "desk")}. Or [the lead](${L(lead.gid)}), ${L(copy.gid, "laptop")}, ${L("nope", "laptop")} and ${L("gone", "desk")}; not \`${L(lead.gid)}\`.`;
     store.saveItems(where.id, [{ kind: "text", text, at: 5 }]);
     const items = (global: boolean) => (routes.items(where, 0, null, global) as { items: Record<string, Json>[] }).items;
@@ -237,10 +237,10 @@ describe("the phone API's chats (api.rs App side)", () => {
     const lead = store.createChat(blankChat({ title: "Fix login", role: "lead", name: "lead" }));
     const sub = store.createChat(blankChat({ title: "Check the API", role: "sub", parent: lead.id, name: "api" }));
     const get = async (url: string, global = true) => (await routes.route({ method: "GET", path: ["v1", "chat_link"], query: [["url", url]], body: null, token: "", device: "Pixel", global })).body;
-    expect(await get(`harbor://chat/${sub.gid}?pc=desk`)).toEqual({ title: "Fix login › api", chat: sub.gid, missing: "" });
-    expect(await get(`harbor://chat/${lead.gid}`, false)).toEqual({ title: "Fix login", chat: lead.id, missing: "" });
-    expect(await get("harbor://chat/nope?pc=laptop")).toEqual({ title: "laptop is offline", chat: null, missing: "laptop is offline" });
-    expect(await get("harbor://chat/gone")).toEqual({ title: "Chat not found", chat: null, missing: "Chat not found" });
+    expect(await get(`hub://chat/${sub.gid}?pc=desk`)).toEqual({ title: "Fix login › api", chat: sub.gid, missing: "" });
+    expect(await get(`hub://chat/${lead.gid}`, false)).toEqual({ title: "Fix login", chat: lead.id, missing: "" });
+    expect(await get("hub://chat/nope?pc=laptop")).toEqual({ title: "laptop is offline", chat: null, missing: "laptop is offline" });
+    expect(await get("hub://chat/gone")).toEqual({ title: "Chat not found", chat: null, missing: "Chat not found" });
     expect(await get("https://example.com/")).toEqual({ title: "https://example.com/", chat: null, missing: "Not a chat link" });
     store.close();
   });

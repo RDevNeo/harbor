@@ -1,0 +1,40 @@
+# Hub
+
+This branch (`hub`) is Harbor's app forked as **Hub**: the same native app (Slint window, engine, agents, phone API,
+Hub for Android in `android/`), in a world of its own. Harbor apps (desktop or phone) never see Hub's chats, and Hub
+never talks to Harbor's PCs, phones, account service or releases.
+
+## What differs from Harbor
+
+| | Harbor | Hub |
+| --- | --- | --- |
+| Name everywhere a user or an agent reads it | Harbor | Hub |
+| Install | `~/.local/lib/harbor` | `~/.local/lib/hub` (`packaging/hub-install.sh`), `~/.local/bin/hub`, `hub.desktop`, autostart |
+| Data / state / socket | `~/.local/share/harbor`, `~/.local/state/harbor`, `$XDG_RUNTIME_DIR/harbor.sock` | `…/hub`, `…/hub`, `hub.sock` (the database file keeps its name `harbor.db`) |
+| Phone API port | 47930 (kv `api_port`) | **47950** (kv `hub_api_port`). 47940 stays the MCP bridge's, 47920/47911 the webhooks' |
+| Window app id / WM class, tray id | `harbor` | `hub` |
+| Agents' MCP server | `harbor` (`mcp__harbor__*`) | `hub` (`mcp__hub__*`) |
+| Other PCs for agents | the mesh's `machines` | `machines` = hub-machines (stdio, SSH on Tailscale), shipped in `~/.local/lib/hub/hub-machines/` |
+| Chat links | `harbor://chat/…` | `hub://chat/…` (old links still open) |
+| Worktree branches | `harbor/<name>` | `hub/<name>` (old ones still known) |
+| Patches | `.harbor/patches` | `.hub/patches` (`.harbor/patches` still read) |
+| Phones | Google sign-in, account directory | pairing: `hub pair` (QR / `hub://pair?…`), android/PROTOCOL.md "Hub pairing" |
+| Account service, workspace cloud, settings sync | Harbor's (`harbor-accounts`) | none until Hub's own exists (`account.ts` `HUB_ACCOUNTS_URL`; see below). Harbor's is never called |
+| Mesh, relay, network discovery, UPnP for phones | on | off (`hub.ts` `STANDALONE`) |
+| Updates, follow-main, previews from peers | Harbor's releases and main | none: running `packaging/hub-install.sh` again is the update (a running Hub restarts into it) |
+
+Internal identifiers (`HARBOR_*` variables, `@harbor/*` packages, `X-Harbor-*` headers, `harbor-app.js`) keep their
+names: nobody reads them, and renaming them would only make merging Harbor's changes harder.
+
+## Workspaces (planned)
+
+Hub's own account service = a separate deploy of `worker/` ("hub-accounts": its own D1, Durable Objects, signing key
+and vault secret, `APP_REDIRECT=hub://oauth`) on Harbor's Clerk instance and OAuth client: the same Google sign-ins
+and the same workspaces (Clerk organizations, members, invitations), with a device directory, tokens, cloud and vault
+of its own. Set `HUB_ACCOUNTS_URL` in `account.ts` (or the environment) once it's deployed; pairing keeps working.
+
+## Commands
+
+- `bash packaging/hub-install.sh [--machines DIR]` builds and installs; `--stage DIR` builds only.
+- `hub pair` (a phone), `hub pair list`, `hub pair remove FP`; `hub quit`; `hub api METHOD PATH [JSON]`.
+- From Person Hub (creators-hub): `scripts/hub-cutover.sh` moves this PC from Harbor's engine to Hub (and `--rollback`).

@@ -143,7 +143,7 @@ test("a chat in a worktree shows its folder mark, red once gone, and its PR's st
 });
 
 test("a reply's chat links read as their chat's title (markdown links keep their text) and redraw when it changes", () => {
-  const L = (gid: string) => `harbor://chat/${gid}?pc=desk`;
+  const L = (gid: string) => `hub://chat/${gid}?pc=desk`;
   const items: Item[] = [{ kind: "text", text: `See ${L("g1")} or [that one](${L("g2")}), <${L("g3")}>; not \`${L("g1")}\`.`, at: 2 }];
   const titles: Record<string, string> = { [L("g1")]: "Fix [login]", [L("g2")]: "Other", [L("g3")]: "Chat not found" };
   const open = newOpened();

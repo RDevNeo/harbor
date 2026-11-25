@@ -45,7 +45,7 @@ function withEnv(vars: Record<string, string | undefined>, f: () => void): void 
   }
 }
 
-const ROOT = "/home/u/.local/state/harbor/turns";
+const ROOT = "/home/u/.local/state/hub/turns";
 
 test("finds_the_chat_of_a_runner", () => {
   expect(detach.runnerChat(["/x/harbor", "turn", `${ROOT}/23-1792605157067846264`], ROOT)).toBe(23);
@@ -59,7 +59,7 @@ test("ignores_other_processes_and_other_harbors", () => {
   expect(detach.runnerChat(["/x/harbor", "mcp", "--chat", "23"], ROOT)).toBeUndefined();
   expect(detach.runnerChat(["/x/harbor"], ROOT)).toBeUndefined();
   // A test instance's turns live in another folder.
-  expect(detach.runnerChat(["/x/harbor", "turn", "/home/u/.local/state/harbor/turns-0a1b2c3d4e5f/23-1"], ROOT)).toBeUndefined();
+  expect(detach.runnerChat(["/x/harbor", "turn", "/home/u/.local/state/hub/turns-0a1b2c3d4e5f/23-1"], ROOT)).toBeUndefined();
   expect(detach.runnerChat(["/x/harbor", "turn", "/elsewhere/23-1"], ROOT)).toBeUndefined();
   expect(detach.runnerChat(["/x/bun", "/x/other.ts", "turn", `${ROOT}/9-1`], ROOT)).toBeUndefined();
 });
@@ -333,9 +333,9 @@ describe("the turn folder is the Rust app's", () => {
   test("a test instance's turns folder is named by FNV-1a of its data folder", () => {
     expect(detach.fnv1a("a")).toBe(0xaf63dc4c8601ec8cn);
     expect(detach.fnv1a("")).toBe(0xcbf29ce484222325n);
-    withEnv({ HOME: "/home/u", XDG_STATE_HOME: join(base, "st"), XDG_DATA_HOME: undefined }, () => expect(detach.root()).toBe(join(base, "st/harbor/turns")));
+    withEnv({ HOME: "/home/u", XDG_STATE_HOME: join(base, "st"), XDG_DATA_HOME: undefined }, () => expect(detach.root()).toBe(join(base, "st/hub/turns")));
     const h = (detach.fnv1a(join("/tmp/x", "harbor")) & 0xffffffffffffn).toString(16).padStart(12, "0");
-    withEnv({ HOME: "/home/u", XDG_STATE_HOME: join(base, "st"), XDG_DATA_HOME: "/tmp/x" }, () => expect(detach.root()).toBe(join(base, `st/harbor/turns-${h}`)));
+    withEnv({ HOME: "/home/u", XDG_STATE_HOME: join(base, "st"), XDG_DATA_HOME: "/tmp/x" }, () => expect(detach.root()).toBe(join(base, `st/hub/turns-${h}`)));
   });
 });
 
@@ -440,9 +440,9 @@ test("the signed-out agent env hides every sign-in", () => {
     expect(v.get("GIT_TERMINAL_PROMPT")).toBe("0");
     expect(v.get("GIT_CONFIG_COUNT")).toBe("6");
     expect(v.get("GIT_CONFIG_VALUE_3")).toContain("GitHub is not signed in");
-    expect(v.get("CONVEX_OVERRIDE_ACCESS_TOKEN")).toBe("sign-in-to-convex-in-harbor");
+    expect(v.get("CONVEX_OVERRIDE_ACCESS_TOKEN")).toBe("sign-in-to-convex-in-hub");
     const gh = v.get("GH_CONFIG_DIR") ?? "";
-    expect(gh).toBe(join(base, "data/harbor/apps/github-signed-out"));
-    expect(readFileSync(join(gh, "hosts.yml"), "utf8")).toContain("sign-in-to-github-in-harbor");
+    expect(gh).toBe(join(base, "data/hub/apps/github-signed-out"));
+    expect(readFileSync(join(gh, "hosts.yml"), "utf8")).toContain("sign-in-to-github-in-hub");
   });
 });

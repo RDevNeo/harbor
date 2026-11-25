@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { UpdateConfig } from "./config.ts";
+import { GITHUB, REPO, type UpdateConfig } from "./config.ts";
 import { apk, dropBrowser, fetchApk, pendingExtras, retryAfter, VIDEO_LIB, type ExtraWork } from "./extras.ts";
 import { fresh, isFile, read, readJson, remove } from "./files.ts";
 import { current, hasPrevious, install, NoBuild, onDisk, PREVIOUS, rollback, rolledBack, skipped, type RolledBack } from "./install.ts";
@@ -77,9 +77,11 @@ export function installDue(failed: { version: string; at: number } | null, versi
   return failed === null || failed.version !== version || now >= failed.at;
 }
 
-/** Hub: Harbor's releases are never fetched or installed here. Hub's builds are put in place by
- *  packaging/hub-install.sh (the running app restarts into them when VERSION changes). */
-export const HUB_UPDATES = false;
+/** Hub: Harbor's releases (its GitHub repository) are never fetched or installed here. Hub's builds are put in place
+ *  by packaging/hub-install.sh (the running app restarts into them when VERSION changes). */
+export function harborsReleases(cfg: Pick<UpdateConfig, "github" | "repo">): boolean {
+  return cfg.github === GITHUB && cfg.repo === REPO;
+}
 
 export class Updater {
   private st: State = { t: "idle" };
@@ -120,7 +122,7 @@ export class Updater {
   }
 
   start(): void {
-    if (!HUB_UPDATES || !this.managed() || this.abort !== null) return;
+    if (harborsReleases(this.cfg) || !this.managed() || this.abort !== null) return;
     const abort = new AbortController();
     this.abort = abort;
     void this.run(abort.signal);
@@ -181,7 +183,7 @@ export class Updater {
   }
 
   async latest(): Promise<string> {
-    if (!HUB_UPDATES) return this.current();
+    if (harborsReleases(this.cfg)) return this.current();
     const res = await this.cfg.fetch(`${this.cfg.github}/${this.cfg.repo}/releases/latest`, {
       method: "HEAD",
       redirect: "manual",
@@ -192,7 +194,7 @@ export class Updater {
   }
 
   async githubCheck(): Promise<void> {
-    if (!HUB_UPDATES) return;
+    if (harborsReleases(this.cfg)) return;
     if (!this.managed()) return;
     const before = this.st;
     if (before.t !== "available" && before.t !== "failed") this.set({ t: "checking" });
@@ -205,12 +207,12 @@ export class Updater {
   }
 
   async check(): Promise<void> {
-    if (!HUB_UPDATES) return;
+    if (harborsReleases(this.cfg)) return;
     await this.githubCheck().catch(() => undefined);
   }
 
   async onRelease(version: string): Promise<void> {
-    if (!HUB_UPDATES) return;
+    if (harborsReleases(this.cfg)) return;
     if (this.handled === null || newer(version, this.handled)) this.handled = version;
     if (!newer(version, this.current())) {
       if (this.st.t !== "installing" && this.st.t !== "installed") this.set({ t: "upToDate" });
@@ -234,7 +236,7 @@ export class Updater {
   }
 
   async installNow(version?: string): Promise<void> {
-    if (!HUB_UPDATES) return;
+    if (harborsReleases(this.cfg)) return;
     const v = version ?? (this.st.t === "available" ? this.st.v : null);
     if (v === null || !newer(v, this.current())) return;
     this.asking = true;
@@ -246,7 +248,7 @@ export class Updater {
   }
 
   async checkAndInstall(): Promise<void> {
-    if (!HUB_UPDATES) return;
+    if (harborsReleases(this.cfg)) return;
     if (!this.managed()) throw new Error("this Hub was built from source, so it doesn't update itself");
     this.asking = true;
     this.set({ t: "checking" });

@@ -110,7 +110,7 @@ test("a link's tip is its address when its text says something else, for web and
   expect(linkTip("docs", "https://x.dev")).toBe("https://x.dev");
   expect(linkTip(" https://x.dev ", "https://x.dev")).toBe("");
   expect(linkTip("me@x.dev", "mailto:me@x.dev")).toBe("");
-  expect(linkTip("Fix login", "harbor://chat/g1?pc=desk")).toBe("");
+  expect(linkTip("Fix login", "hub://chat/g1?pc=desk")).toBe("");
   expect(linkTip("x", `https://x.dev/${"a".repeat(300)}`)).toHaveLength(201);
 });
 

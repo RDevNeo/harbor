@@ -261,7 +261,7 @@ describe("command lines per provider", () => {
     expect(after(v, "--model")).toBe("claude-haiku-5-5");
     expect(after(v, "--session-id")).toBe("abc");
     expect(v).toContain("--strict-mcp-config");
-    expect(after(v, "--mcp-config")).toBe(join(base, "data/harbor/apps/run/claude-999995.json"));
+    expect(after(v, "--mcp-config")).toBe(join(base, "data/hub/apps/run/claude-999995.json"));
     expect(cmd.env.has("CLAUDE_CONFIG_DIR")).toBe(true);
     expect(cmd.env.get("CLAUDE_CONFIG_DIR")).toBeNull();
     expect(stdin).toBe(agent.claudeMessage("hi", []));

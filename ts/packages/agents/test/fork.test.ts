@@ -15,7 +15,7 @@ test("a reply whose images the chat keeps in its uploads still forks at its plac
   // The transcript names the kept copy (media.ts `adopt`); the session, the file the agent wrote.
   forkJsonl(src, "new", [
     { kind: "user", text: "show me", files: [], at: 1, mentions: [], sender: "", intent: "" },
-    { kind: "text", text: "Here:\n\n![The page](/home/sam/.local/share/harbor/uploads/7/0123456789abcdef0123.png)", at: 2 },
+    { kind: "text", text: "Here:\n\n![The page](/home/sam/.local/share/hub/uploads/7/0123456789abcdef0123.png)", at: 2 },
   ]);
   const out = readFileSync(join(dir, "new.jsonl"), "utf8").trim().split("\n");
   expect(out).toHaveLength(2);

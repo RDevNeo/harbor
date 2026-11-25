@@ -58,7 +58,7 @@ test("the_quote_names_the_chat", () => {
   m.text = "Title: Fix login\nStatus: idle";
   m.note = "same bug?";
   m.chat = "g1";
-  expect(quote(m)).toBe("> [mentioned chat “Fix login”, chat id g1 (message_chat takes it; link it as harbor://chat/g1)]\n> Title: Fix login\n> Status: idle\nsame bug?\n\n");
+  expect(quote(m)).toBe("> [mentioned chat “Fix login”, chat id g1 (message_chat takes it; link it as hub://chat/g1)]\n> Title: Fix login\n> Status: idle\nsame bug?\n\n");
   // On the wire: kind, chat and title; a message mention stays as before.
   const v = mentionToJson(m);
   expect([v.kind, v.chat, v.title]).toEqual(["chat", "g1", "Fix login"]);

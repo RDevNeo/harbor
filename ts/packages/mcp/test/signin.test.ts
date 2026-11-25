@@ -215,10 +215,10 @@ test("signed out, agents get a placeholder gh config and a refusing git helper",
   const env = await mcp.agentEnvAs(false);
   const get = (k: string): string | undefined => env.find(([n]) => n === k)?.[1];
   expect(get("GH_CONFIG_DIR")).toBe(join(process.env.XDG_DATA_HOME ?? "", "harbor/apps/github-signed-out"));
-  expect(readFileSync(join(get("GH_CONFIG_DIR") ?? "", "hosts.yml"), "utf8")).toContain("sign-in-to-github-in-harbor");
+  expect(readFileSync(join(get("GH_CONFIG_DIR") ?? "", "hosts.yml"), "utf8")).toContain("sign-in-to-github-in-hub");
   expect(get("GIT_CONFIG_VALUE_3")).toContain("Hub: GitHub is not signed in");
-  expect(get("CONVEX_OVERRIDE_ACCESS_TOKEN")).toBe("sign-in-to-convex-in-harbor");
-  expect(get("SUPABASE_ACCESS_TOKEN")).toBe("sign-in-to-supabase-in-harbor");
+  expect(get("CONVEX_OVERRIDE_ACCESS_TOKEN")).toBe("sign-in-to-convex-in-hub");
+  expect(get("SUPABASE_ACCESS_TOKEN")).toBe("sign-in-to-supabase-in-hub");
 });
 
 test("a cancelled sign-in stops waiting", async () => {

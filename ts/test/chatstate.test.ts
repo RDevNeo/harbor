@@ -134,7 +134,7 @@ function turnsDump(chats: Chat[]): string {
     const items = h.engine.liveItems(c.id) ?? h.store.items(c.id);
     return `chat ${c.id} (${c.title}): ${items.map((it) => ("text" in it && typeof it.text === "string" ? `${it.kind} ${JSON.stringify(clip(it.text))}` : it.kind)).join(" | ")}`;
   });
-  const state = join(root, "state", "harbor");
+  const state = join(root, "state", "hub");
   try {
     for (const d of existsSync(state) ? readdirSync(state).filter((d) => d.startsWith("turns")) : []) {
       for (const t of readdirSync(join(state, d))) {

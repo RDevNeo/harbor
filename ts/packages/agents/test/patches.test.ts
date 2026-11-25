@@ -11,7 +11,7 @@ const kv = () => {
 
 function project(): string {
   const d = mkdtempSync(join(tmpdir(), "patch-"));
-  mkdirSync(join(d, "app", ".harbor", "patches"), { recursive: true });
+  mkdirSync(join(d, "app", ".hub", "patches"), { recursive: true });
   return join(d, "app");
 }
 
@@ -33,8 +33,8 @@ describe("patches", () => {
   test("folders: the chat's and each above it to home, the project's, then home's", () => {
     // Full paths of this system (on Windows "/h" is on the current drive).
     const r = (ps: string[]): string[] => ps.map((p) => resolve(p));
-    expect(patchDirs("/h/p/wt/sub", "/h/p", "/h")).toEqual(r(["/h/p/wt/sub/.harbor/patches", "/h/p/wt/.harbor/patches", "/h/p/.harbor/patches", "/h/.harbor/patches"]));
-    expect(patchDirs("/h", null, "/h")).toEqual(r(["/h/.harbor/patches"]));
+    expect(patchDirs("/h/p/wt/sub", "/h/p", "/h")).toEqual(r(["/h/p/wt/sub/.hub/patches", "/h/p/wt/.hub/patches", "/h/p/.hub/patches", "/h/.hub/patches"]));
+    expect(patchDirs("/h", null, "/h")).toEqual(r(["/h/.hub/patches"]));
   });
 
   test("only node: and bun imports, and no import() by a name", () => {
@@ -56,7 +56,7 @@ describe("patches", () => {
 
   test("runs only once trusted; an edit asks again; a failed load says why", async () => {
     const app = project();
-    const file = join(app, ".harbor", "patches", "dev.ts");
+    const file = join(app, ".hub", "patches", "dev.ts");
     writeFileSync(file, PATCH);
     const store = kv();
     const p = new Patches(store);
@@ -92,15 +92,15 @@ describe("patches", () => {
 
   test("a blocked patch never loads", () => {
     const app = project();
-    writeFileSync(join(app, ".harbor", "patches", "bad.ts"), 'import x from "./x.ts";\nexport default {};\n');
-    const [f] = new Patches(kv()).scan([join(app, ".harbor", "patches")]);
+    writeFileSync(join(app, ".hub", "patches", "bad.ts"), 'import x from "./x.ts";\nexport default {};\n');
+    const [f] = new Patches(kv()).scan([join(app, ".hub", "patches")]);
     expect(f?.state).toBe("blocked");
   });
 
-  test("the format's doc goes to ~/.harbor/patches/README.md", () => {
+  test("the format's doc goes to ~/.hub/patches/README.md", () => {
     const home = mkdtempSync(join(tmpdir(), "home-"));
     const p = writeDoc(home);
-    expect(p).toBe(join(home, ".harbor", "patches", "README.md"));
+    expect(p).toBe(join(home, ".hub", "patches", "README.md"));
     expect(Bun.file(p).size).toBe(Buffer.byteLength(PATCH_DOC));
   });
 });

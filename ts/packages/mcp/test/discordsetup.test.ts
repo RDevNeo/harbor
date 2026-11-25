@@ -143,7 +143,7 @@ test("download follows redirects, retries a 503 and reports progress", async () 
 });
 
 test("the paths live under the private store", () => {
-  expect(root()).toBe(join(box.dir, "data/harbor/apps/discord"));
+  expect(root()).toBe(join(box.dir, "data/hub/apps/discord"));
   expect(profile()).toBe(join(root(), "profile"));
   expect(socket()).toBe(join(root(), "h.sock"));
   expectPerm(root(), 0o700);

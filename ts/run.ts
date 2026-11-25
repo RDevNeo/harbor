@@ -98,7 +98,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   // Its pushes to main reach the other PCs through the worker at once (followmain.ts `nudge`): the account's token, once the hub is up.
   let bearer: () => string | null = () => null;
   // Pushes to the public main come built from GitHub (main.yml) when building here would be slow.
-  follow = new FollowMain({ cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv, remote, prebuilt: remote === REMOTE, token: () => bearer() });
+  follow = new FollowMain({ off: process.env.HUB_FOLLOW_MAIN !== "1", cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv, remote, prebuilt: remote === REMOTE, token: () => bearer() });
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
   let taking = Promise.resolve();

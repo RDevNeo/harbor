@@ -923,6 +923,11 @@ export class AccountService {
     return this.conf("HARBOR_CLERK_CLIENT_ID", ACCOUNT_CLIENT_ID);
   }
 
+  /** Hub never calls Harbor's account service or its Clerk, nor the placeholder Hub has until its own exists. */
+  private harborsService(url: string): boolean {
+    return [ACCOUNTS_URL, "https://accounts.hub.invalid"].some((u) => url.startsWith(u)) || (url.startsWith(CLERK_URL) && this.harborsService(this.serviceUrl()));
+  }
+
   serviceUrl(): string {
     // Hub: its own service only, never Harbor's (ACCOUNTS_URL stays for reference and tests).
     const hub = hubAccountsUrl(this.o.env ?? process.env);
@@ -1116,7 +1121,7 @@ export class AccountService {
     let text: string;
     let code: number;
     try {
-      if (HUB_NO_ACCOUNT) throw AccountFail.offline(HUB_NO_ACCOUNT_TEXT);
+      if (this.harborsService(url)) throw AccountFail.offline(HUB_NO_ACCOUNT_TEXT);
       const res = await fetch(url, { method, headers, ...(body ? { body: body.data } : {}), redirect: "manual", signal: AbortSignal.timeout(HTTP_TIMEOUT) });
       code = res.status;
       text = await res.text();
@@ -1390,7 +1395,7 @@ export class AccountService {
 
   /** The whole sign-in; throws an Error with the sentence to show. Also what `harbor account login` runs. */
   async signInFlow(): Promise<void> {
-    if (HUB_NO_ACCOUNT) throw new Error(HUB_NO_ACCOUNT_TEXT);
+    if (this.harborsService(this.serviceUrl())) throw new Error(HUB_NO_ACCOUNT_TEXT);
     if (!this.configured() && this.env("HARBOR_CLERK_URL") === undefined) throw new Error("This build of Hub has no account service set up.");
     const server = createServer();
     try {
@@ -1835,7 +1840,7 @@ export class AccountService {
   /** Loads what's cached and starts the account loop (once). */
   start(): void {
     this.load();
-    if (HUB_NO_ACCOUNT || this.loop) return;
+    if (this.harborsService(this.serviceUrl()) || this.loop) return;
     this.stopped = false;
     this.loop = this.run();
   }

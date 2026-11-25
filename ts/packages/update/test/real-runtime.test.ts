@@ -193,7 +193,7 @@ test("the bundle fetches its Discord shell at its own commit, never the runtime'
     expect(asked.some((p) => p.includes("0.1.0") || p.includes("0.2.0") || p.includes("0.109.0"))).toBe(false);
     expect(failed.tools.map((t) => t.name)).toEqual(["discord_status"]);
     expect(failed.tools[0]?.description).toContain("couldn't download its Discord shell");
-    const app = join(dir, "data", "harbor", "apps", "discord");
+    const app = join(dir, "data", "hub", "apps", "discord");
     expect(readdirSync(app).filter((n) => n.startsWith("shell-"))).toEqual([]);
     // Now it does: every tool.
     serve = true;

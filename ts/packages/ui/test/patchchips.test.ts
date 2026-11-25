@@ -5,7 +5,7 @@ import { glyphOf, patchChips } from "../src/logic/patchchips.ts";
 import { listRows } from "../src/patchbar.ts";
 import { runScript } from "../src/shell.ts";
 
-const file = (over: Partial<patches.PatchFile>): patches.PatchFile => ({ path: "/p/.harbor/patches/dev.ts", name: "dev", root: "/p", hash: "h", state: "trusted", error: "", actions: [], panels: [], ...over });
+const file = (over: Partial<patches.PatchFile>): patches.PatchFile => ({ path: "/p/.hub/patches/dev.ts", name: "dev", root: "/p", hash: "h", state: "trusted", error: "", actions: [], panels: [], ...over });
 const action = (title: string, kind: patches.ActionKind = "run"): patches.PatchAction => ({ id: title, title, kind, value: "x", icon: "", patch: "/p.ts" });
 
 describe("patch chips", () => {

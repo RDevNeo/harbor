@@ -125,7 +125,7 @@ test("a_key_asked_for_is_answered_through_the_api_and_used_hidden", async () => 
 
 test("patches_to_trust_and_the_team's_actions", async () => {
   const lead = h.store.createChat(blankChat({ title: "Team", account: "claude", role: "lead", name: "lead", repoId: repo }));
-  const dir = join(root, "home", "proj", ".harbor", "patches");
+  const dir = join(root, "home", "proj", ".hub", "patches");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "hello.ts"), 'export default { actions: [{ title: "Site", url: "http://localhost:1" }, { title: "Where", run: "echo here-$((40+2))" }] };\n');
   const wake = h.store.addTimer(lead.id, Math.floor(Date.now() / 1000) + 3600, "later");
