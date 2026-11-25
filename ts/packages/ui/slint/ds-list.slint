@@ -53,6 +53,8 @@ export component SectionHead {
     /** A small picture before the title (a project's favicon or emoji). */
     in property <image> icon;
     in property <bool> has-icon;
+    /** Without a picture: this Lucide glyph in its 12px slot instead (Projects' folder), so names line up. */
+    in property <string> glyph;
     in property <string> tip;
     /** The row drags (left button, past 6px): `drag` with the pointer in window coordinates, `dropped` on release. */
     in property <bool> draggable;
@@ -134,8 +136,18 @@ export component SectionHead {
         image-fit: contain;
         opacity: root.dim ? 0.45 : 1;
     }
+    if !root.has-icon && root.glyph != "": Glyph {
+        x: 6px;
+        y: root.line-y + 5px;
+        width: 12px;
+        height: 12px;
+        icon: root.glyph;
+        size: 12px;
+        color: Ds.caps-fg;
+        opacity: root.dim ? 0.45 : 1;
+    }
     label := Text {
-        x: root.has-icon ? 24px : 6px;
+        x: root.has-icon || root.glyph != "" ? 24px : 6px;
         y: root.line-y;
         height: 22px;
         width: max(0px, min(self.preferred-width, right.x - self.x - 26px));

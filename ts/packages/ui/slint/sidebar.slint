@@ -427,7 +427,7 @@ component ThreadRow {
 // row's hover fill, its status on the right and, hovered, Snooze and + (a new chat in it). A click opens its main chat;
 // a right click its menu. Dragged, it reorders the projects (while the order is yours); dragged out of the sidebar it
 // is its main chat's drag (a chat dropped on the centre splits it). A real icon (favicon, emoji) stays, small, before
-// the name; the letter square doesn't (Persons' heads have none).
+// the name, else a neutral folder glyph there; the letter square doesn't (Persons' heads have none).
 component ProjectHead {
     in property <SideRow> data;
     in property <bool> first;
@@ -460,6 +460,8 @@ component ProjectHead {
         dim: root.data.snoozed;
         icon: root.data.avatar;
         has-icon: root.data.has-avatar;
+        // no favicon or emoji: a neutral folder in the same slot, so every project's name starts at the same x
+        glyph: Icons.folder;
         tip: root.data.tip != "" ? root.data.tip : root.data.title;
         draggable: root.grip || root.data.chat >= 0;
         plus-tip: "New chat in this project";
