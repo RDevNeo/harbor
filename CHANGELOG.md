@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- Hub Projects: a project without its own icon (favicon or emoji) shows a neutral Lucide folder in the same 12px slot
+  in the sidebar's section head (SectionHead `glyph`), so every project's name starts at the same x; the same on
+  Android's Projects drawer.
+- Hub: one scrollbar in every tab (DESIGN.md "Scrolling"): the stock bar with its full-height track and arrow buttons
+  (Persons' chat, sidebar and panel, Settings, PRs, the palette, Add project) is replaced by a thin overlay thumb that
+  shows while scrolling or with the pointer on the edge (drag it to scroll). `Scroll` replaces std-widgets'
+  `ScrollView`; `ScrollThumb` goes over Projects' chat and sidebar, Routine's screens and Coach, and a PR's code.
 - Hub Persons: the Person AI's answers fold. A chevron next to Copy in the bubble's header (on Android: a tap on the
   header) folds an answer to "AI · time", its first two lines (a click opens it again) and its first reply draft on
   one line with **Use as reply**. The newest answer in a chat starts open and older ones folded; a fold or unfold the

@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
+import { ScrollView } from "std-widgets.slint";
 
 // A tip read back by `Ui.tip-parts` (logic/tips.ts `TipParts`).
 export struct TipRow { label: string, value: string }
@@ -1161,6 +1162,109 @@ export component SettingRow {
                 alignment: start;
                 @children
             }
+        }
+    }
+}
+
+// ---------- scrolling ----------
+
+/** Hub's scrollbar (DESIGN.md "Scrolling"): a thin thumb over the content's right edge, no track and no arrows. It shows
+ *  while the content scrolls (and ~1 s after) or while the pointer is on the right edge, where it widens and can be
+ *  dragged. Lay it over a Flickable or a ListView (their `content-*`); `scroll-to` sets content-y. `Scroll`
+ *  has it built in. */
+export component ScrollThumb {
+    in property <length> content-y;
+    in property <length> content-height;
+    in property <length> visible-height;
+    callback scroll-to(length);
+    property <bool> needed: root.content-height > root.visible-height + 1px;
+    property <length> room: max(1px, root.content-height - root.visible-height);
+    property <length> thumb-h: max(28px, root.height * root.visible-height / max(1px, root.content-height));
+    property <length> travel: max(0px, root.height - root.thumb-h);
+    property <float> frac: root.needed ? clamp(-root.content-y / root.room, 0, 1) : 0;
+    // Scrolled lately: `moves` counts scroll steps, the timer hides the thumb once one tick passed without a new one.
+    property <bool> recent;
+    property <int> moves;
+    property <int> seen;
+    width: 12px;
+    changed content-y => {
+        root.moves += 1;
+        root.recent = true;
+    }
+    Timer {
+        interval: 900ms;
+        running: root.recent;
+        triggered => {
+            if root.seen == root.moves {
+                root.recent = false;
+            }
+            root.seen = root.moves;
+        }
+    }
+    edge := TouchArea {
+        visible: root.needed;
+        property <length> grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                // on the thumb: drag it from where it was taken; beside it: its middle jumps there
+                self.grab = self.mouse-y >= bar.y && self.mouse-y <= bar.y + bar.height ? self.mouse-y - bar.y : root.thumb-h / 2;
+                root.scroll-to(-clamp((self.mouse-y - self.grab) / max(1px, root.travel), 0, 1) * root.room);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.scroll-to(-clamp((self.mouse-y - self.grab) / max(1px, root.travel), 0, 1) * root.room);
+            }
+        }
+    }
+    bar := Rectangle {
+        visible: root.needed;
+        width: edge.has-hover || edge.pressed ? 6px : 4px;
+        x: parent.width - self.width - 3px;
+        y: root.frac * root.travel;
+        height: root.thumb-h;
+        border-radius: self.width / 2;
+        background: Theme.fg.with-alpha(edge.pressed ? 0.42 : edge.has-hover ? 0.32 : 0.22);
+        opacity: root.recent || edge.has-hover || edge.pressed ? 1 : 0;
+        animate opacity { duration: 180ms; }
+        animate width { duration: 100ms; }
+    }
+}
+
+/** Every scrolling page and list in Hub (instead of std-widgets' ScrollView, whose bar has a track and arrows): the same
+ *  properties as a ScrollView (`content-*`, `visible-*`, `scrolled`), its own bars off, `ScrollThumb` over it. */
+export component Scroll {
+    in property <bool> enabled <=> sv.enabled;
+    out property <length> visible-width <=> sv.visible-width;
+    out property <length> visible-height <=> sv.visible-height;
+    in-out property <length> content-width <=> sv.content-width;
+    in-out property <length> content-height <=> sv.content-height;
+    in-out property <length> content-x <=> sv.content-x;
+    in-out property <length> content-y <=> sv.content-y;
+    in property <bool> mouse-drag-pan-enabled <=> sv.mouse-drag-pan-enabled;
+    callback scrolled <=> sv.scrolled;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+    min-width: 50px;
+    min-height: 50px;
+    preferred-width: 100%;
+    preferred-height: 100%;
+    sv := ScrollView {
+        width: root.width;
+        height: root.height;
+        vertical-scrollbar-policy: always-off;
+        horizontal-scrollbar-policy: always-off;
+        @children
+    }
+    ScrollThumb {
+        x: root.width - self.width;
+        y: 0;
+        height: root.height;
+        content-y: sv.content-y;
+        content-height: sv.content-height;
+        visible-height: sv.visible-height;
+        scroll-to(y) => {
+            sv.content-y = y;
         }
     }
 }

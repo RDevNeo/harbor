@@ -2,7 +2,7 @@
 // (creators-hub src/routine), drawn natively. RoutineBus is driven by src/tabs/routine/ui.ts; the data is the
 // engine's (ts/tabs/routine), shared with Hub for Android.
 // Built on Hub's design system (ds.slint, DESIGN.md): the sidebar, headings, chips, buttons and dialogs are the shared ones.
-import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted, ComposeField } from "ds.slint";
+import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted, ComposeField, ScrollThumb } from "ds.slint";
 
 export struct RtQuick { label: string, amount: int }
 export struct RtGoal {
@@ -924,6 +924,17 @@ component CoachScreen {
             }
         }
     }
+    ScrollThumb {
+        x: root.width - self.width;
+        y: root.list-y;
+        height: list.height;
+        content-y: list.content-y;
+        content-height: list.content-height;
+        visible-height: list.height;
+        scroll-to(v) => {
+            list.content-y = v;
+        }
+    }
     // the shared composer field (ds ComposeField): Enter sends, Shift+Enter a new line
     coach-row := HorizontalLayout {
         x: 0;
@@ -1220,21 +1231,36 @@ export component RoutinePage {
         height: root.height - top - 16px;
         avail-h: root.height - top;
     }
-    if !RoutineBus.loading && (RoutineBus.section != "coach" || RoutineBus.picking): Flickable {
+    if !RoutineBus.loading && (RoutineBus.section != "coach" || RoutineBus.picking): Rectangle {
         x: main-x;
         y: top;
         width: main-w;
         height: root.height - top;
-        content-height: screen.preferred-height + 32px;
-        screen := VerticalLayout {
-            x: col-x;
+        page := Flickable {
+            width: parent.width;
+            height: parent.height;
+            content-height: screen.preferred-height + 32px;
+            screen := VerticalLayout {
+                x: col-x;
+                y: 0;
+                width: col-w;
+                if RoutineBus.picking: PickerScreen { }
+                if !RoutineBus.picking && RoutineBus.section == "today": TodayScreen { }
+                if !RoutineBus.picking && RoutineBus.section == "history": HistoryScreen { }
+                if !RoutineBus.picking && RoutineBus.section == "sleep": SleepScreen { }
+                if !RoutineBus.picking && RoutineBus.section == "goals": GoalsScreen { }
+            }
+        }
+        ScrollThumb {
+            x: parent.width - self.width;
             y: 0;
-            width: col-w;
-            if RoutineBus.picking: PickerScreen { }
-            if !RoutineBus.picking && RoutineBus.section == "today": TodayScreen { }
-            if !RoutineBus.picking && RoutineBus.section == "history": HistoryScreen { }
-            if !RoutineBus.picking && RoutineBus.section == "sleep": SleepScreen { }
-            if !RoutineBus.picking && RoutineBus.section == "goals": GoalsScreen { }
+            height: parent.height;
+            content-y: page.content-y;
+            content-height: page.content-height;
+            visible-height: page.height;
+            scroll-to(v) => {
+                page.content-y = v;
+            }
         }
     }
     if RoutineBus.sheet == "form": DialogFrame {

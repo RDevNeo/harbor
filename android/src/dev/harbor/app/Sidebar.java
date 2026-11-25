@@ -651,7 +651,7 @@ final class Sidebar {
                 render(st);
             });
         }
-        // A real icon (its own or its website's) stays, small, before the name; the letter square doesn't.
+        // A real icon (its own or its website's) stays, small, before the name (else a folder); the letter square doesn't.
         String icon = projectIcon.get(key);
         if (icon != null && !icon.isEmpty()) {
             TextView tile = Ds.letter(a, "", 0, 14);
@@ -659,6 +659,12 @@ final class Sidebar {
             tile.setAlpha(asleep != null ? 0.45f : 1f);
             ProjectIcons.into(tile, a.hub, key, icon);
             h.addView(tile, 0, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 0, 0, 6, 0));
+        } else {
+            // None: a neutral folder in the same slot, so every project's name starts at the same place.
+            TextView folder = Ui.icon(a, Ui.I_FOLDER, 12, Ui.G600);
+            folder.setGravity(android.view.Gravity.CENTER);
+            folder.setAlpha(asleep != null ? 0.45f : 1f);
+            h.addView(folder, 0, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 0, 0, 6, 0));
         }
         String where = Place.hint(st, key);
         // Its PC when the folder isn't here, after the chevron (the spacer after it keeps the right side right).

@@ -3,10 +3,9 @@ import "fonts/Geist-Medium.ttf";
 import "fonts/Geist-SemiBold.ttf";
 import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, BtnSize, Empty, Glyph, MenuItem, PopoverFrame, SearchField, Separator, Spinner, TipArea, TipLayer, Variant } from "widgets.slint";
+import { Btn, BtnSize, Empty, Glyph, MenuItem, PopoverFrame, SearchField, Separator, Spinner, TipArea, TipLayer, Variant, Scroll } from "widgets.slint";
 import { DetailTab, Divider, PanelToggle, TabActKind } from "listdetail.slint";
 import { PrAvatar, PrChip, PrChipView, PrDetailPanel, PrEvent, PrHeader, PrLine, PrSummary, PrTone } from "prdetail.slint";
 
@@ -509,13 +508,13 @@ component MenuBody {
             vertical-alignment: center;
         }
     }
-    if root.scroll-from >= 0: ScrollView {
+    if root.scroll-from >= 0: Scroll {
         x: 0px;
         y: root.top;
         width: root.width;
         height: root.scroll-h;
-        viewport-width: root.width;
-        viewport-height: bottom.y + bottom.height - root.top;
+        content-width: root.width;
+        content-height: bottom.y + bottom.height - root.top;
         for r[i] in root.rows: Rectangle {
             y: r.y - root.top;
             x: 0px;
@@ -804,13 +803,13 @@ export component PrsPage inherits Rectangle {
                 }
             }
         }
-        ScrollView {
+        Scroll {
             x: 0;
             y: root.list-top;
             width: root.list-w;
             height: root.height - root.list-top;
-            viewport-width: root.list-w;
-            viewport-height: content.preferred-height;
+            content-width: root.list-w;
+            content-height: content.preferred-height;
             content := VerticalLayout {
                 x: 0px;
                 y: 0px;

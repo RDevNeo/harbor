@@ -90,6 +90,22 @@ Per tab:
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
 
+## Scrolling (every tab)
+
+One scrollbar everywhere: a thin thumb over the content's right edge (4px, 6px under the pointer, radius = half its
+width, `Theme.fg` at 22–42%), no track and no arrows. It shows while the content scrolls and about a second after, or
+while the pointer is on the right edge, where it can be dragged (a click beside it jumps there). Shared in
+`widgets.slint` (re-exported by `ds.slint`):
+
+- **Scroll**: a scrolling page or list, in place of std-widgets' `ScrollView` (same `content-*`, `visible-*`,
+  `scrolled`; its own bars off, the thumb over it). Persons (sidebar, All people, chat, panel), Settings, PRs, the PR
+  page, the palette, Add project.
+- **ScrollThumb**: the thumb alone, laid over a `Flickable` or a `ListView` (bars off) that a page drives itself:
+  Projects' chat and sidebar, Routine's screens and Coach, a PR's code (a ListView: only the rows on screen exist).
+
+No tab imports `ScrollView` or shows a stock scrollbar. Small strips (chips, the composer's field, popover lists) keep
+a bare `Flickable` with no thumb.
+
 ## Text input (every tab)
 
 Tabs never handle printable keys themselves. Every text field is a shared one: `Input` and `SearchField` (one line,

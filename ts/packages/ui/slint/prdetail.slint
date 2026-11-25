@@ -3,10 +3,10 @@ import "fonts/Geist-Medium.ttf";
 import "fonts/Geist-SemiBold.ttf";
 import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
-import { ListView, ScrollView } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, BtnSize, Card, Glyph, Separator, Spinner, TipArea, Ui, Variant } from "widgets.slint";
+import { Btn, BtnSize, Card, Glyph, Separator, Spinner, TipArea, Ui, Variant, Scroll, ScrollThumb } from "widgets.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 import { DetailHeader, DetailTab, TabActKind } from "listdetail.slint";
 
@@ -739,7 +739,7 @@ export component PrDetailPanel inherits Rectangle {
                 text: "Loading pull request…";
             }
         }
-        if root.head.has-full && root.tab == "summary": ScrollView {
+        if root.head.has-full && root.tab == "summary": Scroll {
             vertical-stretch: 1;
             VerticalLayout {
                 padding-left: 20px;
@@ -942,7 +942,7 @@ export component PrDetailPanel inherits Rectangle {
                 }
             }
         }
-        if root.head.has-full && root.tab == "timeline": ScrollView {
+        if root.head.has-full && root.tab == "timeline": Scroll {
             vertical-stretch: 1;
             VerticalLayout {
                 padding-left: 20px;
@@ -1019,9 +1019,27 @@ export component PrDetailPanel inherits Rectangle {
                 color: Theme.subtle;
             }
         }
-        if root.head.has-full && root.tab == "code" && root.code-state == "lines": ListView {
-            for l in root.lines: CodeRow {
-                line: l;
+        // ListView keeps only the rows on screen (a diff can be long): its own bars off, Hub's thumb over it.
+        if root.head.has-full && root.tab == "code" && root.code-state == "lines": Rectangle {
+            vertical-stretch: 1;
+            lines := ListView {
+                width: parent.width;
+                height: parent.height;
+                vertical-scrollbar-policy: always-off;
+                horizontal-scrollbar-policy: always-off;
+                for l in root.lines: CodeRow {
+                    line: l;
+                }
+            }
+            ScrollThumb {
+                x: parent.width - self.width;
+                height: parent.height;
+                content-y: lines.content-y;
+                content-height: lines.content-height;
+                visible-height: lines.visible-height;
+                scroll-to(y) => {
+                    lines.content-y = y;
+                }
             }
         }
     }
