@@ -384,31 +384,20 @@ final class PersonsUi {
         return avatar(a, hub, s(person, "avatar"), s(person, "initials"), color(s(person, "color"), Ui.G500), size, presence);
     }
 
-    /** A count in a small round pill (Person Hub's: the text colour, the page's inside). */
-    static TextView pill(Context c, int n, int fill, int fg) {
-        TextView t = Ui.bold(c, n > 99 ? "99+" : String.valueOf(n), 11, fg);
-        t.setGravity(Gravity.CENTER);
-        t.setIncludeFontPadding(false);
-        t.setMinWidth(Ui.dp(18));
-        t.setPadding(Ui.dp(5), Ui.dp(2), Ui.dp(5), Ui.dp(2));
-        t.setBackground(Ui.round(fill, 0, 9));
-        t.setContentDescription(n + " unread");
-        return t;
-    }
-
     /** One person as Person Hub's PersonRow: avatar with presence, bold name + channel mark (+ a
      *  crown for a store's owner), the status line under it coloured by its tone, and on the right
      *  "typing…" or the time of the last message over the unread count. */
     static LinearLayout row(Activity a, Hub hub, JSONObject person, String section, boolean owner) {
         JSONObject info = info(person, section);
         LinearLayout r = Ui.row(a);
+        // Ds.row's look (press fill, radius), two lines tall for the avatar and the status line.
         r.setMinimumHeight(Ui.dp(60));
         r.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(12), Ui.dp(8));
-        r.setBackground(Ui.press(0, 0, 14));
+        r.setBackground(Ui.press(0, 0, Ds.ROW_RADIUS));
         r.addView(avatar(a, hub, person, 40, s(info, "presence")), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)), 0, 0, 12, 0));
         LinearLayout mid = Ui.col(a);
         LinearLayout top = Ui.row(a);
-        TextView name = Ui.subtitle(Ui.bold(a, s(person, "name"), 15, Ui.FG));
+        TextView name = Ds.rowTitle(a, s(person, "name"), true, Ui.FG);
         top.addView(name, new LinearLayout.LayoutParams(-2, -2, 0));
         String ch = s(info, "channel");
         if (!ch.isEmpty()) top.addView(channel(a, ch, 14), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 6, 0, 0, 0));
@@ -429,7 +418,7 @@ final class PersonsUi {
         if (!typing.isEmpty()) end.addView(Ui.text(a, "recording".equals(typing) ? "audio…" : "typing…", 12, Ui.BLUE));
         else if (last > 0) end.addView(Ui.text(a, shortAgo(last), 12, Ui.G600));
         int unread = info.optInt("unread");
-        if (unread > 0) end.addView(pill(a, unread, Ui.INK, Ui.ON_INK), Ui.margins(Ui.wrap(), 0, 3, 0, 0));
+        if (unread > 0) end.addView(Ds.pill(a, unread, false), Ui.margins(Ui.wrap(), 0, 3, 0, 0));
         if (end.getChildCount() > 0) r.addView(end, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
         return r;
     }

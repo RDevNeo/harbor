@@ -61,10 +61,15 @@ public class Routine extends Base {
         section = Ui.prefs(this).getString("routine_section", "today");
         hub = Tabs.hub(this);
         LinearLayout col = Ui.col(this);
+        // The tab's title, as Projects' drawer ("Hub") and Persons have theirs (Ds.pageTitle).
+        LinearLayout top = Ui.row(this);
+        top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(2));
+        top.addView(Ds.pageTitle(this, "Routine"), Ui.weight());
+        col.addView(top, Ui.fill());
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         sections = Ui.row(this);
-        sections.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(6));
+        sections.setPadding(Ui.dp(12), Ui.dp(4), Ui.dp(12), Ui.dp(6));
         hs.addView(sections);
         col.addView(hs, Ui.fill());
         scroll = new ScrollView(this);
@@ -145,13 +150,7 @@ public class Routine extends Base {
         for (int i = 0; i < SECTIONS.length; i++) {
             final String s = SECTIONS[i];
             boolean on = s.equals(section);
-            LinearLayout chip = Ui.row(this);
-            chip.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(14), Ui.dp(8));
-            chip.setBackground(Ui.press(on ? Ui.G200 : 0, 0, 18));
-            chip.addView(Ui.icon(this, GLYPHS[i], 16, on ? Ui.FG : Ui.G700));
-            TextView t = on ? Ui.bold(this, LABELS[i], 14, Ui.FG) : Ui.text(this, LABELS[i], 14, Ui.G700);
-            t.setPadding(Ui.dp(6), 0, 0, 0);
-            chip.addView(t);
+            LinearLayout chip = Ds.iconChip(this, GLYPHS[i], LABELS[i], on, null);
             chip.setOnClickListener(v -> {
                 section = s;
                 Ui.prefs(this).edit().putString("routine_section", s).apply();
@@ -192,42 +191,17 @@ public class Routine extends Base {
     }
 
     private void message(String s) {
-        TextView t = Ui.text(this, s, 15, Ui.G700);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(Ui.dp(12), Ui.dp(60), Ui.dp(12), 0);
-        body.addView(t, Ui.fill());
-    }
-
-    private TextView heading(String s) {
-        TextView t = Ui.bold(this, s, 26, Ui.FG);
-        t.setPadding(0, Ui.dp(4), 0, Ui.dp(10));
-        return t;
+        body.addView(Ds.empty(this, s), Ui.fill());
     }
 
     private static int color(String hex) {
         try { return Color.parseColor(hex); } catch (Exception e) { return 0xfff97316; }
     }
 
-    private LinearLayout card() {
-        LinearLayout c = Ui.col(this);
-        c.setBackground(Ui.round(Ui.CARD, Ui.LINE, 16));
-        c.setPadding(Ui.dp(14), Ui.dp(12), Ui.dp(14), Ui.dp(12));
-        return c;
-    }
-
     private void addCard(View v) {
         LinearLayout.LayoutParams lp = Ui.fill();
         lp.bottomMargin = Ui.dp(10);
         body.addView(v, lp);
-    }
-
-    private TextView chip(String label, boolean on, View.OnClickListener l) {
-        TextView t = Ui.bold(this, label, 13, on ? Ui.ON_INK : Ui.FG);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
-        t.setBackground(Ui.press(on ? Ui.INK : Ui.G200, 0, 18));
-        t.setOnClickListener(l);
-        return t;
     }
 
     private void addTo(LinearLayout row, View v) {
@@ -286,7 +260,7 @@ public class Routine extends Base {
         if (t == null) return;
         LinearLayout hero = Ui.row(this);
         LinearLayout left = Ui.col(this);
-        left.addView(heading("Today"));
+        left.addView(Ds.screenTitle(this, "Today"));
         if (!t.optString("walk").isEmpty()) {
             LinearLayout w = Ui.row(this);
             w.addView(Ui.icon(this, "", 15, Ui.G700));
@@ -305,13 +279,13 @@ public class Routine extends Base {
         body.addView(hero, hl);
         String empty = t.optString("empty");
         if ("first".equals(empty)) {
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             c.setGravity(Gravity.CENTER);
             c.addView(Ui.text(this, "Add your first daily goal to get started.", 15, Ui.G700));
             c.addView(Ui.button(this, "Add a goal", true, v -> { section = "goals"; drawSections(); goalForm(null); }));
             addCard(c);
         } else if ("rest".equals(empty)) {
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             c.addView(Ui.text(this, "Rest day — nothing scheduled today.", 15, Ui.G700));
             addCard(c);
         }
@@ -323,7 +297,7 @@ public class Routine extends Base {
         final String id = g.optString("id");
         int tint = color(g.optString("hex"));
         boolean done = g.optBoolean("done");
-        LinearLayout c = card();
+        LinearLayout c = Ds.card(this);
         LinearLayout top = Ui.row(this);
         top.addView(ring((float) g.optDouble("frac"), tint, done ? Ui.I_CHECK : g.optString("glyph"), dense ? 38 : 46));
         LinearLayout info = Ui.col(this);
@@ -376,15 +350,15 @@ public class Routine extends Base {
                 TextView sub = Ui.text(this, live != null && id.equals(live.goal) ? String.format(java.util.Locale.ROOT, "%.2f km", live.distM / 1000) : g.optString("sub"), 12, Ui.G700);
                 addTo(row, sub);
             }
-            if ("idle".equals(session)) addTo(row, chip("▶ Start", false, v -> { if (ride) startRide(id); else act("timer", "goal", id, "cmd", "start"); }));
-            else if ("running".equals(session)) addTo(row, chip("❚❚ Pause", true, v -> { if (ride) RideService.pause(this); else act("timer", "goal", id, "cmd", "pause"); draw(); }));
-            else addTo(row, chip("▶ Resume", false, v -> { if (ride) RideService.resume(this); else act("timer", "goal", id, "cmd", "resume"); draw(); }));
-            if (!"idle".equals(session)) addTo(row, chip("■", false, v -> { if (ride) RideService.stop(this); else act("timer", "goal", id, "cmd", "stop"); }));
+            if ("idle".equals(session)) addTo(row, Ds.chip(this, "▶ Start", false, v -> { if (ride) startRide(id); else act("timer", "goal", id, "cmd", "start"); }));
+            else if ("running".equals(session)) addTo(row, Ds.chip(this, "❚❚ Pause", true, v -> { if (ride) RideService.pause(this); else act("timer", "goal", id, "cmd", "pause"); draw(); }));
+            else addTo(row, Ds.chip(this, "▶ Resume", false, v -> { if (ride) RideService.resume(this); else act("timer", "goal", id, "cmd", "resume"); draw(); }));
+            if (!"idle".equals(session)) addTo(row, Ds.chip(this, "■", false, v -> { if (ride) RideService.stop(this); else act("timer", "goal", id, "cmd", "stop"); }));
         }
         JSONArray quick = g.optJSONArray("quick");
         for (int i = 0; quick != null && i < quick.length(); i++) {
             final JSONObject qk = quick.optJSONObject(i);
-            addTo(row, chip(qk.optString("label"), false, v -> act("log", "goal", id, "amount", qk.optInt("amount"))));
+            addTo(row, Ds.chip(this, qk.optString("label"), false, v -> act("log", "goal", id, "amount", qk.optInt("amount"))));
         }
         View gap = new View(this);
         row.addView(gap, Ui.weight());
@@ -393,7 +367,7 @@ public class Routine extends Base {
             undo.setEnabled(g.optBoolean("canUndo"));
             row.addView(undo);
         }
-        if (id.equals(confirmReset)) row.addView(chip("Reset?", false, v -> { confirmReset = ""; act("reset", "goal", id); }));
+        if (id.equals(confirmReset)) row.addView(Ds.chip(this, "Reset?", false, v -> { confirmReset = ""; act("reset", "goal", id); }));
         else {
             TextView reset = Ui.iconButton(this, "", g.optBoolean("canReset") ? Ui.G700 : Ui.G300, v -> { confirmReset = id; draw(); });
             reset.setEnabled(g.optBoolean("canReset"));
@@ -431,21 +405,21 @@ public class Routine extends Base {
     private void drawHistory() {
         JSONObject h = view.optJSONObject("history");
         if (h == null) return;
-        body.addView(heading("History"));
+        body.addView(Ds.screenTitle(this, "History"));
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout segs = Ui.row(this);
         JSONArray sa = h.optJSONArray("segs");
         for (int i = 0; sa != null && i < sa.length(); i++) {
             final JSONObject s = sa.optJSONObject(i);
-            addTo(segs, chip(s.optString("label"), s.optString("id").equals(h.optString("sel")), v -> { hsel = s.optString("id"); load(); }));
+            addTo(segs, Ds.chip(this, s.optString("label"), s.optString("id").equals(h.optString("sel")), v -> { hsel = s.optString("id"); load(); }));
         }
         hs.addView(segs);
         LinearLayout.LayoutParams sl = Ui.fill();
         sl.bottomMargin = Ui.dp(10);
         body.addView(hs, sl);
         if (h.optBoolean("walkView")) {
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             LinearLayout tot = Ui.row(this);
             JSONArray wt = h.optJSONArray("walkTotals");
             String[] under = {"this week", "today", "a day"};
@@ -483,7 +457,7 @@ public class Routine extends Base {
         JSONArray st = h.optJSONArray("streaks");
         for (int i = 0; st != null && i < st.length(); i++) {
             JSONObject s = st.optJSONObject(i);
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             LinearLayout r = Ui.row(this);
             r.addView(Ui.icon(this, s.optString("glyph"), 18, color(s.optString("hex"))));
             LinearLayout info = Ui.col(this);
@@ -500,7 +474,7 @@ public class Routine extends Base {
             addCard(c);
         }
         // The heatmap: 8 weeks as columns, Mon..Sun as rows
-        LinearLayout c = card();
+        LinearLayout c = Ds.card(this);
         int heat = h.optString("heatHex").isEmpty() ? Ui.GREEN : color(h.optString("heatHex"));
         LinearLayout grid = Ui.row(this);
         LinearLayout labels = Ui.col(this);
@@ -532,7 +506,7 @@ public class Routine extends Base {
         c.addView(Ui.text(this, h.optString("fullDays"), 12, Ui.G700));
         addCard(c);
         if (!h.optString("ridesTotal").isEmpty()) {
-            LinearLayout rc = card();
+            LinearLayout rc = Ds.card(this);
             rc.addView(Ui.bold(this, h.optString("ridesWeek") + " km this week · " + h.optString("ridesTotal") + " km total", 14, Ui.FG));
             JSONArray rides = h.optJSONArray("rides");
             for (int i = 0; rides != null && i < rides.length(); i++) {
@@ -546,28 +520,28 @@ public class Routine extends Base {
     // ---- Sleep ----
 
     private void drawSleep() {
-        body.addView(heading("Sleep"));
+        body.addView(Ds.screenTitle(this, "Sleep"));
         TextView now = Ui.button(this, "Going to sleep now", true, v -> wakeChoices());
         LinearLayout.LayoutParams nl = Ui.fill();
         nl.bottomMargin = Ui.dp(12);
         body.addView(now, nl);
         if (!lastAlarm.isEmpty()) {
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             LinearLayout r = Ui.row(this);
             r.addView(Ui.icon(this, Ui.I_ALARM, 20, Ui.FG));
             TextView t = Ui.bold(this, "  " + lastAlarm, 16, Ui.FG);
             r.addView(t, Ui.weight());
-            r.addView(chip("Open Clock", false, v -> {
+            r.addView(Ds.chip(this, "Open Clock", false, v -> {
                 try { startActivity(new Intent(AlarmClock.ACTION_SHOW_ALARMS)); } catch (Exception e) { Ui.toast(this, "No Clock app"); }
             }));
             c.addView(r);
             addCard(c);
         }
-        LinearLayout c = card();
+        LinearLayout c = Ds.card(this);
         LinearLayout r = Ui.row(this);
         r.addView(Ui.bold(this, "Wake up by", 16, Ui.FG), Ui.weight());
         final String wakeBy = view.optString("wakeBy", "07:00");
-        r.addView(chip(wakeBy, false, v -> {
+        r.addView(Ds.chip(this, wakeBy, false, v -> {
             String[] hm = wakeBy.split(":");
             new TimePickerDialog(this, (tp, hh, mm) -> act("sleep", "wakeBy", String.format(java.util.Locale.ROOT, "%02d:%02d", hh, mm)),
                     Integer.parseInt(hm[0]), Integer.parseInt(hm[1]), true).show();
@@ -622,10 +596,10 @@ public class Routine extends Base {
         JSONObject g = view.optJSONObject("goals");
         if (g == null) return;
         LinearLayout head = Ui.row(this);
-        head.addView(heading("Goals"), Ui.weight());
-        head.addView(chip("+ New", true, v -> goalForm(null)));
+        head.addView(Ds.screenTitle(this, "Goals"), Ui.weight());
+        head.addView(Ds.chip(this, "+ New", true, v -> goalForm(null)));
         body.addView(head, Ui.fill());
-        LinearLayout plan = card();
+        LinearLayout plan = Ds.card(this);
         LinearLayout pr = Ui.row(this);
         pr.addView(Ui.text(this, "Plan  ", 14, Ui.G700));
         pr.addView(Ui.bold(this, g.optString("planLabel"), 15, Ui.FG), Ui.weight());
@@ -637,7 +611,7 @@ public class Routine extends Base {
         for (int i = 0; rows != null && i < rows.length(); i++) {
             final JSONObject r = rows.optJSONObject(i);
             final String id = r.optString("id");
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             LinearLayout row = Ui.row(this);
             row.addView(Ui.icon(this, r.optString("glyph"), 18, color(r.optString("hex"))));
             LinearLayout info = Ui.col(this);
@@ -646,7 +620,7 @@ public class Routine extends Base {
             info.addView(Ui.text(this, r.optString("line"), 12, Ui.G700));
             row.addView(info, Ui.weight());
             row.addView(Ui.iconButton(this, "", Ui.G700, v -> goalForm(id)));
-            if (id.equals(confirmDel)) row.addView(chip("Delete?", false, v -> { confirmDel = ""; act("delete_goal", "id", id); }));
+            if (id.equals(confirmDel)) row.addView(Ds.chip(this, "Delete?", false, v -> { confirmDel = ""; act("delete_goal", "id", id); }));
             else row.addView(Ui.iconButton(this, Ui.I_TRASH, Ui.G700, v -> { confirmDel = id; draw(); }));
             c.addView(row);
             addCard(c);
@@ -670,12 +644,12 @@ public class Routine extends Base {
     }
 
     private void drawPicker() {
-        body.addView(heading("Choose a plan"));
+        body.addView(Ds.screenTitle(this, "Choose a plan"));
         JSONObject g = view.optJSONObject("goals");
         JSONArray plans = g == null ? null : g.optJSONArray("plans");
         for (int i = 0; plans != null && i < plans.length(); i++) {
             final JSONObject p = plans.optJSONObject(i);
-            LinearLayout c = card();
+            LinearLayout c = Ds.card(this);
             c.addView(Ui.bold(this, p.optString("name"), 16, Ui.FG));
             c.addView(Ui.text(this, p.optString("meta"), 13, Ui.G700));
             c.setBackground(Ui.press(Ui.CARD, Ui.LINE, 16));
@@ -725,7 +699,7 @@ public class Routine extends Base {
             String[] tl = {"Count", "Water", "Timer", "GPS ride"};
             for (int i = 0; i < tl.length; i++) {
                 final int k = i;
-                addTo(types, chip(tl[i], type[0] == i, v -> { type[0] = k; drawTypes[0].run(); }));
+                addTo(types, Ds.chip(this, tl[i], type[0] == i, v -> { type[0] = k; drawTypes[0].run(); }));
             }
             targetLabel.setText(type[0] >= 2 ? "Daily target (min)" : type[0] == 1 ? "Daily target (ml)" : "Daily target");
             unit.setVisibility(type[0] == 0 ? View.VISIBLE : View.GONE);
@@ -851,7 +825,7 @@ public class Routine extends Base {
     // ---- Coach ----
 
     private void drawCoach() {
-        body.addView(heading("Coach"));
+        body.addView(Ds.screenTitle(this, "Coach"));
         if (coach == null) { body.addView(Ui.text(this, "Loading…", 14, Ui.G700)); return; }
         JSONArray msgs = coach.optJSONArray("messages");
         if (!coach.optBoolean("ready")) body.addView(Ui.text(this, "Add the “" + coach.optString("project") + "” project in Projects: the Coach is a chat there.", 13, Ui.G700));
@@ -875,7 +849,7 @@ public class Routine extends Base {
                 final JSONObject c = chips.optJSONObject(j);
                 LinearLayout cr = Ui.row(this);
                 cr.addView(Ui.text(this, (c.optBoolean("ok") ? "✓ " : "✕ ") + c.optString("label") + (c.optBoolean("undone") ? " (undone)" : ""), 12, c.optBoolean("ok") ? Ui.GREEN : Ui.RED));
-                if (c.optBoolean("canUndo")) addTo(cr, chip("Undo", false, v -> coachUndo(c.optString("key"))));
+                if (c.optBoolean("canUndo")) addTo(cr, Ds.chip(this, "Undo", false, v -> coachUndo(c.optString("key"))));
                 body.addView(cr, Ui.fill());
             }
         }

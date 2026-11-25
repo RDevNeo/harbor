@@ -51,7 +51,7 @@ final class PersonsHome {
         view.setBackgroundColor(Ui.BG);
         LinearLayout top = Ui.row(a);
         top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(6));
-        top.addView(Ui.title(a, "Persons", 28), Ui.weight());
+        top.addView(Ds.pageTitle(a, "Persons"), Ui.weight());
         view.addView(top, Ui.fill());
         error = Ui.text(a, "", 13, Ui.RED);
         error.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(6));
@@ -265,25 +265,15 @@ final class PersonsHome {
     private View itemView(Item it) {
         switch (it.kind) {
             case ALL: {
-                LinearLayout r = Ui.listRow(a, Ui.I_USERS, Ui.FG, "All people", Ui.FG);
-                r.setMinimumHeight(Ui.dp(48));
-                r.setBackground(Ui.press(0, 0, 14));
-                if (it.count > 0) r.addView(Ui.text(a, String.valueOf(it.count), 13, Ui.G600));
+                LinearLayout r = Ds.row(a, false);
+                r.addView(Ui.icon(a, Ui.I_USERS, 18, Ui.FG), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 14, 0));
+                r.addView(Ds.rowTitle(a, "All people", false, Ui.FG), Ui.weight());
+                if (it.count > 0) r.addView(Ds.meta(a, String.valueOf(it.count)));
                 r.setOnClickListener(v -> p.openList());
-                return padded(r, 0);
+                return Ds.inset(a, r, 0);
             }
             case HEAD: {
-                LinearLayout r = Ui.row(a);
-                r.setMinimumHeight(Ui.dp(40));
-                r.setPadding(Ui.dp(12), Ui.dp(14), Ui.dp(12), Ui.dp(4));
-                r.setBackground(Ui.press(0, 0, 12));
-                r.addView(Ui.bold(a, it.text, 13, Ui.G700));
-                r.addView(Ui.icon(a, it.open ? Ui.I_DOWN : Ui.I_RIGHT, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 4, 0, 0, 0));
-                r.addView(new View(a), Ui.weight());
-                if (it.unread > 0) r.addView(PersonsUi.pill(a, it.unread, Ui.BLUE, 0xffffffff));
-                r.setOnClickListener(v -> { p.flip("closed", it.key); render(); });
-                r.setContentDescription(it.text + (it.open ? ", open" : ", folded"));
-                return padded(r, 0);
+                return Ds.inset(a, Ds.sectionHead(a, it.text, it.open, it.unread, v -> { p.flip("closed", it.key); render(); }), 0);
             }
             case CHIPS: {
                 HorizontalScrollView hs = new HorizontalScrollView(a);
@@ -299,9 +289,7 @@ final class PersonsHome {
                 JSONObject cn = it.conns.get(0);
                 String kind = PersonsUi.s(cn, "kind"), cid = PersonsUi.s(cn, "id"), note = PersonsUi.s(cn, "error");
                 boolean dc = "discord".equals(kind);
-                LinearLayout c = Ui.col(a);
-                c.setBackground(Ui.round(Ui.CARD, Ui.LINE, 16));
-                c.setPadding(Ui.dp(14), Ui.dp(12), Ui.dp(14), Ui.dp(12));
+                LinearLayout c = Ds.card(a);
                 LinearLayout t = Ui.row(a);
                 t.addView(PersonsUi.channel(a, kind, 18), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 0, 0, 8, 0));
                 t.addView(Ui.bold(a, dc ? "Sign in to Discord" : "Link WhatsApp", 15, Ui.FG));
@@ -333,19 +321,17 @@ final class PersonsHome {
                 return t;
             }
             case STORE: {
-                LinearLayout r = Ui.row(a);
-                r.setMinimumHeight(Ui.dp(48));
-                r.setPadding(Ui.dp(8), Ui.dp(6), Ui.dp(14), Ui.dp(6));
-                r.setBackground(Ui.press(0, 0, 14));
-                r.addView(Ui.icon(a, it.open ? Ui.I_DOWN : Ui.I_RIGHT, 15, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 6, 0));
-                r.addView(PersonsUi.storeBadge(a, p.hub, it.store, 26), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(26), Ui.dp(26)), 0, 0, 10, 0));
+                LinearLayout r = Ds.row(a, false);
+                r.setPadding(Ui.dp(4), Ui.dp(6), Ui.dp(14), Ui.dp(6));
+                r.addView(Ds.chevron(a, it.open), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)), 0, 0, 6, 0));
+                r.addView(PersonsUi.storeBadge(a, p.hub, it.store, 22), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)), 0, 0, 10, 0));
                 String name = PersonsUi.s(it.store, "name");
-                r.addView(Ui.subtitle(Ui.text(a, name, 15, Ui.FG)), Ui.weight());
-                r.addView(Ui.text(a, String.valueOf(it.count), 13, Ui.G600));
+                r.addView(Ds.rowTitle(a, name, true, Ui.FG), Ui.weight());
+                r.addView(Ds.meta(a, String.valueOf(it.count)));
                 String sid = PersonsUi.s(it.store, "id");
                 r.setOnClickListener(v -> { p.flip("stores_open", sid); render(); });
                 r.setContentDescription(name + ", " + it.count + " people");
-                return padded(r, 0);
+                return Ds.inset(a, r, 0);
             }
             case PERSON: {
                 LinearLayout r = PersonsUi.row(a, p.hub, it.person, it.section, it.owner);
@@ -353,29 +339,13 @@ final class PersonsHome {
                 String id = PersonsUi.s(it.person, "id");
                 r.setOnClickListener(v -> p.openChat(id, it.section));
                 r.setOnLongClickListener(v -> { menu(p, it.person, it.section, it.settled); return true; });
-                return padded(r, it.indent ? 22 : 0);
+                return Ds.inset(a, r, it.indent ? 22 : 0);
             }
             case FOLD: {
-                LinearLayout r = Ui.row(a);
-                r.setMinimumHeight(Ui.dp(40));
-                r.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
-                r.setBackground(Ui.press(0, 0, 12));
-                r.addView(Ui.icon(a, Ui.I_ARCHIVE, 15, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 8, 0));
-                r.addView(Ui.text(a, "Settled (" + it.count + ")", 14, Ui.G700));
-                r.addView(Ui.icon(a, it.open ? Ui.I_DOWN : Ui.I_RIGHT, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 4, 0, 0, 0));
-                r.setOnClickListener(v -> { p.flip("settled_open", it.section); render(); });
-                return padded(r, 0);
+                return Ds.foldBar(a, "Settled (" + it.count + ")", it.open, v -> { p.flip("settled_open", it.section); render(); });
             }
         }
         return new View(a);
-    }
-
-    /** A row 8 dp in from the edges (its pressed fill rounded), `indent` more on the left. */
-    private View padded(View r, float indent) {
-        LinearLayout w = Ui.col(a);
-        w.setPadding(Ui.dp(8 + indent), 0, Ui.dp(8), 0);
-        w.addView(r, Ui.fill());
-        return w;
     }
 
     /** A connection: its mark, "Discord · Connected", a dot by status; a tap says more. */
