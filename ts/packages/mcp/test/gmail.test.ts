@@ -307,7 +307,7 @@ test("a message and a thread are shown as text", async () => {
 test("an attachment is saved to a file", async () => {
   const r = await call("get_attachment", { message_id: "m1", attachment_id: "a1", filename: "../x.txt" });
   expect(r.ok).toBe(true);
-  const path = join(dir, "harbor-gmail", "_x.txt");
+  const path = join(dir, "hub-gmail", "_x.txt");
   expect(r.text).toBe(`Saved _x.txt (10 B) to ${path}`);
   expect(readFileSync(path, "utf8")).toBe("file bytes");
   const to = join(dir, "chosen.bin");

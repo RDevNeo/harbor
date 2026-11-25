@@ -174,7 +174,7 @@ test("a_subagent_gets_its_own_worktree_and_only_the_lead_has_the_tools", async (
   // A second one of that name gets the next free branch.
   expect((await h.engine.host.makeWorktree?.(lead, "hub/tests", ""))?.branch).toBe("hub/tests-2");
   commit(made?.dir ?? "", "t.txt", "t\n");
-  expect(await tool("merge_branch", { branch: "hub/tests", into: "main" })).toContain("Merged harbor/tests into main");
+  expect(await tool("merge_branch", { branch: "hub/tests", into: "main" })).toContain("Merged hub/tests into main");
   // Back to sharing the lead's folder.
   expect(await tool("switch_branch", { agent: "tests", worktree: "checkout" })).toContain(`Agent tests works in ${repoDir} now`);
   expect(h.store.get(`worktree:${sub.id}`)).toBe("");

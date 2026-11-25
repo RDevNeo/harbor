@@ -44,7 +44,7 @@ test("fetched once, then from the cache folder", async () => {
   };
   const url = "https://img.example/up/u1-1.jpg";
   expect(await p.load(url, fetcher)).not.toBeNull();
-  expect(readdirSync(join(data, "harbor", "photos")).length).toBe(1);
+  expect(readdirSync(join(data, "hub", "photos")).length).toBe(1);
   expect(await p.load(url, fetcher)).not.toBeNull();
   expect(asked).toBe(1);
 });
@@ -78,5 +78,5 @@ test("made-up photos for shots are drawn, never fetched", async () => {
     throw new Error("fetched");
   });
   expect(img?.width).toBe(p.SIZE);
-  expect(existsSync(join(data, "harbor", "photos"))).toBe(false);
+  expect(existsSync(join(data, "hub", "photos"))).toBe(false);
 });

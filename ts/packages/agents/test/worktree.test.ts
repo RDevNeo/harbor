@@ -74,7 +74,7 @@ test("a_new_worktree_says_its_branch_and_base", async () => {
   let m = await wt.makeIn(root, d, "", "Fix the login bug", null);
   expect([m.branch, m.base]).toEqual(["hub/fix-login-bug", "main"]);
   const [text, detail] = wt.madeNotice(m, "Working in a new worktree");
-  expect(text).toBe(`Working in a new worktree · ${wt.madeName(m)} on branch harbor/fix-login-bug (from main)`);
+  expect(text).toBe(`Working in a new worktree · ${wt.madeName(m)} on branch hub/fix-login-bug (from main)`);
   expect(detail).toContain("Branch: harbor/fix-login-bug (from main)");
   m = await wt.makeIn(root, d, "feature/login", "", null);
   expect(m.base).toBe("feature/login");

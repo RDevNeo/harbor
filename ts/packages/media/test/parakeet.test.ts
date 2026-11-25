@@ -23,7 +23,7 @@ describe("the model files", () => {
     expect(parts.filter((p) => p.sha256 !== "").every((p) => /^[0-9a-f]{64}$/.test(p.sha256))).toBe(true);
     expect(parakeet.size()).toBe(671_122_626);
     expect(parakeet.modelMb()).toBe(671);
-    expect(parakeet.dir()).toBe(join(box.data, "harbor", "parakeet", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"));
+    expect(parakeet.dir()).toBe(join(box.data, "hub", "parakeet", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"));
   });
 
   test("count as installed only when every file has its size", () => {

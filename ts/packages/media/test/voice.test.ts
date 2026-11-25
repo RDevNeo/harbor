@@ -112,8 +112,8 @@ test("the external whisper is run with the dictionary as its prompt", async () =
   expect(voice.engine()).toEqual({ kind: "cli", bin });
   const samples = new Int16Array(16000);
   await expect(voice.whisper(samples, "pt")).rejects.toThrow("put a whisper.cpp ggml model (ggml-base.bin) in");
-  mkdirSync(join(box.data, "harbor", "whisper"), { recursive: true });
-  const model = join(box.data, "harbor", "whisper", "ggml-base.bin");
+  mkdirSync(join(box.data, "hub", "whisper"), { recursive: true });
+  const model = join(box.data, "hub", "whisper", "ggml-base.bin");
   writeFileSync(model, "");
   truncateSync(model, 2_000_000);
   expect(await voice.whisper(samples, "pt", ["SpokPay", "Hub"])).toBe("Olá do whisper.");
@@ -128,8 +128,8 @@ test("the external whisper is run with the dictionary as its prompt", async () =
 test("a failing external whisper says why", async () => {
   const dir = tmp("ext-fail");
   process.env.HARBOR_WHISPER = script(dir, "whisper-cli", `echo "first" >&2\necho "boom: no model" >&2\nexit 3`);
-  mkdirSync(join(box.data, "harbor", "whisper"), { recursive: true });
-  const model = join(box.data, "harbor", "whisper", "ggml-tiny.bin");
+  mkdirSync(join(box.data, "hub", "whisper"), { recursive: true });
+  const model = join(box.data, "hub", "whisper", "ggml-tiny.bin");
   writeFileSync(model, "");
   truncateSync(model, 2_000_000);
   const e = await voice.whisper(new Int16Array(16000), "en").catch((x: unknown) => x);

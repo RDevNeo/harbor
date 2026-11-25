@@ -323,7 +323,7 @@ test("Codex: with a grant, stdio servers are the bridge's and Codex gets their U
 
 test("Codex: an app whose name the user's own stdio entry has stays a stdio entry", async () => {
   mkdirSync(join(root, ".codex"));
-  writeFileSync(join(root, ".codex", "config.toml"), '[mcp_servers.harbor]\ncommand = "/bin/other"\n');
+  writeFileSync(join(root, ".codex", "config.toml"), '[mcp_servers.hub]\ncommand = "/bin/other"\n');
   const lazy: mcp.CodexLazy = { servers: {}, base: "http://127.0.0.1:9/", tokenVar: "T" };
   const team: Json = { type: "stdio", command: "/bin/harbor", args: ["mcp"], env: { HARBOR_SOCK: "/run/h.sock" } };
   const m = overrides(await codexArgs(7, [["harbor", team]], lazy));
@@ -410,7 +410,7 @@ test("on a bridge grant, stdio servers become its URLs and only the team server 
     expect(m.discord).toEqual({ type: "http", url: "http://127.0.0.1:47940/tok/discord" });
     expect(m.harbor).toEqual({ type: "http", url: "http://127.0.0.1:47940/tok/harbor" });
     expect(lazy.servers.discord).toMatchObject({ args: ["app", "discord"], env: { HARBOR_CHAT_ID: "42" } });
-    expect(lazy.servers.harbor).toEqual(team[1]);
+    expect(lazy.servers.hub).toEqual(team[1]);
     // Entries Claude Code expands itself, and http ones, stay as they are.
     expect(m.mine).toEqual(own[1]);
     expect(m.web).toEqual(web[1]);

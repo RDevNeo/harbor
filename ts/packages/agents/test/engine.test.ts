@@ -680,7 +680,7 @@ describe("switching a subagent's account", () => {
     expect(e.limits.paused.has(sub.id)).toBe(false);
     // The session came along: resumable under the new account.
     expect(existsSync(join(dirB, "projects", "-some-project", `${sub.sessionId}.jsonl`))).toBe(true);
-    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [harbor] You're on another account now.")));
+    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [hub] You're on another account now.")));
     expect(e.transcript(sub.id).items.some((i) => i.kind === "notice" && i.text === "Switched to Claude · FS from Claude · CL (switched by the lead)")).toBe(true);
     await until("its end", () => !e.running(sub.id));
     // Its report wakes the lead: that turn ends before the store closes.
@@ -698,7 +698,7 @@ describe("switching a subagent's account", () => {
     store.set("limit_switch_accounts", JSON.stringify(["claude3"]));
     e.trigger(sub.id, "hit the limit", false);
     await until("the move", () => e.chat(sub.id)?.account === "claude3", 10_000);
-    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [harbor] You're on another account now.")));
+    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [hub] You're on another account now.")));
     expect(e.transcript(lead.id).items.some((i) => i.kind === "notice" && i.text === "worker hit the 5-hour limit on Claude · moving to Claude (automatic switch)")).toBe(true);
     // No lead turn for it.
     expect(texts(e.transcript(lead.id).items).some((t) => t.includes("[agent worker]"))).toBe(false);
@@ -719,7 +719,7 @@ describe("switching a subagent's account", () => {
     expect(e.limits.blocked("claude")?.kind).toBe("billing");
     // Its conversation came along.
     expect(existsSync(join(dirB, "projects", "-some-project", `${sub.sessionId}.jsonl`))).toBe(true);
-    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [harbor] You're on another account now.")));
+    await until("the continued turn", () => texts(e.transcript(sub.id).items).some((t) => t.startsWith("echo: [hub] You're on another account now.")));
     const items = e.transcript(sub.id).items;
     expect(items.filter((i) => i.kind === "notice").map((i) => (i.kind === "notice" ? `${i.icon}: ${i.text}` : ""))).toEqual(["alert: Claude has no active subscription (payment past due) · continued on Claude"]);
     // Neither the CLI's sentence as a reply nor a red card.
@@ -826,7 +826,7 @@ describe("pickup at start", () => {
     writeFileSync(join(dir, "meta.json"), detach.metaJson({ chat_id: c.id, kind: "Claude", started: 1, base: 0, pid: 0x7ffffffe, pid_start: 1 }));
     e.reattachTurns();
     expect(e.cutOff.has(c.id)).toBe(true);
-    await until("the continued turn", () => texts(e.transcript(c.id).items).some((t) => t.startsWith("echo: [harbor] Your previous turn was cut off")), 10_000);
+    await until("the continued turn", () => texts(e.transcript(c.id).items).some((t) => t.startsWith("echo: [hub] Your previous turn was cut off")), 10_000);
     expect(e.transcript(c.id).items.some((i) => i.kind === "notice" && i.text.startsWith("The turn was cut off"))).toBe(true);
     await until("its end", () => !e.running(c.id));
     expect(existsSync(dir)).toBe(false);
@@ -866,12 +866,12 @@ describe("teams", () => {
     e.host.makeWorktree = async (_l, branch, from) => (asked.push([branch, from]), { dir, branch, base: "main" });
     const said = await e.tool(lead.id, "spawn_agent", { name: "api", task: "build the api", worktree: true });
     expect(asked).toEqual([["hub/api", ""]]);
-    expect(said).toContain(`It works in its own worktree ${dir} on branch harbor/api (from main)`);
+    expect(said).toContain(`It works in its own worktree ${dir} on branch hub/api (from main)`);
     const sub = e.subsOf(lead.id)[0] as Chat;
     expect(e.worktreeOf(sub)).toBe(dir);
     // The lead's folder isn't the sub-agent's.
     expect(e.worktreeOf(lead)).toBeNull();
-    expect(e.transcript(sub.id).items[0]).toMatchObject({ kind: "notice", text: "Working in its own worktree · proj-api on branch harbor/api (from main)" });
+    expect(e.transcript(sub.id).items[0]).toMatchObject({ kind: "notice", text: "Working in its own worktree · proj-api on branch hub/api (from main)" });
     // A branch named is a worktree asked for.
     await e.tool(lead.id, "spawn_agent", { name: "ui", task: "y", branch: "feature/ui", base: "develop" });
     expect(asked[1]).toEqual(["feature/ui", "develop"]);

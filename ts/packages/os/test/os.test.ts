@@ -456,7 +456,7 @@ describe("autostart", () => {
     const dir = mkdtempSync(join(tmpdir(), "hloginbin-"));
     try {
       const env = { XDG_STATE_HOME: join(dir, "state") };
-      const exe = join(dir, "harbor");
+      const exe = join(dir, "hub");
       writeFileSync(exe, "one");
       // Nothing noted yet (registered by an older Harbor): changed; then not until the file is replaced.
       expect(autostart.registeredBinaryChanged(exe, env)).toBe(true);

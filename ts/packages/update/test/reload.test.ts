@@ -148,7 +148,7 @@ test("without the runtime file there is nothing to start", async () => {
 test("the runtime really starts again with the old pid in its environment", async () => {
   const dir = tmp();
   const out = join(dir, "out");
-  const script = join(dir, "harbor");
+  const script = join(dir, "hub");
   writeFileSync(script, `#!/bin/sh\necho "$HARBOR_RELOADED_PID $*" > ${JSON.stringify(out)}\n`);
   chmodSync(script, 0o755);
   let exited = 0;

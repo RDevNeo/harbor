@@ -219,7 +219,7 @@ test("an account turned off on this PC is listed but not usable, and Remove move
     expect(p.removable(four)).toBe(true);
     p.setOff("claude4", true);
     const to = p.removeAccount(four);
-    expect(to.startsWith(join(data, "harbor", "removed-accounts", "claude4-"))).toBe(true);
+    expect(to.startsWith(join(data, "hub", "removed-accounts", "claude4-"))).toBe(true);
     expect(readFileSync(join(to, "sub/x"), "utf8")).toBe("kept");
     expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude2", "codex", "opencode"]);
     expect(p.offIds()).toEqual([]);

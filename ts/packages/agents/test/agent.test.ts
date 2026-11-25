@@ -87,7 +87,7 @@ test("lead_follows_the_chats_access", async () => {
     const v = await args(access, true);
     expect(after(v, "--permission-mode")).toBe(mode);
     expect(after(v, "--tools")).not.toContain("Bash");
-    expect(v).toContain("--allowedTools=mcp__harbor");
+    expect(v).toContain("--allowedTools=mcp__hub");
     expect(v).not.toContain("--setting-sources");
   }
   const v = await args("full", false);
@@ -176,7 +176,7 @@ test("a local turn hands its stdio servers to the bridge and keeps the grant onl
   try {
     const team = { role: "lead" as const, system: "lead" };
     let { cmd, grant } = await agent.build(spec({ team }));
-    expect((grant?.servers.harbor as { args: string[] }).args.slice(-5)).toEqual(["mcp", "--chat", "999995", "--role", "lead"]);
+    expect((grant?.servers.hub as { args: string[] }).args.slice(-5)).toEqual(["mcp", "--chat", "999995", "--role", "lead"]);
     expect(after(cmd.args, "--mcp-config")).toBe(`http://127.0.0.1:4242/${grant?.token}/|999995`);
     expect(revoked).toEqual([]);
     ({ grant } = await agent.build(spec()));
@@ -231,10 +231,10 @@ test("a Codex turn hands its stdio servers to the bridge, with the token in its 
   try {
     const { cmd, grant } = await agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), team: { role: "sub", system: "sys" } }));
     expect(seen?.base).toBe("http://127.0.0.1:${HARBOR_BRIDGE_PORT}/");
-    expect((grant?.servers.harbor as { args: string[] }).args.slice(-5)).toEqual(["mcp", "--chat", "999995", "--role", "sub"]);
+    expect((grant?.servers.hub as { args: string[] }).args.slice(-5)).toEqual(["mcp", "--chat", "999995", "--role", "sub"]);
     expect(cmd.env.get("HARBOR_BRIDGE_TOKEN")).toBe(grant?.token ?? "?");
     expect(cmd.args.some((a) => a.includes(grant?.token ?? "?"))).toBe(false);
-    expect(cmd.args.some((a) => a.startsWith("mcp_servers.harbor."))).toBe(false);
+    expect(cmd.args.some((a) => a.startsWith("mcp_servers.hub."))).toBe(false);
   } finally {
     agent.integrate(was);
   }
@@ -295,7 +295,7 @@ describe("command lines per provider", () => {
     expect(v).toContain('service_tier="priority"');
     // The team server: on the turn's bridge grant when a bridge is wired in, else on Codex's command line (dotted, or in the one `mcp_servers={…}`).
     const team = '"mcp","--chat","999995","--role","sub"';
-    const onGrant = JSON.stringify(built.grant?.servers.harbor ?? null).includes(team);
+    const onGrant = JSON.stringify(built.grant?.servers.hub ?? null).includes(team);
     expect(onGrant || v.some((a) => a.startsWith("mcp_servers") && a.includes(team))).toBe(true);
     expect(after(v, "-i")).toBe("/a.png");
     // Resumed: no team text in the message, the session id before it.
