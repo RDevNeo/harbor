@@ -15,6 +15,8 @@ export class RawJson {
 
 export type Json = null | boolean | number | bigint | string | F64 | Ordered | RawJson | Json[] | { [k: string]: Json | undefined };
 
+const SURROGATE = /[\uD800-\uDFFF]/;
+
 function byteCompare(a: string, b: string): number {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -40,9 +42,11 @@ export function wire(v: Json | undefined): string {
   if (v instanceof RawJson) return v.text;
   if (v instanceof Ordered) return `{${v.entries.filter(([, x]) => x !== undefined).map(([k, x]) => `${JSON.stringify(k)}:${wire(x)}`).join(",")}}`;
   if (Array.isArray(v)) return `[${v.map(wire).join(",")}]`;
-  const keys = Object.keys(v)
-    .filter((k) => v[k] !== undefined)
-    .sort(byteCompare);
+  const keys = Object.keys(v).filter((k) => v[k] !== undefined);
+  // Byte order; without surrogate pairs (any key outside the BMP) it is the strings' own order,
+  // which sorts without making two Buffers a comparison (a big /v1/state took ~10x as long).
+  if (keys.some((k) => SURROGATE.test(k))) keys.sort(byteCompare);
+  else keys.sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${wire(v[k])}`).join(",")}}`;
 }
 

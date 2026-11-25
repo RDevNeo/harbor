@@ -747,6 +747,19 @@ export class PhoneRoutes {
   }
 
   state(you: string, global: boolean, caller = ""): Json {
+    // Built in one go on the main thread: the store's reads are asked once each for the whole answer
+    // (every chat asked for the projects, the snoozes, its lead and its sub-agents: ~10 queries a chat,
+    // a second or more with hundreds of chats, while every other call waited).
+    const store = this.d.store;
+    this.d.store = memoStore(store);
+    try {
+      return this.stateNow(you, global, caller);
+    } finally {
+      this.d.store = store;
+    }
+  }
+
+  private stateNow(you: string, global: boolean, caller: string): Json {
     const hub = this.d.hub;
     const chats = this.chats();
     const repos = this.repos();
@@ -1649,4 +1662,32 @@ export function chatOrder(chats: readonly number[], raw: string | null): number[
   if (!Array.isArray(order)) return [...chats];
   const at = new Map(order.filter((x): x is number => typeof x === "number").map((id, i) => [id, i]));
   return [...chats.filter((c) => !at.has(c)), ...chats.filter((c) => at.has(c)).sort((a, b) => (at.get(a) ?? 0) - (at.get(b) ?? 0))];
+}
+
+/** The store's reads `PhoneApi.state` asks over and over, each read once (arrays copied); any other call forgets them. */
+const MEMO_READS = new Set(["repos", "chats", "chat", "subs", "mainChats", "get", "placement", "settledProjects"]);
+export function memoStore(store: Store): Store {
+  const kept = new Map<string, unknown>();
+  return new Proxy(store, {
+    get(t, prop, recv) {
+      const v = Reflect.get(t, prop, recv) as unknown;
+      if (typeof v !== "function") return v;
+      const f = v as (...a: unknown[]) => unknown;
+      if (typeof prop !== "string" || !MEMO_READS.has(prop)) {
+        return (...a: unknown[]) => {
+          kept.clear();
+          return f.apply(t, a);
+        };
+      }
+      return (...a: unknown[]) => {
+        const k = `${prop}\u0000${a.map((x) => String(x)).join("\u0000")}`;
+        let r = kept.get(k);
+        if (r === undefined && !kept.has(k)) {
+          r = f.apply(t, a);
+          kept.set(k, r);
+        }
+        return Array.isArray(r) ? [...r] : r;
+      };
+    },
+  });
 }
