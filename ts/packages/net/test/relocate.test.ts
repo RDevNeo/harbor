@@ -186,7 +186,7 @@ describe("relocate beyond the Rust tests", () => {
     const sub = { id: 2, name: "helper", device: "ssh:1", claude: true, running: false };
     const base = { foreignHome: null, isSub: false, movingTo: null, chats: [lead, sub], leadDevice: { os: "linux" } };
     expect(relocateBlocker(base)).toBeNull();
-    expect(relocateBlocker({ ...base, foreignHome: "desk" })).toBe("it runs in desk's Harbor: change it there, or move it with Move to PC…");
+    expect(relocateBlocker({ ...base, foreignHome: "desk" })).toBe("it runs in desk's Hub: change it there, or move it with Move to PC…");
     expect(relocateBlocker({ ...base, chats: [lead, { ...sub, device: "" }] })).toBe("its sub-agent helper runs on another device");
     expect(relocateBlocker({ ...base, leadDevice: null })).toBe("its device isn't in Settings › Workspace anymore, so its session can't be fetched");
     expect(relocateBlocker({ ...base, leadDevice: { os: "Windows" } })).toBe("Windows devices can't hand a started chat over yet");
@@ -211,7 +211,7 @@ describe("relocate beyond the Rust tests", () => {
     expect(why("pc:b")).toBeNull();
     expect(why("pc:b", { meshOn: false })).toBe("this PC doesn't share chats with other PCs (Settings › Workspace)");
     expect(why("pc:b", { peer: { online: false } })).toBe("it's off or out of reach");
-    expect(why("pc:b", { peer: { moves: false } })).toBe("it runs an older Harbor: update it first");
+    expect(why("pc:b", { peer: { moves: false } })).toBe("it runs an older Hub: update it first");
     expect(why("pc:b", { peer: { accounts: [] } })).toBe("it has no Claude account");
     expect(relocateWhy({ started: false, device: "", to: "x", blocker: () => "no", place: null, meshOn: true })).toBeNull();
     expect(deviceWhy(false, false, ["a"], () => "x")).toBeNull();

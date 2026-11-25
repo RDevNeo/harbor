@@ -224,7 +224,7 @@ export interface RelocateBlockerInput {
 
 /** Why a started chat can't move anywhere now (null: it may; the places say the rest). */
 export function relocateBlocker(i: RelocateBlockerInput): string | null {
-  if (i.foreignHome !== null) return `it runs in ${i.foreignHome}'s Harbor: change it there, or move it with Move to PC…`;
+  if (i.foreignHome !== null) return `it runs in ${i.foreignHome}'s Hub: change it there, or move it with Move to PC…`;
   if (i.isSub) return "a sub-agent runs where its lead does: change the lead";
   if (i.movingTo !== null) return `it's moving to ${i.movingTo}`;
   const lead = i.chats[0];
@@ -267,7 +267,7 @@ export function relocateWhy(i: RelocateWhyInput): string | null {
     case "hub":
       if (!i.meshOn) return "this PC doesn't share chats with other PCs (Settings › Workspace)";
       if (!p.peer.online) return "it's off or out of reach";
-      if (!p.peer.moves) return "it runs an older Harbor: update it first";
+      if (!p.peer.moves) return "it runs an older Hub: update it first";
       if (!p.peer.accounts.some((a) => a[2] === "claude")) return "it has no Claude account";
       return null;
   }

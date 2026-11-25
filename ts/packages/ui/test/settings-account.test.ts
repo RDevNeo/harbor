@@ -152,7 +152,7 @@ describe("accountui.rs account_tab", () => {
       ["desk", ["This PC"]],
       ["laptop", ["Online"]],
     ]);
-    expect(pcs?.rows[0]?.line).toBe(`key ${"aaaa aaaa aaaa aaaa"} · added by Ana · Harbor 0.1.0 · checked in 2m ago`);
+    expect(pcs?.rows[0]?.line).toBe(`key ${"aaaa aaaa aaaa aaaa"} · added by Ana · Hub 0.1.0 · checked in 2m ago`);
     expect(pcs?.rows[1]?.line).toBe("key bbbb bbbb bbbb bbbb · checked in 2h ago");
   });
 
@@ -176,8 +176,8 @@ describe("accountui.rs account_tab", () => {
     inv.push({ id: "i2", email: "zed@example.com", at: NOW - 60, no_account: true, near: "" });
     const texts = accountBlocks(host(f)).map((x) => x.text).filter((t) => t.startsWith("Invited "));
     expect(texts).toEqual([
-      "Invited lee@example.com · 1h ago · no Harbor account uses this address: did you mean leo@example.com?",
-      "Invited zed@example.com · 1m ago · no Harbor account uses this address yet",
+      "Invited lee@example.com · 1h ago · no Hub account uses this address: did you mean leo@example.com?",
+      "Invited zed@example.com · 1m ago · no Hub account uses this address yet",
     ]);
   });
 
@@ -285,7 +285,7 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     expect(peopleCards(b).map((c) => c.rows.map((r) => [r.title, r.badges.map((x) => x.text), r.line]))).toEqual([
       [
         ["Ana (you)", [], "ana@example.com"],
-        ["desk", ["This PC"], "Harbor 0.132.0 · key aaaa aaaa aaaa aaaa"],
+        ["desk", ["This PC"], "Hub 0.132.0 · key aaaa aaaa aaaa aaaa"],
         ["Build PC", [], "SSH · offline"],
         // A phone reads by its device name, else just "Phone"; no key.
         ["Pixel", [], "Phone"],
@@ -293,7 +293,7 @@ describe("one Workspace page: each person with their PCs and phones", () => {
       [
         ["leo@example.com", [], "leo@example.com"],
         // The Harbor it really runs (its update info's build), not the compat version it advertises.
-        ["laptop", ["Online"], "Harbor 0.171.4+0d56ad0"],
+        ["laptop", ["Online"], "Hub 0.171.4+0d56ad0"],
         // A device that is itself one of the PCs ("render") isn't listed twice.
         ["Mac", [], "SSH"],
         ["Phone", [], "Phone"],
@@ -308,7 +308,7 @@ describe("one Workspace page: each person with their PCs and phones", () => {
     expect(peopleCards(b).map((c) => c.rows.at(-1)?.buttons.map((x) => x.key))).toEqual([[`phone_signout:${"d".repeat(64)}`], []]);
     const shared = b[b.findIndex((x) => x.title === "Through your other workspaces") + 1];
     expect(shared?.rows.map((r) => [r.title, r.line])).toEqual([
-      ["render", "Kai's Workspace · Harbor 0.131.0 · seen just now"],
+      ["render", "Kai's Workspace · Hub 0.131.0 · seen just now"],
       ["nas", "SSH"],
     ]);
     expect(titles(b)).not.toContain("PCs");

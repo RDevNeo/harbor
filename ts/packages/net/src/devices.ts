@@ -176,12 +176,12 @@ export function pairedDevices(hub: Hub, versions: readonly PcVersion[], at: numb
   const mine = versions.find((y) => y.me);
   // Each PC's Harbor as it really runs (its update info's build), not the version it advertises to old peers.
   const real = (x: PcVersion): PcVersion => ({ ...x, version: runningVersion(x) });
-  const self = newPairedDevice({ key: me.id, name: me.name, kind: "pc", online: true, here: true, seen: at, harbor: mine ? `Harbor ${pcLine(real(mine), newest, at)}` : "" });
+  const self = newPairedDevice({ key: me.id, name: me.name, kind: "pc", online: true, here: true, seen: at, harbor: mine ? `Hub ${pcLine(real(mine), newest, at)}` : "" });
   const v: PairedDevice[] = [self, ...pairedPcs(hub.mesh.workspacePeers().filter((a) => a.use !== false), hub.mesh.peers).map((p) => {
     const down = meshOn && !p.online ? (hub.mesh.down.get(p.id) ?? "") : "";
     const x = versions.find((y) => y.id === p.id);
     // Its Harbor: "0.66.0 (latest)", or the version it ran when last seen.
-    const harbor = x && x.online ? `Harbor ${pcLine(real(x), newest, at)}` : x && x.version !== "" ? `Harbor ${runningVersion(x)}` : "";
+    const harbor = x && x.online ? `Hub ${pcLine(real(x), newest, at)}` : x && x.version !== "" ? `Hub ${runningVersion(x)}` : "";
     return newPairedDevice({ seen: hub.mesh.peers.get(p.id)?.seen ?? 0, key: p.id, name: p.name, kind: "pc", online: meshOn && p.online, ip: p.ip, down, harbor });
   })];
   if (hub.enabled) {
@@ -202,13 +202,13 @@ export function deviceDetails(d: PairedDevice, served: number, at: number = now(
     const a = agoShort(s, at);
     return a === "now" ? "seen just now" : `seen ${a} ago`;
   };
-  if (isPhoneDevice(d) && d.online && d.open && d.via !== "") bits.push(`Harbor open, via ${d.via}`);
-  else if (isPhoneDevice(d) && d.online && d.open) bits.push("Harbor open");
+  if (isPhoneDevice(d) && d.online && d.open && d.via !== "") bits.push(`Hub open, via ${d.via}`);
+  else if (isPhoneDevice(d) && d.online && d.open) bits.push("Hub open");
   // Reachable, the app in the background or closed (its pings, PHONE_ALIVE_SECS).
   else if (isPhoneDevice(d) && d.online && d.via !== "") bits.push(`online, via ${d.via}`);
   else if (d.online) bits.push("online");
-  else if (!isPhoneDevice(d) && d.down === "harbor" && d.seen > 0) bits.push(`Harbor isn't running, ${ago(d.seen)}`);
-  else if (!isPhoneDevice(d) && d.down === "harbor") bits.push("Harbor isn't running");
+  else if (!isPhoneDevice(d) && d.down === "harbor" && d.seen > 0) bits.push(`Hub isn't running, ${ago(d.seen)}`);
+  else if (!isPhoneDevice(d) && d.down === "harbor") bits.push("Hub isn't running");
   else if (d.seen > 0) bits.push(`offline, ${ago(d.seen)}`);
   else bits.push("offline");
   if (isPhoneDevice(d)) {
@@ -225,7 +225,7 @@ export function deviceDetails(d: PairedDevice, served: number, at: number = now(
 /** The line under a device's Send menu, when there is one. */
 export function sendMenuNote(d: PairedDevice): string | null {
   if (isPhoneDevice(d) && d.seen > 0 && d.app < APP_INBOX) return "The phone's app is too old to take these: update it (Settings › Update there)";
-  if (isPhoneDevice(d) && !d.online) return "Arrives when Harbor is open on the phone";
+  if (isPhoneDevice(d) && !d.online) return "Arrives when Hub is open on the phone";
   return null;
 }
 
@@ -261,7 +261,7 @@ export function clearDeviceTransfers(l: DeviceTransfer[]): DeviceTransfer[] {
 export function transferStatus(x: DeviceTransfer): string {
   if (x.error !== null) return x.error;
   if (x.done) return x.saved !== null ? `${deviceHumanSize(x.size)} · saved to ${x.saved}` : x.size === 0 ? "Done" : deviceHumanSize(x.size);
-  if (x.waiting) return "Waiting for Harbor on the phone (open the app)";
+  if (x.waiting) return "Waiting for Hub on the phone (open the app)";
   return `${deviceHumanSize(x.sent)} of ${deviceHumanSize(x.size)}`;
 }
 
@@ -291,7 +291,7 @@ async function pngOf(env: DeviceSendEnv, path: string): Promise<string> {
 
 /** One item to a paired PC (`POST /mesh/v1/deliver`). */
 export async function deviceSendToPc(env: DeviceSendEnv, key: string, kind: DeviceSendKind, name: string, text: string, path: string | null): Promise<void> {
-  if (!env.hub) throw new Error("Harbor isn't ready");
+  if (!env.hub) throw new Error("Hub isn't ready");
   const peer = env.peer(key);
   if (!peer) throw new Error("this PC isn't connected right now");
   let body: Buffer;
@@ -309,7 +309,7 @@ export async function deviceSendToPc(env: DeviceSendEnv, key: string, kind: Devi
   }
   const [status, v] = r;
   if (status === 200) return;
-  if (status === 404) throw new Error(`${peer.name}'s Harbor is too old to take this: update it`);
+  if (status === 404) throw new Error(`${peer.name}'s Hub is too old to take this: update it`);
   const e = typeof v === "object" && v !== null && "error" in v && typeof v.error === "string" ? v.error : null;
   throw new Error(e ?? `${peer.name} answered ${status}`);
 }

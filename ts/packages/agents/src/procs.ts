@@ -92,8 +92,8 @@ export function trim(path: string, keep: number): void {
     const nl = tail.indexOf(10);
     const rest = tail.subarray(nl < 0 ? 0 : nl + 1, got);
     ftruncateSync(fd, 0);
-    writeSync(fd, Buffer.from("[… earlier output cut by Harbor]\n"), 0, undefined, 0);
-    writeSync(fd, rest, 0, rest.length, Buffer.byteLength("[… earlier output cut by Harbor]\n"));
+    writeSync(fd, Buffer.from("[… earlier output cut by Hub]\n"), 0, undefined, 0);
+    writeSync(fd, rest, 0, rest.length, Buffer.byteLength("[… earlier output cut by Hub]\n"));
   } finally {
     closeSync(fd);
   }

@@ -187,7 +187,7 @@ describe("discover", () => {
     expect(quiet.got).toHaveLength(0);
   });
 
-  test("ignores its own datagrams, other sources and anything that is not a Harbor", async () => {
+  test("ignores its own datagrams, other sources and anything that is not a Hub", async () => {
     const p = await freePort();
     const table = new Map<string, LanHarbor>();
     await started({ shared: new Shared(), me: () => meOf(fpB, "bee", 41002, false), net: loopNet(p, []), table });

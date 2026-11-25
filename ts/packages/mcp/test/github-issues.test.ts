@@ -350,7 +350,7 @@ afterAll(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
-test("the real runner runs gh with Harbor's agent environment", async () => {
+test("the real runner runs gh with Hub's agent environment", async () => {
   const log = join(work, "args.log");
   fakeGh(`printf '%s\\n' "$@" > '${log}'\nprintf 'token=%s config=%s\\n' "\${GH_TOKEN-unset}" "\${GH_CONFIG_DIR-unset}" >> '${log}'\ncat <<'EOF'\n${JSON.stringify(answer)}\nEOF`);
   const got = await createIssuesPort().fetch("closed", ["o/r"]);

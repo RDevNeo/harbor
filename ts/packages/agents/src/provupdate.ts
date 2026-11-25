@@ -165,7 +165,7 @@ export class ProviderUpdates {
       const i = await detect(tool, this.io);
       const latest = await this.io.latest(tool);
       const argv = command(i, latest);
-      if (!argv) throw new Error("Use the installer that owns this CLI to update it; Harbor could not identify a supported install method.");
+      if (!argv) throw new Error("Use the installer that owns this CLI to update it; Hub could not identify a supported install method.");
       const current = version(await this.io.run([i.path, "--version"]));
       if (!current) throw new Error("Could not read the installed version; no changes made.");
       if (newer(latest, current)) await this.io.run(argv);

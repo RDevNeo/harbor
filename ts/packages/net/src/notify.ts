@@ -522,7 +522,7 @@ export class Desktop {
       quiet = this.mono() - prev.at < REPOP_MS;
     }
     const title = n.count > 1 ? `${n.title} (${n.count})` : n.title;
-    const args = ["-a", "Harbor", "-p", "-u", n.kind === "input" ? "critical" : "normal"];
+    const args = ["-a", "Hub", "-p", "-u", n.kind === "input" ? "critical" : "normal"];
     if (replace !== undefined) args.push(`--replace-id=${replace}`);
     if (quiet) args.push("-h", "boolean:suppress-sound:true", "-h", "boolean:transient:true");
     if (n.chat !== "") args.push("-A", "default=Open");
@@ -557,14 +557,14 @@ export class Desktop {
 
   /** Settings' test: shown here whatever the window and the settings. */
   async testPopup(n: Note): Promise<void> {
-    const proc = this.send(["-a", "Harbor", n.title, n.body]);
+    const proc = this.send(["-a", "Hub", n.title, n.body]);
     if (proc) await proc.exited;
   }
 }
 
 /** Settings > Notifications > Send a test. */
 export function testNote(): Note {
-  return newNote({ kind: "test", key: "test", title: "Test from Harbor", body: "Notifications work." });
+  return newNote({ kind: "test", key: "test", title: "Test from Hub", body: "Notifications work." });
 }
 
 
@@ -682,7 +682,7 @@ export class Notifier {
       this.online.set(p.id, p.online);
       const name = p.name === "" ? "A PC" : p.name;
       if (was === true && !p.online && meshOn) {
-        this.post("pc", `pc:${p.id}`, `${name} went offline`, "Harbor there doesn't answer any more.", "", false);
+        this.post("pc", `pc:${p.id}`, `${name} went offline`, "Hub there doesn't answer any more.", "", false);
       } else if (was === false && p.online && meshOn && this.went.includes(p.id)) {
         this.post("pc", `pc:${p.id}`, `${name} is back online`, "", "", false);
       }

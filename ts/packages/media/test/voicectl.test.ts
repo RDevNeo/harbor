@@ -50,13 +50,13 @@ describe("settings", () => {
     expect(voice.config()).toEqual(["auto", ""]);
     expect(parakeet.keepMin()).toBe(5);
     expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn(), dictate.dictionary(), dictate.host()]).toEqual(["parakeet", false, true, [], ""]);
-    const stored = { voice_lang2: "pt", voice_model: "tiny", voice_keep_min: "15", voice_engine: "whisper", voice_cleanup: "1", voice_commands: "0", voice_host: "pc:big", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' };
+    const stored = { voice_lang2: "pt", voice_model: "tiny", voice_keep_min: "15", voice_engine: "whisper", voice_cleanup: "1", voice_commands: "0", voice_host: "pc:big", voice_dict: '[{"term":"Hub","sounds":["harbour"]}]' };
     for (const [k, v] of Object.entries(stored)) r.kv.set(k, v);
     r.ctl.load();
     expect(voice.config()).toEqual(["auto", "tiny"]);
     expect(parakeet.keepMin()).toBe(5);
     expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn(), dictate.host()]).toEqual(["parakeet", true, true, "pc:big"]);
-    expect(dictate.dictionary()).toEqual([{ term: "Harbor", sounds: ["harbour"] }]);
+    expect(dictate.dictionary()).toEqual([{ term: "Hub", sounds: ["harbour"] }]);
     // Old values: "0" (switched off before 0.128) is off.
     r.kv.set("voice_cleanup", "0");
     r.kv.set("voice_keep_min", "soon");
@@ -75,9 +75,9 @@ describe("settings", () => {
     r.ctl.setMore({ engine: "whisper", cleanup: true, keepMin: 60 });
     expect([r.kv.get("voice_engine"), r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min")]).toEqual([undefined, "1", undefined]);
     expect([dictate.engine(), dictate.cleanupOn(), parakeet.keepMin()]).toEqual(["parakeet", true, 5]);
-    r.ctl.setWords({ commands: false, dict: [{ term: "Harbor", sounds: [] }] });
-    expect([r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual([undefined, '[{"term":"Harbor","sounds":[]}]']);
-    expect([dictate.commandsOn(), dictate.dictionary()]).toEqual([true, [{ term: "Harbor", sounds: [] }]]);
+    r.ctl.setWords({ commands: false, dict: [{ term: "Hub", sounds: [] }] });
+    expect([r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual([undefined, '[{"term":"Hub","sounds":[]}]']);
+    expect([dictate.commandsOn(), dictate.dictionary()]).toEqual([true, [{ term: "Hub", sounds: [] }]]);
     r.ctl.setMore({ cleanup: false });
     expect([r.kv.get("voice_cleanup"), dictate.cleanupOn()]).toEqual(["0", false]);
   });
@@ -91,11 +91,11 @@ describe("settings", () => {
     c.dictSounds = "spoke pay, , spock pay";
     expect(c.saveEntry()).toBe(true);
     expect([c.dictTerm, c.dictSounds]).toEqual(["", ""]);
-    c.dictTerm = "Harbor";
+    c.dictTerm = "Hub";
     c.saveEntry();
     expect(dictate.dictionary()).toEqual([
       { term: "SpokPay", sounds: ["spoke pay", "spock pay"] },
-      { term: "Harbor", sounds: [] },
+      { term: "Hub", sounds: [] },
     ]);
     c.editEntry(0);
     expect([c.dictEdit, c.dictTerm, c.dictSounds]).toEqual([0, "SpokPay", "spoke pay, spock pay"]);
@@ -119,9 +119,9 @@ describe("settings", () => {
     const r = rig(async () => "Ship it on Monday.");
     r.ctl.load();
     dictate.set({ cleanup: true, keepMin: 15 }, true);
-    dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Harbor" }]) }, true);
+    dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Hub" }]) }, true);
     r.ctl.poll();
-    expect([r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min"), r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual(["1", undefined, undefined, '[{"term":"Harbor","sounds":[]}]']);
+    expect([r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min"), r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual(["1", undefined, undefined, '[{"term":"Hub","sounds":[]}]']);
     // A phone can't change how long the model stays.
     expect(parakeet.keepMin()).toBe(5);
     r.kv.clear();

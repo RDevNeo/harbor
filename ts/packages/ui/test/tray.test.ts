@@ -182,7 +182,7 @@ test("menu_clicks_route", () => {
   const first = r.body[0];
   if (first?.t !== "a") throw new Error("expected an array");
   expect(first.items.length).toBe(1);
-  expect(JSON.stringify(first.items)).toContain("Quit Harbor completely");
+  expect(JSON.stringify(first.items)).toContain("Quit Hub completely");
 });
 
 test("icon_is_square_argb", () => {

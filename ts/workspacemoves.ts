@@ -126,7 +126,7 @@ export class WorkspaceMoves {
     if (own !== null) c = own;
     if (c.home !== "") {
       const r = await this.h.forward(c.home, "POST", ["v1", "chats", String(c.homeId), "workspace"], { workspace: ws });
-      if (older(r)) return err(409, `${this.h.pcName(c.home)} runs an older Harbor that can't move chats to a workspace: update it there first`);
+      if (older(r)) return err(409, `${this.h.pcName(c.home)} runs an older Hub that can't move chats to a workspace: update it there first`);
       if (r.status >= 300) return r;
     }
     this.h.store.setChatWorkspace(c.id, ws);
@@ -145,7 +145,7 @@ export class WorkspaceMoves {
     if (home !== "") {
       const f = await this.h.forward(home, "POST", ["v1", "projects", "do"], { project: r.path, act: "workspace", workspace: ws });
       if (older(f) || (f.status === 400 && /^act:/.test(String((f.body as { error?: unknown } | null)?.error ?? ""))))
-        return err(409, `${this.h.pcName(home)} runs an older Harbor that can't move projects to a workspace: update it there first`);
+        return err(409, `${this.h.pcName(home)} runs an older Hub that can't move projects to a workspace: update it there first`);
       if (f.status >= 300) return f;
     }
     this.h.store.setRepoWorkspace(r.id, ws);
@@ -205,7 +205,7 @@ export class WorkspaceMoves {
     if (own !== null) c = own;
     if (c.home !== "") {
       const r = await this.h.forward(c.home, "POST", ["v1", "chats", String(c.homeId), "share"], { workspace: ws, on });
-      if (older(r)) return err(409, `${this.h.pcName(c.home)} runs an older Harbor that can't share chats with a workspace: update it there first`);
+      if (older(r)) return err(409, `${this.h.pcName(c.home)} runs an older Hub that can't share chats with a workspace: update it there first`);
       if (r.status >= 300) return r;
     }
     const was = this.h.store.placement().shared?.chats.get(c.id) ?? [];
@@ -224,7 +224,7 @@ export class WorkspaceMoves {
     if (home !== "") {
       const f = await this.h.forward(home, "POST", ["v1", "projects", "do"], { project: r.path, act: "share", workspace: ws, on });
       if (older(f) || (f.status === 400 && /^act:/.test(String((f.body as { error?: unknown } | null)?.error ?? ""))))
-        return err(409, `${this.h.pcName(home)} runs an older Harbor that can't share projects with a workspace: update it there first`);
+        return err(409, `${this.h.pcName(home)} runs an older Hub that can't share projects with a workspace: update it there first`);
       if (f.status >= 300) return f;
     }
     const was = this.h.store.placement().shared?.repos.get(r.id) ?? [];

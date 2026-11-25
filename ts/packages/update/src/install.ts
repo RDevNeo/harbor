@@ -75,7 +75,7 @@ export async function smokeBundle(runtime: string, bundle: string, expected: str
 // A release of the Rust app only: nothing in it runs here.
 export class NoBuild extends Error {
   constructor(readonly version: string) {
-    super(`Harbor ${version} has no build of this app`);
+    super(`Hub ${version} has no build of this app`);
   }
 }
 

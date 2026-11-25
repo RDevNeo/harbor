@@ -15,22 +15,22 @@ export async function updateCli(cfg: UpdateConfig, arg: string, io: CliIo): Prom
       if (cfg.dir === null) throw new Error("this copy wasn't installed by install.sh, so it doesn't update itself");
       const v = await new Updater(cfg).latest();
       if (!newer(v, current(cfg))) {
-        io.out(`Harbor ${current(cfg)} is up to date.`);
+        io.out(`Hub ${current(cfg)} is up to date.`);
         return 0;
       }
-      io.out(`Installing Harbor ${v}…`);
+      io.out(`Installing Hub ${v}…`);
       try {
         await install(cfg, v);
       } catch (e) {
         if (!(e instanceof NoBuild)) throw e;
-        io.out(`Harbor ${v} has no build of this app yet: staying on ${current(cfg)}.`);
+        io.out(`Hub ${v} has no build of this app yet: staying on ${current(cfg)}.`);
         return 0;
       }
-      io.out(`Harbor ${v} is installed.`);
+      io.out(`Hub ${v} is installed.`);
       return 0;
     }
     if (arg === "--restore-previous") {
-      io.out(`Harbor ${rollback(cfg).restored} is back.`);
+      io.out(`Hub ${rollback(cfg).restored} is back.`);
       return 0;
     }
     return null;

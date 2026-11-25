@@ -142,7 +142,7 @@ export class AddProject {
     let local = this.clones.get(fullL) ?? [...this.clones].find(([slug, p]) => slug.split("/")[0] === owner && basename(p).toLowerCase() === name.toLowerCase())?.[1] ?? null;
     if (local === null && this.disk.exists(join(target, ".git"))) local = target;
     const icon: Icon = { kind: "logo", name: "github" };
-    if (local !== null) return { icon, title: full, detail: known.has(local) ? `Already in Harbor: ${this.tilde(local)}` : `Add your clone at ${this.tilde(local)}`, act: { kind: "add", dir: local } };
+    if (local !== null) return { icon, title: full, detail: known.has(local) ? `Already in Hub: ${this.tilde(local)}` : `Add your clone at ${this.tilde(local)}`, act: { kind: "add", dir: local } };
     return { icon, title: full, detail: desc || `Clone into ${this.tilde(target)}`, act: { kind: "clone", url: full, name } };
   }
 

@@ -15,7 +15,7 @@ function fixture(opaque = "false") {
   return { calls, modal: new ModalOpacity(run, 42, true) };
 }
 
-test("only this Harbor window becomes opaque, and closing restores its original value", async () => {
+test("only this Hub window becomes opaque, and closing restores its original value", async () => {
   for (const old of ["false", "true"]) {
     const { calls, modal } = fixture(old);
     await modal.update(true);

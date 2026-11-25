@@ -39,7 +39,7 @@ function build(version = "1.5.0"): string {
   return f;
 }
 
-test("reads_the_version_line: the version line says which Harbor it is", () => {
+test("reads_the_version_line: the version line says which Hub it is", () => {
   expect(versionIn("harbor 0.101.0 (abcdef0)\n")).toBe("0.101.0");
   expect(versionIn("harbor 0.101.0\n")).toBe("0.101.0");
   expect(versionIn("something else 1.0")).toBeNull();
@@ -144,7 +144,7 @@ test("a pushed build goes in the slot when previews are on, and is on offer eith
   expect(m?.note.length).toBe(120);
 });
 
-test("a build that does not run, is not Harbor or is older than the release is not taken", async () => {
+test("a build that does not run, is not Hub or is older than the release is not taken", async () => {
   const inst = makeInstall({ version: "1.0.0" });
   const cfg = configFor(inst);
   setEnabled(cfg, true);
@@ -241,7 +241,7 @@ test("harbor preview status says what runs", async () => {
   expect(JSON.parse(c.out[0] ?? "{}")).toMatchObject({ on: true, managed: true, preview: { id: "abc" } });
 });
 
-test("harbor preview on and off, back with no Harbor running", async () => {
+test("harbor preview on and off, back with no Hub running", async () => {
   const inst = makeInstall();
   const cfg = configFor(inst);
   const a = io();
@@ -263,7 +263,7 @@ test("harbor preview on and off, back with no Harbor running", async () => {
   expect(d.err[0]).toContain("install.sh");
 });
 
-test("harbor preview push sends the build to the running Harbor, or keeps it when none runs", async () => {
+test("harbor preview push sends the build to the running Hub, or keeps it when none runs", async () => {
   const inst = makeInstall();
   const cfg = configFor(inst);
   const src = build();

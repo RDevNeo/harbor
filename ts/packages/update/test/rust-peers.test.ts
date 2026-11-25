@@ -109,7 +109,7 @@ test("harbor --update on a Rust-only release says so and keeps this one", async 
   const out: string[] = [];
   const err: string[] = [];
   expect(await updateCli(host.config(inst, key), "--update", { out: (l) => void out.push(l), err: (l) => void err.push(l) })).toBe(0);
-  expect(out.at(-1)).toBe("Harbor 1.1.0 has no build of this app yet: staying on 1.0.0.");
+  expect(out.at(-1)).toBe("Hub 1.1.0 has no build of this app yet: staying on 1.0.0.");
   expect(err).toEqual([]);
 });
 

@@ -151,7 +151,7 @@ test("github_rows_load_in_the_background", async () => {
   await Bun.sleep(5);
   const later = body(await a.route(call("v1/projects/rows", { step: "github" })));
   expect(later.loading).toBe(false);
-  expect(later.rows).toEqual([{ icon: "github", title: "o/tool", detail: "Already in Harbor: ~/Projects/tool", act: { kind: "add", dir: join(home, "Projects", "tool") } }]);
+  expect(later.rows).toEqual([{ icon: "github", title: "o/tool", detail: "Already in Hub: ~/Projects/tool", act: { kind: "add", dir: join(home, "Projects", "tool") } }]);
   const other = body(await a.route(call("v1/projects/rows", { step: "github", query: "o/new" })));
   expect((other.rows as { act: unknown }[])[0]?.act).toEqual({ kind: "clone", url: "o/new", name: "new", github: true });
 });
@@ -171,7 +171,7 @@ test("another_pc_makes_the_project_and_it_is_listed_here_too", async () => {
   expect(body(await a.route(call("v1/projects", { pc: "pc:off", act: { kind: "create", name: "x" } })))).toEqual({ error: "sam-work is off: pick a PC that's on" });
   expect((await a.route(call("v1/projects", { pc: "pc:who", act: { kind: "create", name: "x" } })))?.status).toBe(404);
   const old = api({ forward: async () => err(404, "no such call") }).api;
-  expect(body(await old.route(call("v1/projects/rows", { pc: "pc:laptop" }))).error).toBe("laptop runs an older Harbor that can't add projects from a phone: update it there first");
+  expect(body(await old.route(call("v1/projects/rows", { pc: "pc:laptop" }))).error).toBe("laptop runs an older Hub that can't add projects from a phone: update it there first");
   const down = api({ forward: async () => err(503, "laptop is off or unreachable: the chat is read-only until it's back") }).api;
   expect(body(await down.route(call("v1/projects/rows", { pc: "pc:laptop" }))).error).toBe("laptop is off or unreachable");
 });
@@ -199,9 +199,9 @@ test("the_phones_project_sheet_lists_what_the_desktops_project_menu_does", async
     ["Use website icon", "", false, true],
     ["Settle project", "archive", true, true],
     ["Move to PC…", "monitor", false, true],
-    ["Remove from Harbor", "", false, true],
+    ["Remove from Hub", "", false, true],
   ]);
-  expect(items[0]?.desc).toBe("It opens in Harbor's window on desk");
+  expect(items[0]?.desc).toBe("It opens in Hub's window on desk");
   // By number too (a phone without global ids).
   expect(body(await a.route(call("v1/projects/menu", { project: id }, false))).id).toBe(id);
   expect((await a.route(call("v1/projects/menu", { project: "/nowhere" })))?.status).toBe(404);
@@ -214,7 +214,7 @@ test("a_chat_less_project_without_a_remote_still_has_its_menu", async () => {
   const { api: a } = api();
   const m = body(await a.route(call("v1/projects/menu", { project: dir })));
   expect(m.main).toBeNull();
-  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename project…", "Refresh icon", "Choose icon…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename project…", "Refresh icon", "Choose icon…", "Settle project", "Move to PC…", "Remove from Hub"]);
 });
 
 test("the_project_sheets_acts_run_on_the_pc", async () => {
@@ -264,7 +264,7 @@ test("a_project_menu_on_another_pc_goes_there", async () => {
   // Not added here as a new project: it's only a menu.
   expect(store.repos().some((x) => x.path === "/home/sam/x")).toBe(false);
   const old = api({ forward: async () => err(404, "no such call") }).api;
-  expect(body(await old.route(call("v1/projects/do", { pc: "pc:laptop", project: "/x", act: "remove" }))).error).toBe("laptop runs an older Harbor that can't change its projects from a phone: update it there first");
+  expect(body(await old.route(call("v1/projects/do", { pc: "pc:laptop", project: "/x", act: "remove" }))).error).toBe("laptop runs an older Hub that can't change its projects from a phone: update it there first");
 });
 
 test("a_phone_settles_and_unsettles_a_project", async () => {

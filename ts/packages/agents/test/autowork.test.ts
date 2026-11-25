@@ -57,7 +57,7 @@ test("picks_prs_to_merge", () => {
 
 test("prompts_name_the_item", () => {
   expect(aw.fixPrompt(issue(9), false, "")).toContain("Fixes #9");
-  expect(aw.fixPrompt(issue(9), true, "")).toStartWith("(Started by Harbor's Auto-Fix.)");
+  expect(aw.fixPrompt(issue(9), true, "")).toStartWith("(Started by Hub's Auto-Fix.)");
   expect(aw.mergePrompt(pr(4), false, "")).toContain("gh pr merge 4");
 });
 
@@ -82,7 +82,7 @@ test("user_instructions_are_marked_important", () => {
   expect(fix).toStartWith(plain);
   expect(fix).toEndWith("take priority over the defaults above):\nKeep the public API.");
   const merge = aw.mergePrompt(pr(4), true, "Squash it.");
-  expect(merge).toStartWith("(Started by Harbor's Auto-Merge.)");
+  expect(merge).toStartWith("(Started by Hub's Auto-Merge.)");
   expect(merge).toContain("gh pr merge 4");
   expect(merge).toEndWith("IMPORTANT: instructions from the user (follow these; they take priority over the defaults above):\nSquash it.");
 });

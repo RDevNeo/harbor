@@ -72,10 +72,10 @@ export function probe(ask = false): Probe {
   if (!cg.CGPreflightScreenCaptureAccess()) {
     // Asked when an agent wants the screen (not when Settings looks): macOS's own prompt, then the switch in System Settings.
     if (ask) cg.CGRequestScreenCaptureAccess();
-    missing.push("Screen Recording permission for Harbor (System Settings › Privacy & Security › Screen Recording)");
+    missing.push("Screen Recording permission for Hub (System Settings › Privacy & Security › Screen Recording)");
   }
-  if (!ax.AXIsProcessTrusted()) missing.push("Accessibility permission for Harbor, to move the pointer and type (System Settings › Privacy & Security › Accessibility)");
-  return { ok: missing.length === 0, kind: "macos", name: "macOS (screencapture, CoreGraphics events)", missing, limits: ["cursor_position is where Harbor last moved the pointer"] };
+  if (!ax.AXIsProcessTrusted()) missing.push("Accessibility permission for Hub, to move the pointer and type (System Settings › Privacy & Security › Accessibility)");
+  return { ok: missing.length === 0, kind: "macos", name: "macOS (screencapture, CoreGraphics events)", missing, limits: ["cursor_position is where Hub last moved the pointer"] };
 }
 
 export function backend(): Backend {

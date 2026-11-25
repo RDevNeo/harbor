@@ -9,7 +9,7 @@ export { crop, decode, type Image, png, type Rect, resize } from "./image.ts";
 
 type Env = Record<string, string | undefined>;
 
-const WINDOWS: Probe = { ok: true, kind: "windows", name: "Windows (GDI screenshots, SendInput)", missing: [], limits: ["windows of programs running as administrator take no input from Harbor (unless Harbor runs as administrator too)"] };
+const WINDOWS: Probe = { ok: true, kind: "windows", name: "Windows (GDI screenshots, SendInput)", missing: [], limits: ["windows of programs running as administrator take no input from Hub (unless Hub runs as administrator too)"] };
 
 /** What this desktop can do, and what's missing (a program to install, a permission to give). `ask`: macOS may show
  *  its permission prompt (when an agent wants the screen, not when Settings looks). */

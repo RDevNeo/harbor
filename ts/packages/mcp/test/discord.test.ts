@@ -63,7 +63,7 @@ test("without its shell, Discord offers discord_status saying why, never an empt
   const list = (await tools()) as { name: string; description: string }[];
   expect(list.map((t) => t.name)).toEqual(["discord_status"]);
   expect(list[0]?.description).toContain("built from source without its commit");
-  expect(await statusText()).toStartWith("Discord's tools aren't available on this PC: This Harbor was built from source");
+  expect(await statusText()).toStartWith("Discord's tools aren't available on this PC: This Hub was built from source");
   // One that does: the download is tried at that commit, and its failure is the reason.
   process.env.HARBOR_DISCORD_SHELL_ORIGIN = "http://127.0.0.1:9";
   setup.configure({ shellRef: () => "0123456789abcdef0123456789abcdef01234567" });
@@ -152,7 +152,7 @@ test("a captcha whose server didn't name its chat goes to the one chat waiting o
   expect(items).toEqual([8]);
 });
 
-test("after an update, a host from the old Harbor is stopped when nothing is in flight, and a busy one is left alone", async () => {
+test("after an update, a host from the old Hub is stopped when nothing is in flight, and a busy one is left alone", async () => {
   const { createServer } = await import("node:net");
   const { basename } = await import("node:path");
   const asked: string[] = [];

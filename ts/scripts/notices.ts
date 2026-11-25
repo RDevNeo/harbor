@@ -45,5 +45,5 @@ for (const entry of readdirSync(store)) {
 const sections = [...seen.keys()].sort().map((k) => seen.get(k));
 const rule = `\n\n${"-".repeat(72)}\n\n`;
 mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, `Harbor uses these npm packages (${sections.length}). Their licences follow.${rule}${sections.join(rule)}\n`);
+writeFileSync(out, `Hub uses these npm packages (${sections.length}). Their licences follow.${rule}${sections.join(rule)}\n`);
 console.log(`${sections.length} packages in ${out}`);

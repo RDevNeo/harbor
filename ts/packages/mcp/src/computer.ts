@@ -426,7 +426,7 @@ export async function call(args: unknown, ctx: CallContext): Promise<Result> {
   }
   if (!allowedIn(parsed.action, ctx.access)) return textOf(false, `${parsed.action} needs full access; this chat may only look (screenshot, zoom, cursor_position, wait).`);
   if (!here) {
-    if (!host?.remote) return textOf(false, `No PC named '${machine}': this Harbor has no mesh.`);
+    if (!host?.remote) return textOf(false, `No PC named '${machine}': this Hub has no mesh.`);
     const rest: JsonObj = { ...a };
     delete rest.machine;
     const r = await host.remote(machine, rest, { chat: ctx.chatGid, project: ctx.project });

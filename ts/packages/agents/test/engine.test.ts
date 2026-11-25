@@ -340,7 +340,7 @@ describe("a chat's turn", () => {
     store.close();
   });
 
-  test("Harbor's MCP servers Claude reports failed leave a notice in the chat, once a turn; the user's own don't", async () => {
+  test("Hub's MCP servers Claude reports failed leave a notice in the chat, once a turn; the user's own don't", async () => {
     const failing = join(base, "claude-mcpfail");
     const src = readFileSync(fake, "utf8");
     expect(src).toContain("mcp_servers: []");
@@ -399,7 +399,7 @@ describe("a chat's turn", () => {
     store.close();
   }, 60000);
 
-  test("an error_during_execution Harbor didn't cause by a steer still shows", async () => {
+  test("an error_during_execution Hub didn't cause by a steer still shows", async () => {
     const { e, store } = setup(race);
     const c = newChat(store);
     e.reload();
@@ -513,8 +513,8 @@ describe("a chat's turn", () => {
   });
 });
 
-describe("Harbor stopping", () => {
-  test("a turn still starting when Harbor stops lands nowhere: nothing reads the closed store, nothing new starts", async () => {
+describe("Hub stopping", () => {
+  test("a turn still starting when Hub stops lands nowhere: nothing reads the closed store, nothing new starts", async () => {
     const said: string[] = [];
     const was = console.error;
     console.error = (...a: unknown[]) => void said.push(a.map(String).join(" "));
@@ -816,7 +816,7 @@ describe("pickup at start", () => {
     store.close();
   });
 
-  test("a turn cut off while Harbor was away continues in its session", async () => {
+  test("a turn cut off while Hub was away continues in its session", async () => {
     const { e, store } = setup();
     const c = newChat(store, { started: true });
     e.reload();
@@ -859,7 +859,7 @@ describe("teams", () => {
     const { e, store } = setup();
     const lead = newChat(store, { role: "lead", name: "lead" });
     e.reload();
-    await expect(e.tool(lead.id, "spawn_agent", { name: "api", task: "x", worktree: true })).rejects.toThrow("own worktrees aren't part of this Harbor");
+    await expect(e.tool(lead.id, "spawn_agent", { name: "api", task: "x", worktree: true })).rejects.toThrow("own worktrees aren't part of this Hub");
     expect(e.subsOf(lead.id)).toHaveLength(0);
     const asked: [string, string][] = [];
     const dir = join(base, "proj-api");
@@ -888,7 +888,7 @@ describe("teams", () => {
     expect(said).toBe(`Opened the chat “Docs” (id ${fresh.id}) in No project. Its agent is working on it now; the user sees it in the sidebar. Follow up with message_chat(chat: ${fresh.id}, text) and check it with list_chats.`);
     expect(e.transcript(fresh.id).items[0]).toMatchObject({ kind: "notice", icon: "chat", text: "Opened by the agent of “Main”" });
     await until("its turn", () => !e.running(fresh.id));
-    expect(texts(e.transcript(fresh.id).items).at(-1)).toStartWith("echo: [Harbor: the agent of the chat “Main”");
+    expect(texts(e.transcript(fresh.id).items).at(-1)).toStartWith("echo: [Hub: the agent of the chat “Main”");
     expect(await e.tool(lead.id, "list_chats", {})).toContain(`- id ${fresh.id} “Docs” [idle, active just now]`);
     expect(await e.tool(lead.id, "message_chat", { chat: "docs", text: "and the README" })).toBe("Delivered to “Docs”; its agent is working on it now.");
     await until("its second turn", () => !e.running(fresh.id));
@@ -1058,13 +1058,13 @@ describe("the queue (queue.rs)", () => {
 
   test("sent_from_says_where_the_user_is", () => {
     expect(sentFrom("", "pc:me", false)).toBe("");
-    expect(sentFrom("", "pc:me", true)).toContain("the PC running Harbor");
+    expect(sentFrom("", "pc:me", true)).toContain("the PC running Hub");
     expect(sentFrom("Pixel", "tok:0000abcd", false)).toContain("phone ('Pixel')");
-    expect(sentFrom("desk", "pc:desk", false)).toContain("Harbor on 'desk', another PC");
+    expect(sentFrom("desk", "pc:desk", false)).toContain("Hub on 'desk', another PC");
     // The phone calling this PC straight, or through another PC, has no device id: `via` says it's a phone.
-    expect(sentFrom("Pixel (Sam)", "", false, "desk", "phone")).toBe("[The user sent this from the Harbor app on their phone ('Pixel (Sam)'), not from this PC.]\n\n");
+    expect(sentFrom("Pixel (Sam)", "", false, "desk", "phone")).toBe("[The user sent this from the Hub app on their phone ('Pixel (Sam)'), not from this PC.]\n\n");
     // Typed on another PC.
-    expect(sentFrom("laptop (Sam)", "", false, "desk", "pc")).toContain("Harbor on 'laptop (Sam)', another PC");
+    expect(sentFrom("laptop (Sam)", "", false, "desk", "pc")).toContain("Hub on 'laptop (Sam)', another PC");
     expect(sentFrom("laptop", "tok:1", false, "desk", "pc")).toContain("another PC");
     // Without `via` (old queued entries, older peers) the device id decides.
     expect(sentFrom("Pixel", "tok:1", false, "desk", undefined)).toContain("phone ('Pixel')");
@@ -1080,12 +1080,12 @@ describe("the queue (queue.rs)", () => {
 
   test("sent_from_goes_by_the_message_s_via_and_keeps_the_device_name", () => {
     // A phone paired with this PC (no device id on the call) and one forwarded by another PC.
-    expect(sentFrom("Pixel 8 (Sam Rig)", "", false, "desk", "phone")).toBe("[The user sent this from the Harbor app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]\n\n");
-    expect(sentFrom("Pixel 8 (Sam Rig)", "", false, "desk", "pc")).toBe("[The user sent this from Harbor on 'Pixel 8 (Sam Rig)', another PC, not from this one.]\n\n");
-    expect(sentFrom("work-pc (Sam Rig)", "tok:1", false, "desk", "pc")).toContain("Harbor on 'work-pc (Sam Rig)', another PC");
+    expect(sentFrom("Pixel 8 (Sam Rig)", "", false, "desk", "phone")).toBe("[The user sent this from the Hub app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]\n\n");
+    expect(sentFrom("Pixel 8 (Sam Rig)", "", false, "desk", "pc")).toBe("[The user sent this from Hub on 'Pixel 8 (Sam Rig)', another PC, not from this one.]\n\n");
+    expect(sentFrom("work-pc (Sam Rig)", "tok:1", false, "desk", "pc")).toContain("Hub on 'work-pc (Sam Rig)', another PC");
     // Queued: the same.
     const m: Queued = { ...q(1, "hi"), sender: "Pixel 8 (Sam Rig)", via: "phone" };
-    expect(queuedPrompt(m, "hi", "")).toBe("[The user sent this from the Harbor app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]\n\nhi");
+    expect(queuedPrompt(m, "hi", "")).toBe("[The user sent this from the Hub app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]\n\nhi");
   });
 
   test("a_phone_message_tells_the_agent_it_came_from_a_phone_and_queued_ones_too", async () => {
@@ -1101,7 +1101,7 @@ describe("the queue (queue.rs)", () => {
     const said = e.transcript(c.id).items.flatMap((i) => (i.kind === "text" ? [i.text] : []));
     expect(said.length).toBe(2);
     for (const t of said) {
-      expect(t).toContain("[The user sent this from the Harbor app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]");
+      expect(t).toContain("[The user sent this from the Hub app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]");
       expect(t).not.toContain("another PC");
     }
     store.close();
@@ -1308,7 +1308,7 @@ describe("a message to a settled chat unsettles it", () => {
     store.close();
   });
 
-  test("Harbor's own notices leave it settled", () => {
+  test("Hub's own notices leave it settled", () => {
     const { e, store, c, heard } = settled();
     e.notice(c.id, "alert", "Automatic turns paused");
     expect(isSettled(store, c.id)).toBe(true);
@@ -1473,7 +1473,7 @@ describe("list_models", () => {
   });
 });
 
-test("the failed-MCP notice names Harbor's failed servers only, and only when some failed", () => {
+test("the failed-MCP notice names Hub's failed servers only, and only when some failed", () => {
   expect(mcpFailNotice([])).toBeNull();
   expect(mcpFailNotice([["github", "connected"], ["gmail", "pending"], ["x", "needs-auth"]])).toBeNull();
   expect(mcpFailNotice([["harbor", "failed"]])).toBe("MCP servers didn't connect: harbor · they reconnect on the next turn");

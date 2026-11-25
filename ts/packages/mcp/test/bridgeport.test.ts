@@ -23,7 +23,7 @@ afterAll(async () => {
   reclaim.ms = 5000;
 });
 
-test("the port file names the port and the process serving it; an older Harbor's plain port still reads", async () => {
+test("the port file names the port and the process serving it; an older Hub's plain port still reads", async () => {
   const p = await port();
   expect(p).not.toBeNull();
   const o = read();
@@ -48,7 +48,7 @@ test("a file left by a process that has gone is taken back within moments", asyn
   expect(read()).toMatchObject({ port: p as number, pid: process.pid });
 });
 
-test("another bridge that still serves keeps the file, unless this is the session's Harbor", async () => {
+test("another bridge that still serves keeps the file, unless this is the session's Hub", async () => {
   const p = await port();
   const other = Bun.spawn(["sleep", "30"]);
   try {

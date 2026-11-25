@@ -18,9 +18,9 @@ import { platform } from "../platform.ts";
 type Env = Record<string, string | undefined>;
 
 /** The scheduled task that starts Harbor elevated, as Task Scheduler lists it. */
-export const TASK = "Harbor (elevated)";
+export const TASK = "Hub (elevated)";
 /** The one-off task that starts Harbor with the normal token again, while turning it off. */
-export const LIMITED_TASK = "Harbor (normal rights)";
+export const LIMITED_TASK = "Hub (normal rights)";
 /** Set by `admin-start` for the Harbor it starts: that one never hands its start to the task again. */
 export const VIA_TASK = "HARBOR_VIA_TASK";
 /** The only environment a start through the task takes from the Harbor that asked for it (a restart's handover). */
@@ -184,12 +184,12 @@ export function taskXml(t: TaskSpec): string {
   const trigger = t.logon ? `\n  <Triggers>\n    <LogonTrigger>\n      <Enabled>true</Enabled>\n      <UserId>${xml(t.sid)}</UserId>\n    </LogonTrigger>\n  </Triggers>` : "";
   const what =
     t.level === "highest"
-      ? "Starts Harbor with administrator rights (Harbor: Settings, General, Run as administrator). Turning that off there removes this task."
-      : "Starts Harbor with normal rights again, once (Harbor removes it right after).";
+      ? "Starts Hub with administrator rights (Hub: Settings, General, Run as administrator). Turning that off there removes this task."
+      : "Starts Hub with normal rights again, once (Hub removes it right after).";
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Author>Harbor</Author>
+    <Author>Hub</Author>
     <Description>${xml(what)}</Description>
   </RegistrationInfo>${trigger}
   <Principals>

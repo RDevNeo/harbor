@@ -764,7 +764,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       let say: string | undefined;
       if (p.length === 4) {
         const r = phoneSettingsDo(h.store, typeof b.act === "string" ? b.act : "", b);
-        if (r === null) return err(400, "Unknown setting: update Harbor on this PC");
+        if (r === null) return err(400, "Unknown setting: update Hub on this PC");
         if (r !== "") say = r;
       }
       const screen = fit(phoneSettings(h.store, { dictionary: dictate.dictionary().map((e) => e.term), projects: projectsChoices(homedir()) }), known(b.prims));

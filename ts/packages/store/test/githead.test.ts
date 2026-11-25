@@ -27,7 +27,7 @@ test("a checkout's and a worktree's branch are read from their HEAD files", () =
   expect(branchOf(repo, 6000)).toBe("next");
 });
 
-test("the sidebar names a branch without Harbor's harbor/", () => {
+test("the sidebar names a branch without Hub's harbor/", () => {
   expect(branchLabel("harbor/video-transcription")).toBe("video-transcription");
   expect(branchLabel("feature/x")).toBe("feature/x");
   expect(branchLabel("harbor/")).toBe("harbor/");

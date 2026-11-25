@@ -700,7 +700,7 @@ export class Hub {
     const at = this.clock();
     const old = this.inbox.filter((p) => at - p.at > INBOX_TTL);
     this.inbox = this.inbox.filter((p) => at - p.at <= INBOX_TTL);
-    for (const p of old) finish(p, "The phone's Harbor app didn't pick it up within a day");
+    for (const p of old) finish(p, "The phone's Hub app didn't pick it up within a day");
   }
 
   inboxFor(group: string): Json[] {
@@ -726,7 +726,7 @@ export class Hub {
   auth(token: string, via: Via): Level {
     let hit = false;
     for (const t of this.tokens) if (t.account === "") hit = same(t.token, token) || hit;
-    if (!hit) throw new Error("unknown token: sign in with Google in Harbor for Android");
+    if (!hit) throw new Error("unknown token: sign in with Google in Hub for Android");
     if (via.kind === "loopback") return "loopback";
     if (via.kind === "refused") throw new Error("plain HTTP isn't answered here: use TLS");
     return "legacy";

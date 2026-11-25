@@ -116,7 +116,7 @@ export class SecretTools {
     const until = (n: string): number | null => grants.find((g) => g.chat === me.id && g.name === n && g.until > at)?.until ?? null;
     switch (name) {
       case "list_secrets": {
-        if (saved.length === 0) return "No keys saved in Harbor yet. request_secret asks the user for one.";
+        if (saved.length === 0) return "No keys saved in Hub yet. request_secret asks the user for one.";
         return saved
           .map((s) => {
             const u = until(s.name);
@@ -142,7 +142,7 @@ export class SecretTools {
         const names = [...new Set(list(a, "names").map((n) => secrets.envName(n) ?? n))];
         if (names.length === 0) throw new Error("names: the keys' names, from list_secrets");
         const missing = names.filter((n) => !saved.some((s) => s.name === n));
-        if (missing.length > 0) throw new Error(`not saved in Harbor: ${missing.join(", ")} (request_secret asks the user for a new one)`);
+        if (missing.length > 0) throw new Error(`not saved in Hub: ${missing.join(", ")} (request_secret asks the user for a new one)`);
         const reason = str(a, "reason");
         if (reason === "") throw new Error("reason is required");
         const need = secrets.ungranted(grants, me.id, names, at);
@@ -152,14 +152,14 @@ export class SecretTools {
       }
       case "write_secret_to_env": {
         const n = secrets.envName(str(a, "name")) ?? "";
-        if (!saved.some((s) => s.name === n)) throw new Error(`not saved in Harbor: ${str(a, "name")} (list_secrets shows the saved ones)`);
+        if (!saved.some((s) => s.name === n)) throw new Error(`not saved in Hub: ${str(a, "name")} (list_secrets shows the saved ones)`);
         const file = str(a, "file");
         if (file === "") throw new Error("file is required, e.g. .env.local");
         const envVar = secrets.envVarName(str(a, "var") || n);
         if (envVar === null) throw new Error("var: letters, digits and _ only");
         secrets.envPath(this.h.engine().chatCwd(me), file);
         this.ask(me, { kind: "env", names: [n], reason: str(a, "reason"), minutes: 0, how_to_get: "", env_file: file, env_var: envVar });
-        return `Asked the user to let Harbor write ${n} to ${file}. You'll get a [secret ${n}] message when it's written or refused.`;
+        return `Asked the user to let Hub write ${n} to ${file}. You'll get a [secret ${n}] message when it's written or refused.`;
       }
       case "run_with_secrets": {
         const cmd = str(a, "command");
@@ -244,7 +244,7 @@ export class SecretTools {
       if ([...value.trim()].length < secrets.MIN_LEN) throw new Error(`The key needs at least ${secrets.MIN_LEN} characters.`);
       const n = secrets.save(ask.names[0] ?? "", value, ask.reason, this.path);
       const env = toEnv(value.trim());
-      return done(`[secret ${n}] The user saved ${n} in Harbor.${env}${grantFor(span ?? secrets.minutesSpan(ask.minutes))}`);
+      return done(`[secret ${n}] The user saved ${n} in Hub.${env}${grantFor(span ?? secrets.minutesSpan(ask.minutes))}`);
     }
     if (ask.kind === "use") {
       const s = span ?? secrets.minutesSpan(ask.minutes);
@@ -252,7 +252,7 @@ export class SecretTools {
       return done(`[secret ${names}] The user said yes.${grantFor(s)}`);
     }
     const value = secrets.load(this.path).find((s) => s.name === ask.names[0])?.value;
-    if (value === undefined) throw new Error(`${names} isn't saved in Harbor any more.`);
+    if (value === undefined) throw new Error(`${names} isn't saved in Hub any more.`);
     return done(`[secret ${names}] ${toEnv(value).trim() || "Nothing written."}`);
   }
 }

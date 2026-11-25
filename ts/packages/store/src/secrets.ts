@@ -322,7 +322,7 @@ export function envPath(root: string, file: string): string {
   } catch {
     m = undefined;
   }
-  if (m?.isSymbolicLink()) throw new Error(`'${f}' is a symlink; Harbor writes only plain files`);
+  if (m?.isSymbolicLink()) throw new Error(`'${f}' is a symlink; Hub writes only plain files`);
   if (m && !m.isFile()) throw new Error(`'${f}' isn't a file`);
   return target;
 }

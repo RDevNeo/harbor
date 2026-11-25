@@ -12,7 +12,7 @@ const UPLOAD = "https://gmail.googleapis.com/upload/gmail/v1/users/me";
 const RAW_MAX = 4 << 20;
 const PARALLEL = 8;
 const SYSTEM = ["INBOX", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "CHAT"];
-const SIGN_IN = "Gmail isn't signed in. The user can sign in under Settings › Integrations › Apps in Harbor (desktop) or Settings › Apps (phone).";
+const SIGN_IN = "Gmail isn't signed in. The user can sign in under Settings › Integrations › Apps in Hub (desktop) or Settings › Apps (phone).";
 
 type Obj = Record<string, unknown>;
 export type Label = [id: string, name: string];
@@ -45,7 +45,7 @@ function mailProps(extra: Obj): Obj {
     subject: s('Subject (a reply defaults to "Re: " + the original\'s)'),
     body: s("Plain-text body"),
     html: s("HTML body (optional; the plain text goes along as the alternative)"),
-    attachments: list("Paths of files to attach, on the PC that runs Harbor"),
+    attachments: list("Paths of files to attach, on the PC that runs Hub"),
     reply_to: s("Id of the message this answers: threads it into that conversation and fills recipients and subject when not given"),
     reply_all: flag("With reply_to: also copy the original's other recipients"),
     ...extra,
@@ -92,7 +92,7 @@ export function tools(): Obj[] {
     ),
     tool(
       "get_attachment",
-      "Save an attachment to a file on the PC that runs Harbor and return its path. Pass the filename get_message listed with it.",
+      "Save an attachment to a file on the PC that runs Hub and return its path. Pass the filename get_message listed with it.",
       {
         message_id: s("Message id"),
         attachment_id: s("The attachment_id get_message listed"),
@@ -159,7 +159,7 @@ export function tools(): Obj[] {
     const all = t.name === "search" ? '; "all" searches every account' : "";
     obj(at(t, "inputSchema", "properties")).account = s(`Gmail account to use, by address (default: the default account; see accounts)${all}`);
   }
-  v.push(tool("accounts", "The Gmail accounts connected in Harbor, the default (what tools use without account) first.", {}, []));
+  v.push(tool("accounts", "The Gmail accounts connected in Hub, the default (what tools use without account) first.", {}, []));
   return v;
 }
 
@@ -787,7 +787,7 @@ export class Gmail {
 
   async token(account: string, failed: string | null): Promise<string> {
     const run = async (): Promise<string> => {
-      const gone = (): never => fail(`The sign-in of ${account} has expired or was revoked. Sign in to it again in Harbor (Settings › Integrations › Apps).`);
+      const gone = (): never => fail(`The sign-in of ${account} has expired or was revoked. Sign in to it again in Hub (Settings › Integrations › Apps).`);
       let tok = (await this.opts.auth.token(account, false)) ?? gone();
       if (failed === tok) tok = (await this.opts.auth.token(account, true)) ?? gone();
       return tok;
@@ -836,7 +836,7 @@ class Mailbox {
       }
       if (code >= 200 && code < 300) return v;
       if (code === 401) {
-        return fail(`Gmail refused the sign-in of ${this.account} (${apiMessage(v)}). Sign in to it again in Harbor (Settings › Integrations › Apps).`);
+        return fail(`Gmail refused the sign-in of ${this.account} (${apiMessage(v)}). Sign in to it again in Hub (Settings › Integrations › Apps).`);
       }
       return fail(`Gmail: ${apiMessage(v)} (${code})`);
     }

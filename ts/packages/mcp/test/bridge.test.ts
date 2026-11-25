@@ -251,7 +251,7 @@ test("prompts come from the user's commands and skills", async () => {
     const got = await ask({ jsonrpc: "2.0", id: 2, method: "prompts/get", params: { name: "a_b_c", arguments: { arguments: "the thing" } } });
     expect(got.result).toEqual({ description: "A command", messages: [{ role: "user", content: { type: "text", text: "Do the thing" } }] });
     const skill = await ask({ jsonrpc: "2.0", id: 3, method: "prompts/get", params: { name: "skill_ship" } });
-    expect(JSON.stringify(skill.result)).toContain("Follow this skill. Its other files are on the Harbor PC in /skills/ship");
+    expect(JSON.stringify(skill.result)).toContain("Follow this skill. Its other files are on the Hub PC in /skills/ship");
     revoke(g.token);
   } finally {
     setSlash(null);

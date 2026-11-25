@@ -108,7 +108,7 @@ describe("account vault", () => {
     for (const p of [a, b, c]) expect(existsSync(join(p.dir, "vault-device.json"))).toBe(false);
   });
 
-  test("a vault made by Harbor 0.162-0.164 (its key on its PCs only): a PC that has the key hands it over on its own, and the new PC opens", async () => {
+  test("a vault made by Hub 0.162-0.164 (its key on its PCs only): a PC that has the key hands it over on its own, and the new PC opens", async () => {
     const svc = new FakeVaultService(clock);
     const vk = newVaultKey();
     const epoch = "00112233aabbccdd";

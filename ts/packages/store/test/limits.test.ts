@@ -536,6 +536,6 @@ test("a pinned sub at a limit: its lead hears it's pinned and that switch_agent_
   const c = h.addChat({ role: "sub", parent: lead.id, name: "w" });
   h.pinMap.set(c.id, pinTo("claude", "project"));
   l.limitEvent(c.id, { type: "limit", kind: "five_hour", resetsAt: h.clock + 3600, text: "hit" });
-  expect(told.at(-1)?.[1]).toContain("The user pinned it to claude: Harbor doesn't switch it and switch_agent_account refuses to");
+  expect(told.at(-1)?.[1]).toContain("The user pinned it to claude: Hub doesn't switch it and switch_agent_account refuses to");
   expect(told.at(-1)?.[1]).not.toContain("switch_agent_account(agent:");
 });

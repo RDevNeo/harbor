@@ -227,5 +227,5 @@ export function notice(folder: string, pr: Merged, done: Cleaned, repo: string, 
 
 /** The chat's notice when its merged worktree stays: "Kept the worktree: PR #12 was merged, but it has 2 uncommitted changes". */
 export function keptNotice(pr: Merged, why: string): [string, string] {
-  return [`Kept the worktree: PR #${pr.number} was merged, but ${why}`, "Harbor removes a merged worktree only when nothing would be lost. Commit, push or discard what's left, or remove it yourself."];
+  return [`Kept the worktree: PR #${pr.number} was merged, but ${why}`, "Hub removes a merged worktree only when nothing would be lost. Commit, push or discard what's left, or remove it yourself."];
 }

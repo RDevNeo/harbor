@@ -79,7 +79,7 @@ test("an agent that cannot fix it is tried three times, then the user is told", 
   expect(claudeLog().filter((l) => l.argv).length).toBe(3);
   expect(h.host.saved().attention).toBe("Discord tools need attention");
   expect([...h.host.saved().attempts.values()]).toEqual([3]);
-  expect(notices()).toContain("Harbor's repair couldn't fix the tools for Discord's new build.");
+  expect(notices()).toContain("Hub's repair couldn't fix the tools for Discord's new build.");
   expect(h.host.isRepairing()).toBe(false);
   expect(existsSync(join(r.root, "scratch"))).toBe(false);
 });

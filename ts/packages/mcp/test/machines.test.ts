@@ -140,7 +140,7 @@ describe("serving peers", () => {
   test("a PC with no projects shared gets a clear answer", async () => {
     publish(new MemKv({ share_files: '{"pc:r":"read"}' }), [], new Set());
     const r = (await call("pc:r", { tool: "read", args: { file_path: "x" } })) as Record<string, Json>;
-    expect(textOf(r)).toContain("has no projects in Harbor to share");
+    expect(textOf(r)).toContain("has no projects in Hub to share");
   });
 
   test("github through a read-level PC needs its github switch and the memory id", async () => {
@@ -198,7 +198,7 @@ describe("the machines server", () => {
 
   test("without a mesh nothing runs", async () => {
     const r = await ask(grant, "tools/call", { name: "list", arguments: {} });
-    expect(result(r)).toEqual({ content: [{ type: "text", text: "Harbor's mesh isn't running" }], isError: true });
+    expect(result(r)).toEqual({ content: [{ type: "text", text: "Hub's mesh isn't running" }], isError: true });
   });
 
   const fakeHub = (peers: Peer[], http: NonNullable<Hub["http"]>): Hub => ({ me: () => ({ id: "pc:me", name: "Here" }), peers: () => peers, versions: () => "versions text", http });
@@ -249,7 +249,7 @@ describe("the machines server", () => {
     const go = async (): Promise<Record<string, Json>> => result(await ask(grant, "tools/call", { name: "read", arguments: { machine: "Alpha", file_path: "x" } }));
     expect(await go()).toEqual({ content: [{ type: "text", text: "denied" }], isError: true });
     next = () => Promise.resolve([404, null]);
-    expect(textOf(await go())).toBe("Alpha runs an older Harbor without shared files (0.45+)");
+    expect(textOf(await go())).toBe("Alpha runs an older Hub without shared files (0.45+)");
     next = () => Promise.resolve([403, { error: "no" }]);
     expect(textOf(await go())).toBe("Alpha answered 403: no");
     next = () => Promise.reject(new Error("timed out"));
@@ -275,7 +275,7 @@ describe("the machines server", () => {
       "- Alpha, owner Ann — this chat is driven from here: allows: read my projects; github: yes (its owner's login, for this chat); projects: /p/app (app)",
       "- Beta: allows: read my projects; projects: /p/app (app)",
       "- Gamma: offline",
-      "- Delta: on, but its Harbor shares no files (older than 0.45)",
+      "- Delta: on, but its Hub shares no files (older than 0.45)",
       "",
       "versions text",
     ]);

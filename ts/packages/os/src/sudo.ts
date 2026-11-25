@@ -42,7 +42,7 @@ export const ROOT_SCRIPT = [
   "grep -Eq '^[[:space:]]*[@#]includedir[[:space:]]+(/private)?/etc/sudoers\\.d/?[[:space:]]*$' \"$sudoers\" || { echo \"$sudoers doesn't read $dir (no @includedir line): nothing was changed\"; exit 3; }",
   'mkdir -p "$dir" || exit 4',
   'tmp=$(mktemp "$dir/.harbor.XXXXXX") || exit 4',
-  "printf '# Harbor: passwordless sudo for %s (harbor admin off removes it)\\n%s ALL=(ALL) NOPASSWD: ALL\\n' \"$u\" \"$u\" > \"$tmp\" || { rm -f \"$tmp\"; exit 4; }",
+  "printf '# Hub: passwordless sudo for %s (harbor admin off removes it)\\n%s ALL=(ALL) NOPASSWD: ALL\\n' \"$u\" \"$u\" > \"$tmp\" || { rm -f \"$tmp\"; exit 4; }",
   'chown root "$tmp" && chgrp 0 "$tmp" && chmod 0440 "$tmp" || { rm -f "$tmp"; exit 4; }',
   'if ! visudo -cf "$tmp" >/dev/null 2>&1; then rm -f "$tmp"; echo "visudo refused the rule: nothing was changed"; exit 4; fi',
   'mv -f "$tmp" "$dir/$f" || { rm -f "$tmp"; exit 4; }',
@@ -62,7 +62,7 @@ export const appleString = (s: string): string => `"${s.replaceAll("\\", "\\\\")
 /** macOS: `osascript` arguments that run the script as root behind the system's own authentication dialog. */
 export function osascriptArgs(args: readonly string[]): string[] {
   const cmd = ["/bin/sh", "-c", ROOT_SCRIPT, "sh", ...args].map((a) => `quoted form of ${appleString(a)}`).join(' & " " & ');
-  return ["-e", `do shell script (${cmd}) with prompt "Harbor wants to let its agents use sudo without asking for your password." with administrator privileges`];
+  return ["-e", `do shell script (${cmd}) with prompt "Hub wants to let its agents use sudo without asking for your password." with administrator privileges`];
 }
 
 export type Via = "desktop" | "terminal" | "sudo-n";

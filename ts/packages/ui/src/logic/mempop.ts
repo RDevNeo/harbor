@@ -211,7 +211,7 @@ export function deviceRows(here: PcMem, others: readonly PcMem[], sidebar = "", 
     const key = me ? "" : p.name;
     const r = p.online ? (p.mem?.ram ?? null) : null;
     const isLow = r ? low(r) : false;
-    const note = !p.online ? "Off: no numbers now." : !p.mem ? (p.asking ? "Asking…" : p.note || "No numbers: its Harbor is older.") : !r ? "No RAM figures." : "";
+    const note = !p.online ? "Off: no numbers now." : !p.mem ? (p.asking ? "Asking…" : p.note || "No numbers: its Hub is older.") : !r ? "No RAM figures." : "";
     const n = p.mem?.running ?? 0;
     const desc = !p.online ? "Off" : !p.mem ? "" : n === 0 ? "No chats" : n === 1 ? "1 chat" : `${n} chats`;
     add(row("mem-pc", p.name, { badge: me ? "This PC" : p.ssh ? "SSH" : "", desc, icon: r ? ramText(r) : note, value: r ? ramFrac(r) : -1, checked: isLow, enabled: key === sidebar }), { pc: key, sub: pcSub(p, r, isLow, note, topN) });

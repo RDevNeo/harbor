@@ -9,14 +9,14 @@ import { platform } from "./platform.ts";
 type Env = Record<string, string | undefined>;
 
 /** Harbor's id where the system asks for one (macOS bundles and LaunchAgents). */
-export const APP_ID = "dev.harbor.Harbor";
+export const APP_ID = "dev.harbor.Hub";
 
 /**
  * Where an installed Harbor's command is, the one that follows its updates: ~/.local/bin/harbor (a link,
  * install.sh), or on Windows the installed harbor.exe itself (install.ps1 puts its folder on PATH).
  */
 export function installedLauncher(env: Env = process.env): string {
-  if (platform(env) === "win32") return join(env.LOCALAPPDATA ?? join(home(env), "AppData", "Local"), "Programs", "Harbor", "harbor.exe");
+  if (platform(env) === "win32") return join(env.LOCALAPPDATA ?? join(home(env), "AppData", "Local"), "Programs", "Hub", "harbor.exe");
   return join(env.HOME ?? "", ".local/bin/harbor");
 }
 
@@ -95,7 +95,7 @@ export function desktopEntry(exe: string, arg: string): string {
   if ([...exe].some((c) => /\s/u.test(c) || "\"'\\`$".includes(c))) {
     quoted = `"${[...exe].map((c) => ("\"`$\\".includes(c) ? `\\${c}` : c)).join("")}"`;
   }
-  return `[Desktop Entry]\nType=Application\nName=Harbor\nComment=Starts Harbor in the background, so phones and other PCs can reach this one\nExec=${quoted} ${arg}\nIcon=harbor\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`;
+  return `[Desktop Entry]\nType=Application\nName=Hub\nComment=Starts Hub in the background, so phones and other PCs can reach this one\nExec=${quoted} ${arg}\nIcon=harbor\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`;
 }
 
 const xml = (s: string): string => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");

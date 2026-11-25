@@ -406,7 +406,7 @@ async function upnpTo(net: PortmapNet, local: string, internal: number, external
   const svc = igdService(desc, base);
   if (svc === null) throw new Error("no WAN connection service");
   const { st, url: ctl } = svc;
-  const args = `<NewRemoteHost></NewRemoteHost><NewExternalPort>${external}</NewExternalPort><NewProtocol>TCP</NewProtocol><NewInternalPort>${internal}</NewInternalPort><NewInternalClient>${local}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>Harbor</NewPortMappingDescription><NewLeaseDuration>${LIFETIME}</NewLeaseDuration>`;
+  const args = `<NewRemoteHost></NewRemoteHost><NewExternalPort>${external}</NewExternalPort><NewProtocol>TCP</NewProtocol><NewInternalPort>${internal}</NewInternalPort><NewInternalClient>${local}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>Hub</NewPortMappingDescription><NewLeaseDuration>${LIFETIME}</NewLeaseDuration>`;
   await http(net.httpMs, ctl, { action: `${st}#AddPortMapping`, body: soapEnvelope(st, "AddPortMapping", args) });
   const ext = await http(net.httpMs, ctl, { action: `${st}#GetExternalIPAddress`, body: soapEnvelope(st, "GetExternalIPAddress", "") }).catch(() => null);
   const said = ext === null ? undefined : portmapTag(ext, "NewExternalIPAddress")?.trim();
@@ -732,7 +732,7 @@ export class Portmap {
         io.err("usage: harbor net forward <external port|off>");
         return 2;
       }
-      io.log(`port forward: ${v} (Harbor picks it up within 5 minutes)`);
+      io.log(`port forward: ${v} (Hub picks it up within 5 minutes)`);
       return 0;
     }
     if (cmd === "name" && v !== undefined) {

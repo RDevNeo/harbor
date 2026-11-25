@@ -410,9 +410,9 @@ test("a sign-in that stays refused or is gone says so", async () => {
   const r = await stuck.callTool("get_message", { account: "me@example.com", id: "m1" });
   refused = 0;
   expect(r.ok).toBe(false);
-  expect(r.text).toBe("Gmail refused the sign-in of me@example.com (Invalid Credentials). Sign in to it again in Harbor (Settings › Integrations › Apps).");
+  expect(r.text).toBe("Gmail refused the sign-in of me@example.com (Invalid Credentials). Sign in to it again in Hub (Settings › Integrations › Apps).");
   const gone = new Gmail({ auth: { accounts: auth.accounts, token: () => null } });
-  expect((await gone.callTool("search", {})).text).toBe("The sign-in of me@example.com has expired or was revoked. Sign in to it again in Harbor (Settings › Integrations › Apps).");
+  expect((await gone.callTool("search", {})).text).toBe("The sign-in of me@example.com has expired or was revoked. Sign in to it again in Hub (Settings › Integrations › Apps).");
   const none = new Gmail({ auth: { accounts: () => [], token: () => null } });
   expect((await none.callTool("accounts", {})).text).toContain("isn't signed in");
   const down = new Gmail({ auth, api: "http://localhost:1/x" });

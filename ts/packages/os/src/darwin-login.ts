@@ -23,7 +23,7 @@ export function set(on: boolean): void {
   pool(() => {
     const ok = call1(service(), on ? "registerAndReturnError:" : "unregisterAndReturnError:", null);
     // A BOOL in the low byte of the return register.
-    if ((Number(ok ?? 0) & 0xff) === 0 && on) throw new Error("macOS didn't take Harbor as a login item (System Settings › General › Login Items)");
+    if ((Number(ok ?? 0) & 0xff) === 0 && on) throw new Error("macOS didn't take Hub as a login item (System Settings › General › Login Items)");
   });
 }
 

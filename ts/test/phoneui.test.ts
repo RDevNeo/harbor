@@ -39,8 +39,8 @@ test("the_phone_settings_say_what_the_app_said_before", () => {
   expect(s.sections.map((x) => x.title)).toEqual(["Voice", "Worktrees"]);
   expect(s.sections[0]?.rows[0]?.sub).toBe("Names and terms to spell exactly, like SpokPay");
   expect(s.sections[1]?.rows[0]).toMatchObject({ title: "Delete merged worktrees", sub: "Once a chat's PR is merged · their branches too", lines: 2, chevron: true });
-  const terms = ["SpokPay", "Harbor", "Omarchy", "Hyprland", "Parakeet", "Whisper", "Servo", "Slint", "Bun"];
-  expect(phoneSettings(k, { dictionary: terms }).sections[0]?.rows[0]?.sub).toBe("9 words · SpokPay, Harbor, Omarchy, Hyprland, Parakeet, Whisper, Servo");
+  const terms = ["SpokPay", "Hub", "Omarchy", "Hyprland", "Parakeet", "Whisper", "Servo", "Slint", "Bun"];
+  expect(phoneSettings(k, { dictionary: terms }).sections[0]?.rows[0]?.sub).toBe("9 words · SpokPay, Hub, Omarchy, Hyprland, Parakeet, Whisper, Servo");
   expect(phoneSettings(k, { dictionary: ["One"] }).sections[0]?.rows[0]?.sub).toBe("1 word · One");
   expect(phoneSettings(k, { dictionary: null }).sections.map((x) => x.id)).toEqual(["worktrees"]);
   expect(phoneSettingsDo(k, "worktrees", { values: { wt_clean_merged: false } })).toBe("");

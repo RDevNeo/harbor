@@ -42,7 +42,7 @@ test("trims_a_log_to_its_end", () => {
   writeFileSync(p, Array.from({ length: 1000 }, (_, i) => `line ${i}\n`).join(""));
   procs.trim(p, 100);
   const t = readFileSync(p, "utf8");
-  expect(t.startsWith("[… earlier output cut by Harbor]\nline 9")).toBe(true);
+  expect(t.startsWith("[… earlier output cut by Hub]\nline 9")).toBe(true);
   expect(t.endsWith("line 999\n")).toBe(true);
   expect(t.length).toBeLessThan(150);
 });

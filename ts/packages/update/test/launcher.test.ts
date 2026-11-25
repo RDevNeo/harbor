@@ -61,7 +61,7 @@ test("a bundle that crashes on start falls back to the previous one, which is sk
   expect(existsSync(join(inst.dir, ".previous"))).toBe(false);
 });
 
-test("a helper command such as harbor turn does not start an attempt that could roll Harbor back", async () => {
+test("a helper command such as harbor turn does not start an attempt that could roll Hub back", async () => {
   const marker = join(tmp(), "ran");
   const inst = makeInstall({ version: "1.1.0", bundle: goodBundle("1.1.0", marker) });
   expect(await run(inst, ["turn", "x"])).toBe(0);
@@ -72,7 +72,7 @@ test("a helper command such as harbor turn does not start an attempt that could 
 const liveAttempt = (inst: Install, pid: number, stage: "trying" | "ok"): void =>
   writeFileSync(join(inst.dir, "starting.json"), JSON.stringify({ version: "1.1.0", pid, at: Date.now(), stage, kind: "release", args: [], id: "" }));
 
-test("a second Harbor started while one runs leaves that one's start alone, and a restart takes over from the one it replaces", async () => {
+test("a second Hub started while one runs leaves that one's start alone, and a restart takes over from the one it replaces", async () => {
   const inst = makeInstall({ version: "1.1.0" });
   const cfg = configFor(inst);
   const first = Bun.spawn(["sleep", "30"]);
@@ -143,7 +143,7 @@ test("launch reports a file that is not a bundle and runs main with the argument
   const cfg = configFor(null, { exe: join(tmp(), "harbor") });
   const bad = await launch(["x"], { cfg, load: async () => ({}), err: (l) => void errs.push(l), out: (l) => void outs.push(l) });
   expect(bad).toBe(1);
-  expect(errs[0]).toContain("is not a Harbor bundle");
+  expect(errs[0]).toContain("is not a Hub bundle");
   let got: string[] = [];
   const ok = await launch(["a", "b"], {
     cfg,

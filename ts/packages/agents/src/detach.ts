@@ -517,7 +517,7 @@ export function signedOutEnv(): [string, string | null][] {
     }
   }
   v.push(["GH_CONFIG_DIR", gh], ["GIT_TERMINAL_PROMPT", "0"]);
-  const helper = "!f() { test \"$1\" = get && echo 'Harbor: GitHub is not signed in. Sign in under Settings > Integrations > Apps.' >&2; }; f";
+  const helper = "!f() { test \"$1\" = get && echo 'Hub: GitHub is not signed in. Sign in under Settings > Integrations > Apps.' >&2; }; f";
   const git: [string, string][] = [
     ["credential.helper", ""],
     ["credential.https://github.com.helper", ""],

@@ -68,7 +68,7 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
       ]),
     );
     if (st.signingIn && st.url !== "") out.push(status(badge(""), "Waiting for the browser.", { before: 14, buttons: [btn("open_page", "Open the page again")] }));
-    if (!acc.configured()) out.push(copy("This build of Harbor has no account service set up (a development build).", 12, { before: 14 }));
+    if (!acc.configured()) out.push(copy("This build of Hub has no account service set up (a development build).", 12, { before: 14 }));
     out.push(...thisPc(d, ds), ...(d ? otherDevices(d, []) : []));
     return out;
   }
@@ -146,7 +146,7 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
     out.push(form("invite", [field("email", "name@example.com", { width: 260 })], btn("invite", "Invite", { icon: ICONS.PLUS, variant: "primary", enabled: !st.busy }), { before: 16 }));
     out.push(
       copy(
-        "They'll see the invitation in Harbor when they sign in with that Google account, on a PC or phone (no email is sent). Once they accept, they have full control of this workspace's PCs and chats. Only owners invite and remove people.",
+        "They'll see the invitation in Hub when they sign in with that Google account, on a PC or phone (no email is sent). Once they accept, they have full control of this workspace's PCs and chats. Only owners invite and remove people.",
         12,
         { before: 12 },
       ),
@@ -162,7 +162,7 @@ export function accountBlocks(host: AccountHost, ds: DevicesState = newDevicesSt
       list(
         here.pcs.map((p) => {
           const by = p.owner_name === "" ? "" : ` · added by ${p.owner_name}`;
-          const v = p.version === "" ? "" : ` · Harbor ${p.version}`;
+          const v = p.version === "" ? "" : ` · Hub ${p.version}`;
           const badges = p.fp === mine ? [badge("This PC", "green")] : online.has(p.fp) ? [badge("Online", "green")] : [];
           return row(p.name, { icon: ICONS.MONITOR, lead: 32, badges, line: `key ${keyShort(p.fp)}${by}${v} · checked in ${ago(p.seen)}` });
         }),

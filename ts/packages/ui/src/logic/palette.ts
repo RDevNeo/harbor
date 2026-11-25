@@ -188,7 +188,7 @@ export function paletteItems(p: PaletteInput): Item[] {
       ? paletteItem("act:fast:off", "actions", ICONS.GAUGE, "gauge", "Turn fast mode off", "Fast mode for every chat on this PC", { kind: "fast", on: false }, "speed toggle setting")
       : paletteItem("act:fast:on", "actions", ICONS.GAUGE, "gauge", "Turn fast mode on", "Fast mode for every chat on this PC", { kind: "fast", on: true }, "speed toggle setting"),
   );
-  v.push(paletteItem("act:updates", "actions", ICONS.REFRESH, "refresh", "Check for updates", "Harbor's latest release", { kind: "check_updates" }, "upgrade version release"));
+  v.push(paletteItem("act:updates", "actions", ICONS.REFRESH, "refresh", "Check for updates", "Hub's latest release", { kind: "check_updates" }, "upgrade version release"));
   v.push(paletteItem("act:sidebar", "actions", ICONS.PANEL_LEFT, "panel", "Show or hide the sidebar", "", { kind: "toggle_sidebar" }, "toggle"));
   v.push(paletteItem("act:terminal", "actions", ICONS.TERMINAL, "terminal", "Open or close the terminal", "", { kind: "toggle_terminal" }, "toggle shell console"));
   for (const r of p.repos) v.push(paletteItem(`new:${r.id}`, "actions", ICONS.COMPOSE, "compose", `New chat in ${r.name}`, r.dir, { kind: "new_chat", repo: r.id }, "thread start create"));

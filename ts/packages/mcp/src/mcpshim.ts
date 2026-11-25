@@ -21,12 +21,12 @@ const mode: Json = {
 
 export function tools(role: string): JsonObject[] {
   const v: JsonObject[] = [
-    tool("list_processes", "Long-running processes Harbor runs for this project (dev servers, watchers…): status, command and URL.", {}, []),
+    tool("list_processes", "Long-running processes Hub runs for this project (dev servers, watchers…): status, command and URL.", {}, []),
     tool("process_logs", "Recent output of a process started with start_process.", { name: prop("string", "Process name"), lines: prop("integer", "How many lines (default 60)") }, ["name"]),
     tool("stop_process", "Stop a process (and everything it started).", { name: prop("string", "Process name") }, ["name"]),
     tool(
       "start_process",
-      "Run a long-running or slow command (dev server, watcher, data pull, long build) owned by Harbor, so it survives your turn and Harbor restarts. Returns at once; you get a [process name] message when it prints a local URL or exits.",
+      "Run a long-running or slow command (dev server, watcher, data pull, long build) owned by Hub, so it survives your turn and Hub restarts. Returns at once; you get a [process name] message when it prints a local URL or exits.",
       {
         name: prop("string", "Short name, e.g. 'dev', 'convex', 'db-pull'"),
         command: prop("string", "Shell command, e.g. 'npm run dev'"),
@@ -37,14 +37,14 @@ export function tools(role: string): JsonObject[] {
     tool("list_agents", "List the project's agents: name, account id and provider/model, status (running, queued, paused at a usage limit, idle), current task and last report; for the lead, also the messages it queued for each (with their ids, for unqueue_message).", {}, []),
     tool(
       "find_chats",
-      "Find Harbor chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (harbor://chat/…) to put in a reply so the user can open it.",
+      "Find Hub chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (harbor://chat/…) to put in a reply so the user can open it.",
       { query: prop("string", "Words of the title or agent name (empty: the most recent chats)") },
       [],
     ),
-    tool("list_secrets", "Keys the user saved in Harbor for agents (API keys, tokens): their names, what they're for and whether you may use them now; never the values.", {}, []),
+    tool("list_secrets", "Keys the user saved in Hub for agents (API keys, tokens): their names, what they're for and whether you may use them now; never the values.", {}, []),
     tool(
       "request_secret",
-      "Ask the user for a key you need (an API key, a token) instead of asking in the chat, also one they still have to create: say where to get it in how_to_get. Harbor shows them a card with a field for it, outside the chat; they may keep it in Harbor (and let you use it for `minutes`), write it to the project's .env file you name, or both. Returns at once; you get a '[secret NAME]' message when they answer. You never see the value.",
+      "Ask the user for a key you need (an API key, a token) instead of asking in the chat, also one they still have to create: say where to get it in how_to_get. Hub shows them a card with a field for it, outside the chat; they may keep it in Hub (and let you use it for `minutes`), write it to the project's .env file you name, or both. Returns at once; you get a '[secret NAME]' message when they answer. You never see the value.",
       {
         name: prop("string", "Environment variable name, e.g. 'STRIPE_SECRET_KEY'"),
         reason: prop("string", "What it's for, shown to the user, e.g. 'To test the payments integration'"),
@@ -57,7 +57,7 @@ export function tools(role: string): JsonObject[] {
     ),
     tool(
       "request_secret_access",
-      "Ask the user to let you use saved keys for a while: every use of a key needs it. Harbor shows them a card with your reason and the time; they may shorten it or say no. Returns at once; you get a '[secret …]' message when they answer, and another when the time is up.",
+      "Ask the user to let you use saved keys for a while: every use of a key needs it. Hub shows them a card with your reason and the time; they may shorten it or say no. Returns at once; you get a '[secret …]' message when they answer, and another when the time is up.",
       {
         names: names("Names from list_secrets"),
         reason: prop("string", "Why, shown to the user, e.g. 'To test the Boat API'"),
@@ -67,7 +67,7 @@ export function tools(role: string): JsonObject[] {
     ),
     tool(
       "write_secret_to_env",
-      "Ask the user to let Harbor write a saved key to a .env file of the project (.env, .env.local, .env.production…), for code that reads it from there. Harbor writes the VAR=value line itself; you never see the value. Returns at once; you get a '[secret NAME]' message when it's written or refused.",
+      "Ask the user to let Hub write a saved key to a .env file of the project (.env, .env.local, .env.production…), for code that reads it from there. Hub writes the VAR=value line itself; you never see the value. Returns at once; you get a '[secret NAME]' message when it's written or refused.",
       {
         name: prop("string", "The secret's name, from list_secrets"),
         file: prop("string", "The .env file, relative to the project, e.g. '.env.local'"),
@@ -117,7 +117,7 @@ export function tools(role: string): JsonObject[] {
           account: prop("string", "Account id from list_models: Claude, Codex or OpenCode (default: yours)"),
           model: prop("string", "Model id from list_models (default: yours)"),
           effort: prop("string", "Reasoning effort (optional)"),
-          machine: prop("string", "Another PC of the user's Harbor mesh to run it on (default: this PC)"),
+          machine: prop("string", "Another PC of the user's Hub mesh to run it on (default: this PC)"),
         },
         ["prompt"],
       ),
@@ -201,7 +201,7 @@ export function tools(role: string): JsonObject[] {
       ),
       tool(
         "delete_branch",
-        "Delete a local branch and/or remove a worktree (a branch checked out in a Harbor worktree takes its worktree along). Refused when the branch's commits aren't merged into the default branch or pushed, when the worktree has uncommitted changes or another chat works there, unless force; never the default branch, the project's checkout, or the checkout this chat is in.",
+        "Delete a local branch and/or remove a worktree (a branch checked out in a Hub worktree takes its worktree along). Refused when the branch's commits aren't merged into the default branch or pushed, when the worktree has uncommitted changes or another chat works there, unless force; never the default branch, the project's checkout, or the checkout this chat is in.",
         {
           branch: prop("string", "Branch to delete"),
           worktree: prop("string", "Worktree to remove: its folder name or path (its branch stays unless you give branch too)"),
@@ -300,11 +300,11 @@ export async function callApp(chat: number, name: string, args: Json, opts: Call
       answer = await askSocket(path, message);
       break;
     } catch {
-      if (Date.now() - started >= waitMs) return [false, "Harbor is not running"];
+      if (Date.now() - started >= waitMs) return [false, "Hub is not running"];
       await sleep(250);
     }
   }
-  if (answer.trim() === "") return [false, "Harbor restarted before answering. Check whether it took effect (list_agents, list_processes…) before trying again."];
+  if (answer.trim() === "") return [false, "Hub restarted before answering. Check whether it took effect (list_agents, list_processes…) before trying again."];
   const v = parseJson(answer);
   const o = isObject(v) ? v : {};
   const text = typeof o.text === "string" ? o.text : "no reply";

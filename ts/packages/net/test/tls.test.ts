@@ -99,9 +99,9 @@ describe("identity (tls.rs)", () => {
     expect(certFp(x.raw.subarray(0, 40))).toBeNull();
   });
 
-  test("the certificate is rcgen's shape: CN=Harbor, SAN harbor, 2025 to 2125, self-signed", () => {
+  test("the certificate is rcgen's shape: CN=Hub, SAN harbor, 2025 to 2125, self-signed", () => {
     const x = new X509Certificate(srv.cert);
-    expect(x.subject).toBe("CN=Harbor");
+    expect(x.subject).toBe("CN=Hub");
     expect(x.subjectAltName).toBe("DNS:harbor");
     expect(new Date(x.validFrom).getUTCFullYear()).toBe(2025);
     expect(new Date(x.validTo).getUTCFullYear()).toBe(2125);

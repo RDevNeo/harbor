@@ -35,7 +35,7 @@ export function label(l: Level): string {
 export function aboutLevel(l: Level): string {
   return {
     off: "Its chats can't see this PC's files",
-    read: "Read and search inside your Harbor projects",
+    read: "Read and search inside your Hub projects",
     edit: "Also write and edit files inside your projects",
     full: "Run any command and open any file as you, use your GitHub login (the default)",
   }[l];
@@ -173,7 +173,7 @@ export async function serveTool(peer: string, body: unknown): Promise<Reply> {
   if (named) cwd = named[1];
   else if (level === "full") cwd = home();
   else if (roots[0] !== undefined) cwd = roots[0];
-  else return no(`${me} has no projects in Harbor to share`);
+  else return no(`${me} has no projects in Hub to share`);
   if (level !== "full") {
     const key = ["read", "write", "edit"].includes(tool) ? "file_path" : "path";
     const target = resolve(cwd, argStr(args, key) ?? "");
@@ -249,7 +249,7 @@ export async function gh(args: unknown, full: boolean): Promise<{ ok: boolean; t
     const why = ghAllowed(argv);
     if (why !== null) return { ok: false, text: why };
   }
-  if (!signedIn("github")) return { ok: false, text: `GitHub isn't signed in in Harbor on ${hostname()}` };
+  if (!signedIn("github")) return { ok: false, text: `GitHub isn't signed in in Hub on ${hostname()}` };
   const script = `exec 2>&1\nGH_PAGER=cat GH_PROMPT_DISABLED=1 GH_BROWSER=false BROWSER=false exec gh ${argv.map(shQuote).join(" ")}`;
   const scratch = join(tmpdir(), `harbor-gh-${randomHex(8)}`);
   const wanted = argStr(args, "cwd");
@@ -309,7 +309,7 @@ function toolDefs(g: Grant): Json[] {
     {
       name: "list",
       description:
-        "The PCs of the user's Harbor mesh: who owns each, whether it's on, what it lets this chat do there and its projects' folders; then the Harbor version and update status of every PC and the app version of every paired phone. Call it before working on another PC.",
+        "The PCs of the user's Hub mesh: who owns each, whether it's on, what it lets this chat do there and its projects' folders; then the Hub version and update status of every PC and the app version of every paired phone. Call it before working on another PC.",
       inputSchema: { type: "object", properties: {} },
       annotations: { readOnlyHint: true },
     },
@@ -326,7 +326,7 @@ function toolDefs(g: Grant): Json[] {
     out.push({
       name: "github",
       description:
-        "Run gh (GitHub's CLI) on a PC, signed in as that PC's owner in Harbor: issues, pull requests, releases, `gh api`. A chat driven from another PC uses it on that PC, so GitHub actions are its person's. Unless that PC allows everything it runs in an empty folder and takes no file paths: pass --repo owner/name and texts inline (--body, -f).",
+        "Run gh (GitHub's CLI) on a PC, signed in as that PC's owner in Hub: issues, pull requests, releases, `gh api`. A chat driven from another PC uses it on that PC, so GitHub actions are its person's. Unless that PC allows everything it runs in an empty folder and takes no file paths: pass --repo owner/name and texts inline (--body, -f).",
       inputSchema: {
         type: "object",
         properties: {
@@ -383,7 +383,7 @@ export async function mcp(g: Grant, cwd: string, chatId: number, msg: unknown): 
         protocolVersion: argStr(p, "protocolVersion") ?? "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: NAME, version: harborVersion() },
-        instructions: "Files, shell and GitHub on every PC of the user's Harbor mesh: pass `machine` (see `list`). Each PC's owner decides what other PCs' chats may do there.",
+        instructions: "Files, shell and GitHub on every PC of the user's Hub mesh: pass `machine` (see `list`). Each PC's owner decides what other PCs' chats may do there.",
       };
       break;
     case "tools/list":
@@ -402,7 +402,7 @@ export async function mcp(g: Grant, cwd: string, chatId: number, msg: unknown): 
 }
 
 async function callTool(g: Grant, cwd: string, chatId: number, name: string, a: unknown): Promise<Json> {
-  if (!hub) return text(false, "Harbor's mesh isn't running");
+  if (!hub) return text(false, "Hub's mesh isn't running");
   if (name === "list") return text(true, await list(hub, g));
   const allowed = (name === "github" && g.tools.includes("bash")) || g.tools.includes(name);
   if (!allowed) return text(false, `\`${name}\` isn't available in this chat's mode`);
@@ -428,7 +428,7 @@ async function callTool(g: Grant, cwd: string, chatId: number, name: string, a: 
   try {
     const [status, v] = await (hub.http ?? meshHttp)(dest(peer), "POST", "/mesh/v1/tool", jsonBody(body), wait);
     if (status === 200) return { content: isObject(v) ? (v.content as Json) : null, isError: !(isObject(v) && v.ok === true) };
-    if (status === 404) return text(false, `${peer.name} runs an older Harbor without shared files (0.45+)`);
+    if (status === 404) return text(false, `${peer.name} runs an older Hub without shared files (0.45+)`);
     return text(false, `${peer.name} answered ${status}: ${argStr(v, "error") ?? ""}`);
   } catch (e) {
     return text(false, `${peer.name} didn't answer: ${e instanceof Error ? e.message : String(e)}`);
@@ -446,7 +446,7 @@ export async function remoteComputer(want: string, args: Obj, g: { chat: string;
   try {
     const [status, v] = await (hub.http ?? meshHttp)(dest(peer), "POST", "/mesh/v1/tool", jsonBody({ tool: "computer", args, project: g.project, chat: g.chat, memory_id: "" }), wait);
     if (status === 200 && isObject(v) && Array.isArray(v.content)) return { ok: v.ok === true, content: v.content };
-    if (status === 400 || status === 404) return no(`${peer.name} runs an older Harbor without computer use`);
+    if (status === 400 || status === 404) return no(`${peer.name} runs an older Hub without computer use`);
     return no(`${peer.name} answered ${status}: ${argStr(v, "error") ?? ""}`);
   } catch (e) {
     return no(`${peer.name} didn't answer: ${e instanceof Error ? e.message : String(e)}`);
@@ -473,7 +473,7 @@ async function list(h: Hub, g: Grant): Promise<string> {
     const driven = p.id === g.commander ? " — this chat is driven from here" : "";
     let what: string;
     if (!p.online) what = "offline";
-    else if (v === null) what = "on, but its Harbor shares no files (older than 0.45)";
+    else if (v === null) what = "on, but its Hub shares no files (older than 0.45)";
     else {
       const level = parseLevel(argStr(v, "level") ?? "") ?? "off";
       what = `allows: ${label(level).toLowerCase()}`;

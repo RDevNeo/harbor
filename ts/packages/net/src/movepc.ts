@@ -497,7 +497,7 @@ export async function sendHandoff(h: MoveHandoff, deps: MoveSendDeps = {}): Prom
     if (status === 200 && o.ok === true) {
       // goes on
     } else if (status === 200 || status === 409) return { kind: "refused", why: str(o.why) ?? str(o.error) ?? "it can't take it" };
-    else if (status === 404) return { kind: "refused", why: `${name} runs an older Harbor: update it first` };
+    else if (status === 404) return { kind: "refused", why: `${name} runs an older Hub: update it first` };
     else return { kind: "refused", why: `${name} answered ${status}: ${str(o.error) ?? ""}` };
   } catch (e) {
     return { kind: "refused", why: `${name} didn't answer: ${text(e)}` };
@@ -696,9 +696,9 @@ export function movePcTargets(i: TargetsInput): MoveTarget[] {
     .map((p) => {
       let why: string | null;
       if (i.blocker !== null) why = i.blocker;
-      else if (!p.online) why = i.downOf(p.id) === "harbor" ? "Harbor isn't running there" : "it's off or out of reach";
-      else if (!p.moves) why = "it runs an older Harbor: update it first";
-      else if (i.anyKind === true && !p.accountMoves) why = "it runs an older Harbor: update it to switch to its accounts";
+      else if (!p.online) why = i.downOf(p.id) === "harbor" ? "Hub isn't running there" : "it's off or out of reach";
+      else if (!p.moves) why = "it runs an older Hub: update it first";
+      else if (i.anyKind === true && !p.accountMoves) why = "it runs an older Hub: update it to switch to its accounts";
       else if (i.anyKind !== true && !p.accounts.some((a) => a[2] === "claude")) why = "it has no Claude account";
       else why = null;
       return { id: p.id, name: p.name === "" ? label(p.id) : p.name, why };
@@ -821,8 +821,8 @@ export async function movePlan(app: MoveTargetApp, body: unknown, peer = ""): Pr
   if (repo === null && at !== "") throw new Error(`${me} has no project at ${tildeOf(app.home, at)}`);
   if (repo === null) {
     // A folder without Git has nothing to clone, only its files to copy.
-    if (s("remote") === "") throw new Error(`${me} has no project named ${s("name")}: copy its folder there and add it to Harbor first`);
-    throw new Error(`${me} has no project for ${s("name")} (${s("remote")}): clone it there and add it to Harbor first`);
+    if (s("remote") === "") throw new Error(`${me} has no project named ${s("name")}: copy its folder there and add it to Hub first`);
+    throw new Error(`${me} has no project for ${s("name")} (${s("remote")}): clone it there and add it to Hub first`);
   }
   if (isObject(b.worktree)) {
     const dir = app.repo(repo)?.dir ?? "";
@@ -1009,7 +1009,7 @@ export function moveSessions(
 export async function askMoveTargets(dest: Dest, hid: number, http: MeshHttp = meshHttp): Promise<{ why: string | null; targets: MoveTarget[] }> {
   const call = { method: "GET", path: ["v1", "chats", String(hid), "move_targets"], body: null };
   const [status, v] = await http(dest, "POST", "/mesh/v1/call", { ctype: "application/json", data: wire(call) }, 20_000);
-  if (status === 404) throw new Error("its PC runs an older Harbor");
+  if (status === 404) throw new Error("its PC runs an older Hub");
   const o = obj(v);
   if (status !== 200) throw new Error(str(o.error) ?? "its PC didn't say");
   const targets: MoveTarget[] = [];

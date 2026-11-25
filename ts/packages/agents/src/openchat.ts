@@ -48,5 +48,5 @@ export function matching(chats: readonly Chat[], query: string, visible: (c: Cha
 
 /** What an opened chat's agent reads before the prompt. */
 export function preamble(source: Chat): string {
-  return `[Harbor: the agent of the chat ${quoted(source.title)} (id ${source.id}) opened this chat for you with the request below. Work on it here: the user follows this chat in Harbor's sidebar. To report back to that chat, use harbor message_chat.]\n\n`;
+  return `[Hub: the agent of the chat ${quoted(source.title)} (id ${source.id}) opened this chat for you with the request below. Work on it here: the user follows this chat in Hub's sidebar. To report back to that chat, use harbor message_chat.]\n\n`;
 }

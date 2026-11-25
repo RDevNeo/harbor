@@ -224,7 +224,7 @@ describe("movepc beyond the Rust tests", () => {
       expect(calls).toEqual(["POST /mesh/v1/adopt/check", "POST /mesh/v1/upload?name=move.json", `POST /mesh/v1/upload?name=${SID}.part`, "POST /mesh/v1/adopt"]);
 
       const old = await sendHandoff(h, { http: async () => [404, null] });
-      expect(old).toEqual({ kind: "refused", why: "laptop runs an older Harbor: update it first" });
+      expect(old).toEqual({ kind: "refused", why: "laptop runs an older Hub: update it first" });
       const no = await sendHandoff(h, { http: async () => [200, { ok: false, why: "no project" }] });
       expect(no).toEqual({ kind: "refused", why: "no project" });
 
@@ -287,7 +287,7 @@ describe("movepc beyond the Rust tests", () => {
       expect((await moveCheck(app, "pc1", { gid: "" })).status).toBe(400);
       expect((await moveCheck(app, "pc1", { gid: "g2" })).body).toEqual({ ok: false, owns: false, busy: false });
       const missing = { ...check, project: { name: "zzz", folder: "zzz", remote: "git@github.com:a/b.git" } };
-      expect(((await moveCheck(app, "pc1", missing)).body as { why: string }).why).toBe("laptop has no project for zzz (git@github.com:a/b.git): clone it there and add it to Harbor first");
+      expect(((await moveCheck(app, "pc1", missing)).body as { why: string }).why).toBe("laptop has no project for zzz (git@github.com:a/b.git): clone it there and add it to Hub first");
 
       const body = { ...check, payload: "up/move.json", sessions: [{ sid: SID, files: [{ rel: `${SID}.jsonl`, upload: "up/s.part" }] }], deadline_ms: deadlineMs() };
       expect((await moveAdopt(app, "pc1", { ...body, deadline_ms: 1 })).body).toEqual({ error: "the call came too late" });
@@ -328,8 +328,8 @@ describe("movepc beyond the Rust tests", () => {
     const targets = movePcTargets({ blocker: null, meId: "me", hosts, allowedFp: (fp) => fp === "fp-c", downOf: () => "harbor" });
     expect(targets.map((t) => [t.id, t.why])).toEqual([
       ["a", null],
-      ["b", "it runs an older Harbor: update it first"],
-      ["c", "Harbor isn't running there"],
+      ["b", "it runs an older Hub: update it first"],
+      ["c", "Hub isn't running there"],
     ]);
     expect(apiMoveTargets(null, targets, "x has 2 uncommitted changes: commit or stash them first")).toMatchObject({ why: "x has 2 uncommitted changes: commit or stash them first" });
 
@@ -377,6 +377,6 @@ describe("movepc beyond the Rust tests", () => {
       return [200, { why: null, targets: [{ id: "a", name: "a-pc", why: "off" }] }];
     };
     expect(await askMoveTargets(NOWHERE, 12, http)).toEqual({ why: null, targets: [{ id: "a", name: "a-pc", why: "off" }] });
-    await expect(askMoveTargets(NOWHERE, 12, async () => [404, null])).rejects.toThrow("its PC runs an older Harbor");
+    await expect(askMoveTargets(NOWHERE, 12, async () => [404, null])).rejects.toThrow("its PC runs an older Hub");
   });
 });

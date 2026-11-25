@@ -21,8 +21,8 @@ export function infoPlist(version: string): string {
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key><string>${APP_ID}</string>
-  <key>CFBundleName</key><string>Harbor</string>
-  <key>CFBundleDisplayName</key><string>Harbor</string>
+  <key>CFBundleName</key><string>Hub</string>
+  <key>CFBundleDisplayName</key><string>Hub</string>
   <key>CFBundleExecutable</key><string>harbor</string>
   <key>CFBundleIconFile</key><string>harbor</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -33,7 +33,7 @@ export function infoPlist(version: string): string {
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticTermination</key><false/>
-  <key>NSMicrophoneUsageDescription</key><string>Harbor records your voice to type what you say.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Hub records your voice to type what you say.</string>
 </dict>
 </plist>
 `;

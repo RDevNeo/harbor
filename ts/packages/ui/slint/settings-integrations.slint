@@ -115,7 +115,7 @@ component DiscordForm {
         padding-top: 8px;
         spacing: 6px;
         Note {
-            text: "Discord's rules forbid automating personal accounts, and this account can be banned for it. Harbor signs in with a real Discord page and paces joins, new DMs and uploads, but that doesn't make it allowed. Use an account you can afford to lose.";
+            text: "Discord's rules forbid automating personal accounts, and this account can be banned for it. Hub signs in with a real Discord page and paces joins, new DMs and uploads, but that doesn't make it allowed. Use an account you can afford to lose.";
         }
         HorizontalLayout {
             alignment: start;
@@ -203,12 +203,12 @@ component GoogleForm {
             height: 2px;
         }
         Note {
-            text: (root.app.builtin ? "Sign in through your own Google Cloud project instead of Harbor's. " : "Gmail needs your own OAuth client. ") + "In Google Cloud console: create a project, enable the Gmail API, set the OAuth consent screen to In production (sign-ins in Testing end after 7 days), then Credentials \u{203a} Create OAuth client ID \u{203a} Desktop app.";
+            text: (root.app.builtin ? "Sign in through your own Google Cloud project instead of Hub's. " : "Gmail needs your own OAuth client. ") + "In Google Cloud console: create a project, enable the Gmail API, set the OAuth consent screen to In production (sign-ins in Testing end after 7 days), then Credentials \u{203a} Create OAuth client ID \u{203a} Desktop app.";
         }
         if root.app.builtin: HorizontalLayout {
             alignment: start;
             Btn {
-                text: "Use Harbor's client";
+                text: "Use Hub's client";
                 size: sm;
                 variant: ghost;
                 clicked => {
@@ -358,7 +358,7 @@ component AppCard {
             if root.app.builtin-hint: VerticalLayout {
                 padding-top: 6px;
                 Note {
-                    text: "If Google says it hasn't verified this app, click Advanced, then Go to Harbor.";
+                    text: "If Google says it hasn't verified this app, click Advanced, then Go to Hub.";
                 }
             }
             if root.app.form == "discord": DiscordForm {

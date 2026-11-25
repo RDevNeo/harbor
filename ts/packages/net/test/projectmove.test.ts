@@ -544,7 +544,7 @@ describe("projectmove: two PCs", () => {
       a.store.setRepoRemote(repo, remote);
       const plan = await a.project.plan(repo, "pc:b");
       expect(plan.mode).toBe("existing");
-      expect(plan.text).toContain("b already has app in ~/work/app: Harbor uses it and doesn't change its files.");
+      expect(plan.text).toContain("b already has app in ~/work/app: Hub uses it and doesn't change its files.");
       await a.project.start(repo, "pc:b");
       const st = await finished(a, repo);
       expect(st.state).toBe("done");
@@ -604,7 +604,7 @@ describe("projectmove: two PCs", () => {
     }
   }, 60_000);
 
-  test("it says why it can't move: a running chat, a Codex chat, a PC with an older Harbor", async () => {
+  test("it says why it can't move: a running chat, a Codex chat, a PC with an older Hub", async () => {
     const a = pc("a");
     const b = pc("b");
     try {
@@ -620,8 +620,8 @@ describe("projectmove: two PCs", () => {
       a.engine.running_.clear();
       const peer = a.mesh.peers.get("pc:b");
       if (peer) peer.projectMoves = false;
-      expect(a.project.targets(repo).targets[0]?.why).toBe("it runs an older Harbor that can't take projects: update it first");
-      await expect(a.project.start(repo, "pc:b")).rejects.toThrow("b can't take it: it runs an older Harbor that can't take projects");
+      expect(a.project.targets(repo).targets[0]?.why).toBe("it runs an older Hub that can't take projects: update it first");
+      await expect(a.project.start(repo, "pc:b")).rejects.toThrow("b can't take it: it runs an older Hub that can't take projects");
       if (peer) peer.projectMoves = true;
       a.store.createChat(blankChat({ repoId: repo, title: "Codex one", account: "codex", gid: "g-codex" }));
       expect(a.project.blocker(repo)).toBe("“Codex one” can't move: it isn't a Claude chat: only Claude chats move to another PC for now");

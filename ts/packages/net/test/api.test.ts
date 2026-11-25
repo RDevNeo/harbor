@@ -589,7 +589,7 @@ describe("the listener (api.rs)", () => {
     await Bun.sleep(10);
     const text = Buffer.concat(out).toString();
     expect(text.startsWith("HTTP/1.1 426 ")).toBe(true);
-    expect(text.endsWith('{"error":"Harbor answers other devices over TLS only"}')).toBe(true);
+    expect(text.endsWith('{"error":"Hub answers other devices over TLS only"}')).toBe(true);
   });
 
   test("the_phone_inbox", async () => {

@@ -110,7 +110,7 @@ test("claude_names_new_worktrees", async () => {
 
 test("claude_answers_are_cleaned_into_names", () => {
   expect(wt.cleanName("inline-chat-mention-links")).toBe("inline-chat-mention-links");
-  expect(wt.cleanName("  `Harbor/Fix_Login Redirect`.\n")).toBe("fix-login-redirect");
+  expect(wt.cleanName("  `Hub/Fix_Login Redirect`.\n")).toBe("fix-login-redirect");
   expect(wt.cleanName('"dark-mode"\nBecause the user wants…')).toBe("dark-mode");
   expect(wt.cleanName("one-two-three-four-five-six-seven")).toBe("one-two-three-four");
   expect(wt.cleanName("integrations-resource-usage-check")).toBe("integrations-resource-usage");

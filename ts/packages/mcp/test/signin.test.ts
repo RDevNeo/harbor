@@ -88,7 +88,7 @@ test("a stray hit on the sign-in callback doesn't end the wait: only this sign-i
     for (const q of ["code=x&state=other", "state=the-state", "code=x", "error=access_denied", "foo=bar", "error=access_denied&state=other"]) {
       const r = await fetch(`${cb.base}callback?${q}`);
       expect(r.status).toBe(200);
-      expect(await r.text()).toContain("isn't for the sign-in Harbor is waiting for");
+      expect(await r.text()).toContain("isn't for the sign-in Hub is waiting for");
     }
     await Bun.sleep(10);
     expect(settled).toBe("");
@@ -103,7 +103,7 @@ test("a stray hit on the sign-in callback doesn't end the wait: only this sign-i
     );
     expect((await fetch(`${cb.base}callback?code=x&state=nope`)).status).toBe(200);
     const r = await fetch(`${cb.base}callback?error=access_denied&error_description=${encodeURIComponent("The user said no")}&state=s2`);
-    expect(await r.text()).toContain("The user said no. Go back to Harbor");
+    expect(await r.text()).toContain("The user said no. Go back to Hub");
     expect(await denied).toBe("Sign-in failed: The user said no");
   } finally {
     cb.close();
@@ -216,7 +216,7 @@ test("signed out, agents get a placeholder gh config and a refusing git helper",
   const get = (k: string): string | undefined => env.find(([n]) => n === k)?.[1];
   expect(get("GH_CONFIG_DIR")).toBe(join(process.env.XDG_DATA_HOME ?? "", "harbor/apps/github-signed-out"));
   expect(readFileSync(join(get("GH_CONFIG_DIR") ?? "", "hosts.yml"), "utf8")).toContain("sign-in-to-github-in-harbor");
-  expect(get("GIT_CONFIG_VALUE_3")).toContain("Harbor: GitHub is not signed in");
+  expect(get("GIT_CONFIG_VALUE_3")).toContain("Hub: GitHub is not signed in");
   expect(get("CONVEX_OVERRIDE_ACCESS_TOKEN")).toBe("sign-in-to-convex-in-harbor");
   expect(get("SUPABASE_ACCESS_TOKEN")).toBe("sign-in-to-supabase-in-harbor");
 });
@@ -306,7 +306,7 @@ test("an OAuth sign-in that ran out with no refresh token is expired, not signed
   void server.stop(true);
 });
 
-test("the Convex sign-in keeps its key in Harbor's Convex folder: HOME, and USERPROFILE for Node on Windows", () => {
+test("the Convex sign-in keeps its key in Hub's Convex folder: HOME, and USERPROFILE for Node on Windows", () => {
   process.env.USERPROFILE = join(root, "user");
   const c = convexLoginCmd();
   expect(c.cwd).toBe(mcp.convexHome());

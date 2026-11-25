@@ -287,7 +287,7 @@ const bad = (error: string): Check => ({ ok: false, error });
 
 export function check(path: string): Check {
   if (kind(path) === null) return bad("not an image or video");
-  if (!absolute(path) || !allowed(path)) return bad("not a file Harbor shows");
+  if (!absolute(path) || !allowed(path)) return bad("not a file Hub shows");
   return checkFile(path, located(path));
 }
 
@@ -374,7 +374,7 @@ export function located(path: string): string {
 }
 
 export function keepOne(path: string): string | null {
-  if (!isFile(path) || !allowed(path)) return "not a file Harbor shows";
+  if (!isFile(path) || !allowed(path)) return "not a file Hub shows";
   const c = checkFile(path, path);
   if (!c.ok) return c.error;
   const to = keptPath(path);
@@ -641,6 +641,6 @@ export async function imageAnswer(path: string, max: number | null): Promise<Ima
     const out = await (big ? img.resize(m, m, { fit: "inside" }) : img).flatten({ background: "#ffffff" }).jpeg().toBuffer();
     return { status: 200, ctype: "image/jpeg", body: out };
   } catch {
-    return answerError(415, "not an image Harbor can read");
+    return answerError(415, "not an image Hub can read");
   }
 }

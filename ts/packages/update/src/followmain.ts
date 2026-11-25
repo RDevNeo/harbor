@@ -727,7 +727,7 @@ export class FollowMain {
       ensureDir(this.home);
       if (checkout !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", checkout, this.src], INSTALL_MS);
       else if (this.remote !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", "main", "--no-tags", "--", this.remote, this.src], INSTALL_MS);
-      else throw new Error("no Harbor checkout found");
+      else throw new Error("no Hub checkout found");
     }
     if (checkout === null) return this.fetchRemote(["+refs/heads/main:refs/follow/remote-main"]);
     await this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, "+refs/heads/main:refs/follow/main", "+refs/remotes/origin/main:refs/follow/origin-main"], INSTALL_MS).catch(() =>
@@ -1099,7 +1099,7 @@ export class FollowMain {
 
 /** One line for `harbor follow-main status`. */
 export function statusLine(s: FollowStatus, on: boolean): string {
-  if (!on) return "Off: this PC takes Harbor's releases only.";
+  if (!on) return "Off: this PC takes Hub's releases only.";
   const short = s.commit.slice(0, 7);
   const v = s.version !== "" ? s.version : short;
   switch (s.state) {

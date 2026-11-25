@@ -303,7 +303,7 @@ export const buildRef = (): string | undefined => ports.shellRef();
 /** The commit (or tag) of this repository whose `discord/` this build goes with: the build's own, never a version guessed at run time. */
 export function shellRef(): string {
   const r = process.env.HARBOR_DISCORD_REF ?? ports.shellRef();
-  if (r === undefined || r === "") throw new Error("This Harbor was built from source without its commit, so it can't fetch its Discord shell (a rig sets HARBOR_DISCORD_SHELL).");
+  if (r === undefined || r === "") throw new Error("This Hub was built from source without its commit, so it can't fetch its Discord shell (a rig sets HARBOR_DISCORD_SHELL).");
   return r;
 }
 
@@ -336,7 +336,7 @@ export async function ensureShell(say: Say): Promise<void> {
   const target = shellDir();
   for (const name of readdirSync(root())) if (staleTmp(name)) rmSync(join(root(), name), { recursive: true, force: true });
   if (existsSync(join(target, "main.js"))) return;
-  say("Downloading Harbor's Discord shell…");
+  say("Downloading Hub's Discord shell…");
   // Its own folder: another of Harbor's processes may be fetching the same shell right now.
   const tmp = `${target}.tmp-${process.pid}`;
   try {
@@ -347,9 +347,9 @@ export async function ensureShell(say: Say): Promise<void> {
       try {
         await download(`${base}/${rel}`, to);
       } catch (e) {
-        throw new Error(`Harbor couldn't download its Discord shell (${rel} from ${base}): ${e instanceof Error ? e.message : String(e)}`);
+        throw new Error(`Hub couldn't download its Discord shell (${rel} from ${base}): ${e instanceof Error ? e.message : String(e)}`);
       }
-      if ((await fileSha256(to)) !== want) throw new Error(`Harbor's Discord shell (${rel}) doesn't match this version of Harbor.`);
+      if ((await fileSha256(to)) !== want) throw new Error(`Hub's Discord shell (${rel}) doesn't match this version of Hub.`);
     }
     if (existsSync(join(target, "main.js"))) return;
     // Earlier Harbors' shells: this one replaces them (not what other processes are still fetching).

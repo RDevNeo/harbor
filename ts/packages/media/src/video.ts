@@ -46,7 +46,7 @@ export const MAX_PIXEL_RATE = 1280 * 720 * 60;
 export function pixelBudget(fps: number): number {
   return Math.min(MAX_PICTURE, MAX_PIXEL_RATE / (fps > 0 && Number.isFinite(fps) ? fps : 30));
 }
-export const WARN_NO_MPV = "Harbor's video player isn't here yet, so this opened in your video player";
+export const WARN_NO_MPV = "Hub's video player isn't here yet, so this opened in your video player";
 
 export const PIPEWIRE_MIN: Version = [0, 3, 65];
 
@@ -169,7 +169,7 @@ export const OPTIONS: readonly (readonly [string, string])[] = [
   ["keep-open", "yes"],
   ["hr-seek", "yes"],
   ["volume-max", "100"],
-  ["audio-client-name", "Harbor"],
+  ["audio-client-name", "Hub"],
 ];
 
 export function optionValue(name: string): string | undefined {
@@ -369,7 +369,7 @@ export function playable(path: string): Playable {
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   }
-  return isAbsolute(file) ? { ok: true, file } : fail("not a file Harbor shows");
+  return isAbsolute(file) ? { ok: true, file } : fail("not a file Hub shows");
 }
 
 export async function fileOf(key: string, fetch?: Fetch): Promise<Playable> {
@@ -968,9 +968,9 @@ export function checkVideo(files: readonly string[], own: string | null = null, 
   try {
     engine = load(own);
   } catch {
-    return { code: 1, lines: ["no video player: Harbor's own isn't installed and this system has no libmpv"] };
+    return { code: 1, lines: ["no video player: Hub's own isn't installed and this system has no libmpv"] };
   }
-  lines.push(engine.own ? `player: Harbor's own, ${engine.path} (audio: ${engine.own.ao}, VA-API: ${engine.own.va ? "yes" : "no"})` : "player: the system's libmpv");
+  lines.push(engine.own ? `player: Hub's own, ${engine.path} (audio: ${engine.own.ao}, VA-API: ${engine.own.va ? "yes" : "no"})` : "player: the system's libmpv");
   let mpv: Mpv;
   try {
     mpv = Mpv.create(engine.lib, coreOptions({ paused: false, volume: 0, blind: true, own: engine.own, log: logFile() }));

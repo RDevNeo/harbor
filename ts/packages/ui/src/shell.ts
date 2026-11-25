@@ -2588,7 +2588,7 @@ export class Shell {
     const head = p === null ? "Keep this chat on:" : `Pinned to ${this.pinName(p)}${p.scope === "project" ? " by its project" : ""}${p.why === "" ? "" : `, which ${p.why}`}`;
     const items: PopRow[] = [{ ...this.label(head), kind: "caption" }];
     for (const a of this.data.accounts.filter(providers.usable)) items.push(this.item(providers.short(a), set(a.id), { checked: p?.scope === "chat" && p.account === a.id }));
-    if (p?.scope === "chat") items.push(this.separator(), this.item("Unpin", set(null), { desc: "Harbor may switch its account again" }));
+    if (p?.scope === "chat") items.push(this.separator(), this.item("Unpin", set(null), { desc: "Hub may switch its account again" }));
     return { items, width: 260 };
   }
 
@@ -2610,7 +2610,7 @@ export class Shell {
     };
     const items: PopRow[] = [{ ...this.label(p === null ? "Its chats and agents stay on:" : `Pinned to ${this.pinName(p)}${p.why === "" ? "" : `, which ${p.why}`}`), kind: "caption" }];
     for (const a of this.data.accounts.filter(providers.usable)) items.push(this.item(providers.short(a), set(a.id), { checked: p?.account === a.id }));
-    if (p !== null) items.push(this.separator(), this.item("Unpin", set(null), { desc: "Harbor may switch its chats' accounts again" }));
+    if (p !== null) items.push(this.separator(), this.item("Unpin", set(null), { desc: "Hub may switch its chats' accounts again" }));
     return { items, width: 260 };
   }
 
@@ -3994,7 +3994,7 @@ export class Shell {
    * PC, part by part. Nothing of it runs on the main thread's time but the toasts. */
   private async downloadFile(path: string): Promise<void> {
     const pkg = this.media;
-    if (pkg === null) return this.toast("Harbor is still starting: try again in a moment");
+    if (pkg === null) return this.toast("Hub is still starting: try again in a moment");
     const name = path.split(/[\\/]/).pop() ?? "file";
     const homeFile = this.hub.homeFile;
     // The chats on screen that run on another PC: one of them has it.
@@ -4459,7 +4459,7 @@ export class Shell {
       if (!open) return "";
       if (open.role === "sub") return "A sub-agent moves with its lead: switch the lead";
       if (open.device !== "") return "It runs on a device: bring it to this PC first";
-      return this.hub.call === undefined && !this.meshChat.foreign(open) ? "This Harbor can't move chats" : "";
+      return this.hub.call === undefined && !this.meshChat.foreign(open) ? "This Hub can't move chats" : "";
     };
     const ok = (a: Account) => {
       const s = isSharedId(a.id) ? mesh.get(a.id) : undefined;
@@ -4671,7 +4671,7 @@ export class Shell {
       const place = chat === null ? this.draftPlace() : null;
       if (started && chat !== null && id === AUTO_DEVICE) {
         // Auto: the PC with the most free memory now; the chat moves there as a pick of that PC moves it.
-        const moving = this.hub.auto?.relocate?.(chat, kind) ?? Promise.reject(new Error("this Harbor can't do that"));
+        const moving = this.hub.auto?.relocate?.(chat, kind) ?? Promise.reject(new Error("this Hub can't do that"));
         void moving.then(
           (r) => {
             this.toast(r.moved ? `Moving to ${r.name}…` : `Already on ${r.name}, the PC with the most free memory`);
@@ -4880,7 +4880,7 @@ export class Shell {
     }
     // Account pins (pins.ts): this chat's own; a copy's goes to its home PC.
     const pinned = this.engine.pinOf(id);
-    if (!c.retired) items.push({ ...native(PIN_LABEL, () => {}, { badge: "submenu", desc: pinned === null ? "Harbor may switch its account at a limit" : `Pinned to ${this.pinName(pinned)}` }), sub: () => this.chatPinMenu(id) });
+    if (!c.retired) items.push({ ...native(PIN_LABEL, () => {}, { badge: "submenu", desc: pinned === null ? "Hub may switch its account at a limit" : `Pinned to ${this.pinName(pinned)}` }), sub: () => this.chatPinMenu(id) });
     // Its chat link (harbor://chat/<gid>?pc=<PC>): pasted in a chat it reads as the chat's title; another app or a
     // browser on the phone opens the chat with it. Not a change: offered while syncing too.
     items.push({ ...this.item("Copy link", () => void this.media?.clipboard.copyTextNoticed(this.engine.chatLink(c))), kind: "native" as const });
@@ -5451,7 +5451,7 @@ export class Shell {
     const c = this.data.chat(id);
     if (!c) return;
     if (this.syncRefused(id)) return;
-    this.dialog("Delete chat?", "The transcript is removed from Harbor. The provider's session stays on disk.", "Delete", true, null, (ok) => {
+    this.dialog("Delete chat?", "The transcript is removed from Hub. The provider's session stays on disk.", "Delete", true, null, (ok) => {
       if (!ok) return;
       if (this.syncRefused(id)) return;
       // Another PC's chat: deleted there (its copies go with it), or here when that PC is off (it hears of it when back).
@@ -5978,7 +5978,7 @@ function followHot(shell: Shell): () => void {
     dev = null;
     if (d === null) return;
     const ts = tsRoot(d);
-    if (ts === null) return shell.toast(`Hot reload: no Harbor checkout in ${d}`);
+    if (ts === null) return shell.toast(`Hot reload: no Hub checkout in ${d}`);
     shareHost();
     const next = new HotDev(ts, { notice: (t) => shell.toast(t), log: (l) => console.error(l) });
     next.onSwapped = (t) => shell.hotSwapped(t.unit);

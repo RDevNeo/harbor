@@ -438,7 +438,7 @@ export function pace(kind: string, log: [string, number][], at: number): Pace {
   const times = log.filter(([k]) => k === kind).map(([, t]) => t).filter((t) => at - t < DAY).sort((a, b) => a - b);
   const hour = times.filter((t) => at - t < 3600).length;
   const refuse = (n: number, what: string, secs: number): Pace => ({
-    refuse: `Paced: ${n} ${l.label} in the last ${what} is Harbor's limit, because Discord's spam filter watches these. The next one can go in about ${Math.floor((secs + 59) / 60)} min. Tell the user instead of retrying.`,
+    refuse: `Paced: ${n} ${l.label} in the last ${what} is Hub's limit, because Discord's spam filter watches these. The next one can go in about ${Math.floor((secs + 59) / 60)} min. Tell the user instead of retrying.`,
   });
   if (times.length >= l.day) return refuse(times.length, "day", (times[times.length - l.day] ?? 0) + DAY - at);
   if (hour >= l.hour) return refuse(hour, "hour", (times[times.length - l.hour] ?? 0) + 3600 - at);
@@ -446,7 +446,7 @@ export function pace(kind: string, log: [string, number][], at: number): Pace {
   const left = last === undefined ? 0 : last + l.gap - at;
   if (left <= 0) return { go: true };
   if (left <= WAIT_UP_TO) return { wait: left };
-  return { refuse: `Paced: Harbor spaces out ${l.label} because Discord's spam filter watches them. The next one can go in about ${left < 60 ? `${left} s` : `${Math.floor((left + 59) / 60)} min`}. Tell the user instead of retrying.` };
+  return { refuse: `Paced: Hub spaces out ${l.label} because Discord's spam filter watches them. The next one can go in about ${left < 60 ? `${left} s` : `${Math.floor((left + 59) / 60)} min`}. Tell the user instead of retrying.` };
 }
 
 const isGo = (p: Pace): boolean => "go" in p;
@@ -1048,7 +1048,7 @@ export class Host {
   private sessionEnded(): void {
     rmSync(setup.accountPath(), { force: true });
     this.setAttention("Discord signed this session out. Sign in again to use it.");
-    setup.notice("Discord signed out", "Discord ended Harbor's session. Sign in again under Settings › Integrations › Apps.");
+    setup.notice("Discord signed out", "Discord ended Hub's session. Sign in again under Settings › Integrations › Apps.");
     background(() => this.stopPage());
   }
 
@@ -1249,11 +1249,11 @@ export class Host {
   private async runTool(name: string, args: Obj): Promise<Json> {
     const c = this.st.captcha;
     if (c !== null && name === "discord_join" && get(args, "apply") === true) {
-      return { joined: false, captchaPending: true, note: `A captcha to join ${c.guild ?? "a server"} is waiting for the user to solve it in Harbor. Try again after that one is done.` };
+      return { joined: false, captchaPending: true, note: `A captcha to join ${c.guild ?? "a server"} is waiting for the user to solve it in Hub. Try again after that one is done.` };
     }
     const missing = this.st.broken.get(name);
     if (missing !== undefined) {
-      const doing = this.st.repairing ? "Harbor is repairing it; try again in a few minutes." : "Discord tools need attention.";
+      const doing = this.st.repairing ? "Hub is repairing it; try again in a few minutes." : "Discord tools need attention.";
       throw new Error(`This tool can't work right now: Discord changed ${missing.join(", ")}. ${doing}`);
     }
     // New DMs are only known in the page: it refuses one when the pace says so.
@@ -1279,7 +1279,7 @@ export class Host {
     const o: Obj = isObj(v) ? { ...v } : {};
     if (this.engine.captchaView?.() === true) {
       this.captchaStart(v, chat);
-      o.note = `Discord wants a captcha for this join, and only a person may solve it. Harbor shows it to the user${chat !== null ? " in this chat" : ""} and will tell them how it went; don't retry. discord_status says whether it's still waiting; discord_guilds shows the server once joined.`;
+      o.note = `Discord wants a captcha for this join, and only a person may solve it. Hub shows it to the user${chat !== null ? " in this chat" : ""} and will tell them how it went; don't retry. discord_status says whether it's still waiting; discord_guilds shows the server once joined.`;
       return o;
     }
     // The view is off: the join is the user's to make in their own Discord app.
@@ -1306,7 +1306,7 @@ export class Host {
       st.saved.captcha = { id: c.id, chat: c.chat, guild: c.guild };
     });
     this.save();
-    const where = chat !== null ? "Solve it in the chat, on any of your PCs or your phone" : "Solve it in Harbor, on this PC or your phone";
+    const where = chat !== null ? "Solve it in the chat, on any of your PCs or your phone" : "Solve it in Hub, on this PC or your phone";
     setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. ${where}; it's given up in ${CAPTCHA_WAIT / 60} minutes.`, "discord-captcha", {
       chat,
       captcha: { captcha: c.id, state: "pending", guild: c.guild },

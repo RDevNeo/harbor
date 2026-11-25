@@ -414,7 +414,7 @@ export class ProjectsApi {
         act: it.act,
         label: it.label,
         icon: MENU_ICONS.get(it.icon) ?? "",
-        desc: it.act === "terminal" ? `It opens in Harbor's window on ${this.pcName()}` : it.desc,
+        desc: it.act === "terminal" ? `It opens in Hub's window on ${this.pcName()}` : it.desc,
         sep: it.sep,
         enabled: !off,
       };
@@ -455,13 +455,13 @@ export class ProjectsApi {
     }
     switch (act) {
       case "workspace":
-        if (!this.h.moves) return err(409, "this Harbor can't move projects to a workspace");
+        if (!this.h.moves) return err(409, "this Hub can't move projects to a workspace");
         return this.h.moves.moveProject(r, b.workspace, forwarded);
       case "share":
-        if (!this.h.moves) return err(409, "this Harbor can't share projects with a workspace");
+        if (!this.h.moves) return err(409, "this Hub can't share projects with a workspace");
         return this.h.moves.shareProject(r, b.workspace, b.on, forwarded);
       case "rename":
-        if (!this.h.moves) return err(409, "this Harbor can't rename projects");
+        if (!this.h.moves) return err(409, "this Hub can't rename projects");
         return this.h.moves.renameProject(r, b.name, b.at, forwarded);
       case "refresh_icon":
       case "website_icon":
@@ -487,12 +487,12 @@ export class ProjectsApi {
       }
       case "clean_worktrees": {
         const done = (await this.h.cleanWorktrees?.(r.id)) ?? null;
-        if (done === null) return err(409, "this Harbor can't clean up worktrees");
+        if (done === null) return err(409, "this Hub can't clean up worktrees");
         if (done.removed > 0) this.h.touch();
         return ok({ ok: true, ...done });
       }
       case "pin_account": {
-        if (!this.h.pinProject) return err(409, "this Harbor can't pin projects to an account");
+        if (!this.h.pinProject) return err(409, "this Hub can't pin projects to an account");
         const to = b.account === null || b.account === "" ? null : typeof b.account === "string" ? b.account : undefined;
         if (to === undefined) return err(400, "account: an account id, or null to unpin");
         try {
@@ -544,7 +544,7 @@ export class ProjectsApi {
     const rb = obj(r.body);
     if (r.status === 503) return err(503, `${peer.name} is off or unreachable`);
     if (r.status === 404 && sub !== "job" && ["no such call", "unknown call", "not found"].includes(str(rb.error)))
-      return err(409, `${peer.name} runs an older Harbor that can't ${sub === "menu" || sub === "do" || sub === "move" ? "change its projects" : "add projects"} from a phone: update it there first`);
+      return err(409, `${peer.name} runs an older Hub that can't ${sub === "menu" || sub === "do" || sub === "move" ? "change its projects" : "add projects"} from a phone: update it there first`);
     if (r.status !== 200 || typeof rb.path !== "string" || rb.path === "" || sub === "rows" || sub === "menu" || sub === "do" || sub === "move") return r;
     // A project there: listed here as well, by the folder it has there.
     const repos = this.h.store.repos();

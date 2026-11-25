@@ -49,7 +49,7 @@ test("a bundle that needs a newer runtime fetches the runtime first, from the re
   expect(runtimeText(join(inst.dir, RUNTIME))).toContain("FAKE_RUNTIME_VERSION=1.1.0");
 });
 
-test("the runtime and the bundle are in place before VERSION changes, which a running Harbor reloads on", async () => {
+test("the runtime and the bundle are in place before VERSION changes, which a running Hub reloads on", async () => {
   const key = await makeKey();
   const host = new FakeHost();
   const inst = makeInstall();

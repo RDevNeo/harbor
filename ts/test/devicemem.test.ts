@@ -11,7 +11,7 @@ const harbors = { ids: ["ts:me", "ts:studio"], names: ["me", "studio", "laptop"]
 const MACOUT = "hw.memsize: 17179869184\nvm.swapusage: total = 0.00M  used = 0.00M  free = 0.00M\nMach Virtual Memory Statistics: (page size of 16384 bytes)\nPages wired down: 100000.\nAnonymous pages: 400000.\nPages occupied by compressor: 0.\n";
 
 describe("Runs on devices in the PCs popover", () => {
-  test("only the shown devices that aren't a Harbor PC of the mesh, by id or by name", () => {
+  test("only the shown devices that aren't a Hub PC of the mesh, by id or by name", () => {
     expect(sshDevices([[mac, true], [studio, true], [byHand, true], [hidden, null], [win, null]], harbors).map(([h]) => h.id)).toEqual(["ssh:1", "ssh:4"]);
   });
 

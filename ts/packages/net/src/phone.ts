@@ -1103,7 +1103,7 @@ export class PhoneRoutes {
       // when the chat is there already).
       const auto = c.started && body.device === AUTO_DEVICE;
       if (auto) {
-        if (!this.d.auto?.relocate) return err(409, "can't move it there: this Harbor can't do that");
+        if (!this.d.auto?.relocate) return err(409, "can't move it there: this Hub can't do that");
         const w = this.d.auto.why?.(c.id, this.kindOf(c)) ?? null;
         if (w !== null) return err(409, `can't move it there: ${w}`);
         delete body.device;
@@ -1116,7 +1116,7 @@ export class PhoneRoutes {
         if (t.why !== "") return err(409, t.why);
         if (t.pc === "") body.account = t.account;
         else {
-          if (!this.d.move) return err(409, "can't move it there: this Harbor can't move chats");
+          if (!this.d.move) return err(409, "can't move it there: this Hub can't move chats");
           try {
             const to = await this.d.move.movePc(c.id, t.pc, { account: t.account, kind: t.kind, model: typeof body.model === "string" ? body.model : "" });
             return { status: 202, body: { ok: true, moving: true, to, account: t.label } };
@@ -1127,7 +1127,7 @@ export class PhoneRoutes {
       }
       const moving = !auto && c.started && typeof body.device === "string" && body.device !== c.device ? body.device : null;
       if (moving !== null) {
-        const w = this.d.relocate ? this.d.relocate.why(c.id, moving) : "this Harbor can't move a started chat";
+        const w = this.d.relocate ? this.d.relocate.why(c.id, moving) : "this Hub can't move a started chat";
         if (w !== null) return err(409, `can't move it there: ${w}`);
         delete body.device;
       }
@@ -1294,7 +1294,7 @@ export class PhoneRoutes {
         return { repo: id };
       }
       const here = hostname();
-      if (remote === "") return err(409, `${name} isn't a project on ${here} and has no Git remote to clone there: add its folder to Harbor on that PC first`);
+      if (remote === "") return err(409, `${name} isn't a project on ${here} and has no Git remote to clone there: add its folder to Hub on that PC first`);
       return err(409, `${name} isn't a project on ${here} yet`);
     }
     if (pref === undefined || pref === null) return { repo: null };
@@ -1562,7 +1562,7 @@ export class PhoneRoutes {
     }
     if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off`);
     // Moving is its home's to do; a home before it would only say "unknown call".
-    if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Harbor that can't move chats: update it first`);
+    if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Hub that can't move chats: update it first`);
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
     const { files: ids, ...rest } = body;
     const ctx = startsTurn(method, p.slice(3)) ? this.ctxFor(c.repoId, who) : null;

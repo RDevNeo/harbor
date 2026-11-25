@@ -19,7 +19,7 @@ test("an unknown app is refused", async () => {
   expect(mcp.app("gmail")?.mcp).toEqual({ kind: "harbor", name: "gmail" });
 });
 
-test("the apps agents get from Harbor are the ones serve starts", async () => {
+test("the apps agents get from Hub are the ones serve starts", async () => {
   const names = mcp.APPS.flatMap((a) => (a.mcp.kind === "harbor" ? [a.mcp.name] : []));
   expect(names).toEqual(["gmail", "discord", "whatsapp"]);
 });

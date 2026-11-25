@@ -216,7 +216,7 @@ export async function agentEnvAs(signedInHere: boolean): Promise<EnvVar[]> {
   set("GIT_TERMINAL_PROMPT", "0");
   const helper = gh
     ? `!'${providers.which("gh") ?? "gh"}' auth git-credential`
-    : "!f() { test \"$1\" = get && echo 'Harbor: GitHub is not signed in. Sign in under Settings > Integrations > Apps.' >&2; }; f";
+    : "!f() { test \"$1\" = get && echo 'Hub: GitHub is not signed in. Sign in under Settings > Integrations > Apps.' >&2; }; f";
   const git: [string, string][] = [
     ["credential.helper", ""],
     ["credential.https://github.com.helper", ""],

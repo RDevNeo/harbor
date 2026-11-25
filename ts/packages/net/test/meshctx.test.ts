@@ -85,7 +85,7 @@ describe("meshctx", () => {
       newPc({ name: "desk", me: true, online: true, owner: "Sam", github: "sam-gh", phones: ["Pixel", "Tab"], harbor: "0.66.0 (latest)", phone_apps: new Map([["Pixel", "app 0.66.0"]]) }),
       newPc({ name: "laptop", owner: "Alex" }),
     ]);
-    expect(n).toContain("- desk (this PC, where you run): owner Sam; GitHub sam-gh; Harbor 0.66.0 (latest); phones: Pixel (app 0.66.0), Tab");
+    expect(n).toContain("- desk (this PC, where you run): owner Sam; GitHub sam-gh; Hub 0.66.0 (latest); phones: Pixel (app 0.66.0), Tab");
     expect(n).toContain("- laptop (offline): owner Alex");
     const g = newPc({ name: "lap", owner: "Alex", suggested: true, guessed: true });
     expect(peoplePcLine(g)).toBe("Alex (guessed here, not confirmed) · offline");

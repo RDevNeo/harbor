@@ -263,7 +263,7 @@ describe("portmap", () => {
     expect(add?.action).toBe('"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping"');
     expect(add?.body).toContain("<NewExternalPort>47930</NewExternalPort><NewProtocol>TCP</NewProtocol><NewInternalPort>47930</NewInternalPort>");
     expect(add?.body).toContain(`<NewInternalClient>${LOOP}</NewInternalClient>`);
-    expect(add?.body).toContain("<NewPortMappingDescription>Harbor</NewPortMappingDescription><NewLeaseDuration>3600</NewLeaseDuration>");
+    expect(add?.body).toContain("<NewPortMappingDescription>Hub</NewPortMappingDescription><NewLeaseDuration>3600</NewLeaseDuration>");
     expect(igd.calls.some((c) => c.action === '"urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress"')).toBe(true);
   });
 
@@ -476,7 +476,7 @@ describe("portmap", () => {
       const a = io();
       expect(await pm.cli(["forward", "8443"], a.io)).toBe(0);
       expect(kv.get("net_forward")).toBe("8443");
-      expect(a.out).toEqual(["port forward: 8443 (Harbor picks it up within 5 minutes)"]);
+      expect(a.out).toEqual(["port forward: 8443 (Hub picks it up within 5 minutes)"]);
       expect(await pm.cli(["forward", "off"], a.io)).toBe(0);
       expect(kv.get("net_forward")).toBe("");
       expect(await pm.cli(["forward", "0"], a.io)).toBe(2);

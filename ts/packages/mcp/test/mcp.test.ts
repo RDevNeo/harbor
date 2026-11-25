@@ -202,7 +202,7 @@ test("the built-in Playwright is offered only where npx is installed", () => {
   expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { command: "/opt/pw" }]);
 });
 
-test("the built-in Playwright is offered once Harbor's own Node (and its npx) is installed", () => {
+test("the built-in Playwright is offered once Hub's own Node (and its npx) is installed", () => {
   process.env.PATH = join(root, "empty");
   noderuntime.resetForTests();
   resetLocalsCache();
@@ -382,7 +382,7 @@ test("a sign-in for an app that signs in with a key fails without side effects",
   expect(mcp.pending("context7")).toBeUndefined();
 });
 
-test("Harbor's own apps learn which chat runs them: Discord shows that chat a captcha its call hits", async () => {
+test("Hub's own apps learn which chat runs them: Discord shows that chat a captcha its call hits", async () => {
   const was = integrations.discord;
   integrations.discord = { signedIn: () => true, accountName: () => "Ana", signOut: () => {}, login: async () => {} };
   try {
@@ -424,7 +424,7 @@ test("on a bridge grant, stdio servers become its URLs and only the team server 
   }
 });
 
-test("Playwright's Chromium is wanted only for Harbor's own entry on it, while it's on", () => {
+test("Playwright's Chromium is wanted only for Hub's own entry on it, while it's on", () => {
   process.env.PATH = [fakeNpx(), process.env.PATH ?? ""].join(delimiter);
   resetLocalsCache();
   expect(mcp.needsPlaywrightChromium()).toBe(playwrightArgs().includes("chromium"));

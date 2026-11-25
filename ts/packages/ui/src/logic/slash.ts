@@ -49,7 +49,7 @@ function scopeRank(e: Entry): number {
 export function badge(e: Entry): { icon: IconName; label: string } {
   switch (e.scope) {
     case "harbor":
-      return { icon: "SLIDERS", label: "Harbor" };
+      return { icon: "SLIDERS", label: "Hub" };
     case "builtin":
       return { icon: "TERMINAL", label: "Built-in" };
     case "plugin":
@@ -510,7 +510,7 @@ export function apiCommand(command: unknown): { command: "plan" | "default" | "f
     case "model":
     case "effort":
     case "new":
-      return { status: 400, error: `/${command} is picked on the phone: update Harbor there` };
+      return { status: 400, error: `/${command} is picked on the phone: update Hub there` };
     default:
       return { status: 400, error: "command is plan, default, fork, settle or clear-queue" };
   }

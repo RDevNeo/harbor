@@ -71,7 +71,7 @@ export function engineDir(): string {
 
 export function engineBase(): string {
   const ref = process.env.HARBOR_WHATSAPP_REF ?? buildRef();
-  if (ref === undefined || ref === "") throw new Error("This Harbor was built from source without its commit, so it can't fetch its WhatsApp engine (a rig sets HARBOR_WHATSAPP_ENGINE).");
+  if (ref === undefined || ref === "") throw new Error("This Hub was built from source without its commit, so it can't fetch its WhatsApp engine (a rig sets HARBOR_WHATSAPP_ENGINE).");
   return process.env.HARBOR_WHATSAPP_ENGINE_URL ?? `${process.env.HARBOR_WHATSAPP_ENGINE_ORIGIN ?? "https://raw.githubusercontent.com"}/RDevNeo/harbor/${ref}/whatsapp`;
 }
 
@@ -126,9 +126,9 @@ export async function ensureEngine(say: (s: string) => void = () => {}): Promise
       try {
         await download(`${base}/${rel}`, to);
       } catch (e) {
-        throw new Error(`Harbor couldn't download its WhatsApp engine (${rel}): ${e instanceof Error ? e.message : String(e)}`);
+        throw new Error(`Hub couldn't download its WhatsApp engine (${rel}): ${e instanceof Error ? e.message : String(e)}`);
       }
-      if ((await fileSha256(to)) !== want) throw new Error(`Harbor's WhatsApp engine (${rel}) doesn't match this version of Harbor.`);
+      if ((await fileSha256(to)) !== want) throw new Error(`Hub's WhatsApp engine (${rel}) doesn't match this version of Hub.`);
     }
     say("Installing WhatsApp's engine…");
     const bun = bunCommand();

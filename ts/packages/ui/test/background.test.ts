@@ -113,9 +113,9 @@ test("show_waits_for_hidden", async () => {
   expect(bg.takeShow()).toBe(false);
 });
 
-test("the desktop entry has every line Harbor writes", () => {
+test("the desktop entry has every line Hub writes", () => {
   expect(desktopEntry("/opt/h")).toBe(
-    "[Desktop Entry]\nType=Application\nName=Harbor\nComment=Starts Harbor in the background, so phones and other PCs can reach this one\nExec=/opt/h --background\nIcon=harbor\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+    "[Desktop Entry]\nType=Application\nName=Hub\nComment=Starts Hub in the background, so phones and other PCs can reach this one\nExec=/opt/h --background\nIcon=harbor\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
   );
   expect(desktopEntry('/x/a"b`c\\d\'e')).toContain('Exec="/x/a\\"b\\`c\\\\d\'e" --background');
 });
@@ -138,7 +138,7 @@ test.if(linuxLike)("autostart is written into XDG_CONFIG_HOME, read back, and re
 });
 
 test.if(linuxLike)("autostart without a known executable says so, and a relative XDG_CONFIG_HOME falls back to HOME", () => {
-  expect(() => setAutostart(true, { exe: null, managed: true })).toThrow("Harbor can't tell where its own file is");
+  expect(() => setAutostart(true, { exe: null, managed: true })).toThrow("Hub can't tell where its own file is");
   process.env.XDG_CONFIG_HOME = "relative/dir";
   expect(autostartFile()).toBe(join(tmp, "home", ".config", "autostart/harbor.desktop"));
   delete process.env.XDG_CONFIG_HOME;
@@ -208,14 +208,14 @@ test("a show asked before the loop starts opens the window at once", async () =>
   expect(app.ticks).toBe(0);
 });
 
-test("closing the window says once that Harbor is still running, with the tray hint", async () => {
+test("closing the window says once that Hub is still running, with the tray hint", async () => {
   const withTray = setup({ tray: true });
   withTray.bg.show();
   await withTray.bg.runHidden(withTray.app, true);
   expect(withTray.calls.notes).toEqual([
     [
-      "Harbor is still running",
-      "Phones, other PCs and queued work keep reaching this PC. Run Harbor again to open it. Quit it from its tray icon, or turn this off there.",
+      "Hub is still running",
+      "Phones, other PCs and queued work keep reaching this PC. Run Hub again to open it. Quit it from its tray icon, or turn this off there.",
     ],
   ]);
   withTray.bg.show();
@@ -240,7 +240,7 @@ test("an update that needs the owner's click is announced once per version", asy
   app.offered = "1.2.3";
   const run = bg.runHidden(app, false);
   await until("a second tick", () => app.ticks >= 2);
-  expect(calls.notes).toEqual([["Harbor 1.2.3 is ready", "Open Harbor and click Update to install it."]]);
+  expect(calls.notes).toEqual([["Hub 1.2.3 is ready", "Open Hub and click Update to install it."]]);
   expect(kv.get("bg_update_noticed")).toBe("1.2.3");
   app.offered = "";
   await until("the unnamed version", () => calls.notes.length === 2);

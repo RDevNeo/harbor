@@ -101,7 +101,7 @@ describe("addproject.rs", () => {
       ],
     };
     const rows = ap.rows(new Set(["/h/Projects/app"]));
-    expect(rows.map((r) => r.detail)).toEqual(["Already in Harbor: ~/Projects/app", "Add your clone at ~/Projects/Renamed", "Add your clone at ~/Projects/site", "fresh", "Clone into ~/Projects/plain"]);
+    expect(rows.map((r) => r.detail)).toEqual(["Already in Hub: ~/Projects/app", "Add your clone at ~/Projects/Renamed", "Add your clone at ~/Projects/site", "fresh", "Clone into ~/Projects/plain"]);
     expect(rows[3]?.act).toEqual({ kind: "clone", url: "you/new", name: "new" });
     ap.query = "you/other";
     expect(titles(ap)).toEqual(["you/other"]);

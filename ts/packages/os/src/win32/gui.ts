@@ -211,7 +211,7 @@ export function hiddenWindow(): Pointer {
   wc.writeBigUInt64LE(BigInt(num(hInstance)), 24);
   wc.writeBigUInt64LE(BigInt(num(ptr(className))), 64);
   user32().RegisterClassExW(ptr(wc));
-  const title = wide("Harbor");
+  const title = wide("Hub");
   // A top-level window that's never shown (not a message-only one: those don't hear that the taskbar restarted).
   window = pointer(user32().CreateWindowExW(0, ptr(className), ptr(title), 0, 0, 0, 0, 0, null, null, hInstance, null));
   if (window === null) throw new Error(`Windows made no window (${kernel32().GetLastError()})`);

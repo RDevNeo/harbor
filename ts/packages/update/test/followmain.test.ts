@@ -342,7 +342,7 @@ test("follow-main: a release whose tag the build of main already holds is kept o
   expect(await fm.keeps("1.0.1")).toBe(false);
 });
 
-test("follow-main is on by default where there's a Harbor checkout; off only when turned off; 0.166's opt-in key is ignored", () => {
+test("follow-main is on by default where there's a Hub checkout; off only when turned off; 0.166's opt-in key is ignored", () => {
   const kv = new Map<string, string>();
   const store = { get: (k: string) => kv.get(k) ?? null, set: (k: string, v: string) => void kv.set(k, v) };
   let repos: { path: string; remote: string; local: string | null }[] = [];

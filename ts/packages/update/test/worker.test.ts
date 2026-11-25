@@ -451,7 +451,7 @@ test("a PC's nudge is never believed: main becomes what GitHub says, read again 
   expect(h.main?.sha).toBe(B);
 });
 
-test("POST /v1/main needs a Harbor token", async () => {
+test("POST /v1/main needs a Hub token", async () => {
   const path = resolve(import.meta.dir, "../../../../worker/src/index.js");
   const worker = ((await import(path)) as { default: { fetch: (req: Request, env: ReleaseEnv) => Promise<Response> } }).default;
   const { hub: h } = hub();

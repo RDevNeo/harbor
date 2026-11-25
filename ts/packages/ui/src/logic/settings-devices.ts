@@ -46,7 +46,7 @@ export function thisPcRow(h: DevicesHost, st: DevicesState): BlockRow {
   return row(h.me().name, {
     icon: ICONS.MONITOR,
     badges: [badge("This PC", "green")],
-    line: `Harbor ${h.versionLabel()} · key ${keyShort(h.myFp())}`,
+    line: `Hub ${h.versionLabel()} · key ${keyShort(h.myFp())}`,
     buttons: [
       btn("rename", "Rename", { enabled: !st.renaming, tip: "The name your other PCs and phones show for this PC" }),
       btn("copy_key", "", { icon: ICONS.COPY, variant: "muted", tip: "Copy this PC's full key" }),
@@ -64,7 +64,7 @@ export function pcRow(h: DevicesHost, pc: AccountPc, owner = false): BlockRow {
   const status = online ? "" : seen > 0 ? (ago === "now" ? "seen just now" : `last seen ${ago} ago`) : "offline";
   // The Harbor it really runs (its update info's build, as the Devices panel shows), not the version it advertises to old peers.
   const version = (peer ? runningVersion(peer) : "") || pc.version;
-  const bits = [owner ? ownersWorkspace(pc.owner_name) : "", version !== "" ? `Harbor ${version}` : "", status].filter((b) => b !== "");
+  const bits = [owner ? ownersWorkspace(pc.owner_name) : "", version !== "" ? `Hub ${version}` : "", status].filter((b) => b !== "");
   return row(pc.name || peer?.name || "PC", {
     icon: ICONS.MONITOR,
     badges: [badge(online ? "Online" : "Offline", online ? "green" : "gray")],

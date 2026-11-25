@@ -75,7 +75,7 @@ const canConnect = (sock = setup.socket()): Promise<boolean> =>
 function spawnHost(): void {
   const cmd = selfCommand();
   const exe = cmd?.[0];
-  if (cmd === undefined || exe === undefined) throw new Error("Can't find Harbor's binary.");
+  if (cmd === undefined || exe === undefined) throw new Error("Can't find Hub's binary.");
   const log = openSync(setup.logPath(), "a", 0o600);
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -360,7 +360,7 @@ function readNotices(notify: (n: { key: string; title: string; body: string }) =
   }
 }
 
-const NOT_LINKED = "WhatsApp isn't linked on this PC. The user links it in Harbor: Settings › Integrations › WhatsApp (desktop) or Settings › Apps › WhatsApp (phone).";
+const NOT_LINKED = "WhatsApp isn't linked on this PC. The user links it in Hub: Settings › Integrations › WhatsApp (desktop) or Settings › Apps › WhatsApp (phone).";
 const WAIT = 700_000;
 const MAX_TEXT = 80_000;
 

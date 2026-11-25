@@ -12,7 +12,7 @@ const STARTUP_WAIT_MS = 25_000;
 /** kv: the suggestion the pop-up was closed for (`owner|github`). */
 export const PROFILE_TOAST_KEY = "owner_toast_dismissed";
 
-export const PROFILE_SYSTEM = "You work out who owns which PC of a person's Harbor mesh (Harbor runs AI coding agents and links the owner's PCs and phones) from facts the PCs found about themselves. You have no tools. Answer with JSON only.";
+export const PROFILE_SYSTEM = "You work out who owns which PC of a person's Hub mesh (Hub runs AI coding agents and links the owner's PCs and phones) from facts the PCs found about themselves. You have no tools. Answer with JSON only.";
 
 export const PROFILE_PROMPT = "For every PC in <facts>, propose its owner's name (the person who uses it, as they would write it: \"Ana Souza\", not a login) and their GitHub login.\n\nRules:\n- A PC that reports an owner itself (reported_owner, detected false) keeps it.\n- The strongest signals for this_pc: git user.name, the full name, the GitHub logins signed in, the default agent account (default_profile) and its email. Other agent accounts, phones and SSH entries on a PC can belong to other people (a family member, a colleague who shares the PC): only use them for a PC's owner when they point at that PC.\n- A phone named after a person (\"A13 de Ana\", \"Ana's Pixel\") names someone who uses that PC, not necessarily its owner.\n- For another PC: SSH hosts whose alias, host or user matches its name, key comments naming it, and what it reports.\n- Give a GitHub login only with evidence (a signed-in login, a users.noreply.github.com email, a remote or note naming it). Never invent one; use \"\" when unknown. Same for the owner.\n- confidence: \"high\" when two independent signals agree, \"medium\" for one good signal, \"low\" for a guess.\n- why: one short line naming the evidence (\"git user.name and gh login on this PC\").\n\nAnswer with only this JSON: {\"pcs\": {\"<pc id>\": {\"owner\": \"\", \"github\": \"\", \"confidence\": \"low\", \"why\": \"\"}}}";
 
@@ -693,7 +693,7 @@ export function profileCheck(kv: Kv, cur: { confirmed: boolean; owner: string; g
   const { owner, github: gh } = cur;
   const who = gh === "" ? owner : `${owner} · GitHub ${gh}`;
   const why = d.me.why === "" ? "" : ` ${d.me.why.replace(/\.+$/, "")}.`;
-  return { key: `${owner}|${gh}`, title: "Is this you?", body: `Harbor detected ${who} as this PC's owner.${why} Agents and your other PCs see it.` };
+  return { key: `${owner}|${gh}`, title: "Is this you?", body: `Hub detected ${who} as this PC's owner.${why} Agents and your other PCs see it.` };
 }
 
 export function profileCheckJson(c: ProfileCheckInfo | null): Json {

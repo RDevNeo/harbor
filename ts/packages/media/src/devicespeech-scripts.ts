@@ -4,7 +4,7 @@
 export const WORKER_VERSION = "1";
 
 /** Python, run in ~/.harbor-voice/venv: Parakeet TDT 0.6B v3 on MLX (Apple Silicon) or sherpa-onnx (int8, CPU). */
-export const WORKER_PY = String.raw`# Harbor's speech worker on an SSH device: reads requests on stdin, answers one JSON line each on stdout.
+export const WORKER_PY = String.raw`# Hub's speech worker on an SSH device: reads requests on stdin, answers one JSON line each on stdout.
 # A request is a JSON line; "transcribe" is followed by "bytes" bytes of 16 kHz mono s16le audio.
 # It exits after "keep" seconds without a request (the model leaves memory with it), or when stdin closes.
 import json, os, select, sys, time
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     main()`;
 
 /** POSIX sh: everything under ~/.harbor-voice (uv, its own Python, the model), no sudo. Prints "step: …", then "done: <engine>" or "error: …". */
-const SETUP_TEMPLATE = String.raw`# Sets up Harbor's speech worker in ~/.harbor-voice on this machine (run by Harbor as "ssh <device> sh -s").
+const SETUP_TEMPLATE = String.raw`# Sets up Hub's speech worker in ~/.harbor-voice on this machine (run by Hub as "ssh <device> sh -s").
 # No sudo, nothing outside ~/.harbor-voice; "rm -rf ~/.harbor-voice" removes it all.
 set -eu
 R="$HOME/.harbor-voice"
@@ -206,7 +206,7 @@ HARBOR_WORKER_PY
 mv -f "$R/worker.py.new" "$R/worker.py"
 cat >"$R/serve.new" <<'HARBOR_SERVE'
 #!/bin/sh
-# Harbor's speech worker (see worker.py); its errors go to serve.log.
+# Hub's speech worker (see worker.py); its errors go to serve.log.
 R="$HOME/.harbor-voice"
 if [ -f "$R/serve.log" ] && [ "$(wc -c <"$R/serve.log")" -gt 1000000 ]; then mv -f "$R/serve.log" "$R/serve.log.old"; fi
 exec "$R/venv/bin/python" -I "$R/worker.py" "$@" 2>>"$R/serve.log"

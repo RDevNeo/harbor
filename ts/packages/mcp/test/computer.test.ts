@@ -218,7 +218,7 @@ describe("the gate", () => {
   });
 });
 
-describe("on Harbor's MCP server", () => {
+describe("on Hub's MCP server", () => {
   test("every agent gets the computer tool", () => {
     for (const role of ["lead", "sub"]) expect(tools(role).some((t) => t.name === "computer")).toBe(true);
     const schema = toolDef(true).inputSchema as { properties: Record<string, unknown>; required: string[] };

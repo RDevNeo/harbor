@@ -30,7 +30,7 @@ const MAX_JSON = 2 << 20;
 export const MAX_AUDIO = 16_000 * 2 * 600 + 4096;
 const MAX_UPLOAD = 200 << 20;
 export const HEAD_WAIT = 10_000;
-export const OLD_PAIRING = "This PC now uses Google accounts: update Harbor on this phone (Settings › Update), then sign in with Google.";
+export const OLD_PAIRING = "This PC now uses Google accounts: update Hub on this phone (Settings › Update), then sign in with Google.";
 export const ALIVE_WAIT_MS = 240_000;
 export const ALIVE_EVERY_S = 900;
 
@@ -144,7 +144,7 @@ function noteRefused(ip: string, why: string): void {
 
 export function refusedText(status: number, why: string): string {
   const w = why.length > 0 ? why[0]?.toUpperCase() + why.slice(1) : why;
-  return status === 401 && !w.includes("sign in") ? `${w}. Sign in again in Harbor for Android.` : `${w}.`;
+  return status === 401 && !w.includes("sign in") ? `${w}. Sign in again in Hub for Android.` : `${w}.`;
 }
 
 /** Whether `/app.apk` is served: to anyone on this network, from the internet to a signed-in phone or an old pairing. */
@@ -352,7 +352,7 @@ export class Api {
   async handle(peer: ConnPeer, req: Request, r: Reader, w: Duplex, pub: boolean): Promise<void> {
     const hub = this.d.hub;
     const ip = peer.ip;
-    if (peer.via.kind === "refused") return sendJson(w, 426, { error: "Harbor answers other devices over TLS only" });
+    if (peer.via.kind === "refused") return sendJson(w, 426, { error: "Hub answers other devices over TLS only" });
     const segs = segments(req.path);
     const is = (...p: string[]) => segs.length === p.length && p.every((x, i) => segs[i] === x);
     if (segs[0] === "relay" && req.method === "POST") {
@@ -534,7 +534,7 @@ export class Api {
     this.d.wake?.();
     let reply: Reply;
     try {
-      reply = await withTimeout(this.d.route(call), 30_000, err(503, "Harbor did not answer in time"));
+      reply = await withTimeout(this.d.route(call), 30_000, err(503, "Hub did not answer in time"));
     } catch (e) {
       reply = err(500, e instanceof Error ? e.message : String(e));
     }
@@ -558,7 +558,7 @@ export class Api {
 
   private serveApk(w: Duplex, headOnly: boolean): void {
     const path = this.d.apk();
-    if (path === null) return sendJson(w, 404, { error: "this Harbor has no phone app yet (Settings › Phones › Download)" });
+    if (path === null) return sendJson(w, 404, { error: "this Hub has no phone app yet (Settings › Phones › Download)" });
     let len: number;
     try {
       len = statSync(path).size;
@@ -611,7 +611,7 @@ export class Api {
   }
 
   private async serveImage(w: Duplex, path: string, max: number | null): Promise<void> {
-    if (!this.d.image) return sendJson(w, 404, { error: "no such image: images aren't served by this Harbor yet" });
+    if (!this.d.image) return sendJson(w, 404, { error: "no such image: images aren't served by this Hub yet" });
     const a = await this.d.image(path, max);
     if (a.status !== 200) return sendJson(w, a.status, { error: Buffer.from(a.body).toString() });
     sendBytes(w, 200, a.ctype, a.body);
@@ -619,7 +619,7 @@ export class Api {
 
   private async serveMedia(w: Duplex, path: string, range: string | null): Promise<void> {
     await this.d.mediaWait?.(path);
-    const why = this.d.mediaCheck ? this.d.mediaCheck(path) : "media isn't served by this Harbor yet";
+    const why = this.d.mediaCheck ? this.d.mediaCheck(path) : "media isn't served by this Hub yet";
     if (why !== null) return sendJson(w, 404, { error: `no such media: ${why}` });
     const file = this.d.located?.(path) ?? path;
     this.sendRange(w, file, this.d.mime?.(path) ?? "application/octet-stream", range);
@@ -627,7 +627,7 @@ export class Api {
 
   /** An attached file's kept copy (`/v1/file`, `/mesh/v1/file`), whole or the part a Range asks for. */
   private async serveFile(w: Duplex, path: string, range: string | null): Promise<void> {
-    const why = this.d.fileCheck ? await this.d.fileCheck(path) : "files aren't served by this Harbor yet";
+    const why = this.d.fileCheck ? await this.d.fileCheck(path) : "files aren't served by this Hub yet";
     if (why !== null) return sendJson(w, 404, { error: `no such file: ${why}` });
     return this.sendRange(w, path, "application/octet-stream", range);
   }

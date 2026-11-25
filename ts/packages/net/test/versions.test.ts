@@ -129,18 +129,18 @@ describe("versions", () => {
   test("the agent's text", () => {
     expect(versionsText(input, at)).toBe(
       [
-        "Harbor versions (newest known: 0.68.0):",
-        "- desk (this PC): Harbor 0.68.0 (latest, updates automatically)",
-        "- laptop: Harbor 0.67.0, 0.68.0 available, updates automatically",
-        "- alpha: Harbor version unknown, offline",
-        "- zeta: Harbor 0.66.0, offline (last seen 2d ago)",
+        "Hub versions (newest known: 0.68.0):",
+        "- desk (this PC): Hub 0.68.0 (latest, updates automatically)",
+        "- laptop: Hub 0.67.0, 0.68.0 available, updates automatically",
+        "- alpha: Hub version unknown, offline",
+        "- zeta: Hub 0.66.0, offline (last seen 2d ago)",
         "Phones:",
         "- Tab 2: app 0.66.0 (66000), 0.68.0 available, seen just now at zeta; Pixel 7",
         "- Phone: app 0.68.0 (68000), seen 1m ago",
       ].join("\n"),
     );
     expect(versionsText({ ...input, paired: [], local: [], elsewhere: [], meshOn: false }, at)).toBe(
-      "Harbor versions (newest known: 0.68.0):\n- desk (this PC): Harbor 0.68.0 (latest, updates automatically)\nPhones: none paired",
+      "Hub versions (newest known: 0.68.0):\n- desk (this PC): Hub 0.68.0 (latest, updates automatically)\nPhones: none paired",
     );
   });
 });

@@ -251,7 +251,7 @@ export interface GhDeps {
 export const FRESH_MS = 60_000;
 export const PEER_WAIT_MS = 35_000;
 export const MAX_DIFF = 5000;
-export const NOT_PROJECT = "Add this repo as a Harbor project to let an agent work on it";
+export const NOT_PROJECT = "Add this repo as a Hub project to let an agent work on it";
 
 export const PR_SORTS: PrSort[] = ["ready", "blocked", "updated", "newest", "oldest", "largest", "smallest"];
 export const ISSUE_SORTS: IssueSort[] = ["updated", "stale", "newest", "oldest", "most_commented", "least_commented"];
@@ -504,7 +504,7 @@ async function peerPart(deps: GhDeps, p: Peer, state: IssueFilters["state"], ref
     const projects = arr(v.projects).flatMap((r) => str(r) ?? []);
     return [{ ...src, login, projects }, { viewer: login, items, sources: [] }];
   }
-  if (status === 404) return fail("runs an older Harbor");
+  if (status === 404) return fail("runs an older Hub");
   return fail(deps.issues.shortError(str(v.error) ?? "didn't answer"));
 }
 

@@ -60,7 +60,7 @@ export function movedProject(kv: Kv, repo: number, folder?: string): MovedProjec
 
 /** The line a chat of a moved project gets instead of a turn here. */
 export function movedProjectText(home: string, repoName: string, m: MovedProject): string {
-  return `${repoName} moved to ${m.name} (${tildeOf(home, m.dir)} there): its chats go on there. Its old folder is still on this PC at ${tildeOf(home, m.folder)}; Harbor doesn't use it any more.`;
+  return `${repoName} moved to ${m.name} (${tildeOf(home, m.dir)} there): its chats go on there. Its old folder is still on this PC at ${tildeOf(home, m.folder)}; Hub doesn't use it any more.`;
 }
 
 /** "Same files": what a folder holds, without its `.git`, as one hash (paths and sizes). */
@@ -236,7 +236,7 @@ export class ProjectMove {
         const v = JSON.parse(t) as ProjectMoveStatus;
         if (v.state === "running") {
           v.state = "failed";
-          v.result = `Harbor stopped while ${v.name} was moving to ${v.toName}. Nothing is lost: what moved is on ${v.toName}, the rest is still here. Move it again to finish.`;
+          v.result = `Hub stopped while ${v.name} was moving to ${v.toName}. Nothing is lost: what moved is on ${v.toName}, the rest is still here. Move it again to finish.`;
           v.stage = "Stopped";
           v.percent = null;
           this.d.store.set(`${KV_STATUS}${r.id}`, JSON.stringify(v));
@@ -301,7 +301,7 @@ export class ProjectMove {
     const list = movePcTargets({ blocker: why, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.usableFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null });
     const targets = list.map((t) => {
       const p = mesh.peer(t.id);
-      if (t.why === null && p && !p.projectMoves) return { ...t, why: "it runs an older Harbor that can't take projects: update it first" };
+      if (t.why === null && p && !p.projectMoves) return { ...t, why: "it runs an older Hub that can't take projects: update it first" };
       return t;
     });
     return { why, targets };
@@ -327,7 +327,7 @@ export class ProjectMove {
       throw new Error(`${peer.name} didn't answer (${say(e)})`);
     }
     const o = obj(v);
-    if (status === 404 && sub === "check") throw new Error(`${peer.name} runs an older Harbor that can't take projects: update it first`);
+    if (status === 404 && sub === "check") throw new Error(`${peer.name} runs an older Hub that can't take projects: update it first`);
     if (status !== 200) throw new Error(s(o.error) || s(o.why) || `${peer.name} answered ${status}`);
     return o;
   }
@@ -394,7 +394,7 @@ export class ProjectMove {
     const again = p.answer.again === true;
     if (again) lines.push(`${name}'s folder came to ${to} before (${where}): it isn't copied again. Changes made here since then stay here.`);
     else if (p.mode === "existing") {
-      lines.push(`${to} already has ${name} in ${where}: Harbor uses it and doesn't change its files.`);
+      lines.push(`${to} already has ${name} in ${where}: Hub uses it and doesn't change its files.`);
       if (p.info !== null) {
         const extra = p.info.dirty > 0 ? ` Uncommitted changes here (${plural(p.info.dirty, "file")}) go as a commit on a branch moved-from-${this.d.mesh.me.name}/uncommitted.` : "";
         lines.push(`Commits ${to} doesn't have go there as branches moved-from-${this.d.mesh.me.name}/….${extra} Files Git ignores (like .env) stay here.`);
@@ -402,7 +402,7 @@ export class ProjectMove {
     } else if (p.mode === "clone") {
       lines.push(`${to} clones ${name} from ${p.info?.origin ?? ""} into ${where}, then gets from this PC what isn't on the remote: the commits and branches only here, and the ${plural(scan?.files ?? 0, "file")} that differ from the last commit (${sizeText(scan?.bytes ?? 0)}), also files Git ignores like .env.`);
     } else {
-      lines.push(`Harbor copies the whole folder to ${to}, into ${where}: ${sizeText(scan?.bytes ?? 0)}, ${plural(scan?.files ?? 0, "file")}, everything in it, also hidden files like .env${isDir(join(p.dir, ".git")) ? " and its Git history" : ""}.`);
+      lines.push(`Hub copies the whole folder to ${to}, into ${where}: ${sizeText(scan?.bytes ?? 0)}, ${plural(scan?.files ?? 0, "file")}, everything in it, also hidden files like .env${isDir(join(p.dir, ".git")) ? " and its Git history" : ""}.`);
     }
     if (!again && p.mode !== "existing") lines.push(`Anyone who uses ${to} can read what's copied.`);
     const chats = p.leads.length;
@@ -712,7 +712,7 @@ export class ProjectMove {
       await git(run, dir, ["read-tree", "HEAD"], 120_000, env);
       await git(run, dir, ["add", "-A"], 10 * 60_000, env);
       const tree = (await git(run, dir, ["write-tree"], 120_000, env)).trim();
-      return (await git(run, dir, ["commit-tree", tree, "-p", "HEAD", "-m", `Uncommitted changes from ${this.d.mesh.me.name}, moved by Harbor`], 60_000, { GIT_AUTHOR_NAME: "Harbor", GIT_AUTHOR_EMAIL: "harbor@localhost", GIT_COMMITTER_NAME: "Harbor", GIT_COMMITTER_EMAIL: "harbor@localhost" })).trim();
+      return (await git(run, dir, ["commit-tree", tree, "-p", "HEAD", "-m", `Uncommitted changes from ${this.d.mesh.me.name}, moved by Hub`], 60_000, { GIT_AUTHOR_NAME: "Hub", GIT_AUTHOR_EMAIL: "harbor@localhost", GIT_COMMITTER_NAME: "Hub", GIT_COMMITTER_EMAIL: "harbor@localhost" })).trim();
     } finally {
       rmSync(index, { force: true });
     }
@@ -776,7 +776,7 @@ export class ProjectMove {
     const { project: _p, chat: _c, pc: _pc, ...rest } = b;
     const body = { ...(rest as Record<string, Json>), ...owner.body };
     const r = await this.d.forward(dest(peer), peer.name, "POST", ["v1", "projects", "move"], body, [], [sender, ""], null);
-    if (r.status === 404 && ["no such call", "unknown call", "not found"].includes(s(obj(r.body).error))) return err(409, `this project is ${owner.name}'s, and ${owner.name} runs an older Harbor that can't move projects: update it first`);
+    if (r.status === 404 && ["no such call", "unknown call", "not found"].includes(s(obj(r.body).error))) return err(409, `this project is ${owner.name}'s, and ${owner.name} runs an older Hub that can't move projects: update it first`);
     return r;
   }
 

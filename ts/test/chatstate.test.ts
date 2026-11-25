@@ -240,7 +240,7 @@ test("the_state_carries_the_app_s_version_code_and_the_owner_question_until_it_i
   expect(st.profile_check).toEqual({
     key: "Ana Souza|anasouza",
     title: "Is this you?",
-    body: "Harbor detected Ana Souza · GitHub anasouza as this PC's owner. git user.name and gh login on this PC. Agents and your other PCs see it.",
+    body: "Hub detected Ana Souza · GitHub anasouza as this PC's owner. git user.name and gh login on this PC. Agents and your other PCs see it.",
   });
   expect(st.hub_name).not.toBe("");
   h.store.set("owner_name", "Ana Souza");

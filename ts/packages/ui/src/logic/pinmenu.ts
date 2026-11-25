@@ -29,25 +29,25 @@ export function pinRows(i: PinMenuInput): { rows: PinRow[]; acts: PinAct[] } {
   };
   const p = i.pinned;
   if (!i.chat) {
-    if (p !== null) add(`${i.project || "This project"} keeps its chats on ${i.pinName}`, p.why !== "" ? `${i.pinName} ${p.why}: unpin it in the project's menu` : "New chats here start there; Harbor won't switch them", { kind: "none" }, p.why !== "");
+    if (p !== null) add(`${i.project || "This project"} keeps its chats on ${i.pinName}`, p.why !== "" ? `${i.pinName} ${p.why}: unpin it in the project's menu` : "New chats here start there; Hub won't switch them", { kind: "none" }, p.why !== "");
     return { rows, acts };
   }
   if (p === null) {
-    add(`Keep this chat on ${i.sel.name}`, "Harbor won't switch its account by itself", { kind: "pin", account: i.sel.account });
+    add(`Keep this chat on ${i.sel.name}`, "Hub won't switch its account by itself", { kind: "pin", account: i.sel.account });
     return { rows, acts };
   }
   if (p.why !== "") {
     add(`Pinned to ${i.pinName}, which ${p.why}`, p.scope === "project" ? "Pick another account above (it pins this chat to it)" : "Pick another account above, or unpin", { kind: "none" }, true);
-    if (p.scope === "chat") add("Unpin", "Harbor may switch its account again", { kind: "unpin" });
+    if (p.scope === "chat") add("Unpin", "Hub may switch its account again", { kind: "unpin" });
     return { rows, acts };
   }
   if (i.waiting !== null && i.waiting.other !== null) add(`Use ${i.waiting.other} this time`, `Otherwise it waits for ${i.pinName}'s reset; the pin stays`, { kind: "other" });
   if (p.scope === "project") {
     if (i.sel.account !== p.account) add(`Keep this chat on ${i.sel.name}`, `Its project keeps it on ${i.pinName}; this pins the chat itself`, { kind: "pin", account: i.sel.account });
-    else add(`Kept on ${i.pinName} by its project`, "Harbor won't switch it; unpin it in the project's menu", { kind: "none" });
+    else add(`Kept on ${i.pinName} by its project`, "Hub won't switch it; unpin it in the project's menu", { kind: "none" });
     return { rows, acts };
   }
-  add(`Unpin from ${i.pinName}`, "Pinned: Harbor won't switch its account", { kind: "unpin" });
+  add(`Unpin from ${i.pinName}`, "Pinned: Hub won't switch its account", { kind: "unpin" });
   return { rows, acts };
 }
 
@@ -56,7 +56,7 @@ export function chipPin(p: pins.Pinned | null, name: string): { pin: "" | "ok" |
   if (p === null) return { pin: "", tip: "" };
   const whose = p.scope === "project" ? " (its project's pin)" : "";
   if (p.why !== "") return { pin: "error", tip: `Pinned to ${name}${whose}, which ${p.why}: pick another account or unpin` };
-  return { pin: "ok", tip: `Pinned to ${name}${whose}: Harbor won't switch it` };
+  return { pin: "ok", tip: `Pinned to ${name}${whose}: Hub won't switch it` };
 }
 
 /** The line over the composer of a pinned chat that can't run as it is: its account missing here, or waiting at its

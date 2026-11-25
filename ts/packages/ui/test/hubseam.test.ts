@@ -45,9 +45,9 @@ test("fixOnPeer sends the issue to the other PC under this PC's name, then opens
 });
 
 test("fixOnPeer says what the other PC answered when it won't", async () => {
-  const f = fixer(() => Promise.resolve({ status: 409, body: { error: "Add this repo as a Harbor project to let an agent work on it" } }), undefined);
+  const f = fixer(() => Promise.resolve({ status: 409, body: { error: "Add this repo as a Hub project to let an agent work on it" } }), undefined);
   await fixOnPeer(f.gh, issue, "", undefined, "pc:desk", f.out);
-  expect(f.said).toEqual(["toast Couldn't start the chat: Add this repo as a Harbor project to let an agent work on it"]);
+  expect(f.said).toEqual(["toast Couldn't start the chat: Add this repo as a Hub project to let an agent work on it"]);
   const down = fixer(() => Promise.reject(new Error("Connection refused")));
   await fixOnPeer(down.gh, issue, "", undefined, "pc:desk", down.out);
   expect(down.said).toEqual(["toast Couldn't start the chat: Connection refused"]);

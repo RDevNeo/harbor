@@ -161,7 +161,7 @@ export async function exchange(s: Duplex, host: string, method: string, path: st
     s.write(Buffer.concat([Buffer.from(head, "latin1"), data]));
     const got = await readAnswerHead(s);
     const status = parseStatus(got.head);
-    if (status === 0) throw new Error("not Harbor");
+    if (status === 0) throw new Error("not Hub");
     const lenText = headerOf(got.head, "content-length");
     const len = lenText !== null && /^\d+$/.test(lenText) ? Number(lenText) : null;
     if (len !== null && len > MAX_ANSWER) throw new Error("answer too large");

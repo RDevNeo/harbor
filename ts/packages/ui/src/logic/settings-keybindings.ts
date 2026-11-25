@@ -31,7 +31,7 @@ export interface KeysView {
 }
 
 const FOOTER =
-  "Click a shortcut, then press the new keys, e.g. Ctrl+Shift+K (Ctrl, Alt and Shift). Esc alone cancels, Backspace alone goes back to the default. Super combos can't be used: Hyprland takes most of them before Harbor sees them.";
+  "Click a shortcut, then press the new keys, e.g. Ctrl+Shift+K (Ctrl, Alt and Shift). Esc alone cancels, Backspace alone goes back to the default. Super combos can't be used: Hyprland takes most of them before Hub sees them.";
 
 /** widgets.rs `kbd_combo`: "Ctrl+Shift+F" as key caps; a "+" key is a cap of its own. */
 export function caps(combo: string): string[] {

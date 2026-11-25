@@ -15,7 +15,7 @@ export interface SecretsHost {
 }
 
 const ABOUT =
-  "Agents see only the names, and use a key only after you allow it, for the time you pick. Harbor's run_with_secrets tool runs their command on this PC with the key set and hides it in what comes back, as is and in common encodings (base64, URL, hex). That keeps keys out of chats by mistake; it is not a lock: a command that changes the value on purpose gets it through, and agents run as you, so one could read the file it's kept in. A key you let Harbor write to a project's .env file is plain text there, readable by the agent's own tools.";
+  "Agents see only the names, and use a key only after you allow it, for the time you pick. Hub's run_with_secrets tool runs their command on this PC with the key set and hides it in what comes back, as is and in common encodings (base64, URL, hex). That keeps keys out of chats by mistake; it is not a lock: a command that changes the value on purpose gets it through, and agents run as you, so one could read the file it's kept in. A key you let Hub write to a project's .env file is plain text there, readable by the agent's own tools.";
 
 /** secrets.rs's `until`: what is left of a grant. */
 export function secretsLeft(until: number, at: number): string {

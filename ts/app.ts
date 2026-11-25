@@ -71,7 +71,7 @@ const commands: Record<string, Command> = {
     const st = readJson<import("./packages/update/src/followmain.ts").FollowStatus>(join(dataDir(), followMain.DIR, "status.json"));
     console.log(`main: ${process.env.HARBOR_FOLLOW_REMOTE || followMain.REMOTE}${checkout === null ? "" : `, or ${checkout} when it's ahead`}`);
     const off = { state: "off" as const, checkout: "", commit: "", subject: "", version: "", reason: "", at: 0 };
-    console.log(st === null || !on ? (on ? "On: the running Harbor starts following main within 10 s." : followMain.statusLine(off, false)) : followMain.statusLine(st, on));
+    console.log(st === null || !on ? (on ? "On: the running Hub starts following main within 10 s." : followMain.statusLine(off, false)) : followMain.statusLine(st, on));
     if (st?.last) console.log(followMain.timelineText(st.last));
     return 0;
   },
@@ -86,11 +86,11 @@ const commands: Record<string, Command> = {
     if (verb === "on") {
       const d = resolve(dir ?? process.cwd());
       if (!["ts/packages/ui/src/cards.ts", "packages/ui/src/cards.ts"].some((f) => existsSync(join(d, f)))) {
-        console.error(`harbor hot: ${d} isn't a Harbor checkout (no ts/packages/ui/src/cards.ts)`);
+        console.error(`harbor hot: ${d} isn't a Hub checkout (no ts/packages/ui/src/cards.ts)`);
         return 1;
       }
       writePrivate(file, `${JSON.stringify({ dir: d })}\n`);
-      console.log(`Hot reload on: the running Harbor follows ${d} within 3 s. Saves to the transcript's cards, the team tools and the agents' instructions swap in without a restart.`);
+      console.log(`Hot reload on: the running Hub follows ${d} within 3 s. Saves to the transcript's cards, the team tools and the agents' instructions swap in without a restart.`);
       return 0;
     }
     if (verb === "off") {
@@ -114,8 +114,8 @@ const commands: Record<string, Command> = {
   // Restarts the running Harbor the way an update does: the window comes back where it was, with what was typed.
   restart: async () => {
     const { single } = await import("./packages/store/src/index.ts");
-    if (await single.restartRunning()) return (console.log("Harbor is restarting."), 0);
-    console.error("harbor: no running Harbor answered");
+    if (await single.restartRunning()) return (console.log("Hub is restarting."), 0);
+    console.error("harbor: no running Hub answered");
     return 1;
   },
   // A call to the running Harbor's own API, as a phone makes them, with this PC's rights (the control socket is
@@ -142,7 +142,7 @@ const commands: Record<string, Command> = {
       req = { method: first, path: second, body };
     }
     const r = await single.apiCall(req);
-    if (r === null) return (console.error("harbor: no running Harbor answered"), 1);
+    if (r === null) return (console.error("harbor: no running Hub answered"), 1);
     console.log(JSON.stringify(r.body, null, 2));
     return r.ok ? 0 : 1;
   },
@@ -150,17 +150,17 @@ const commands: Record<string, Command> = {
   quit: async () => {
     const { single } = await import("./packages/store/src/index.ts");
     if (!(await single.quitRunning())) {
-      if (single.lockHeld() === true) return (console.error("harbor: the running Harbor didn't answer"), 1);
-      return (console.log("Harbor isn't running."), 0);
+      if (single.lockHeld() === true) return (console.error("harbor: the running Hub didn't answer"), 1);
+      return (console.log("Hub isn't running."), 0);
     }
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       // Gone: its lock is free (or, with no lock to test, its control socket no longer answers).
       const held = single.lockHeld();
-      if (held === false || (held === null && !(await single.socketListening()))) return (console.log("Harbor quit."), 0);
+      if (held === false || (held === null && !(await single.socketListening()))) return (console.log("Hub quit."), 0);
       await new Promise((r) => setTimeout(r, 200));
     }
-    console.error("harbor: Harbor is still quitting after 30 s");
+    console.error("harbor: Hub is still quitting after 30 s");
     return 1;
   },
   // Harbor has administrator rights by default (packages/os/src/admin.ts: Windows runs it as administrator, Linux
@@ -171,7 +171,7 @@ const commands: Record<string, Command> = {
     const what = args[0] ?? "status";
     if (!["status", "on", "off"].includes(what)) return (console.error("usage: harbor admin [status|on|off]"), 2);
     const { admin, autostart } = await import("./packages/os/src/index.ts");
-    if (!admin.state().supported) return (console.log("Harbor's administrator rights are for Windows, Linux and macOS."), what === "status" ? 0 : 2);
+    if (!admin.state().supported) return (console.log("Hub's administrator rights are for Windows, Linux and macOS."), what === "status" ? 0 : 2);
     const { single } = await import("./packages/store/src/index.ts");
     // Linux and macOS: this command does it, and sudo asks for the password right here when it must.
     const r = admin.cliLocal() ? null : await single.adminRunning(what);
@@ -181,13 +181,13 @@ const commands: Record<string, Command> = {
     }
     if (what === "status") {
       for (const l of await admin.status("command")) console.log(l);
-      if (!admin.cliLocal()) console.log("Harbor isn't running.");
+      if (!admin.cliLocal()) console.log("Hub isn't running.");
       return 0;
     }
     const exe = autostart.installedLauncher();
-    if (!existsSync(exe)) return (console.error(`harbor: no installed Harbor at ${exe}`), 1);
+    if (!existsSync(exe)) return (console.error(`harbor: no installed Hub at ${exe}`), 1);
     const done = await admin.set(what === "on", { exe, login: autostart.enabled("--background", exe), arg: "--background" }, "terminal");
-    const said = admin.cliLocal() ? done.message : what === "on" ? "On: Harbor starts as administrator from now on." : "Off: Harbor starts with your normal rights from now on, updates included (harbor admin on turns it back on).";
+    const said = admin.cliLocal() ? done.message : what === "on" ? "On: Hub starts as administrator from now on." : "Off: Hub starts with your normal rights from now on, updates included (harbor admin on turns it back on).";
     (done.ok ? console.log : console.error)(done.ok ? said : done.message);
     return done.ok ? 0 : 1;
   },

@@ -269,9 +269,9 @@ describe("profile", () => {
     expect(profileCheck(kv, state)).toEqual({
       key: "Sam Lee|samlee",
       title: "Is this you?",
-      body: "Harbor detected Sam Lee · GitHub samlee as this PC's owner. From git user.name. Agents and your other PCs see it.",
+      body: "Hub detected Sam Lee · GitHub samlee as this PC's owner. From git user.name. Agents and your other PCs see it.",
     });
-    expect(profileCheck(kv, { ...state, github: "" })?.body).toBe("Harbor detected Sam Lee as this PC's owner. From git user.name. Agents and your other PCs see it.");
+    expect(profileCheck(kv, { ...state, github: "" })?.body).toBe("Hub detected Sam Lee as this PC's owner. From git user.name. Agents and your other PCs see it.");
     expect(profileCheck(kv, { ...state, confirmed: true })).toBeNull();
     expect(profileCheck(kv, { ...state, owner: "" })).toBeNull();
     expect(profileCheckJson(null)).toBeNull();

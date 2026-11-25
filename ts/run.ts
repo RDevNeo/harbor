@@ -75,7 +75,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   // Linux and macOS: whether sudo needs no password, looked at once now (a process, not on the main thread's way).
   if (adminNow.kind === "sudo") void admin.refresh();
   if (adminNow.on) admin.keepHook(cfg.exe);
-  if (adminNow.supported) console.error(`harbor: ${adminNow.kind === "sudo" ? "passwordless sudo" : "running as administrator"} (default) is ${adminNow.on ? "set up" : adminNow.off ? "off (harbor admin off)" : "not set up"}${adminNow.kind === "sudo" ? "" : `; this Harbor ${adminNow.elevated ? "has" : "lacks"} the administrator token`}`);
+  if (adminNow.supported) console.error(`harbor: ${adminNow.kind === "sudo" ? "passwordless sudo" : "running as administrator"} (default) is ${adminNow.on ? "set up" : adminNow.off ? "off (harbor admin off)" : "not set up"}${adminNow.kind === "sudo" ? "" : `; this Hub ${adminNow.elevated ? "has" : "lacks"} the administrator token`}`);
   const stopTrims = malloc.trimEvery();
   // A line in the log for every time the main thread stops answering for a quarter second or more (stallwatch.ts).
   stallwatch.hookSqlite();
@@ -111,7 +111,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     whatsappKeep: true,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
     preview: {
-      refuses: (full, offer) => (embedded ? "this PC's Harbor runs inside Person Hub, which ships its own copy" : preview.refuses(cfg, full, offer)),
+      refuses: (full, offer) => (embedded ? "this PC's Hub runs inside Person Hub, which ships its own copy" : preview.refuses(cfg, full, offer)),
       take: (from, name, offer) => {
         // One offer at a time: its file is fetched to a fixed name.
         taking = taking.then(async () => {
@@ -150,7 +150,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     if (what === "status") return { ok: true, text: (await admin.status("harbor")).join("\n") };
     if (what !== "on" && what !== "off") return { ok: false, text: "usage: harbor admin [status|on|off]" };
     const opts = adminOptions();
-    if (opts === null) return { ok: false, text: "This Harbor isn't the installed one: running as administrator is for an installed Harbor." };
+    if (opts === null) return { ok: false, text: "This Hub isn't the installed one: running as administrator is for an installed Hub." };
     const r = await admin.set(what === "on", opts);
     // After the answer is out: the restart through a task (into or out of the administrator token).
     if (r.restart) setTimeout(() => void reloader?.now(), 500);
@@ -396,7 +396,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     tray?.stop();
     if (!quitting && keepsRunning()) {
       const note = ui.stillRunning(run.store, tray !== null);
-      if (note) Bun.spawnSync(["notify-send", "-a", "Harbor", ...note], { stdio: ["ignore", "ignore", "ignore"] });
+      if (note) Bun.spawnSync(["notify-send", "-a", "Hub", ...note], { stdio: ["ignore", "ignore", "ignore"] });
       hidden = true;
       if (await reloader.now()) return 0;
     }

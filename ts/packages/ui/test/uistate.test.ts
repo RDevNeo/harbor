@@ -5,7 +5,7 @@ import { field, row, type Block } from "../src/logic/settings-blocks.ts";
 
 const entry = (text: string, cursor = Buffer.byteLength(text)) => ({ text, cursor, mentions: [], files: [], picked: [] });
 
-test("an older Harbor's snapshot (view and plain drafts) still restores: chat, drafts with the cursor at their end", () => {
+test("an older Hub's snapshot (view and plain drafts) still restores: chat, drafts with the cursor at their end", () => {
   const s = parseSnapshot({ view: { t: "chat", id: 4 }, drafts: { "4": "héllo", "0": "new", x: "no" }, draft_repo: 2, draft_main: true });
   expect(s?.view).toEqual({ t: "chat", id: 4 });
   expect(s?.composers.get(4)).toEqual(entry("héllo"));

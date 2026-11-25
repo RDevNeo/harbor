@@ -7,7 +7,7 @@ const n = normalize;
 
 const kv = (v: string | null) => ({ get: (k: string) => (k === pd.KEY ? v : null) });
 
-test("without a Projects folder: ~/Projects for projects, Harbor's data folder for worktrees, home for chats", () => {
+test("without a Projects folder: ~/Projects for projects, Hub's data folder for worktrees, home for chats", () => {
   expect(pd.chosen(kv(null), "/h")).toBeNull();
   expect(pd.projectsDir(kv(null), "/h")).toBe(n("/h/Projects"));
   expect(pd.worktreesDir(kv(""), "/h", "/d")).toBe(n("/d/worktrees"));

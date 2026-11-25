@@ -9,7 +9,7 @@ export type IssueSort = ghapi.IssueSort;
 export type StateF = IssueFilters["state"];
 
 /** Why the agent actions are off for a repo that isn't a Harbor project. */
-export const NOT_PROJECT = "Add this repo as a Harbor project to let an agent work on it";
+export const NOT_PROJECT = "Add this repo as a Hub project to let an agent work on it";
 
 export const SORTS: readonly IssueSort[] = ghapi.ISSUE_SORTS;
 

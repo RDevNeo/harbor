@@ -97,16 +97,16 @@ describe("settings and cleanup", () => {
   });
 
   test("cleanup_with_claude_spells_dictionary_terms", async () => {
-    const dict = dictwords.parse([{ term: "SpokPay" }, { term: "SpokPayCRM" }, { term: "Harbor" }]);
+    const dict = dictwords.parse([{ term: "SpokPay" }, { term: "SpokPayCRM" }, { term: "Hub" }]);
     dictate.setWords({ dict });
     let system = "";
     dictate.setAccount(async (s, prompt) => {
       system = s;
-      return prompt.includes("checkout") ? "So the SpokPay checkout is broken and the SpokPayCRM too." : "Então eu abri o Harbor no celular e o SpokPay não carregou.";
+      return prompt.includes("checkout") ? "So the SpokPay checkout is broken and the SpokPayCRM too." : "Então eu abri o Hub no celular e o SpokPay não carregou.";
     });
     const cases: [string, string[]][] = [
       ["um so the spoke pay checkout is broken and the spook pay see are em too", ["SpokPay", "SpokPayCRM"]],
-      ["então eu abri o harbour no celular e o spock pay não carregou", ["Harbor", "SpokPay"]],
+      ["então eu abri o harbour no celular e o spock pay não carregou", ["Hub", "SpokPay"]],
     ];
     for (const [raw, want] of cases) {
       const clean = await cleanupText(raw);
@@ -114,7 +114,7 @@ describe("settings and cleanup", () => {
     }
     expect(system).toContain("- SpokPayCRM");
     expect(system).toStartWith(CLEANUP_SYSTEM);
-    expect(dictate.cleanupSystem([{ term: "Harbor", sounds: ["harbour", "arbor"] }])).toContain("- Harbor (may sound like: harbour, arbor)");
+    expect(dictate.cleanupSystem([{ term: "Hub", sounds: ["harbour", "arbor"] }])).toContain("- Hub (may sound like: harbour, arbor)");
   });
 
   test("a cleanup of fewer than eight words is not asked for", async () => {
@@ -152,8 +152,8 @@ describe("settings and cleanup", () => {
     expect(dictate.takeDirty()).toBeNull();
     dictate.set({ keepMin: 1 }, true);
     expect(parakeet.keepMin()).toBe(5);
-    dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Harbor" }]) }, true);
-    expect(dictate.takeDirty()).toEqual({ cleanup: false, keepMin: 5, commands: true, dict: [{ term: "Harbor", sounds: [] }] });
+    dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Hub" }]) }, true);
+    expect(dictate.takeDirty()).toEqual({ cleanup: false, keepMin: 5, commands: true, dict: [{ term: "Hub", sounds: [] }] });
     expect(dictate.takeDirty()).toBeNull();
     dictate.set({ cleanup: true }, true);
     expect(dictate.takeDirty()?.cleanup).toBe(true);
@@ -163,7 +163,7 @@ describe("settings and cleanup", () => {
 
   test("status tells a peer what this PC can do", () => {
     process.env.HARBOR_TEST_MEMAVAIL_MB = "3210";
-    dictate.setWords({ dict: dictwords.parse([{ term: "Harbor", sounds: ["harbour"] }]) });
+    dictate.setWords({ dict: dictwords.parse([{ term: "Hub", sounds: ["harbour"] }]) });
     const s = dictate.status("desk");
     expect(s).toEqual({
       engine: "parakeet",
@@ -174,7 +174,7 @@ describe("settings and cleanup", () => {
       keep_loaded_min: 5,
       host: "desk",
       commands: true,
-      dictionary: [{ term: "Harbor", sounds: ["harbour"] }],
+      dictionary: [{ term: "Hub", sounds: ["harbour"] }],
     });
     expect(dictate.status("").host).not.toBe("");
     expect(dictate.readyHere()).toBe(false);
@@ -266,18 +266,18 @@ describe("routing without a model", () => {
     process.env.HARBOR_TEST_MEMAVAIL_MB = "500";
     const rig = fakeMesh([peerB, { ...peerB, id: "rig-c", name: "rig-c", online: false }]);
     const samples = new Int16Array(16000);
-    dictate.setWords({ dict: dictwords.parse([{ term: "Harbor", sounds: ["harbour"] }]) });
+    dictate.setWords({ dict: dictwords.parse([{ term: "Hub", sounds: ["harbour"] }]) });
     const d = await dictate.transcribe(rig, samples, "klingon!", { cleanup: false, commands: true, localOnly: false });
     expect(d).toEqual({ text: "hello from b", raw: null, host: "rig-b", send: false });
     expect(rig.asks).toEqual(["rig-b /mesh/v1/voice"]);
     expect(rig.posts).toEqual(["/mesh/v1/transcribe?lang=auto"]);
     rig.reply = [200, { text: "open the harbour. press enter", host: "" }];
     const sent = await dictate.transcribe(rig, samples, "pt", { cleanup: false, commands: true, localOnly: false });
-    expect(sent).toEqual({ text: "open the Harbor.", raw: null, host: "rig-b", send: true });
+    expect(sent).toEqual({ text: "open the Hub.", raw: null, host: "rig-b", send: true });
     expect(rig.posts[1]).toBe("/mesh/v1/transcribe?lang=pt");
     const kept = await dictate.transcribe(rig, samples, "pt", { cleanup: false, commands: false, localOnly: false });
     expect(kept.send).toBe(false);
-    expect(kept.text).toBe("open the Harbor. press enter");
+    expect(kept.text).toBe("open the Hub. press enter");
     voice.setFetcher(async () => {
       throw new Error("offline");
     });

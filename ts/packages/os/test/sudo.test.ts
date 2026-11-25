@@ -69,7 +69,7 @@ test.skipIf(!posix)("the root script writes the rule checked by visudo, mode 044
   const on = run("on");
   expect(on.exitCode).toBe(0);
   const f = join(d, "harbor-igor");
-  expect(readFileSync(f, "utf8")).toBe("# Harbor: passwordless sudo for igor (harbor admin off removes it)\nigor ALL=(ALL) NOPASSWD: ALL\n");
+  expect(readFileSync(f, "utf8")).toBe("# Hub: passwordless sudo for igor (harbor admin off removes it)\nigor ALL=(ALL) NOPASSWD: ALL\n");
   expect(statSync(f).mode & 0o777).toBe(0o440);
   // No temporary file left behind.
   expect(readdirSync(d)).toEqual(["harbor-igor"]);

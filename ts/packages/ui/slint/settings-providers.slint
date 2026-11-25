@@ -162,7 +162,7 @@ export component ProvidersTab {
                             alignment: end;
                             Centered {
                                 Text {
-                                    text: "Remove from Harbor?";
+                                    text: "Remove from Hub?";
                                     font-size: 13px;
                                     color: Theme.fg;
                                 }
@@ -240,7 +240,7 @@ export component ProvidersTab {
                                     icon: Icons.trash;
                                     size: icon-sm;
                                     variant: ghost-destructive;
-                                    tip: "Remove this account from Harbor";
+                                    tip: "Remove this account from Hub";
                                     clicked => {
                                         root.act(r.id, "remove");
                                     }
@@ -263,7 +263,7 @@ export component ProvidersTab {
             height: 8px;
         }
         Text {
-            text: "Sign-in runs the provider's own login in Harbor's terminal. Press Refresh in the sidebar afterwards. An account switched off is never used for new chats, agents or automatic switching on this PC.";
+            text: "Sign-in runs the provider's own login in Hub's terminal. Press Refresh in the sidebar afterwards. An account switched off is never used for new chats, agents or automatic switching on this PC.";
             font-size: 12px;
             color: Theme.subtle;
             wrap: word-wrap;

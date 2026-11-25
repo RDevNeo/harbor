@@ -122,7 +122,7 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
     if (path === undefined) return 2;
     const m = await load(path);
     if (!isBundle(m)) {
-      err("harbor: that file is not a Harbor bundle");
+      err("harbor: that file is not a Hub bundle");
       return 1;
     }
     if (needsNewer(m, base.runtime)) {
@@ -166,7 +166,7 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
   globalThis.__harbor = Object.assign(globalThis.__harbor ?? {}, { runtime: info });
   const m = own ? opts.embedded : await load(chosen.path);
   if (!isBundle(m)) {
-    err(`harbor: ${chosen.path} is not a Harbor bundle`);
+    err(`harbor: ${chosen.path} is not a Hub bundle`);
     return 1;
   }
   if (needsNewer(m, base.runtime)) {

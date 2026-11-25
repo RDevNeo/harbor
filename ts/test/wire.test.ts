@@ -79,7 +79,7 @@ test.if(process.platform !== "win32")("resumed_sessions_follow_the_folder", () =
   }
 });
 
-test("Harbor's own MCP servers: its team server, machines and its own apps, none of the third-party apps", () => {
+test("Hub's own MCP servers: its team server, machines and its own apps, none of the third-party apps", () => {
   wire();
   expect([...agent.harborServers()].sort()).toEqual(["discord", "gmail", "harbor", "machines", "whatsapp"]);
 });

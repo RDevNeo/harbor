@@ -261,8 +261,8 @@ export function versionsJson(input: VersionsInput, at: number = now()): Json {
 export function versionsText(input: VersionsInput, at: number = now()): string {
   const [pcs, phones] = gatherVersions(input, at);
   const newest = newestVersion(pcs);
-  let out = `Harbor versions (newest known: ${newest === "" ? "unknown" : newest}):`;
-  for (const p of pcs) out += `\n- ${p.name}${p.me ? " (this PC)" : ""}: Harbor ${pcLine(p, newest, at)}`;
+  let out = `Hub versions (newest known: ${newest === "" ? "unknown" : newest}):`;
+  for (const p of pcs) out += `\n- ${p.name}${p.me ? " (this PC)" : ""}: Hub ${pcLine(p, newest, at)}`;
   if (phones.length === 0) {
     out += "\nPhones: none paired";
   } else {

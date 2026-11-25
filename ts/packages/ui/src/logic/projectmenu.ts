@@ -79,9 +79,9 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
   if (p.shareWhy !== undefined) add("share_workspace", SHARE_LABEL, ICONS.LINK, p.shareWhy ?? p.shareLine ?? "It and its chats show under those workspaces too", p.shareWhy !== null);
   if (p.settled === true) add("unsettle_project", "Unsettle project", ICONS.UNARCHIVE, "It and the chats settled with it come back");
   else add("settle_project", "Settle project", ICONS.ARCHIVE, "It and its chats go to Settled; a new chat or new activity in it brings it back");
-  if (p.pin !== undefined) add("pin_account", PIN_LABEL, ICONS.LOCK, p.pin === null ? "Its chats and agents stay on the account you pick: Harbor won't switch them" : `Pinned to ${p.pin}: Harbor won't switch its chats`);
+  if (p.pin !== undefined) add("pin_account", PIN_LABEL, ICONS.LOCK, p.pin === null ? "Its chats and agents stay on the account you pick: Hub won't switch them" : `Pinned to ${p.pin}: Hub won't switch its chats`);
   add("move_pc", "Move to PC…", ICONS.MONITOR, p.moving ? p.moving : "Its folder and its chats go to another PC of yours");
-  add("remove", "Remove from Harbor");
+  add("remove", "Remove from Hub");
   return out;
 }
 
@@ -94,4 +94,4 @@ export function projectMoveTitle(state: string, name: string, to: string): strin
 export const RENAME_PROJECT = { label: "Rename project…", title: "Rename project", ok: "Rename" } as const;
 
 /** The confirmation Remove from Harbor asks first. */
-export const REMOVE_PROJECT = { title: "Remove project?", text: "Its chats are removed from Harbor. Nothing on disk is touched.", ok: "Remove" } as const;
+export const REMOVE_PROJECT = { title: "Remove project?", text: "Its chats are removed from Hub. Nothing on disk is touched.", ok: "Remove" } as const;

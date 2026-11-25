@@ -106,7 +106,7 @@ const SUBJECT_ALT_NAME = oid(0x55, 0x1d, 0x11);
 /** A new ECDSA P-256 key and a self-signed certificate like rcgen's in tls.rs: valid for a century. */
 export function generateIdentity(): Identity {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-  const name = seq(der(0x31, seq(COMMON_NAME, der(0x0c, ascii("Harbor")))));
+  const name = seq(der(0x31, seq(COMMON_NAME, der(0x0c, ascii("Hub")))));
   const serial = randomBytes(16);
   serial[0] = ((serial[0] ?? 0) & 0x7f) | 0x40; // positive and minimal DER: a leading 0x00 with a low next byte is refused (INVALID_INTEGER)
   const tbs = seq(

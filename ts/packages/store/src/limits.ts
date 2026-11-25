@@ -345,7 +345,7 @@ export function notify(title: string, body: string): void {
   // macOS (inside Harbor.app): its own notifications.
   if (osNotify.available()) return osNotify.post({ id: `harbor-limits-${Date.now()}`, title, body, sound: true });
   try {
-    const p = spawn("notify-send", ["-a", "Harbor", title, body], { stdio: "ignore", detached: true });
+    const p = spawn("notify-send", ["-a", "Hub", title, body], { stdio: "ignore", detached: true });
     p.on("error", () => {});
     p.unref();
   } catch {
@@ -1050,7 +1050,7 @@ export class Limits {
         : `hit the ${label} limit on ${from ? accountName(from) : account} (account '${account}') · ${then}`;
     const pin = this.pinnedName(chatId);
     if (pin !== null) {
-      this.host.teamNote(chatId, text, `The user pinned it to ${pin}: Harbor doesn't switch it and switch_agent_account refuses to; it waits for the reset. Only the user can move or unpin it.${said.trim() === "" ? "" : `\n\nIt said: ${said.trim()}`}`, true);
+      this.host.teamNote(chatId, text, `The user pinned it to ${pin}: Hub doesn't switch it and switch_agent_account refuses to; it waits for the reset. Only the user can move or unpin it.${said.trim() === "" ? "" : `\n\nIt said: ${said.trim()}`}`, true);
       return;
     }
     const { on } = this.switchSettings();

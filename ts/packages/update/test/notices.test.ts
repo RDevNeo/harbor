@@ -29,13 +29,13 @@ test("a release is on offer only for an installed copy that has one to install o
 test("the update pop-up says what is happening and offers Update only when nothing is running", () => {
   const offer = { version: "2.0.0", installing: false };
   const a = harborToast(offer, "1.0.0", false, false, null);
-  expect(a).toMatchObject({ id: "harbor-update-toast", title: "Harbor 2.0.0 is available", primary: { label: "Update", enabled: true }, secondary: "What's new" });
-  expect(a?.body).toBe("You have 1.0.0. Update installs it and reloads Harbor in place.");
+  expect(a).toMatchObject({ id: "harbor-update-toast", title: "Hub 2.0.0 is available", primary: { label: "Update", enabled: true }, secondary: "What's new" });
+  expect(a?.body).toBe("You have 1.0.0. Update installs it and reloads Hub in place.");
   const b = harborToast({ ...offer, installing: true }, "1.0.0", false, false, null);
-  expect(b).toMatchObject({ title: "Updating Harbor to 2.0.0…", primary: { label: "Updating…", enabled: false } });
+  expect(b).toMatchObject({ title: "Updating Hub to 2.0.0…", primary: { label: "Updating…", enabled: false } });
   expect(harborToast(offer, "1.0.0", false, true, null)?.primary?.enabled).toBe(false);
   const c = harborToast(offer, "1.0.0", true, false, null);
-  expect(c?.title).toBe("Harbor 2.0.0 is installed");
+  expect(c?.title).toBe("Hub 2.0.0 is installed");
   expect(c?.body).toContain("You still run 1.0.0");
 });
 
@@ -49,7 +49,7 @@ test("closing the pop-up hides that version only", () => {
 test("a start that was undone is said once per version", () => {
   const r = { version: "2.0.0", restored: "1.0.0", why: "it exited while starting", at: 1 };
   const t = rollbackToast(r, null);
-  expect(t?.title).toBe("Harbor 2.0.0 didn't start");
+  expect(t?.title).toBe("Hub 2.0.0 didn't start");
   expect(t?.body).toContain("went back to 1.0.0");
   expect(t?.body).toContain("won't try 2.0.0 again on this PC");
   expect(rollbackToast(r, "2.0.0")).toBeNull();

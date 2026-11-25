@@ -151,7 +151,7 @@ test("a server answers the handshake from the cache, starts only for a tool call
   await until("the turn's server stops", () => !alive(pid2));
 }, 30_000);
 
-test("Harbor's own app servers are one process for the turns with the same entry, until unused", async () => {
+test("Hub's own app servers are one process for the turns with the same entry, until unused", async () => {
   limits.idle = 500;
   const exe = join(work, "harbor");
   writeFileSync(exe, `#!/bin/sh\nexec '${process.execPath}' '${fake}'\n`);
@@ -349,7 +349,7 @@ test("a server that never answers holds up one turn, not every one: later turns 
   expect(dead(serverKey(def as { [k: string]: Json }, tmpdir()))?.fails).toBe(1);
   expect(startsSeen()).toHaveLength(1);
   t = Date.now();
-  expect(JSON.stringify((await rpc(p, `/${g1.token}/s`, init))?.error)).toContain("Harbor tries it again in the background");
+  expect(JSON.stringify((await rpc(p, `/${g1.token}/s`, init))?.error)).toContain("Hub tries it again in the background");
   expect(Date.now() - t).toBeLessThan(400);
   revoke(g1.token);
   // The next turn: both answered at once, and nothing starts before its time comes.
@@ -410,7 +410,7 @@ test("a server dead in one folder fails at once in a new one too (a new worktree
   const g2 = base({ cwd: folder("b"), servers: { s: def } });
   await grant(g2);
   t = Date.now();
-  expect(JSON.stringify((await rpc(p, `/${g2.token}/s`, init))?.error)).toContain("Harbor tries it again in the background");
+  expect(JSON.stringify((await rpc(p, `/${g2.token}/s`, init))?.error)).toContain("Hub tries it again in the background");
   expect(Date.now() - t).toBeLessThan(400);
   await until("it's tried in the new folder", () => startsSeen().length === 2);
   await until("that try is over", () => dead(serverKey(def as { [k: string]: Json }, join(work, "b"))) !== null);

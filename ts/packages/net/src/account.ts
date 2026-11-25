@@ -317,7 +317,7 @@ function parsePc(v: unknown): AccountPc {
 /** What to add after "Invited <email>" when the invitation can't reach anyone as it is. */
 export function inviteNote(i: AccountInvite): string {
   if (!i.no_account) return "";
-  return i.near === "" ? " · no Harbor account uses this address yet" : ` · no Harbor account uses this address: did you mean ${i.near}?`;
+  return i.near === "" ? " · no Hub account uses this address yet" : ` · no Hub account uses this address: did you mean ${i.near}?`;
 }
 
 function parseInvite(v: unknown): AccountInvite {
@@ -610,7 +610,7 @@ function parseClaims(v: unknown): HarborClaims | null {
   }
 }
 
-const NOT_A_TOKEN = "not a Harbor token";
+const NOT_A_TOKEN = "not a Hub token";
 
 /** A Harbor token's claims, when one of `keys` signed it and it hasn't run out (`now`: unix s). */
 export function verifyHarborToken(token: string, keys: readonly AccountKey[], now: number): AccountResult<HarborClaims> {
@@ -628,7 +628,7 @@ export function verifyHarborToken(token: string, keys: readonly AccountKey[], no
   const c = parseClaims(jsonOf(p));
   if (!c) return { ok: false, error: NOT_A_TOKEN };
   if (c.iss !== ISSUER || c.sub === "") return { ok: false, error: NOT_A_TOKEN };
-  if (c.exp <= now) return { ok: false, error: "this sign-in ran out: open Harbor on the phone to sign in again" };
+  if (c.exp <= now) return { ok: false, error: "this sign-in ran out: open Hub on the phone to sign in again" };
   return { ok: true, value: c };
 }
 
@@ -731,14 +731,14 @@ function callbackPage(ok: boolean, error: string, stray = false): string {
   const esc = (t: string) => t.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
   const title = ok ? "You're signed in" : stray ? "Not this sign-in" : "Sign-in didn't finish";
   const line = ok
-    ? "Harbor is back in front. You can close this tab."
+    ? "Hub is back in front. You can close this tab."
     : stray
-      ? "This link isn't for the sign-in Harbor is waiting for. Finish signing in in the tab Harbor opened: Harbor is still waiting."
+      ? "This link isn't for the sign-in Hub is waiting for. Finish signing in in the tab Hub opened: Hub is still waiting."
       : error === ""
-        ? "Go back to Harbor and try again."
-        : `${esc(error)}. Go back to Harbor and try again.`;
+        ? "Go back to Hub and try again."
+        : `${esc(error)}. Go back to Hub and try again.`;
   const mark = ok ? "&#10003;" : "!";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harbor</title>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hub</title>
 <style>
 :root{--bg:#fafafa;--card:#fff;--fg:#171717;--sub:#737373;--border:#e5e5e5;--mark:${ok ? "#0070f3" : "#e5484d"};--markfg:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--card:#171717;--fg:#ededed;--sub:#a1a1a1;--border:#2e2e2e;--markfg:#0a0a0a}}
@@ -749,7 +749,7 @@ body{background:var(--bg);color:var(--fg);font:14px/1.5 Geist,"Geist Sans",Inter
 .brand{font-weight:600;letter-spacing:-.01em;color:var(--sub);margin:14px 0 2px}
 h1{font-size:20px;letter-spacing:-.02em;margin:0 0 6px}p{margin:0;color:var(--sub)}
 </style>
-<div class="card"><div class="mark">${mark}</div><div class="brand">Harbor</div><h1>${title}</h1><p>${line}</p></div>
+<div class="card"><div class="mark">${mark}</div><div class="brand">Hub</div><h1>${title}</h1><p>${line}</p></div>
 <script>setTimeout(function(){window.close()},${ok ? 600 : 600000})</script>
 </html>`;
 }
@@ -1373,7 +1373,7 @@ export class AccountService {
 
   /** The whole sign-in; throws an Error with the sentence to show. Also what `harbor account login` runs. */
   async signInFlow(): Promise<void> {
-    if (!this.configured() && this.env("HARBOR_CLERK_URL") === undefined) throw new Error("This build of Harbor has no account service set up.");
+    if (!this.configured() && this.env("HARBOR_CLERK_URL") === undefined) throw new Error("This build of Hub has no account service set up.");
     const server = createServer();
     try {
       await new Promise<void>((resolve, reject) => {
@@ -1596,7 +1596,7 @@ export class AccountService {
     return this.runAction(async (token) => {
       await this.service("POST", `/v1/workspaces/${encodeURIComponent(ws)}/invites`, token, { email: email.trim() });
       // No email goes out: the invitation waits in their Harbor.
-      const note = `Invited ${email.trim()}: they'll see it in Harbor when they sign in with that Google account.`;
+      const note = `Invited ${email.trim()}: they'll see it in Hub when they sign in with that Google account.`;
       this.setStatus((s) => (s.notice = note));
     });
   }
@@ -2054,7 +2054,7 @@ export class AccountService {
         }
         const a = this.acct;
         io.out(`Signed in as ${a?.name ?? ""} <${a?.email ?? ""}>.`);
-        if (this.ws === "" && a && a.workspaces.length > 1) io.out(`Pick this PC's workspace in Harbor › Settings › Account: ${a.workspaces.map((w) => w.name).join(", ")}`);
+        if (this.ws === "" && a && a.workspaces.length > 1) io.out(`Pick this PC's workspace in Hub › Settings › Account: ${a.workspaces.map((w) => w.name).join(", ")}`);
         return 0;
       }
       case "logout":
@@ -2082,7 +2082,7 @@ export class AccountService {
         return 0;
       }
       default:
-        io.err("usage: harbor account [status|login|logout]\nOr sign in and out in Harbor › Settings › Account.");
+        io.err("usage: harbor account [status|login|logout]\nOr sign in and out in Hub › Settings › Account.");
         return 2;
     }
   }

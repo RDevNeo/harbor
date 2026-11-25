@@ -203,7 +203,7 @@ export class HotDev {
       batch.set(rel, at);
       if (pinned.has(rel)) stale.push(rel);
     }
-    for (const rel of stale) this.host.notice(`${rel.split("/").pop()} holds state Harbor keeps: restart to use the change`);
+    for (const rel of stale) this.host.notice(`${rel.split("/").pop()} holds state Hub keeps: restart to use the change`);
     for (const u of this.units()) {
       const r = this.reads.get(u.name);
       const hit = [...batch.keys()].filter((rel) => !pinned.has(rel) && (r === undefined || r.files.has(rel) || r.pkgs.has(pkgOf(rel) ?? "") || rel === u.entry));

@@ -40,26 +40,26 @@ test("the person's choice outlives updates: off for good, or a declined prompt t
 });
 
 test("the task: this user's alone, the administrator token, in their desktop, no time limit, on battery, normal priority", () => {
-  const x = taskXml({ exe: String.raw`C:\Users\A & B\AppData\Local\Programs\Harbor\harbor.exe`, sid: "S-1-5-21-1-2-3-1001", home: String.raw`C:\Users\A & B`, level: "highest", logon: true });
+  const x = taskXml({ exe: String.raw`C:\Users\A & B\AppData\Local\Programs\Hub\harbor.exe`, sid: "S-1-5-21-1-2-3-1001", home: String.raw`C:\Users\A & B`, level: "highest", logon: true });
   expect(x).toStartWith('<?xml version="1.0" encoding="UTF-16"?>');
   expect(x).toContain("<LogonTrigger>\n      <Enabled>true</Enabled>\n      <UserId>S-1-5-21-1-2-3-1001</UserId>");
   expect(x).toContain("<UserId>S-1-5-21-1-2-3-1001</UserId>\n      <LogonType>InteractiveToken</LogonType>\n      <RunLevel>HighestAvailable</RunLevel>");
   for (const s of ["<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>", "<Priority>4</Priority>", "<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"]) expect(x).toContain(s);
-  expect(x).toContain(String.raw`<Command>C:\Users\A &amp; B\AppData\Local\Programs\Harbor\harbor.exe</Command>`);
+  expect(x).toContain(String.raw`<Command>C:\Users\A &amp; B\AppData\Local\Programs\Hub\harbor.exe</Command>`);
   expect(x).toContain(String.raw`<WorkingDirectory>C:\Users\A &amp; B</WorkingDirectory>`);
   expect(x).toContain("<Arguments>admin-start</Arguments>");
   const limited = taskXml({ exe: String.raw`C:\h.exe`, sid: "S-1-5-21-9", home: "C:\\", level: "limited", logon: false });
   expect(limited).toContain("<RunLevel>LeastPrivilege</RunLevel>");
   expect(limited).not.toContain("<Triggers>");
-  expect(TASK).toBe("Harbor (elevated)");
+  expect(TASK).toBe("Hub (elevated)");
   expect(LIMITED_TASK).not.toBe(TASK);
   // schtasks reads it as UTF-16 with its byte order mark.
   expect([...utf16("<").subarray(0, 4)]).toEqual([0xff, 0xfe, 0x3c, 0x00]);
 });
 
-test("start at login is still the Run value Windows reads (HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Harbor)", async () => {
+test("start at login is still the Run value Windows reads (HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Hub)", async () => {
   const { where } = await import("../src/win32/login.ts");
-  expect(where).toBe(String.raw`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Harbor`);
+  expect(where).toBe(String.raw`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run\Hub`);
 });
 
 test("a start through the task carries a window or the background, nothing else", () => {
@@ -69,7 +69,7 @@ test("a start through the task carries a window or the background, nothing else"
   expect(passable(["--background", "x"])).toBe(false);
 });
 
-test("the task's start: what a Harbor left for it, once and while fresh, with only the handover's environment", () => {
+test("the task's start: what a Hub left for it, once and while fresh, with only the handover's environment", () => {
   const e = env();
   expect(takeStart(e)).toBeNull();
   const now = Date.now();
@@ -104,7 +104,7 @@ test("uninstall.ps1 gets the task's removal first while it's on, and loses it af
   const on = withHook(before, true);
   expect(on.startsWith(hookLines()[0] ?? "x")).toBe(true);
   expect(on).toContain("\r\n");
-  expect(on).toContain(`-ArgumentList '/delete /tn "Harbor (elevated)" /f' -Verb RunAs`);
+  expect(on).toContain(`-ArgumentList '/delete /tn "Hub (elevated)" /f' -Verb RunAs`);
   expect(on).toContain(String.raw`"harbor\run-as-admin.json"`);
   expect(withHook(on, true)).toBe(on);
   expect(withHook(on, false)).toBe(before);

@@ -46,12 +46,12 @@ describe("the waker", () => {
 });
 
 describe("turn scopes", () => {
-  test("Harbor main keeps up to 512 MB from reclaim, 8% of a small PC's RAM", () => {
+  test("Hub main keeps up to 512 MB from reclaim, 8% of a small PC's RAM", () => {
     expect(turnscope.appMemoryLow(16 * 2 ** 30)).toBe(512 * 2 ** 20);
     expect(turnscope.appMemoryLow(4 * 2 ** 30)).toBe(328 * 2 ** 20);
   });
 
-  test("the slices above Harbor's unit, up to the user's manager, get its protection passed down", () => {
+  test("the slices above Hub's unit, up to the user's manager, get its protection passed down", () => {
     const u = "/user.slice/user-1000.slice/user@1000.service";
     expect(turnscope.slicesAbove(`${u}/app.slice/app-graphical.slice/app-harbor@autostart.service`).map((s) => s.unit)).toEqual(["app-graphical.slice", "app.slice"]);
     expect(turnscope.slicesAbove(`${u}/app.slice/app-harbor-1.scope`).map((s) => s.unit)).toEqual(["app.slice"]);

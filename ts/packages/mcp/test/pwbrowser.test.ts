@@ -31,7 +31,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("Harbor's Playwright entry passes the browser unless it's Chrome", () => {
+test("Hub's Playwright entry passes the browser unless it's Chrome", () => {
   expect(playwrightArgs("chrome")).toEqual(["-y", "@playwright/mcp@latest", "--headless"]);
   expect(playwrightArgs("msedge")).toEqual(["-y", "@playwright/mcp@latest", "--headless", "--browser", "msedge"]);
   expect(playwrightArgs("chromium")).toEqual(["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]);

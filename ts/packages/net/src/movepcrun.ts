@@ -427,8 +427,8 @@ export class MovePc {
     const peer = this.d.mesh.peer(c.home);
     const name = this.homeName(c);
     if (!peer?.online) throw new Error(`${name} is off: it moves the chat`);
-    if (!peer.moves) throw new Error(`${name} runs an older Harbor that can't move chats: update it first`);
-    if (want !== null && !peer.accountMoves) throw new Error(`${name} runs an older Harbor: update it to switch this chat to another PC's account`);
+    if (!peer.moves) throw new Error(`${name} runs an older Hub that can't move chats: update it first`);
+    if (want !== null && !peer.accountMoves) throw new Error(`${name} runs an older Hub: update it to switch this chat to another PC's account`);
     this.asked.delete(c.id);
     // Its home PC is the one that knows: "" here is this PC, by its id there.
     const to = pc === "" ? this.d.mesh.me.id : pc;

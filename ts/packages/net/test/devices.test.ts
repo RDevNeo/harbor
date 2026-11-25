@@ -144,7 +144,7 @@ describe("devices beyond the Rust tests", () => {
     expect(phoneAppNote(18001, 5, 19000)).toEqual(["app 0.18.1 → 0.19.0 available", true]);
     expect(phoneAppNote(19000, 5, 19000)).toEqual(["app 0.19.0", false]);
     expect(sendMenuNote(newPairedDevice({ kind: "android", seen: 1, app: 100 }))).toBe("The phone's app is too old to take these: update it (Settings › Update there)");
-    expect(sendMenuNote(newPairedDevice({ kind: "android", seen: 1, app: 99999 }))).toBe("Arrives when Harbor is open on the phone");
+    expect(sendMenuNote(newPairedDevice({ kind: "android", seen: 1, app: 99999 }))).toBe("Arrives when Hub is open on the phone");
     expect(sendMenuNote(newPairedDevice({ kind: "pc" }))).toBeNull();
     expect(imageSendNote({ kind: "pc" })).toBe("Saved to its Downloads and opened there");
     expect(deviceGuessImage(Buffer.from("89504e470d0a1a0a", "hex"))).toBe(true);
@@ -154,10 +154,10 @@ describe("devices beyond the Rust tests", () => {
   test("the row says what is known", () => {
     const at = 10_000;
     const phone = newPairedDevice({ kind: "android", online: true, open: true, via: "laptop", owner: "Sam", app: 66000, seen: at - 10 });
-    expect(deviceDetails(phone, 66000, at)).toBe("Phone · Harbor open, via laptop · Sam · app 0.66.0");
+    expect(deviceDetails(phone, 66000, at)).toBe("Phone · Hub open, via laptop · Sam · app 0.66.0");
     expect(deviceDetails(newPairedDevice({ kind: "android", online: true }), 0, at)).toBe("Phone · online");
-    const off = newPairedDevice({ kind: "pc", down: "harbor", seen: at - 7200, harbor: "Harbor 0.66.0" });
-    expect(deviceDetails(off, 0, at)).toBe("PC · Harbor isn't running, seen 2h ago · Harbor 0.66.0");
+    const off = newPairedDevice({ kind: "pc", down: "harbor", seen: at - 7200, harbor: "Hub 0.66.0" });
+    expect(deviceDetails(off, 0, at)).toBe("PC · Hub isn't running, seen 2h ago · Hub 0.66.0");
     expect(deviceDetails(newPairedDevice({ kind: "pc", online: true, ip: ip(192, 0, 2, 7) }), 0, at)).toBe(`PC · online · ${ip(192, 0, 2, 7)}`);
     expect(deviceDetails(newPairedDevice({ kind: "pc" }), 0, at)).toBe("PC · offline");
   });
@@ -168,7 +168,7 @@ describe("devices beyond the Rust tests", () => {
     expect(t({ done: true, size: 2048, saved: "/d/a.png" })).toBe("2 KB · saved to /d/a.png");
     expect(t({ done: true })).toBe("Done");
     expect(t({ done: true, size: 12 })).toBe("12 B");
-    expect(t({ waiting: true })).toBe("Waiting for Harbor on the phone (open the app)");
+    expect(t({ waiting: true })).toBe("Waiting for Hub on the phone (open the app)");
     expect(t({ sent: 1024, size: 4096 })).toBe("1 KB of 4 KB");
     expect(clearDeviceTransfers([newDeviceTransfer({ done: true }), newDeviceTransfer({ error: "x" }), newDeviceTransfer({})]).length).toBe(1);
   });
@@ -203,8 +203,8 @@ describe("devices beyond the Rust tests", () => {
       ["pc:lap", "pc", false, "harbor", 40],
       ["phone:g1", "android", true, "", 995],
     ]);
-    expect(v[0]?.harbor.startsWith("Harbor 0.66.0+abc1234")).toBe(true);
-    expect(v[1]?.harbor).toBe("Harbor 0.60.0");
+    expect(v[0]?.harbor.startsWith("Hub 0.66.0+abc1234")).toBe(true);
+    expect(v[1]?.harbor).toBe("Hub 0.60.0");
     expect(v[2]).toMatchObject({ name: "Pixel", open: true, app: 66000 });
     hub.mesh.on = false;
     hub.enabled = false;
@@ -254,7 +254,7 @@ describe("devices beyond the Rust tests", () => {
       const old = { ...env, http: async (): Promise<[number, unknown]> => [404, null] };
       const l5: DeviceTransfer[] = [];
       await deviceSend(pc, "text", "x", [], l5, old);
-      expect(l5[0]?.error).toBe("desk's Harbor is too old to take this: update it");
+      expect(l5[0]?.error).toBe("desk's Hub is too old to take this: update it");
       const down = { ...env, http: async (): Promise<[number, unknown]> => { throw new Error("timed out"); } };
       const l6: DeviceTransfer[] = [];
       await deviceSend(pc, "text", "x", [], l6, down);

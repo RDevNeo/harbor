@@ -38,7 +38,7 @@ test("parses_and_cleans_the_dictionary", () => {
 
 test("keys_fold_spellings", () => {
   expect(key("SpokPayCRM")).toBe(key("spock pay crm"));
-  expect(key("Harbor")).toBe("harbor");
+  expect(key("Hub")).toBe("harbor");
   expect(key("codes")).not.toBe(key("Codex"));
 });
 

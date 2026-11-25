@@ -46,7 +46,7 @@ test("switch_agent_account refuses a subagent the user pinned (itself or through
   const { e, store, repo, lead, sub } = setup();
   e.pinChat(sub.id, "claude");
   expect(e.pinOf(sub.id)).toMatchObject({ scope: "chat", account: "claude", why: "" });
-  await expect(teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude3" })).rejects.toThrow("worker stays on Claude · CL: it's pinned to that account by the user, so Harbor won't switch it");
+  await expect(teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude3" })).rejects.toThrow("worker stays on Claude · CL: it's pinned to that account by the user, so Hub won't switch it");
   expect(e.chat(sub.id)?.account).toBe("claude");
   // The pinned account itself is no move.
   expect(await teamTool(e, lead, "switch_agent_account", { agent: "worker", account: "claude" })).toBe("worker is already on Claude · CL (account 'claude').");

@@ -37,7 +37,7 @@ test("the transcript draws the live card, the outcome line, and drops the supers
   expect(a.map((c) => c.kind)).toEqual(["user", "captcha"]);
   const card = a[1];
   expect(card).toMatchObject({ kind: "captcha", detail: "a", label: "Big Server", result: "", actions: [] });
-  expect(card?.text).toBe("To join Big Server. Only the captcha takes your clicks; Harbor never answers it for you.");
+  expect(card?.text).toBe("To join Big Server. Only the captcha takes your clicks; Hub never answers it for you.");
   // The same card object while nothing changes; the muted line once the host has none.
   expect(transcriptCards(live, false, [], open, "").find((c) => c.kind === "captcha")).toBe(card as never);
   expect(transcriptCards(live, false, [], open, "", 0, () => [], (id) => id === "a").find((c) => c.kind === "captcha")?.result).toBe("gone");

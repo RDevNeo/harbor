@@ -18,7 +18,7 @@ describe("memory popovers", () => {
     expect([low(r(14.5, 0)), low(r(13, 0)), low(r(13, 1)), low(r(9, 2))]).toEqual([true, false, true, false]);
   });
 
-  test("an older Harbor's answer isn't numbers", () => {
+  test("an older Hub's answer isn't numbers", () => {
     expect(parseMem({ error: "not found" })).toBeNull();
     expect(parseMem(null)).toBeNull();
     expect(parseMem({ ram: null, running: 0, top: [] })).toEqual({ ram: null, running: 0, top: [], parts: null });
@@ -163,7 +163,7 @@ describe("memory popovers", () => {
       ["separator", "", "", "", "", false, false],
       ["mem-pc", "off", "", "Off", "Off: no numbers now.", false, false],
       ["separator", "", "", "", "", false, false],
-      ["mem-pc", "old", "", "", "No numbers: its Harbor is older.", false, false],
+      ["mem-pc", "old", "", "", "No numbers: its Hub is older.", false, false],
       ["separator", "", "", "", "", false, false],
       ["mem-pc", "far", "", "No chats", "4 of 32 GB  ·  13%", false, false],
     ]);

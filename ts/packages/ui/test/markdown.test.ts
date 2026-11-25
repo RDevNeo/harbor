@@ -87,8 +87,8 @@ test("a block's plain text and its links by byte offset, for selecting and click
 });
 
 test("a selection in a reply's block reports its item and the text it covers", () => {
-  const key = registerBlock("Read the Harbor docs", 7);
-  expect(selectionAt(`sel:${key}:16:0:298:157`)).toEqual({ seq: 7, text: "Read the Harbor ", x: 298, y: 157 });
+  const key = registerBlock("Read the Hub docs", 7);
+  expect(selectionAt(`sel:${key}:16:0:298:157`)).toEqual({ seq: 7, text: "Read the Hub ", x: 298, y: 157 });
   expect(selectionAt(`sel:${registerBlock("no item", -1)}:0:2:0:0`)).toBeNull();
   expect(selectionAt("sel:")).toBeNull();
 });

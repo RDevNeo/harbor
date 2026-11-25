@@ -118,7 +118,7 @@ export async function relayServe(d: RelayDeps, peer: ConnPeer, req: Request, r: 
   if (!target) return sendJson(w, 404, { error: "that PC isn't paired with this one" });
   const known = d.hub.mesh.addrsOfFp(fp);
   const harborPort = [...known, ...target.addrs].map((a) => socketAddr(a)?.port).find((p) => p !== undefined) ?? DEFAULT_PORT;
-  if (phone && port !== harborPort) return sendJson(w, 403, { error: "a phone may only reach a PC's Harbor" });
+  if (phone && port !== harborPort) return sendJson(w, 403, { error: "a phone may only reach a PC's Hub" });
   const out = await dial(relayTargets(known, port), d.env ?? process.env);
   if (!out) return sendJson(w, 502, { error: `${target.name === "" ? "that PC" : target.name} doesn't answer from here either` });
   w.write("HTTP/1.1 200 Connection established\r\n\r\n");

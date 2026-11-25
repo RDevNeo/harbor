@@ -121,7 +121,7 @@ export function linuxPlan(env: Env, has: (t: LinuxTool) => boolean): LinuxPlan {
 export function linuxGaps(p: LinuxPlan): { missing: string[]; limits: string[] } {
   const missing: string[] = [];
   const limits: string[] = [];
-  if (p.kind === "none") return { missing: ["a graphical session (no WAYLAND_DISPLAY or DISPLAY): Harbor runs without a desktop here"], limits };
+  if (p.kind === "none") return { missing: ["a graphical session (no WAYLAND_DISPLAY or DISPLAY): Hub runs without a desktop here"], limits };
   const x11 = p.kind === "x11";
   if (p.shot === null) {
     missing.push(
@@ -141,7 +141,7 @@ export function linuxGaps(p: LinuxPlan): { missing: string[]; limits: string[] }
     if (p.keys === null) missing.push(p.kind === "gnome-wayland" || p.kind === "kde-wayland" ? "ydotool (with ydotoold), for the keyboard" : "wtype (or ydotool), for the keyboard");
     if (p.click !== null && p.press === null) limits.push("left_mouse_down, left_mouse_up and left_click_drag need ydotool (with ydotoold) here");
     if (p.scroll === null && p.click !== null) limits.push("scroll needs ydotool or wlrctl here");
-    if (p.cursor === null) limits.push("cursor_position is where Harbor last moved the pointer (this compositor doesn't say)");
+    if (p.cursor === null) limits.push("cursor_position is where Hub last moved the pointer (this compositor doesn't say)");
     if (p.keys === "ydotool") limits.push("ydotool types US-layout key positions: other layouts may get other characters");
     if (p.keys === "wtype" && p.press !== "ydotool") limits.push("modifier keys held during clicks and scrolls (their text) need ydotool here: wtype lets go of keys when it exits");
   }

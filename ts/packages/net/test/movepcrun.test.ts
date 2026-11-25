@@ -251,7 +251,7 @@ describe("movepcrun: the sender", () => {
       a.mesh.on = true;
       const old = a.mesh.peers.get(b.mesh.me.id);
       if (old) old.moves = false;
-      await expect(a.move.movePc(lead.id, b.mesh.me.id)).rejects.toThrow("b can't take it: it runs an older Harbor: update it first");
+      await expect(a.move.movePc(lead.id, b.mesh.me.id)).rejects.toThrow("b can't take it: it runs an older Hub: update it first");
       expect(a.move.local.moving.size).toBe(0);
       expect(a.store.get("move_pc")).toBeNull();
     } finally {
@@ -301,8 +301,8 @@ describe("movepcrun: the sender", () => {
       expect(t.targets.map((x) => [x.id, x.why])).toEqual([
         ["pc:codex", "it has no Claude account"],
         ["pc:ok", null],
-        ["pc:old", "it runs an older Harbor: update it first"],
-        ["pc:off", "Harbor isn't running there"],
+        ["pc:old", "it runs an older Hub: update it first"],
+        ["pc:off", "Hub isn't running there"],
       ]);
       const json: unknown = await a.move.targetsJson(lead.id);
       expect(json).toEqual({ why: null, targets: t.targets });
@@ -333,8 +333,8 @@ describe("movepcrun: the sender", () => {
       a.engine.pending.set(lead.id, ["woke up", "again"]);
       open();
       await until("the notice", () => a.engine.notices(lead.id).length > 0);
-      expect(a.engine.notices(lead.id)).toEqual(["Couldn't move to b: b has no project named app: copy its folder there and add it to Harbor first"]);
-      expect(a.toasts).toEqual(["Couldn't move to b: b has no project named app: copy its folder there and add it to Harbor first"]);
+      expect(a.engine.notices(lead.id)).toEqual(["Couldn't move to b: b has no project named app: copy its folder there and add it to Hub first"]);
+      expect(a.toasts).toEqual(["Couldn't move to b: b has no project named app: copy its folder there and add it to Hub first"]);
       expect(a.move.movingTo(lead.id)).toBeNull();
       expect(a.store.get("move_pc")).toBe("{}");
       expect(a.engine.log.filter((l) => l.startsWith("turn") || l.startsWith("send"))).toEqual([`turn ${lead.id}: woke up\n\n---\n\nagain`, `send ${lead.id}: while it moves ["/tmp/x.png"]`]);
@@ -564,7 +564,7 @@ describe("movepcrun: the sender", () => {
       await expect(a.move.movePc(copy.id, "pc:c")).rejects.toThrow("gamma can't take it");
       const home = a.mesh.peers.get("pc:h");
       if (home) home.moves = false;
-      await expect(a.move.movePc(copy.id, "pc:c")).rejects.toThrow("home runs an older Harbor that can't move chats: update it first");
+      await expect(a.move.movePc(copy.id, "pc:c")).rejects.toThrow("home runs an older Hub that can't move chats: update it first");
       if (home) home.online = false;
       expect((await a.move.targets(copy.id)).why).toBe("home is off: it moves the chat");
     } finally {
@@ -703,13 +703,13 @@ describe("movepcrun: a started chat switched to another PC's account", () => {
     }
   });
 
-  test("a PC whose Harbor can't take such a switch says so in the targets", async () => {
+  test("a PC whose Hub can't take such a switch says so in the targets", async () => {
     const a = pc("a", { accounts: [acct("codex", "codex", null)] });
     const b = pc("b");
     try {
       meet(a, b);
       const lead = a.store.createChat(blankChat({ title: "x", sessionId: "t", started: true, account: "codex", role: "lead", name: "lead", gid: "g-old" }));
-      await expect(a.move.movePc(lead.id, "pc:b", false, { account: "claude", kind: "claude", model: "" })).rejects.toThrow("b can't take it: it runs an older Harbor: update it to switch to its accounts");
+      await expect(a.move.movePc(lead.id, "pc:b", false, { account: "claude", kind: "claude", model: "" })).rejects.toThrow("b can't take it: it runs an older Hub: update it to switch to its accounts");
     } finally {
       clean(a, b);
     }

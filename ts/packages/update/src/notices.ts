@@ -39,14 +39,14 @@ export function harborToast(offer: Offer | null, running: string, ready: boolean
   if (offer === null || dismissed === offer.version) return null;
   const v = offer.version;
   const busy = offer.installing || asked;
-  let title = `Harbor ${v} is available`;
-  let body = `You have ${running}. Update installs it and reloads Harbor in place.`;
+  let title = `Hub ${v} is available`;
+  let body = `You have ${running}. Update installs it and reloads Hub in place.`;
   if (busy) {
-    title = `Updating Harbor to ${v}…`;
+    title = `Updating Hub to ${v}…`;
     body = "It reloads in place when it's ready; running agents keep going.";
   } else if (ready) {
-    title = `Harbor ${v} is installed`;
-    body = `You still run ${running}. Update restarts Harbor into it; running agents keep going.`;
+    title = `Hub ${v} is installed`;
+    body = `You still run ${running}. Update restarts Hub into it; running agents keep going.`;
   }
   return { id: "harbor-update-toast", icon: "sparkles", title, body, primary: { label: busy ? "Updating…" : "Update", enabled: !busy }, secondary: "What's new" };
 }
@@ -56,8 +56,8 @@ export function rollbackToast(r: RolledBack | null, dismissed: string | null): T
   return {
     id: "rollback-toast",
     icon: "undo",
-    title: `Harbor ${r.version} didn't start`,
-    body: `Harbor went back to ${r.restored === "" ? "the previous version" : r.restored} and won't try ${r.version} again on this PC. ${r.why}.`,
+    title: `Hub ${r.version} didn't start`,
+    body: `Hub went back to ${r.restored === "" ? "the previous version" : r.restored} and won't try ${r.version} again on this PC. ${r.why}.`,
     primary: null,
     secondary: "What's new",
   };

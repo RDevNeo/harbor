@@ -59,11 +59,11 @@ export interface Queued {
  *  `via` says phone or PC (also for a phone's message another PC forwards); without it (old queued
  *  entries, older peers) a phone's device id is the only hint. */
 export function sentFrom(sender: string, device: string, back: boolean, hostname = "this PC", via?: SentVia | null): string {
-  if (sender === "") return back ? `[The user sent this from '${hostname}', the PC running Harbor.]\n\n` : "";
+  if (sender === "") return back ? `[The user sent this from '${hostname}', the PC running Hub.]\n\n` : "";
   const phone = via ? via === "phone" : device.startsWith("tok:");
   return phone
-    ? `[The user sent this from the Harbor app on their phone ('${sender}'), not from this PC.]\n\n`
-    : `[The user sent this from Harbor on '${sender}', another PC, not from this one.]\n\n`;
+    ? `[The user sent this from the Hub app on their phone ('${sender}'), not from this PC.]\n\n`
+    : `[The user sent this from Hub on '${sender}', another PC, not from this one.]\n\n`;
 }
 
 /** What the agent gets for a queued message: mentioned messages quoted first, then the text as `said` (another agent's: its tag, then the text). */

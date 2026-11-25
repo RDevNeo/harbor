@@ -46,7 +46,7 @@ if (!starter) {
   const r = Bun.spawnSync([process.execPath, import.meta.path, "--starter", tmp], { stdout: "pipe", stderr: "inherit", env: { ...process.env } });
   const out = r.stdout.toString();
   process.stdout.write(out);
-  if (r.exitCode !== 0) fail("the starting Harbor failed");
+  if (r.exitCode !== 0) fail("the starting Hub failed");
   await pickUp(out.match(/^runner \d+ in (.+)$/m)?.[1] ?? fail("no turn folder"));
   rmSync(tmp, { recursive: true, force: true });
   process.exit(0);
@@ -62,7 +62,7 @@ if (readFileSync(`/proc/${turn.meta.pid}/cmdline`, "utf8").split("\0").indexOf("
 for (let i = 0; i < 1500 && !first.some((e) => e.type === "session"); i++) await Bun.sleep(20);
 turn.release();
 await turn.done;
-console.log(`the first Harbor quits after ${first.map((e) => e.type).join(" ")}`);
+console.log(`the first Hub quits after ${first.map((e) => e.type).join(" ")}`);
 if (!existsSync(turn.dir)) fail("a released turn's folder must stay");
 process.exit(0);
 
@@ -88,5 +88,5 @@ for (const e of events) if (e.type === "error" || e.type === "stderr") console.l
 if (!exited || exited.type !== "exited" || !exited.ok) fail("the turn didn't end well");
 if (!/pong/i.test(text)) fail("no pong");
 if (!events.some((e) => e.type === "session" && e.id === spec.sessionId)) fail("the replay didn't start from the beginning");
-console.log("PASS: a real Claude turn ran detached under `harbor turn`, outlived the Harbor that started it and was picked up by the next one");
+console.log("PASS: a real Claude turn ran detached under `harbor turn`, outlived the Hub that started it and was picked up by the next one");
 }

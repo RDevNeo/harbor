@@ -175,8 +175,8 @@ export class Background {
     if (v === null) return;
     if (app.autoUpdate() || this.kv.get("bg_update_noticed") === v) return;
     this.kv.set("bg_update_noticed", v);
-    const name = v === "" ? "A new version" : `Harbor ${v}`;
-    this.host.notify(`${name} is ready`, "Open Harbor and click Update to install it.");
+    const name = v === "" ? "A new version" : `Hub ${v}`;
+    this.host.notify(`${name} is ready`, "Open Hub and click Update to install it.");
   }
 }
 
@@ -186,7 +186,7 @@ export function stillRunning(kv: BackgroundKv, trayActive: boolean): [string, st
   if (kv.get("bg_explained") !== null) return null;
   kv.set("bg_explained", "1");
   const how = trayActive ? "Quit it from its tray icon" : "Quit it from Settings › General";
-  return ["Harbor is still running", `Phones, other PCs and queued work keep reaching this PC. Run Harbor again to open it. ${how}, or turn this off there.`];
+  return ["Hub is still running", `Phones, other PCs and queued work keep reaching this PC. Run Hub again to open it. ${how}, or turn this off there.`];
 }
 
 /** The system's start-at-login entry for Harbor (os.autostart: a .desktop file on Linux, a LaunchAgent on macOS). */
@@ -257,7 +257,7 @@ export function healAutostart(): void {
 /** Writes or removes the entry. Throws an Error whose message is for the person. */
 export function setAutostart(on: boolean, self: SelfInstall): void {
   const exe = on ? autostartLauncher(self) : (self.exe ?? process.execPath);
-  if (exe === null) throw new Error("Harbor can't tell where its own file is");
+  if (exe === null) throw new Error("Hub can't tell where its own file is");
   osAutostart.set(on, exe, BACKGROUND_FLAG);
 }
 

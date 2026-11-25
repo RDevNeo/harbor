@@ -126,7 +126,7 @@ describe("clipboard plan", () => {
 
 describe("start at login", () => {
   test("the Run value, and Task Manager's off switch", () => {
-    expect(command("C:\\Program Files\\Harbor\\harbor.exe", "--background")).toBe('"C:\\Program Files\\Harbor\\harbor.exe" --background');
+    expect(command("C:\\Program Files\\Hub\\harbor.exe", "--background")).toBe('"C:\\Program Files\\Hub\\harbor.exe" --background');
     expect(isOn('"C:\\h.exe" --background', null, "--background")).toBe(true);
     expect(isOn('"C:\\h.exe" --background', new Uint8Array([2, 0, 0]), "--background")).toBe(true);
     expect(isOn('"C:\\h.exe" --background', new Uint8Array([3, 0, 0]), "--background")).toBe(false);
@@ -137,7 +137,7 @@ describe("start at login", () => {
 
 describe("tray and toasts", () => {
   test("NOTIFYICONDATAW's layout", () => {
-    const d = notifyIconData(0x1234, 0x5678, "Harbor & co");
+    const d = notifyIconData(0x1234, 0x5678, "Hub & co");
     expect(d.length).toBe(976);
     expect(d.readUInt32LE(0)).toBe(976);
     expect(d.readBigUInt64LE(8)).toBe(0x1234n);
@@ -145,7 +145,7 @@ describe("tray and toasts", () => {
     expect(d.readUInt32LE(20)).toBe(7);
     expect(d.readUInt32LE(24)).toBe(0x401);
     expect(d.readBigUInt64LE(32)).toBe(0x5678n);
-    expect(d.toString("utf16le", 40, 40 + 22)).toBe("Harbor & co");
+    expect(d.toString("utf16le", 40, 40 + 22)).toBe("Hub & co");
     expect(d.readUInt16LE(40 + 22)).toBe(0);
     expect(menuLabel("Save & quit")).toBe("Save && quit");
   });

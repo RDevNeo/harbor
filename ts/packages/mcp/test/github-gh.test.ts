@@ -91,7 +91,7 @@ afterAll(() => {
 
 const failure = (p: Promise<unknown>): Promise<Error> => p.then(() => new Error("it did not fail"), (e: Error) => e);
 
-test("the real runner runs gh with Harbor's agent environment", async () => {
+test("the real runner runs gh with Hub's agent environment", async () => {
   const out = await ghRun(["pr", "diff", "https://github.com/o/r/pull/5"]);
   expect(out.code).toBe(0);
   expect(out.stdout).toContain("diff --git a/x.txt b/x.txt");

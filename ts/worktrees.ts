@@ -302,7 +302,7 @@ export class Worktrees {
         e.noteWorktree(lead, `the ${by === "user" ? "user" : "lead"} renamed this worktree's branch from ${rn.old} to ${rn.branch}.`);
       } else {
         e.notice(lead, "worktree", `Branch named · ${rn.old} → ${rn.branch}`, detail);
-        e.noteWorktree(lead, `Harbor renamed this worktree's branch from ${rn.old} to ${rn.branch}, a name for the task.`);
+        e.noteWorktree(lead, `Hub renamed this worktree's branch from ${rn.old} to ${rn.branch}, a name for the task.`);
       }
       if (!this.folderNamed(lead)) {
         const to = wt.folderFor(info.repo, info.dir, rn.branch);

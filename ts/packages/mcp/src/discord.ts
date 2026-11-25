@@ -75,7 +75,7 @@ const canConnect = (sock: string): Promise<boolean> =>
 function spawnHost(): void {
   const cmd = setup.selfCommand();
   const exe = cmd?.[0];
-  if (cmd === undefined || exe === undefined) throw new Error("Can't find Harbor's binary.");
+  if (cmd === undefined || exe === undefined) throw new Error("Can't find Hub's binary.");
   const log = openSync(join(setup.root(), "host.log"), "w");
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -420,13 +420,13 @@ export async function shellProblem(): Promise<string | undefined> {
   } catch (e) {
     return message(e);
   }
-  return existsSync(join(setup.shellDir(), "tools.json")) ? undefined : "Harbor's Discord shell has no tool list.";
+  return existsSync(join(setup.shellDir(), "tools.json")) ? undefined : "Hub's Discord shell has no tool list.";
 }
 
 /** Without the shell there's only discord_status, which says why: never an empty list, which reads as "no Discord here". */
 const statusOnly = (why: string): Json => ({
   name: "discord_status",
-  description: `Harbor couldn't get its Discord tools, so this is the only one: ${why} Call it for the details, and tell the user.`,
+  description: `Hub couldn't get its Discord tools, so this is the only one: ${why} Call it for the details, and tell the user.`,
   inputSchema: { type: "object", properties: {} },
 });
 
@@ -435,7 +435,7 @@ export async function tools(): Promise<Json[]> {
   const why = await shellProblem();
   if (why !== undefined) return [statusOnly(why)];
   const list = items(parse(safeRead(join(setup.shellDir(), "tools.json"))));
-  return list.length > 0 ? list : [statusOnly("Harbor's Discord shell has an unreadable tool list.")];
+  return list.length > 0 ? list : [statusOnly("Hub's Discord shell has an unreadable tool list.")];
 }
 
 function safeRead(p: string): string {
@@ -575,12 +575,12 @@ export async function statusText(): Promise<string> {
     .filter((x): x is string => typeof x === "string")
     .join(", ");
   let out = `${who} ${run}`;
-  if (bad !== "") out += `\nCan't find in Discord: ${bad}.${get(s, "repairing") === true ? " Harbor is repairing this." : ""}`;
+  if (bad !== "") out += `\nCan't find in Discord: ${bad}.${get(s, "repairing") === true ? " Hub is repairing this." : ""}`;
   const attention = str(get(s, "attention"));
   if (attention !== undefined && attention !== "") out += `\n${attention}`;
   const c = get(s, "captcha");
   const end = get(s, "captcha_end");
-  if (isObj(c)) out += `\nA captcha to join ${str(get(c, "guild")) ?? "a server"} is waiting for the user to solve it in Harbor.`;
+  if (isObj(c)) out += `\nA captcha to join ${str(get(c, "guild")) ?? "a server"} is waiting for the user to solve it in Hub.`;
   else if (isObj(end)) out += `\nThe last captcha (${str(get(end, "guild")) ?? "a server"}): ${CAPTCHA_ENDS[str(get(end, "outcome")) ?? ""] ?? "ended"}.`;
   return out;
 }

@@ -80,12 +80,15 @@ export interface TrustStore {
   set(key: string, value: string): void;
 }
 
-/** The patch folders a chat in `cwd` gets: `.harbor/patches` in it and each folder above it up to (not including) home, the project's, then ~/.harbor/patches. */
+/** The patch folders a chat in `cwd` gets: `.hub/patches` in it and each folder above it up to (not including) home, the project's, then ~/.hub/patches.
+ *  Hub: each place's `.harbor/patches` (from before the fork) is read too, right after its `.hub/patches`. */
 export function patchDirs(cwd: string, project: string | null, home: string): string[] {
   const out: string[] = [];
   const add = (d: string) => {
-    const p = join(d, ".harbor", "patches");
-    if (!out.includes(p)) out.push(p);
+    for (const dot of [".hub", ".harbor"]) {
+      const p = join(d, dot, "patches");
+      if (!out.includes(p)) out.push(p);
+    }
   };
   const walk = (from: string) => {
     let d = resolve(from);
@@ -323,9 +326,9 @@ export class Patches {
   }
 }
 
-/** Puts the format's doc where agents read it: ~/.harbor/patches/README.md (only when it differs). */
+/** Puts the format's doc where agents read it: ~/.hub/patches/README.md (only when it differs). */
 export function writeDoc(home: string): string {
-  const dir = join(home, ".harbor", "patches");
+  const dir = join(home, ".hub", "patches");
   const p = join(dir, "README.md");
   try {
     if (existsSync(p) && readFileSync(p, "utf8") === doc) return p;

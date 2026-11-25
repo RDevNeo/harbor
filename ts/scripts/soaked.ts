@@ -41,7 +41,7 @@ const die = (m: string, code = 1): never => {
 };
 
 if (!Number.isFinite(hours) || hours < 0) die("--hours wants a number");
-const top = git(["rev-parse", "--show-toplevel"], process.cwd(), true) || die("run it inside a clone of Harbor");
+const top = git(["rev-parse", "--show-toplevel"], process.cwd(), true) || die("run it inside a clone of Hub");
 if (!flag("--offline")) git(["fetch", "--quiet", "--tags", "origin"], top, true);
 const main = git(["rev-parse", "refs/remotes/origin/main"], top);
 const lastTag = git(["describe", "--tags", "--abbrev=0", "--match", "v*", main], top, true);

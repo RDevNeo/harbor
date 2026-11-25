@@ -191,7 +191,7 @@ class Proc {
       let answer: Obj;
       if (method === "roots/list") answer = { jsonrpc: "2.0", id: rid, result: { roots: [{ uri: `file://${this.cwd}`, name: "project" }] } };
       else if (method === "ping") answer = { jsonrpc: "2.0", id: rid, result: {} };
-      else answer = { jsonrpc: "2.0", id: rid, error: { code: -32601, message: "not supported over Harbor's bridge" } };
+      else answer = { jsonrpc: "2.0", id: rid, error: { code: -32601, message: "not supported over Hub's bridge" } };
       this.write(`${JSON.stringify(answer)}\n`);
     } else if (method !== undefined) {
       let to = uint(get(v, "params", "_meta", SUBSCRIPTION));
@@ -627,7 +627,7 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
     }
     if (here === null || Date.now() >= gone.next) void probe(slot, msg);
     const ago = Math.max(1, Math.round((Date.now() - gone.since) / 1000));
-    return rpcError(id, `the MCP server on the Harbor PC hasn't answered since it was first tried ${ago} s ago (it isn't running?); Harbor tries it again in the background, and the next turn gets it once it answers`);
+    return rpcError(id, `the MCP server on the Hub PC hasn't answered since it was first tried ${ago} s ago (it isn't running?); Hub tries it again in the background, and the next turn gets it once it answers`);
   }
   if (msg.method === "subscriptions/listen" && hasId) return listenLazily(slot, msg, agent, id);
   // A notification for a server that isn't running has no one to tell.
@@ -666,7 +666,7 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
     }
     return null;
   });
-  if (!sent) return hasId ? rpcError(id, "the MCP server on the Harbor PC didn't start or exited") : null;
+  if (!sent) return hasId ? rpcError(id, "the MCP server on the Hub PC didn't start or exited") : null;
   if ("answer" in sent) return { ...structuredClone(sent.answer), id };
   const { inbox, mine, proc } = sent;
   if (!hasId || !inbox) return null;
@@ -703,9 +703,9 @@ async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | 
       if (HANDSHAKE.has(method) && (proc.heard === null || proc.heard < at) && noInit(slot)) markDead(slot.ckey);
       const stuck = (proc.heard === null || proc.heard < at) && ![...proc.byId.values()].some((x) => x.tool);
       if (stuck) await slot.lock(async () => (slot.proc?.id === proc.id ? slot.stop() : undefined));
-      return rpcError(id, `the MCP server on the Harbor PC didn't answer in ${Math.floor(limit / 1000)} s`);
+      return rpcError(id, `the MCP server on the Hub PC didn't answer in ${Math.floor(limit / 1000)} s`);
     }
-    if (got === null) return rpcError(id, "the MCP server on the Harbor PC exited");
+    if (got === null) return rpcError(id, "the MCP server on the Hub PC exited");
     if ("method" in got) {
       // About this request (progress, a subscription's events): on to the agent, and the wait starts again.
       const meta = get(got, "params", "_meta");
@@ -750,7 +750,7 @@ async function listenLazily(slot: Slot, msg: Obj, agent: Agent, id: Json): Promi
       // Never heard from: start it once to learn its acknowledgement.
       await slot.lock(async () => (slot.proc?.alive() ? undefined : restart(slot, true)));
       p = slot.proc?.alive() ? slot.proc : null;
-      if (!p) return rpcError(id, "the MCP server on the Harbor PC didn't start or exited");
+      if (!p) return rpcError(id, "the MCP server on the Hub PC didn't start or exited");
     }
     if (!p) {
       if ((await Promise.race([slot.nextStart(), agent.goneP])) === "gone") return null;
@@ -866,7 +866,7 @@ function prompts(): Prompt[] {
       : {
           name: `skill_${basename(l.skill)}`,
           description: l.description,
-          body: `Follow this skill. Its other files are on the Harbor PC in ${l.skill} (the origin read tool, or run_command, reads them when this device has it).\n\n${l.body}`,
+          body: `Follow this skill. Its other files are on the Hub PC in ${l.skill} (the origin read tool, or run_command, reads them when this device has it).\n\n${l.body}`,
         },
   );
 }
@@ -878,7 +878,7 @@ function runCommandOn(g: Grant): boolean {
 function runCommandTool(): Json {
   return {
     name: "run_command",
-    description: `Run a shell command on ${hostname()}, the PC running Harbor (not the machine you run on): its files, tools and sign-ins. Returns the output and exit code.`,
+    description: `Run a shell command on ${hostname()}, the PC running Hub (not the machine you run on): its files, tools and sign-ins. Returns the output and exit code.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -919,7 +919,7 @@ async function origin(g: Grant, msg: Obj): Promise<Json | null> {
         protocolVersion: argStr(p, "protocolVersion") ?? "2025-06-18",
         capabilities: { tools: {}, prompts: {} },
         serverInfo: { name: ORIGIN, version: harborVersion() },
-        instructions: `You run on a remote device. '${hostname()}' is the PC running Harbor (the user is usually there; a message from a phone or another PC says so). Its prompts are the user's own slash commands and skills${where}.`,
+        instructions: `You run on a remote device. '${hostname()}' is the PC running Hub (the user is usually there; a message from a phone or another PC says so). Its prompts are the user's own slash commands and skills${where}.`,
       };
       break;
     }
@@ -939,7 +939,7 @@ async function origin(g: Grant, msg: Obj): Promise<Json | null> {
         const r = await workspaceCall(g.cwd, g.chat_id, name, args);
         result = { content: r.content, isError: !r.ok };
       } else {
-        result = { content: [{ type: "text", text: "No such tool here (this device isn't allowed it on the Harbor PC)." }], isError: true };
+        result = { content: [{ type: "text", text: "No such tool here (this device isn't allowed it on the Hub PC)." }], isError: true };
       }
       break;
     }
@@ -1051,7 +1051,7 @@ async function handle(s: Socket): Promise<void> {
       const t = teamOf(defObj);
       return t ? team(t, m) : stdio(slotFor(live, server, defObj), m, agent);
     }
-    return "id" in m ? rpcError(m.id as Json, "Harbor's bridge only carries stdio and http servers") : null;
+    return "id" in m ? rpcError(m.id as Json, "Hub's bridge only carries stdio and http servers") : null;
   };
   // Events only for a single request (a batch's answers come together).
   agent.sse = !Array.isArray(msg) && (req.header("accept") ?? "").includes("text/event-stream");

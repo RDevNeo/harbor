@@ -100,5 +100,5 @@ setInterval(() => {}, 1000);
 }
 
 test("a running job survives its controller's death and reports its exit to the owning chat", () => restart(false, false), 15_000);
-test("a job that finished while Harbor was away keeps its log and successful exit report", () => restart(false, true), 15_000);
-test.skipIf(!existsSync(`/run/user/${process.getuid?.()}/systemd/private`))("a job survives killing Harbor's entire systemd scope during a restart", () => restart(true, false), 15_000);
+test("a job that finished while Hub was away keeps its log and successful exit report", () => restart(false, true), 15_000);
+test.skipIf(!existsSync(`/run/user/${process.getuid?.()}/systemd/private`))("a job survives killing Hub's entire systemd scope during a restart", () => restart(true, false), 15_000);

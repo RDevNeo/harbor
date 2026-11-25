@@ -128,14 +128,14 @@ export function stamp(exe: string, icoPath: string, version: string): void {
   info.setStringValues(
     { lang: EN_US, codepage: UNICODE },
     {
-      FileDescription: "Harbor",
-      ProductName: "Harbor",
-      CompanyName: "Harbor",
+      FileDescription: "Hub",
+      ProductName: "Hub",
+      CompanyName: "Hub",
       InternalName: "harbor",
       OriginalFilename: "harbor.exe",
       FileVersion: v,
       ProductVersion: v,
-      LegalCopyright: "Harbor's authors",
+      LegalCopyright: "Hub's authors",
     },
   );
   info.outputToResourceEntries(res.entries);

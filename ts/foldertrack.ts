@@ -140,7 +140,7 @@ export class FolderTracker {
     for (const b of this.binned) {
       if (!fm.under(dir, b)) continue;
       const what = b === dir ? wt.tilde(dir) : `${wt.tilde(b)}, which held ${wt.tilde(dir)},`;
-      return `${what} is in the Trash. Restore it and send again: Harbor finds it wherever it goes back to.`;
+      return `${what} is in the Trash. Restore it and send again: Hub finds it wherever it goes back to.`;
     }
     return null;
   }
@@ -291,7 +291,7 @@ export class FolderTracker {
     // Its records follow it (its fingerprint too: the same folder, renamed in place).
     for (const m of moves) this.rehome(m);
     await this.repair(moves);
-    this.afterMoves(moves, "Harbor gave it a plain name: the one it had was another system's whole path, which tools can't work in");
+    this.afterMoves(moves, "Hub gave it a plain name: the one it had was another system's whole path, which tools can't work in");
     return moves;
   }
 
@@ -447,10 +447,10 @@ export class FolderTracker {
       if (was !== m.from) fm.copySessions(configs, was, now);
       for (const id of [c.id, ...e.subsOf(c.id).map((x) => x.id)]) workspace.forget(id);
       if (!c.started) continue;
-      e.noteWorktree(c.id, `this chat's folder moved from ${was} to ${now} (${why === null ? "moved outside Harbor" : "renamed by Harbor"}): work there now, nothing is left under the old path.`);
+      e.noteWorktree(c.id, `this chat's folder moved from ${was} to ${now} (${why === null ? "moved outside Hub" : "renamed by Hub"}): work there now, nothing is left under the old path.`);
       if (c.settled) continue;
       const what = e.worktreeOf(c) !== null ? "Worktree" : c.repoId !== null ? "Project" : "Folder";
-      const detail = why === null ? "Harbor follows a folder that's moved or renamed: its chats, sessions and worktrees go on there." : `${why}. Its chats, sessions and worktrees go on there.`;
+      const detail = why === null ? "Hub follows a folder that's moved or renamed: its chats, sessions and worktrees go on there." : `${why}. Its chats, sessions and worktrees go on there.`;
       e.notice(c.id, "folder", `${what} moved to ${wt.tilde(now)}`, `Was ${wt.tilde(was)}. ${detail}`);
     }
     this.h.touch();

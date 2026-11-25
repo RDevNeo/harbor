@@ -224,4 +224,4 @@ export function compactNotice(text: string): "harbor" | "claude" | null {
 }
 
 export const COMPACT_DETAIL =
-  "Claude Code reloads the whole session at every turn, so a long one costs memory and time each message. Harbor ran /compact: Claude now continues from a summary of the earlier conversation. This chat still shows every message.";
+  "Claude Code reloads the whole session at every turn, so a long one costs memory and time each message. Hub ran /compact: Claude now continues from a summary of the earlier conversation. This chat still shows every message.";

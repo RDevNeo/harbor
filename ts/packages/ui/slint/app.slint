@@ -320,7 +320,7 @@ component TopBar {
                 icon: Icons.x;
                 size: icon-xs;
                 variant: ghost;
-                tip: "Close Harbor";
+                tip: "Close Hub";
                 clicked => {
                     root.close-window();
                 }
@@ -403,7 +403,7 @@ component SplitTools {
                 icon: Icons.x;
                 size: icon-xs;
                 variant: ghost;
-                tip: "Close Harbor";
+                tip: "Close Hub";
                 clicked => {
                     root.close-window();
                 }
@@ -476,7 +476,7 @@ component Hero {
 
 export component AppWindow inherits Window {
     // HARBOR_WINDOW_TITLE (scripts/preview: "Harbor preview · …"), so a preview is never taken for the real window.
-    in property <string> window-title: "Harbor";
+    in property <string> window-title: "Hub";
     title: root.window-title;
     icon: @image-url("");
     preferred-width: 1400px;

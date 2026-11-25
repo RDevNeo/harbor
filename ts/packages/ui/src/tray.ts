@@ -69,8 +69,8 @@ function menuBar(hooks: TrayHooks): TrayHandle | null {
       iconPoints: 18,
       colorPng: pngOf(rgbaOfArgb(trayIcon(32)), 32, 32),
       onActivate: () => hooks.onOpen(),
-      tooltip: "Harbor",
-      items: [{ label: "Open Harbor", onClick: () => hooks.onOpen() }, "separator", { label: "Quit Harbor completely", onClick: () => hooks.onQuit() }],
+      tooltip: "Hub",
+      items: [{ label: "Open Hub", onClick: () => hooks.onOpen() }, "separator", { label: "Quit Hub completely", onClick: () => hooks.onQuit() }],
     });
   } catch (e) {
     (hooks.onError ?? ((m: string) => console.error(m)))(`harbor: no menu bar icon: ${e instanceof Error ? e.message : String(e)}`);
@@ -222,7 +222,7 @@ function itemProps(hidden: boolean): Prop[] {
   return [
     ["Category", dv.s("ApplicationStatus")],
     ["Id", dv.s("harbor")],
-    ["Title", dv.s("Harbor")],
+    ["Title", dv.s("Hub")],
     ["Status", dv.s("Active")],
     ["WindowId", dv.i(0)],
     ["IconName", dv.s("harbor")],
@@ -230,7 +230,7 @@ function itemProps(hidden: boolean): Prop[] {
     ["IconPixmap", pixmaps()],
     ["OverlayIconName", dv.s("")],
     ["AttentionIconName", dv.s("")],
-    ["ToolTip", dv.r([dv.s(""), dv.a("(iiay)", []), dv.s("Harbor"), dv.s(tip)])],
+    ["ToolTip", dv.r([dv.s(""), dv.a("(iiay)", []), dv.s("Hub"), dv.s(tip)])],
     ["ItemIsMenu", dv.b(false)],
     ["Menu", dv.o(MENU_PATH)],
   ];
@@ -251,13 +251,13 @@ function entryProps(id: number): Prop[] {
       return [["children-display", dv.s("submenu")]];
     case MENU_OPEN:
       return [
-        ["label", dv.s("Open Harbor")],
+        ["label", dv.s("Open Hub")],
         ["enabled", dv.b(true)],
         ["visible", dv.b(true)],
       ];
     case MENU_QUIT:
       return [
-        ["label", dv.s("Quit Harbor completely")],
+        ["label", dv.s("Quit Hub completely")],
         ["enabled", dv.b(true)],
         ["visible", dv.b(true)],
       ];

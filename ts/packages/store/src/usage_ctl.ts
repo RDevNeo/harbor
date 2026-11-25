@@ -272,7 +272,7 @@ export class UsageCtl {
         const [w, cap] = over;
         const until = w.resetsAt !== null && w.resetsAt > at ? w.resetsAt : at + 30 * 60;
         this.limits.capBlock(id, kindOf(w.key), cap, until, w.resetsAt !== null);
-        host.notify("limit", `limit:${id}`, "Usage cap reached", `Harbor paused ${accountName(a)} at your ${cap}% cap of the ${w.label.toLowerCase()} limit, until ${when(until, at)}.`);
+        host.notify("limit", `limit:${id}`, "Usage cap reached", `Hub paused ${accountName(a)} at your ${cap}% cap of the ${w.label.toLowerCase()} limit, until ${when(until, at)}.`);
       } else if (!over && block && block.cap !== null) {
         this.limits.liftBlock(id);
       }

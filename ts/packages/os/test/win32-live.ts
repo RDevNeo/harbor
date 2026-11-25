@@ -73,7 +73,7 @@ await check("start at login: on, seen by the registry, off", () => {
   const exe = "C:\\rig\\harbor.exe";
   autostart.set(true, exe, "--background");
   expect(autostart.enabled("--background", exe), "not enabled after set(true)");
-  const v = ps("(Get-ItemProperty HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run).Harbor");
+  const v = ps("(Get-ItemProperty HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run).Hub");
   expect(v === `"${exe}" --background`, `Run value ${v}`);
   autostart.set(false, exe, "--background");
   expect(!autostart.enabled("--background", exe), "still enabled after set(false)");
@@ -82,15 +82,15 @@ await check("start at login: on, seen by the registry, off", () => {
 
 await check("notifications: a toast posts and is taken back", async () => {
   expect(notify.available(), "not available");
-  notify.post({ id: "harbor-live-1", title: "Harbor test", body: "A toast from win32-live.ts", sound: false, onClick: () => console.log("     (clicked)") });
+  notify.post({ id: "harbor-live-1", title: "Hub test", body: "A toast from win32-live.ts", sound: false, onClick: () => console.log("     (clicked)") });
   await Bun.sleep(1500);
   const shown = ps(
-    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; ([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('dev.harbor.Harbor') | Measure-Object).Count",
+    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; ([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('dev.harbor.Hub') | Measure-Object).Count",
   );
   notify.remove("harbor-live-1");
   await Bun.sleep(500);
   const after = ps(
-    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; ([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('dev.harbor.Harbor') | Measure-Object).Count",
+    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; ([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('dev.harbor.Hub') | Measure-Object).Count",
   );
   return `in Action Center: ${shown}, after remove: ${after}`;
 });
@@ -99,7 +99,7 @@ const traySeconds = Number(process.argv[process.argv.indexOf("--tray-seconds") +
 await check("tray: the icon goes up and comes down", async () => {
   expect(tray.available(), "not available");
   const png = PNG2x2;
-  const stop = tray.start({ iconPng: png, iconPoints: 16, colorPng: png, tooltip: "Harbor test", items: [{ label: "Open Harbor", onClick: () => console.log("     (open)") }, "separator", { label: "Quit", onClick: () => {} }] });
+  const stop = tray.start({ iconPng: png, iconPoints: 16, colorPng: png, tooltip: "Hub test", items: [{ label: "Open Hub", onClick: () => console.log("     (open)") }, "separator", { label: "Quit", onClick: () => {} }] });
   expect(stop !== null, "no icon");
   if (traySeconds > 0) {
     console.log(`     icon up for ${traySeconds} s`);

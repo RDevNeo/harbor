@@ -68,7 +68,7 @@ test("integrations tells a sign-in going on from its code and its URL", () => {
   expect([plain?.sub, plain?.form]).toEqual(["Finish in your browser\u{2026}", ""]);
 });
 
-test("integrations signs Google apps in with one click when Harbor has a client, and keeps a gear for your own", () => {
+test("integrations signs Google apps in with one click when Hub has a client, and keeps a gear for your own", () => {
   const builtin = find(data(view({ googleBuiltin: () => true })), "gmail");
   expect(builtin).toMatchObject({ action: "google", action_text: "Sign in with Google", gear: true, builtin: true });
   const own = find(data(view({ googleBuiltin: () => true, googleClient: () => ({ id: "mine", secret: "s" }) })), "gmail");

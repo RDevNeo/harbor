@@ -274,7 +274,7 @@ async function updateRoute(u: Updater | null, call: Call, store: Store): Promise
     return ok({ ok: true, auto: true });
   }
   if (what !== "update" && what !== "check") return null;
-  if (u === null || !u.managed()) return err(409, "this Harbor was built from source, so it doesn't update itself");
+  if (u === null || !u.managed()) return err(409, "this Hub was built from source, so it doesn't update itself");
   if (what === "check") {
     void u.check();
     return { status: 202, body: { ok: true, checking: true } };
@@ -516,7 +516,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phones: () => hub.localPhones().map((p) => [p.name, p.owner] as const),
   });
   let services: Services | null = null;
-  let phoneRoute: (call: Call) => Promise<Reply> = async () => err(503, "Harbor is starting");
+  let phoneRoute: (call: Call) => Promise<Reply> = async () => err(503, "Hub is starting");
   const prs = new chatpr.ChatPrs({
     store,
     chats: () => store.chats(),
@@ -596,7 +596,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     setIcon: async (repo, how) => {
       if (how === "website") favicon.clearCustom(repo);
       else if (how !== "refresh") {
-        if ((await favicon.decode(how.file).catch(() => null)) === null) return "Harbor can't read that image: pick a PNG, JPEG, WebP or GIF";
+        if ((await favicon.decode(how.file).catch(() => null)) === null) return "Hub can't read that image: pick a PNG, JPEG, WebP or GIF";
         if (!favicon.setCustom(repo, how.file)) return "Couldn't save the icon on this PC";
       }
       if (windowProjects) windowProjects.icon(repo, how === "refresh");
@@ -929,7 +929,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myAddrs: meshAddrs,
     uploadsDir,
     apkCode: () => apkInfo()?.code ?? 0,
-    upload: async (r, q) => (api ? api.upload(r, q) : err(503, "Harbor is starting")),
+    upload: async (r, q) => (api ? api.upload(r, q) : err(503, "Hub is starting")),
     notes: { last: () => notes.last(), ownSince: (s) => { const [n, l] = notes.ownSince(s); return [n.map(noteJson), l]; } },
     memory: (chat) => memory.snapshot(engine ? memory.engineSource(engine, (c, running) => deviceMemory.chat(c.device, memory.turnMark(hub.mesh.me.id, c.id), running)) : { chats: [], runner: () => null, procs: [] }, chat) as Json,
     // Settings that are one value for the whole workspace ("Clean up dictation"): the newest change on any PC wins.
@@ -995,8 +995,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     if (h.os === "") void remotes.testOnce(cfg, h);
     const os = h.os === "" ? "" : `It runs ${osLabel(h.os)}. `;
     const commands = h.commands && chat.access !== "plan";
-    const bridgeText = !h.bridge ? "" : commands && h.device_files ? "Your MCP servers are the Harbor PC's, through a bridge; the `origin` server's run_command runs shell commands on the Harbor PC." : "Your MCP servers are the Harbor PC's, through a bridge.";
-    const base = `You run on the device '${hostLabel(h)}', started over SSH by Harbor on '${hostname()}', in ${dir}. ${os}The user talks to you through Harbor, usually at that PC; a message written on a phone or another PC says where it came from. ${h.device_files ? "Files, shell, git and builds are that device's. " : ""}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. ${bridgeText}`;
+    const bridgeText = !h.bridge ? "" : commands && h.device_files ? "Your MCP servers are the Hub PC's, through a bridge; the `origin` server's run_command runs shell commands on the Hub PC." : "Your MCP servers are the Hub PC's, through a bridge.";
+    const base = `You run on the device '${hostLabel(h)}', started over SSH by Hub on '${hostname()}', in ${dir}. ${os}The user talks to you through Hub, usually at that PC; a message written on a phone or another PC says where it came from. ${h.device_files ? "Files, shell, git and builds are that device's. " : ""}Hub's own tools (processes, agents, webhooks) act on the Hub PC. ${bridgeText}`;
     const token = oauth.token(account.configDir);
     // With this PC's login the device's own profile is swapped for an empty one, and this PC's person's go in the note (meshctx.rs).
     const guest = token !== null;

@@ -8,7 +8,7 @@ const base = { chat: true, pinned: null, pinName: "", sel, waiting: null, projec
 const labels = (r: ReturnType<typeof pinRows>) => r.rows.map((x) => x.label);
 
 test("the picker's pin rows: keep this chat on its account, unpin, use another this time", () => {
-  expect(pinRows(base)).toEqual({ rows: [{ label: "Keep this chat on Claude · IG", sub: "Harbor won't switch its account by itself", warn: false, enabled: true }], acts: [{ kind: "pin", account: "claude2" }] });
+  expect(pinRows(base)).toEqual({ rows: [{ label: "Keep this chat on Claude · IG", sub: "Hub won't switch its account by itself", warn: false, enabled: true }], acts: [{ kind: "pin", account: "claude2" }] });
   const on = { ...base, pinned: pinned("claude2"), pinName: "Claude · IG" };
   expect(labels(pinRows(on))).toEqual(["Unpin from Claude · IG"]);
   expect(pinRows(on).acts).toEqual([{ kind: "unpin" }]);
@@ -31,13 +31,13 @@ test("a project's pin: the chat can pin itself to another account; the draft jus
   expect(labels(pinRows({ ...base, pinned: p, pinName: "Claude · CL" }))).toEqual(["Keep this chat on Claude · IG"]);
   expect(pinRows({ ...base, pinned: p, pinName: "Claude · CL" }).rows[0]?.sub).toBe("Its project keeps it on Claude · CL; this pins the chat itself");
   expect(labels(pinRows({ ...base, pinned: pinned("claude2", "project"), pinName: "Claude · IG" }))).toEqual(["Kept on Claude · IG by its project"]);
-  expect(pinRows({ ...base, chat: false, pinned: p, pinName: "Claude · CL" }).rows).toEqual([{ label: "harbor keeps its chats on Claude · CL", sub: "New chats here start there; Harbor won't switch them", warn: false, enabled: false }]);
+  expect(pinRows({ ...base, chat: false, pinned: p, pinName: "Claude · CL" }).rows).toEqual([{ label: "harbor keeps its chats on Claude · CL", sub: "New chats here start there; Hub won't switch them", warn: false, enabled: false }]);
   expect(pinRows({ ...base, chat: false })).toEqual({ rows: [], acts: [] });
 });
 
 test("the composer chip's lock and the line over the composer", () => {
   expect(chipPin(null, "")).toEqual({ pin: "", tip: "" });
-  expect(chipPin(pinned("claude2"), "Claude · IG")).toEqual({ pin: "ok", tip: "Pinned to Claude · IG: Harbor won't switch it" });
+  expect(chipPin(pinned("claude2"), "Claude · IG")).toEqual({ pin: "ok", tip: "Pinned to Claude · IG: Hub won't switch it" });
   expect(chipPin(pinned(null, "project", "isn't on this PC"), "Claude · IG").pin).toBe("error");
   expect(pinNotice(pinned("claude2"), "Claude · IG", null)).toBe("");
   expect(pinNotice(pinned("claude2"), "Claude · IG", "at 14:05")).toBe("Pinned to Claude · IG: waiting for its limit to reset (at 14:05). The account menu below can use another account this time, or unpin.");

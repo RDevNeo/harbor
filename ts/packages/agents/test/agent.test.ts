@@ -253,7 +253,7 @@ test("a remote turn without the net package says so instead of running", async (
 });
 
 describe("command lines per provider", () => {
-  test("Claude: stream-json both ways, Harbor's servers only, Medium by default", async () => {
+  test("Claude: stream-json both ways, Hub's servers only, Medium by default", async () => {
     const { cmd, stdin } = await agent.build(spec({ model: "claude-haiku-5-5" }));
     const v = cmd.args;
     expect(v.slice(0, 8)).toEqual(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages"]);

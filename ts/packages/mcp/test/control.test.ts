@@ -151,7 +151,7 @@ test("a chunked webhook body is read", async () => {
   expect(got[0]?.body).toBe("abcd");
 });
 
-test("harbor quit: asks the running Harbor, then sees its lock and socket go", async () => {
+test("harbor quit: asks the running Hub, then sees its lock and socket go", async () => {
   const { quitRunning, lockHeld, socketListening, acquire, release } = await import("../../store/src/single.ts");
   const env = { HARBOR_SOCK: join(root, "q.sock") };
   expect(await quitRunning(env)).toBe(false);
@@ -169,7 +169,7 @@ test("harbor quit: asks the running Harbor, then sees its lock and socket go", a
   expect(await socketListening(env)).toBe(false);
 });
 
-test("harbor api: a call reaches the running Harbor's own API and its answer comes back; a recording goes as wav", async () => {
+test("harbor api: a call reaches the running Hub's own API and its answer comes back; a recording goes as wav", async () => {
   const { apiCall } = await import("../../store/src/single.ts");
   const env = { HARBOR_SOCK: join(root, "api.sock") };
   const seen: unknown[] = [];
@@ -189,7 +189,7 @@ test("harbor api: a call reaches the running Harbor's own API and its answer com
   expect(await apiCall({ method: "GET", path: "v1/state" }, env, 2000)).toBeNull();
 });
 
-test("harbor admin: on, off or status goes to the running Harbor and its answer comes back; a Harbor without it says so", async () => {
+test("harbor admin: on, off or status goes to the running Hub and its answer comes back; a Hub without it says so", async () => {
   const { adminRunning } = await import("../../store/src/single.ts");
   const env = { HARBOR_SOCK: join(root, "admin.sock") };
   expect(await adminRunning("status", env)).toBeNull();

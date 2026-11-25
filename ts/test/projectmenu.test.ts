@@ -3,22 +3,22 @@ import { projectMenu } from "../packages/ui/src/logic/projectmenu.ts";
 
 test("project_menu_matches_sidebar_rs_order", () => {
   const labels = (remote: string | null, main: boolean, customIcon: boolean, settled = false) => projectMenu({ remote, main, customIcon, settled }).map((i) => (i.sep ? `— ${i.label}` : i.label));
-  expect(labels("https://github.com/sam/x", true, true)).toEqual(["Open terminal", "Pull requests", "Issues", "Open remote", "— Rename project…", "Rename main chat", "Settle main chat", "— Refresh icon", "Choose icon…", "Use website icon", "— Settle project", "Move to PC…", "Remove from Harbor"]);
-  expect(labels("https://gitlab.com/sam/x", false, false)).toEqual(["Open terminal", "Open remote", "— Rename project…", "— Refresh icon", "Choose icon…", "— Settle project", "Move to PC…", "Remove from Harbor"]);
-  expect(labels(null, false, false)).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Settle project", "Move to PC…", "Remove from Harbor"]);
-  expect(labels(null, false, false, true)).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Unsettle project", "Move to PC…", "Remove from Harbor"]);
+  expect(labels("https://github.com/sam/x", true, true)).toEqual(["Open terminal", "Pull requests", "Issues", "Open remote", "— Rename project…", "Rename main chat", "Settle main chat", "— Refresh icon", "Choose icon…", "Use website icon", "— Settle project", "Move to PC…", "Remove from Hub"]);
+  expect(labels("https://gitlab.com/sam/x", false, false)).toEqual(["Open terminal", "Open remote", "— Rename project…", "— Refresh icon", "Choose icon…", "— Settle project", "Move to PC…", "Remove from Hub"]);
+  expect(labels(null, false, false)).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Settle project", "Move to PC…", "Remove from Hub"]);
+  expect(labels(null, false, false, true)).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Unsettle project", "Move to PC…", "Remove from Hub"]);
 });
 
 test("project_menu_offers_move_to_workspace_greyed_with_why", () => {
   const items = (moveWhy: string | null) => projectMenu({ remote: null, main: false, customIcon: false, moveWhy });
-  expect(items(null).map((i) => (i.sep ? `— ${i.label}` : i.label))).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Move to workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  expect(items(null).map((i) => (i.sep ? `— ${i.label}` : i.label))).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Move to workspace…", "Settle project", "Move to PC…", "Remove from Hub"]);
   expect(items(null).find((i) => i.act === "move_workspace")?.off).toBeUndefined();
   expect(items("Sign in first").find((i) => i.act === "move_workspace")).toMatchObject({ off: true, desc: "Sign in first" });
 });
 
 test("project_menu_offers_share_with_workspace_after_move_greyed_with_why", () => {
   const items = (shareWhy: string | null) => projectMenu({ remote: null, main: false, customIcon: false, moveWhy: shareWhy, shareWhy, shareLine: "Owned by Team · not shared" });
-  expect(items(null).map((i) => (i.sep ? `— ${i.label}` : i.label))).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Move to workspace…", "Share with workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
+  expect(items(null).map((i) => (i.sep ? `— ${i.label}` : i.label))).toEqual(["Open terminal", "— Rename project…", "— Refresh icon", "Choose icon…", "— Move to workspace…", "Share with workspace…", "Settle project", "Move to PC…", "Remove from Hub"]);
   // Its line says owner and shares; greyed, it says why instead.
   expect(items(null).find((i) => i.act === "share_workspace")).toMatchObject({ desc: "Owned by Team · not shared" });
   expect(items(null).find((i) => i.act === "share_workspace")?.off).toBeUndefined();
@@ -34,9 +34,9 @@ test("project_menu_offers_clean_up_merged_worktrees_for_git_projects", () => {
 
 test("project_menu_offers_keep_on_one_account_with_its_pin", () => {
   const items = (pin: string | null) => projectMenu({ remote: null, main: false, customIcon: false, pin });
-  expect(items(null).map((i) => i.label)).toEqual(["Open terminal", "Rename project…", "Refresh icon", "Choose icon…", "Settle project", "Keep on one account…", "Move to PC…", "Remove from Harbor"]);
-  expect(items(null).find((i) => i.act === "pin_account")?.desc).toBe("Its chats and agents stay on the account you pick: Harbor won't switch them");
-  expect(items("Claude · IG").find((i) => i.act === "pin_account")?.desc).toBe("Pinned to Claude · IG: Harbor won't switch its chats");
+  expect(items(null).map((i) => i.label)).toEqual(["Open terminal", "Rename project…", "Refresh icon", "Choose icon…", "Settle project", "Keep on one account…", "Move to PC…", "Remove from Hub"]);
+  expect(items(null).find((i) => i.act === "pin_account")?.desc).toBe("Its chats and agents stay on the account you pick: Hub won't switch them");
+  expect(items("Claude · IG").find((i) => i.act === "pin_account")?.desc).toBe("Pinned to Claude · IG: Hub won't switch its chats");
   // Not offered where pins aren't known (an older caller).
   expect(projectMenu({ remote: null, main: false, customIcon: false }).some((i) => i.act === "pin_account")).toBe(false);
 });

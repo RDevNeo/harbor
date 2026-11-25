@@ -237,7 +237,7 @@ export class Updater {
   }
 
   async checkAndInstall(): Promise<void> {
-    if (!this.managed()) throw new Error("this Harbor was built from source, so it doesn't update itself");
+    if (!this.managed()) throw new Error("this Hub was built from source, so it doesn't update itself");
     this.asking = true;
     this.set({ t: "checking" });
     try {

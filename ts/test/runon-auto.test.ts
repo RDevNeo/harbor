@@ -90,7 +90,7 @@ describe("Runs on › Auto (runon.ts)", () => {
     expect(rows.map((r) => r.desc)).toEqual(["", "Most free memory now: laptop · 12.3 GB free", ""]);
     // A PC that's off can't be picked, and says why.
     const off = rig({ here: 1, peers: [peer("pc:off", "box", 1, { online: false })] }).run.rows(null, "", "Claude").find((r) => r.id === "pc:off");
-    expect([off?.enabled, off?.desc]).toEqual([false, "Harbor · off"]);
+    expect([off?.enabled, off?.desc]).toEqual([false, "Hub · off"]);
     const c = store.createChat(blankChat({ title: "x", role: "lead", name: "lead" }));
     expect(run.rows(c.id, "", "Claude").some((r) => r.id === "auto")).toBe(false);
     const empty = rig({ here: null, peers: [] }).run.rows(null, "", "Claude").find((r) => r.id === "auto");
@@ -114,7 +114,7 @@ describe("Runs on › Auto (runon.ts)", () => {
     expect(run.autoLabel({ ...there, home: "pc:b" })).toBeNull();
   }, SLOW);
 
-  test("Auto names a PC as the menu's rows do: the device's own name before its Harbor's", () => {
+  test("Auto names a PC as the menu's rows do: the device's own name before its Hub's", () => {
     const { run } = rig({ here: 2048, peers: [peer("pc:a", "laptop", 12_595)], devices: [samDevice()] });
     expect(run.nameOf("pc:a")).toBe("Sam-Laptop");
     expect(run.nameOf("")).toBe("This PC");

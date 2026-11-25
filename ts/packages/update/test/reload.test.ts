@@ -227,7 +227,7 @@ test("a handover: the new process starts first; once its window is built this on
   ended();
 });
 
-test("a handover whose new process ends before it's ready (an older Harbor) restarts the plain way", async () => {
+test("a handover whose new process ends before it's ready (an older Hub) restarts the plain way", async () => {
   const file = join(tmp(), "handover");
   const { r, calls, spawned } = reloader({
     handover: file,
@@ -243,7 +243,7 @@ test("a handover whose new process ends before it's ready (an older Harbor) rest
   expect(r.handingOver).toBe(false);
 });
 
-test("a hidden Harbor (no window) restarts the plain way: nothing to hand over", async () => {
+test("a hidden Hub (no window) restarts the plain way: nothing to hand over", async () => {
   const { r, calls } = reloader({ handover: join(tmp(), "handover"), hidden: () => true });
   await r.now();
   expect(calls).toEqual(["snapshot", "beforeExit", "release", "spawn", "exit 0"]);

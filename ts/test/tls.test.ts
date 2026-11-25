@@ -50,7 +50,7 @@ describe("identity", () => {
     expect(again.fp).toBe(srv.fp);
     expect(srv.fp).toMatch(/^[0-9a-f]{64}$/);
     const x = new X509Certificate(srv.cert);
-    expect(x.subject).toBe("CN=Harbor");
+    expect(x.subject).toBe("CN=Hub");
     expect(x.checkPrivateKey(createPrivateKey(srv.key))).toBe(true);
     expect(x.verify(x.publicKey)).toBe(true);
   });

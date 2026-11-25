@@ -116,7 +116,7 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
       return reply(socket, { ok: true });
     }
     if (typeof v.admin === "string") {
-      if (!opts.admin) return reply(socket, { ok: false, text: "This Harbor doesn't run as administrator (Windows only)." });
+      if (!opts.admin) return reply(socket, { ok: false, text: "This Hub doesn't run as administrator (Windows only)." });
       return void opts.admin(v.admin).then(
         (r) => reply(socket, r),
         (e: unknown) => reply(socket, { ok: false, text: e instanceof Error ? e.message : String(e) }),
@@ -134,7 +134,7 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
       if (timer) clearTimeout(timer);
       reply(socket, content === undefined ? { ok, text } : { ok, text, content });
     };
-    timer = setTimeout(() => done(false, "Harbor did not answer"), TOOL_WAIT_MS);
+    timer = setTimeout(() => done(false, "Hub did not answer"), TOOL_WAIT_MS);
     const call: ToolCall = {
       chatId: typeof v.chat === "number" && Number.isInteger(v.chat) ? v.chat : 0,
       tool: typeof v.tool === "string" ? v.tool : "",
@@ -144,7 +144,7 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
     try {
       opts.send({ kind: "tool", call });
     } catch {
-      done(false, "Harbor did not answer");
+      done(false, "Hub did not answer");
     }
   };
   let server: UnixSocketListener<undefined>;

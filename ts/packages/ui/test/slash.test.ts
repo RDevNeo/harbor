@@ -147,11 +147,11 @@ test("the_phones_list", () => {
     const r = v[i];
     return r === undefined ? null : [r.name, r.source, r.badge, r.skill];
   };
-  expect(row(0)).toEqual(["model", "harbor", "Harbor", false]);
+  expect(row(0)).toEqual(["model", "harbor", "Hub", false]);
   expect(v[0]?.command).toBe("model");
-  expect(row(1)).toEqual(["effort", "harbor", "Harbor", false]);
+  expect(row(1)).toEqual(["effort", "harbor", "Hub", false]);
   expect(v[1]?.command).toBe("effort");
-  expect(row(2)).toEqual(["plan", "harbor", "Harbor", false]);
+  expect(row(2)).toEqual(["plan", "harbor", "Hub", false]);
   expect(v[2]?.command).toBe("plan");
   expect(row(3)).toEqual(["compact", "builtin", "Built-in", false]);
   expect([v[3]?.hint, v[3]?.aliases, v[3]?.command]).toEqual(["<instructions>", ["c"], null]);

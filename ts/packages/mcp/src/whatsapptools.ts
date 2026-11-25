@@ -50,7 +50,7 @@ export function tools(): Raw[] {
     tool("status", "Whether WhatsApp is linked on this PC and connected, as whom, how far the history sync from the phone got, and how many sends the pacing still allows.", {}),
     tool(
       "list_chats",
-      "The user's WhatsApp chats, most recent first: name, chat id, unread count, when the last message came and its first words. Read from what Harbor stored on this PC.",
+      "The user's WhatsApp chats, most recent first: name, chat id, unread count, when the last message came and its first words. Read from what Hub stored on this PC.",
       {
         query: s("Only chats whose name or number contains this"),
         unread_only: flag("Only chats with unread messages"),
@@ -233,7 +233,7 @@ export class Tools {
         case "status":
           return this.text(this.status());
       }
-      if (!this.opts.state().linked) fail("WhatsApp isn't linked on this PC. The user links it in Harbor: Settings › Integrations › WhatsApp (desktop) or Settings › Apps › WhatsApp (phone).");
+      if (!this.opts.state().linked) fail("WhatsApp isn't linked on this PC. The user links it in Hub: Settings › Integrations › WhatsApp (desktop) or Settings › Apps › WhatsApp (phone).");
       switch (name) {
         case "list_chats":
           return this.text(this.listChats(a));
@@ -272,8 +272,8 @@ export class Tools {
   status(): string {
     const st = this.opts.state();
     if (!st.linked) {
-      const doing = st.connection === "pairing" ? " A link is waiting for the user's phone to scan the code." : st.connection === "installing" ? " Harbor is installing its WhatsApp engine." : "";
-      return `WhatsApp isn't linked on this PC.${doing} The user links it in Harbor: Settings › Integrations › WhatsApp (desktop) or Settings › Apps › WhatsApp (phone).`;
+      const doing = st.connection === "pairing" ? " A link is waiting for the user's phone to scan the code." : st.connection === "installing" ? " Hub is installing its WhatsApp engine." : "";
+      return `WhatsApp isn't linked on this PC.${doing} The user links it in Hub: Settings › Integrations › WhatsApp (desktop) or Settings › Apps › WhatsApp (phone).`;
     }
     const who = st.me ? `${st.me.name !== "" ? `${st.me.name} ` : ""}(${phoneOf(st.me.jid) ?? st.me.jid})` : "the user's account";
     const conn = st.connection === "open" ? "connected" : st.connection === "connecting" ? "connecting (reads use what's stored)" : "not connected right now (reads use what's stored; sends wait for the connection)";

@@ -96,7 +96,7 @@ test("Pins in kv: set, read, resolve, unpin; a pick by hand moves the pin and th
 
 test("the phone's pin JSON names the account as this PC does and says what's wrong", () => {
   const p: Pin = pinOf(ig);
-  expect(pinJson({ pin: p, scope: "chat", account: "claude2", why: "" }, () => "Claude · IG2")).toEqual({ account: "claude2", label: "Claude · IG2", scope: "chat", why: "", tip: "Pinned to Claude · IG2: Harbor won't switch it" });
+  expect(pinJson({ pin: p, scope: "chat", account: "claude2", why: "" }, () => "Claude · IG2")).toEqual({ account: "claude2", label: "Claude · IG2", scope: "chat", why: "", tip: "Pinned to Claude · IG2: Hub won't switch it" });
   expect(pinJson({ pin: p, scope: "project", account: null, why: "isn't on this PC" }, () => undefined)?.tip).toBe("Pinned to Claude · IG (this project's pin), which isn't on this PC: pick another account or unpin");
   expect(pinJson(null, () => "")).toBeNull();
   expect(projectPinned(p, [fs])).toEqual({ pin: p, scope: "project", account: null, why: "isn't on this PC" });

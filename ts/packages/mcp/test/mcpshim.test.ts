@@ -142,8 +142,8 @@ test("a screenshot comes over the socket as MCP content", async () => {
   l?.stop();
 });
 
-test("a missing socket reports that Harbor is not running", async () => {
-  expect(await callApp(1, "x", {}, { path: join(root, "none.sock"), waitMs: 300 })).toEqual([false, "Harbor is not running"]);
+test("a missing socket reports that Hub is not running", async () => {
+  expect(await callApp(1, "x", {}, { path: join(root, "none.sock"), waitMs: 300 })).toEqual([false, "Hub is not running"]);
 });
 
 test("an app that closes without answering says it restarted", async () => {
@@ -153,7 +153,7 @@ test("an app that closes without answering says it restarted", async () => {
       }, open() {}, close() {}, error() {} } });
   const [ok, text] = await callApp(1, "x", {}, { path });
   expect(ok).toBe(false);
-  expect(text).toStartWith("Harbor restarted before answering");
+  expect(text).toStartWith("Hub restarted before answering");
   server.stop(true);
 });
 

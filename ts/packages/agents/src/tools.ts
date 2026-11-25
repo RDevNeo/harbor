@@ -20,7 +20,7 @@ export function retireCall(e: Engine, me: Chat, a: unknown): string {
   const c = team.retiree(e.chats, me.id, arg(a, "agent"));
   if (typeof c === "string") throw new Error(c);
   if (c.retired) return `${c.name} was already retired.`;
-  if ((c.home ?? "") !== "") throw new Error("retiring another PC's agent needs the mesh, which this Harbor doesn't have yet");
+  if ((c.home ?? "") !== "") throw new Error("retiring another PC's agent needs the mesh, which this Hub doesn't have yet");
   return e.retireAgent(c.id);
 }
 
@@ -86,7 +86,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       e.procs = e.procs.filter((x) => !(x.lead === leadId && x.name === name));
       e.dropEnded(leadId, name);
       e.procs.push(p);
-      return `Started '${name}' (pid ${p.pid}). It keeps running after your turn ends and across Harbor restarts. You'll get a [process ${name}] message when it prints a local URL or exits; use process_logs to check on it.`;
+      return `Started '${name}' (pid ${p.pid}). It keeps running after your turn ends and across Hub restarts. You'll get a [process ${name}] message when it prints a local URL or exits; use process_logs to check on it.`;
     }
     case "process_logs": {
       const name = arg(a, "name");
@@ -256,7 +256,7 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       e.webhooks = e.store.webhooks();
       const [local, pub] = e.hookUrl(token);
       if (pub !== null) return `Webhook '${name}' created.\nPublic URL: ${pub}\n(Local: ${local})`;
-      return `Webhook '${name}' created, but the public URL is not enabled yet. Only this machine can reach it: ${local}\nTell the user to turn on public webhooks in Harbor › Settings › Webhooks; the URL will then be https://<this PC's public name>/hooks/${token}.`;
+      return `Webhook '${name}' created, but the public URL is not enabled yet. Only this machine can reach it: ${local}\nTell the user to turn on public webhooks in Hub › Settings › Webhooks; the URL will then be https://<this PC's public name>/hooks/${token}.`;
     }
     case "list_webhooks": {
       const list = e.webhooks.filter((w) => w.repoId === repoId).map((w) => {
@@ -481,7 +481,7 @@ export async function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown
   const own = (a as Record<string, unknown> | null)?.worktree === true || arg(a, "branch") !== "";
   let made: { dir: string; branch: string; base: string } | null = null;
   if (own) {
-    if (!e.host.makeWorktree) throw new Error("own worktrees aren't part of this Harbor");
+    if (!e.host.makeWorktree) throw new Error("own worktrees aren't part of this Hub");
     made = await e.host.makeWorktree(me, arg(a, "branch") || `harbor/${name.toLowerCase()}`, arg(a, "base"));
   }
   const chat = e.store.createChat({

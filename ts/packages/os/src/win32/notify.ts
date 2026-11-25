@@ -94,7 +94,7 @@ function setUp(): Center {
   // Single-threaded, as Slint's window loop already set COM up on this thread (a mismatch is refused, harmlessly).
   combase().RoInitialize(0);
   const key = `Software\\Classes\\AppUserModelId\\${APP_ID}`;
-  setRegString(key, "DisplayName", "Harbor");
+  setRegString(key, "DisplayName", "Hub");
   const icon = join(dirname(process.execPath), "harbor.png");
   if (existsSync(icon)) setRegString(key, "IconUri", icon);
   const statics = factory("Windows.UI.Notifications.ToastNotificationManager", IID.managerStatics);

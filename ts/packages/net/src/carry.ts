@@ -229,7 +229,7 @@ export function gitIn(dir: string, run: Spawner = outputWithin): Git {
   };
 }
 
-const FIXED = { GIT_AUTHOR_NAME: "Harbor", GIT_AUTHOR_EMAIL: "harbor@localhost", GIT_COMMITTER_NAME: "Harbor", GIT_COMMITTER_EMAIL: "harbor@localhost", GIT_AUTHOR_DATE: "1700000000 +0000", GIT_COMMITTER_DATE: "1700000000 +0000" };
+const FIXED = { GIT_AUTHOR_NAME: "Hub", GIT_AUTHOR_EMAIL: "harbor@localhost", GIT_COMMITTER_NAME: "Hub", GIT_COMMITTER_EMAIL: "harbor@localhost", GIT_AUTHOR_DATE: "1700000000 +0000", GIT_COMMITTER_DATE: "1700000000 +0000" };
 
 /** A scratch file name of our own. */
 const scratchName = (dir: string, what: string) => join(dir, `harbor-carry-${what}-${process.pid}-${randomBytes(5).toString("hex")}`);
@@ -279,7 +279,7 @@ export async function gitSnapshot(dir: string, o: { scratch: string; name: strin
   const dirty = st.tree !== st.headTree;
   let work = st.head;
   if (dirty) {
-    const c = await g(["commit-tree", st.tree, "-p", st.head, "-m", "Harbor: uncommitted work"], { env: FIXED });
+    const c = await g(["commit-tree", st.tree, "-p", st.head, "-m", "Hub: uncommitted work"], { env: FIXED });
     if (c.code !== 0) return null;
     work = c.out;
   }

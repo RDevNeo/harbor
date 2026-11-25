@@ -64,7 +64,7 @@ test("the notice texts", () => {
   expect(compaction.claudeCompactedText(665_545, 4003)).toBe("Claude Code compacted the conversation (666k → 4k tokens)");
 });
 
-test("parses Harbor's compaction lines and Claude Code's boundary", () => {
+test("parses Hub's compaction lines and Claude Code's boundary", () => {
   const evs = (s: string) => parseClaude(JSON.parse(s));
   expect(evs(compaction.startLine(20_000_000))).toEqual([{ type: "compact", state: "start", before: 20_000_000, after: 0, ok: false, error: "" }]);
   expect(evs(compaction.doneLine({ before: 20, after: 2, ok: true, error: "" }))).toEqual([{ type: "compact", state: "done", before: 20, after: 2, ok: true, error: "" }]);

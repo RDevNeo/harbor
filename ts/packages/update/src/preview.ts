@@ -62,7 +62,7 @@ async function install(cfg: UpdateConfig, dir: string, src: string, id: string, 
       throw new Error(`it doesn't run here: ${e.message}`);
     });
     const version = versionIn(said);
-    if (version === null) throw new Error("that isn't Harbor");
+    if (version === null) throw new Error("that isn't Hub");
     const release = onDisk(cfg);
     if (superseded(version, release)) throw new Error(`this build is ${version}, older than the release here (${release ?? ""})`);
     const sha = await sha256(fresh);
@@ -284,7 +284,7 @@ export async function cli(cfg: UpdateConfig, args: string[], io: Io): Promise<nu
           (e: Error) => ({ ok: false, text: e.message }) as Record<string, unknown>,
         ));
       if (r.ok !== true) {
-        io.err(`harbor: ${typeof r.text === "string" ? r.text : "Harbor did not answer"}`);
+        io.err(`harbor: ${typeof r.text === "string" ? r.text : "Hub did not answer"}`);
         return 1;
       }
       if (r.restarting !== true) {

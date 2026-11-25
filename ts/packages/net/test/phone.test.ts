@@ -677,7 +677,7 @@ describe("phone: Move to PC…", () => {
     const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
     const withMesh = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, move });
     const old = await withMesh.route({ method: "POST", path: ["v1", "chats", String(copy.id), "move_pc"], query: [], body: { pc: "pc:b" }, token: "", device: "", global: false });
-    expect([old.status, old.body]).toEqual([409, { error: "old runs an older Harbor that can't move chats: update it first" }]);
+    expect([old.status, old.body]).toEqual([409, { error: "old runs an older Hub that can't move chats: update it first" }]);
     store.close();
   });
 });
@@ -765,7 +765,7 @@ describe("phone: a project whose folder is on another PC", () => {
   });
 });
 
-test("a default saved on a provider Harbor dropped reads as Claude's defaults", () => {
+test("a default saved on a provider Hub dropped reads as Claude's defaults", () => {
   const kv = new Map<string, string>([
     ["default_account", "cursor"],
     ["default_model", "auto"],

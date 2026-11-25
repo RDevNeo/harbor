@@ -62,7 +62,7 @@ export async function providersFeed(kv: Kv, host: ProvidersHost, logos?: Awaited
             if (next) makeDefault(kv, next, firstModel(host.modelsFor(next.kind)));
           }
           providers.removeAccount(a);
-          note = `Removed ${label(a)}. Its folder was kept in Harbor's removed-accounts folder.`;
+          note = `Removed ${label(a)}. Its folder was kept in Hub's removed-accounts folder.`;
         } catch (e) {
           note = `Couldn't remove ${label(a)}: ${e instanceof Error ? e.message : String(e)}`;
         }

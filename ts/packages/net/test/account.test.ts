@@ -272,7 +272,7 @@ function serviceHandler(w: World): (c: Call) => Reply | Promise<Reply> {
         },
       };
     }
-    if (c.auth.startsWith("clerk-access")) return { status: 401, body: { error: "Harbor token only", signin: true } };
+    if (c.auth.startsWith("clerk-access")) return { status: 401, body: { error: "Hub token only", signin: true } };
     if (key === "POST /v1/pcs") return w.pcsRefusal ? { status: 403, body: w.pcsRefusal } : { status: 200, body: { ok: true } };
     if (key === "GET /v1/directory") {
       const r = { status: w.directoryStatus, body: withPeers(w.directory) };
@@ -522,7 +522,7 @@ describe("sign-in through Clerk", () => {
     expect(r.svc.status().error).toBe("Sign-in failed: <b>no</b>");
     await until(() => page !== "", "the page");
     expect(page).toContain("Sign-in didn&#39;t finish".replace("&#39;", "'"));
-    expect(page).toContain("&lt;b&gt;no&lt;/b&gt;. Go back to Harbor and try again.");
+    expect(page).toContain("&lt;b&gt;no&lt;/b&gt;. Go back to Hub and try again.");
     expect(r.svc.signedIn()).toBe(false);
     expect(existsSync(join(r.stateDir, "account.json"))).toBe(false);
   });
@@ -553,7 +553,7 @@ describe("sign-in through Clerk", () => {
     expect(pages.length).toBe(6);
     for (const p of pages) {
       expect(p).toContain("Not this sign-in");
-      expect(p).toContain("Harbor is still waiting.");
+      expect(p).toContain("Hub is still waiting.");
     }
   });
 
@@ -907,7 +907,7 @@ describe("the account loop", () => {
     expect(must(again.admit(t, PHONE_FP)).sub).toBe("user_1");
   });
 
-  test("a new Harbor token is asked for once a day, refreshing Clerk's access token", async () => {
+  test("a new Hub token is asked for once a day, refreshing Clerk's access token", async () => {
     const r = rig();
     await signedIn(r);
     const old = secrets(r);
@@ -1057,7 +1057,7 @@ describe("the account loop", () => {
     expect(r.svc.signedIn()).toBe(true);
   });
 
-  test("a 401 from the service asks for a new Harbor token at the next turn", async () => {
+  test("a 401 from the service asks for a new Hub token at the next turn", async () => {
     const r = rig();
     await signedIn(r);
     r.world.directoryStatus = 401;
@@ -1129,7 +1129,7 @@ describe("the account loop", () => {
     expect(r.svc.status().offlineSince).toBeGreaterThan(0);
   });
 
-  test("settings calls go to /v1/settings with the Harbor token", async () => {
+  test("settings calls go to /v1/settings with the Hub token", async () => {
     const r = rig();
     await signedIn(r);
     const token = String(secrets(r).token);
@@ -1140,7 +1140,7 @@ describe("the account loop", () => {
     await expect(r.svc.settingsCall("clerk-access-9")).rejects.toBeInstanceOf(AccountFail);
   });
 
-  test("the vault's round runs in the loop with the Harbor token, and a sign-out hands the vault back", async () => {
+  test("the vault's round runs in the loop with the Hub token, and a sign-out hands the vault back", async () => {
     const r = rig();
     const items = new Map<string, Uint8Array>([["s:K", new Uint8Array([1])]]);
     const vault = new Vault({
@@ -1217,7 +1217,7 @@ describe("actions from Settings", () => {
     await r.svc.invite("org_personal", " pat@example.com ");
     expect(callPaths(r.calls)).toEqual(["POST /v1/workspaces/org_personal/invites", "GET /v1/directory", "GET /v1/invites"]);
     expect(r.calls[0]?.json).toEqual({ email: "pat@example.com" });
-    expect(r.svc.takeNotice()).toBe("Invited pat@example.com: they'll see it in Harbor when they sign in with that Google account.");
+    expect(r.svc.takeNotice()).toBe("Invited pat@example.com: they'll see it in Hub when they sign in with that Google account.");
     expect(r.svc.takeNotice()).toBeNull();
     expect(r.svc.status()).toMatchObject({ busy: false, error: "" });
   });
@@ -1229,7 +1229,7 @@ describe("actions from Settings", () => {
     expect(r.svc.status().expired).toBe(false);
   });
 
-  test("without a Harbor token the sign-in is expired", async () => {
+  test("without a Hub token the sign-in is expired", async () => {
     const r = rig();
     await r.svc.invite("org_personal", "pat@example.com");
     expect(r.svc.status().expired).toBe(true);
@@ -1393,7 +1393,7 @@ describe("cache and command line", () => {
     expect(out.at(-1)).toBe("Signed out. This PC stays in its workspace.");
     expect(r.kv.get("account_ws")).toBe("org_personal");
     expect(await r.svc.cli(["bogus"], io)).toBe(2);
-    expect(err.at(-1)).toBe("usage: harbor account [status|login|logout]\nOr sign in and out in Harbor › Settings › Account.");
+    expect(err.at(-1)).toBe("usage: harbor account [status|login|logout]\nOr sign in and out in Hub › Settings › Account.");
     r.world.clerkRefuse = true;
     expect(await r.svc.cli(["login"], io)).toBe(1);
     expect(err.at(-1)).toBe("harbor: Clerk refused the sign-in: bad code");

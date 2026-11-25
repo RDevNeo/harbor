@@ -63,7 +63,7 @@ test("a folder name every system takes: another system's whole path gives its la
   expect(folderName("x".repeat(300)).length).toBe(100);
 });
 
-test("folders Harbor named after another system's whole path are told apart from plain names", () => {
+test("folders Hub named after another system's whole path are told apart from plain names", () => {
   expect(isForeignPathName("C:\\Users\\Sam\\Projects\\crm")).toBe(true);
   expect(isForeignPathName("D:")).toBe(true);
   expect(isForeignPathName("a\\b")).toBe(true);

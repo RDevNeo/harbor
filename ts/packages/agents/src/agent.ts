@@ -473,9 +473,9 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
     const r = spec.remote;
     const br = bridgeOrThrow();
     const port = await br.grant(grant);
-    if (port === null) throw new Error("Harbor's MCP bridge couldn't open a port on 127.0.0.1");
+    if (port === null) throw new Error("Hub's MCP bridge couldn't open a port on 127.0.0.1");
     const remote = integrations.remote;
-    if (!remote) throw new Error("turns on other devices need the net package's remote module, which this Harbor doesn't have yet");
+    if (!remote) throw new Error("turns on other devices need the net package's remote module, which this Hub doesn't have yet");
     // The device's own `claude` (from its login shell's PATH), with the same arguments.
     const argv = ["claude", ...args];
     // The login first (it's the first stdin line), the MCP config next, then the profile and the session.
@@ -533,12 +533,12 @@ function codexStdio(name: string, def: unknown): string[] {
 export const MCP_CONFIG_ARG = "@harbor-mcp-config";
 
 function bridgeOrThrow(): Bridge {
-  if (!integrations.bridge) throw new Error("this needs Harbor's MCP bridge (mcp package), which this Harbor doesn't have yet");
+  if (!integrations.bridge) throw new Error("this needs Hub's MCP bridge (mcp package), which this Hub doesn't have yet");
   return integrations.bridge;
 }
 
 function workspaceOrThrow(): Workspace {
-  if (!integrations.workspace) throw new Error("working on this PC's files from a device needs the mcp package's workspace tools, which this Harbor doesn't have yet");
+  if (!integrations.workspace) throw new Error("working on this PC's files from a device needs the mcp package's workspace tools, which this Hub doesn't have yet");
   return integrations.workspace;
 }
 

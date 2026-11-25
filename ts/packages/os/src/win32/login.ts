@@ -7,7 +7,7 @@ import { deleteRegValue, regBinary, regString, setRegString } from "./gui.ts";
 
 const RUN = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const APPROVED = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
-const NAME = "Harbor";
+const NAME = "Hub";
 
 /** The command line the Run value holds. */
 export function command(exe: string, arg: string): string {

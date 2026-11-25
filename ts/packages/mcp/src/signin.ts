@@ -160,7 +160,7 @@ function ghLoginCmd(): Cmd {
 export function convexLoginCmd(): Cmd {
   const h = convexHome();
   return {
-    argv: ["npx", "-y", "convex@latest", "login", "--no-open", "--device-name", "Harbor", "--login-flow", "poll"],
+    argv: ["npx", "-y", "convex@latest", "login", "--no-open", "--device-name", "Hub", "--login-flow", "poll"],
     cwd: h,
     // The CLI keeps its key in its home's .convex, which Harbor reads (apps.ts convexHome): HOME, and USERPROFILE,
     // where Node takes the home folder from on Windows. The npm cache stays the user's own.
@@ -281,7 +281,7 @@ export async function oauthLogin(id: string, url: string, signal: AbortSignal, u
     const methods = meta.token_endpoint_auth_methods_supported;
     const publicClient = !Array.isArray(methods) || methods.includes("none");
     const reg = {
-      client_name: "Harbor",
+      client_name: "Hub",
       redirect_uris: [redirect],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -292,7 +292,7 @@ export async function oauthLogin(id: string, url: string, signal: AbortSignal, u
     const clientId = isObject(r.body) ? text(r.body.client_id) : "";
     if (r.status < 200 || r.status >= 300 || clientId === "") {
       const b = isObject(r.body) ? r.body : {};
-      throw new Error(`Registering Harbor failed (${r.status}): ${text(b.error_description) || text(b.error)}`);
+      throw new Error(`Registering Hub failed (${r.status}): ${text(b.error_description) || text(b.error)}`);
     }
     const clientSecret = isObject(r.body) ? text(r.body.client_secret) : "";
     const verifier = b64url(random(32));
@@ -372,7 +372,7 @@ export async function googleSaveCode(id: string, scope: string, client: Client, 
   applyToken(c, r.status, r.body);
   const granted = isObject(r.body) && typeof r.body.scope === "string" ? r.body.scope : undefined;
   if (missingScopes(scope, granted).some((s) => s.endsWith("gmail.modify"))) throw new Error("Google didn't grant access to the mail: sign in again and tick every box.");
-  if (c.refresh_token === "") throw new Error("Google sent no refresh token: remove Harbor at myaccount.google.com/permissions and sign in again.");
+  if (c.refresh_token === "") throw new Error("Google sent no refresh token: remove Hub at myaccount.google.com/permissions and sign in again.");
   const profile = integrations.profileEmail;
   if (!profile) throw new Error("Gmail isn't available here.");
   c.account = await profile(c.access_token);
@@ -423,7 +423,7 @@ export function googlePhoneStart(id: string, redirect: string): [string, string]
   const scope = googleScope(id);
   if (!phoneRedirectOk(redirect)) throw new Error("redirect_uri must be http://127.0.0.1:<port>/");
   const client = googleDesktopClient(id);
-  if (!client) throw new Error("This PC's Harbor has no Google client: sign in on the PC first.");
+  if (!client) throw new Error("This PC's Hub has no Google client: sign in on the PC first.");
   const verifier = b64url(random(32));
   const state = b64url(random(16));
   const url = googleAuthUrl(client.id, redirect, scope, verifier, state);
@@ -444,7 +444,7 @@ export async function googlePhoneFinish(id: string, state: string, code: string)
 export async function googlePhoneCode(id: string, code: string): Promise<string> {
   const scope = googleScope(id);
   const web = googleWebFromEnv();
-  if (!web) throw new Error("This PC's Harbor can't take a code from the phone's account sheet.");
+  if (!web) throw new Error("This PC's Hub can't take a code from the phone's account sheet.");
   return googleSaveCode(id, scope, web, code, "", "");
 }
 
@@ -459,16 +459,16 @@ export function callbackPage(ok: boolean, error: string, stray = false): string 
   const esc = (t: string): string => t.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
   const title = ok ? "You're signed in" : stray ? "Not this sign-in" : "Sign-in didn't finish";
   const line = ok
-    ? "Harbor is back in front. You can close this tab."
+    ? "Hub is back in front. You can close this tab."
     : stray
-      ? "This link isn't for the sign-in Harbor is waiting for. Finish signing in in the tab Harbor opened: Harbor is still waiting."
+      ? "This link isn't for the sign-in Hub is waiting for. Finish signing in in the tab Hub opened: Hub is still waiting."
       : error === ""
-        ? "Go back to Harbor and try again."
-        : `${esc(error)}. Go back to Harbor and try again.`;
+        ? "Go back to Hub and try again."
+        : `${esc(error)}. Go back to Hub and try again.`;
   const mark = ok ? "&#10003;" : "!";
   const mk = ok ? "#0070f3" : "#e5484d";
   const close = ok ? 600 : 600000;
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harbor</title>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hub</title>
 <style>
 :root{--bg:#fafafa;--card:#fff;--fg:#171717;--sub:#737373;--border:#e5e5e5;--mark:${mk};--markfg:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--card:#171717;--fg:#ededed;--sub:#a1a1a1;--border:#2e2e2e;--markfg:#0a0a0a}}
@@ -479,7 +479,7 @@ body{background:var(--bg);color:var(--fg);font:14px/1.5 Geist,"Geist Sans",Inter
 .brand{font-weight:600;letter-spacing:-.01em;color:var(--sub);margin:14px 0 2px}
 h1{font-size:20px;letter-spacing:-.02em;margin:0 0 6px}p{margin:0;color:var(--sub)}
 </style>
-<div class="card"><div class="mark">${mark}</div><div class="brand">Harbor</div><h1>${title}</h1><p>${line}</p></div>
+<div class="card"><div class="mark">${mark}</div><div class="brand">Hub</div><h1>${title}</h1><p>${line}</p></div>
 <script>setTimeout(function(){window.close()},${close})</script>
 </html>`;
 }

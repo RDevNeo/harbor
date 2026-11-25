@@ -79,7 +79,7 @@ export function toggleAccount(accounts: readonly providers.Account[], defaultAcc
     return { newDefault: null };
   }
   const rest = accounts.filter((x) => x.id !== id && providers.usable(x));
-  if (rest.length === 0 && providers.usable(a)) return { error: `${label(a)} is the only account Harbor can use: turn another one on first.` };
+  if (rest.length === 0 && providers.usable(a)) return { error: `${label(a)} is the only account Hub can use: turn another one on first.` };
   setOff(id, true);
   if (a.id !== defaultAccount) return { newDefault: null };
   return { newDefault: providers.fallback(rest, a.kind) ?? null };

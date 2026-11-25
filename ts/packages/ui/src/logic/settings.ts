@@ -69,17 +69,17 @@ export const RUN_AS_ADMIN = "run_as_admin";
 export function adminDesc(a: AdminView): string {
   const now = a.elevated
     ? a.on
-      ? "Harbor and everything its agents run have full control of this PC, with no Windows prompt (Windows asked once)."
-      : "Harbor runs as administrator because it was opened that way."
+      ? "Hub and everything its agents run have full control of this PC, with no Windows prompt (Windows asked once)."
+      : "Hub runs as administrator because it was opened that way."
     : !a.canElevate
-      ? "Your Windows account isn't an administrator, so Harbor runs with your normal rights."
+      ? "Your Windows account isn't an administrator, so Hub runs with your normal rights."
       : a.off
-        ? "Harbor runs with your normal rights: harbor admin off in a terminal turned that off. harbor admin on turns it back on (Windows asks once)."
+        ? "Hub runs with your normal rights: harbor admin off in a terminal turned that off. harbor admin on turns it back on (Windows asks once)."
         : a.on
-          ? "Harbor should run as administrator, but this one has your normal rights (its task didn't start it). harbor admin on in a terminal sets it up again."
+          ? "Hub should run as administrator, but this one has your normal rights (its task didn't start it). harbor admin on in a terminal sets it up again."
           : a.declined !== ""
-            ? "Harbor runs with your normal rights: Windows' prompt was declined. harbor admin on in a terminal asks again."
-            : "Harbor runs with your normal rights until Windows allows it (Harbor asks once).";
+            ? "Hub runs with your normal rights: Windows' prompt was declined. harbor admin on in a terminal asks again."
+            : "Hub runs with your normal rights until Windows allows it (Hub asks once).";
   const cost = a.elevated && a.on ? " Files dragged from other apps can't be dropped on its window, other apps' keyboard shortcuts may not work while it's in front, and dev servers and terminals it starts run as administrator too; links and files still open in your normal browser and apps. harbor admin off in a terminal turns this off." : "";
   return `${now}${cost}`;
 }
@@ -88,17 +88,17 @@ export function adminDesc(a: AdminView): string {
 export function sudoDesc(a: AdminView): string {
   const now = a.elevated
     ? a.on
-      ? "Harbor's agents can run sudo without a password (your system asked once). Harbor's window itself never runs as root."
-      : "sudo already needs no password for you, by a rule that isn't Harbor's: Harbor's agents can use it."
+      ? "Hub's agents can run sudo without a password (your system asked once). Hub's window itself never runs as root."
+      : "sudo already needs no password for you, by a rule that isn't Hub's: Hub's agents can use it."
     : !a.canElevate
       ? "sudo isn't installed here."
       : a.off
-        ? "sudo asks for your password: harbor admin off in a terminal turned Harbor's rule off. harbor admin on turns it back on."
+        ? "sudo asks for your password: harbor admin off in a terminal turned Hub's rule off. harbor admin on turns it back on."
         : a.on
-          ? "Harbor's sudo rule is there, but sudo still asks for a password. harbor admin in a terminal says why."
+          ? "Hub's sudo rule is there, but sudo still asks for a password. harbor admin in a terminal says why."
           : a.declined !== ""
             ? "sudo asks for your password: the prompt was declined. harbor admin on in a terminal asks again."
-            : "sudo asks for your password until you allow Harbor once (it asks at the start of its window).";
+            : "sudo asks for your password until you allow Hub once (it asks at the start of its window).";
   const cost = a.elevated && a.on ? " The cost: any program running as you can get root without a password. harbor admin off in a terminal removes the rule." : "";
   return `${now}${cost}`;
 }
@@ -123,7 +123,7 @@ export function projectsSection(kv: Kv, h: string): SettingSection {
       ? `${dir}. New projects and clones go here. Pick a folder and worktrees go in its .worktrees folder too, and chats without a project in its chats folder.`
       : `${dir}. New projects and clones go here, worktrees in its .worktrees folder and chats without a project in its chats folder.`;
   const rows = [item({ kind: "button", key: PROJECTS_DIR.change, title: "Projects folder", desc, label: "Change…" })];
-  if (chosen !== null) rows.push(item({ kind: "button", key: PROJECTS_DIR.reset, title: `Back to ${tildeIn(h, join(h, "Projects"))}`, desc: "New worktrees go to Harbor's data folder again and new chats without a project run in your home folder. Nothing already made moves.", label: "Reset" }));
+  if (chosen !== null) rows.push(item({ kind: "button", key: PROJECTS_DIR.reset, title: `Back to ${tildeIn(h, join(h, "Projects"))}`, desc: "New worktrees go to Hub's data folder again and new chats without a project run in your home folder. Nothing already made moves.", label: "Reset" }));
   return { title: "Projects", rows };
 }
 
@@ -132,7 +132,7 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
   return [
     {
       title: "Background",
-      rows: [toggle("autostart", "Start Harbor when I log in", "Starts in the background, without a window, so this PC is reachable as soon as you log in.", env.autostart)],
+      rows: [toggle("autostart", "Start Hub when I log in", "Starts in the background, without a window, so this PC is reachable as soon as you log in.", env.autostart)],
     },
     ...(env.admin === undefined ? [] : [adminSection(env.admin)]),
     {
@@ -154,7 +154,7 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
     },
     projectsSection(kv, env.home ?? home()),
     worktreesSection(kv),
-    { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Harbor ${env.version}` }), ] },
+    { title: "Updates", rows: [item({ kind: "text", key: "version", title: `Hub ${env.version}` }), ] },
   ];
 }
 

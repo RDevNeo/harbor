@@ -138,12 +138,12 @@ export class RunOn {
     for (const [h, online] of devs) {
       const no = why(h.id);
       const hub = hubs.find((p) => p.id === h.id);
-      const desc = !claude ? "Claude Code only" : no !== null ? no : hub !== undefined && !hub.online ? "Harbor · off" : "";
+      const desc = !claude ? "Claude Code only" : no !== null ? no : hub !== undefined && !hub.online ? "Hub · off" : "";
       out.push({ id: h.id, name: hostLabel(h), glyph: glyph(h), desc, online, current: h.id === current, enabled: claude && (!locked || h.id === current) && no === null && (hub === undefined || hub.online) });
     }
     for (const p of hubs.filter((x) => !devs.some(([h]) => h.id === x.id))) {
       const no = why(p.id);
-      const desc = no !== null ? no : !p.online ? "Harbor · off" : "";
+      const desc = no !== null ? no : !p.online ? "Hub · off" : "";
       out.push({ id: p.id, name: p.name, glyph: glyph(newHost({ os: "linux" })), desc, online: p.online, current: p.id === current, enabled: claude && !locked && p.online && no === null });
     }
     return out;

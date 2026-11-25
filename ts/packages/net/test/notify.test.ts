@@ -228,14 +228,14 @@ describe("notify", () => {
     const d = new Desktop({ send, mono: () => t, localMinute: () => 12 * 60 });
     const notifier = new Notifier({ notes: new Notes(), desktop: d });
     notifier.post("input", "chat:g", "api needs you", "Which one?", "g", true);
-    expect(runs[0]?.args).toEqual(["-a", "Harbor", "-p", "-u", "critical", "-A", "default=Open", "api needs you", "Which one?"]);
+    expect(runs[0]?.args).toEqual(["-a", "Hub", "-p", "-u", "critical", "-A", "default=Open", "api needs you", "Which one?"]);
     runs[0]?.say("7");
     await new Promise((r) => setTimeout(r, 0));
     t = 10_000;
     notifier.post("input", "chat:g", "api needs you", "again", "g", true);
     expect(runs[0]?.killed).toBe(true);
     expect(runs[1]?.args).toEqual([
-      "-a", "Harbor", "-p", "-u", "critical", "--replace-id=7", "-h", "boolean:suppress-sound:true", "-h", "boolean:transient:true", "-A", "default=Open", "api needs you (2)", "again",
+      "-a", "Hub", "-p", "-u", "critical", "--replace-id=7", "-h", "boolean:suppress-sound:true", "-h", "boolean:transient:true", "-A", "default=Open", "api needs you (2)", "again",
     ]);
     runs[1]?.say("7");
     runs[1]?.say("default");
@@ -260,7 +260,7 @@ describe("notify", () => {
     d.frame(false, false);
     notifier.post("done", "chat:r", "away?", "", "", false);
     expect(runs.length).toBe(3);
-    expect(runs[2]?.args).toEqual(["-a", "Harbor", "-p", "-u", "normal", "away?", ""]);
+    expect(runs[2]?.args).toEqual(["-a", "Hub", "-p", "-u", "normal", "away?", ""]);
   });
 
   test("a note records whether the user was away", () => {
@@ -332,7 +332,7 @@ describe("notify", () => {
     const n = new Notifier({ notes });
     n.notePeers([{ id: "ts:b", name: "", online: true }], true);
     n.notePeers([{ id: "ts:b", name: "", online: false }], true);
-    expect(notes.since(0)[0].map((x) => [x.title, x.body, x.reply])).toEqual([["A PC went offline", "Harbor there doesn't answer any more.", false]]);
+    expect(notes.since(0)[0].map((x) => [x.title, x.body, x.reply])).toEqual([["A PC went offline", "Hub there doesn't answer any more.", false]]);
   });
 
   test("failed checks once per head commit, not on the first list", () => {
@@ -357,7 +357,7 @@ test.if(!osNotify.available())("a notifier that isn't installed fails quietly: n
   const saved = process.env.PATH;
   process.env.PATH = "/nonexistent";
   try {
-    expect(spawnNotifySend(["Harbor", "test"])).toBeNull();
+    expect(spawnNotifySend(["Hub", "test"])).toBeNull();
     await Bun.sleep(50);
   } finally {
     process.env.PATH = saved;
@@ -366,26 +366,26 @@ test.if(!osNotify.available())("a notifier that isn't installed fails quietly: n
 
 test("notify-send's arguments, as macOS's notifications read them", async () => {
   const { notifySendArgs } = await import("../src/notify.ts");
-  expect(notifySendArgs(["-a", "Harbor", "-p", "-u", "critical", "--replace-id=7", "-h", "boolean:suppress-sound:true", "-h", "boolean:transient:true", "-A", "default=Open", "Done (2)", "The build passed"])).toEqual({
+  expect(notifySendArgs(["-a", "Hub", "-p", "-u", "critical", "--replace-id=7", "-h", "boolean:suppress-sound:true", "-h", "boolean:transient:true", "-A", "default=Open", "Done (2)", "The build passed"])).toEqual({
     title: "Done (2)",
     body: "The build passed",
     replace: 7,
     quiet: true,
     actions: ["default"],
   });
-  expect(notifySendArgs(["-a", "Harbor", "Test", "Works"])).toEqual({ title: "Test", body: "Works", replace: null, quiet: false, actions: [] });
+  expect(notifySendArgs(["-a", "Hub", "Test", "Works"])).toEqual({ title: "Test", body: "Works", replace: null, quiet: false, actions: [] });
 });
 
 test("macOS's stand-in speaks notify-send's protocol: an id, then the click", async () => {
   const { osNotifySend } = await import("../src/notify.ts");
-  const p = osNotifySend(["-a", "Harbor", "-p", "-A", "default=Open", "T", "B"]);
+  const p = osNotifySend(["-a", "Hub", "-p", "-A", "default=Open", "T", "B"]);
   if (!p) throw new Error("no proc");
   const it = p.lines[Symbol.asyncIterator]();
   expect(String((await it.next()).value)).toMatch(/^\d+$/);
   p.kill();
   await p.exited;
   expect((await it.next()).done).toBe(true);
-  const once = osNotifySend(["-a", "Harbor", "--replace-id=42", "T", "B"]);
+  const once = osNotifySend(["-a", "Hub", "--replace-id=42", "T", "B"]);
   const first = await once?.lines[Symbol.asyncIterator]().next();
   expect(String(first?.value)).toBe("42");
   await once?.exited;

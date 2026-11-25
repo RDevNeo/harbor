@@ -191,7 +191,7 @@ export async function start(argv: readonly string[], dir: string, chat: number):
     "--collect",
     `--slice=${SLICE}`,
     `--unit=${unitOf(dir)}`,
-    `--description=Harbor turn (chat ${chat})`,
+    `--description=Hub turn (chat ${chat})`,
     "--",
     ...argv,
   ]);

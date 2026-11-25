@@ -97,5 +97,5 @@ export function solvingLine(s: Solver | null, me: string): string {
 
 /** The card's text. */
 export function captchaText(guild: string | null): string {
-  return `To join ${guild ?? "a server"}. Only the captcha takes your clicks; Harbor never answers it for you.`;
+  return `To join ${guild ?? "a server"}. Only the captcha takes your clicks; Hub never answers it for you.`;
 }

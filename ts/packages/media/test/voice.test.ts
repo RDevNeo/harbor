@@ -116,11 +116,11 @@ test("the external whisper is run with the dictionary as its prompt", async () =
   const model = join(box.data, "harbor", "whisper", "ggml-base.bin");
   writeFileSync(model, "");
   truncateSync(model, 2_000_000);
-  expect(await voice.whisper(samples, "pt", ["SpokPay", "Harbor"])).toBe("Olá do whisper.");
+  expect(await voice.whisper(samples, "pt", ["SpokPay", "Hub"])).toBe("Olá do whisper.");
   const args = readFileSync(join(dir, "args"), "utf8").trim();
   expect(args).toContain(`-m ${model} -f `);
   expect(args).toContain("-l pt -t ");
-  expect(args).toContain("-nt -np --prompt SpokPay, Harbor.");
+  expect(args).toContain("-nt -np --prompt SpokPay, Hub.");
   await voice.whisper(samples, "klingon");
   expect(readFileSync(join(dir, "args"), "utf8")).toContain("-l auto");
 });

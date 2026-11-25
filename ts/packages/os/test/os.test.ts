@@ -401,20 +401,20 @@ describe("autostart", () => {
     const mac = { HARBOR_TEST_PLATFORM: "darwin", HOME: "/Users/sam" };
     expect(autostart.entryPath(linux)).toBe("/h/.config/autostart/harbor.desktop");
     expect(autostart.entryPath({ ...linux, XDG_CONFIG_HOME: "/c" })).toBe("/c/autostart/harbor.desktop");
-    expect(autostart.entryPath(mac)).toBe("/Users/sam/Library/LaunchAgents/dev.harbor.Harbor.plist");
+    expect(autostart.entryPath(mac)).toBe("/Users/sam/Library/LaunchAgents/dev.harbor.Hub.plist");
     const d = autostart.entry("/opt/my apps/harbor", "--background", linux);
     expect(d).toContain('Exec="/opt/my apps/harbor" --background');
     expect(autostart.isOn(d, "--background", linux)).toBe(true);
     expect(autostart.isOn(`${d}Hidden=true\n`, "--background", linux)).toBe(false);
-    const p = autostart.entry("/Applications/Harbor & Co.app/Contents/MacOS/harbor", "--background", mac);
+    const p = autostart.entry("/Applications/Hub & Co.app/Contents/MacOS/harbor", "--background", mac);
     expect(p).toContain("<key>RunAtLoad</key>\n  <true/>");
     expect(autostart.isOn(p, "--background", mac)).toBe(true);
     expect(autostart.isOn(p.replace("<key>RunAtLoad</key>", "<key>Disabled</key>\n  <true/>\n  <key>RunAtLoad</key>"), "--background", mac)).toBe(false);
     // A bundle's executable is opened as the app with Apple's `open` (launchd pins the program's code hash,
     // and an update changes Harbor's).
-    expect(p).toContain("<string>/usr/bin/open</string>\n    <string>-g</string>\n    <string>/Applications/Harbor &amp; Co.app</string>\n    <string>--args</string>\n    <string>--background</string>");
+    expect(p).toContain("<string>/usr/bin/open</string>\n    <string>-g</string>\n    <string>/Applications/Hub &amp; Co.app</string>\n    <string>--args</string>\n    <string>--background</string>");
     // …and Login Items show it as Harbor's (its bundle id), not as `open`.
-    expect(p).toContain("<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>dev.harbor.Harbor</string>\n  </array>");
+    expect(p).toContain("<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>dev.harbor.Hub</string>\n  </array>");
     expect(autostart.entry("/usr/local/bin/harbor-cli", "--background", mac)).toContain("<string>/usr/local/bin/harbor-cli</string>\n    <string>--background</string>");
     expect(autostart.entry("/usr/local/bin/harbor-cli", "--background", mac)).not.toContain("AssociatedBundleIdentifiers");
   });

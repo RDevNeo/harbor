@@ -367,14 +367,14 @@ export class Engine {
     if (!c) throw new Error("no such chat");
     if (to === null) {
       this.pins.setChat(c.gid, null);
-      this.notice(id, "clock", "Unpinned: Harbor may switch its account again");
+      this.notice(id, "clock", "Unpinned: Hub may switch its account again");
       this.pinChanged(id);
       return "Unpinned";
     }
     const acc = this.account(to);
     if (!acc) throw new Error(`unknown account '${to}'`);
     this.pins.setChat(c.gid, pins.pinOf(acc, short(acc)));
-    this.notice(id, "clock", `Pinned to ${short(acc)}: Harbor won't switch it`);
+    this.notice(id, "clock", `Pinned to ${short(acc)}: Hub won't switch it`);
     if (c.account !== to && c.home === "") return this.switchAccount(id, to, { why: "pinned by hand", byUser: true });
     this.pinChanged(id);
     return `Pinned to ${short(acc)}`;
@@ -543,7 +543,7 @@ export class Engine {
     const n = this.store.get(k) ?? "";
     if (n === "") return n;
     this.store.set(k, "");
-    return `[Harbor: ${n}]\n\n`;
+    return `[Hub: ${n}]\n\n`;
   }
 
   /** The worktree a chat runs in (sub-agents: their own, given at spawn or by the lead's checkout tools, else their lead's), if any. */
@@ -718,7 +718,7 @@ export class Engine {
       if (knownAccount(chat.account)) return;
       // A chat on a provider Harbor dropped (Cursor, Gemini, …) says so instead of doing nothing.
       const tr = this.transcript(id);
-      tr.items.push({ kind: "error", text: `Harbor no longer runs ${chat.account}: switch this chat to a Claude, Codex or OpenCode account.` });
+      tr.items.push({ kind: "error", text: `Hub no longer runs ${chat.account}: switch this chat to a Claude, Codex or OpenCode account.` });
       this.persist(id);
       return;
     }
@@ -1245,7 +1245,7 @@ export class Engine {
     for (const [id, dir, pid] of detach.runners(rootDir)) {
       if (this.turns.has(id) || !this.chat(id)) continue;
       const meta = detach.recover(dir, pid, id, userTimes(this.store.items(id)));
-      this.notice(id, "alert", "Picked up a turn Harbor had lost track of");
+      this.notice(id, "alert", "Picked up a turn Hub had lost track of");
       this.pickUp(dir, meta);
     }
   }
@@ -1294,7 +1294,7 @@ export class Engine {
   private restartExited(id: number): void {
     const go = this.resumes(id);
     if (!this.cutOff.delete(id) || !go || this.turns.has(id) || this.limits.paused.has(id)) return;
-    this.notice(id, "restart", "The turn was cut off while Harbor was away · continuing");
+    this.notice(id, "restart", "The turn was cut off while Hub was away · continuing");
     this.startTurn(id, detach.RESTARTED);
   }
 
@@ -1957,7 +1957,7 @@ export class Engine {
     const me = this.chat(chatId);
     if (!me) throw new Error("unknown agent");
     if (me.retired) throw new Error("this agent was retired");
-    if (!this.host.computer) throw new Error("computer use isn't part of this Harbor");
+    if (!this.host.computer) throw new Error("computer use isn't part of this Hub");
     return this.host.computer(me, args);
   }
 
@@ -1976,7 +1976,7 @@ export class Engine {
     const pin = this.pinOf(id);
     if (pin !== null && opts.byUser !== true && pin.account !== to) {
       const whose = pin.scope === "project" ? "its project is pinned" : "it's pinned";
-      throw new Error(`${c.role === "sub" ? c.name : "that chat"} stays on ${pin.pin.label}: ${whose} to that account by the user, so Harbor won't switch it. Leave it there (it waits for a reset at a limit), or ask the user to unpin it.`);
+      throw new Error(`${c.role === "sub" ? c.name : "that chat"} stays on ${pin.pin.label}: ${whose} to that account by the user, so Hub won't switch it. Leave it there (it waits for a reset at a limit), or ask the user to unpin it.`);
     }
     const acc = this.account(to);
     if (!acc) throw new Error(`unknown account '${to}'. Use list_models.`);
@@ -2245,7 +2245,7 @@ export function mcpFailNotice(servers: readonly (readonly [string, string])[], o
 }
 
 export const MCP_FAIL_DETAIL =
-  "Claude Code couldn't reach these servers of Harbor's when this turn started, so their tools are missing until it ends. When they all failed at once, Harbor's MCP bridge was out of reach.";
+  "Claude Code couldn't reach these servers of Hub's when this turn started, so their tools are missing until it ends. When they all failed at once, Hub's MCP bridge was out of reach.";
 
 function noticedThisTurn(items: readonly Item[], text: string): boolean {
   for (let i = items.length - 1; i >= 0; i--) {

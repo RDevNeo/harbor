@@ -182,7 +182,7 @@ export class Pins {
 export function pinTip(p: Pinned, name: string): string {
   const whose = p.scope === "project" ? " (this project's pin)" : "";
   if (p.why !== "") return `Pinned to ${name}${whose}, which ${p.why}: pick another account or unpin`;
-  return `Pinned to ${name}${whose}: Harbor won't switch it`;
+  return `Pinned to ${name}${whose}: Hub won't switch it`;
 }
 
 /** A pin as the phone gets it (chat JSON `pin`, a project's `pin`): `account` its id here (null: not on this PC),

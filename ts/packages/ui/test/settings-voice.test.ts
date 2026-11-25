@@ -72,26 +72,26 @@ test("the speech model downloads by itself: no model row, and the microphone row
 });
 
 test("voice dictionary lists the words, then the form to add or edit one", () => {
-  const f = facts({ dict: [{ term: "SpokPay", sounds: ["spoke pay", "spock pay"] }, { term: "Harbor", sounds: [] }] });
+  const f = facts({ dict: [{ term: "SpokPay", sounds: ["spoke pay", "spock pay"] }, { term: "Hub", sounds: [] }] });
   const rows = voiceView(f).sections[2]?.rows ?? [];
   expect(rows.map((r) => [r.title, r.desc])).toEqual([
     ["SpokPay", "Sounds like: spoke pay, spock pay"],
-    ["Harbor", ""],
+    ["Hub", ""],
     ["Add a word", "Spelled exactly like this when you say it (\"SpokPay\"). Sounds like, optional: how it comes out wrong, comma-separated (\"spoke pay\")."],
   ]);
   expect(rows[0]?.buttons.map((b) => b.key)).toEqual(["voice:dict:edit:0", "voice:dict:remove:0"]);
   expect(rows[2]).toMatchObject({ kind: "add", buttons: [{ key: "voice:dict:save", label: "Add", enabled: false }] });
-  const editing = voiceView({ ...f, editing: true, term: "Harbor", sounds: "harbour" }).sections[2]?.rows[2];
-  expect(editing).toMatchObject({ title: "Edit the word", term: "Harbor", sounds: "harbour", buttons: [{ label: "Save", enabled: true }] });
+  const editing = voiceView({ ...f, editing: true, term: "Hub", sounds: "harbour" }).sections[2]?.rows[2];
+  expect(editing).toMatchObject({ title: "Edit the word", term: "Hub", sounds: "harbour", buttons: [{ label: "Save", enabled: true }] });
 });
 
 test("voice facts read what the speech modules hold, after the stored settings load", () => {
   expect(voiceFacts(ctl, "").cleanup).toBe(false);
-  for (const [k, v] of Object.entries({ voice_lang2: "en", voice_engine: "whisper", voice_keep_min: "15", voice_cleanup: "1", voice_commands: "0", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' })) kv.set(k, v);
+  for (const [k, v] of Object.entries({ voice_lang2: "en", voice_engine: "whisper", voice_keep_min: "15", voice_cleanup: "1", voice_commands: "0", voice_dict: '[{"term":"Hub","sounds":["harbour"]}]' })) kv.set(k, v);
   ctl.load();
   const f = voiceFacts(ctl, "Ctrl+Shift+Space");
   expect([f.lang, f.engine, f.keepMin, f.cleanup, f.commands]).toEqual(["auto", "parakeet", 5, true, true]);
-  expect(f.dict).toEqual([{ term: "Harbor", sounds: ["harbour"] }]);
+  expect(f.dict).toEqual([{ term: "Hub", sounds: ["harbour"] }]);
   expect(f.models.map((m) => [m.name, m.installed, m.used])).toEqual([["tiny", false, false], ["base", false, false], ["small", false, false]]);
   expect([f.parakeet.installed, f.parakeet.loaded, f.download]).toEqual([false, false, null]);
 });

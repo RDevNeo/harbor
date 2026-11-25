@@ -411,9 +411,9 @@ export function saveGuests(kv: Kv, guests: ReadonlyMap<number, Guest>): void {
 /** Told to a guest turn's agent: whose chat it is and what that means here. */
 export function guestNote(g: Guest, me: string, signedIn: boolean): string {
   const who = g.owner === "" ? `the person at '${g.name}'` : `${g.owner} (at '${g.name}')`;
-  let s = `This chat is commanded from another PC of the user's Harbor mesh: you work for ${who}, not for the owner of '${me}', the PC you run on. `;
+  let s = `This chat is commanded from another PC of the user's Hub mesh: you work for ${who}, not for the owner of '${me}', the PC you run on. `;
   if (g.off) s += `'${g.name}' sent no user instructions or memory, so none are loaded; '${me}'s own aren't either. `;
-  else s += `The user instructions, auto-memory and settings loaded are theirs, sent by Harbor from '${g.name}'; memory you save goes back there. `;
+  else s += `The user instructions, auto-memory and settings loaded are theirs, sent by Hub from '${g.name}'; memory you save goes back there. `;
   s += `'${me}' only lends its compute, files and tools: paths are '${me}' paths.`;
   if (!signedIn) s += ` '${me}'s GitHub and app sign-ins belong to its owner, so they are off in this chat (gh is signed out).`;
   return s;
@@ -568,11 +568,11 @@ export function peoplePcLine(p: Pc): string {
 /** Told to every turn while the mesh has other PCs: who has which PC, phone and accounts. */
 export function peopleNote(pcs: readonly Pc[]): string {
   if (pcs.length < 2) return "";
-  let s = 'Harbor mesh, who is who (each PC\'s Harbor says its owner; PCs share chats; "not confirmed" ones were detected from the PC\'s accounts and settings):';
+  let s = 'Hub mesh, who is who (each PC\'s Hub says its owner; PCs share chats; "not confirmed" ones were detected from the PC\'s accounts and settings):';
   for (const p of pcs) {
     const parts = [p.owner === "" ? "owner not set" : `owner ${ownerLabel(p)}`];
     if (p.github !== "") parts.push(`GitHub ${p.github}`);
-    if (p.harbor !== "") parts.push(`Harbor ${p.harbor}`);
+    if (p.harbor !== "") parts.push(`Hub ${p.harbor}`);
     if (p.phones.length > 0) {
       const phones = p.phones.map((n) => {
         const a = p.phone_apps.get(n);

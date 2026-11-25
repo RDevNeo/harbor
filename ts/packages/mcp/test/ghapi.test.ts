@@ -292,7 +292,7 @@ test("a pc that is off, old or not signed in leaves a note, and only a total fai
   r.peerBodies.set("c", { status: 500, body: { error: "boom\nmore" } });
   r.peerBodies.set("d", { status: 503, body: null });
   const ok = await r.api.handle(call([], { path: ["v1", "issues"] }));
-  expect((body(ok) as { notes: string[] }).notes).toEqual(["a: runs an older Harbor", "b: GitHub not connected", "c: boom", "d: didn't answer"]);
+  expect((body(ok) as { notes: string[] }).notes).toEqual(["a: runs an older Hub", "b: GitHub not connected", "c: boom", "d: didn't answer"]);
   const lone = rig();
   lone.ownError = "gh failed hard";
   lone.mesh.peers = [peer("a")];

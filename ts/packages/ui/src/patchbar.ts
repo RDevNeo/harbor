@@ -122,7 +122,7 @@ export class PatchBar {
         return this.host.popup("patch-more", x, y, rows);
       }
       case "trust": {
-        const rows: Row[] = [{ ...this.host.label("A patch is code that runs in Harbor as you: read it first."), kind: "caption" }];
+        const rows: Row[] = [{ ...this.host.label("A patch is code that runs in Hub as you: read it first."), kind: "caption" }];
         for (const f of a.files) {
           rows.push(this.host.separator(), { ...this.host.label(tilde(f.path, this.home)), kind: "caption" });
           rows.push(this.host.item(`Open ${basename(f.path)}`, () => this.host.openFile(f.path), { icon: "" }));
