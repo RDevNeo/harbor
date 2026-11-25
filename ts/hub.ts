@@ -1,3 +1,4 @@
+import { SecretTools } from "./secrettools.ts";
 import { provupdate } from "./packages/agents/src/index.ts";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -634,6 +635,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
   // The lead's checkout tools (create_branch, switch_branch…): the picker's code, driven by the agent.
   const checkoutTools = new CheckoutTools({ store, engine: () => eng(), worktrees });
+  // Keys for agents (secrettools.ts): the secret team tools and their cards' phone API.
+  const secretTools = new SecretTools({ store, engine: () => eng(), touch: (chat) => void hub.touch(chat, false) });
   // Delete merged worktrees: on this PC's own chats only, never on a copy of someone's data.
   // Moved or renamed folders followed (foldertrack.ts): this PC's own Harbor only, never a rig on a copy of its data.
   const folders = offline
@@ -1077,7 +1080,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     dropChat: (c) => worktrees.drop(c),
     worktrees: newWorktree,
     openedFrom: (chat, gid, title) => eng().notice(chat, "chat", openchat.openedBy(title), `${openchat.LINK}${gid}`),
-    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, moves, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
+    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, moves, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), secrets: secretTools }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
     profileCheck: profileCheckNow,
     bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName, online: (pc) => hub.mesh.online(pc) }, chat, nowMs),
@@ -1162,7 +1165,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     remote: (m, args, ctx) => machines.remoteComputer(m, args, ctx),
   });
   const host: HubHost = {
-    tool: (chat, name, args) => checkoutTools.tool(chat, name, args),
+    tool: (chat, name, args) => secretTools.tool(chat, name, args) ?? checkoutTools.tool(chat, name, args),
     makeWorktree: (lead, branch, base) => checkoutTools.makeWorktree(lead, branch, base),
     computer: (chat, args) =>
       computer.call(args, {
@@ -1563,6 +1566,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // to the database from outside (another tool, a fix by hand) applies without a restart.
   const voiceKv = setInterval(() => dictate.loadFrom(store), 15_000);
   voiceKv.unref();
+  // Uses of keys whose time is up end (not on a copy of someone's data: nothing acts on its own there).
+  if (!offline) secretTools.start();
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   signedIn = () => signIn && account.account() !== null;
   // Until the first read of the workspace cloud, its chats here may be older than theirs elsewhere: they sync.
@@ -1661,6 +1666,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       folders?.stop();
       // Pull request lookups still out (git, gh) would land on a closed store.
       prs.stop();
+      secretTools.stop();
       // Turns still starting would land on a closed store: they're left to their runners, as the running ones below.
       live.close();
       hub.onDrafts = null;

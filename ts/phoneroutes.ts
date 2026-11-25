@@ -26,6 +26,7 @@ import * as limits from "./packages/store/src/limits.ts";
 import { dictate } from "./packages/media/src/index.ts";
 import { fit, known } from "./packages/ui/src/logic/phoneui.ts";
 import { phoneSettings, phoneSettingsDo } from "./packages/ui/src/logic/settings-phone.ts";
+import { askJson, NotFound, type SecretTools } from "./secrettools.ts";
 
 export interface RouteHost {
   store: Store;
@@ -44,6 +45,8 @@ export interface RouteHost {
   /** Move to workspace… (`/v1/chats/{id}/workspace`, `/workspaces`). */
   moves?: WorkspaceMoves;
   wantPr(chat: number): void;
+  /** Keys for agents: the cards' answers (secrettools.ts). */
+  secrets?: SecretTools;
 }
 
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -587,15 +590,17 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
 
   // The chat's patch buttons that open a page (agents/src/patches.ts): the phone shows those over its composer.
   const patchScan = new patches.Patches(h.store);
-  const patchLinks = async (chat: Chat): Promise<{ title: string; url: string }[]> => {
+  const patchFiles = async (chat: Chat): Promise<patches.PatchFile[]> => {
     if (chat.home !== "") return [];
     const e = h.engine();
     const r = chat.repoId === null ? undefined : e.repo(chat.repoId);
     const dirs = patches.patchDirs(e.chatCwd(chat), r ? (r.local ?? r.path) : null, homedir());
     patchScan.scan(dirs);
     await patchScan.settled();
-    return patchScan.scan(dirs).flatMap((f) => f.actions.filter((a) => a.kind === "url").map((a) => ({ title: a.title, url: a.value })));
+    return patchScan.scan(dirs);
   };
+  const patchLinks = async (chat: Chat): Promise<{ title: string; url: string }[]> =>
+    (await patchFiles(chat)).flatMap((f) => f.actions.filter((a) => a.kind === "url").map((a) => ({ title: a.title, url: a.value })));
 
   return async (call, chat) => {
     const p = call.path;
@@ -622,6 +627,48 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         return ok({ ok: true, branch: d.renamed.branch, old: d.renamed.old, remote: d.renamed.remote, name: d.folder, path: d.path, folder_waits: d.waits, said: wt.renameSaid(d) });
       } catch (x) {
         return err(409, x instanceof Error ? x.message : String(x));
+      }
+    }
+    // The chat's patches waiting for trust (the desktop's "Patch to trust" chip), and trusting one.
+    if (p[0] === "v1" && p[1] === "chats" && chat !== null && p[3] === "patches" && ((p.length === 5 && m === "GET" && p[4] === "untrusted") || (p.length === 6 && m === "POST" && p[5] === "trust"))) {
+      const files = await patchFiles(chat);
+      if (p.length === 5) return ok({ patches: files.filter((f) => f.state === "untrusted" || f.state === "blocked").map((f) => ({ id: f.hash.slice(0, 16), title: f.name, path: f.path, state: f.state, error: f.error })) });
+      const pid = p[4] ?? "";
+      const on = body(call).trust !== false;
+      const f = pid.length >= 8 ? files.find((x) => x.hash.startsWith(pid)) : undefined;
+      if (f === undefined) return err(404, "No such patch in this chat's folders (it may have changed: look again).");
+      if (on && f.state === "blocked") return err(409, `This patch can't be trusted: ${f.error}`);
+      if (on) patches.trust(h.store, f.hash);
+      else patches.untrust(h.store, f.hash);
+      h.hub.touch(chat.id, false);
+      return ok({ ok: true });
+    }
+    // A lead's team (GET /v1/chats/{id}/team): stop a process, cancel a wake-up, delete a webhook, as the desktop's team panel does.
+    if (p[0] === "v1" && p[1] === "chats" && chat !== null && p[3] === "team" && (p.length === 6 || p.length === 7)) {
+      const e = h.engine();
+      const lead = chat.role === "sub" ? (chat.parent ?? chat.id) : chat.id;
+      const lc = e.chat(lead);
+      const id = Number(p[5]);
+      const what = p[4] ?? "";
+      const known = (what === "processes" && m === "POST" && p.length === 7 && p[6] === "stop") || (["wakeups", "webhooks"].includes(what) && m === "DELETE" && p.length === 6);
+      if (known && lc && lc.home !== "") return err(409, `This team runs on ${h.hub.mesh.nameOf(lc.home)}.`);
+      if (known && !Number.isInteger(id)) return err(404, "no such id");
+      if (known && what === "processes") {
+        const proc = e.procs.find((x) => x.id === id && x.lead === lead);
+        if (!proc) return err(404, "That process isn't running.");
+        proc.stop();
+      } else if (known && what === "wakeups") {
+        if (!e.timers.some((t) => t.id === id && t.chatId === lead)) return err(404, "No such wake-up.");
+        h.store.deleteTimer(id);
+        e.timers = e.timers.filter((t) => t.id !== id);
+      } else if (known && what === "webhooks") {
+        if (!e.webhooks.some((w) => w.id === id && w.repoId === (lc?.repoId ?? null))) return err(404, "No such webhook in this project.");
+        h.store.deleteWebhook(id);
+        e.webhooks = h.store.webhooks();
+      }
+      if (known) {
+        h.hub.touch(lead, false);
+        return ok({ ok: true });
       }
     }
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 4) {
@@ -680,6 +727,25 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       }
       const screen = fit(phoneSettings(h.store, { dictionary: dictate.dictionary().map((e) => e.term), projects: projectsChoices(homedir()) }), known(b.prims));
       return ok(plain(say === undefined ? screen : { ...screen, say }));
+    }
+    // Keys asked for by agents (secrettools.ts): the cards of a chat (?chat=ID or gid) or of every chat here, and their answers.
+    if (p[1] === "secrets" && p[2] === "asks" && h.secrets !== undefined) {
+      const st = h.secrets;
+      if (p.length === 3 && m === "GET") {
+        const ref = query(call, "chat");
+        const c = ref === null ? null : resolve(ref);
+        if (ref !== null && c === null) return ok({ asks: [] });
+        const e = h.engine();
+        return ok(plain({ asks: st.asks(c?.id ?? null).map((a) => askJson(a, call.global ? (e.chat(a.chat)?.gid || a.chat) : a.chat)) }));
+      }
+      if (p.length === 4 && m === "POST") {
+        try {
+          st.answer(p[3] ?? "", body(call));
+          return ok({ ok: true });
+        } catch (x) {
+          return err(x instanceof NotFound ? 404 : 400, x instanceof Error ? x.message : String(x));
+        }
+      }
     }
     if (p.length !== 2) return null;
     if (m === "GET" && p[1] === "workspace") return workspaceInfo(call);

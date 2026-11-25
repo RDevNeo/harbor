@@ -2683,3 +2683,24 @@ The release workflow attaches `harbor-android.apk` and `harbor-android.apk.minis
 (0.7.0 → 7000). Harbor's updater and install.sh fetch it into the install folder
 (`~/.local/lib/harbor/harbor-android.apk`, with `harbor-android.version` beside it); builds from
 source keep it in `~/.local/share/harbor/` (Settings › Phones › Download).
+
+## Person Hub's engine (branch `person-hub-embed`)
+
+Calls only the Harbor inside Person Hub answers (other Harbors say 404, which hides what uses them).
+
+- `GET /v1/secrets/asks[?chat=ID|gid]` → `{"asks": [{"id", "chat", "kind": "value"|"use"|"env",
+  "names": [..], "reason", "agent", "minutes", "how_to_get", "env_file", "env_var",
+  "spans": [{"kind": "minutes", "minutes", "label"} | {"kind": "not", "label"}]}]}`: the cards of
+  request_secret (`value`), request_secret_access (`use`) and write_secret_to_env (`env`, no spans)
+  waiting on this PC. A change of a chat's cards puts the chat in `changed_chats`.
+- `POST /v1/secrets/asks/{id}` with `{"value", "span"?}` (value; span `{"kind":"not"}` saves it
+  with no use), `{"span"?}` (use; default the minutes asked), `{}` (env: write it) or
+  `{"deny": true}` → `{"ok": true}`; `400 {error}` (a value under 4 characters, a bad span or .env
+  file), `404` when it's answered already. The agent gets a `[secret NAME]` message.
+- `GET /v1/chats/{id}/patches/untrusted` → `{"patches": [{"id", "title", "path", "state":
+  "untrusted"|"blocked", "error"}]}`; `POST /v1/chats/{id}/patches/{id}/trust {"trust": bool}` →
+  `{"ok": true}` (`409` for a blocked one, `404` when it changed: look again).
+- A lead's team: `POST /v1/chats/{id}/team/processes/{pid}/stop`, `DELETE
+  /v1/chats/{id}/team/wakeups/{wid}`, `DELETE /v1/chats/{id}/team/webhooks/{hid}` → `{"ok": true}`;
+  `404` when it isn't the team's, `409` when the team runs on another PC. The lead goes in
+  `changed_chats`.
