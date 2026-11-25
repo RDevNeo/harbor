@@ -70,6 +70,8 @@ export component AppTabs {
 /** A full-window tab page: a header with the switcher (and `title`), the tab's own content under it. */
 export component TabFrame inherits Rectangle {
     in property <string> title;
+    /** The height under the header: a page sets `y: 0; height: frame.body-h` (children without y are centered). */
+    out property <length> body-h: self.height - round(46px / 1phx) * 1phx;
     background: Theme.bg100;
     // Clicks don't fall through to the Projects window under it.
     TouchArea { }

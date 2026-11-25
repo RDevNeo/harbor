@@ -2847,8 +2847,10 @@ export component AppWindow inherits Window {
             width: root.width;
             height: root.height;
             PersonsPage {
+                x: 0;
+                y: 0;
                 width: parent.width;
-                height: parent.height;
+                height: parent.body-h;
             }
         }
         if TabsBus.current == "routine": TabFrame {
@@ -2857,8 +2859,10 @@ export component AppWindow inherits Window {
             width: root.width;
             height: root.height;
             RoutinePage {
+                x: 0;
+                y: 0;
                 width: parent.width;
-                height: parent.height;
+                height: parent.body-h;
             }
         }
         if root.palette-open: PaletteOverlay {
