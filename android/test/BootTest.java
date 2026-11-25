@@ -147,7 +147,7 @@ public class BootTest {
         File z5 = codeZip(dl, 189003, "0.189.3", SHELL, true);
         check(stageErr(other, z5, sign(z5, "0.189.3", Boot.ASSET), "0.189.3", key, 189004).startsWith("unusable"), "not newer than the code running");
         File z6 = codeZip(dl, 189005, "0.189.5", SHELL, false);
-        check(stageErr(other, z6, sign(z6, "0.189.5", Boot.ASSET), "0.189.5", key, 0).startsWith("io: not Harbor's app code"), "no classes.dex in it");
+        check(stageErr(other, z6, sign(z6, "0.189.5", Boot.ASSET), "0.189.5", key, 0).startsWith("io: not Hub's app code"), "no classes.dex in it");
 
         // ---- process starts ----
         File d = fresh("start");

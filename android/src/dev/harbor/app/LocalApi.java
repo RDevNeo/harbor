@@ -38,7 +38,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Harbor's local API for other apps on this phone (PROTOCOL.md, "Local API for other apps"):
- *  plain HTTP on 127.0.0.1:47999 only, so an app (a Capacitor WebView too) can hold a chat with
+ *  plain HTTP on 127.0.0.1:47998 only, so an app (a Capacitor WebView too) can hold a chat with
  *  one Harbor chat without opening Harbor, through this phone's own connection to its PCs. It
  *  runs while Harbor's process does (Listen keeps that up in the background). Who may call: an
  *  app the user allowed once for one chat (a pairing: the app opens an approval link, Android

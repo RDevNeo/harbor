@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
 
 /** A test build's hooks for the local API (scripts/boat/phoneshot --broadcast; never in a
  *  release, Rig.on()): RIG_LOCAL_PAIR runs the API end to end from inside the app, as another
- *  app's client would over 127.0.0.1:47999 (raw sockets, so each header is the one written
+ *  app's client would over 127.0.0.1:47998 (raw sockets, so each header is the one written
  *  here), pairing with the rig chat "Speed up the checkout page" (code LocalApi.RIG_CODE: the
  *  approval link is `--view cards --approve <it>`), and logs "LOCALAPI PASS|FAIL …" lines;
  *  RIG_LOCAL_ALLOW / RIG_LOCAL_DENY tap Allow / Don't allow on the approval dialog (and check that

@@ -268,7 +268,8 @@ final class Account {
 
     static boolean isCallback(Intent i) {
         Uri u = i == null ? null : i.getData();
-        return u != null && "harbor".equals(u.getScheme()) && "oauth".equals(u.getHost());
+        // Hub's manifest takes hub://oauth (its own account service's bounce); harbor:// is Harbor's.
+        return u != null && (Pair.SCHEME.equals(u.getScheme()) || "harbor".equals(u.getScheme())) && "oauth".equals(u.getHost());
     }
 
     /** The browser came back (on a background thread): the code for tokens, then the session

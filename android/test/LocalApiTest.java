@@ -25,7 +25,7 @@ public final class LocalApiTest {
         }
     }
 
-    static String H = "Host: 127.0.0.1:47999";
+    static String H = "Host: 127.0.0.1:47998";
 
     static LocalGate.Route route(String method, String path, String... headers) {
         StringBuilder b = new StringBuilder(method + " " + path + " HTTP/1.1\r\n");
@@ -63,7 +63,7 @@ public final class LocalApiTest {
         String msgs = "/local/v1/chats/" + chat + "/messages";
 
         // ---- HTTP ----
-        LocalHttp.Req r = req("POST /local/v1/pair?x=1&wait=5 HTTP/1.1\r\nHost: 127.0.0.1:47999\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
+        LocalHttp.Req r = req("POST /local/v1/pair?x=1&wait=5 HTTP/1.1\r\nHost: 127.0.0.1:47998\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
         eq(r.method, "POST", "method");
         eq(r.path, "/local/v1/pair", "path");
         eq(r.param("wait"), "5", "query parameter");
@@ -83,8 +83,8 @@ public final class LocalApiTest {
 
         // ---- Host and Origin ----
         eq(status(route("GET", "/local/v1/status", H)), 0, "status passes");
-        eq(status(route("GET", "/local/v1/status", "Host: localhost:47999")), 0, "localhost passes");
-        eq(code(route("GET", "/local/v1/status", "Host: evil.example:47999")), "bad_host", "DNS rebinding: other Host");
+        eq(status(route("GET", "/local/v1/status", "Host: localhost:47998")), 0, "localhost passes");
+        eq(code(route("GET", "/local/v1/status", "Host: evil.example:47998")), "bad_host", "DNS rebinding: other Host");
         eq(code(route("GET", "/local/v1/status")), "bad_host", "no Host");
         LocalGate.Route evil = route("GET", "/local/v1/status", H, "Origin: https://evil.example");
         eq(status(evil), 400, "a web page elsewhere: 400");
@@ -222,7 +222,7 @@ public final class LocalApiTest {
         String[] pr = LocalGate.prompt(wh, "Weekly plan");
         eq(pr[0], "Let “Shift Planner” chat with “Weekly plan”?", "unverified title");
         eq(pr[1].startsWith("An app calling itself “Shift Planner” asks to send messages"), true, "unverified message: " + pr[1]);
-        eq(pr[1].contains("Harbor couldn't confirm which app it is"), true, "says it couldn't confirm");
+        eq(pr[1].contains("Hub couldn't confirm which app it is"), true, "says it couldn't confirm");
         LocalGate.Sources ref = new LocalGate.Sources();
         ref.sdk = 34; ref.referrer = "android-app://com.example.shifts"; ref.claimed = "Shift Planner";
         wh = LocalGate.identify(ref, own);
@@ -233,7 +233,7 @@ public final class LocalApiTest {
         eq(pr[1].startsWith("Shift Planner (com.example.shifts) asks"), true, "verified message: " + pr[1]);
         eq(pr[1].contains("couldn't confirm"), false, "no doubt when verified");
         wh.label = "";
-        eq(LocalGate.prompt(wh, "T")[0], "Let com.example.shifts chat with “T”?", "a verified app Harbor can't see by its package");
+        eq(LocalGate.prompt(wh, "T")[0], "Let com.example.shifts chat with “T”?", "a verified app Hub can't see by its package");
         eq(LocalGate.prompt(wh, "T")[1].contains("It calls itself “Shift Planner”."), true, "and the name it gives");
         LocalGate.Sources shared = new LocalGate.Sources();
         shared.sdk = 34; shared.fresh = true; shared.launchedPkg = "com.example.shifts"; shared.referrer = "android-app://com.example.other";
@@ -257,7 +257,7 @@ public final class LocalApiTest {
         eq(LocalGate.identify(call, own).how, "calling-package", "startActivityForResult's caller");
         LocalGate.Sources self = new LocalGate.Sources();
         self.sdk = 34; self.fresh = true; self.launchedPkg = own; self.referrer = "android-app://" + own;
-        eq(LocalGate.identify(self, own).verified(), false, "Harbor itself is never the answer");
+        eq(LocalGate.identify(self, own).verified(), false, "Hub itself is never the answer");
         LocalGate.Sources fake = new LocalGate.Sources();
         fake.sdk = 34; fake.extraReferrer = "android-app://com.example.bank"; fake.claimed = "Shift Planner";
         wh = LocalGate.identify(fake, own);

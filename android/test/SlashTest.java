@@ -33,7 +33,7 @@ public class SlashTest {
         boolean harbor = "harbor".equals(source);
         String desc = !harbor ? name + " does things" : "model".equals(name) ? "Switch the model for this chat"
                 : "Switch this chat to read only: it reads and plans, changes nothing";
-        return new SlashList.Entry(name, Collections.<String>emptyList(), desc, "", source, harbor ? "Harbor" : source, skill, harbor ? name : null);
+        return new SlashList.Entry(name, Collections.<String>emptyList(), desc, "", source, harbor ? "Hub" : source, skill, harbor ? name : null);
     }
 
     private static List<String> find(List<SlashList.Entry> all, String text) {
@@ -56,7 +56,7 @@ public class SlashTest {
         // replaces_the_word
         same(put("/co", 3, "/compact"), "/compact |9", "put at the end");
         same(put("/co more", 2, "/compact"), "/compact more|9", "put before more text");
-        same(put("/mod hello", 3, ""), "hello|0", "a Harbor command takes its word and space");
+        same(put("/mod hello", 3, ""), "hello|0", "a Hub command takes its word and space");
         same(put("é /sk", 5, "/skill"), "é /skill |9", "put after other text");
 
         // ranks_and_filters (Harbor's /model and /plan, then the user's files, for Codex)
@@ -65,7 +65,7 @@ public class SlashTest {
         same(find(all, "/review"), "[review-pr, code-review]", "prefix before word boundary");
         same(find(all, "/dpl"), "[deploy]", "letters in order");
         same(find(all, "/zzz"), "[]", "no match");
-        same(find(all, "/"), "[model, plan, code-review, deploy, review-pr]", "everything: Harbor's first, then by name");
+        same(find(all, "/"), "[model, plan, code-review, deploy, review-pr]", "everything: Hub's first, then by name");
         same(find(all, "look at /rev"), "[code-review]", "mid-message: skills only");
         same(find(all, "/model"), "[model]", "exact name");
         same(find(all, "/things"), "[code-review, deploy, review-pr]", "descriptions match too");

@@ -19,12 +19,12 @@ public class UpdateTest {
         long g = Quiet.GRACE_MS;
         check(Quiet.now(false, false, false, 0), "screen off: at once");
         check(Quiet.now(false, true, true, 0), "lock screen up: at once");
-        check(!Quiet.now(false, true, false, 0), "just left Harbor for another app: not yet");
+        check(!Quiet.now(false, true, false, 0), "just left Hub for another app: not yet");
         check(!Quiet.now(false, true, false, g - 1), "still within the grace");
         check(Quiet.now(false, true, false, g), "out of sight for the grace: installs");
-        check(Quiet.now(false, true, false, Long.MAX_VALUE), "no Harbor screen in this process yet (a job, the service)");
-        check(!Quiet.now(true, true, false, Long.MAX_VALUE), "Harbor on screen");
-        check(!Quiet.now(true, false, true, Long.MAX_VALUE), "a Harbor screen still on screen (seen wins over screen off)");
+        check(Quiet.now(false, true, false, Long.MAX_VALUE), "no Hub screen in this process yet (a job, the service)");
+        check(!Quiet.now(true, true, false, Long.MAX_VALUE), "Hub on screen");
+        check(!Quiet.now(true, false, true, Long.MAX_VALUE), "a Hub screen still on screen (seen wins over screen off)");
         check(10_000 >= g && g >= 3_000, "the grace is short: " + g);
 
         // Release news: which release to ask about, and what counts as newer.
@@ -59,7 +59,7 @@ public class UpdateTest {
         same(Quiet.plan(54000, 53000, 53000, true, 54000), Quiet.NONE, "blocked and offered");
         same(Quiet.plan(53000, 53000, 53000, true, 53000), Quiet.NONE, "blocked, up to date");
 
-        // The "Harbor X is ready" sheet: once per version, back for a newer one.
+        // The "Hub X is ready" sheet: once per version, back for a newer one.
         check(Quiet.prompt(53000, 52000, 0), "newer, never shown");
         check(!Quiet.prompt(53000, 52000, 53000), "shown for it already");
         check(Quiet.prompt(54000, 52000, 53000), "a newer one than the dismissed one");
@@ -98,7 +98,7 @@ public class UpdateTest {
         check(Quiet.restart(true, true, true, 0), "quiet, the listener can start again: at once");
         check(!Quiet.restart(true, true, false, 0), "quiet, the listener couldn't start again: waits");
         check(Quiet.restart(true, true, false, Quiet.STAGED_MAX_MS), "until it has waited long enough");
-        check(!Quiet.restart(false, false, true, Long.MAX_VALUE), "never while someone sees Harbor");
+        check(!Quiet.restart(false, false, true, Long.MAX_VALUE), "never while someone sees Hub");
 
         if (failed > 0) { System.err.println(failed + " update checks failed"); System.exit(1); }
         System.out.println("UpdateTest ok");

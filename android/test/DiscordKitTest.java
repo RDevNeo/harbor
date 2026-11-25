@@ -72,8 +72,8 @@ public class DiscordKitTest {
         int[] back = DiscordKit.cropToPage(v[0], v[1], 250, 300, crop);
         same(back[0] + "," + back[1], "400,100", "and back to the page");
         same(DiscordKit.pageToView(null, crop, 250, 300), null, "no rect");
-        same(DiscordKit.cardIntro("Cats"), "To join Cats. Only the captcha takes your taps; Harbor never answers it for you.", "card intro");
-        same(DiscordKit.cardIntro(null), "To join a server. Only the captcha takes your taps; Harbor never answers it for you.", "card intro without a name");
+        same(DiscordKit.cardIntro("Cats"), "To join Cats. Only the captcha takes your taps; Hub never answers it for you.", "card intro");
+        same(DiscordKit.cardIntro(null), "To join a server. Only the captcha takes your taps; Hub never answers it for you.", "card intro without a name");
 
         // The frame loop's pace: at most ~15 calls a second, older PCs every 500 ms.
         same(DiscordKit.nextCall(true, 1000, 1010), 56, "a quick answer waits out the 66 ms");
@@ -119,8 +119,8 @@ public class DiscordKitTest {
         same(p[0] + "," + p[1], "495,-18", "a drag past the edge goes as it is (the PC clamps)");
 
         // The lines, as the desktop says them.
-        same(DiscordKit.intro("Cats"), "To join Cats, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro");
-        same(DiscordKit.intro(""), "To join a server, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro without a name");
+        same(DiscordKit.intro("Cats"), "To join Cats, Discord wants a person to solve this. Only the captcha takes your taps; Hub never answers it for you.", "intro");
+        same(DiscordKit.intro(""), "To join a server, Discord wants a person to solve this. Only the captcha takes your taps; Hub never answers it for you.", "intro without a name");
         same(DiscordKit.outcome("joined", "Cats"), "Discord joined Cats", "joined");
         same(DiscordKit.outcome("closed", "Cats"), "Not joined: the captcha was closed", "closed");
         same(DiscordKit.outcome("timeout", ""), "Not joined: nobody solved the captcha in time", "timeout");

@@ -22,7 +22,7 @@ public final class PairTest {
         eq(parsed("hub://pair?fp=" + fp + "&addrs=h"), null, "no code");
         eq(parsed("hub://pair?fp=" + fp + "&code=c"), null, "no address");
         eq(parsed("hub://pair?fp=abc&addrs=h&code=c"), null, "a bad key");
-        eq(parsed("harbor://pair?fp=" + fp + "&addrs=h&code=c"), null, "Harbor's scheme");
+        eq(parsed("harbor://pair?fp=" + fp + "&addrs=h&code=c"), null, "Harbor's scheme is not Hub's");
         eq(parsed("hub://chat/abc"), null, "a chat link");
         eq(parsed(null), null, "nothing");
         eq(PairLink.label(PairLink.parse("hub://pair?fp=" + fp + "&addrs=h&code=c")), "PC abababab", "label without a name");
