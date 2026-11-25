@@ -66,6 +66,15 @@
       "name": "@harbor/os",
       "version": "0.0.0",
     },
+    "packages/persons": {
+      "name": "@harbor/persons",
+      "version": "0.0.0",
+      "dependencies": {
+        "@harbor/mcp": "workspace:*",
+        "@harbor/os": "workspace:*",
+        "@harbor/store": "workspace:*",
+      },
+    },
     "packages/store": {
       "name": "@harbor/store",
       "version": "0.0.0",
@@ -109,6 +118,8 @@
     "@harbor/net": ["@harbor/net@workspace:packages/net"],
 
     "@harbor/os": ["@harbor/os@workspace:packages/os"],
+
+    "@harbor/persons": ["@harbor/persons@workspace:packages/persons"],
 
     "@harbor/store": ["@harbor/store@workspace:packages/store"],
 

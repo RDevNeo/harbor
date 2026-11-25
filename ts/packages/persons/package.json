@@ -1,0 +1,13 @@
+{
+  "name": "@harbor/persons",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@harbor/os": "workspace:*",
+    "@harbor/store": "workspace:*",
+    "@harbor/mcp": "workspace:*"
+  }
+}
