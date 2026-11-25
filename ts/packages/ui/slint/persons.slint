@@ -305,6 +305,16 @@ component Sidebar inherits SideSurface {
             hide => {
                 PersonsBus.side-hidden = true;
             }
+            // Search in the rightmost slot, as Projects' (refresh, search).
+            Btn {
+                icon: Icons.plus;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Add person";
+                clicked => {
+                    PersonsBus.add-person();
+                }
+            }
             Btn {
                 icon: Icons.search;
                 size: icon-xs;
@@ -313,15 +323,6 @@ component Sidebar inherits SideSurface {
                 clicked => {
                     PersonsBus.want-search = true;
                     PersonsBus.all-people();
-                }
-            }
-            Btn {
-                icon: Icons.plus;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Add person";
-                clicked => {
-                    PersonsBus.add-person();
                 }
             }
         }

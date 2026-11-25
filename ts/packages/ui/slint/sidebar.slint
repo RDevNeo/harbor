@@ -183,6 +183,8 @@ component ThreadRow {
     callback drag(length, length);
     callback dropped(length, length);
     property <bool> far;
+    // The left button is down on this row (only it drags).
+    property <bool> left-held;
     callback settle(bool);
     // Under the clock button, in window coordinates.
     callback snooze(length, length);
@@ -224,17 +226,24 @@ component ThreadRow {
             }
             pointer-event(e) => {
                 if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                    root.far = false;
+                    root.left-held = false;
                     root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                 }
                 if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
                     root.far = false;
+                    root.left-held = true;
                 }
-                if e.kind == PointerEventKind.up && e.button == PointerEventButton.left && root.far {
-                    root.dropped(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                    root.left-held = false;
+                    if root.far {
+                        root.dropped(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    }
                 }
             }
             moved => {
-                root.far = root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px;
+                // Only the left button drags: a right press that moves (into its menu) isn't a drag.
+                root.far = root.left-held && (root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
                 if root.far {
                     root.drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                 }
@@ -444,6 +453,8 @@ component ProjectRow {
     out property <bool> above: drag-y < self.absolute-position.y + self.height / 2;
     property <bool> dragging: drag-id == data.id;
     property <bool> far;
+    // The left button is down on this row (only it drags).
+    property <bool> left-held;
     // While a drag runs the pressed handle keeps the hover, so the pointer's row shows it instead.
     property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || chevron.has-hover || shared.has-hover || plus.hovered || snooze.hovered;
     // Its icon, after the fold's chevron; its name after that.
@@ -470,17 +481,24 @@ component ProjectRow {
         }
         pointer-event(e) => {
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.chat-far = false;
+                root.left-held = false;
                 root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
                 root.chat-far = false;
+                root.left-held = true;
             }
-            if e.kind == PointerEventKind.up && e.button == PointerEventButton.left && root.chat-far {
-                root.chat-drop(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                root.left-held = false;
+                if root.chat-far {
+                    root.chat-drop(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
             }
         }
         moved => {
-            root.chat-far = root.data.chat >= 0 && (root.chat-far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
+            // Only the left button drags: a right press that moves (into its menu) isn't a drag (its ghost covered the menu).
+            root.chat-far = root.left-held && root.data.chat >= 0 && (root.chat-far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
             if root.chat-far {
                 root.chat-drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
@@ -494,14 +512,18 @@ component ProjectRow {
         pointer-event(e) => {
             if e.kind == PointerEventKind.down {
                 root.far = false;
+                root.left-held = e.button == PointerEventButton.left;
             }
             if e.kind == PointerEventKind.up && root.dragging {
                 root.dropped();
             }
+            if e.kind == PointerEventKind.up {
+                root.left-held = false;
+            }
         }
         moved => {
-            // egui's click distance: further than 6px is a drag.
-            root.far = root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px;
+            // egui's click distance: further than 6px is a drag (the left button only).
+            root.far = root.left-held && (root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
             if root.far {
                 root.drag(self.absolute-position.y + self.mouse-y);
             }

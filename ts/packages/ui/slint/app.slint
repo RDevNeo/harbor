@@ -2831,13 +2831,14 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.drag-chat >= 0 && root.view == "chat": DragGhost {
+        // Never over an open menu (the menus are drawn before these).
+        if root.drag-chat >= 0 && root.view == "chat" && root.pop-id == "": DragGhost {
             x: min(root.drag-x + 14px, root.width - self.width - 8px);
             y: min(root.drag-y + 10px, root.height - self.height - 8px);
             chat: root.drag-row;
         }
         // Under the pointer's right, clear of the drop label centred on the zone.
-        if root.drag-pane >= 0 && root.view == "chat": PaneGhost {
+        if root.drag-pane >= 0 && root.view == "chat" && root.pop-id == "": PaneGhost {
             x: min(root.drag-x + 16px, root.width - self.width - 8px);
             y: min(root.drag-y + 26px, root.height - self.height - 8px);
             head: root.drag-head;
