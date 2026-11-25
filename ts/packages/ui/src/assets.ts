@@ -45,10 +45,17 @@ import team from "../slint/team.slint" with { type: "file" };
 import terminal from "../slint/terminal.slint" with { type: "file" };
 import theme from "../slint/theme.slint" with { type: "file" };
 import widgets from "../slint/widgets.slint" with { type: "file" };
+// Hub's tabs (tabs.slint) and each tab's own files (persons*.slint: the Persons port's; routine*.slint).
+import tabs from "../slint/tabs.slint" with { type: "file" };
+import persons from "../slint/persons.slint" with { type: "file" };
+import routine from "../slint/routine.slint" with { type: "file" };
 
 export const FILES: Readonly<Record<string, string>> = {
   "addproject.slint": addproject,
   "app.slint": app,
+  "tabs.slint": tabs,
+  "persons.slint": persons,
+  "routine.slint": routine,
   "chat.slint": chat,
   "composer.slint": composer,
   "gallery.slint": gallery,

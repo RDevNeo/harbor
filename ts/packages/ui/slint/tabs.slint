@@ -1,0 +1,103 @@
+// Hub's top-level tabs: Projects (the hub's own window: sidebar, chats) | Persons | Routine (more later).
+// The switcher (AppTabs) sits at the window's top-left in every tab: in Projects' sidebar header (or its top bar while
+// the sidebar is hidden), and in the header of TabFrame, the full-window page every other tab is drawn in.
+// A tab: its own .slint file exporting `<Name>Bus` (a global the TS side drives, src/tabs/<id>/ui.ts) and
+// `<Name>Page`; app.slint draws `if TabsBus.current == "<id>": TabFrame { <Name>Page { … } }`.
+import { Theme } from "theme.slint";
+import { TipArea } from "widgets.slint";
+
+export global TabsBus {
+    /** "projects", "persons", "routine". */
+    in-out property <string> current: "projects";
+    /** A switch asked for (a click, Ctrl+1/2/3): the TS side sets `current`, mounting the tab on its first time. */
+    callback select(string);
+}
+
+struct TabDef {
+    id: string,
+    label: string,
+    icon: string,
+}
+
+/** The switcher: the current tab with its name, the others as icons (their names on hover). */
+export component AppTabs {
+    /** Icons only (the sidebar's header): names on hover, the current one highlighted. */
+    in property <bool> compact;
+    // Lucide: folder-kanban, users, dumbbell
+    property <[TabDef]> tabs: [
+        { id: "projects", label: "Projects", icon: "\u{e4c6}" },
+        { id: "persons", label: "Persons", icon: "\u{e1a4}" },
+        { id: "routine", label: "Routine", icon: "\u{e3a1}" },
+    ];
+    height: 28px;
+    HorizontalLayout {
+        spacing: 2px;
+        for t in root.tabs: Rectangle {
+            property <bool> on: TabsBus.current == t.id;
+            property <bool> named: root.compact ? false : true;
+            width: named ? label.preferred-width + 34px : 28px;
+            border-radius: 6px;
+            background: on ? Theme.gray-200 : area.has-hover ? Theme.accent : transparent;
+            Text {
+                x: 6px;
+                width: 16px;
+                text: t.icon;
+                font-family: "lucide";
+                font-size: 15px;
+                color: on ? Theme.fg : Theme.subtle;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            label := Text {
+                x: 27px;
+                visible: named;
+                text: t.label;
+                font-size: 13px;
+                font-weight: on ? 600 : 400;
+                color: on ? Theme.fg : Theme.subtle;
+                vertical-alignment: center;
+            }
+            area := TipArea {
+                tip: named ? "" : t.label;
+                clicked => {
+                    TabsBus.select(t.id);
+                }
+            }
+        }
+    }
+}
+
+/** A full-window tab page: a header with the switcher (and `title`), the tab's own content under it. */
+export component TabFrame inherits Rectangle {
+    in property <string> title;
+    background: Theme.bg100;
+    // Clicks don't fall through to the Projects window under it.
+    TouchArea { }
+    Rectangle {
+        y: 0;
+        height: round(46px / 1phx) * 1phx;
+        AppTabs {
+            x: 12px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            x: 330px;
+            width: parent.width - self.x - 12px;
+            text: root.title;
+            font-size: 14px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+    Rectangle {
+        y: round(46px / 1phx) * 1phx;
+        height: parent.height - self.y;
+        @children
+    }
+}

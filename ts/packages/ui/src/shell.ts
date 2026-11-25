@@ -26,6 +26,7 @@ import { type Bar, type BarChip, branchClick, renameBranchNote, renameFolderNote
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
 import { type Page, type PageHub, PageHost } from "./pages/host.ts";
+import { TAB_UIS, type TabCtx } from "./tabs/index.ts";
 import { tabFromSlug } from "./logic/pages.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
@@ -521,6 +522,7 @@ export class Shell {
     hub.syncing?.lates?.add((chat) => {
       if (chat !== null && this.view === "chat" && this.chatId === chat) this.toast("This chat didn't finish syncing in time: it's open again");
     });
+    this.mountTabs();
     // The @ menu's file list is read in the background (composer.ts): the menu shows it when it arrives.
     this.menus.onFiles = () => this.refreshMenu();
     const shellMesh = hub.mesh ?? solo;
@@ -1415,6 +1417,7 @@ export class Shell {
     else if (tab !== null) shown = this.pages.openSettings(tab);
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
+    else if (name === "tab") this.selectTab(arg); // Hub's tabs: tab:persons, tab:routine
     else if (name !== "draft") console.error(`HARBOR_VIEW: no view ${v}`);
     // HARBOR_FAKE_ATTACH=a.png,b.txt (scripts/shot --env): files in the composer as if pasted or attached.
     for (const p of process.env.HARBOR_FAKE_ATTACH?.split(",") ?? []) {
@@ -5735,6 +5738,60 @@ export class Shell {
     const s = b.step(performance.now() / 1000, false, this.selHover);
     this.win.sel_shown = s.show;
     if (s.wake !== null) this.selTimer = setTimeout(() => this.stepSelButton(), s.wake * 1000 + 5);
+  }
+
+  /** Hub's top-level tabs (tabs.slint): TabsBus.select switches; a tab's TabUi mounts the first time it's opened. */
+  private readonly tabChanged = new Set<() => void>();
+  /** Switches the top-level tab (as a click on the tab bar). */
+  selectTab: (id: string) => void = () => {};
+  private mountTabs(): void {
+    type Bus = { current: string; select: (id: string) => void };
+    let found: Bus;
+    try {
+      found = busOf<Bus>(this.win, "TabsBus");
+    } catch {
+      return;
+    }
+    const tabs: Bus = found;
+    const mounted = new Set<string>();
+    const ctx = (id: string): TabCtx => ({
+      win: this.win,
+      call: async (method, path, query, body) => {
+        const call = this.hub.call;
+        if (!call) throw new Error("Hub isn't running here");
+        return call(method, path.replace(/^\/+/, ""), query, body);
+      },
+      dark: () => this.dark,
+      toast: (t) => this.toast(t),
+      openExternal: (url) => this.openExternal(url),
+      shown: () => tabs.current === id,
+      onChanged: (f) => void this.tabChanged.add(f),
+    });
+    // What a phone changed shows here too: while a tab besides Projects is on screen, it re-reads every 3 s.
+    const tick = setInterval(() => {
+      if (tabs.current !== "projects") this.tabsChanged();
+    }, 3000);
+    tick.unref?.();
+    const select = (id: string): void => {
+      const was = tabs.current;
+      if (id === was) return;
+      const ui = TAB_UIS.find((t) => t.id === id);
+      if (id !== "projects" && ui === undefined) return;
+      tabs.current = id;
+      if (ui && !mounted.has(id)) {
+        mounted.add(id);
+        void Promise.resolve(ui.mount(ctx(id))).catch((e) => this.toast(`${id}: ${e instanceof Error ? e.message : String(e)}`));
+      }
+      TAB_UIS.find((t) => t.id === was)?.shown?.(false);
+      ui?.shown?.(true);
+    };
+    tabs.select = select;
+    this.selectTab = select;
+  }
+
+  /** The hub said something changed: the tabs re-read what they show. */
+  tabsChanged(): void {
+    for (const f of this.tabChanged) f();
   }
 
   private openExternal(url: string): void {
