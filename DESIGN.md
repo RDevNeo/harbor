@@ -90,6 +90,20 @@ Per tab:
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
 
+## Text input (every tab)
+
+Tabs never handle printable keys themselves. Every text field is a shared one: `Input` and `SearchField` (one line,
+Enter is their `accepted`), `TextBox` (notes: Enter is a new line), `ComposeField` (a composer's field, Persons' and
+Routine's Coach: **Enter sends, Shift+Enter is a new line**, Esc asks the composer; Projects' composer keeps its own
+field on the same rule through shell.ts `composerKey`). What a key does before the text input sees it is decided once,
+in `logic/keys.ts` `textKey` (unit tested), reached from Slint through the `TextKeys` global (widgets.slint) that
+shell.ts binds:
+
+- **AltGr as Ctrl+Alt** (Brazilian ABNT2: Ctrl+Alt+Q = `/`, Ctrl+Alt+W = `?`): the window's capture (app.slint) has
+  it typed again without Ctrl into whatever field has the focus, in every tab; Ctrl+Alt+letter or digit stays a shortcut.
+- **Space** and every other printable key always go to the focused field: no tab, row or page binds them.
+- A tab's FocusScope may take Escape (close a menu or dialog) and shortcuts with Ctrl or Alt, never a printable key.
+
 ## Android (`Ds.java`)
 
 The phone keeps its own scale (dp, larger touch targets, the serif page titles). It shares the same components:

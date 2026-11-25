@@ -23,6 +23,7 @@ export function parseSteps(spec: string): Step[] {
 
 const KEYS: Record<string, string> = { Return: "\n", Tab: "\t", Escape: "\u{1b}", Up: "\u{f700}", Down: "\u{f701}", Left: "\u{f702}", Right: "\u{f703}", Backspace: "\u{8}", Delete: "\u{7f}" };
 const CONTROL = "\u{11}";
+const SHIFT = "\u{10}";
 const ALT = "\u{12}";
 
 function press(w: slint.Window, text: string): void {
@@ -73,6 +74,12 @@ export function runStep(w: slint.Window, s: Step): void {
       w.dispatchEvent({ type: "key-pressed", text: CONTROL });
       press(w, KEYS[arg] ?? arg);
       w.dispatchEvent({ type: "key-released", text: CONTROL });
+      break;
+    // Shift held for one key (Shift+Enter: a new line in a composer).
+    case "shift":
+      w.dispatchEvent({ type: "key-pressed", text: SHIFT });
+      press(w, KEYS[arg] ?? arg);
+      w.dispatchEvent({ type: "key-released", text: SHIFT });
       break;
     // Ctrl+Alt held while a key types (a layout's AltGr; shell.ts typeCtrlAlt): let go 50 ms later, as a hand would.
     case "ctrlalt":

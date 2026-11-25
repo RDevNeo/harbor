@@ -2,7 +2,7 @@
 // (creators-hub src/routine), drawn natively. RoutineBus is driven by src/tabs/routine/ui.ts; the data is the
 // engine's (ts/tabs/routine), shared with Hub for Android.
 // Built on Hub's design system (ds.slint, DESIGN.md): the sidebar, headings, chips, buttons and dialogs are the shared ones.
-import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted } from "ds.slint";
+import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted, ComposeField } from "ds.slint";
 
 export struct RtQuick { label: string, amount: int }
 export struct RtGoal {
@@ -876,7 +876,7 @@ component CoachScreen {
         x: 0;
         y: root.list-y;
         width: root.width;
-        height: root.height - root.list-y - 52px;
+        height: root.height - root.list-y - coach-row.height - 16px;
         content-width: root.width;
         content-height: max(msgs.preferred-height, self.height);
         msgs := VerticalLayout {
@@ -924,20 +924,37 @@ component CoachScreen {
             }
         }
     }
-    HorizontalLayout {
+    // the shared composer field (ds ComposeField): Enter sends, Shift+Enter a new line
+    coach-row := HorizontalLayout {
         x: 0;
-        y: root.height - 40px;
+        y: root.height - self.height - 4px;
         width: root.width;
-        height: 36px;
+        height: max(36px, coach-field.height + 4px);
         spacing: 8px;
-        Input {
-            text <=> RoutineBus.coach-text;
-            hint: "Message the Coach";
-            accepted => {
-                RoutineBus.coach-send();
+        alignment: stretch;
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: coach-field.focused ? Theme.gray-1000 : Theme.border;
+            background: Theme.bg100;
+            coach-field := ComposeField {
+                x: 8px;
+                y: 2px;
+                width: parent.width - 16px;
+                min-h: 32px;
+                max-h: 140px;
+                font-size: 14px;
+                text <=> RoutineBus.coach-text;
+                hint: "Message the Coach";
+                submit => {
+                    RoutineBus.coach-send();
+                }
             }
         }
-        Btn {
+        VerticalLayout {
+            alignment: end;
+            Btn {
             icon: "\u{e152}";
             variant: primary;
             size: icon;
@@ -945,6 +962,7 @@ component CoachScreen {
             clicked => {
                 RoutineBus.coach-send();
             }
+        }
         }
     }
 }

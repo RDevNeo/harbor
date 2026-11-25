@@ -2,7 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card } from "ds.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField } from "ds.slint";
 import { ScrollView } from "std-widgets.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 
@@ -1172,56 +1172,30 @@ component Composer inherits Rectangle {
                         color: Theme.subtle;
                         wrap: word-wrap;
                     }
-                    if root.writes: FocusScope {
-                        height: min(192px, max(32px, field.preferred-height + 10px));
-                        key-pressed(e) => {
-                            if e.text == Key.Return && !e.modifiers.shift {
-                                PersonsBus.send();
-                                return accept;
-                            }
-                            if e.text == Key.Escape && !root.ai && PersonsBus.reply-name != "" {
-                                PersonsBus.cancel-reply();
-                                return accept;
-                            }
-                            if e.text == Key.Escape && root.ai && PersonsBus.fwd-name != "" {
-                                PersonsBus.cancel-forward();
-                                return accept;
-                            }
-                            return reject;
+                    // the shared composer field (ds ComposeField): Enter sends, Shift+Enter a new line, Esc drops the reply / forward
+                    if root.writes: ComposeField {
+                        text <=> PersonsBus.draft;
+                        hint: PersonsBus.c-hint;
+                        focus-rev: PersonsBus.focus-rev;
+                        submit => {
+                            PersonsBus.send();
                         }
-                        Rectangle {
-                            clip: true;
-                            if field.text == "": Text {
-                                x: 4px;
-                                width: parent.width - 8px;
-                                text: PersonsBus.c-hint;
-                                font-size: Ds.t-body;
-                                color: Theme.gray-800;
-                                vertical-alignment: center;
-                                overflow: elide;
+                        edited => {
+                            PersonsBus.typing();
+                        }
+                        escape => {
+                            if !root.ai && PersonsBus.reply-name != "" {
+                                PersonsBus.cancel-reply();
+                                return true;
                             }
-                            field := TextInput {
-                                x: 4px;
-                                width: parent.width - 8px;
-                                text <=> PersonsBus.draft;
-                                font-size: Ds.t-body;
-                                color: Theme.fg;
-                                wrap: word-wrap;
-                                single-line: false;
-                                vertical-alignment: center;
-                                selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
-                                selection-foreground-color: Theme.fg;
-                                edited => {
-                                    PersonsBus.typing();
-                                }
-                                changed has-focus => {
-                                    root.focused = self.has-focus;
-                                }
-                                property <int> want: PersonsBus.focus-rev;
-                                changed want => {
-                                    self.focus();
-                                }
+                            if root.ai && PersonsBus.fwd-name != "" {
+                                PersonsBus.cancel-forward();
+                                return true;
                             }
+                            return false;
+                        }
+                        changed focused => {
+                            root.focused = self.focused;
                         }
                     }
                     // attach (+ Open in Projects for the AI), the recipient switch, send

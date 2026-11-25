@@ -6,6 +6,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- Hub: one text-input path for every tab (DESIGN.md "Text input"): Persons' composer and Routine's Coach use the shared
+  `ComposeField` (Enter sends, Shift+Enter is a new line; Persons' composer inserted a new line on Enter), the key
+  decisions live in one tested function (`logic/keys.ts` `textKey`: AltGr as Ctrl+Alt typed again in any field, Space
+  and printable keys never taken) reached through the `TextKeys` global. The Coach's field grows with its text.
 - Hub Persons: a message's right-click menu (long-press on Android) is Person Hub's: Reply, Forward to AI, Open Site
   Request | Copy text, Open attachment | Mark as unread (Alt+Click on the PC), with Lucide icons (reply, forward,
   file-plus and mail-warning added to the font subset), hairlines between groups and nothing in red; compact (208px).

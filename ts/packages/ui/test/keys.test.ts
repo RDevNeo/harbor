@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { ACTIONS, GROUPS, Keys, comboName, isChar, label, parseCombo } from "../src/logic/keys.ts";
+import { describe, expect, test } from "bun:test";
+import { textKey, ACTIONS, GROUPS, Keys, comboName, isChar, label, parseCombo } from "../src/logic/keys.ts";
 
 test("combos_round_trip_and_defaults_parse", () => {
   for (const s of ["Ctrl+N", "Ctrl+Shift+Backtick", "Shift+Enter", "Alt+F4", "Escape"]) {
@@ -38,4 +38,36 @@ test("ctrl_alt_types_a_layouts_altgr_character_but_stays_a_shortcut_otherwise", 
   expect(ctrlAltTyped("/", { control: true, alt: false })).toBe(false);
   expect(ctrlAltTyped("/", { control: false, alt: true })).toBe(false);
   expect(ctrlAltTyped("/", { ...ca, meta: true })).toBe(false);
+});
+
+describe("textKey: every text field's one key decision (Projects, Persons, Routine)", () => {
+  const m = (o: Partial<{ control: boolean; alt: boolean; shift: boolean; meta: boolean }> = {}) => ({ control: false, alt: false, shift: false, meta: false, ...o });
+  test("AltGr as Ctrl+Alt (Brazilian ABNT2: Ctrl+Alt+Q = /, Ctrl+Alt+W = ?) is typed again by the window, in any field", () => {
+    for (const f of ["", "line", "lines", "compose"] as const) {
+      expect(textKey("/", m({ control: true, alt: true }), f)).toBe("retype");
+      expect(textKey("?", m({ control: true, alt: true, shift: true }), f)).toBe("retype");
+      expect(textKey("°", m({ control: true, alt: true }), f)).toBe("retype");
+    }
+    expect(textKey("b", m({ control: true, alt: true }))).toBe("");
+    expect(textKey("1", m({ control: true, alt: true }))).toBe("");
+  });
+  test("Space always types a space: no field and no modifier makes it anything else", () => {
+    for (const f of ["", "line", "lines", "compose"] as const) {
+      expect(textKey(" ", m(), f)).toBe("");
+      expect(textKey(" ", m({ shift: true }), f)).toBe("");
+      expect(textKey(" ", m({ control: true, alt: true }), f)).toBe("");
+    }
+  });
+  test("in a composer Enter sends and Shift+Enter is a new line", () => {
+    expect(textKey("\n", m(), "compose")).toBe("submit");
+    expect(textKey("\n", m({ shift: true }), "compose")).toBe("");
+    expect(textKey("\n", m({ control: true }), "compose")).toBe("");
+  });
+  test("notes and one-line fields keep Enter for themselves (a new line, their own accepted)", () => {
+    expect(textKey("\n", m(), "lines")).toBe("");
+    expect(textKey("\n", m(), "line")).toBe("");
+  });
+  test("printable keys are never taken", () => {
+    for (const c of ["a", "Z", "ç", "/", "?", "~", "´"]) expect(textKey(c, m(), "compose")).toBe("");
+  });
 });

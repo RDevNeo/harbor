@@ -345,6 +345,12 @@ export component MenuRow {
 // Steps every 500 ms, not every frame, like the Rust app's spinner.
 // widgets.rs `spinner`: 8 dashes on a ring of `radius`, a 15° step every 500ms.
 // While turns run, the window steps every spinner at once, so they draw in the same frames.
+/** Every text field's key decision, made once in TS (logic/keys.ts textKey, bound by shell.ts): "submit" (Enter in a
+ *  composer), "retype" (AltGr typed again by the window), "" (the text input's own handling). Unbound: "". */
+export global TextKeys {
+    callback decide(KeyEvent, string) -> string;
+}
+
 export global Spin {
     in-out property <bool> driven;
     in-out property <int> tick;

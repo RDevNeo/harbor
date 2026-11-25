@@ -237,6 +237,24 @@ export function ctrlAltTyped(text: string, m: { control: boolean; alt: boolean; 
   return !/[\p{Lu}\p{Ll}\p{Lt}\p{Nd}\s]/u.test(c);
 }
 
+/** The kinds of text field (widgets.slint / ds-surface.slint): a one-line Input or SearchField, a multi-line TextBox
+ *  (notes: Enter is a new line), a composer's ComposeField (Enter sends, Shift+Enter is a new line). */
+export type FieldKind = "line" | "lines" | "compose";
+
+/**
+ * Every text field's one key decision (DESIGN.md "Text input": tabs never handle printable keys themselves): what the
+ * window or the focused field does with a key before the text input sees it.
+ * - "retype": Ctrl+Alt that types a character (a layout's AltGr, ctrlAltTyped): the window types it again without Ctrl.
+ * - "submit": plain Enter in a composer (Shift+Enter falls through: the text input's new line).
+ * - "": the text input's own handling: every printable key, Space included, Enter in notes and one-line fields (their
+ *   own `accepted`), Shift+Enter, arrows, Backspace…
+ */
+export function textKey(text: string, m: { control: boolean; alt: boolean; shift: boolean; meta?: boolean }, field: FieldKind | "" = ""): "retype" | "submit" | "" {
+  if (ctrlAltTyped(text, m)) return "retype";
+  if (field === "compose" && text === "\n" && !m.shift && !m.control && !m.alt && !m.meta) return "submit";
+  return "";
+}
+
 export function isChar(key: string): boolean {
   return key.length === 1 || key.startsWith("Num") || CHAR_KEYS.has(key);
 }

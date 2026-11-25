@@ -4,7 +4,7 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Ds } from "ds-tokens.slint";
-import { Btn, BtnSize, Glyph, Input, PopoverFrame, TipArea, Variant } from "widgets.slint";
+import { Btn, BtnSize, Glyph, Input, PopoverFrame, TipArea, Variant, TextKeys } from "widgets.slint";
 
 // ---------- frames ----------
 
@@ -324,6 +324,68 @@ export component Field inherits VerticalLayout {
 }
 
 /** A few lines of text (notes, a pasted export): an Input's frame around a wrapping TextInput. */
+/** A composer's text field, the same in every tab (Persons' composer, Routine's Coach): Enter sends (`submit`), Shift+Enter
+ *  is a new line, Esc asks `escape` (true: taken), every printable key, Space and AltGr included, is the text input's
+ *  (TextKeys.decide, logic/keys.ts textKey). No frame: the composer around it draws one. Grows with its text up to
+ *  `max-h`; bump `focus-rev` to give it the focus. */
+export component ComposeField {
+    in-out property <string> text <=> field.text;
+    in property <string> hint;
+    in property <length> font-size: Ds.t-body;
+    in property <length> min-h: 32px;
+    in property <length> max-h: 192px;
+    in property <int> focus-rev;
+    out property <bool> focused: field.has-focus;
+    callback submit();
+    callback edited(string);
+    callback escape() -> bool;
+    public function focus-field() {
+        field.focus();
+    }
+    height: min(root.max-h, max(root.min-h, field.preferred-height + 10px));
+    changed focus-rev => {
+        field.focus();
+    }
+    FocusScope {
+        capture-key-pressed(e) => {
+            if TextKeys.decide(e, "compose") == "submit" {
+                root.submit();
+                return accept;
+            }
+            if e.text == Key.Escape && root.escape() {
+                return accept;
+            }
+            return reject;
+        }
+        Rectangle {
+            clip: true;
+            if field.text == "": Text {
+                x: 4px;
+                width: parent.width - 8px;
+                text: root.hint;
+                font-size: root.font-size;
+                color: Theme.gray-800;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            field := TextInput {
+                x: 4px;
+                width: parent.width - 8px;
+                font-size: root.font-size;
+                color: Theme.fg;
+                wrap: word-wrap;
+                single-line: false;
+                vertical-alignment: center;
+                selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+                selection-foreground-color: Theme.fg;
+                edited => {
+                    root.edited(self.text);
+                }
+            }
+        }
+    }
+}
+
 export component TextBox {
     in-out property <string> text <=> field.text;
     in property <string> hint;

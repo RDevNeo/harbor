@@ -30,7 +30,7 @@ import { TAB_UIS, type TabCtx } from "./tabs/index.ts";
 import { tabFromSlug } from "./logic/pages.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
-import { Keys, ctrlAltTyped, label as keyLabel } from "./logic/keys.ts";
+import { Keys, textKey, type FieldKind, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { richTip } from "./logic/tips.ts";
@@ -1022,6 +1022,8 @@ export class Shell {
     w.global_key = (e) => this.globalKey(e);
     w.nav_key = (e) => this.navKey(e, true);
     w.ctrl_alt_text = (e) => this.typeCtrlAlt(e);
+    // Every text field's key decision (widgets.slint TextKeys, logic/keys.ts textKey): one path for every tab.
+    busOf<{ decide: (e: KeyEvent, kind: string) => string }>(w, "TextKeys").decide = (e, kind) => textKey(e.text, e.modifiers, kind as FieldKind);
     // Ctrl+C on a transcript selection: the selection's own copy happens first, then its message's images join it.
     w.copy_key = () => {
       const s = this.selection;
@@ -3217,7 +3219,7 @@ export class Shell {
    *  again with Ctrl let go for that one key (Alt stays, which text inputs accept), then Ctrl is down again as the user
    *  still holds it. On the next turn of the loop: Slint is in the middle of this key's event. */
   private typeCtrlAlt(e: KeyEvent): boolean {
-    if (!ctrlAltTyped(e.text, e.modifiers)) return false;
+    if (textKey(e.text, e.modifiers) !== "retype") return false;
     const w = this.win.window;
     const text = e.text;
     setTimeout(() => {
