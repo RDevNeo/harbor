@@ -95,7 +95,7 @@ final class PersonsList {
         Collections.sort(shown, PersonsHome.recent(""));
         int n = all.size();
         sub.setText(q.isEmpty() ? n + (n == 1 ? " person" : " people") : shown.size() + " of " + n + " match “" + q + "”");
-        empty.setText(n == 0 ? "No one yet. Add people in Person Hub on the PC." : "No one matches “" + q + "”.");
+        empty.setText(n == 0 ? "No one yet. Add people in Hub on the PC (Persons)." : "No one matches “" + q + "”.");
         empty.setVisibility(shown.isEmpty() && p.st != null ? View.VISIBLE : View.GONE);
         adapter.notifyDataSetChanged();
     }
