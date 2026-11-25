@@ -42,7 +42,7 @@ import java.util.Map;
 final class PersonsChat {
     private static final long GROUP_MS = 7 * 60_000;
 
-    final Persons p;
+    final PersonsState p;
     final Activity a;
     final String pid, section;
     final LinearLayout view;
@@ -76,7 +76,7 @@ final class PersonsChat {
     private long aiUntil, aiAsked;
     private String aiSig = "";
 
-    PersonsChat(Persons p, String pid, String section) {
+    PersonsChat(PersonsState p, String pid, String section) {
         this.p = p;
         this.pid = pid;
         this.section = section;

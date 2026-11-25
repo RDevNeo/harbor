@@ -6,32 +6,32 @@ import android.content.ContextWrapper;
 import android.view.View;
 import android.view.ViewGroup;
 
-/** The Persons tab's entry for the bottom tab bar (HubTab): Person Hub's people, chats and
- *  details, natively (Persons). The static hooks are for the screen that hosts the tabs:
+/** The Persons tab's content (hosted by the Persons activity under the tab bar): Person Hub's people,
+ *  chats and details, natively (PersonsState). The static hooks are for the screen that hosts the tabs:
  *  {@link #back()} from its onBackPressed, {@link #unread()} for the tab's badge, {@link #deep()}
  *  to hide the tab bar while a chat or a person's details fill the screen, and {@link #listen}
  *  to hear when either changes. */
-public final class PersonsTab implements HubTab {
+public final class PersonsTab {
     private static Runnable listener;
 
-    @Override public String id() { return "persons"; }
+    public String id() { return "persons"; }
 
     /** The tab's root (the same view again for the same screen and PC, taken off its old parent). */
-    @Override public View view(Context c, Hub hub) {
-        Persons p = Persons.of(activity(c), hub);
+    public View view(Context c, Hub hub) {
+        PersonsState p = PersonsState.of(activity(c), hub);
         if (p.root.getParent() != null) ((ViewGroup) p.root.getParent()).removeView(p.root);
         return p.root;
     }
 
     /** Android back: closes the top-most of details › chat › All people; false at the tab's home
      *  (the app's own back then). */
-    public static boolean back() { return Persons.cur != null && Persons.cur.back(); }
+    public static boolean back() { return PersonsState.cur != null && PersonsState.cur.back(); }
 
     /** Everyone's unread messages (the tab's badge). */
-    public static int unread() { return Persons.unread; }
+    public static int unread() { return PersonsState.unread; }
 
     /** A chat or a person's details fills the screen: the host may hide the tab bar. */
-    public static boolean deep() { return Persons.cur != null && Persons.cur.deep(); }
+    public static boolean deep() { return PersonsState.cur != null && PersonsState.cur.deep(); }
 
     /** Runs on the UI thread whenever unread() or deep() may have changed (null: none). */
     public static void listen(Runnable r) { listener = r; }

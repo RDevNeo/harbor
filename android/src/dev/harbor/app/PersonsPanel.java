@@ -24,7 +24,7 @@ import java.util.List;
  *  section, their socials with the latest uploads, notes, and Delete. GET/PATCH/DELETE
  *  /v1/persons/person/{id}. */
 final class PersonsPanel {
-    final Persons p;
+    final PersonsState p;
     final Activity a;
     final String pid, section;
     final LinearLayout view;
@@ -34,7 +34,7 @@ final class PersonsPanel {
     private String savedNotes;
     private boolean closed;
 
-    PersonsPanel(Persons p, String pid, String section) {
+    PersonsPanel(PersonsState p, String pid, String section) {
         this.p = p;
         this.pid = pid;
         this.section = section;

@@ -22,7 +22,7 @@ import java.util.Locale;
 /** All people (Person Hub's middle list on the phone): back, the title and how many, a search box,
  *  then everyone by their last message. A tap opens their chat over every section. */
 final class PersonsList {
-    final Persons p;
+    final PersonsState p;
     final Activity a;
     final LinearLayout view;
     private final TextView sub;
@@ -31,7 +31,7 @@ final class PersonsList {
     private final BaseAdapter adapter;
     private final TextView empty;
 
-    PersonsList(Persons p) {
+    PersonsList(PersonsState p) {
         this.p = p;
         a = p.a;
         view = Ui.col(a);

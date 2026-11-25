@@ -37,14 +37,14 @@ final class PersonsHome {
         Item(int kind) { this.kind = kind; }
     }
 
-    final Persons p;
+    final PersonsState p;
     final Activity a;
     final LinearLayout view;
     private final TextView error;
     private final List<Item> items = new ArrayList<>();
     private final BaseAdapter adapter;
 
-    PersonsHome(Persons p) {
+    PersonsHome(PersonsState p) {
         this.p = p;
         a = p.a;
         view = Ui.col(a);
@@ -435,7 +435,7 @@ final class PersonsHome {
 
     // ---- a person's long-press menu (shared with the list) ----
 
-    static void menu(Persons p, JSONObject person, String section, boolean settled) {
+    static void menu(PersonsState p, JSONObject person, String section, boolean settled) {
         String id = PersonsUi.s(person, "id"), name = PersonsUi.s(person, "name");
         List<String> opts = new ArrayList<>();
         opts.add("Rename");
@@ -446,7 +446,7 @@ final class PersonsHome {
         }).show();
     }
 
-    static void rename(Persons p, String id, String name) {
+    static void rename(PersonsState p, String id, String name) {
         EditText e = Ui.input(p.a, "Name", false);
         e.setText(name);
         e.setSelectAllOnFocus(true);
@@ -463,7 +463,7 @@ final class PersonsHome {
         e.requestFocus();
     }
 
-    static void settle(Persons p, String id, String section, boolean on) {
+    static void settle(PersonsState p, String id, String section, boolean on) {
         JSONObject s = PersonsUi.put(new JSONObject(), "section", section);
         PersonsUi.put(s, "on", on);
         patch(p, id, PersonsUi.put(new JSONObject(), "settle", s), () ->
@@ -471,7 +471,7 @@ final class PersonsHome {
     }
 
     /** PATCH /v1/persons/person/{id}; `then` on success; the state follows. */
-    static void patch(Persons p, String id, JSONObject body, Runnable then) {
+    static void patch(PersonsState p, String id, JSONObject body, Runnable then) {
         Ui.bg(p.a, () -> p.hub.call("PATCH", "/v1/persons/person/" + PersonsUi.enc(id), body), r -> {
             if (!r.optBoolean("ok", true)) { Ui.toast(p.a, r.optString("error", "Couldn't save it")); return; }
             p.refresh();
