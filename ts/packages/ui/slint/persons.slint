@@ -72,7 +72,22 @@ export struct PMsg {
     card-note: string,
     card-why: string,
     card-chat: bool,
+    // The channel it came or went on (a mark by the time when the person has more than one chat).
+    chan: string,
+    chan-label: string,
+    // A voice message or audio file, drawn as a player: its key, length (s), bars 0..1, played, transcript.
+    has-audio: bool,
+    a-key: string,
+    a-dur: float,
+    a-bars: [float],
+    a-played: bool,
+    a-voice: bool,
+    a-transcript: string,
+    a-transcribing: bool,
 }
+
+// Someone to link with (the Link with… picker), or someone linked (the panel's LINKED).
+export struct PPick { id: string, name: string, sub: string, initials: string, color: color, avatar: image, has-avatar: bool, on: bool }
 
 export struct PMenu { id: string, label: string, icon: string, sub: string, hint: string, danger: bool, sep: bool, header: bool, disabled: bool }
 
@@ -176,6 +191,19 @@ export global PersonsBus {
     in property <string> toast;
     in property <string> toast-action;
 
+    // the audio player (one at a time): the attachment's key, playing, position (s, moves on its own while playing)
+    in property <string> a-key;
+    in property <bool> a-playing;
+    in-out property <float> a-pos;
+    in property <float> a-dur;
+    in property <float> a-speed: 1;
+
+    // Link with…: the people to pick from (the search filters them), and the panel's linked people
+    in-out property <string> f-query;
+    in property <[PPick]> f-picks;
+    in property <string> f-picked; // "2 picked: Evellin, Eve"
+    in property <[PPick]> p-linked;
+
     callback all-people();
     callback open-person(string, string, string);
     callback toggle-store(string);
@@ -218,6 +246,14 @@ export global PersonsBus {
     callback prev();
     callback next();
     callback toast-act();
+    callback audio-toggle(string); // a message's play / pause
+    callback audio-seek(string, float); // a message's audio to that fraction
+    callback audio-speed(); // 1x → 1.5x → 2x
+    callback audio-transcribe(string);
+    callback pick-toggle(string); // Link with…: a person picked or not
+    callback pick-query(string);
+    callback unlink(string); // the panel's LINKED: back on their own
+    callback panel-menu(length, length); // the panel's ⋯
 }
 
 // ---------- rows (ds-list.slint's ListRow, SectionHead, FoldBar) ----------
@@ -609,6 +645,133 @@ component DraftLine inherits Rectangle {
     }
 }
 
+// A voice message or an audio file in a bubble (WhatsApp's): play / pause, the bars (played part in ink; a click
+// seeks there), the position or the length, the speed (1x, 1.5x, 2x, for every audio), a dot until it is played;
+// Transcribe under it, then its text (Hub's own speech to text, kept).
+component AudioPlayer {
+    in property <PMsg> m;
+    property <bool> current: PersonsBus.a-key == m.a-key;
+    property <bool> playing: current && PersonsBus.a-playing;
+    property <float> pos: current ? PersonsBus.a-pos : 0;
+    property <float> dur: current && PersonsBus.a-dur > 0 ? PersonsBus.a-dur : m.a-dur;
+    property <float> frac: dur > 0 ? clamp(pos / dur, 0, 1) : 0;
+    property <int> n: max(1, m.a-bars.length);
+    property <color> ink: m.mine ? Theme.blue-900 : Theme.fg;
+    property <float> shown: current && (playing || pos > 0) ? pos : dur;
+    height: col.preferred-height;
+    col := VerticalLayout {
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 10px;
+            height: 38px;
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                y: 3px;
+                border-radius: 16px;
+                background: play-area.has-hover ? root.ink.with-alpha(0.82) : root.ink;
+                Glyph {
+                    // the play triangle sits a little right of the middle, as players draw it
+                    x: (parent.width - self.width) / 2 + (root.playing ? 0px : 1px);
+                    icon: root.playing ? Icons.pause : Icons.play;
+                    size: 14px;
+                    color: Theme.bg100;
+                }
+                play-area := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        PersonsBus.audio-toggle(root.m.id);
+                    }
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                bars := Rectangle {
+                    height: 22px;
+                    property <length> bw: max(1px, (self.width - (root.n - 1) * 2px) / root.n);
+                    for b[i] in root.m.a-bars: Rectangle {
+                        x: i * (bars.bw + 2px);
+                        width: bars.bw;
+                        height: max(3px, b * 22px);
+                        y: (parent.height - self.height) / 2;
+                        border-radius: min(bars.bw, 3px) / 2;
+                        background: (i + 0.5) / root.n <= root.frac && (root.current) ? root.ink : root.ink.with-alpha(0.28);
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            PersonsBus.audio-seek(root.m.id, clamp(self.mouse-x / self.width, 0, 1));
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: floor(root.shown / 60) + ":" + (mod(floor(root.shown), 60) < 10 ? "0" : "") + mod(floor(root.shown), 60);
+                        font-size: 11px;
+                        font-family: "Geist Mono";
+                        color: Theme.gray-800;
+                        vertical-alignment: center;
+                    }
+                    if !root.m.a-played && !root.m.mine: Rectangle {
+                        width: 6px;
+                        height: 6px;
+                        y: (parent.height - 6px) / 2;
+                        border-radius: 3px;
+                        background: Theme.blue-700;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+            sp := Rectangle {
+                width: 38px;
+                height: 22px;
+                y: 8px;
+                border-radius: 11px;
+                background: sp-area.has-hover ? Theme.fg.with-alpha(0.14) : Theme.fg.with-alpha(0.08);
+                Text {
+                    text: PersonsBus.a-speed >= 1.75 ? "2x" : PersonsBus.a-speed >= 1.25 ? "1.5x" : "1x";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                sp-area := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        PersonsBus.audio-speed();
+                    }
+                }
+            }
+        }
+        if root.m.a-transcript != "": Text {
+            text: root.m.a-transcript;
+            font-size: 12.5px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+        if root.m.a-transcript == "": HorizontalLayout {
+            alignment: start;
+            Btn {
+                text: root.m.a-transcribing ? "Transcribing…" : "Transcribe";
+                icon: Icons.file-text;
+                size: BtnSize.xs;
+                variant: Variant.ghost-muted;
+                enabled: !root.m.a-transcribing;
+                tip: "Write down what it says (on this PC)";
+                clicked => {
+                    PersonsBus.audio-transcribe(root.m.id);
+                }
+            }
+        }
+    }
+}
+
 // A message, the user's note to the Person AI, or the AI's answer. The AI's thread has its own tint and a small
 // caps label with the time ("AI · 10:35", "TO THE AI · 10:33"); an answer is as wide as the column and draws its
 // markdown as Projects' chat does (markdown.slint), its ```reply drafts as DraftCards.
@@ -625,7 +788,7 @@ component Bubble {
     property <length> text-w: min(root.max-w - 2 * pad-x, body.preferred-width);
     // "TO THE AI · 00:00" fits.
     property <length> label-w: thread ? 124px : 0px;
-    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
+    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-audio ? 280px : root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
     height: lay.preferred-height;
     lay := HorizontalLayout {
         width: root.width;
@@ -759,6 +922,9 @@ component Bubble {
                         }
                     }
                 }
+                if root.m.has-audio: AudioPlayer {
+                    m: root.m;
+                }
                 body := Text {
                     visible: !root.ai && root.m.text != "";
                     height: self.visible ? self.preferred-height : 0px;
@@ -819,6 +985,15 @@ component Bubble {
                 if !root.thread: HorizontalLayout {
                     alignment: end;
                     spacing: 4px;
+                    // the channel it came or went on (the person has more than one chat)
+                    if root.m.chan != "": VerticalLayout {
+                        alignment: center;
+                        opacity: 0.7;
+                        ChannelMark {
+                            kind: root.m.chan;
+                            size: 10px;
+                        }
+                    }
                     Text {
                         text: root.m.failed ? "Not sent · click to retry" : root.m.sending ? "Sending…" : root.m.meta != "" ? root.m.meta + " · " + root.m.time : root.m.time;
                         font-size: 10px;
@@ -1369,6 +1544,14 @@ component Composer inherits Rectangle {
 
 component ChatPane inherits Rectangle {
     property <bool> at-bottom: true;
+    // the audio playing moves on by itself (the engine says when it ends or stops)
+    Timer {
+        interval: 100ms;
+        running: PersonsBus.a-playing;
+        triggered => {
+            PersonsBus.a-pos = PersonsBus.a-dur > 0 ? min(PersonsBus.a-dur, PersonsBus.a-pos + 0.1 * PersonsBus.a-speed) : PersonsBus.a-pos + 0.1 * PersonsBus.a-speed;
+        }
+    }
     VerticalLayout {
         // header: the shared page bar (46px, as Projects' chat header)
         PageBar {
@@ -1626,6 +1809,66 @@ component Panel inherits PanelSurface {
                                 PersonsBus.menu-pick("panel:delete");
                             }
                         }
+                        Btn {
+                            text: "⋯";
+                            size: BtnSize.xs;
+                            variant: Variant.ghost-muted;
+                            tip: "More: Link with…, Unlink";
+                            clicked => {
+                                PersonsBus.panel-menu(self.absolute-position.x, self.absolute-position.y + self.height + 4px);
+                            }
+                        }
+                    }
+                }
+                // People linked into this one (Link with…): one chat over all their channels; Unlink splits one back out
+                if PersonsBus.p-linked.length > 0: PanelSection {
+                    title: "LINKED (" + PersonsBus.p-linked.length + ")";
+                    action: "Link…";
+                    action-icon: Icons.link;
+                    act => {
+                        PersonsBus.menu-pick("panel:link");
+                    }
+                    for l in PersonsBus.p-linked: HorizontalLayout {
+                        spacing: 8px;
+                        height: 36px;
+                        VerticalLayout {
+                            alignment: center;
+                            Avatar {
+                                size: 22px;
+                                initials: l.initials;
+                                color: l.color;
+                                photo: l.avatar;
+                                has-photo: l.has-avatar;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: l.name;
+                                font-size: Ds.t-sm;
+                                color: Theme.fg;
+                                overflow: elide;
+                            }
+                            if l.sub != "": Text {
+                                text: l.sub;
+                                font-size: Ds.t-xs;
+                                color: Theme.gray-800;
+                                overflow: elide;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Btn {
+                                text: "Unlink";
+                                size: BtnSize.xs;
+                                variant: Variant.ghost-muted;
+                                tip: "Split " + l.name + " back out as their own person";
+                                clicked => {
+                                    PersonsBus.unlink(l.id);
+                                }
+                            }
+                        }
                     }
                 }
                 PanelSection {
@@ -1820,7 +2063,7 @@ component Choices inherits HorizontalLayout {
 component Dialog inherits DialogFrame {
     title: PersonsBus.d-title;
     text: PersonsBus.d-text;
-    box-w: PersonsBus.dialog == "qr" ? 300px : PersonsBus.dialog == "person" ? 512px : 448px;
+    box-w: PersonsBus.dialog == "qr" ? 300px : PersonsBus.dialog == "person" || PersonsBus.dialog == "link" ? 512px : 448px;
     dismiss => {
         PersonsBus.dialog-cancel();
     }
@@ -1849,6 +2092,77 @@ component Dialog inherits DialogFrame {
         text <=> PersonsBus.f-socials;
         accepted => {
             PersonsBus.dialog-ok();
+        }
+    }
+    // Link with…: everyone else, searchable; a click picks or unpicks
+    if PersonsBus.dialog == "link": VerticalLayout {
+        spacing: 8px;
+        link-search := SearchField {
+            hint: "Search people";
+            text <=> PersonsBus.f-query;
+            init => {
+                self.focus-field();
+            }
+            edited(t) => {
+                PersonsBus.pick-query(t);
+            }
+        }
+        Rectangle {
+            height: 300px;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Ds.radius-lg;
+            clip: true;
+            ScrollView {
+                VerticalLayout {
+                    padding: 4px;
+                    for p in PersonsBus.f-picks: Rectangle {
+                        height: Ds.row2-h;
+                        ListRow {
+                            lead: "avatar";
+                            letter: p.initials;
+                            tint: p.color;
+                            image: p.avatar;
+                            has-image: p.has-avatar;
+                            title: p.name;
+                            sub: p.sub;
+                            active: p.on;
+                            clicked => {
+                                PersonsBus.pick-toggle(p.id);
+                            }
+                        }
+                        Rectangle {
+                            x: parent.width - 30px;
+                            y: (parent.height - 18px) / 2;
+                            width: 18px;
+                            height: 18px;
+                            border-radius: 5px;
+                            border-width: p.on ? 0px : 1px;
+                            border-color: Theme.gray-600;
+                            background: p.on ? Theme.fg : transparent;
+                            if p.on: Glyph {
+                                icon: Icons.check;
+                                size: 12px;
+                                color: Theme.bg100;
+                            }
+                        }
+                    }
+                    if PersonsBus.f-picks.length == 0: Text {
+                        height: 40px;
+                        text: "Nobody matches.";
+                        font-size: Ds.t-sm;
+                        color: Theme.subtle;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        Text {
+            text: PersonsBus.f-picked;
+            font-size: Ds.t-sm;
+            color: Theme.subtle;
+            wrap: word-wrap;
         }
     }
     if PersonsBus.dialog == "rename": Input {

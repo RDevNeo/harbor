@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aiFolds, aiPreview, chatRows, fitImage, listRows, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -82,6 +82,35 @@ describe("Persons chat rows", () => {
     outgoing: [],
     ai: [],
     ...o,
+  });
+
+  test("a linked person's page: every chat in one timeline, each message marked with its channel", () => {
+    const wa = { key: "wa:5511", kind: "whatsapp", label: "WhatsApp" };
+    const dc = { key: "stores:678", kind: "discord", label: "Discord" };
+    const c = chat({
+      accounts: [{ id: wa.key, kind: "whatsapp", label: "WhatsApp · Igor" }, { id: dc.key, kind: "discord", label: "Discord · igor" }],
+      messages: [msg("a", "2026-11-24T10:00:00", false, { channel: dc }), msg("b", "2026-11-24T10:01:00", false, { channel: wa })],
+      outgoing: [{ key: "o1", text: "oi", status: "sending", error: null, at: "2026-11-24T10:02:00", subject: null, files: [], channel: wa }],
+    });
+    const rows = chatRows(c).filter((r) => r.kind === "msg" || r.kind === "out");
+    expect(rows.map((r) => [r.id, r.chan])).toEqual([["a", "discord"], ["b", "whatsapp"], ["oo1", "whatsapp"]]);
+    // one chat only: no marks
+    expect(chatRows({ ...c, accounts: [c.accounts[0]!] }).filter((r) => r.kind === "msg").map((r) => r.chan)).toEqual(["", ""]);
+  });
+
+  test("a voice message is a player (bars, length, played, transcript), not a file row", () => {
+    const voice = { name: "voice-ABC.ogg", url: "/v1/persons/file?account=wa1&url=chwa%3A%2F%2Fwa1%2FABC&name=voice-ABC.ogg", raw: "chwa://wa1/ABC", type: "audio/ogg; codecs=opus", size: 9000, width: null, height: null, kind: "audio", image: false, duration: 20, audio: "wa1:ABC:0", bars: [0.2, 1], played: false, transcript: "Oi, tudo bem?" };
+    const { audio: _a, bars: _b, played: _p, transcript: _t, ...plain } = voice;
+    const doc = { ...plain, name: "a.pdf", kind: "file", type: "application/pdf", size: 2048 };
+    const r = chatRows(chat({ messages: [msg("ABC", "2026-11-24T10:00:00", false, { voice: true, text: "", files: [voice, doc] })] })).find((x) => x.kind === "msg")!;
+    expect(r.audio).toEqual({ key: "wa1:ABC:0", account: "wa1", raw: "chwa://wa1/ABC", name: "voice-ABC.ogg", duration: 20, bars: [0.2, 1], played: false, transcript: "Oi, tudo bem?", voice: true });
+    expect(r.files).toBe("a.pdf · 2 KB");
+    // an audio file without a waveform: flat bars
+    const mp3 = { ...voice, name: "song.mp3", type: "audio/mpeg", bars: null, played: true, transcript: null };
+    const r2 = chatRows(chat({ messages: [msg("m", "2026-11-24T10:00:00", true, { files: [mp3] })] })).find((x) => x.kind === "msg")!;
+    expect(r2.audio?.bars).toEqual(FLAT_BARS);
+    expect(r2.audio?.voice).toBe(false);
+    expect([nextSpeed(1), nextSpeed(1.5), nextSpeed(2)]).toEqual([1.5, 2, 1]);
   });
 
   test("day separators, the unread line, groups by side and time, AI bubbles by time", () => {

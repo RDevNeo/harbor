@@ -296,7 +296,7 @@ export class PersonsRoutes {
         settled,
         rows,
         search: searchText(p).replace(/\n/g, " "),
-        linked: (p.links ?? []).length,
+        linked: (p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person) })),
       };
     });
     return {
