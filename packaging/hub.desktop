@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hub
+GenericName=Coding Agents
+Comment=Chat with coding agents (Claude Code, Codex, …), organised by project
+Exec=hub
+Icon=hub
+Terminal=false
+Categories=Development;
+Keywords=claude;codex;agent;ai;chat;projects;
+StartupWMClass=hub

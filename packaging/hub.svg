@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#111111"/>
+  <!-- Hub: a centre with three spokes (Lucide-style strokes, as Harbor's anchor was) -->
+  <g transform="translate(88 88) scale(14)" fill="none" stroke="#ededed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <circle cx="12" cy="3.5" r="1.8"/>
+    <circle cx="4.6" cy="16.3" r="1.8"/>
+    <circle cx="19.4" cy="16.3" r="1.8"/>
+    <path d="M12 9V5.3"/>
+    <path d="M9.4 13.5l-3.2 1.9"/>
+    <path d="M14.6 13.5l3.2 1.9"/>
+  </g>
+</svg>
