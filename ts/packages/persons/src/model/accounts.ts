@@ -1,0 +1,89 @@
+import type { Person } from './types.ts'
+import { isDiscordId, isEmail, type Scope } from './data.ts'
+
+/**
+ * Channels: every section (Stores, Creators, SpokPay) can connect any number of integrations —
+ * Discord, Gmail, WhatsApp — each its own account (a "connection", id from the shell). A person has
+ * an identifier per kind (Discord id, email, WhatsApp number); their chat uses one connection.
+ */
+export type ChannelKind = 'discord' | 'gmail' | 'whatsapp'
+export type SectionId = 'stores' | 'creators' | 'spokpay'
+/** A connection's id (the shell's: "stores", "spokpay", "gmail" for the original three, else generated). */
+export type AccountId = string
+
+export const KINDS: ChannelKind[] = ['discord', 'gmail', 'whatsapp']
+export const KIND_LABEL: Record<ChannelKind, string> = { discord: 'Discord', gmail: 'Gmail', whatsapp: 'WhatsApp' }
+export const SECTIONS: SectionId[] = ['stores', 'creators', 'spokpay']
+export const SECTION_LABEL: Record<SectionId, string> = { stores: 'Stores', creators: 'Creators', spokpay: 'SpokPay' }
+export const isSection = (s: string): s is SectionId => (SECTIONS as string[]).includes(s)
+
+export interface ConnMeta {
+  id: AccountId
+  kind: ChannelKind
+  section: SectionId
+}
+
+/** A WhatsApp number as kept: digits with the country code (8–15). */
+export const normPhone = (s: string) => { const d = String(s ?? '').replace(/\D/g, ''); return d.length >= 8 && d.length <= 15 ? d : '' }
+/**
+ * A typed WhatsApp number (the shell's normWhatsApp): digits with the country code; Brazilian
+ * numbers without it get 55, and mobiles their 9th digit.
+ */
+export function normWhatsApp(s: string): string {
+  const raw = String(s ?? '').trim()
+  let d = raw.replace(/\D/g, '')
+  if (!raw.startsWith('+') && d.startsWith('0')) d = d.replace(/^0+/, '')
+  if (!raw.startsWith('+') && /^[1-9][1-9](?:9\d{8}|[2-9]\d{7})$/.test(d)) d = `55${d}`
+  if (/^55[1-9][1-9][6-9]\d{7}$/.test(d)) d = `${d.slice(0, 4)}9${d.slice(4)}`
+  return normPhone(d)
+}
+/** The same Brazilian mobile with and without its 9th digit (both may be someone's WhatsApp). */
+export function phoneVariants(digits: string): string[] {
+  const d = normPhone(digits)
+  if (!d) return []
+  const m = /^55([1-9][1-9])9(\d{8})$/.exec(d)
+  return m && /^[6-9]/.test(m[2] ?? "") ? [d, `55${m[1]}${m[2]}`] : [d]
+}
+
+/**
+ * Who the person is on a kind of channel: Discord id, email address or WhatsApp number. With a
+ * `section`, an identity of theirs for that section wins over the default (the person's own fields).
+ */
+export function peerOf(p: Person, kind: ChannelKind, section?: SectionId): string {
+  const own = section ? p.identities?.find((i) => i.kind === kind && i.section === section) : undefined
+  if (own) return own.value
+  if (kind === 'gmail') return (p.email ?? '').toLowerCase()
+  if (kind === 'whatsapp') return normPhone(p.whatsapp ?? '')
+  return p.discordId
+}
+
+/** Every identifier the person has on a kind (default and per-section), for tracking and duplicates. */
+export function allPeers(p: Person, kind: ChannelKind): string[] {
+  return [...new Set([peerOf(p, kind), ...(p.identities ?? []).filter((i) => i.kind === kind).map((i) => i.value)].filter((v) => validPeer(kind, v)))]
+}
+
+/** Read-state key of a chat: the connection and who the person is on it. */
+export const seenKey = (connId: string, peer: string) => `${connId}:${peer}`
+export function validPeer(kind: ChannelKind, s: string): boolean {
+  return kind === 'gmail' ? isEmail(s) : kind === 'whatsapp' ? !!normPhone(s) && normPhone(s) === s : isDiscordId(s)
+}
+
+/** The section a sidebar view belongs to (All people: none). */
+export const sectionOfScope = (s: Scope): SectionId | null => (s.kind === 'store' ? 'stores' : s.kind === 'list' && isSection(s.id) ? s.id : null)
+
+/** The sections a person is in: Stores when in any store, plus their lists (Creators, SpokPay). */
+export function personSections(p: Person): SectionId[] {
+  const out: SectionId[] = []
+  if (p.storeIds.length) out.push('stores')
+  for (const l of p.listIds) if (isSection(l) && !out.includes(l)) out.push(l)
+  return out
+}
+
+/**
+ * The connections a person can be talked to through: those of the section they were opened from
+ * (or of all their sections from All people), for kinds the person has an identifier for.
+ */
+export function channelsFor<T extends ConnMeta>(p: Person, conns: T[], from: SectionId | null): T[] {
+  const sections = from ? [from] : personSections(p)
+  return conns.filter((c) => sections.includes(c.section) && validPeer(c.kind, peerOf(p, c.kind, c.section)))
+}

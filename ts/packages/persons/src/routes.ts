@@ -1,0 +1,592 @@
+// `v1/persons/…`: the Persons tab's API (API.md). The Slint window calls it in-process and Hub for Android over the
+// phone API, so both see and change the same state. JSON only (pictures and files as base64).
+import { statSync } from "node:fs";
+import { KIND_LABEL, peerOf, isSection, normWhatsApp, validPeer } from "./model/accounts.ts";
+import { attachmentKind } from "./model/conversation.ts";
+import { initials } from "./model/format.ts";
+import { cleanUsername, isDiscordId, isEmail, joinScope, personLabel } from "./model/data.ts";
+import { headerStatus } from "./model/presence.ts";
+import { seenOf } from "./model/readState.ts";
+import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, Store } from "./model/types.ts";
+import { Avatars, pictureUrls, storeImageFile, whatsappNumber } from "./avatars.ts";
+import type { ConnView, PersonsService, RowInfo } from "./service.ts";
+
+export interface Call {
+  method: string;
+  path: string[];
+  query: [string, string][];
+  body: unknown;
+}
+export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+export interface Reply {
+  status: number;
+  body: Json;
+}
+
+const ok = (body: Json): Reply => ({ status: 200, body });
+const err = (status: number, msg: string): Reply => ({ status, body: { error: msg } });
+const q = (c: Call, k: string): string | null => c.query.find(([x]) => x === k)?.[1] ?? null;
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const json = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json;
+
+const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
+export const colorOf = (id: string): string => {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return COLORS[h % COLORS.length]!;
+};
+const TONE: Record<string, string> = { online: "green", idle: "yellow", dnd: "red", muted: "muted" };
+const sectionOf = (s: string | null | undefined): SectionId | null => (s && isSection(s) ? s : null);
+
+export class PersonsRoutes {
+  readonly avatars: Avatars;
+  /** WhatsApp photos by number: file or null (asked once per run per number). */
+  private waPhotos = new Map<string, string | null>();
+
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[]) => Promise<Json>; ai?: AiPort } = {}) {
+    this.avatars = new Avatars(s.dir, () => s.touch());
+  }
+
+  async route(c: Call): Promise<Reply | null> {
+    const p = c.path;
+    if (p[0] !== "v1" || p[1] !== "persons") return null;
+    const m = c.method;
+    const rest = p.slice(2);
+    try {
+      if (m === "GET" && rest[0] === "state" && rest.length === 1) return await this.state(c);
+      if (rest[0] === "chat" && rest[1]) {
+        if (m === "GET" && rest.length === 2) return await this.chat(rest[1], c);
+        if (m === "POST" && rest[2] === "send") return await this.send(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "read") return this.read(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "unread") return this.unread(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "typing") return this.typing(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "retry") return this.retry(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
+      }
+      if (rest[0] === "person" && rest[1]) {
+        if (m === "GET") return await this.panel(rest[1]);
+        if (m === "PATCH") return this.patchPerson(rest[1], obj(c.body));
+        if (m === "DELETE") return this.deletePerson(rest[1]);
+      }
+      if (m === "POST" && rest[0] === "people") return this.createPerson(obj(c.body));
+      if (m === "GET" && rest[0] === "lookup") return await this.lookup(c);
+      if (rest[0] === "stores") {
+        if (m === "POST" && rest.length === 1) return this.saveStore(null, obj(c.body));
+        if (m === "PATCH" && rest[1]) return this.saveStore(rest[1], obj(c.body));
+        if (m === "DELETE" && rest[1]) return this.deleteStore(rest[1]);
+      }
+      if (rest[0] === "connections") {
+        if (m === "POST" && rest.length === 1) return await this.addConn(obj(c.body));
+        if (m === "POST" && rest[1] && rest[2] === "connect") return this.connConnect(rest[1]);
+        if (m === "DELETE" && rest[1]) return await this.connRemove(rest[1]);
+      }
+      if (m === "GET" && rest[0] === "img") return await this.img(rest, c);
+      if (m === "GET" && rest[0] === "file") return await this.file(c);
+    } catch (e) {
+      return err(500, e instanceof Error ? e.message : String(e));
+    }
+    return err(404, "no such call");
+  }
+
+  // ---------- pictures ----------
+
+  /** The person's picture on disk: the best URL that's cached (the best one is fetched meanwhile), else WhatsApp. */
+  picture(p: Person, size = 128): string | null {
+    for (const u of pictureUrls(p, size)) {
+      const f = this.avatars.file(u);
+      if (f) return f;
+    }
+    const n = whatsappNumber(p);
+    if (n) {
+      if (this.waPhotos.has(n)) return this.waPhotos.get(n) ?? null;
+      const wa = this.s.views().find((v) => v.kind === "whatsapp" && v.connected);
+      const conn = wa ? this.s.conn(wa.id) : undefined;
+      if (conn?.photo) {
+        this.waPhotos.set(n, null);
+        void conn.photo(n).then((f) => {
+          this.waPhotos.set(n, f);
+          if (f) this.s.touch();
+        }, () => {});
+      }
+    }
+    return null;
+  }
+
+  private pictureRef(p: Person): string | null {
+    const f = this.picture(p);
+    if (!f) return null;
+    let v = 0;
+    try {
+      v = Math.floor(statSync(f).mtimeMs);
+    } catch {
+      // gone meanwhile
+    }
+    return `/v1/persons/img/person/${encodeURIComponent(p.id)}?v=${v}`;
+  }
+
+  private async img(rest: string[], c: Call): Promise<Reply> {
+    const d = this.s.data;
+    if (!d) return err(503, "not loaded");
+    let f: string | null = null;
+    if (rest[1] === "person" && rest[2]) {
+      const p = this.s.person(decodeURIComponent(rest[2]));
+      if (p) {
+        const size = Number(q(c, "size") ?? "128") >= 200 ? 256 : 128;
+        f = this.picture(p, size);
+        if (!f) for (const u of pictureUrls(p, size)) if ((f = await this.avatars.fetch(u))) break;
+      }
+    } else if (rest[1] === "store" && rest[2]) {
+      const st = d.stores.find((x) => x.id === decodeURIComponent(rest[2]!));
+      if (st) f = storeImageFile(this.s.dir, st);
+    }
+    const out = f ? Avatars.read(f) : null;
+    if (!out) return err(404, "no picture");
+    return ok(q(c, "path") === "1" ? { type: out.type, path: f } : out);
+  }
+
+  private async file(c: Call): Promise<Reply> {
+    const url = q(c, "url") ?? "";
+    const name = q(c, "name") ?? "file";
+    const f = await this.s.fetchAttachment(url, name, q(c, "account") ?? undefined);
+    if (!f) return err(404, "can't fetch that file");
+    const size = statSync(f).size;
+    if (q(c, "path") === "1") return ok({ path: f, name, size });
+    if (size > 20 << 20) return err(413, "too large for the phone");
+    const out = Avatars.read(f);
+    return out ? ok({ ...out, name, size }) : err(404, "gone");
+  }
+
+  // ---------- state ----------
+
+  private rowJson(i: RowInfo): Json {
+    return {
+      lastAt: i.lastAt ?? null,
+      unread: i.unread,
+      presence: i.presence ?? null,
+      status: i.status ? { text: i.status.text, tone: TONE[i.status.tone] ?? "muted" } : null,
+      channel: i.channel ?? null,
+      typing: i.typing ?? null,
+    };
+  }
+
+  private connJson(v: ConnView): Json {
+    const who = v.state.me?.globalName || v.state.me?.username || "";
+    return {
+      id: v.id,
+      kind: v.kind,
+      section: v.section,
+      status: v.state.status,
+      gateway: v.state.gateway,
+      label: who ? `${KIND_LABEL[v.kind]} · ${who}` : KIND_LABEL[v.kind],
+      who,
+      error: v.state.error ?? null,
+      qr: v.state.qr ?? null,
+      contacts: v.state.contacts ?? null,
+    };
+  }
+
+  stateJson(): Json {
+    const d = this.s.data;
+    if (!d) return { rev: this.s.rev, loading: true };
+    const sections: SectionId[] = ["stores", "creators", "spokpay"];
+    const counts = new Map<string, number>();
+    for (const p of d.people) for (const sid of p.storeIds) counts.set(sid, (counts.get(sid) ?? 0) + 1);
+    let unread = 0;
+    const people = d.people.map((p) => {
+      const rows: Record<string, Json> = {};
+      const all = this.s.rowInfo(p, null);
+      unread += all.unread;
+      rows[""] = this.rowJson(all);
+      for (const sec of sections) {
+        const inSec = sec === "stores" ? p.storeIds.length > 0 || d.stores.some((s) => s.ownerId === p.id) : p.listIds.includes(sec);
+        if (inSec) rows[sec] = this.rowJson(this.s.rowInfo(p, sec));
+      }
+      const settled: Record<string, Json> = {};
+      for (const sec of sections) if (p.settled?.[sec] && this.isSettledNow(p, sec)) settled[sec] = true;
+      const avatarPath = this.picture(p);
+      return {
+        id: p.id,
+        name: personLabel(p),
+        initials: initials(personLabel(p)),
+        color: colorOf(p.id),
+        avatar: avatarPath ? this.pictureRef(p) : null,
+        avatarPath,
+        storeIds: p.storeIds,
+        listIds: p.listIds,
+        settled,
+        rows,
+        search: [p.name, p.displayName ?? "", p.discordUsername ?? "", p.discordId, p.email ?? "", p.whatsapp ?? "", p.notes ?? ""].join(" ").toLowerCase(),
+      };
+    });
+    return {
+      rev: this.s.rev,
+      unread,
+      connections: this.s.views().map((v) => this.connJson(v)),
+      stores: d.stores.map((st) => {
+        const f = storeImageFile(this.s.dir, st);
+        return { id: st.id, name: st.name, color: st.color ?? "#64748b", image: f ? `/v1/persons/img/store/${encodeURIComponent(st.id)}` : null, imagePath: f, ownerId: st.ownerId ?? null, count: counts.get(st.id) ?? 0 };
+      }),
+      lists: d.lists.map((l) => ({ id: l.id, name: l.name, accountId: l.accountId })),
+      people,
+    };
+  }
+
+  private isSettledNow(p: Person, sec: SectionId): boolean {
+    const mark = p.settled?.[sec];
+    if (!mark) return false;
+    const last = this.s.rowInfo(p, sec).lastAt;
+    return !(last && Date.parse(last) > Date.parse(mark));
+  }
+
+  private async state(c: Call): Promise<Reply> {
+    const rev = Number(q(c, "rev") ?? "0");
+    if (rev && rev === this.s.rev) await this.s.waitChange(rev, Math.min(25_000, Number(q(c, "wait") ?? "25000") || 25_000));
+    return ok(this.stateJson());
+  }
+
+  // ---------- chat ----------
+
+  /** The connection a chat uses: `account` if it's one of the person's choices, else the default. */
+  private chatConn(p: Person, section: SectionId | null, account?: string | null): { conn: ConnView | undefined; choices: ConnView[] } {
+    const { choices, current } = this.s.chatChoices(p, section);
+    const pick = account ? choices.find((x) => x.id === account) : undefined;
+    return { conn: pick ?? current, choices };
+  }
+
+  private msgJson(m: Message, conn: ConnView, mine: Map<string, Message>): Json {
+    const files = (m.attachments ?? []).map((a) => ({
+      name: a.name,
+      url: `/v1/persons/file?account=${encodeURIComponent(conn.id)}&url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.name)}`,
+      raw: a.url,
+      type: a.type ?? null,
+      size: a.size ?? null,
+      width: a.width ?? null,
+      height: a.height ?? null,
+      kind: attachmentKind(a, m.voice),
+      image: attachmentKind(a, m.voice) === "image",
+      duration: a.duration ?? null,
+    }));
+    const r = m.reply;
+    const quoted = r ? mine.get(r.id) : undefined;
+    return {
+      id: m.id,
+      fromMe: m.fromMe,
+      text: m.content,
+      at: m.timestamp,
+      edited: !!m.edited,
+      subject: m.subject ?? null,
+      threadId: m.threadId ?? null,
+      status: m.status ?? null,
+      voice: !!m.voice,
+      embed: !!m.embed,
+      reply: r ? { id: r.id, text: quoted?.content ?? r.content ?? (r.attachments ? "📎 Attachment" : r.deleted ? "Deleted message" : ""), fromMe: quoted?.fromMe ?? !!r.fromMe } : null,
+      files,
+      ai: false,
+    };
+  }
+
+  private async chat(personId: string, c: Call): Promise<Reply> {
+    const p = this.s.person(decodeURIComponent(personId));
+    if (!p) return err(404, "no such person");
+    const section = sectionOf(q(c, "section"));
+    const { conn, choices } = this.chatConn(p, section, q(c, "account"));
+    const pic = this.pictureRef(p);
+    const row = this.s.rowInfo(p, section);
+    const personJson = { id: p.id, name: personLabel(p), initials: initials(personLabel(p)), color: colorOf(p.id), avatar: pic, avatarPath: this.picture(p), presence: row.presence ?? null };
+    const ai = this.extra.ai ? await this.extra.ai.items(p, section ?? conn?.section ?? "stores").catch(() => []) : [];
+    if (!conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: json(ai) });
+    const peer = peerOf(p, conn.kind, conn.section);
+    const before = q(c, "before");
+    if (before) {
+      const n = await this.s.loadHistory(conn.id, peer, before).catch(() => 0);
+      if (!n) return ok({ messages: [], more: false });
+    } else if (!conn.convos[peer]?.messages.length && conn.connected) {
+      await this.s.loadHistory(conn.id, peer).catch(() => 0);
+    }
+    if (!before) this.s.watch(conn.id, peer);
+    const cur = this.s.view(conn.id) ?? conn;
+    const msgs = cur.convos[peer]?.messages ?? [];
+    const byId = new Map(msgs.map((m) => [m.id, m]));
+    const shown = before ? msgs.filter((m) => m.timestamp < (byId.get(before)?.timestamp ?? "")) : msgs;
+    const seen = seenOf(p, conn.id, peer);
+    const firstUnread = shown.find((m) => !m.fromMe && (seen ? Date.parse(m.timestamp) > Date.parse(seen) : m.unread === true));
+    const typing = cur.typing[peer];
+    const status = headerStatus(conn.kind, this.s.presenceOf(peer), cur.lastSeen[peer], typing && typing.until > Date.now() ? typing.kind : undefined);
+    return ok({
+      person: { ...personJson, status: status ? { text: status.text, tone: TONE[status.tone] ?? "muted" } : null },
+      account: { id: conn.id, kind: conn.kind, section: conn.section, label: this.connLabel(cur), connected: cur.connected },
+      accounts: choices.map((x) => ({ id: x.id, kind: x.kind, label: this.connLabel(x) })),
+      peer,
+      typing: typing && typing.until > Date.now() ? typing.kind : null,
+      more: shown.length > 0,
+      unreadFrom: firstUnread?.id ?? null,
+      messages: shown.map((m) => this.msgJson(m, cur, byId)),
+      outgoing: (cur.outgoing[peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })) })),
+      ai: json(ai),
+    });
+  }
+
+  private connLabel(v: ConnView): string {
+    const who = v.state.me?.globalName || v.state.me?.username || "";
+    return who ? `${KIND_LABEL[v.kind]} · ${who}` : KIND_LABEL[v.kind];
+  }
+
+  private resolve(personId: string, b: Record<string, unknown>): { p: Person; conn: ConnView } | null {
+    const p = this.s.person(decodeURIComponent(personId));
+    if (!p) return null;
+    const { conn } = this.chatConn(p, sectionOf(str(b.section)), str(b.account));
+    return conn ? { p, conn } : null;
+  }
+
+  private async send(personId: string, b: Record<string, unknown>): Promise<Reply> {
+    const r = this.resolve(personId, b);
+    if (!r) return err(404, "no channel to send through");
+    const text = str(b.text) ?? "";
+    const files: OutgoingFile[] = (Array.isArray(b.files) ? b.files : []).map((x) => {
+      const f = obj(x);
+      return { name: str(f.name) ?? "file", type: str(f.type) ?? "application/octet-stream", data: new Uint8Array(Buffer.from(str(f.data) ?? "", "base64")) };
+    }).filter((f) => f.data.length > 0);
+    if (!text.trim() && !files.length) return err(400, "nothing to send");
+    const opts: { files?: OutgoingFile[]; replyTo?: string; subject?: string } = {};
+    if (files.length) opts.files = files;
+    const replyTo = str(b.replyTo);
+    if (replyTo) opts.replyTo = replyTo;
+    const subject = str(b.subject);
+    if (subject) opts.subject = subject;
+    const res = await this.s.send(r.p.id, r.conn.id, text, opts);
+    return ok(json(res));
+  }
+
+  private read(personId: string, b: Record<string, unknown>): Reply {
+    const r = this.resolve(personId, b);
+    if (r) this.s.markSeen(r.p.id, r.conn.id, str(b.upTo));
+    return ok({ ok: !!r });
+  }
+
+  private unread(personId: string, b: Record<string, unknown>): Reply {
+    const r = this.resolve(personId, b);
+    const id = str(b.messageId);
+    const m = r && id ? r.conn.convos[peerOf(r.p, r.conn.kind, r.conn.section)]?.messages.find((x) => x.id === id) : undefined;
+    if (r && m) this.s.markUnread(r.p.id, r.conn.id, m);
+    return ok({ ok: !!m });
+  }
+
+  private typing(personId: string, b: Record<string, unknown>): Reply {
+    const r = this.resolve(personId, b);
+    if (r) this.s.sendTyping(r.conn.id, peerOf(r.p, r.conn.kind, r.conn.section), b.on !== false);
+    return ok({ ok: !!r });
+  }
+
+  private retry(personId: string, b: Record<string, unknown>): Reply {
+    const r = this.resolve(personId, b);
+    const key = str(b.key);
+    if (r && key) {
+      if (b.dismiss === true) this.s.dismiss(r.conn.id, peerOf(r.p, r.conn.kind, r.conn.section), key);
+      else this.s.retry(r.p.id, r.conn.id, key);
+    }
+    return ok({ ok: !!r });
+  }
+
+  private async ai(personId: string, b: Record<string, unknown>): Promise<Reply> {
+    const p = this.s.person(decodeURIComponent(personId));
+    if (!p) return err(404, "no such person");
+    if (!this.extra.ai) return err(503, "Person AI isn't available");
+    const section = sectionOf(str(b.section)) ?? "stores";
+    const text = str(b.text) ?? "";
+    if (!text.trim()) return err(400, "empty");
+    const { conn } = this.chatConn(p, section, str(b.account));
+    const peer = conn ? peerOf(p, conn.kind, conn.section) : "";
+    const msgs = conn ? conn.convos[peer]?.messages ?? [] : [];
+    const chat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!);
+    return ok({ ok: true, chat });
+  }
+
+  // ---------- people ----------
+
+  private async panel(personId: string): Promise<Reply> {
+    const d = this.s.data;
+    const p = this.s.person(decodeURIComponent(personId));
+    if (!d || !p) return err(404, "no such person");
+    const socials = this.extra.socials && p.socials?.length ? await this.extra.socials(p.socials).catch(() => null) : null;
+    const identities = [
+      ...(p.discordId ? [{ kind: "discord", value: p.discordId, section: null, label: p.discordUsername ? `@${p.discordUsername}` : p.discordId }] : []),
+      ...(p.email ? [{ kind: "gmail", value: p.email, section: null, label: p.email }] : []),
+      ...(p.whatsapp ? [{ kind: "whatsapp", value: p.whatsapp, section: null, label: `+${p.whatsapp}` }] : []),
+      ...(p.identities ?? []).map((i) => ({ kind: i.kind, value: i.value, section: i.section, label: i.kind === "discord" && i.username ? `@${i.username}` : i.kind === "whatsapp" ? `+${i.value}` : i.value })),
+    ];
+    return ok({
+      person: json(p),
+      name: personLabel(p),
+      initials: initials(personLabel(p)),
+      color: colorOf(p.id),
+      avatar: this.pictureRef(p),
+      avatarPath: this.picture(p, 256),
+      stores: d.stores.filter((s) => p.storeIds.includes(s.id) || s.ownerId === p.id).map((s) => ({ id: s.id, name: s.name, owner: s.ownerId === p.id, color: s.color ?? "#64748b" })),
+      lists: d.lists.filter((l) => p.listIds.includes(l.id)).map((l) => ({ id: l.id, name: l.name })),
+      identities: json(identities),
+      socials: socials ?? (p.socials ?? []).map((url) => ({ url, platform: null, handle: null, uploads: [] })),
+    });
+  }
+
+  private patchPerson(personId: string, b: Record<string, unknown>): Reply {
+    const id = decodeURIComponent(personId);
+    if (!this.s.person(id)) return err(404, "no such person");
+    const settle = obj(b.settle);
+    const sec = sectionOf(str(settle.section));
+    if (sec) this.s.setSettled(id, sec, settle.on !== false);
+    if (typeof b.name === "string") this.s.rename(id, b.name);
+    this.s.updatePerson(id, (p) => {
+      const n: Person = { ...p };
+      const at = new Date().toISOString();
+      let changed = false;
+      const set = <K extends "notes" | "email" | "whatsapp">(k: K, v: string | undefined): void => {
+        if (v === undefined) return;
+        changed = true;
+        if (v) n[k] = v;
+        else delete n[k];
+      };
+      if (typeof b.notes === "string") set("notes", b.notes.trim() ? b.notes : "");
+      if (typeof b.email === "string") set("email", isEmail(b.email) ? b.email.trim().toLowerCase() : "");
+      if (typeof b.whatsapp === "string") set("whatsapp", normWhatsApp(b.whatsapp));
+      if (typeof b.discordId === "string" && (b.discordId === "" || isDiscordId(b.discordId))) {
+        n.discordId = b.discordId.trim();
+        changed = true;
+      }
+      if (typeof b.discordUsername === "string") {
+        const u = cleanUsername(b.discordUsername);
+        if (u) n.discordUsername = u;
+        else delete n.discordUsername;
+        changed = true;
+      }
+      if (Array.isArray(b.storeIds)) {
+        n.storeIds = b.storeIds.filter((x): x is string => typeof x === "string" && !!this.s.data?.stores.some((s) => s.id === x));
+        changed = true;
+      }
+      if (Array.isArray(b.listIds)) {
+        n.listIds = b.listIds.filter((x): x is string => typeof x === "string" && !!this.s.data?.lists.some((l) => l.id === x));
+        changed = true;
+      }
+      if (Array.isArray(b.socials)) {
+        const urls = b.socials.filter((x): x is string => typeof x === "string" && /^https:\/\//.test(x));
+        if (urls.length) n.socials = [...new Set(urls)];
+        else delete n.socials;
+        changed = true;
+      }
+      if (!changed) return p;
+      n.updatedAt = at;
+      return n;
+    });
+    return ok({ ok: true, person: json(this.s.person(id) ?? null) });
+  }
+
+  private deletePerson(personId: string): Reply {
+    const id = decodeURIComponent(personId);
+    const p = this.s.person(id);
+    if (!p) return err(404, "no such person");
+    this.s.deletePerson(id);
+    return ok({ ok: true, person: json(p) });
+  }
+
+  private createPerson(b: Record<string, unknown>): Reply {
+    const d = this.s.data;
+    if (!d) return err(503, "not loaded");
+    const at = new Date().toISOString();
+    const discordId = str(b.discordId)?.trim() ?? "";
+    const email = str(b.email)?.trim().toLowerCase() ?? "";
+    const wa = normWhatsApp(str(b.whatsapp) ?? "");
+    const dup = d.people.find((p) => (discordId && p.discordId === discordId) || (email && p.email === email) || (wa && p.whatsapp === wa));
+    if (dup) return ok({ ok: false, existing: dup.id, error: `${personLabel(dup)} already has that` });
+    let p: Person = { id: this.s.newId(), name: (str(b.name) ?? "").trim(), discordId: isDiscordId(discordId) ? discordId : "", storeIds: [], listIds: [], createdAt: at, updatedAt: at };
+    const uname = cleanUsername(str(b.discordUsername) ?? "");
+    if (uname) p.discordUsername = uname;
+    if (isEmail(email)) p.email = email;
+    if (wa) p.whatsapp = wa;
+    if (typeof b.avatar === "string" || b.avatar === null) p.avatar = b.avatar as string | null;
+    if (str(b.displayName)) p.displayName = str(b.displayName)!;
+    for (const sid of Array.isArray(b.storeIds) ? b.storeIds : []) if (typeof sid === "string" && d.stores.some((s) => s.id === sid)) p = joinScope(p, { kind: "store", id: sid }, at);
+    for (const lid of Array.isArray(b.listIds) ? b.listIds : []) if (typeof lid === "string" && d.lists.some((l) => l.id === lid)) p = joinScope(p, { kind: "list", id: lid }, at);
+    if (!p.name && !p.discordId && !p.discordUsername && !p.email && !p.whatsapp) return err(400, "give a name, a Discord id or username, an email or a WhatsApp number");
+    const person = p;
+    this.s.update((x) => ({ ...x, people: [...x.people, person] }));
+    return ok({ ok: true, person: json(person) });
+  }
+
+  private saveStore(id: string | null, b: Record<string, unknown>): Reply {
+    const name = (str(b.name) ?? "").trim();
+    if (id === null) {
+      if (!name) return err(400, "a store needs a name");
+      const st: Store = { id: this.s.newId("s"), name, color: str(b.color) ?? COLORS[(this.s.data?.stores.length ?? 0) % COLORS.length]! };
+      const owner = str(b.ownerId);
+      if (owner && this.s.person(owner)) st.ownerId = owner;
+      this.s.update((d) => ({ ...d, stores: [...d.stores, st] }));
+      return ok({ ok: true, store: json(st) });
+    }
+    this.s.update((d) => ({
+      ...d,
+      stores: d.stores.map((s) => {
+        if (s.id !== decodeURIComponent(id)) return s;
+        const n: Store = { ...s };
+        if (name) n.name = name;
+        if (str(b.color)) n.color = str(b.color)!;
+        if (typeof b.ownerId === "string") {
+          if (b.ownerId && this.s.person(b.ownerId)) n.ownerId = b.ownerId;
+          else delete n.ownerId;
+        }
+        return n;
+      }),
+    }));
+    return ok({ ok: true });
+  }
+
+  private deleteStore(id: string): Reply {
+    const sid = decodeURIComponent(id);
+    this.s.update((d: AppData) => ({ ...d, stores: d.stores.filter((s) => s.id !== sid), people: d.people.map((p) => (p.storeIds.includes(sid) ? { ...p, storeIds: p.storeIds.filter((x) => x !== sid) } : p)) }));
+    return ok({ ok: true });
+  }
+
+  private async lookup(c: Call): Promise<Reply> {
+    const section = sectionOf(q(c, "section"));
+    const kind = (q(c, "kind") ?? "discord") as ChannelKind;
+    const text = (q(c, "q") ?? "").trim();
+    if (!text) return ok({ matches: [] });
+    const views = this.s.views();
+    const conn = kind === "discord" ? this.s.discordFor(section) : views.find((v) => v.kind === kind && v.section === section && v.connected) ?? views.find((v) => v.kind === kind && v.connected);
+    if (!conn) return ok({ matches: [], error: `No ${KIND_LABEL[kind]} connected` });
+    const r = await this.s.lookup(conn.id, kind === "whatsapp" ? normWhatsApp(text) || text : text);
+    const known = (id: string): string | null => this.s.data?.people.find((p) => (kind === "discord" ? p.discordId === id : kind === "gmail" ? p.email === id : p.whatsapp === id))?.id ?? null;
+    return ok({
+      matches: r.matches.map((u) => ({ id: u.id, username: u.username, name: u.globalName ?? u.username, avatar: u.avatar, avatarUrl: u.avatarUrl, known: known(u.id) })),
+      notFound: !!r.notFound,
+      notes: json(r.notes ?? []),
+    });
+  }
+
+  // ---------- connections ----------
+
+  private async addConn(b: Record<string, unknown>): Promise<Reply> {
+    const section = sectionOf(str(b.section));
+    const kind = str(b.kind) as ChannelKind | undefined;
+    if (!section || !kind || !["discord", "gmail", "whatsapp"].includes(kind)) return err(400, "section and kind");
+    const m = await this.s.addConnection(section, kind);
+    return ok({ ok: true, id: m.id });
+  }
+
+  private connConnect(id: string): Reply {
+    this.s.connect(decodeURIComponent(id));
+    return ok({ ok: true });
+  }
+
+  private async connRemove(id: string): Promise<Reply> {
+    await this.s.removeConnection(decodeURIComponent(id));
+    return ok({ ok: true });
+  }
+}
+
+/** The Person AI side (ai.ts): its items for a person+section, and asking it. */
+export interface AiPort {
+  items(p: Person, section: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]>;
+  ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData): Promise<string | number>;
+}
+
+export { validPeer };

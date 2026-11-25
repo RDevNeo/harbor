@@ -1,0 +1,7 @@
+export { PersonsService, type ConnView, type RowInfo, type ServiceOptions } from "./service.ts";
+export { PersonsRoutes, type AiPort, type Call as PersonsCall, type Reply as PersonsReply } from "./routes.ts";
+export { personsDir, loadConnections, saveConnections } from "./store.ts";
+export type { Connection, ConnContext, ConnFactory, ConnMeta } from "./conn/types.ts";
+export * from "./model/types.ts";
+export { PersonAi } from "./ai.ts";
+export { FACTORIES } from "./conn/index.ts";
