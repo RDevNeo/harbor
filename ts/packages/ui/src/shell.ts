@@ -825,9 +825,9 @@ export class Shell {
       for (const r of this.data.repos) this.gitOf(r.id, true);
       this.refreshAll();
     };
+    // Hub: the team panel is the corner badge's; its shortcut opens and closes it.
     w.team = () => {
-      w.team_on = !w.team_on;
-      this.data.store.set("show_team", w.team_on ? "1" : "0");
+      w.team_pop = !w.team_pop;
     };
     w.side_resized = (width) => this.data.store.set(SIDEBAR_W_KEY, String(parseSidebarWidth(String(width))));
     w.open_agent = (id) => this.openChat(id);
@@ -1078,8 +1078,7 @@ export class Shell {
       const v = stripView(this.stripRows.length, 0, this.stripFold.get(this.chatId) ?? null);
       if (headerClick(v.folded) === "toggle") this.stripFold.set(this.chatId, !v.open);
       else {
-        w.team_on = true;
-        this.data.store.set("show_team", "1");
+        w.team_pop = true;
       }
       this.refreshStrip();
     };
@@ -1907,6 +1906,9 @@ export class Shell {
       };
     };
     sync(this.teamAgentRows, active.map((c) => row(c, false)), sameJsonRow);
+    // The corner badge (app.slint): how many agents, and how many are working now.
+    this.win.team_count = active.length;
+    this.win.team_running = active.filter((c) => this.engine.live(c.id)).length;
     sync(this.teamSettledRows, settled.map((c) => row(c, true)), sameJsonRow);
     sync(
       this.wakeRows,

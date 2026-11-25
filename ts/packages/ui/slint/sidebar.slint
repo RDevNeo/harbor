@@ -1,5 +1,4 @@
 import { Theme } from "theme.slint";
-import { AppTabs } from "tabs.slint";
 import { Icons } from "icons.slint";
 import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
 import { MemGauge } from "memory.slint";
@@ -785,10 +784,6 @@ export component Sidebar inherits Rectangle {
                 clicked => {
                     root.hide();
                 }
-            }
-            // Hub's tabs (tabs.slint): Projects | Persons | Routine.
-            AppTabs {
-                compact: true;
             }
             Rectangle {
                 horizontal-stretch: 1;

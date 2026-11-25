@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -63,6 +64,8 @@ public class Chat extends Base implements Images.Gallery {
     private boolean queueUnfolded;
     private Render render;
     private Team team;
+    private LinearLayout teamBadge;
+    private TextView teamCount;
     private Slash slash;
     private JSONObject shown;                         // the chat the header shows
     private Tags tags;
@@ -111,7 +114,21 @@ public class Chat extends Base implements Images.Gallery {
         toCaptcha = b == null && getIntent().getBooleanExtra("captcha", false);
         render = new Render(this, null);
         LinearLayout root = frame("Chat", menuButton(), false);
-        action(Ui.I_PANEL_RIGHT, v -> openRight()).setContentDescription("Team: agents, processes, wake-ups, webhooks");
+        // Hub: the team's badge (agents, and how many work now); a tap opens the team, another closes it.
+        teamBadge = Ui.row(this);
+        teamBadge.setGravity(Gravity.CENTER_VERTICAL);
+        teamBadge.setPadding(Ui.dp(10), 0, Ui.dp(12), 0);
+        teamBadge.setBackground(Ui.press(0, Ui.LINE, 16));
+        teamBadge.addView(Ui.icon(this, Ui.I_USERS, 17, Ui.FG));
+        teamCount = Ui.text(this, "", 14, Ui.FG);
+        teamCount.setPadding(Ui.dp(6), 0, 0, 0);
+        teamCount.setVisibility(View.GONE);
+        teamBadge.addView(teamCount);
+        teamBadge.setContentDescription("Team: agents, processes, wake-ups, webhooks");
+        teamBadge.setOnClickListener(v -> { if (rightOpen()) closeDrawer(); else openRight(); });
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(32));
+        bl.setMargins(0, 0, Ui.dp(4), 0);
+        barActions.addView(teamBadge, bl);
         action(Ui.I_MENU, v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
             if (c != null) Chats.menu(this, hub, c, this::refreshState, this::deleted);
@@ -255,7 +272,13 @@ public class Chat extends Base implements Images.Gallery {
         root.addView(offNote, Ui.margins(Ui.fill(), 12, 0, 12, 12));
         installDrawer(chatId);
         team = new Team(this, chatId);
+        team.onCount = (n, working) -> {
+            teamCount.setText(working > 0 ? working + "/" + n : String.valueOf(n));
+            teamCount.setTextColor(working > 0 ? Ui.BLUE : Ui.FG);
+            teamCount.setVisibility(n > 0 ? View.VISIBLE : View.GONE);
+        };
         installRight(team.view);
+        team.load();
         livePanel(b);
         if ("1".equals(Swap.state(this, b, "focus"))) {
             // The keyboard was up on the composer: up again.
@@ -345,7 +368,8 @@ public class Chat extends Base implements Images.Gallery {
         if (reconnect || stateChanged) work.load();
         if (stateChanged) refreshState();
         // The hub counts a change in a team as a change of its lead.
-        if (rightOpen() && (reconnect || stateChanged || changed.contains(chatId) || changed.contains(team.lead))) team.load();
+        // Closed, the badge's count still follows the team's own changes.
+        if (reconnect || changed.contains(chatId) || changed.contains(team.lead) || (rightOpen() && stateChanged)) team.load();
     }
 
     @Override

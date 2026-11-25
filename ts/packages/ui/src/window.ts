@@ -621,6 +621,9 @@ export interface AppWindow extends slint.ComponentHandle {
   team_enabled: boolean;
   team_on: boolean;
   team_agents: slint.Model<AgentRow>;
+  team_count: number;
+  team_pop: boolean;
+  team_running: number;
   team_settled: slint.Model<AgentRow>;
   team_wakeups: slint.Model<WakeRow>;
   team_hooks: slint.Model<HookRow>;

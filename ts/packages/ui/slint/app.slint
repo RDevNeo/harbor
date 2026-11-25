@@ -177,11 +177,6 @@ component TopBar {
                 root.show-sidebar();
             }
         }
-        // Hub's tabs: in the sidebar's header, here while the sidebar is hidden.
-        if !root.sidebar-open: AppTabs {
-            y: 1px;
-            compact: true;
-        }
         HorizontalLayout {
             horizontal-stretch: 1;
             spacing: 6px;
@@ -290,50 +285,6 @@ component TopBar {
                     root.restore();
                 }
             }
-            Btn {
-                y: 1px;
-                icon: Icons.square-menu;
-                size: icon-xs;
-                variant: ghost-muted;
-                enabled: root.team-enabled;
-                pressed: root.team-enabled && root.team-on;
-                tip: "Team: agents, processes, wake-ups, webhooks (Ctrl+J)";
-                clicked => {
-                    root.team();
-                }
-            }
-            Btn {
-                y: 1px;
-                icon: Icons.panel-bottom;
-                size: icon-xs;
-                variant: ghost-muted;
-                pressed: root.bottom-on;
-                tip: "Bottom panel";
-                clicked => {
-                    root.pane("bottom");
-                }
-            }
-            Btn {
-                y: 1px;
-                icon: Icons.panel-right;
-                size: icon-xs;
-                variant: ghost-muted;
-                pressed: root.right-on;
-                tip: "Right panel";
-                clicked => {
-                    root.pane("right");
-                }
-            }
-            Btn {
-                y: 1px;
-                icon: Icons.x;
-                size: icon-xs;
-                variant: ghost;
-                tip: "Close Hub";
-                clicked => {
-                    root.close-window();
-                }
-            }
         }
     }
     if root.cap: CapNotice {
@@ -368,55 +319,15 @@ component SplitTools {
         spacing: 0px;
         VerticalLayout {
             alignment: center;
-            Btn {
-                icon: Icons.square-menu;
-                size: icon-xs;
-                variant: ghost-muted;
-                enabled: root.team-enabled;
-                pressed: root.team-enabled && root.team-on;
-                tip: "Team: agents, processes, wake-ups, webhooks (Ctrl+J)";
-                clicked => {
-                    root.team();
-                }
-            }
         }
         VerticalLayout {
             alignment: center;
-            Btn {
-                icon: Icons.panel-bottom;
-                size: icon-xs;
-                variant: ghost-muted;
-                pressed: root.bottom-on;
-                tip: "Bottom panel";
-                clicked => {
-                    root.pane("bottom");
-                }
-            }
         }
         VerticalLayout {
             alignment: center;
-            Btn {
-                icon: Icons.panel-right;
-                size: icon-xs;
-                variant: ghost-muted;
-                pressed: root.right-on;
-                tip: "Right panel";
-                clicked => {
-                    root.pane("right");
-                }
-            }
         }
         VerticalLayout {
             alignment: center;
-            Btn {
-                icon: Icons.x;
-                size: icon-xs;
-                variant: ghost;
-                tip: "Close Hub";
-                clicked => {
-                    root.close-window();
-                }
-            }
         }
     }
 }
@@ -628,6 +539,13 @@ export component AppWindow inherits Window {
     out property <bool> keys-plain: keys.has-focus || composer-el.focused;
     in property <bool> team-enabled;
     in property <bool> team-on;
+    // Hub: the team panel floats, opened and closed by its corner badge (how many agents, how many working).
+    in-out property <bool> team-pop;
+    in property <int> team-count;
+    in property <int> team-running;
+    // Hub's tab row (Projects | Persons | Routine) across the top; Projects' window sits under it.
+    out property <length> tabs-h: round(46px / 1phx) * 1phx;
+    out property <length> content-h: root.height - root.tabs-h;
     in property <[AgentRow]> team-agents;
     in property <[AgentRow]> team-settled;
     in property <[WakeRow]> team-wakeups;
@@ -1027,6 +945,9 @@ export component AppWindow inherits Window {
         }
 
         keys := FocusScope {
+            y: root.tabs-h;
+            width: root.width;
+            height: root.content-h;
             key-pressed(e) => {
                 if root.global-key(e) {
                     return accept;
@@ -1038,7 +959,7 @@ export component AppWindow inherits Window {
                     x: 0;
                     y: 0;
                     width: root.side-shown;
-                    height: root.height;
+                    height: root.content-h;
                     rows: root.side-rows;
                     reveal: root.side-reveal;
                     scroll-y <=> root.side-scroll;
@@ -1154,7 +1075,7 @@ export component AppWindow inherits Window {
                     x: root.left-edge;
                     y: 0;
                     width: root.width - self.x - root.right-shown;
-                    height: root.height - root.bottom-shown;
+                    height: root.content-h - root.bottom-shown;
                     // Split, the panes' header row is the window's top (SplitTools has the bar's buttons).
                     if (root.view == "draft" || root.view == "chat") && !root.panes-on: TopBar {
                         crumbs: root.crumbs;
@@ -1199,7 +1120,9 @@ export component AppWindow inherits Window {
                         // Split panes: each one is drawn by Panes; the focused one has this usual composer under it.
                         property <bool> split: root.panes-on;
                         // chat.rs: the panel docks while the chat keeps its 440px minimum.
-                        property <bool> team-docked: root.view == "chat" && root.team-enabled && root.team-on && self.width - 300px >= 440px;
+                        // Hub: no docked column; the panel floats over the chat while its corner badge has it open.
+                        property <bool> team-docked: false;
+                        property <bool> team-float: root.view == "chat" && root.team-enabled && root.team-pop;
                         // The panes' area: the centre left of the docked panel.
                         property <length> area-w: self.width - (team-docked ? 300px : 0px);
                         property <length> fx: split ? floor(root.split-fx * area-w / 1phx) * 1phx : 0px;
@@ -1215,11 +1138,25 @@ export component AppWindow inherits Window {
                         property <bool> centred: root.view == "draft" || root.hero;
                         // chat.rs: (h/2 - 170 - growth), clamped at 24px; fitted to the Rust app at 853 and 553px.
                         property <length> hero-top: fy + top + max((fh - top) * 0.5 - 375px, 24px) + 7px;
-                        if body.team-docked: TeamPanel {
-                            x: floor(body.area-w / 1phx) * 1phx;
-                            y: body.split ? 0px : 9px;
-                            width: parent.width - self.x;
-                            height: parent.height - self.y;
+                        if body.team-float: Rectangle {
+                            x: parent.width - 316px;
+                            y: 52px;
+                            z: 10;
+                            width: 304px;
+                            height: max(120px, parent.height - 64px);
+                            border-radius: 12px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.bg200;
+                            drop-shadow-blur: 18px;
+                            drop-shadow-color: #00000055;
+                            clip: true;
+                            TouchArea { }
+                            TeamPanel {
+                            x: 0;
+                            y: 1px;
+                            width: parent.width - 1px;
+                            height: parent.height - 2px;
                             split: body.split;
                             head-h: body.top;
                             head-trail: body.split ? split-tools.width : 0px;
@@ -1270,6 +1207,54 @@ export component AppWindow inherits Window {
                             }
                             settled-toggled(on) => {
                                 root.team-settled-toggled(on);
+                            }
+                            }
+                        }
+                        // The team's corner badge: agents (and how many work now); a click opens the panel, another closes it.
+                        if root.view == "chat" && root.team-enabled: Rectangle {
+                            x: parent.width - self.width - 12px;
+                            y: 12px;
+                            z: 12;
+                            width: badge-row.preferred-width + 20px;
+                            height: 30px;
+                            border-radius: 15px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: root.team-pop ? Theme.gray-200 : badge-area.has-hover ? Theme.gray-100 : Theme.bg100;
+                            drop-shadow-blur: 6px;
+                            drop-shadow-color: #00000033;
+                            badge-row := HorizontalLayout {
+                                x: 10px;
+                                width: parent.width - 20px;
+                                spacing: 6px;
+                                alignment: center;
+                                Text {
+                                    text: "\u{e1a4}";
+                                    font-family: "lucide";
+                                    font-size: 14px;
+                                    color: Theme.fg;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.team-count == 0 ? "Agents" : root.team-running > 0 ? root.team-running + "/" + root.team-count + " working" : root.team-count + (root.team-count == 1 ? " agent" : " agents");
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: Theme.fg;
+                                    vertical-alignment: center;
+                                }
+                                if root.team-running > 0: Rectangle {
+                                    width: 7px;
+                                    height: 7px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 3.5px;
+                                    background: Theme.green-800;
+                                }
+                            }
+                            badge-area := TipArea {
+                                tip: root.team-pop ? "Hide the team (agents, processes, wake-ups, webhooks)" : "Team: agents, processes, wake-ups, webhooks";
+                                clicked => {
+                                    root.team-pop = !root.team-pop;
+                                }
                             }
                         }
                         transcript := Transcript {
@@ -1469,7 +1454,7 @@ export component AppWindow inherits Window {
                                 menu: root.menu;
                                 menu-selected: root.menu-selected;
                                 open-popup: root.pop-id;
-                                max-h: min(14 * 20px, root.height * 0.45);
+                                max-h: min(14 * 20px, root.content-h * 0.45);
                                 edited(t) => {
                                     root.edited(t);
                                 }
@@ -1632,7 +1617,7 @@ export component AppWindow inherits Window {
                     x: 0;
                     y: 0;
                     width: root.width;
-                    height: root.height;
+                    height: root.content-h;
                     background: Theme.bg100;
                     init => {
                         settings-page.focus-page();
@@ -1647,7 +1632,7 @@ export component AppWindow inherits Window {
                     x: root.left-edge;
                     y: 0;
                     width: root.width - self.x;
-                    height: root.height;
+                    height: root.content-h;
                     background: Theme.bg100;
                     init => {
                         keys.focus();
@@ -1673,7 +1658,7 @@ export component AppWindow inherits Window {
                     x: root.left-edge;
                     y: 0;
                     width: root.width - self.x;
-                    height: root.height;
+                    height: root.content-h;
                     background: Theme.bg100;
                     TouchArea { }
                     IssuesPage {
@@ -1697,9 +1682,9 @@ export component AppWindow inherits Window {
 
         if root.docked && root.view != "settings": TouchArea {
             x: root.side-shown - 3px;
-            y: 0;
+            y: root.tabs-h;
             width: 6px;
-            height: root.height;
+            height: root.content-h;
             mouse-cursor: col-resize;
             Rectangle {
                 x: 2px;
@@ -1723,16 +1708,16 @@ export component AppWindow inherits Window {
         }
         if root.right-open && root.pane-max == "": Rectangle {
             x: root.width - root.right-shown;
-            y: 0;
+            y: root.tabs-h;
             width: 1px;
-            height: root.height;
+            height: root.content-h;
             background: Theme.border;
         }
         if root.right-open && root.pane-max == "": TouchArea {
             x: root.width - root.right-shown - 3px;
-            y: 0;
+            y: root.tabs-h;
             width: 6px;
-            height: root.height;
+            height: root.content-h;
             mouse-cursor: ew-resize;
             moved => {
                 root.right-w = max(320px, root.width - (self.absolute-position.x + self.mouse-x));
@@ -1740,9 +1725,9 @@ export component AppWindow inherits Window {
         }
         right-pane := SurfacePane {
             x: root.pane-max == "right" ? root.left-edge : root.width - root.right-shown + 1px;
-            y: 0;
+            y: root.tabs-h;
             width: root.pane-max == "right" ? root.width - root.left-edge : root.right-shown - 1px;
-            height: root.height;
+            height: root.content-h;
             visible: root.right-open && (root.pane-max == "" || root.pane-max == "right");
             tabs: root.right-tabs;
             active: root.right-active;
@@ -1815,14 +1800,14 @@ export component AppWindow inherits Window {
         }
         if root.bottom-open && root.pane-max == "": Rectangle {
             x: root.left-edge;
-            y: root.height - root.bottom-shown;
+            y: root.tabs-h + root.content-h - root.bottom-shown;
             width: root.width - root.left-edge - root.right-shown;
             height: 1px;
             background: Theme.border;
         }
         if root.bottom-open && root.pane-max == "": TouchArea {
             x: root.left-edge;
-            y: root.height - root.bottom-shown - 3px;
+            y: root.tabs-h + root.content-h - root.bottom-shown - 3px;
             width: root.width - root.left-edge - root.right-shown;
             height: 6px;
             mouse-cursor: ns-resize;
@@ -1832,9 +1817,9 @@ export component AppWindow inherits Window {
         }
         bottom-pane := SurfacePane {
             x: root.left-edge;
-            y: root.pane-max == "bottom" ? 0px : root.height - root.bottom-shown + 1px;
+            y: root.tabs-h + (root.pane-max == "bottom" ? 0px : root.content-h - root.bottom-shown + 1px);
             width: root.width - root.left-edge - (root.pane-max == "bottom" ? 0px : root.right-shown);
-            height: root.pane-max == "bottom" ? root.height : root.bottom-shown - 1px;
+            height: root.pane-max == "bottom" ? root.content-h : root.bottom-shown - 1px;
             visible: root.bottom-open && (root.pane-max == "" || root.pane-max == "bottom");
             tabs: root.bottom-tabs;
             active: root.bottom-active;
@@ -1906,6 +1891,23 @@ export component AppWindow inherits Window {
             }
         }
 
+        // Hub's tab row, the same as Persons' and Routine's (tabs.slint TabFrame's header).
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.tabs-h;
+            background: Theme.bg100;
+            AppTabs {
+                x: 12px;
+                y: (parent.height - self.height) / 2;
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
         if root.pop-id == "model": TouchArea {
             clicked => {
                 root.pop-close();
