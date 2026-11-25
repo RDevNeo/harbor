@@ -1234,13 +1234,28 @@ component Panel inherits PanelSurface {
 component Menu inherits MenuPanel {
     for it in PersonsBus.menu: Rectangle {
         height: it.sep ? 9px : it.header ? 28px : it.sub != "" ? 44px : 32px;
-        if it.sep: MenuSeparator { }
+        // Each entry fills its slot (without a size a child of a Rectangle gets its preferred width, 0, and is
+        // centred: an empty menu with a dash in it).
+        if it.sep: MenuSeparator {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+        }
         if it.header: MenuLabel {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
             text: it.label;
         }
         // A channel (Discord, Gmail, WhatsApp) is its mark in the icon's place.
         property <bool> brand: it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp";
         if !it.sep && !it.header: MenuItem {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
             icon: parent.brand ? " " : it.icon;
             label: it.label;
             desc: it.sub;

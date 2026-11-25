@@ -51,6 +51,14 @@ export function runStep(w: slint.Window, s: Step): void {
     case "up":
       w.dispatchEvent({ type: "pointer-released", position, button: "left" });
       break;
+    // The right button held and let go as two steps (a Flickable, the sidebars' lists, holds a press back: an
+    // instant rclick never reaches a row's menu there).
+    case "rdown":
+      w.dispatchEvent({ type: "pointer-pressed", position, button: "right" });
+      break;
+    case "rup":
+      w.dispatchEvent({ type: "pointer-released", position, button: "right" });
+      break;
     case "wheel":
     case "wheel-down":
       w.dispatchEvent({ type: "pointer-scrolled", position, deltaX: 0, deltaY: kind === "wheel" ? 120 : -120 });
