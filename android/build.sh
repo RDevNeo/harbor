@@ -30,8 +30,8 @@
 # shell's inputs changed without a version bump. HARBOR_CODE_VERSION=X.Y.Z gives the code zip
 # another version than the APK (tests of the loader: a code newer than the APK it runs on).
 #
-# Accounts (Account.java, android/PROTOCOL.md "Accounts"): HARBOR_CLERK_URL, HARBOR_CLERK_CLIENT_ID
-# HARBOR_ACCOUNTS_URL and HARBOR_GOOGLE_WEB_CLIENT_ID replace the built-in values (test builds against fakes; an http:// URL
+# Accounts (Account.java, android/PROTOCOL.md "Accounts"): HUB_ACCOUNTS_URL (empty: pairing only), HUB_CLERK_URL, HUB_CLERK_CLIENT_ID
+# and HUB_GOOGLE_WEB_CLIENT_ID replace the built-in values (test builds against fakes; an http:// URL
 # to 127.0.0.1 also lets the app talk plain HTTP to loopback, for `adb reverse`).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -142,21 +142,28 @@ LIBS+=("$DEPS/collection-1.1.0.jar")
 LIBCP=$(IFS=:; echo "${LIBS[*]}")
 
 # Where the app signs in (Config.java): RDevNeo's Clerk app and account service by default.
-CLERK_URL=${HARBOR_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
-CLERK_CLIENT=${HARBOR_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}
-ACCOUNTS_URL=${HARBOR_ACCOUNTS_URL:-https://harbor-accounts.rdevneo.workers.dev}
+# Hub: accounts come from Hub's own account service only (a deploy of worker/ as hub-accounts,
+# its phone redirect bouncing to hub://oauth), never Harbor's. HUB_ACCOUNTS_URL empty (the
+# default): the phone only pairs by QR code (Pair.java); set: it also signs in and shows its
+# workspaces, and pairing keeps working. Clerk defaults to the same instance as Harbor's (the
+# same Google sign-in and workspaces); HUB_CLERK_CLIENT_ID names Hub's own OAuth app there.
+CLERK_URL=${HUB_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
+CLERK_CLIENT=${HUB_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}
+ACCOUNTS_URL=${HUB_ACCOUNTS_URL-}
+case "$ACCOUNTS_URL" in *harbor-accounts.rdevneo*) echo "HUB_ACCOUNTS_URL is Harbor's account service: Hub needs its own" >&2; exit 1 ;; esac
 # Harbor's Google Cloud Web client id: set, Android 14+ signs in with its own account picker
 # (Credential Manager); empty, the browser through Clerk. Fill it once the Google Cloud clients exist.
-GOOGLE_WEB_CLIENT=${HARBOR_GOOGLE_WEB_CLIENT_ID-}
+GOOGLE_WEB_CLIENT=${HUB_GOOGLE_WEB_CLIENT_ID-}
 case "$GOOGLE_WEB_CLIENT" in *[\\\"]*) echo "bad Google client id" >&2; exit 1 ;; esac
 # A screenshot build (scripts/boat/phoneshot, Rig.java): signed in to nobody, it knows one PC, a hub
 # on 127.0.0.1:$HARBOR_RIG_PORT (adb reverse) taking the token $HARBOR_RIG_TOKEN. Unset: off.
 RIG_PORT=${HARBOR_RIG_PORT:-0} RIG_TOKEN=${HARBOR_RIG_TOKEN-}
 case "$RIG_PORT" in *[!0-9]*|"") echo "bad HARBOR_RIG_PORT" >&2; exit 1 ;; esac
 case "$RIG_TOKEN" in *[\\\"]*) echo "bad HARBOR_RIG_TOKEN" >&2; exit 1 ;; esac
-for v in "$CLERK_URL" "$CLERK_CLIENT" "$ACCOUNTS_URL"; do
+for v in "$CLERK_URL" "$CLERK_CLIENT"; do
   case "$v" in *[\\\"]*|"") echo "bad accounts setting: $v" >&2; exit 1 ;; esac
 done
+case "$ACCOUNTS_URL" in *[\\\"]*) echo "bad HUB_ACCOUNTS_URL" >&2; exit 1 ;; esac
 mkdir -p "$W/gen/dev/harbor/app"
 cat > "$W/gen/dev/harbor/app/Config.java" <<JAVA
 package dev.harbor.app;

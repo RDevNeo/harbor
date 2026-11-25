@@ -541,9 +541,10 @@ final class Hub {
     /** The headers that say who calls: the account's Harbor token (every PC of the workspace
      *  checks it), the phone's name and its app's version. */
     private void authorize(Net.Http c) {
-        String tok = Ui.app == null ? "" : Account.token(Ui.app);
-        // Hub: no account token; the PC knows this phone by its paired key (Pair). X-Hub says
+        // Hub: a paired PC (Pair, id pc:…) knows this phone by its key and gets no token; a
+        // workspace's PCs (Hub's own account service, Account.on) get the account's. X-Hub says
         // it's Hub's app, so a Harbor PC reached by mistake can tell.
+        String tok = Ui.app == null || id.startsWith(Pair.ID) ? "" : Account.token(Ui.app);
         if (!tok.isEmpty()) c.header("Authorization", "Bearer " + tok);
         if (Pair.ON) c.header("X-Hub", "1");
         c.header("X-Harbor-Device", deviceName());
@@ -912,7 +913,7 @@ final class Hub {
         JSONObject j = null;
         try { j = new JSONObject(body); } catch (JSONException ignored) { }
         String msg = j == null ? null : j.optString("error", null);
-        ApiError e = new ApiError(code, msg != null ? msg : code == 401 ? (Pair.ON ? "This PC doesn't know this phone any more: pair it again (Hub on the PC › Settings › Phones)." : "This PC refused the sign-in. Sign in again.") : "HTTP " + code);
+        ApiError e = new ApiError(code, msg != null ? msg : code == 401 ? (!Account.on() ? "This PC doesn't know this phone any more: pair it again (Hub on the PC › Settings › Phones)." : "This PC refused the sign-in or the pairing. Sign in again, or pair the phone again.") : "HTTP " + code);
         if (code == 401) {
             e.signin = true;
             if (Ui.app != null) Account.renewSoon(Ui.app);

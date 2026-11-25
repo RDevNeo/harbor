@@ -18,9 +18,10 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The start screen. Hub (Pair.ON): the PCs this phone is paired with, one entry each, and
- *  "Pair a PC" (the PC's QR code opens hub://pair?… here, or the link is pasted). Harbor's
- *  sign-in screens below stay for its code paths but never show. Another app or a browser opens
+/** The start screen. Hub (Pair.ON, renderPaired): with Hub's own account service (Account.on) the
+ *  account's workspaces as in Harbor; always the PCs this phone is paired with, one entry each,
+ *  and "Pair a PC" (the PC's QR code opens hub://pair?… here, or the link is pasted). Harbor's
+ *  sign-in-only screen below never shows. Another app or a browser opens
  *  a chat with its link, hub://chat/<gid>?pc=<PC name> (ChatLink).
  *
  *  Room for Hub's top-level tabs (Persons, Routine, Projects): this screen and what it opens are
@@ -460,26 +461,52 @@ public class Hubs extends Base {
      *  chats it opens) is built; Persons and Routine are ported from Person Hub later. */
     static final String[] TABS = {"Persons", "Routine", "Projects"};
 
-    /** The paired PCs and Pair a PC. */
+    /** Hub's start screen: with Hub's account service (Account.on), the account (or Sign in with
+     *  Google), its invitations and its workspaces, as Harbor shows them; then always the PCs
+     *  paired by QR code, and Pair a PC. */
     private void renderPaired() {
-        List<Hub> hubs = Hub.all(this);
-        if (error != null) list.addView(Ui.text(this, error, 14, Ui.RED), Ui.margins(Ui.fill(), 4, 12, 4, 0));
-        list.addView(Ui.text(this, "Your PCs", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
-        if (hubs.isEmpty()) {
-            list.addView(Ui.text(this, busy ? "Pairing…" : "Your Hub chats on your phone. Pair it with Hub on your PC: open Settings › Phones there and scan its QR code with the phone's camera.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
-        } else {
-            LinearLayout c = Ui.card(this);
-            boolean first = true;
-            for (Hub h : hubs) {
-                if (!first) c.addView(Ui.gap(this));
-                first = false;
-                c.addView(hubRow(h), Ui.fill());
+        List<Hub> hubs = Hub.all(this), ws = new ArrayList<>(), paired = new ArrayList<>();
+        for (Hub h : hubs) (h.id.startsWith(Pair.ID) ? paired : ws).add(h);
+        if (Account.on()) {
+            if (Account.wantsSignIn(this)) {
+                boolean ran = Account.signedIn(this);
+                list.addView(Ui.text(this, ran ? "Your sign-in ran out. Sign in again to reach your workspaces' PCs."
+                        : "Sign in with the Google account you use in Hub on your PC to see your workspaces, or pair a PC below.", 15, Ui.G700), Ui.margins(Ui.fill(), 4, 8, 4, 14));
+                if (busy) list.addView(Ui.text(this, "Signing in…", 15, Ui.G700), Ui.margins(Ui.fill(), 4, 0, 4, 12));
+                else list.addView(Ui.button(this, "Sign in with Google", paired.isEmpty(), v -> signIn()), Ui.fill());
+            } else {
+                LinearLayout acct = Ui.cardRow(this, Ui.I_USER, Account.name(this), Account.email(this), Ui.FG, v -> accountMenu());
+                acct.addView(Ui.chevron(this));
+                LinearLayout ac = Ui.card(this);
+                ac.addView(acct, Ui.fill());
+                list.addView(ac, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+                invitations();
+                list.addView(Ui.text(this, "Your workspaces", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
+                if (ws.isEmpty()) {
+                    list.addView(Ui.text(this, busy ? "Looking for your PCs…" : "No PCs in your workspaces yet. Sign in to Hub on a PC with this account, or ask whoever invited you to sign in on theirs.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 12));
+                    if (!busy) list.addView(Ui.button(this, "Check again", false, v -> recheck()), Ui.fill());
+                } else list.addView(rows(ws), Ui.fill());
             }
-            list.addView(c, Ui.fill());
         }
-        if (!busy) list.addView(Ui.button(this, hubs.isEmpty() ? "Paste a pairing link" : "Pair another PC", hubs.isEmpty(), v -> pastePair()), Ui.margins(Ui.fill(), 0, 14, 0, 0));
-        TextView how = Ui.text(this, "Hub pairs only with Hub on your PCs, never with Harbor. Each connection is encrypted and pinned to the PC's own key; long-press a PC to forget it.", 13, Ui.G700);
+        if (error != null) list.addView(Ui.text(this, error, 14, Ui.RED), Ui.margins(Ui.fill(), 4, 12, 4, 0));
+        list.addView(Ui.text(this, Account.on() ? "Paired PCs" : "Your PCs", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
+        if (paired.isEmpty()) {
+            list.addView(Ui.text(this, busy && !Account.on() ? "Pairing…" : "Pair the phone with Hub on your PC: run `hub pair` there (or open Settings › Phones) and scan its QR code with the phone's camera.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
+        } else list.addView(rows(paired), Ui.fill());
+        if (!busy) list.addView(Ui.button(this, paired.isEmpty() ? "Paste a pairing link" : "Pair another PC", paired.isEmpty() && !Account.wantsSignIn(this) && ws.isEmpty(), v -> pastePair()), Ui.margins(Ui.fill(), 0, 14, 0, 0));
+        TextView how = Ui.text(this, "Hub connects only to Hub on your PCs, never to Harbor. Each connection is encrypted and pinned to the PC's own key; long-press a PC for its settings (Forget this PC).", 13, Ui.G700);
         list.addView(how, Ui.margins(Ui.fill(), 4, 24, 4, 0));
+    }
+
+    private LinearLayout rows(List<Hub> hubs) {
+        LinearLayout c = Ui.card(this);
+        boolean first = true;
+        for (Hub h : hubs) {
+            if (!first) c.addView(Ui.gap(this));
+            first = false;
+            c.addView(hubRow(h), Ui.fill());
+        }
+        return c;
     }
 
     /** A pairing link typed or pasted (the QR code's text, from Hub on the PC). */

@@ -195,7 +195,7 @@ public class Settings extends Base {
         showUpdate(Math.max(Update.known(this), available)); // the version already known to be on offer: no wait for a check
 
         LinearLayout bye = card(col);
-        if (Pair.ON) bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Forget this PC", hub.label(), Ui.RED, v -> forgetPc()), Ui.fill());
+        if (hub.id.startsWith(Pair.ID)) bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Forget this PC", hub.label(), Ui.RED, v -> forgetPc()), Ui.fill());
         else bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
     }
 
@@ -329,7 +329,7 @@ public class Settings extends Base {
      *  as "Your Workspace" or its owner's ("Sam's Workspace"), with its SSH machines ("SSH") under it. */
     private void workspaceRows() {
         wsBox.removeAllViews();
-        if (Pair.ON) { pairedRows(); return; }
+        if (hub.id.startsWith(Pair.ID)) { pairedRows(); return; }
         section(wsBox, "Account");
         LinearLayout acct = card(wsBox);
         acct.addView(Ui.cardRow(this, avatar(Account.name(this), myPhoto()), Account.name(this), Account.email(this) + " · Google", Ui.FG, v -> photoSheet()), Ui.fill());
@@ -852,7 +852,7 @@ public class Settings extends Base {
     private void pcs() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
         for (Hub h : Hub.all(this)) o.add(new Sheet.Option(h.id, h.label(), pcCount(h), true));
-        Sheet.pick(this, Pair.ON ? "PCs" : "Workspaces", null, o, hub.id, id -> {
+        Sheet.pick(this, Account.on() ? "Workspaces and PCs" : "PCs", null, o, hub.id, id -> {
             if (id.equals(hub.id)) return;
             Hub.setLast(this, id);
             startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));

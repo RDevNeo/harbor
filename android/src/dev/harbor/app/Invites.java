@@ -38,7 +38,7 @@ final class Invites {
     /** Fetches once (what changed while no screen was open), then follows the pushes until the
      *  screen goes. Errors back off from 2 s to a minute; meanwhile the minute's fallback check. */
     private static void listen(Activity a, int my) {
-        if (Pair.ON) return; // Hub: no account, no invitations (Pair)
+        if (!Account.on()) return; // Hub without its account service: no invitations (Pair)
         fetch(a, my, false);
         if (Rig.on()) return;
         long wait = 2_000;

@@ -97,8 +97,22 @@ final class Account {
 
     /** Nothing works until the user signs in again: no account, or its token ran out and
      *  Clerk won't renew it. */
+    /** Hub: accounts are on when the build names Hub's own account service (HUB_ACCOUNTS_URL in
+     *  android/build.sh; never Harbor's). Off, the phone only pairs (Pair); on, it also signs in
+     *  and gets its workspaces' PCs, and paired PCs stay. */
+    static boolean on() { String s = service(); return s != null && !s.isEmpty(); }
+
+    /** Whether the start screen should offer Sign in with Google (accounts on, and not signed in
+     *  or the sign-in ran out). Unlike Harbor, nothing waits for it: paired PCs work without. */
+    static boolean wantsSignIn(Context c) {
+        if (!on()) return false;
+        JSONObject s = state(c);
+        if (s.optString("id").isEmpty()) return true;
+        return !(s.optLong("exp") * 1000 > System.currentTimeMillis()) && s.optBoolean("expired");
+    }
+
     static boolean needsSignIn(Context c) {
-        if (Pair.ON) return false; // Hub: no sign-in, its PCs are paired (Pair)
+        if (Pair.ON) return false; // Hub: sign-in is optional (wantsSignIn); paired PCs need none
         JSONObject s = state(c);
         if (s.optString("id").isEmpty()) return true;
         boolean live = s.optLong("exp") * 1000 > System.currentTimeMillis();
@@ -129,7 +143,7 @@ final class Account {
 
     /** The Harbor token every call to a PC carries ("" when there's none). */
     static String token(Context c) {
-        if (Pair.ON) return "";
+        if (!on()) return "";
         JSONObject s = state(c);
         if (System.currentTimeMillis() - s.optLong("token_at") > RENEW_MS) renewSoon(c);
         return s.optString("token");
@@ -400,7 +414,7 @@ final class Account {
 
     /** A new Harbor token in the background, when one is due (at most once a minute). */
     static void renewSoon(Context c) {
-        if (Pair.ON) return;
+        if (!on()) return;
         long now = System.currentTimeMillis();
         if (now - renewing < 60_000) return;
         renewing = now;
@@ -411,7 +425,7 @@ final class Account {
     /** A new Harbor token (and the directory), when due or forced. Expired: Clerk ended the
      *  session; the old token works on the PCs until it runs out. */
     static synchronized void renew(Context c, boolean force) throws IOException {
-        if (Rig.on() || Pair.ON) return;
+        if (Rig.on() || !on()) return;
         JSONObject s = state(c);
         if (s.optString("id").isEmpty()) return;
         long now = System.currentTimeMillis();
@@ -439,7 +453,7 @@ final class Account {
 
     /** GET /v1/directory (at most every 2 minutes unless forced) → the hubs. */
     static void directory(Context c, boolean force) throws IOException {
-        if (Rig.on() || Pair.ON) return;
+        if (Rig.on() || !on()) return;
         if (!force && System.currentTimeMillis() - dirAt < 120_000) return;
         String tok = state(c).optString("token");
         if (tok.isEmpty()) return;
@@ -467,7 +481,7 @@ final class Account {
     private static volatile long invAt;
 
     static void checkInvites(Context c, boolean force) throws IOException {
-        if (Rig.on() || Pair.ON || (!force && System.currentTimeMillis() - invAt < 60_000)) return;
+        if (Rig.on() || !on() || (!force && System.currentTimeMillis() - invAt < 60_000)) return;
         String tok = state(c).optString("token");
         if (tok.isEmpty()) return;
         invAt = System.currentTimeMillis();
@@ -537,7 +551,7 @@ final class Account {
                 Hub.Ep e = new Hub.Ep(pcId(p), p.optString("name"), "", "", 0, token);
                 e.fp = p.optString("fp");
                 addrs(p, e.addrs);
-                if (!e.addrs.isEmpty()) { Object[] hp = Addr.hostPort(e.addrs.get(0), 47930); e.host = (String) hp[0]; e.port = (Integer) hp[1]; }
+                if (!e.addrs.isEmpty()) { Object[] hp = Addr.hostPort(e.addrs.get(0), Pair.PORT); e.host = (String) hp[0]; e.port = (Integer) hp[1]; }
                 // What the PCs said on the local network (GET /v1/hubs) comes first.
                 if (was != null) { Hub.Ep o = was.ep(e.pid); if (o != null) for (String a : o.addrs) if (!e.addrs.contains(a)) e.addrs.add(0, a); }
                 h.eps.add(e);
@@ -545,6 +559,8 @@ final class Account {
             if (was != null && was.fp.equals(h.fp)) for (String a : was.addrs) if (!h.addrs.contains(a)) h.addrs.add(0, a);
             out.add(h);
         }
+        // Hub: the PCs paired by QR code (Pair) stay, after the workspaces.
+        for (Hub h : old) if (h.id.startsWith(Pair.ID)) out.add(h);
         Hub.save(c, out);
     }
 
@@ -559,7 +575,7 @@ final class Account {
         h.pcName = p.optString("name");
         addrs(p, h.addrs);
         if (!h.addrs.isEmpty()) {
-            Object[] hp = Addr.hostPort(h.addrs.get(0), 47930);
+            Object[] hp = Addr.hostPort(h.addrs.get(0), Pair.PORT);
             h.host = (String) hp[0];
             h.port = (Integer) hp[1];
         }
@@ -579,7 +595,7 @@ final class Account {
         String tok = state(c).optString("token"), fp = Net.myFp();
         if (!tok.isEmpty() && !fp.isEmpty()) Ui.pool.execute(() -> { try { http("DELETE", service() + "/v1/devices/" + fp, tok, null, null); } catch (Exception ignored) { } });
         save(c, new JSONObject());
-        for (Hub h : Hub.all(c)) Hub.remove(c, h.id);
+        for (Hub h : Hub.all(c)) if (!h.id.startsWith(Pair.ID)) Hub.remove(c, h.id); // paired PCs stay (Pair.forget)
         Hub.states.clear();
     }
 

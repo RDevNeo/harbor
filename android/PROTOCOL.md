@@ -86,6 +86,14 @@ calls, mutual TLS pinned to each side's key) is unchanged. Phone code: `Pair.jav
 - **Chat links**: Hub's are `hub://chat/<gid>?pc=<PC name>`; the phone also takes
   `harbor://chat/…`, and still asks the PC `GET /v1/chat_link?url=harbor://chat/…` (the API's own
   form). A Hub PC should accept both schemes there.
+- **Accounts too (when configured).** A build with `HUB_ACCOUNTS_URL` (android/build.sh: Hub's
+  own deploy of `worker/`, "hub-accounts", same Clerk instance, its `APP_REDIRECT` = `hub://oauth`)
+  also signs in with Google and shows the account's workspaces exactly as Harbor does (directory,
+  invitations, members), calling their PCs with `Authorization: Bearer <token>` from that
+  service. Pairing keeps working beside it: paired PCs (entries `pc:<fp>`) never get the token,
+  survive sign-out and directory refreshes, and are listed under "Paired PCs". Empty (the
+  default): pairing only, nothing goes to any account service. Never Harbor's service (the
+  build refuses it).
 - **Updates**: Hub takes nothing from Harbor's releases (`Update.OFF`): no release news, no code
   zips, no APK installs until Hub has a release channel of its own.
 
