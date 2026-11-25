@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Imports Person Hub's data into Hub's Persons tab. COPIES ONLY: nothing under ~/.local/share/creators-hub or
+// Imports Person Hub's data into Hub's Persons tab. COPIES ONLY: nothing in Person Hub's data folder (creators-hub) or
 // ~/.config/Creators Hub is ever moved, changed or deleted, so Person Hub keeps working on its own data.
 //
 //   bun ts/packages/persons/scripts/migrate.ts [--dry-run] [--sessions] [--force] [--from DIR] [--profile DIR] [--to DIR]
@@ -13,7 +13,7 @@
 // pictures) of the source and the copy; exit 1 when they differ. Prints names and counts only, never contents.
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { paths } from "@harbor/os";
 import { dirname, join, relative } from "node:path";
 
 const args = process.argv.slice(2);
@@ -25,10 +25,10 @@ const opt = (f: string, d: string): string => {
 const DRY = flag("--dry-run");
 const SESSIONS = flag("--sessions");
 const FORCE = flag("--force");
-const home = homedir();
-const FROM = opt("--from", join(home, ".local/share/creators-hub"));
-const PROFILE = opt("--profile", join(home, ".config/Creators Hub"));
-const TO = opt("--to", join(process.env.XDG_DATA_HOME || join(home, ".local/share"), "hub", "persons"));
+// Person Hub's data folder and Electron profile, and Hub's (the system's data and config folders: @harbor/os)
+const FROM = opt("--from", join(paths.systemDataHome(), "creators-hub"));
+const PROFILE = opt("--profile", join(paths.configHome(), "Creators Hub"));
+const TO = opt("--to", join(paths.dataHome(), "hub", "persons"));
 const STAMP = new Date().toISOString().replace(/[:.]/g, "-");
 
 if (!existsSync(join(FROM, "data.json"))) {

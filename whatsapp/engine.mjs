@@ -9,6 +9,11 @@
 //
 // Commands: {id, op, ...}; answers {id, ok: true, result} or {id, ok: false, error}.
 // Events: {ev: "qr" | "open" | "close" | <Baileys event name>, data}.
+//
+// Ops for Hub's Persons tab (ported from Person Hub's copy of this file): presence (typing, online)
+// is forwarded as "presence.update", with ops to subscribe to someone's ("presence_subscribe") and to
+// send ours ("presence"); "profile_picture" for a number's photo, "add_contact" to save a number in
+// the address book, "contacts_snapshot" to read the whole address book once.
 
 import { mkdirSync, createWriteStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -30,6 +35,8 @@ export const EVENTS = [
   "groups.upsert",
   "groups.update",
   "lid-mapping.update",
+  // Persons: typing / recording indicators and online / last seen
+  "presence.update",
 ];
 
 /** Long numbers become numbers, bytes `{$b: base64}`: what the host stores and sends back. */
@@ -365,6 +372,42 @@ export function createEngine({ baileys, authDir, write, say = () => {}, exit = (
       }
       case "history":
         return { request: await need().fetchMessageHistory(c.count, c.key, c.ts) };
+      // Persons: presence (typing, online) in both directions.
+      case "presence_subscribe":
+        await need().presenceSubscribe(c.jid);
+        return {};
+      case "presence":
+        await need().sendPresenceUpdate(c.type, c.jid);
+        return {};
+      // Persons: someone's profile photo (a short-lived pps.whatsapp.net URL, "" when hidden or none;
+      // other failures are errors, so the host can tell "no photo" from "couldn't ask").
+      case "profile_picture": {
+        try {
+          const url = await need().profilePictureUrl(c.jid, c.type === "image" ? "image" : "preview", 8000);
+          return { url: url ?? "" };
+        } catch (e) {
+          const code = e?.output?.statusCode ?? e?.data?.code ?? 0;
+          if ([401, 403, 404].includes(Number(code)) || /not-authorized|item-not-found|forbidden/i.test(String(e?.message ?? ""))) return { url: "" };
+          throw e;
+        }
+      }
+      // Persons: save (or rename) a contact in the account's address book, as WhatsApp Web's "Add
+      // contact" does: an app-state contactAction the phone applies to its own contacts.
+      case "add_contact":
+        await need().addOrEditContact(c.jid, {
+          fullName: c.name,
+          firstName: c.name.split(/\s+/)[0] || c.name,
+          saveOnPrimaryAddressbook: true,
+        });
+        return {};
+      // Persons: the address book once in full (a snapshot of the contacts collection), for links
+      // made before the host kept contacts: contacts.upsert fires for every saved contact.
+      case "contacts_snapshot": {
+        const s = need();
+        await s.authState.keys.set({ "app-state-sync-version": { critical_unblock_low: null } });
+        await s.resyncAppState(["critical_unblock_low"], true);
+        return {};
+      }
       case "logout":
         stopping = true;
         await need().logout().catch(() => {});

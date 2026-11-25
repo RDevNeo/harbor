@@ -424,7 +424,7 @@ export class PersonsRoutes {
       initials: initials(personLabel(p)),
       color: colorOf(p.id),
       avatar: this.pictureRef(p),
-      avatarPath: this.picture(p, 256),
+      avatarPath: this.picture(p, 256) ?? this.picture(p),
       stores: d.stores.filter((s) => p.storeIds.includes(s.id) || s.ownerId === p.id).map((s) => ({ id: s.id, name: s.name, owner: s.ownerId === p.id, color: s.color ?? "#64748b" })),
       lists: d.lists.filter((l) => p.listIds.includes(l.id)).map((l) => ({ id: l.id, name: l.name })),
       identities: json(identities),

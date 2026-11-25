@@ -381,6 +381,8 @@ component SideRow {
     property <bool> hov: area.has-hover;
     height: r.kind == "section" ? 30px : r.kind == "store" ? 32px : r.kind == "all" ? 32px : r.kind == "settled" ? 26px : r.kind == "empty" ? 24px : person.height;
     if root.r.kind == "all": Rectangle {
+        width: root.width;
+        height: root.height;
         border-radius: Theme.radius-md;
         background: root.r.active ? Theme.accent : root.hov ? Theme.gray-100 : transparent;
         HorizontalLayout {
@@ -410,6 +412,8 @@ component SideRow {
         }
     }
     if root.r.kind == "section": HorizontalLayout {
+        width: root.width;
+        height: root.height;
         padding-left: 8px;
         padding-right: 2px;
         padding-top: 8px;
@@ -464,6 +468,8 @@ component SideRow {
         }
     }
     if root.r.kind == "store": Rectangle {
+        width: root.width;
+        height: root.height;
         border-radius: Theme.radius-md;
         background: root.hov ? Theme.gray-100 : transparent;
         HorizontalLayout {
@@ -521,6 +527,9 @@ component SideRow {
         }
     }
     if root.r.kind == "settled": HorizontalLayout {
+        width: root.width;
+        height: root.height;
+        alignment: start;
         padding-left: 10px;
         spacing: 6px;
         Glyph {
@@ -543,6 +552,7 @@ component SideRow {
         vertical-alignment: center;
     }
     person := PersonRow {
+        width: root.width;
         visible: root.r.kind == "person";
         height: root.r.kind == "person" ? self.preferred-height : 0px;
         r: root.r;
@@ -698,9 +708,10 @@ component Bubble {
     callback menu(length, length);
     property <color> bg: m.kind == "ai" ? (Theme.dark ? #1d1830 : #f3effe) : m.mine ? (Theme.dark ? #1f2a44 : #e6f0ff) : Theme.gray-100;
     property <length> text-w: min(root.max-w - 24px, body.preferred-width);
-    property <length> w: max(root.m.has-image ? root.m.img-w : 0px, max(text-w, 60px)) + 24px;
+    property <length> w: max(root.m.has-image ? root.m.img-w : 0px, max(text-w, root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 24px;
     height: lay.preferred-height;
     lay := HorizontalLayout {
+        width: root.width;
         alignment: root.m.mine && root.m.kind != "ai" ? end : start;
         padding-top: root.m.first ? 6px : 1px;
         Rectangle {
@@ -823,6 +834,8 @@ component MsgRow {
     in property <length> max-w;
     height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : bubble.preferred-height;
     if root.m.kind == "day": Text {
+        width: root.width;
+        height: root.height;
         text: root.m.text;
         font-size: 11px;
         font-weight: 600;
@@ -831,6 +844,8 @@ component MsgRow {
         vertical-alignment: center;
     }
     if root.m.kind == "unread": Rectangle {
+        width: root.width;
+        height: root.height;
         Rectangle {
             height: 1px;
             background: Theme.red-800;
@@ -848,6 +863,9 @@ component MsgRow {
         }
     }
     if root.m.kind == "subject": HorizontalLayout {
+        width: root.width;
+        height: root.height;
+        alignment: start;
         spacing: 6px;
         Glyph {
             icon: Icons.message;
@@ -864,6 +882,7 @@ component MsgRow {
         }
     }
     bubble := Bubble {
+        width: root.width;
         visible: root.m.kind == "msg" || root.m.kind == "ai" || root.m.kind == "out";
         m: root.m;
         max-w: root.max-w;

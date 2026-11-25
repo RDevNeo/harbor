@@ -3,7 +3,7 @@
 // connections (Discord, Gmail, WhatsApp), their conversations, presence, typing and the outgoing
 // queue, and refreshes profiles and photos in the background. Every change bumps `rev`.
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { allPeers, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, validPeer, channelsFor } from "./model/accounts.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
@@ -113,7 +113,7 @@ export class PersonsService {
       this.retrack();
     });
     if (this.o.offline) {
-      for (const m of this.metas) this.patch(m.id, (s) => ({ ...s, state: { status: "signed-out", me: null, gateway: "down" } }));
+      for (const m of this.metas) this.patch(m.id, (s) => ({ ...s, state: { status: "signed-out", me: null, gateway: "down" }, convos: this.cachedConvos(m) }));
       this.changed(false);
       return;
     }
@@ -123,6 +123,20 @@ export class PersonsService {
     this.timers.push(setTimeout(() => void this.refreshPhotos(), 6000), setInterval(() => void this.refreshPhotos(), REFRESH_EVERY_MS));
     this.timers.push(setTimeout(() => void this.refreshSocialPhotos(), 8000), setInterval(() => void this.refreshSocialPhotos(), REFRESH_EVERY_MS));
     this.changed(false);
+  }
+
+  /** A connection's conversations from its cache file, without starting it (offline: the screenshot rig). */
+  private cachedConvos(m: ConnMeta): Record<string, Conversation> {
+    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : "";
+    if (!name) return {};
+    try {
+      const raw = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as { conversations?: Record<string, Conversation> };
+      const out: Record<string, Conversation> = {};
+      for (const [k, v] of Object.entries(raw.conversations ?? {})) if (v && Array.isArray(v.messages)) out[k] = { channelId: v.channelId ?? null, messages: v.messages };
+      return out;
+    } catch {
+      return {};
+    }
   }
 
   async stop(): Promise<void> {
