@@ -2004,7 +2004,8 @@ export component PersonsPage {
                 if PersonsBus.view == "chat": ChatPane { }
             }
             if PersonsBus.view == "chat" && PersonsBus.panel: Panel {
-                width: Ds.panel-w;
+                // Whole physical pixels: its hairline (PanelSurface) lands on one.
+                width: round(Ds.panel-w / 1phx) * 1phx;
             }
         }
     }

@@ -13,7 +13,7 @@ import { Lightbox, LightboxData } from "lightbox.slint";
 import { CaptchaView, CaptchaPill, CaptchaData, ChatCaptchaData } from "captcha.slint";
 import { VideoView, VideoData } from "video.slint";
 import { TermKey } from "terminal.slint";
-import { Spin, Ui, TextKeys, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge, Meter } from "widgets.slint";
+import { Spin, Ui, TextKeys, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, HLine, VLine, Input, Badge, Meter } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
 import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip, WorkBarData, PatchChip } from "composer.slint";
@@ -853,7 +853,8 @@ export component AppWindow inherits Window {
     property <bool> docked: root.sidebar-open && !root.narrow && !(root.right-open && root.pane-max == "" && root.width < root.side-shown + 320px + 440px);
     // The chat keeps its room: the sidebar never grows past 40% of the window.
     property <length> side-max: max(200px, min(480px, root.width * 0.4));
-    property <length> side-shown: max(200px, min(root.side-w, root.side-max));
+    // On whole physical pixels: the sidebar's edge line and everything right of it land on one.
+    property <length> side-shown: round(max(200px, min(root.side-w, root.side-max)) / 1phx) * 1phx;
     in property <bool> right-open;
     in property <bool> bottom-open;
     in property <string> pane-max;
@@ -895,8 +896,8 @@ export component AppWindow inherits Window {
         IssuesBus.docked = root.docked;
     }
     property <length> left-edge: root.docked ? root.side-shown : 0px;
-    property <length> right-shown: root.right-open && root.pane-max == "" ? max(320px, min(root.right-w, root.width - root.left-edge - 440px)) : 0px;
-    property <length> bottom-shown: root.bottom-open && root.pane-max == "" ? max(140px, min(root.bottom-h, root.height - 120px)) : 0px;
+    property <length> right-shown: root.right-open && root.pane-max == "" ? round(max(320px, min(root.right-w, root.width - root.left-edge - 440px)) / 1phx) * 1phx : 0px;
+    property <length> bottom-shown: root.bottom-open && root.pane-max == "" ? round(max(140px, min(root.bottom-h, root.height - 120px)) / 1phx) * 1phx : 0px;
 
     // Browser-style zoom, as Chrome does it: Ctrl+= or Ctrl++ (keypad too) in, Ctrl+- out, Ctrl+0 back to 100%.
     // It wraps everything so the key is caught before any widget (the composer, a terminal) sees it.
@@ -1141,18 +1142,18 @@ export component AppWindow inherits Window {
                         // Flush: right under the header's line, down to the window's bottom and right edges, a 1px line on its left;
                         // the badge sits in its head row.
                         if body.team-float: Rectangle {
-                            x: parent.width - 300px;
+                            x: floor((parent.width - 300px) / 1phx) * 1phx;
                             y: 0;
                             z: 10;
-                            width: 300px;
+                            width: parent.width - self.x;
                             height: parent.height;
                             background: Theme.bg100;
                             clip: true;
                             TouchArea { }
                             TeamPanel {
-                            x: 1px;
+                            x: 1phx;
                             y: 0;
-                            width: parent.width - 1px;
+                            width: parent.width - 1phx;
                             height: parent.height;
                             split: true;
                             head-h: 54px;
@@ -1206,11 +1207,13 @@ export component AppWindow inherits Window {
                                 root.team-settled-toggled(on);
                             }
                             }
-                            Rectangle {
-                                x: 0;
-                                width: 1px;
-                                background: Theme.border;
-                            }
+                        }
+                        // Its line, outside its clip so a repaint beside it always draws it again (widgets.slint VLine).
+                        if body.team-float: VLine {
+                            at: floor((parent.width - 300px) / 1phx) * 1phx;
+                            y: 0;
+                            z: 10;
+                            height: parent.height;
                         }
                         // The team's corner badge: agents (and how many work now); a click opens the panel, another closes it.
                         team-badge := Rectangle {
@@ -1536,12 +1539,10 @@ export component AppWindow inherits Window {
                             // 1px dividers: brighter and wider, with the resize cursor, under the pointer; dragged, they resize.
                             // The panes' right edge beside the docked Agents column: the same line, on top of the panes so
                             // nothing they redraw covers it, the whole height, on a whole physical pixel.
-                            if body.team-docked: Rectangle {
-                                x: floor(body.area-w / 1phx) * 1phx;
+                            if body.team-docked: VLine {
+                                at: floor(body.area-w / 1phx) * 1phx;
                                 y: 0;
-                                width: 1phx;
                                 height: body.height;
-                                background: Theme.border;
                             }
                             // Each divider's grab area is whole physical pixels around its line, so the line lands on one.
                             for d in root.split-divs: TouchArea {
@@ -1709,12 +1710,10 @@ export component AppWindow inherits Window {
                 root.side-resized(root.side-w);
             }
         }
-        if root.right-open && root.pane-max == "": Rectangle {
-            x: root.width - root.right-shown;
+        if root.right-open && root.pane-max == "": VLine {
+            at: root.width - root.right-shown;
             y: root.tabs-h;
-            width: 1px;
             height: root.content-h;
-            background: Theme.border;
         }
         if root.right-open && root.pane-max == "": TouchArea {
             x: root.width - root.right-shown - 3px;
@@ -1727,9 +1726,9 @@ export component AppWindow inherits Window {
             }
         }
         right-pane := SurfacePane {
-            x: root.pane-max == "right" ? root.left-edge : root.width - root.right-shown + 1px;
+            x: root.pane-max == "right" ? root.left-edge : root.width - root.right-shown + 1phx;
             y: root.tabs-h;
-            width: root.pane-max == "right" ? root.width - root.left-edge : root.right-shown - 1px;
+            width: root.pane-max == "right" ? root.width - root.left-edge : root.right-shown - 1phx;
             height: root.content-h;
             visible: root.right-open && (root.pane-max == "" || root.pane-max == "right");
             tabs: root.right-tabs;
@@ -1801,12 +1800,10 @@ export component AppWindow inherits Window {
                 root.term-resized("right", w, h, self.cell-w, self.cell-h);
             }
         }
-        if root.bottom-open && root.pane-max == "": Rectangle {
+        if root.bottom-open && root.pane-max == "": HLine {
+            at: root.tabs-h + root.content-h - root.bottom-shown;
             x: root.left-edge;
-            y: root.tabs-h + root.content-h - root.bottom-shown;
             width: root.width - root.left-edge - root.right-shown;
-            height: 1px;
-            background: Theme.border;
         }
         if root.bottom-open && root.pane-max == "": TouchArea {
             x: root.left-edge;
@@ -1820,9 +1817,9 @@ export component AppWindow inherits Window {
         }
         bottom-pane := SurfacePane {
             x: root.left-edge;
-            y: root.tabs-h + (root.pane-max == "bottom" ? 0px : root.content-h - root.bottom-shown + 1px);
+            y: root.tabs-h + (root.pane-max == "bottom" ? 0px : root.content-h - root.bottom-shown + 1phx);
             width: root.width - root.left-edge - (root.pane-max == "bottom" ? 0px : root.right-shown);
-            height: root.pane-max == "bottom" ? root.content-h : root.bottom-shown - 1px;
+            height: root.pane-max == "bottom" ? root.content-h : root.bottom-shown - 1phx;
             visible: root.bottom-open && (root.pane-max == "" || root.pane-max == "bottom");
             tabs: root.bottom-tabs;
             active: root.bottom-active;
@@ -1905,12 +1902,9 @@ export component AppWindow inherits Window {
                 x: 12px;
                 y: (parent.height - self.height) / 2;
             }
-            // The one divider under the tab row: one physical row (a 1px line at a fractional scale lands on two
-            // half-lit rows that partial redraws, e.g. a streaming chat, relight unevenly: a flicker).
-            Rectangle {
-                y: parent.height - 1phx;
-                height: 1phx;
-                background: Theme.border;
+            // The one divider under the tab row (widgets.slint HLine: repainted with whatever changes under it).
+            HLine {
+                at: parent.height - 1phx;
             }
         }
         if root.pop-id == "model": TouchArea {
