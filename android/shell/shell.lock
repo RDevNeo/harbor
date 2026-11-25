@@ -1,4 +1,4 @@
 # Hub for Android's shell version, and a hash of what the shell is made of (android/shell/lock.sh).
 # android/build.sh refuses to build when the hash no longer matches: run `android/shell/lock.sh bump`.
-version=3
-inputs=1e1ba13deec94216b34b9b69b12ec26ed5536888f73448b506ef81e2b808c9b9
+version=4
+inputs=8ff8342ee58c62e6d28e66e9fd2755cbcfa0267258b7fcd6456978d322390e4c

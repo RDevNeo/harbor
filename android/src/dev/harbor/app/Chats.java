@@ -28,7 +28,7 @@ public class Chats extends Base {
         super.onCreate(b);
         if (noHub()) return;
         side = new Sidebar(this, null);
-        setContentView(side.view);
+        setContentView(Tabs.around(this, side.view, Tabs.PROJECTS));
         JSONObject cached = Hub.states.get(hub.id);
         if (cached != null) side.render(cached);
     }

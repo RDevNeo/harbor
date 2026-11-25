@@ -24,8 +24,8 @@ import java.util.List;
  *  sign-in-only screen below never shows. Another app or a browser opens
  *  a chat with its link, hub://chat/<gid>?pc=<PC name> (ChatLink).
  *
- *  Room for Hub's top-level tabs (Persons, Routine, Projects): this screen and what it opens are
- *  the Projects tab; the others come later (see TABS). */
+ *  Hub's top-level tabs (Tabs.java: Projects, Persons, Routine): this screen and what it opens are
+ *  the Projects tab. */
 public class Hubs extends Base {
     private LinearLayout list;
     private boolean busy;
@@ -47,7 +47,8 @@ public class Hubs extends Base {
         list.setPadding(Ui.dp(20), Ui.dp(24), Ui.dp(20), Ui.dp(24));
         sv.addView(list);
         page.addView(sv, new LinearLayout.LayoutParams(-1, -1));
-        setContentView(page);
+        // Hub's tabs (Tabs.java): this screen and the chats it opens are Projects.
+        setContentView(Tabs.around(this, page, Tabs.PROJECTS));
 
         if (b == null && !handleLink(getIntent(), true) && !Account.needsSignIn(this)) {
             // Right after a live update (Swap): the same screens as before, at once.
@@ -457,9 +458,6 @@ public class Hubs extends Base {
 
     // ---- Hub: paired PCs (Pair) ----
 
-    /** Hub's top-level tabs, for the navigation to come: only Projects (this screen and the
-     *  chats it opens) is built; Persons and Routine are ported from Person Hub later. */
-    static final String[] TABS = {"Persons", "Routine", "Projects"};
 
     /** Hub's start screen: with Hub's account service (Account.on), the account (or Sign in with
      *  Google), its invitations and its workspaces, as Harbor shows them; then always the PCs
