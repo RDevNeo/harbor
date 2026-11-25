@@ -210,6 +210,8 @@ export const HARBOR_WORLD_KEYS = ["api_tokens", "api_revoked", "phones_seen", "m
 /** Once: what made this database part of Harbor's world (its phones' handles, remembered peers) goes. */
 export function forkFromHarbor(store: { get(k: string): string | null; set(k: string, v: string): void }, del: (k: string) => void): string[] {
   if (store.get("hub_forked") === "1") return [];
+  // Only a database that was a Harbor PC's (signed in to Harbor's account): a new Hub's own has nothing to drop.
+  if (store.get("account") === null && store.get("account_dir") === null) return [];
   const gone = HARBOR_WORLD_KEYS.filter((k) => store.get(k) !== null);
   for (const k of gone) del(k);
   store.set("hub_forked", "1");

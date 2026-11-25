@@ -39,7 +39,7 @@ function start(name: string, offline: boolean): { trap: string; started: string;
   store.set("mesh_peers", JSON.stringify([{ id: "peer", name: "desk", addr: "127.0.0.1:9", dns: "", online: true, seen: past, version: "1.0.0", accounts: [], node: "", phones: false, fp: "ab", addrs: ["127.0.0.1:9"], owner: "", github: "", owner_suggested: false, update: null, moves: false }]));
   store.set("mesh_enabled", "1");
   store.set("api_enabled", "1");
-  store.set("api_port", String(20000 + (process.pid % 20000)));
+  store.set("hub_api_port", String(20000 + (process.pid % 20000)));
   store.addWebhook(repo, "deploys", "tok-offline", "");
   store.close();
 

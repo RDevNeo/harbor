@@ -66,7 +66,7 @@ beforeAll(async () => {
   sh(repoDir, "config", "user.email", "t@example.com");
   commit(repoDir, "a.txt", "a\n");
   const store = Store.open(dataDir());
-  store.set("api_port", String(await freePort()));
+  store.set("hub_api_port", String(await freePort()));
   repoId = store.addRepo(repoDir);
   h = await startHub({ version: "9.9.9", hookPort: await freePort(), store });
   lead = h.store.createChat(blankChat({ repoId, title: "Login work", role: "lead", account: "claude", updated: 1 }));

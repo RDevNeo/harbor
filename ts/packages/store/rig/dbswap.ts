@@ -124,7 +124,7 @@ if (cmd === "same") {
   const c = s.createChat(blankChat({ title: "TS made this db", role: "lead" }));
   s.saveItems(c.id, [{ kind: "user", text: "hello", files: [], at: 1, mentions: [], sender: "", intent: "" }, { kind: "text", text: "world", at: 2 }]);
   s.setQuiet("api_enabled", "1");
-  s.setQuiet("api_port", "47930");
+  s.setQuiet("hub_api_port", "47930");
   s.setQuiet("api_tokens", '[{"token":"0123456789abcdef0123456789abcdef0123456789abcdef","name":"","created":0,"group":"gggggggggggggggg","fp":""}]');
   console.log(JSON.stringify({ chat: c.id }));
   s.close();

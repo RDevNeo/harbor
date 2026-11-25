@@ -48,7 +48,7 @@ Object.assign(process.env, env);
 const { Store, dataDir } = await import("../src/index.ts");
 const s = Store.open(dataDir());
 s.setQuiet("api_enabled", "1");
-s.setQuiet("api_port", "47930");
+s.setQuiet("hub_api_port", "47930");
 s.setQuiet("api_tokens", JSON.stringify([{ token: TOKEN, name: "", created: 0, group: "gggggggggggggggg", fp: "" }]));
 const repo = s.addRepo(join(work, "scratch"));
 s.close();

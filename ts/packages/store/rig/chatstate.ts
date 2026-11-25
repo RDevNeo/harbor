@@ -29,7 +29,7 @@ if (cmd === "make") {
   s.set("mesh_peers", JSON.stringify({ "pc:far": { id: "pc:far", name: "far", addr: "", dns: "", seen: 1, version: "0.108.0", node: "", phones: false, fp: "ab".repeat(32), addrs: [], owner: "", github: "", owner_suggested: false } }));
   s.set("chat_prs", JSON.stringify({ [lead.id]: { number: 7, state: "open", url: "https://github.com/o/r/pull/7", title: "Add it", branch: "add-it" }, [ids.other]: { number: 3, state: "merged", url: "https://github.com/o/r/pull/3", title: "Old", branch: "old" } }));
   s.setQuiet("api_enabled", "1");
-  s.setQuiet("api_port", "47930");
+  s.setQuiet("hub_api_port", "47930");
   s.setQuiet("api_tokens", '[{"token":"0123456789abcdef0123456789abcdef0123456789abcdef","name":"","created":0,"group":"gggggggggggggggg","fp":""}]');
   s.setQuiet("mesh_id", "pc:cs");
   console.log(JSON.stringify(ids));

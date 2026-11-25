@@ -64,7 +64,7 @@ beforeAll(async () => {
   chmodSync(bin, 0o755);
   port = await freePort();
   const store = Store.open(dataDir());
-  store.set("api_port", String(port));
+  store.set("hub_api_port", String(port));
   store.set("api_enabled", "1");
   store.set("api_tokens", JSON.stringify([{ token: "tok", name: "Pixel", created: 0, group: "", fp: "" }]));
   const mk = (over: Partial<Chat>): Chat => store.createChat(blankChat({ account: "claude", ...over }));

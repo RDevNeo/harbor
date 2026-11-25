@@ -78,7 +78,7 @@ const notice = (icon: string, text: string, detail = ""): Item => ({ kind: "noti
 const seed = Store.open(dataDir());
 // The hub behind this file's own listener on PORT (the captcha's frames are answered there).
 const inner = port + 1;
-seed.set("api_port", String(inner));
+seed.set("hub_api_port", String(inner));
 seed.set("api_enabled", "1");
 seed.set("api_tokens", JSON.stringify([{ token, name: "Rig phone", created: t0, group: "", fp: "" }]));
 seed.set("onboarded", "1");

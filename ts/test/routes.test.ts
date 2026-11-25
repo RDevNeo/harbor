@@ -44,7 +44,7 @@ beforeAll(async () => {
   for (const d of ["home", "run", "state"]) mkdirSync(join(root, d), { recursive: true });
   port = await freePort();
   const store = Store.open(dataDir());
-  store.set("api_port", String(port));
+  store.set("hub_api_port", String(port));
   store.set("api_enabled", "1");
   store.set("mesh_enabled", "1");
   store.set("api_tokens", JSON.stringify([{ token: "tok", name: "Pixel", created: 0, group: "", fp: "" }]));

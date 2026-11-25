@@ -39,7 +39,7 @@ beforeAll(async () => {
   for (const d of ["home", "run", "state"]) mkdirSync(join(root, d), { recursive: true });
   port = await freePort();
   const seed = Store.open(dataDir());
-  seed.set("api_port", String(port));
+  seed.set("hub_api_port", String(port));
   seed.set("api_enabled", "1");
   seed.set("api_tokens", JSON.stringify([{ token: "tok", name: "Pixel", created: 0, group: "", fp: "" }]));
   seed.close();
