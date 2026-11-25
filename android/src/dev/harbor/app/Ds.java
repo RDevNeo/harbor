@@ -1,5 +1,6 @@
 package dev.harbor.app;
 
+import android.app.Activity;
 import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
@@ -7,6 +8,9 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /** Hub's design system on the phone (DESIGN.md "Android"): the parts every tab shares, so Projects' drawer,
  *  Persons and Routine draw their titles, section heads, rows, folds, pills, chips and cards the same way. Built on
@@ -193,5 +197,61 @@ final class Ds {
         ViewGroup.LayoutParams p = v.getLayoutParams();
         f.addView(v, new FrameLayout.LayoutParams(p == null ? -2 : p.width, p == null ? -2 : p.height, Gravity.CENTER));
         return f;
+    }
+
+    // ---- menus ----
+
+    /** One entry of a menu: a glyph, a label, what it does; or a hairline between groups. */
+    static final class Item {
+        final String glyph, label;
+        final boolean danger, sep;
+        final Runnable run;
+        Item(String glyph, String label, boolean danger, Runnable run) { this.glyph = glyph; this.label = label; this.danger = danger; this.sep = false; this.run = run; }
+        Item() { glyph = ""; label = ""; danger = false; sep = true; run = null; }
+    }
+
+    static Item item(String glyph, String label, Runnable run) { return new Item(glyph, label, false, run); }
+    static Item danger(String glyph, String label, Runnable run) { return new Item(glyph, label, true, run); }
+    static Item sep() { return new Item(); }
+
+    /** A compact menu (a message's long-press, Person Hub's context menu): a card of 48dp rows, each its glyph
+     *  and label, hairlines between groups, red only for destructive entries; a tap outside closes it. */
+    static void menu(Activity a, List<Item> items) {
+        List<Item> list = new ArrayList<>();
+        for (Item it : items) if (!it.sep || (!list.isEmpty() && !list.get(list.size() - 1).sep)) list.add(it);
+        while (!list.isEmpty() && list.get(list.size() - 1).sep) list.remove(list.size() - 1);
+        if (list.isEmpty()) return;
+        android.app.Dialog d = new android.app.Dialog(a);
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        LinearLayout box = Ui.col(a);
+        box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 16));
+        box.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(6), Ui.dp(6));
+        for (Item it : list) {
+            if (it.sep) {
+                View line = new View(a);
+                line.setBackgroundColor(Ui.LINE);
+                box.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), -6, 5, -6, 5));
+                continue;
+            }
+            LinearLayout r = Ui.row(a);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setMinimumHeight(Ui.dp(48));
+            r.setPadding(Ui.dp(12), 0, Ui.dp(14), 0);
+            r.setBackground(Ui.press(0, 0, 10));
+            int ink = it.danger ? Ui.RED : Ui.FG;
+            r.addView(Ui.icon(a, it.glyph, 18, it.danger ? Ui.RED : Ui.G700), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
+            r.addView(Ui.text(a, it.label, 15, ink), Ui.margins(Ui.weight(), 12, 0, 0, 0));
+            r.setOnClickListener(v -> { d.dismiss(); if (it.run != null) it.run.run(); });
+            box.addView(r, Ui.fill());
+        }
+        d.setContentView(box);
+        android.view.Window w = d.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+            w.setLayout(Ui.dp(280), ViewGroup.LayoutParams.WRAP_CONTENT);
+            w.setDimAmount(0.3f);
+        }
+        d.setCanceledOnTouchOutside(true);
+        d.show();
     }
 }

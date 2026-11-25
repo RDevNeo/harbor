@@ -8,4 +8,5 @@ export { aiParts, aiPartsJson, type AiPart, type AiPartJson } from "./aiparts.ts
 export { FACTORIES } from "./conn/index.ts";
 export { createSocials, formatAge, formatCount, type Socials, type SocialResult } from "./socials.ts";
 export { createSpokpay } from "./spokpay.ts";
+export { SiteRequests } from "./siterequests.ts";
 export { AgentDiscord, cardLine as discordCardLine, DiscordTools, type AgentDiscordInfo } from "./agent/index.ts";

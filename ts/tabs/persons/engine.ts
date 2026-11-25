@@ -3,7 +3,7 @@
 // HUB_PERSONS_OFFLINE=1 (or Hub's HARBOR_OFFLINE=1) starts it without connections or background reads, conversations from
 // the caches on disk (the screenshot rig); HARBOR_PERSONS_DIR points it at another folder (a copy of the data).
 import { desktop } from "../../packages/os/src/index.ts";
-import { AgentDiscord, createSocials, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
+import { AgentDiscord, createSocials, createSpokpay, SiteRequests, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
 import { parseSocialUrl, PLATFORM_LABEL, socialHandle } from "../../packages/persons/src/socials.ts";
 import type { Call, Reply } from "../../packages/net/src/index.ts";
 import type { TabEngine } from "../api.ts";
@@ -29,6 +29,8 @@ export const personsEngine: TabEngine = {
       },
       factories: FACTORIES,
       offline,
+      // the screenshot rig's composer (HUB_PERSONS_SHOT_CONNECTED=1): offline connections drawn as connected
+      offlineConnected: offline && ctx.env.HUB_PERSONS_SHOT_CONNECTED === "1",
       openExternal: (url) => desktop.open(url),
     });
     // the panel's Socials: each profile with its latest uploads ("22d ago · 140K views"); offline: what's cached
@@ -49,7 +51,12 @@ export const personsEngine: TabEngine = {
     // `hub app discord` calls them through v1/persons/agent/discord; the Settings card and the phone read it here.
     const agent = new AgentDiscord(service);
     agentsDiscord.provide({ info: () => agent.info(), signIn: () => agent.signIn(), cancel: () => agent.cancel(), signOut: () => agent.signOut() });
-    routes = new PersonsRoutes(service, { agent, ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
+    // SpokPay (the admin key in <dir>/spokpay.json): the message menu's Open Site Request and the proposals' cards
+    const svc = service;
+    const spokpay = createSpokpay({ dir, log: (...a) => ctx.log(a.map(String).join(" ")) });
+    if (!offline) spokpay.start();
+    const sites = new SiteRequests(spokpay, async (m, p, q, b) => ctx.call(m, p, q, b), () => svc.touch(), (url, name, account) => svc.fetchAttachment(url, name, account));
+    routes = new PersonsRoutes(service, { agent, sites, ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
     service.onChange(() => ctx.changed());
     await service.start();
   },

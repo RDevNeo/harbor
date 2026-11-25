@@ -59,6 +59,8 @@ export interface ServiceOptions {
   socialPhoto?: (url: string) => Promise<string | null | undefined>;
   /** No background refreshes, no connections started (screenshot rig, tests). */
   offline?: boolean;
+  /** Offline, the connections drawn as connected (the screenshot rig's composer); nothing is sent. */
+  offlineConnected?: boolean;
 }
 
 const REFRESH_EVERY_MS = 30 * 60_000;
@@ -113,7 +115,8 @@ export class PersonsService {
       this.retrack();
     });
     if (this.o.offline) {
-      for (const m of this.metas) this.patch(m.id, (s) => ({ ...s, state: { status: "signed-out", me: null, gateway: "down" }, convos: this.cachedConvos(m) }));
+      const status = this.o.offlineConnected ? "connected" : "signed-out";
+      for (const m of this.metas) this.patch(m.id, (s) => ({ ...s, state: { status, me: null, gateway: this.o.offlineConnected ? "up" : "down" }, convos: this.cachedConvos(m) }));
       this.changed(false);
       return;
     }

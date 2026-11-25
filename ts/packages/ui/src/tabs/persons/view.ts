@@ -200,7 +200,11 @@ export interface MsgJson { id: string; fromMe: boolean; text: string; at: string
 export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[] }
 /** An answer's pieces (the engine's persons aiparts.ts): markdown, and the messages it drafted for the person (```reply). */
 export type AiPartJson = { type: "text"; text: string } | { type: "draft"; text: string };
-export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; parts?: AiPartJson[] }
+export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; parts?: AiPartJson[]; forwarded?: { from: string; text: string } }
+export type ProposalStateJson = { kind: "waiting" } | { kind: "opening"; startedAt: number } | { kind: "opened"; at: number; ref: string } | { kind: "failed"; at: number; reason: string; fix: string } | { kind: "discarded"; at: number };
+/** A SpokPay site request proposed from a message (the engine's routes.ts proposalJson). */
+export interface ProposalJson { id: string; at: string; messageId: string | null; store: { slug: string; name: string } | null; category: string; subject: string; details: string; brief: Record<string, string>; why: string; from: string; chat: string | null; images: number; state: ProposalStateJson }
+export interface ProposingJson { personId: string; messageId: string; at: string; chat: string | null; error: string | null }
 export interface ChatJson {
   person: { id: string; name: string; initials: string; color: string; avatar: string | null; avatarPath: string | null; presence: string | null; status: { text: string; tone: string } | null };
   account: { id: string; kind: string; section: string; label: string; connected: boolean } | null;
@@ -212,11 +216,19 @@ export interface ChatJson {
   messages: MsgJson[];
   outgoing: OutJson[];
   ai: AiJson[];
+  /** The person's AI is there: the composer's AI switch, Forward to AI. */
+  aiOn?: boolean;
+  /** The AI's Hub chat (the composer's "Open in Projects"). */
+  aiChat?: string | null;
+  /** Open Site Request in the message menu (SpokPay people and store owners, SpokPay connected). */
+  siteRequests?: boolean;
+  proposals?: ProposalJson[];
+  proposing?: ProposingJson[];
 }
 
 /** One chat row (PMsg); `imageUrl`: the file route of its first picture (the driver decodes it). */
 export interface MsgRow {
-  kind: "msg" | "day" | "unread" | "subject" | "ai" | "out";
+  kind: "msg" | "day" | "unread" | "subject" | "ai" | "out" | "proposal" | "proposing";
   id: string;
   mine: boolean;
   text: string;
@@ -235,6 +247,8 @@ export interface MsgRow {
   toAi: boolean;
   /** The AI's answer in pieces (kind "ai"); a whole answer as markdown when the engine sent none. */
   parts: AiPartJson[];
+  /** A site request card (kind "proposal" / "proposing"): its title, the line under it, its state, a note. */
+  card: { title: string; sub: string; state: string; note: string; why: string; chat: boolean };
 }
 
 const hhmm = (iso: string): string => {
@@ -270,7 +284,7 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
-  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [] });
+  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false } });
   let lastThread: string | null = null;
   for (const m of c.messages) {
     const r = blank("msg", m.id);
@@ -299,6 +313,11 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
       r.toAi = true;
     }
     r.text = a.text || (a.streaming ? "…" : "");
+    // Forward to AI: the forwarded message quoted over the question (empty: the default one)
+    if (a.forwarded) {
+      r.reply = `${a.forwarded.from}: ${a.forwarded.text || "…"}`;
+      r.text = a.text || "What should I reply to this?";
+    }
     if (a.role !== "user") r.parts = a.parts ?? (r.text ? [{ type: "text", text: r.text }] : []);
     r.time = hhmm(a.at);
     r.streaming = !!a.streaming;
@@ -314,6 +333,19 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.files = o.files.map((f) => `${f.name} · ${formatBytes(f.size)}`).join("\n");
     if (o.error) r.meta = o.error;
     items.push({ at: o.at, row: r });
+  }
+  for (const p of c.proposals ?? []) {
+    const r = blank("proposal", `p${p.id}`);
+    r.time = hhmm(p.at);
+    r.text = p.details;
+    r.card = proposalCard(p);
+    items.push({ at: p.at, row: r });
+  }
+  for (const p of c.proposing ?? []) {
+    const r = blank("proposing", `q${p.messageId}`);
+    r.time = hhmm(p.at);
+    r.card = { title: p.error ? "The SpokPay agent couldn’t draft it" : "The SpokPay agent is drafting a site request…", sub: "", state: p.error ? "failed" : "drafting", note: p.error ?? "", why: "", chat: !!p.chat };
+    items.push({ at: p.at, row: r });
   }
   items.sort((a, b) => at(a.at) - at(b.at));
   const out: MsgRow[] = [];
@@ -336,6 +368,16 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     out.push(it.row);
   }
   return out;
+}
+
+const CATEGORY: Record<string, string> = { website: "Website", catalog: "Catalog", delivery: "Delivery", dashboard: "Dashboard", other: "Other" };
+
+/** A proposal's card: subject, "store · category · N images", its state and the line that goes with it. */
+export function proposalCard(p: ProposalJson): MsgRow["card"] {
+  const sub = [p.store ? p.store.name || p.store.slug : "No store picked", CATEGORY[p.category] ?? p.category, p.images ? `${p.images} ${p.images === 1 ? "image" : "images"}` : ""].filter(Boolean).join(" · ");
+  const st = p.state;
+  const note = st.kind === "opened" ? `Opened as ${st.ref}` : st.kind === "failed" ? `Not opened: ${st.reason}` : st.kind === "opening" ? "Opening…" : !p.store ? "Pick the store (Edit) before opening it." : "";
+  return { title: p.subject || "(no subject)", sub, state: st.kind, note, why: p.why ? `${p.from}: ${p.why}` : p.from, chat: !!p.chat };
 }
 
 /** The sections a person is in (for Settle in the All people menu): Stores when in a store, and their lists that are sections. */

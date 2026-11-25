@@ -5807,6 +5807,12 @@ export class Shell {
       openExternal: (url) => this.openExternal(url),
       shown: () => tabs.current === id,
       onChanged: (f) => void this.tabChanged.add(f),
+      openChat: (chat) => {
+        const n = Number(chat);
+        if (!Number.isInteger(n)) return;
+        tabs.select("projects");
+        this.openChat(n);
+      },
     });
     // What a phone changed shows here too: while a tab besides Projects is on screen, it re-reads every 3 s.
     const tick = setInterval(() => {

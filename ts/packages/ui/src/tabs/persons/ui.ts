@@ -2,13 +2,15 @@
 // through ctx.call — the same routes Hub for Android uses). Pictures are local files the engine cached, decoded here.
 import * as slint from "slint-ui";
 import { readFileSync, statSync } from "node:fs";
-import { images, picker } from "@harbor/media";
+import { clipboard, images, picker } from "@harbor/media";
+import { GLYPHS, type GlyphName } from "@harbor/net";
 import { basename } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
 import { syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
+import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, type MenuEntry } from "./menus.ts";
 import { chatRows, listRows, personSections, sideRows, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
@@ -84,10 +86,17 @@ class PersonsTab {
   private chat: ChatJson | null = null;
   private panelData: PanelJson | null = null;
   private panelOpen = true;
+  /** The composer writes to the person's AI (Person Hub's "To: AI | Name" switch), remembered per chat. */
   private aiMode = false;
-  private replyTo: { id: string; text: string } | null = null;
-  /** Files going with the next message (paths on this PC). */
+  private toAi = new Map<string, boolean>();
+  private replyTo: { id: string; name: string; text: string } | null = null;
+  /** A message forwarded to the AI (Forward to AI): quoted in the AI composer, for the chat it came from. */
+  private forwarded: { id: string; name: string; text: string } | null = null;
+  /** Files going with the next message (paths on this PC); the AI composer has its own. */
   private files: string[] = [];
+  private aiFiles: string[] = [];
+  /** Unsent text per chat and recipient (kept when switching people or recipient). */
+  private drafts = new Map<string, string>();
   private menuActions = new Map<string, () => void>();
   private dialogOk: (() => Promise<void> | void) | null = null;
   private chipState = new Map<string, boolean>();
@@ -148,17 +157,26 @@ class PersonsTab {
     on("open_file", ((id: string) => void this.openFile(id)) as Cb);
     on("attach", () => void this.attach());
     on("clear_attached", () => {
-      this.files = [];
+      if (this.aiMode) this.aiFiles = [];
+      else this.files = [];
       this.render();
     });
+    on("set_to", ((to: string) => this.setTo(to === "ai")) as Cb);
+    on("cancel_forward", () => {
+      this.forwarded = null;
+      this.render();
+    });
+    on("open_ai_chat", () => {
+      const id = this.chat?.aiChat;
+      if (id) this.ctx.openChat?.(id);
+    });
+    on("msg_unread", ((id: string) => this.markUnread(id)) as Cb);
+    on("card_act", ((id: string, act: string) => void this.cardAct(id, act)) as Cb);
     on("cancel_reply", () => {
       this.replyTo = null;
       this.render();
     });
-    on("toggle_ai", () => {
-      this.aiMode = !this.aiMode;
-      this.render();
-    });
+    on("toggle_ai", () => this.setTo(!this.aiMode));
     on("save_notes", ((text: string) => void this.saveNotes(text)) as Cb);
     on("open_url", ((url: string) => ctx.openExternal(url)) as Cb);
     // markdown.slint also reports selections ("sel:…") and keys ("scroll:…"): only web and mail links open
@@ -346,8 +364,22 @@ class PersonsTab {
     b.c_more = c.more;
     b.c_loading = false;
     b.c_empty = c.account ? "No messages yet." : "No channel to talk to them here: connect Discord, Gmail or WhatsApp in the section's +, and give them that identifier (Edit).";
-    b.reply_text = this.replyTo?.text ?? "";
-    b.attached = this.files.map((f) => basename(f)).join(", ");
+    // the composer (Person Hub's): who it goes to, the reply / forward, the subject of a first email, the files
+    const aiOn = c.aiOn !== false;
+    if (!aiOn) this.aiMode = false;
+    const kind = c.account?.kind ?? "";
+    const blocked = blockedNote({ hasAccount: !!c.account, hasPeer: !!c.peer, connected: !!c.account?.connected, kind });
+    b.c_ai_on = aiOn;
+    b.c_can_send = !blocked;
+    b.c_blocked = blocked ?? "";
+    b.c_need_subject = kind === "gmail" && c.messages.length === 0 && c.outgoing.length === 0 && !blocked;
+    b.c_hint = composerHint({ toAi: this.aiMode, forwarded: !!this.forwarded, name: pp.name, kind, me: kind === "gmail" ? c.account?.label.replace(/^Gmail · /, "").replace(/^Gmail$/, "") ?? "" : "" });
+    b.has_ai_chat = !!c.aiChat;
+    b.reply_name = this.aiMode ? "" : this.replyTo?.name ?? "";
+    b.reply_text = this.aiMode ? "" : this.replyTo?.text ?? "";
+    b.fwd_name = this.aiMode && this.forwarded ? this.forwarded.name : "";
+    b.fwd_text = this.aiMode && this.forwarded ? this.forwarded.text : "";
+    b.attached = (this.aiMode ? this.aiFiles : this.files).map((f) => basename(f)).join(", ");
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
     const rows = chatRows(c).slice(-400);
@@ -384,9 +416,33 @@ class PersonsTab {
 
   /** A draft from the AI's answer into the composer, to send to the person. */
   private useDraft(text: string): void {
-    this.aiMode = false;
+    this.setTo(false);
     this.bus.draft = text;
     this.render();
+  }
+
+  /** The chat's key for what the composer remembers (recipient, drafts). */
+  private chatKey(): string {
+    const o = this.ui.open;
+    return o ? `${o.id}:${o.section}` : "";
+  }
+
+  /** Switches the composer between the person and their AI, each with its own draft. */
+  private setTo(ai: boolean): void {
+    const k = this.chatKey();
+    if (!k || ai === this.aiMode) return;
+    this.drafts.set(`${k}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
+    this.aiMode = ai;
+    this.toAi.set(k, ai);
+    this.bus.draft = this.drafts.get(`${k}:${ai ? "ai" : "person"}`) ?? "";
+    if (ai) this.typingAt = 0;
+    this.focusField();
+    this.render();
+  }
+
+  /** The composer's field takes the focus (Person Hub's switchTo / startReply). */
+  private focusField(): void {
+    this.bus.focus_rev = (Number(this.bus.focus_rev) || 0) + 1;
   }
 
   private msgJs(r: MsgRow): Record<string, unknown> {
@@ -421,6 +477,12 @@ class PersonsTab {
       streaming: r.streaming,
       to_ai: r.toAi,
       parts: this.partsOf(r),
+      card_title: r.card.title,
+      card_sub: r.card.sub,
+      card_state: r.card.state,
+      card_note: r.card.note,
+      card_why: r.card.why,
+      card_chat: r.card.chat,
     };
   }
 
@@ -492,13 +554,19 @@ class PersonsTab {
 
   private async openPerson(id: string, section: string, store: string): Promise<void> {
     if (this.ui.open?.id === id && this.ui.open.section === section && this.ui.open.store === store) return;
+    const was = this.chatKey();
+    if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
     this.ui.open = { id, section, store };
     this.ui.allActive = false;
     this.chat = null;
     this.panelData = null;
     this.replyTo = null;
-    this.aiMode = false;
-    this.bus.draft = "";
+    this.forwarded = null;
+    this.files = [];
+    this.aiFiles = [];
+    const k = this.chatKey();
+    this.aiMode = this.toAi.get(k) ?? false;
+    this.bus.draft = this.drafts.get(`${k}:${this.aiMode ? "ai" : "person"}`) ?? "";
     this.bus.subject = "";
     this.render();
     await Promise.all([this.loadChat(true), this.panelOpen ? this.loadPanel() : Promise.resolve()]);
@@ -563,17 +631,34 @@ class PersonsTab {
   private async send(): Promise<void> {
     const open = this.ui.open;
     const text = String(this.bus.draft ?? "").replace(/\s+$/, "");
-    if (!open || (!text.trim() && (this.aiMode || !this.files.length))) return;
-    this.bus.draft = "";
+    if (!open) return;
     if (this.aiMode) {
-      const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/ai`, { section: open.section || this.chat?.account?.section || "stores", text, account: this.chat?.account?.id });
+      // to the AI: the question, the forwarded message (empty question: the default one) and the files' paths
+      const fwd = this.forwarded;
+      const paths = this.aiFiles;
+      if (!text.trim() && !fwd && !paths.length) return;
+      this.bus.draft = "";
+      this.forwarded = null;
+      this.aiFiles = [];
+      this.render();
+      const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/ai`, { section: open.section || this.chat?.account?.section || "stores", text, account: this.chat?.account?.id, ...(fwd ? { forward: fwd.id } : {}), ...(paths.length ? { paths } : {}) });
       if (r.status !== 200) {
         this.bus.draft = text;
-        this.setToast(String(r.body.error ?? "The Person AI didn't answer"));
+        this.forwarded = fwd;
+        this.aiFiles = paths;
+        this.setToast(`AI: ${String(r.body.error ?? "the Person AI didn't answer")}`);
       }
       void this.loadChat(false);
       return;
     }
+    if (!text.trim() && !this.files.length) return;
+    if (this.bus.c_can_send === false) return;
+    const subject = String(this.bus.subject ?? "").trim();
+    if (this.bus.c_need_subject && !subject) {
+      this.setToast("Add a subject for the first email");
+      return;
+    }
+    this.bus.draft = "";
     const body: Record<string, unknown> = { section: open.section, account: this.chat?.account?.id, text };
     if (this.replyTo) body.replyTo = this.replyTo.id;
     if (this.files.length) {
@@ -589,8 +674,7 @@ class PersonsTab {
       body.files = out;
       this.files = [];
     }
-    const subject = String(this.bus.subject ?? "").trim();
-    if (subject) body.subject = subject;
+    if (subject && this.bus.c_need_subject) body.subject = subject;
     this.replyTo = null;
     this.bus.subject = "";
     this.render();
@@ -610,7 +694,8 @@ class PersonsTab {
         // gone
       }
     }
-    this.files = [...this.files, ...ok].slice(0, 10);
+    if (this.aiMode) this.aiFiles = [...this.aiFiles, ...ok].slice(0, 10);
+    else this.files = [...this.files, ...ok].slice(0, 10);
     this.render();
   }
 
@@ -632,14 +717,15 @@ class PersonsTab {
 
   // ---------- menus ----------
 
-  private showMenu(x: number, y: number, items: { id?: string; label: string; icon?: string; sub?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; run?: () => void }[]): void {
+  private showMenu(x: number, y: number, items: { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; run?: () => void }[], width = 264): void {
     this.menuActions.clear();
     let n = 0;
     this.bus.menu = items.map((it) => {
       const id = it.id ?? `m${n++}`;
       if (it.run) this.menuActions.set(id, it.run);
-      return { id, label: it.label, icon: it.icon ?? "", sub: it.sub ?? "", danger: !!it.danger, sep: !!it.sep, header: !!it.header, disabled: !!it.disabled };
+      return { id, label: it.label, icon: it.icon ?? "", sub: it.sub ?? "", hint: it.hint ?? "", danger: !!it.danger, sep: !!it.sep, header: !!it.header, disabled: !!it.disabled };
     });
+    this.bus.menu_w = width;
     this.bus.menu_x = x;
     this.bus.menu_y = y;
     this.bus.menu_open = true;
@@ -719,15 +805,36 @@ class PersonsTab {
     } })));
   }
 
+  /** A shared menu's entries (menus.ts) with their actions; compact, as Person Hub's. */
+  private showEntries(x: number, y: number, entries: (MenuEntry & { run?: () => void })[]): void {
+    const glyph = (n?: GlyphName): string => (n ? GLYPHS[n] : "");
+    const hint = entries.some((e) => e.hint);
+    this.showMenu(x, y, entries.map((e) => ({ label: e.label, icon: glyph(e.icon), ...(e.hint ? { hint: e.hint } : {}), sep: !!e.sep, danger: !!e.danger, ...(e.run ? { run: e.run } : {}) })), hint ? 236 : 208);
+  }
+
+  private copy(text: string): void {
+    void clipboard.copyText(text).then(() => this.setToast("Copied"), () => this.setToast("Couldn't copy"));
+  }
+
+  private markUnread(id: string): void {
+    const open = this.ui.open;
+    const c = this.chat;
+    const m = c?.messages.find((x) => x.id === id);
+    if (!open || !c || !m || m.fromMe) return;
+    void this.api("POST", `chat/${encodeURIComponent(open.id)}/unread`, { section: open.section, account: c.account?.id, messageId: m.id }).then(() => this.setToast("Marked as unread"));
+  }
+
   private msgMenu(id: string, x: number, y: number): void {
     const open = this.ui.open;
     const c = this.chat;
     if (!open || !c) return;
+    const canSend = this.bus.c_can_send !== false;
     if (id.startsWith("oo")) {
       const key = id.slice(1);
-      this.showMenu(x, y, [
-        { label: "Retry", run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/retry`, { section: open.section, account: c.account?.id, key }) },
-        { label: "Dismiss", danger: true, run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/retry`, { section: open.section, account: c.account?.id, key, dismiss: true }) },
+      const [retry, dismiss] = failedMenu();
+      this.showEntries(x, y, [
+        { ...retry!, run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/retry`, { section: open.section, account: c.account?.id, key }) },
+        { ...dismiss!, run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/retry`, { section: open.section, account: c.account?.id, key, dismiss: true }) },
       ]);
       return;
     }
@@ -735,29 +842,99 @@ class PersonsTab {
       const a = c.ai.find((x) => `ai${x.id}` === id);
       if (!a) return;
       // the drafts the AI fenced as ```reply (the engine's persons aiparts.ts), else the whole answer
-      const drafts = (a.parts ?? []).flatMap((p) => (p.type === "draft" ? [p.text] : []));
-      const use = (t: string): void => this.useDraft(t);
-      this.showMenu(x, y, [
-        ...(drafts.length ? drafts.map((d, i) => ({ label: drafts.length > 1 ? `Use reply ${i + 1}` : "Use as reply", sub: d.slice(0, 60), run: () => use(d) })) : [{ label: "Use as reply", run: () => use(a.text) }]),
-      ]);
+      const drafts = a.role === "user" ? [] : (a.parts ?? []).flatMap((p) => (p.type === "draft" ? [p.text] : []));
+      const entries = aiMenu({ drafts, text: a.text, canSend: canSend && a.role !== "user" });
+      this.showEntries(x, y, entries.map((e) => ({ ...e, ...(e.use !== undefined ? { run: () => this.useDraft(e.use!) } : e.action === "copy" ? { run: () => this.copy(a.text) } : {}) })));
       return;
     }
     const m = c.messages.find((x) => x.id === id);
     if (!m) return;
-    this.showMenu(x, y, [
-      { label: "Reply", run: () => {
-        this.replyTo = { id: m.id, text: `${m.fromMe ? "you" : c.person.name}: ${m.text.slice(0, 80) || "attachment"}` };
-        this.aiMode = false;
+    const who = m.fromMe ? "You" : c.person.name;
+    const entries = messageMenu({ fromMe: m.fromMe, hasText: !!m.text, hasFiles: m.files.length > 0, canSend, aiOn: c.aiOn !== false, siteRequests: !!c.siteRequests, proposing: (c.proposing ?? []).some((p) => p.messageId === m.id && !p.error) });
+    const run: Record<string, () => void> = {
+      reply: () => {
+        this.setTo(false);
+        this.replyTo = { id: m.id, name: who, text: m.text.slice(0, 160) || (m.files.length ? "📎 attachment" : "") };
+        this.focusField();
         this.render();
-      } },
-      { label: "Ask the AI about this", icon: "", run: () => {
-        this.aiMode = true;
-        this.bus.draft = `About their message “${m.text.slice(0, 200)}”: `;
+      },
+      forward: () => {
+        // Person Hub's Forward to AI: the AI composer, with this message quoted, ready for a question
+        this.forwarded = { id: m.id, name: who, text: m.text.slice(0, 160) || (m.files[0] ? (m.voice ? "Voice message" : m.files[0].image ? "Photo" : m.files[0].name) : "Message") };
+        this.setTo(true);
+        this.focusField();
         this.render();
-      } },
-      ...(!m.fromMe ? [{ label: "Mark as unread", run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/unread`, { section: open.section, account: c.account?.id, messageId: m.id }) }] : []),
-      ...(m.files.length ? [{ label: "Open attachment", run: () => void this.openFile(m.id) }] : []),
-    ]);
+      },
+      "site-request": () => void this.siteRequest(m.id),
+      copy: () => this.copy(m.text),
+      "open-file": () => void this.openFile(m.id),
+      unread: () => this.markUnread(m.id),
+    };
+    this.showEntries(x, y, entries.map((e) => ({ ...e, ...(e.action ? { run: run[e.action] } : {}) })));
+  }
+
+  // ---------- SpokPay site requests ----------
+
+  /** Open Site Request: SpokPay's agent drafts it from this message; its card shows in the chat. */
+  private async siteRequest(messageId: string): Promise<void> {
+    const open = this.ui.open;
+    const c = this.chat;
+    if (!open || !c) return;
+    const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/site-request`, { section: open.section, account: c.account?.id, messageId });
+    if (r.status !== 200) this.setToast(String(r.body.error ?? "Couldn't start the site request"));
+    void this.loadChat(false);
+  }
+
+  /** A site request card's buttons: a proposal (p<id>) or one being drafted (q<message id>). */
+  private async cardAct(rowId: string, act: string): Promise<void> {
+    const open = this.ui.open;
+    const c = this.chat;
+    if (!open || !c) return;
+    if (rowId.startsWith("q")) {
+      const mid = rowId.slice(1);
+      const p = (c.proposing ?? []).find((x) => x.messageId === mid);
+      if (act === "agent" && p?.chat) this.ctx.openChat?.(p.chat);
+      else if (act === "local") await this.api("POST", `proposing/${encodeURIComponent(mid)}/local`, { personId: open.id, section: open.section, account: c.account?.id });
+      else if (act === "dismiss") await this.api("DELETE", `proposing/${encodeURIComponent(mid)}`);
+      void this.loadChat(false);
+      return;
+    }
+    const p = (c.proposals ?? []).find((x) => `p${x.id}` === rowId);
+    if (!p) return;
+    const path = `proposal/${encodeURIComponent(p.id)}`;
+    if (act === "agent" && p.chat) return this.ctx.openChat?.(p.chat);
+    if (act === "edit") return this.proposalDialog(p.id);
+    if (act === "discard") {
+      await this.api("DELETE", path);
+      this.setToast("Proposal discarded");
+    } else if (act === "open") {
+      if (!p.store) return this.proposalDialog(p.id);
+      const r = await this.api("POST", `${path}/open`, {});
+      if (r.status !== 200) this.setToast(String(r.body.error ?? "Not opened"));
+      else if ((r.body.state as { kind?: string; ref?: string } | undefined)?.kind === "opened") this.setToast(`Site request ${(r.body.state as { ref: string }).ref} opened`);
+    }
+    void this.loadChat(false);
+  }
+
+  /** Edit a proposal before Open: the store (its SpokPay slug), the subject and the details the store reads. */
+  private proposalDialog(id: string): void {
+    const p = (this.chat?.proposals ?? []).find((x) => x.id === id);
+    if (!p) return;
+    const b = this.bus;
+    b.f_store = p.store?.slug ?? "";
+    b.f_subject = p.subject;
+    b.f_details = p.details;
+    this.openDialog("proposal", "Site request", "The store reads the subject and the details (in Portuguese). Open sends it to SpokPay.", "Save", async () => {
+      const slug = String(b.f_store ?? "").trim().toLowerCase();
+      if (slug && !/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) throw new Error("The store is its SpokPay slug: lowercase letters, numbers and dashes");
+      const subject = String(b.f_subject ?? "").trim();
+      const details = String(b.f_details ?? "").trim();
+      if (!subject || !details) throw new Error("A site request needs a subject and details");
+      const fields = { category: p.category, subject, details, brief: (p as unknown as { brief?: unknown }).brief ?? {} };
+      const r = await this.api("PATCH", `proposal/${encodeURIComponent(id)}`, { fields, store: slug ? { slug, name: slug === p.store?.slug ? p.store.name : slug } : null });
+      if (r.status !== 200) throw new Error(String(r.body.error ?? "Not saved"));
+      void this.loadChat(false);
+    });
   }
 
   // ---------- people ----------

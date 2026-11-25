@@ -18,6 +18,8 @@ export interface TabCtx {
   shown(): boolean;
   /** Called every 3 s while a tab besides Projects is on screen (a phone may have changed something): re-read. */
   onChanged(f: () => void): void;
+  /** Shows a Hub chat in Projects (a Person AI's, a SpokPay agent's). */
+  openChat?(id: string): void;
 }
 
 export interface TabUi {

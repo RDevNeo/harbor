@@ -140,6 +140,10 @@ export class PersonAi implements AiPort {
     return f;
   }
 
+  chatOf(p: Person, s: SectionId): string | null {
+    return this.chats[this.key(p, s)] ?? null;
+  }
+
   async items(p: Person, s: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]> {
     const chat = this.chats[this.key(p, s)] ?? (await this.locate(p, s)).chat;
     if (!chat) return [];

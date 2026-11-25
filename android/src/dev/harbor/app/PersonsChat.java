@@ -52,11 +52,13 @@ final class PersonsChat {
     private final ScrollView sv;
     private final LinearLayout content;
     private final TextView typingLine;
-    private final LinearLayout box;
-    private final TextView toLine, blocked;
-    private final LinearLayout replyBox;
-    private final TextView replyText;
+    private final LinearLayout box, head, replyBox, fwdBox, seg, segAi, segPerson, sendPill;
+    private final FrameLayout headMark, sendRound;
+    private final View headLine;
+    private final TextView headText, headNote, blocked, replyText, fwdText, toLabel, attach, maximize;
     private final EditText subject, edit;
+    /** A message forwarded to the AI (Forward to AI): quoted in the AI composer, sent with the next note. */
+    private JSONObject forwarded;
     private final HorizontalScrollView draftsScroll;
     private final LinearLayout drafts;
 
@@ -106,42 +108,45 @@ final class PersonsChat {
         typingLine.setVisibility(View.GONE);
         view.addView(typingLine, Ui.fill());
 
-        // The composer: who it goes to, the reply and the subject, the pictures, then + / text / send.
+        // The composer (Person Hub's): who it goes to on top ("To <person>", or "Note to the AI · never sent to them"
+        // in the AI's tint), then the first email's subject, the reply or the forwarded message, the photos, the
+        // field (or why it can't write to them), and attach / "To: AI | <person>" / Send.
         box = Ui.col(a);
-        box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 24));
-        box.setPadding(Ui.dp(6), Ui.dp(4), Ui.dp(6), Ui.dp(6));
-        toLine = Ui.subtitle(Ui.text(a, "", 12, Ui.G700));
-        toLine.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(10), Ui.dp(2));
-        box.addView(toLine, Ui.fill());
-        replyBox = Ui.row(a);
-        replyBox.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(2), Ui.dp(4));
-        replyBox.setBackground(Ui.round(Ui.G100, 0, 12));
-        replyText = Ui.subtitle(Ui.text(a, "", 13, Ui.G700));
-        replyBox.addView(replyText, Ui.weight());
-        TextView noReply = Ui.icon(a, Ui.I_X, 16, Ui.G700);
-        noReply.setBackground(Ui.press(0, 0, 14));
-        noReply.setOnClickListener(v -> { replyTo = null; composer(); });
-        noReply.setContentDescription("Cancel reply");
-        replyBox.addView(noReply, new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(28)));
-        box.addView(replyBox, Ui.margins(Ui.fill(), 4, 2, 4, 4));
+        head = Ui.row(a);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setMinimumHeight(Ui.dp(40));
+        head.setPadding(Ui.dp(14), 0, Ui.dp(14), 0);
+        headMark = new FrameLayout(a);
+        head.addView(headMark, new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
+        headText = Ui.subtitle(Ui.text(a, "", 13, Ui.G700));
+        head.addView(headText, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        headNote = Ui.subtitle(Ui.text(a, "", 11.5f, Ui.G600));
+        head.addView(headNote, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        box.addView(head, Ui.fill());
+        headLine = new View(a);
+        box.addView(headLine, new LinearLayout.LayoutParams(-1, Ui.dp(1)));
+        LinearLayout body = Ui.col(a);
+        body.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(8), Ui.dp(6));
+        box.addView(body, Ui.fill());
         subject = Ui.input(a, "Subject (first email)", false);
-        subject.setBackground(Ui.round(Ui.BG, Ui.LINE, 12));
+        subject.setBackground(Ui.round(Ui.BG, Ui.LINE, 10));
         subject.setTextSize(15);
         subject.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(8));
-        box.addView(subject, Ui.margins(Ui.fill(), 4, 2, 4, 4));
+        body.addView(subject, Ui.margins(Ui.fill(), 0, 0, 0, 8));
+        replyText = Ui.subtitle(Ui.text(a, "", 13, Ui.G700));
+        replyBox = quoteRow(Ui.I_REPLY, replyText, "Cancel reply", () -> { replyTo = null; composer(); }, false);
+        body.addView(replyBox, Ui.margins(Ui.fill(), 0, 0, 0, 8));
+        fwdText = Ui.subtitle(Ui.text(a, "", 13, Ui.G700));
+        fwdBox = quoteRow(Ui.I_FORWARD, fwdText, "Cancel forward", () -> { forwarded = null; composer(); }, true);
+        body.addView(fwdBox, Ui.margins(Ui.fill(), 0, 0, 0, 8));
         draftsScroll = new HorizontalScrollView(a);
         draftsScroll.setHorizontalScrollBarEnabled(false);
         drafts = Ui.row(a);
         draftsScroll.addView(drafts);
-        box.addView(draftsScroll, Ui.margins(Ui.fill(), 4, 2, 4, 4));
+        body.addView(draftsScroll, Ui.margins(Ui.fill(), 0, 0, 0, 8));
         blocked = Ui.text(a, "", 13, Ui.G700);
-        blocked.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
-        box.addView(blocked, Ui.fill());
-        LinearLayout row = Ui.row(a);
-        row.setGravity(Gravity.BOTTOM);
-        FrameLayout plus = Ui.roundButton(a, Ui.I_PLUS, Ui.G100, Ui.FG, 40, v -> plusMenu());
-        plus.setContentDescription("More: attach a photo, ask the AI");
-        row.addView(plus);
+        blocked.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(8));
+        body.addView(blocked, Ui.fill());
         edit = new EditText(a);
         edit.setBackground(null);
         edit.setTextColor(Ui.FG);
@@ -150,17 +155,45 @@ final class PersonsChat {
         edit.setTextSize(16);
         edit.setMaxLines(6);
         edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        edit.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(10), Ui.dp(8));
+        edit.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(6));
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
-            @Override public void afterTextChanged(Editable s) { if (s.toString().trim().length() > 0) typing(); }
+            @Override public void afterTextChanged(Editable s) { if (s.toString().trim().length() > 0) typing(); sendState(); }
         });
-        row.addView(edit, Ui.weight());
-        FrameLayout send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 40, v -> send());
-        send.setContentDescription("Send");
-        row.addView(send);
-        box.addView(row, Ui.fill());
+        body.addView(edit, Ui.fill());
+        LinearLayout row = Ui.row(a);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        attach = Ui.iconButton(a, Ui.I_CLIP, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickImage(this::addPhoto); });
+        attach.setContentDescription("Attach a photo");
+        row.addView(attach, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
+        maximize = Ui.iconButton(a, Ui.I_MAXIMIZE, Ui.G700, v -> Ui.toast(a, "The AI's chat is in Projects on the PC"));
+        maximize.setContentDescription("Open in Projects");
+        row.addView(maximize, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
+        toLabel = Ui.text(a, "To", 13, Ui.G700);
+        row.addView(toLabel, Ui.margins(Ui.wrap(), 4, 0, 6, 0));
+        seg = Ui.row(a);
+        seg.setGravity(Gravity.CENTER_VERTICAL);
+        seg.setPadding(Ui.dp(2), Ui.dp(2), Ui.dp(2), Ui.dp(2));
+        segAi = segment(Ui.I_SPARKLES, v -> switchTo(true));
+        segPerson = segment(Ui.I_MESSAGE, v -> switchTo(false));
+        seg.addView(segAi);
+        seg.addView(segPerson, Ui.margins(new LinearLayout.LayoutParams(0, -2, 1), 2, 0, 0, 0));
+        row.addView(seg, new LinearLayout.LayoutParams(0, -2, 1));
+        View gap = new View(a);
+        row.addView(gap, new LinearLayout.LayoutParams(Ui.dp(8), 1));
+        sendPill = Ui.row(a);
+        sendPill.setGravity(Gravity.CENTER);
+        sendPill.setPadding(Ui.dp(14), 0, Ui.dp(12), 0);
+        sendPill.addView(Ui.bold(a, "Send", 14, Ui.ON_INK));
+        sendPill.addView(Ui.icon(a, Ui.I_UP, 15, Ui.ON_INK), Ui.margins(Ui.wrap(), 5, 0, 0, 0));
+        sendPill.setOnClickListener(v -> send());
+        sendPill.setContentDescription("Send");
+        row.addView(sendPill, new LinearLayout.LayoutParams(-2, Ui.dp(36)));
+        sendRound = Ui.roundButton(a, Ui.I_UP, Ui.CARD, Ui.FG, 36, v -> send());
+        sendRound.setContentDescription("Send to the AI");
+        row.addView(sendRound);
+        body.addView(row, Ui.fill());
         view.addView(box, Ui.margins(Ui.fill(), 10, 4, 10, 10));
 
         JSONObject q = p.person(pid);
@@ -414,8 +447,11 @@ final class PersonsChat {
         }
         // The conversation and the AI's thread, by time.
         List<Object[]> line = new ArrayList<>();
-        for (JSONObject m : msgs) line.add(new Object[]{at(m), m, false});
-        for (JSONObject e : PersonsHome.objs(ai)) line.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), e, true});
+        for (JSONObject m : msgs) line.add(new Object[]{at(m), m, "msg"});
+        for (JSONObject e : PersonsHome.objs(ai)) line.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), e, "ai"});
+        // SpokPay site requests proposed from a message, and those the agent is still drafting
+        for (JSONObject e : PersonsHome.objs(PersonsUi.arr(data, "proposals"))) line.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), e, "proposal"});
+        for (JSONObject e : PersonsHome.objs(PersonsUi.arr(data, "proposing"))) line.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), e, "proposing"});
         Collections.sort(line, (x, y) -> Long.compare((Long) x[0], (Long) y[0]));
         String unreadFrom = PersonsUi.s(data, "unreadFrom");
         List<String[]> gallery = new ArrayList<>();
@@ -433,8 +469,8 @@ final class PersonsChat {
                 content.addView(divider(PersonsUi.day(t), Ui.G700, false));
                 broke = true;
             }
-            if ((Boolean) e[2]) {
-                content.addView(aiView(o));
+            if (!"msg".equals(e[2])) {
+                content.addView("ai".equals(e[2]) ? aiView(o) : siteCard(o, "proposing".equals(e[2])));
                 prev = null;
                 continue;
             }
@@ -655,7 +691,17 @@ final class PersonsChat {
         h.addView(Ui.subtitle(Ui.bold(a, mine ? "To the AI" : "AI", 13, Ui.FG)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         h.addView(Ui.subtitle(Ui.text(a, " · Only you see this" + (t > 0 ? " · " + PersonsUi.clock(t) : ""), 12, Ui.G600)));
         b.addView(h, Ui.margins(Ui.wrap(), 0, 0, 0, 4));
-        String text = PersonsUi.s(e, "text");
+        String raw = PersonsUi.s(e, "text");
+        // Forward to AI: the forwarded message quoted over the question (empty: the default one)
+        JSONObject fw = mine ? PersonsUi.obj(e, "forwarded") : null;
+        if (fw != null) {
+            TextView q = Ui.subtitle(Ui.text(a, quote("", PersonsUi.s(fw, "from"), PersonsUi.s(fw, "text")), 13, Ui.G700));
+            q.setPadding(Ui.dp(8), Ui.dp(4), Ui.dp(8), Ui.dp(4));
+            q.setBackground(Ui.round(Ui.BG, Ui.LINE, 8));
+            q.setMaxWidth(maxW());
+            b.addView(q, Ui.margins(Ui.wrap(), 0, 2, 0, 6));
+        }
+        String text = fw != null && raw.isEmpty() ? "What should I reply to this?" : raw;
         JSONArray parts = mine ? null : e.optJSONArray("parts");
         // "Use as reply" in the menu: the first draft it wrote, else the whole answer.
         String use = text;
@@ -759,50 +805,246 @@ final class PersonsChat {
 
     // ---- menus ----
 
+    /** A message's long-press menu (Person Hub's, as the PC's menus.ts): Reply · Forward to AI · Open Site Request |
+     *  Copy text | Mark as unread. Open Site Request where the person panel has site requests (SpokPay people and store
+     *  owners, SpokPay connected), from the chat's `siteRequests`. */
     private void menu(JSONObject m) {
         String text = PersonsUi.s(m, "text");
-        List<String> opts = new ArrayList<>();
-        boolean canReply = acctId() != null;
-        if (canReply) opts.add("Reply");
-        if (!text.isEmpty()) opts.add("Copy text");
-        if (opts.isEmpty()) return;
-        Ui.dialog(a).setItems(opts.toArray(new String[0]), (d, w) -> {
-            String o = opts.get(w);
-            if (o.equals("Reply")) {
-                replyTo = m;
-                if (toAi) toAi = false;
-                composer();
-                edit.requestFocus();
-                showKeyboard();
-            } else Ui.copy(a, text);
-        }).show();
+        String id = PersonsUi.s(m, "id");
+        boolean mine = m.optBoolean("fromMe");
+        boolean drafting = false;
+        for (JSONObject q : PersonsHome.objs(PersonsUi.arr(data, "proposing")))
+            if (id.equals(PersonsUi.s(q, "messageId")) && PersonsUi.s(q, "error").isEmpty()) drafting = true;
+        List<Ds.Item> items = new ArrayList<>();
+        if (blockedNote() == null) items.add(Ds.item(Ui.I_REPLY, "Reply", () -> {
+            replyTo = m;
+            toAi = false;
+            composer();
+            edit.requestFocus();
+            showKeyboard();
+        }));
+        if (aiOn()) items.add(Ds.item(Ui.I_SPARKLES, "Forward to AI", () -> {
+            forwarded = m;
+            toAi = true;
+            typingOff();
+            composer();
+            edit.requestFocus();
+            showKeyboard();
+        }));
+        if (data != null && data.optBoolean("siteRequests") && !drafting) items.add(Ds.item(Ui.I_FILE_PLUS, "Open Site Request", () -> siteRequest(id)));
+        items.add(Ds.sep());
+        if (!text.isEmpty()) items.add(Ds.item(Ui.I_COPY, "Copy text", () -> Ui.copy(a, text)));
+        items.add(Ds.sep());
+        if (!mine) items.add(Ds.item(Ui.I_MAIL_WARNING, "Mark as unread", () -> markUnread(id)));
+        Ds.menu(a, items);
+    }
+
+    private void markUnread(String id) {
+        String ac = acctId();
+        if (ac == null || p.hub == null) return;
+        JSONObject b = PersonsUi.put(new JSONObject(), "section", section);
+        PersonsUi.put(b, "account", ac);
+        PersonsUi.put(b, "messageId", id);
+        String path = base() + "/unread";
+        Ui.bg(a, () -> p.hub.call("POST", path, b), r -> Ui.toast(a, "Marked as unread"));
+    }
+
+    // ---- SpokPay site requests ----
+
+    /** Open Site Request: SpokPay's agent drafts it from this message on the PC; its card shows in the chat. */
+    private void siteRequest(String messageId) {
+        JSONObject b = PersonsUi.put(new JSONObject(), "section", section);
+        PersonsUi.put(b, "account", acctId());
+        PersonsUi.put(b, "messageId", messageId);
+        String path = base() + "/site-request";
+        Ui.bg(a, () -> p.hub.call("POST", path, b), r -> {
+            if (r.has("error")) Ui.toast(a, r.optString("error"));
+            load(false);
+            pollCards();
+        });
+    }
+
+    /** Asks the chat again every 4 s while a site request is being drafted or opened. */
+    private void pollCards() {
+        Ui.main.removeCallbacks(cardTick);
+        Ui.main.postDelayed(cardTick, 4000);
+    }
+
+    private final Runnable cardTick = new Runnable() {
+        @Override public void run() {
+            if (closed || a.isDestroyed() || data == null) return;
+            boolean busy = false;
+            for (JSONObject q : PersonsHome.objs(PersonsUi.arr(data, "proposing"))) if (PersonsUi.s(q, "error").isEmpty()) busy = true;
+            for (JSONObject q : PersonsHome.objs(PersonsUi.arr(data, "proposals"))) if ("opening".equals(PersonsUi.s(PersonsUi.obj(q, "state"), "kind"))) busy = true;
+            if (!busy) return;
+            load(false);
+            Ui.main.postDelayed(this, 4000);
+        }
+    };
+
+    /** A site request card (Headquarters' ProposalCard): proposed from a message, or the agent still drafting it. */
+    private View siteCard(JSONObject o, boolean drafting) {
+        LinearLayout wrap = Ui.col(a);
+        wrap.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(24), 0);
+        LinearLayout c = Ds.card(a);
+        JSONObject st = PersonsUi.obj(o, "state");
+        String kind = drafting ? (PersonsUi.s(o, "error").isEmpty() ? "drafting" : "failed") : PersonsUi.s(st, "kind");
+        LinearLayout h = Ui.row(a);
+        h.setGravity(Gravity.CENTER_VERTICAL);
+        h.addView(Ui.icon(a, Ui.I_FILE_PLUS, 12, Ui.G600));
+        String label = drafting ? ("failed".equals(kind) ? "SITE REQUEST · NOT DRAFTED" : "SITE REQUEST · DRAFTING…")
+                : "opened".equals(kind) ? "SITE REQUEST · OPENED" : "opening".equals(kind) ? "SITE REQUEST · OPENING…" : "failed".equals(kind) ? "SITE REQUEST · NOT OPENED" : "SITE REQUEST · PROPOSED";
+        TextView lt = Ui.bold(a, label, 11.5f, Ui.G600);
+        lt.setLetterSpacing(0.06f);
+        h.addView(lt, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        c.addView(h);
+        if (drafting) {
+            String err = PersonsUi.s(o, "error");
+            c.addView(Ui.text(a, err.isEmpty() ? "The SpokPay agent is drafting a site request…" : "The SpokPay agent couldn't draft it: " + err, 14, err.isEmpty() ? Ui.G700 : Ui.RED), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            String mid = PersonsUi.s(o, "messageId");
+            LinearLayout acts = Ui.row(a);
+            acts.addView(Ds.chip(a, "Use the message", !err.isEmpty(), v -> cardCall("POST", "/v1/persons/proposing/" + PersonsUi.enc(mid) + "/local", PersonsUi.put(PersonsUi.put(PersonsUi.put(new JSONObject(), "personId", pid), "section", section), "account", acctId()))));
+            acts.addView(Ds.chip(a, err.isEmpty() ? "Cancel" : "Dismiss", false, v -> cardCall("DELETE", "/v1/persons/proposing/" + PersonsUi.enc(mid), null)), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            c.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+        } else {
+            String id = PersonsUi.s(o, "id");
+            c.addView(Ui.bold(a, PersonsUi.s(o, "subject"), 16, Ui.FG), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            JSONObject store = PersonsUi.obj(o, "store");
+            int imgs = o.optInt("images");
+            String sub = (store == null ? "No store picked" : PersonsUi.s(store, "name").isEmpty() ? PersonsUi.s(store, "slug") : PersonsUi.s(store, "name"))
+                    + " · " + category(PersonsUi.s(o, "category")) + (imgs > 0 ? " · " + imgs + (imgs == 1 ? " image" : " images") : "");
+            c.addView(Ui.text(a, sub, 13, Ui.G700), Ui.margins(Ui.fill(), 0, 2, 0, 0));
+            String det = PersonsUi.s(o, "details");
+            if (!det.isEmpty()) c.addView(Ui.text(a, det, 14, Ui.FG), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            String why = PersonsUi.s(o, "why");
+            c.addView(Ui.text(a, PersonsUi.s(o, "from") + (why.isEmpty() ? "" : ": " + why), 12.5f, Ui.G600), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            String note = "opened".equals(kind) ? "Opened as " + PersonsUi.s(st, "ref") : "failed".equals(kind) ? "Not opened: " + PersonsUi.s(st, "reason") : "opening".equals(kind) ? "Opening…" : store == null ? "Pick the store on the PC (Edit) before opening it." : "";
+            if (!note.isEmpty()) c.addView(Ui.text(a, note, 13, "opened".equals(kind) ? PersonsUi.tone("green") : "failed".equals(kind) ? Ui.RED : Ui.G700), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            if (!"opened".equals(kind) && !"opening".equals(kind)) {
+                LinearLayout acts = Ui.row(a);
+                acts.addView(Ds.chip(a, "failed".equals(kind) ? "Try again" : "Open site request", true, v -> {
+                    if (store == null) { Ui.toast(a, "Pick the store on the PC first"); return; }
+                    cardCall("POST", "/v1/persons/proposal/" + PersonsUi.enc(id) + "/open", new JSONObject());
+                }));
+                acts.addView(Ds.chip(a, "Discard", false, v -> cardCall("DELETE", "/v1/persons/proposal/" + PersonsUi.enc(id), null)), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+                c.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+            }
+        }
+        wrap.addView(c, new LinearLayout.LayoutParams(maxW() + Ui.dp(24), LinearLayout.LayoutParams.WRAP_CONTENT));
+        return wrap;
+    }
+
+    private static String category(String c) {
+        switch (c) {
+            case "catalog": return "Catalog";
+            case "delivery": return "Delivery";
+            case "dashboard": return "Dashboard";
+            case "other": return "Other";
+            default: return "Website";
+        }
+    }
+
+    private void cardCall(String method, String path, JSONObject body) {
+        if (p.hub == null) return;
+        Ui.bg(a, () -> p.hub.call(method, path, body, 90_000), r -> {
+            if (r.has("error")) Ui.toast(a, r.optString("error"));
+            JSONObject st = PersonsUi.obj(r, "state");
+            if ("opened".equals(PersonsUi.s(st, "kind"))) Ui.toast(a, "Site request " + PersonsUi.s(st, "ref") + " opened");
+            load(false);
+            pollCards();
+        });
     }
 
     private void aiMenu(String text, String use, boolean mine) {
-        List<String> opts = new ArrayList<>();
-        if (!mine && acctId() != null) opts.add("Use as reply");
-        if (!text.isEmpty()) opts.add("Copy text");
-        if (opts.isEmpty()) return;
-        Ui.dialog(a).setItems(opts.toArray(new String[0]), (d, w) -> {
-            if (opts.get(w).equals("Use as reply")) useReply(use);
-            else Ui.copy(a, text);
-        }).show();
+        List<Ds.Item> items = new ArrayList<>();
+        if (!mine && acctId() != null) items.add(Ds.item(Ui.I_STEER, "Use as reply", () -> useReply(use)));
+        items.add(Ds.sep());
+        if (!text.isEmpty()) items.add(Ds.item(Ui.I_COPY, "Copy text", () -> Ui.copy(a, text)));
+        Ds.menu(a, items);
     }
 
-    private void plusMenu() {
-        List<String> opts = new ArrayList<>();
-        if (a instanceof Base && !toAi && acctId() != null) opts.add("Attach a photo");
-        opts.add(toAi ? "Message " + name() : "Ask AI");
-        Ui.dialog(a).setItems(opts.toArray(new String[0]), (d, w) -> {
-            String o = opts.get(w);
-            if (o.equals("Attach a photo")) ((Base) a).pickImage(this::addPhoto);
-            else {
-                toAi = !toAi;
-                if (toAi) typingOff();
-                composer();
-                edit.requestFocus();
-            }
-        }).show();
+    /** The composer writes to the person or to their AI (Person Hub's switch); the field keeps the focus. */
+    private void switchTo(boolean ai) {
+        if (ai == toAi) return;
+        toAi = ai;
+        if (toAi) typingOff();
+        composer();
+        edit.requestFocus();
+    }
+
+    /** A line over the field: the message replied to, or the one forwarded to the AI, with its ×. */
+    private LinearLayout quoteRow(String glyph, TextView text, String closeLabel, Runnable close, boolean dashed) {
+        LinearLayout r = Ui.row(a);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(Ui.dp(10), Ui.dp(2), Ui.dp(2), Ui.dp(2));
+        GradientDrawable g = Ui.round(Ui.BG, dashed ? Ui.G500 : Ui.LINE, 10);
+        if (dashed) g.setStroke(Ui.dp(1), Ui.G500, Ui.dp(4), Ui.dp(3));
+        r.setBackground(g);
+        r.addView(Ui.icon(a, glyph, 14, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
+        r.addView(text, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        TextView x = Ui.icon(a, Ui.I_X, 16, Ui.G700);
+        x.setBackground(Ui.press(0, 0, 14));
+        x.setOnClickListener(v -> close.run());
+        x.setContentDescription(closeLabel);
+        r.addView(x, new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(32)));
+        return r;
+    }
+
+    /** One side of the "To" switch: a glyph and a label in a pill. */
+    private LinearLayout segment(String glyph, View.OnClickListener on) {
+        LinearLayout s = Ui.row(a);
+        s.setGravity(Gravity.CENTER_VERTICAL);
+        s.setPadding(Ui.dp(10), 0, Ui.dp(12), 0);
+        s.setMinimumHeight(Ui.dp(30));
+        s.addView(Ui.icon(a, glyph, 13, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)));
+        s.addView(Ui.subtitle(Ui.bold(a, "", 13, Ui.G700)), Ui.margins(Ui.wrap(), 5, 0, 0, 0));
+        s.setOnClickListener(on);
+        return s;
+    }
+
+    private void paintSegment(LinearLayout s, String label, boolean on) {
+        s.setBackground(on ? Ui.round(Ui.FG, 0, 15) : Ui.press(0, 0, 15));
+        ((TextView) s.getChildAt(0)).setTextColor(on ? Ui.BG : Ui.G700);
+        TextView t = (TextView) s.getChildAt(1);
+        t.setText(label);
+        t.setTextColor(on ? Ui.BG : Ui.G700);
+        s.setContentDescription("To " + label + (on ? ", selected" : ""));
+    }
+
+    /** "Replying to <b>Name</b> text" / "Forwarding <b>Name</b> text". */
+    private CharSequence quote(String lead, String name, String text) {
+        SpannableStringBuilder b = new SpannableStringBuilder(lead.isEmpty() ? "" : lead + " ");
+        int s0 = b.length();
+        b.append(name);
+        b.setSpan(new ForegroundColorSpan(Ui.FG), s0, b.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        b.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), s0, b.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        if (!text.isEmpty()) b.append("  ").append(text.replace('\n', ' '));
+        return b;
+    }
+
+    private boolean aiOn() { return data == null || data.optBoolean("aiOn", true); }
+
+    /** Why the composer can't write to the person (null: it can), Person Hub's notes. */
+    private String blockedNote() {
+        if (data == null) return null;
+        JSONObject ac = PersonsUi.obj(data, "account");
+        String k = kind();
+        String app = "gmail".equals(k) ? "Gmail" : "whatsapp".equals(k) ? "WhatsApp" : "Discord";
+        String what = "gmail".equals(k) ? "email address" : "whatsapp".equals(k) ? "WhatsApp number" : "Discord account";
+        if (ac == null) return "No channel to talk to " + name() + " here: connect Discord, Gmail or WhatsApp on the PC, and give them that identifier.";
+        if (PersonsUi.s(data, "peer").isEmpty()) return "Add their " + what + " on the PC (Edit) to message them here.";
+        if (!ac.optBoolean("connected", true)) return "Sign in to " + app + " on the PC to message.";
+        return null;
+    }
+
+    private void sendState() {
+        boolean has = edit.getText().toString().trim().length() > 0;
+        boolean can = toAi ? has || forwarded != null : blockedNote() == null && (has || !files.isEmpty());
+        sendPill.setEnabled(can);
+        sendPill.setAlpha(can ? 1f : 0.45f);
+        sendPill.setBackground(Ui.round(can ? Ui.INK : Ui.G300, 0, 18));
+        sendRound.setEnabled(can);
+        sendRound.setAlpha(can ? 1f : 0.45f);
     }
 
     private void showKeyboard() {
@@ -816,31 +1058,68 @@ final class PersonsChat {
 
     private void composer() {
         String n = name();
-        boolean can = acctId() != null;
+        if (!aiOn()) toAi = false;
+        String note = blockedNote();
+        boolean blockedNow = !toAi && note != null;
+        // who it goes to
+        headMark.removeAllViews();
         if (toAi) {
-            toLine.setText("✦ Note to the AI · never sent to " + n);
-            edit.setHint("Tell the AI what to do about " + n);
-            box.setBackground(dashed());
+            TextView mark = Ui.icon(a, Ui.I_SPARKLES, 11, Ui.BG);
+            mark.setBackground(Ui.round(Ui.FG, 0, 10));
+            headMark.addView(mark, new FrameLayout.LayoutParams(-1, -1));
+            headText.setText("Note to the AI");
+            headNote.setText("Never sent to " + n);
+            headNote.setVisibility(View.VISIBLE);
         } else {
-            JSONObject ac = PersonsUi.obj(data, "account");
-            toLine.setText("To " + n + (ac == null || PersonsUi.s(ac, "label").isEmpty() ? "" : " · " + PersonsUi.s(ac, "label")));
-            String k = kind();
-            edit.setHint("gmail".equals(k) ? "Email " + n + "…" : "Message " + n + (k.isEmpty() ? "" : " on " + PersonsUi.kindLabel(k)));
-            box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 24));
+            JSONObject st = p.person(pid);
+            JSONObject cp = PersonsUi.obj(data, "person");
+            String av = PersonsUi.s(cp, "avatar");
+            if (av.isEmpty()) av = PersonsUi.s(st, "avatar");
+            headMark.addView(PersonsUi.avatar(a, p.hub, av, PersonsUi.s(st, "initials"), PersonsUi.color(PersonsUi.s(st, "color"), Ui.G500), 20, ""), new FrameLayout.LayoutParams(-1, -1));
+            headText.setText(quote("To", n, ""));
+            headNote.setVisibility(View.GONE);
         }
-        boolean blockedNow = !toAi && !can && data != null;
-        blocked.setText(blockedNow ? "No channel to talk to " + n + " here: connect Discord, Gmail or WhatsApp on the PC, and give them that identifier. You can still Ask AI (+)." : "");
-        blocked.setVisibility(blockedNow ? View.VISIBLE : View.GONE);
-        edit.setEnabled(!blockedNow);
+        headLine.setBackgroundColor(toAi ? PersonsUi.aiLine() : Ui.LINE);
+        if (toAi) box.setBackground(dashed());
+        else box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 20));
+        // the first email's subject, the reply or the forward, the photos
+        subject.setVisibility(!toAi && note == null && needSubject() ? View.VISIBLE : View.GONE);
         if (!toAi && replyTo != null) {
             String rt = PersonsUi.s(replyTo, "text");
-            replyText.setText("Replying to " + (replyTo.optBoolean("fromMe") ? "You" : n) + ": " + (rt.isEmpty() ? "attachment" : rt));
+            replyText.setText(quote("Replying to", replyTo.optBoolean("fromMe") ? "You" : n, rt.isEmpty() ? "📎 attachment" : rt));
             replyBox.setVisibility(View.VISIBLE);
         } else replyBox.setVisibility(View.GONE);
-        subject.setVisibility(!toAi && can && needSubject() ? View.VISIBLE : View.GONE);
+        if (toAi && forwarded != null) {
+            String ft = PersonsUi.s(forwarded, "text");
+            fwdText.setText(quote("Forwarding", forwarded.optBoolean("fromMe") ? "You" : n, ft.isEmpty() ? "Message" : ft));
+            fwdBox.setVisibility(View.VISIBLE);
+        } else fwdBox.setVisibility(View.GONE);
         drafts.removeAllViews();
         for (int i = 0; i < files.size(); i++) drafts.addView(draftChip(i), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
         draftsScroll.setVisibility(!toAi && !files.isEmpty() ? View.VISIBLE : View.GONE);
+        // the field, or why it can't write to them
+        blocked.setText(blockedNow ? note : "");
+        blocked.setVisibility(blockedNow ? View.VISIBLE : View.GONE);
+        edit.setVisibility(blockedNow ? View.GONE : View.VISIBLE);
+        String k = kind();
+        edit.setHint(toAi ? (forwarded != null ? "Ask about this message (empty: \u201cWhat should I reply to this?\u201d)" : "Tell the AI what to do about " + n)
+                : "gmail".equals(k) ? "Email " + n + "…" : "Message " + n + (k.isEmpty() ? "" : " on " + PersonsUi.kindLabel(k)));
+        // attach (photos to the person), the switch, send
+        attach.setVisibility(toAi ? View.GONE : View.VISIBLE);
+        attach.setEnabled(!blockedNow && a instanceof Base);
+        attach.setAlpha(!blockedNow ? 1f : 0.45f);
+        maximize.setVisibility(toAi ? View.VISIBLE : View.GONE);
+        boolean sw = aiOn();
+        toLabel.setVisibility(sw ? View.VISIBLE : View.GONE);
+        seg.setVisibility(sw ? View.VISIBLE : View.INVISIBLE);
+        seg.setBackground(Ui.round(Ui.BG, Ui.LINE, 17));
+        paintSegment(segAi, "AI", toAi);
+        paintSegment(segPerson, n, !toAi);
+        sendPill.setVisibility(toAi ? View.GONE : View.VISIBLE);
+        sendRound.setVisibility(toAi ? View.VISIBLE : View.GONE);
+        GradientDrawable ring = Ui.round(Ui.CARD, Ui.LINE, 18);
+        sendRound.setBackground(ring);
+        sendState();
     }
 
     private GradientDrawable dashed() {
@@ -901,7 +1180,7 @@ final class PersonsChat {
         String text = edit.getText().toString().trim();
         if (toAi) { askAi(text); return; }
         String ac = acctId();
-        if (ac == null || data == null) return;
+        if (ac == null || data == null || blockedNote() != null) return;
         if (text.isEmpty() && files.isEmpty()) return;
         boolean subj = needSubject();
         String su = subject.getText().toString().trim();
@@ -956,13 +1235,18 @@ final class PersonsChat {
     /** "Ask AI": the note goes to the Person AI of this person and section; its answer shows in
      *  `ai`, so the chat is asked again every 3 s for a while. */
     private void askAi(String text) {
-        if (text.isEmpty()) return;
+        JSONObject fwd = forwarded;
+        if (text.isEmpty() && fwd == null) return;
         JSONObject b = PersonsUi.put(new JSONObject(), "section", section);
         PersonsUi.put(b, "text", text);
+        if (acctId() != null) PersonsUi.put(b, "account", acctId());
+        if (fwd != null) PersonsUi.put(b, "forward", PersonsUi.s(fwd, "id"));
         edit.setText("");
+        forwarded = null;
+        composer();
         String path = base() + "/ai";
         Ui.bg(a, () -> p.hub.call("POST", path, b, 60_000), r -> {
-            if (!r.optBoolean("ok", true)) { Ui.toast(a, "AI: " + r.optString("error", "not sent")); edit.setText(text); return; }
+            if (!r.optBoolean("ok", true) || r.has("error")) { Ui.toast(a, "AI: " + r.optString("error", "not sent")); edit.setText(text); forwarded = fwd; composer(); return; }
             if (closed) return;
             aiAsked = System.currentTimeMillis();
             aiUntil = aiAsked + 180_000;
