@@ -37,6 +37,14 @@ export component SideHead inherits HorizontalLayout {
     @children
 }
 
+/** Show-sidebar, where a page starts while its sidebar is hidden (Projects' chat header has the same one). */
+export component ShowSideBtn inherits Btn {
+    icon: Icons.panel-left;
+    size: icon-xs;
+    variant: ghost-muted;
+    tip: "Show sidebar (Ctrl+B)";
+}
+
 /** A page's header bar over its content (a chat, a person): 46px, a hairline under it. While the sidebar is hidden it
  *  starts with show-sidebar, where the sidebar's header had hide. */
 export component PageBar inherits Rectangle {
@@ -49,11 +57,7 @@ export component PageBar inherits Rectangle {
         spacing: 8px;
         if root.side-hidden: VerticalLayout {
             alignment: center;
-            Btn {
-                icon: Icons.panel-left;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Show sidebar (Ctrl+B)";
+            ShowSideBtn {
                 clicked => {
                     root.show-side();
                 }

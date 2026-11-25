@@ -2,7 +2,7 @@
 // (creators-hub src/routine), drawn natively. RoutineBus is driven by src/tabs/routine/ui.ts; the data is the
 // engine's (ts/tabs/routine), shared with Hub for Android.
 // Built on Hub's design system (ds.slint, DESIGN.md): the sidebar, headings, chips, buttons and dialogs are the shared ones.
-import { Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted } from "ds.slint";
+import { ShowSideBtn, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, PageHead, DialogFrame, FieldLabel, Chip, Muted } from "ds.slint";
 
 export struct RtQuick { label: string, amount: int }
 export struct RtGoal {
@@ -84,6 +84,8 @@ export global RoutineBus {
     in-out property <string> coach-text;
     // "" none, "form", "plans", "wake", "import"
     in property <string> sheet;
+    // The sidebar hidden (its header's button, Ctrl+B through shell.ts): this tab's own, as Projects' sidebar-open.
+    in-out property <bool> side-hidden;
 
     callback pick-section(string);
     callback quick(string, int);
@@ -1089,7 +1091,9 @@ component Sidebar inherits SideSurface {
         SideHead {
             padding-left: Ds.side-pad;
             padding-right: Ds.side-pad;
-            can-hide: false;
+            hide => {
+                RoutineBus.side-hidden = true;
+            }
             Btn {
                 icon: Icons.plus;
                 size: icon-xs;
@@ -1154,14 +1158,14 @@ export component RoutinePage {
     Rectangle {
         background: Theme.bg100;
     }
-    Sidebar {
+    if !RoutineBus.side-hidden: Sidebar {
         x: 0;
         y: 0;
         width: Ds.side-w;
         height: root.height;
     }
     // The page beside the sidebar: one centred column, as wide as a page goes (Ds.page-max-w).
-    property <length> main-x: Ds.side-w;
+    property <length> main-x: RoutineBus.side-hidden ? 0px : Ds.side-w;
     property <length> main-w: root.width - main-x;
     property <length> col-w: min(Ds.page-max-w, main-w - 2 * Ds.page-pad);
     property <length> col-x: (main-w - col-w) / 2;
@@ -1196,6 +1200,14 @@ export component RoutinePage {
             if !RoutineBus.picking && RoutineBus.section == "history": HistoryScreen { }
             if !RoutineBus.picking && RoutineBus.section == "sleep": SleepScreen { }
             if !RoutineBus.picking && RoutineBus.section == "goals": GoalsScreen { }
+        }
+    }
+    // Show-sidebar at the page's top-left while it's hidden.
+    if RoutineBus.side-hidden: ShowSideBtn {
+        x: 12px;
+        y: 12px;
+        clicked => {
+            RoutineBus.side-hidden = false;
         }
     }
     if RoutineBus.sheet == "form": DialogFrame {

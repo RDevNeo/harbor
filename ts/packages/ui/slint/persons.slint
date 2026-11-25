@@ -2,7 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PageHead, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip } from "ds.slint";
+import { ShowSideBtn, Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PageHead, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip } from "ds.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct PRow {
@@ -74,6 +74,8 @@ export global PersonsBus {
     in-out property <string> query;
     // The sidebar's search button asked for the list's search field (set in Slint; the list focuses it and clears it).
     in-out property <bool> want-search;
+    // The sidebar hidden (its header's button, Ctrl+B through shell.ts): this tab's own, as Projects' sidebar-open.
+    in-out property <bool> side-hidden;
     // chat
     in property <string> c-name;
     in property <string> c-initials;
@@ -296,7 +298,9 @@ component Sidebar inherits SideSurface {
         SideHead {
             padding-left: Ds.side-pad;
             padding-right: Ds.side-pad;
-            can-hide: false;
+            hide => {
+                PersonsBus.side-hidden = true;
+            }
             Btn {
                 icon: Icons.search;
                 size: icon-xs;
@@ -371,18 +375,29 @@ component ListPane inherits Rectangle {
         padding-right: Ds.page-pad;
         padding-top: Ds.sp8;
         spacing: Ds.sp6;
-        PageHead {
-            title: PersonsBus.list-title;
-            sub: PersonsBus.list-sub;
-            VerticalLayout {
+        HorizontalLayout {
+            spacing: 10px;
+            if PersonsBus.side-hidden: VerticalLayout {
                 alignment: center;
-                Btn {
-                    text: "Add person";
-                    icon: Icons.plus;
-                    variant: Variant.primary;
-                    size: BtnSize.sm;
+                ShowSideBtn {
                     clicked => {
-                        PersonsBus.add-person();
+                        PersonsBus.side-hidden = false;
+                    }
+                }
+            }
+            PageHead {
+                title: PersonsBus.list-title;
+                sub: PersonsBus.list-sub;
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        text: "Add person";
+                        icon: Icons.plus;
+                        variant: Variant.primary;
+                        size: BtnSize.sm;
+                        clicked => {
+                            PersonsBus.add-person();
+                        }
                     }
                 }
             }
@@ -774,6 +789,10 @@ component ChatPane inherits Rectangle {
     VerticalLayout {
         // header: the shared page bar (46px, as Projects' chat header)
         PageBar {
+            side-hidden: PersonsBus.side-hidden;
+            show-side => {
+                PersonsBus.side-hidden = false;
+            }
             Btn {
                 y: (parent.height - self.height) / 2;
                 icon: Icons.arrow-left;
@@ -1410,7 +1429,7 @@ export component PersonsPage {
             return reject;
         }
         HorizontalLayout {
-            Sidebar {
+            if !PersonsBus.side-hidden: Sidebar {
                 width: Ds.side-w;
             }
             Rectangle {

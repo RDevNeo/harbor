@@ -25,7 +25,7 @@ A new shared need goes into `ds-*.slint` / `Ds.java` first and is then used by t
 | --- | --- | --- | --- | --- |
 | Tab switcher | in the sidebar's header (icons); since fork's 81cf8de5 a labelled tab row across the window | TabFrame's top row (labelled) | TabFrame's top row | **The window's tab row** (`tabs.slint` AppTabs, 46px), the same in every tab |
 | Sidebar frame | bg200, 1px border, 11/13px padding, 256px | bg200, right hairline, 264px | none: sections as pills over the page | **SideSurface** + **SideHead**, 256px (`Ds.side-w`), in all three tabs |
-| Sidebar header row | hide, tabs, refresh, search (28px ghost icon buttons) | none | none | **SideHead**: hide (where the tab supports it) on the left, the tab's ghost icon buttons on the right |
+| Sidebar header row | hide, tabs, refresh, search (28px ghost icon buttons) | none | none | **SideHead**: hide on the left (every tab; Ctrl+B), the tab's ghost icon buttons on the right |
 | Section head | "PROJECTS": 11px/500, 0.6 spacing, gray-800, 18px | "STORES": 11px/600, 0.4 spacing, subtle, chevron, dot, blue pill, + | none | **SectionHead**: Projects' caps; optional fold chevron, status dot, blue count pill, + (a 22px ghost Btn) |
 | List row | ProjectRow / ThreadRow: 32 (34 head, 46 two-line), radius 6, accent on hover and selected, chevron 0..22, 16px lead at 22 (8 unfolded), title 14px at 46 (32), meta 12.5px gray-800 | PersonRow 30/38/52, gray-100 hover, 13px titles, 10.5px meta, avatars 22–36 | section pills 40px, radius 8 | **ListRow** on Projects' metrics: avatars 22 (one line) / 28 (two lines), second line 11.5px, unread CountPill and meta on the right, marks (channel, crown…) after the title |
 | Lead mark | 16px letter square (radius 4, gray-300/400) or the project's picture | store picture 20px (radius 5) or a 9px colour dot | glyphs 16px | **LeadLetter** (picture, else letter on gray, or on a store's colour), **Avatar** (photo / initials, presence), a glyph, or a dot |
@@ -67,8 +67,11 @@ A new shared need goes into `ds-*.slint` / `Ds.java` first and is then used by t
 ## Layout rules (every tab)
 
 1. The window's tab row on top (Projects | Persons | Routine), from `tabs.slint`.
-2. Under it a **sidebar** (SideSurface, 256px) on the left: the SideHead row (28px, ghost icon buttons), then the
-   tab's list: SectionHeads, ListRows, FoldBars.
+2. Under it a **sidebar** (SideSurface, 256px) on the left: the SideHead row (28px: hide-sidebar on the left, the
+   tab's ghost icon buttons on the right), then the tab's list: SectionHeads, ListRows, FoldBars. Every tab's sidebar
+   hides with that button or Ctrl+B (the `toggle_sidebar` binding) and comes back from **ShowSideBtn** at the page's
+   top-left (in the PageBar, or before the PageHead). Each tab keeps its own state: Projects' `sidebar-open`,
+   `PersonsBus.side-hidden`, `RoutineBus.side-hidden` (shell.ts `tabSidebarKey` routes Ctrl+B to the tab on screen).
 3. The **page** on the right: a PageBar (46px) for a thing that's open (a chat, a person), or a PageHead over a
    centred column for a screen (All people, Today, History…).
 4. An optional **detail panel** (PanelSurface, 340px) on the far right, its top bar in line with the PageBar.

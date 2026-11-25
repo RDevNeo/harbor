@@ -190,6 +190,9 @@ const REMOTE_ICON_MS = 10 * 60_000;
 /** How soon it's asked again when no PC that may hold it was on (the mesh connects a few seconds after the start). */
 const REMOTE_ICON_RETRY_MS = 30_000;
 
+/** Hub's tabs besides Projects whose sidebar Ctrl+B shows or hides: the bus holding its `side-hidden`. */
+const TAB_SIDEBAR_BUS: Readonly<Record<string, string>> = { persons: "PersonsBus", routine: "RoutineBus" };
+
 export class Shell {
   readonly win: AppWindow;
   readonly data: Data;
@@ -3229,6 +3232,8 @@ export class Shell {
   private navKey(e: KeyEvent, yieldQueued: boolean): boolean {
     if (this.keys.capture !== null || this.win.lb_open || this.win.vid_open || this.menu.length > 0) return false;
     const p = pressOf(e.text, e.modifiers);
+    // Persons and Routine: Show or hide the sidebar (Ctrl+B) toggles that tab's own sidebar, as Projects' does its own.
+    if (this.tabSidebarKey(p)) return true;
     // Split panes: Ctrl+1…4 and Ctrl+W, while no popup is open and nothing with keys of its own (a terminal) has them.
     if (this.view === "chat" && this.page === null && this.win.pop_id === "" && this.win.keys_plain && this.split.key(p.ctrl, p.alt, p.shift, p.key)) return true;
     const dir = this.keys.matches("chat_prev", p) ? -1 : this.keys.matches("chat_next", p) ? 1 : 0;
@@ -3240,6 +3245,20 @@ export class Shell {
     if (to.kind === "project" || to.kind === "settled-project") this.openProject(to.id);
     else this.openChat(to.id);
     this.win.side_reveal = `${to.kind}:${to.id}`;
+    return true;
+  }
+
+  /** Hub's other tabs keep their own sidebar state on their bus (`side_hidden`, ds-surface.slint SideHead / ShowSideBtn). */
+  private tabSidebarKey(p: ReturnType<typeof pressOf>): boolean {
+    const tab = this.tabsBus?.current ?? "projects";
+    const bus = TAB_SIDEBAR_BUS[tab];
+    if (!bus || !this.keys.matches("toggle_sidebar", p)) return false;
+    try {
+      const b = busOf<{ side_hidden: boolean }>(this.win, bus);
+      b.side_hidden = !b.side_hidden;
+    } catch {
+      return false;
+    }
     return true;
   }
 
@@ -5761,6 +5780,8 @@ export class Shell {
 
   /** Hub's top-level tabs (tabs.slint): TabsBus.select switches; a tab's TabUi mounts the first time it's opened. */
   private readonly tabChanged = new Set<() => void>();
+  /** The tab bar's bus, once mounted (which tab is on screen). */
+  private tabsBus: { current: string } | null = null;
   /** Switches the top-level tab (as a click on the tab bar). */
   selectTab: (id: string) => void = () => {};
   private mountTabs(): void {
@@ -5772,6 +5793,7 @@ export class Shell {
       return;
     }
     const tabs: Bus = found;
+    this.tabsBus = tabs;
     const mounted = new Set<string>();
     const ctx = (id: string): TabCtx => ({
       win: this.win,
