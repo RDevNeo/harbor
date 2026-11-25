@@ -2100,7 +2100,7 @@ export class AccountService {
         return 0;
       }
       default:
-        io.err("usage: harbor account [status|login|logout]\nOr sign in and out in Hub › Settings › Account.");
+        io.err("usage: hub account [status|login|logout]\nOr sign in and out in Hub › Settings › Account.");
         return 2;
     }
   }

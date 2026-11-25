@@ -59,7 +59,7 @@ const commands: Record<string, Command> = {
     const verb = args[0] ?? "status";
     const at = args.indexOf("--checkout");
     if (!["status", "on", "off"].includes(verb) || (at >= 0 && !args[at + 1])) {
-      console.error("usage: harbor follow-main [status|on|off] [--checkout DIR]");
+      console.error("usage: hub follow-main [status|on|off] [--checkout DIR]");
       return 2;
     }
     const kv = await store();
@@ -99,7 +99,7 @@ const commands: Record<string, Command> = {
       return 0;
     }
     if (verb !== "status") {
-      console.error("usage: harbor hot on [DIR] | off | status");
+      console.error("usage: hub hot on [DIR] | off | status");
       return 2;
     }
     let on = "";
@@ -124,7 +124,7 @@ const commands: Record<string, Command> = {
     const { single } = await import("./packages/store/src/index.ts");
     const [first, second, third] = args;
     if (first === undefined || second === undefined) {
-      console.error("usage: harbor api METHOD PATH [JSON] | harbor api transcribe FILE.wav");
+      console.error("usage: hub api METHOD PATH [JSON] | hub api transcribe FILE.wav");
       return 2;
     }
     let req: { method: string; path: string; body?: unknown; wav?: string };
@@ -201,7 +201,7 @@ const commands: Record<string, Command> = {
   // Harbor does it (and restarts into or out of the administrator token); with none running, this command does.
   admin: async (args) => {
     const what = args[0] ?? "status";
-    if (!["status", "on", "off"].includes(what)) return (console.error("usage: harbor admin [status|on|off]"), 2);
+    if (!["status", "on", "off"].includes(what)) return (console.error("usage: hub admin [status|on|off]"), 2);
     const { admin, autostart } = await import("./packages/os/src/index.ts");
     if (!admin.state().supported) return (console.log("Hub's administrator rights are for Windows, Linux and macOS."), what === "status" ? 0 : 2);
     const { single } = await import("./packages/store/src/index.ts");
@@ -219,7 +219,7 @@ const commands: Record<string, Command> = {
     const exe = autostart.installedLauncher();
     if (!existsSync(exe)) return (console.error(`harbor: no installed Hub at ${exe}`), 1);
     const done = await admin.set(what === "on", { exe, login: autostart.enabled("--background", exe), arg: "--background" }, "terminal");
-    const said = admin.cliLocal() ? done.message : what === "on" ? "On: Hub starts as administrator from now on." : "Off: Hub starts with your normal rights from now on, updates included (harbor admin on turns it back on).";
+    const said = admin.cliLocal() ? done.message : what === "on" ? "On: Hub starts as administrator from now on." : "Off: Hub starts with your normal rights from now on, updates included (hub admin on turns it back on).";
     (done.ok ? console.log : console.error)(done.ok ? said : done.message);
     return done.ok ? 0 : 1;
   },

@@ -384,7 +384,7 @@ export class CheckoutTools {
       if (ref === "HEAD") ref = await wt.git(info.dir, ["rev-parse", "HEAD"]);
     }
     let name = branch;
-    if (name.startsWith("harbor/")) {
+    if (name.startsWith("hub/") || name.startsWith("harbor/")) {
       const taken = await wt.takenBranches(info.repo);
       for (let n = 2; taken.has(name) && n < 100; n++) name = `${branch}-${n}`;
     }

@@ -147,7 +147,7 @@ export function ghDir(): string {
 export function ghOutDir(): string {
   const d = privateDir(join(dir(), "github-signed-out"));
   const hosts = join(d, "hosts.yml");
-  if (!existsSync(hosts)) writePrivate(hosts, "github.com:\n    oauth_token: sign-in-to-github-in-harbor\n    git_protocol: https\n    user: harbor\n");
+  if (!existsSync(hosts)) writePrivate(hosts, "github.com:\n    oauth_token: sign-in-to-github-in-hub\n    git_protocol: https\n    user: hub\n");
   return d;
 }
 

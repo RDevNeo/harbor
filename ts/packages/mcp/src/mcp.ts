@@ -230,8 +230,8 @@ export async function agentEnvAs(signedInHere: boolean): Promise<EnvVar[]> {
     set(`GIT_CONFIG_KEY_${i}`, k);
     set(`GIT_CONFIG_VALUE_${i}`, val);
   });
-  set("CONVEX_OVERRIDE_ACCESS_TOKEN", (signedInHere ? convexToken() : undefined) ?? "sign-in-to-convex-in-harbor");
-  set("SUPABASE_ACCESS_TOKEN", (signedInHere ? await token("supabase") : undefined) ?? "sign-in-to-supabase-in-harbor");
+  set("CONVEX_OVERRIDE_ACCESS_TOKEN", (signedInHere ? convexToken() : undefined) ?? "sign-in-to-convex-in-hub");
+  set("SUPABASE_ACCESS_TOKEN", (signedInHere ? await token("supabase") : undefined) ?? "sign-in-to-supabase-in-hub");
   for (const a of APPS) {
     if (!signedInHere || a.mcp.kind !== "http") continue;
     const t = await token(a.id);

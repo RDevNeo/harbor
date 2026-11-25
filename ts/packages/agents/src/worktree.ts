@@ -253,7 +253,7 @@ export function projectPart(repo: string): string {
 
 /** A branch as the end of a folder name: "harbor/fix-login" → "fix-login", "feature/a b" → "feature-a-b". */
 export function folderPart(branch: string): string {
-  const b = branch.startsWith("harbor/") ? branch.slice(7) : branch;
+  const b = branch.startsWith("hub/") ? branch.slice(4) : branch.startsWith("harbor/") ? branch.slice(7) : branch;
   const s = [...b].map((c) => (/^[A-Za-z0-9_.]$/.test(c) ? c.toLowerCase() : "-")).join("");
   return s
     .split("-")
@@ -289,7 +289,7 @@ export async function takenBranches(repo: string): Promise<Set<string>> {
 export function freeId(rootDir: string, project: string, want: string, taken: Set<string>): string | null {
   for (let n = 1; n < 100; n++) {
     const id = n === 1 ? want : `${want}-${n}`;
-    if (!existsSync(join(rootDir, `${project}-${id}`)) && !taken.has(`harbor/${id}`)) return id;
+    if (!existsSync(join(rootDir, `${project}-${id}`)) && !taken.has(`hub/${id}`)) return id;
   }
   return null;
 }
@@ -306,12 +306,12 @@ async function renameNew(repo: string, dir: string, name: string): Promise<strin
   if (old === undefined) return null;
   const fresh = freeId(rootDir, project, name, await takenBranches(repo));
   if (fresh === null) return null;
-  if (!(await ok(git(dir, ["branch", "-m", old, `harbor/${fresh}`])))) return null;
+  if (!(await ok(git(dir, ["branch", "-m", old, `hub/${fresh}`])))) return null;
   const to = join(rootDir, `${project}-${fresh}`);
   try {
     moveDir(dir, to);
   } catch {
-    await ok(git(dir, ["branch", "-m", `harbor/${fresh}`, old]));
+    await ok(git(dir, ["branch", "-m", `hub/${fresh}`, old]));
     return null;
   }
   return to;
@@ -329,7 +329,7 @@ async function addIn(rootDir: string, repo: string, base: string, about: string)
     const id = s === "" ? [...newUuid()].filter((c) => /[0-9a-f]/i.test(c)).slice(0, 6).join("") : n === 1 ? s : `${s}-${n}`;
     n++;
     const dir = join(rootDir, `${project}-${id}`);
-    const branch = `harbor/${id}`;
+    const branch = `hub/${id}`;
     if (existsSync(dir) || taken.has(branch)) continue;
     tries++;
     mkdirSync(rootDir, { recursive: true });
@@ -593,7 +593,7 @@ export async function remove(repo: string, dir: string): Promise<void> {
   if (!h) throw new Error(`${dir} isn't a git worktree`);
   if (h.dirty > 0) throw new Error(`${dir} has ${h.dirty} uncommitted change${h.dirty === 1 ? "" : "s"}`);
   await git(repo, ["worktree", "remove", dir]);
-  if (h.branch.startsWith("harbor/")) await ok(git(repo, ["branch", "-d", h.branch]));
+  if (h.branch.startsWith("hub/") || h.branch.startsWith("harbor/")) await ok(git(repo, ["branch", "-d", h.branch]));
 }
 
 export type RenameKind = "branch" | "folder";

@@ -32,7 +32,7 @@ export const POLL_MS = 60;
 export const SLOW_MS = 500;
 /** Sent to a chat whose turn was cut off while Harbor was away. */
 export const RESTARTED =
-  "[harbor] Your previous turn was cut off (the computer restarted or its process was killed). Continue the task from where you stopped.";
+  "[hub] Your previous turn was cut off (the computer restarted or its process was killed). Continue the task from where you stopped.";
 /** Finished turns' folders older than this are swept at startup. */
 const KEEP_MS = 2 * 24 * 3600 * 1000;
 
@@ -511,7 +511,7 @@ export function signedOutEnv(): [string, string | null][] {
   const hosts = join(gh, "hosts.yml");
   if (!existsSync(hosts)) {
     try {
-      writePrivate(hosts, "github.com:\n    oauth_token: sign-in-to-github-in-harbor\n    git_protocol: https\n    user: harbor\n");
+      writePrivate(hosts, "github.com:\n    oauth_token: sign-in-to-github-in-hub\n    git_protocol: https\n    user: hub\n");
     } catch {
       // gh then finds no login, the same as signed out
     }
@@ -528,7 +528,7 @@ export function signedOutEnv(): [string, string | null][] {
   ];
   v.push(["GIT_CONFIG_COUNT", String(git.length)]);
   git.forEach(([k, val], i) => v.push([`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, val]));
-  v.push(["CONVEX_OVERRIDE_ACCESS_TOKEN", "sign-in-to-convex-in-harbor"], ["SUPABASE_ACCESS_TOKEN", "sign-in-to-supabase-in-harbor"]);
+  v.push(["CONVEX_OVERRIDE_ACCESS_TOKEN", "sign-in-to-convex-in-hub"], ["SUPABASE_ACCESS_TOKEN", "sign-in-to-supabase-in-hub"]);
   return v;
 }
 

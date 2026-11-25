@@ -25,7 +25,7 @@ export interface MeshCliDeps {
   clock?: () => number;
 }
 
-const MESH_USAGE = `usage: harbor mesh [status]
+const MESH_USAGE = `usage: hub mesh [status]
   This PC shares chats with the PCs of its workspace (Settings › Workspace); there is no pairing.`;
 
 const pad = (s: string, n: number) => s + " ".repeat(Math.max(0, n - Array.from(s).length));
@@ -95,7 +95,7 @@ export async function ncCli(args: string[], d: NcDeps): Promise<number> {
   const host = rest[0];
   const port = rest[1] !== undefined && /^\d+$/.test(rest[1]) && Number(rest[1]) <= 65535 ? Number(rest[1]) : null;
   if (host === undefined || port === null) {
-    d.io.err("usage: harbor nc [--device <id>] <host> <port>");
+    d.io.err("usage: hub nc [--device <id>] <host> <port>");
     return 2;
   }
   const env = d.env ?? process.env;

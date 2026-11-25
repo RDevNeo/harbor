@@ -482,7 +482,7 @@ export async function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown
   let made: { dir: string; branch: string; base: string } | null = null;
   if (own) {
     if (!e.host.makeWorktree) throw new Error("own worktrees aren't part of this Hub");
-    made = await e.host.makeWorktree(me, arg(a, "branch") || `harbor/${name.toLowerCase()}`, arg(a, "base"));
+    made = await e.host.makeWorktree(me, arg(a, "branch") || `hub/${name.toLowerCase()}`, arg(a, "base"));
   }
   const chat = e.store.createChat({
     id: 0,

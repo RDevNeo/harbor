@@ -148,7 +148,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   };
   const adminCall = async (what: string): Promise<{ ok: boolean; text: string }> => {
     if (what === "status") return { ok: true, text: (await admin.status("harbor")).join("\n") };
-    if (what !== "on" && what !== "off") return { ok: false, text: "usage: harbor admin [status|on|off]" };
+    if (what !== "on" && what !== "off") return { ok: false, text: "usage: hub admin [status|on|off]" };
     const opts = adminOptions();
     if (opts === null) return { ok: false, text: "This Hub isn't the installed one: running as administrator is for an installed Hub." };
     const r = await admin.set(what === "on", opts);
@@ -440,7 +440,7 @@ function googleBuildEnv(): Record<string, string> {
  */
 export async function checkWindow(args: string[], version: string): Promise<number> {
   const secs = Number(args[0] ?? 5);
-  if (!(secs > 0)) return (console.error("usage: harbor --check-window [SECONDS]"), 2);
+  if (!(secs > 0)) return (console.error("usage: hub --check-window [SECONDS]"), 2);
   if (!isOffline()) return (console.error("harbor: --check-window runs only with HARBOR_OFFLINE=1 and its own data folders"), 2);
   let verdict = "no window: the app ended before showing one";
   const limit = setTimeout(() => {

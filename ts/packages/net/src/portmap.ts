@@ -729,7 +729,7 @@ export class Portmap {
       if (v === "off") this.kv.set("net_forward", "");
       else if (p !== null && p !== 0) this.kv.set("net_forward", v);
       else {
-        io.err("usage: harbor net forward <external port|off>");
+        io.err("usage: hub net forward <external port|off>");
         return 2;
       }
       io.log(`port forward: ${v} (Hub picks it up within 5 minutes)`);
@@ -739,14 +739,14 @@ export class Portmap {
       if (v === "off") this.kv.set("net_name", "");
       else if (portmapValidName(v)) this.kv.set("net_name", v);
       else {
-        io.err("usage: harbor net name <dns name|off>");
+        io.err("usage: hub net name <dns name|off>");
         return 2;
       }
       io.log(`public name: ${v}`);
       return 0;
     }
     if (cmd !== undefined) {
-      io.err("usage: harbor net [forward <port|off> | name <name|off>]");
+      io.err("usage: hub net [forward <port|off> | name <name|off>]");
       return 2;
     }
     const fwd = this.forwardPort();

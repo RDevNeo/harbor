@@ -1711,7 +1711,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     services,
     projectPlace: (repo) => projectClones.place(repo),
     call: (method, path, query = {}, body = null) => route({ method, path: path.split("/").filter((x) => x !== ""), query: Object.entries(query), body, token: "", device: "", global: false }),
-    transcribe: (wav, query = {}) => transcribeHere(wav, Object.entries(query), "harbor api"),
+    transcribe: (wav, query = {}) => transcribeHere(wav, Object.entries(query), "hub api"),
     newWorktree: {
       make: (repo, base, about) => newWorktree.make(repo, base, about),
       attach: (chat, made) => newWorktree.attach(chat, made),

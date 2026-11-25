@@ -89,7 +89,7 @@ export function tools(): Raw[] {
       {
         chat: s(CHAT),
         message_id: s("The message's id (from history or search)"),
-        path: s("File or folder to save to (default: a harbor-whatsapp folder in the temp dir)"),
+        path: s("File or folder to save to (default: a hub-whatsapp folder in the temp dir)"),
         inline: flag("Return an image as an image too (default true; false: the path only)"),
       },
       ["message_id"],
@@ -418,7 +418,7 @@ export class Tools {
     const mime = (m.media.mimetype ?? "").split(";")[0]?.trim() ?? "";
     const name = (m.media.file_name ?? `${m.id}${EXT[mime] ?? ""}`).replace(/[/\\]/g, "_");
     const asked = str(a, "path");
-    const base = asked !== "" ? asked : (this.opts.mediaDir ?? join(tmpdir(), "harbor-whatsapp"));
+    const base = asked !== "" ? asked : (this.opts.mediaDir ?? join(tmpdir(), "hub-whatsapp"));
     const isDir = asked === "" || (existsSync(base) && statSync(base).isDirectory()) || asked.endsWith("/");
     const to = isDir ? join(base, name) : base;
     mkdirSync(isDir ? base : join(to, ".."), { recursive: true });

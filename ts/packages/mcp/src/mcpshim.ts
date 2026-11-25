@@ -102,7 +102,7 @@ export function tools(role: string): JsonObject[] {
           model: prop("string", "Model id from list_models (default: your model)"),
           effort: prop("string", "Reasoning effort, e.g. low/medium/high (default: medium on Claude)"),
           worktree: prop("boolean", "Work in a new worktree of its own, on a new branch (default false: it shares your folder)"),
-          branch: prop("string", "That branch's name (default 'harbor/<name>'); giving one implies worktree"),
+          branch: prop("string", "That branch's name (default 'hub/<name>'); giving one implies worktree"),
           base: prop("string", "Branch or commit its branch starts from (default: your current branch, as committed)"),
         },
         ["name", "task"],

@@ -11,7 +11,7 @@ import { UsageCtl } from "./usage_ctl.ts";
 import type { Pinned } from "./pins.ts";
 import { notify as osNotify } from "@harbor/os";
 
-export const RESUME = "[harbor] Your usage limit reset. Continue the task from where you stopped.";
+export const RESUME = "[hub] Your usage limit reset. Continue the task from where you stopped.";
 /** A chat moved to another account mid-task (a switch by hand or an automatic one). */
 export const MOVED = RESUME.replace("Your usage limit reset", "You're on another account now");
 /** Hits with the same reset time before Harbor stops trying and asks. */

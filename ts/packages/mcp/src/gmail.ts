@@ -97,7 +97,7 @@ export function tools(): Obj[] {
         message_id: s("Message id"),
         attachment_id: s("The attachment_id get_message listed"),
         filename: s("The attachment's filename"),
-        path: s("File or folder to save to (default: a harbor-gmail folder in the temp dir)"),
+        path: s("File or folder to save to (default: a hub-gmail folder in the temp dir)"),
       },
       ["message_id", "attachment_id"],
     ),
@@ -903,7 +903,7 @@ class Mailbox {
     let path: string;
     const given = opt(a, "path");
     if (given === "") {
-      const d = join(this.g.opts.attachmentDir ?? tmpdir(), "harbor-gmail");
+      const d = join(this.g.opts.attachmentDir ?? tmpdir(), "hub-gmail");
       mkdirSync(d, { recursive: true });
       path = join(d, name);
     } else {
