@@ -14,7 +14,6 @@ import { agentProcessEnv, OUTPUT_MAX, shell, token } from "./shell.ts";
 import { harborVersion } from "./version.ts";
 import { ackFor, anyFolder, asked, cached, dead, flush, initialized, idleFor, limits, markDead, remember, rememberAck, requestKey, serverKey, starts } from "./lazy.ts";
 import { answer as teamAnswer, callApp } from "./mcpshim.ts";
-import * as pwbrowser from "./pwbrowser.ts";
 import { selfExe } from "./sys.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
 import { env as osEnv, proc } from "@harbor/os";
@@ -357,9 +356,6 @@ async function spawnServer(cwd: string, def: Obj): Promise<Proc | null> {
   // node, npm or npx (the built-in Playwright): the Node Harbor installs when the PC has none may still be on its
   // way. Waited for up to `waits.wait`; not there by then, the start fails and the bridge tries again later.
   if (NODE_CMDS.has(command.toLowerCase())) await within(providers.ensureNode(), waits.wait);
-  // Harbor's Playwright entry on Playwright's Chromium (pwbrowser.ts): a download under way is waited for as long.
-  const browser = args.includes(pwbrowser.PACKAGE) && args.includes("chromium") ? pwbrowser.pending() : null;
-  if (browser !== null) await within(browser, waits.wait);
   const env = await agentProcessEnv();
   if (isObject(def.env)) for (const [k, v] of Object.entries(def.env)) if (typeof v === "string") env[k] = v;
   // A bare name is looked up on the server's own PATH, Windows' suffixes too (npx is npx.cmd there, which node's

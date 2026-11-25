@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { noderuntime, providers } from "@harbor/agents";
-import { nodedist, env as osEnv } from "@harbor/os";
+import { browsers, nodedist, env as osEnv } from "@harbor/os";
 import {
   accountFile,
   accountsIn,
@@ -190,7 +190,7 @@ test("the built-in Playwright is offered only where npx is installed", () => {
   const bin = fakeNpx();
   process.env.PATH = [bin, process.env.PATH ?? ""].join(delimiter);
   resetLocalsCache();
-  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { type: "stdio", command: "npx", args: playwrightArgs() }]);
+  if (browsers.playwrightBrowser() !== null) expect(mcp.locals().find((l) => l.local.id === "playwright")?.def).toEqual(["playwright", { type: "stdio", command: "npx", args: playwrightArgs() }]);
   // Without npx anywhere (an empty PATH; the OS's own tool folders may still have one): no entry that can't start.
   process.env.PATH = join(root, "empty");
   resetLocalsCache();
@@ -216,8 +216,10 @@ test("the built-in Playwright is offered once Hub's own Node (and its npx) is in
   writeFileSync(join(bin, osEnv.execSuffixes().includes(".cmd") ? "npx.cmd" : "npx"), "", { mode: 0o755 });
   noderuntime.resetForTests();
   resetLocalsCache();
-  expect(mcp.locals().find((l) => l.local.id === "playwright")?.def?.[1]).toEqual({ type: "stdio", command: "npx", args: playwrightArgs() });
-  expect(mcp.localNote("playwright")).toBeNull();
+  if (browsers.playwrightBrowser() !== null) {
+    expect(mcp.locals().find((l) => l.local.id === "playwright")?.def?.[1]).toEqual({ type: "stdio", command: "npx", args: playwrightArgs() });
+    expect(mcp.localNote("playwright")).toBeNull();
+  }
   expect(mcp.localNote("discord")).toBeNull();
   noderuntime.resetForTests();
 });
@@ -229,7 +231,7 @@ test("agents get the local servers from the user's config and the signed-in apps
   const m = await claudeServers();
   expect(m["Roblox Studio"]).toEqual({ command: "rbx" });
   expect(m.other).toBeUndefined();
-  expect(m.playwright).toBeDefined();
+  if (browsers.playwrightBrowser() !== null) expect(m.playwright).toBeDefined();
   expect(m.context7).toEqual({ type: "http", url: "https://mcp.context7.com/mcp", headers: { CONTEXT7_API_KEY: "k-1" } });
   mcp.toggleOff("robloxstudio");
   resetLocalsCache();
@@ -424,15 +426,12 @@ test("on a bridge grant, stdio servers become its URLs and only the team server 
   }
 });
 
-test("Playwright's Chromium is wanted only for Hub's own entry on it, while it's on", () => {
+test("the built-in Playwright needs an installed Chrome or Edge: Hub downloads no browser", () => {
   process.env.PATH = [fakeNpx(), process.env.PATH ?? ""].join(delimiter);
   resetLocalsCache();
-  expect(mcp.needsPlaywrightChromium()).toBe(playwrightArgs().includes("chromium"));
-  // A user's own entry is theirs, even one on Playwright's Chromium: Harbor installs nothing for it.
-  writeFileSync(join(root, ".claude.json"), JSON.stringify({ mcpServers: { playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest", "--browser", "chromium"] } } }));
-  resetLocalsCache();
-  expect(mcp.needsPlaywrightChromium()).toBe(false);
-  mcp.toggleOff("playwright");
-  resetLocalsCache();
-  expect(mcp.needsPlaywrightChromium()).toBe(false);
+  const pw = mcp.locals().find((l) => l.local.id === "playwright")?.def;
+  if (browsers.playwrightBrowser() === null) {
+    expect(pw).toBeUndefined();
+    expect(mcp.localNote("playwright")).toContain("Chrome or Microsoft Edge");
+  } else expect(JSON.stringify(pw)).not.toContain("chromium");
 });
