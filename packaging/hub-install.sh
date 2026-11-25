@@ -13,8 +13,9 @@
 # existing bundle (--google-from FILE, else Person Hub's engine or an old Harbor install).
 # hub-machines (the agents' tools for the other PCs) comes from --machines DIR (creators-hub's tools/hub-machines).
 #
-# Usage: bash packaging/hub-install.sh [--prefix DIR] [--stage DIR] [--google-from BUNDLE] [--machines DIR] [--no-desktop]
-#   --stage DIR  only builds into DIR (nothing installed; for checks)
+# Usage: bash packaging/hub-install.sh [--prefix DIR] [--stage DIR | --install-stage DIR] [--google-from BUNDLE] [--machines DIR] [--no-desktop]
+#   --stage DIR          only builds into DIR (nothing installed; for checks, and for the cutover's build step)
+#   --install-stage DIR  installs what --stage built in DIR (no build)
 #   --prefix DIR install the app there instead of ~/.local/lib/hub (and no launcher, menu entry or autostart)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -25,6 +26,7 @@ RUNTIME_ASSET=harbor-runtime-x86_64
 RUNTIME_SHA256=e3e0151608d17a0e32465c065d42537004fb18841a2c81c9a985d0ddd3d9d5b8
 LIB="$HOME/.local/lib/hub"
 STAGE_ONLY=""
+FROM_STAGE=""
 DESKTOP=1
 GOOGLE_FROM=()
 MACHINES=""
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --prefix) LIB="$2"; DESKTOP=0; shift ;;
     --stage) STAGE_ONLY="$2"; shift ;;
+    --install-stage) FROM_STAGE="$2"; shift ;;
     --google-from) GOOGLE_FROM+=("$2"); shift ;;
     --machines) MACHINES="$2"; shift ;;
     --no-desktop) DESKTOP=0 ;;
@@ -44,6 +47,36 @@ while [[ $# -gt 0 ]]; do
 done
 
 say() { echo "hub-install: $*"; }
+install_files() { # DIR with hub, harbor-app.js, RUNTIME, hub.svg, VERSION(.new), hub-machines/
+  local from="$1" version
+  version=$(cat "$from/VERSION.new" 2>/dev/null || cat "$from/VERSION")
+  mkdir -p "$LIB"
+  for f in hub harbor-app.js RUNTIME hub.svg; do
+    cp "$from/$f" "$LIB/.$f.new" && mv -f "$LIB/.$f.new" "$LIB/$f"
+  done
+  if [[ -d "$from/hub-machines" ]]; then
+    rm -rf "$LIB/hub-machines.new"; cp -r "$from/hub-machines" "$LIB/hub-machines.new"
+    # the machines' policies are this PC's own once installed: an edited machines.json stays
+    [[ -f "$LIB/hub-machines/machines.json" ]] && cp "$LIB/hub-machines/machines.json" "$LIB/hub-machines.new/machines.json"
+    rm -rf "$LIB/hub-machines"; mv "$LIB/hub-machines.new" "$LIB/hub-machines"
+  fi
+  echo "$version" > "$LIB/.VERSION.new" && mv -f "$LIB/.VERSION.new" "$LIB/VERSION"
+  if [[ $DESKTOP == 1 ]]; then
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/scalable/apps" "$HOME/.config/autostart"
+    ln -sfn "$LIB/hub" "$HOME/.local/bin/hub"
+    sed "s#^Exec=hub#Exec=$LIB/hub#" packaging/hub.desktop > "$HOME/.local/share/applications/hub.desktop"
+    cp packaging/hub.svg "$HOME/.local/share/icons/hicolor/scalable/apps/hub.svg"
+    printf '[Desktop Entry]\nType=Application\nName=Hub\nComment=Starts Hub in the background\nExec=%s --background\nIcon=hub\nTerminal=false\nX-GNOME-Autostart-enabled=true\n' "$LIB/hub" > "$HOME/.config/autostart/hub.desktop"
+    command -v update-desktop-database >/dev/null && update-desktop-database -q "$HOME/.local/share/applications" 2>/dev/null || true
+    command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+  fi
+  say "installed Hub $version in $LIB"
+}
+if [[ -n "$FROM_STAGE" ]]; then
+  [[ -x "$FROM_STAGE/hub" && -f "$FROM_STAGE/harbor-app.js" ]] || { say "no staged build in $FROM_STAGE" >&2; exit 1; }
+  install_files "$FROM_STAGE"
+  exit 0
+fi
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/hub-build"
 mkdir -p "$CACHE"
 RT="$CACHE/harbor-runtime-$RUNTIME"
@@ -105,19 +138,4 @@ if [[ -n "$STAGE_ONLY" ]]; then
 fi
 
 # Install: the files beside the running ones, then VERSION last (a running Hub restarts into the new build on it).
-mkdir -p "$LIB"
-for f in hub harbor-app.js RUNTIME hub.svg; do
-  cp "$OUT/$f" "$LIB/.$f.new" && mv -f "$LIB/.$f.new" "$LIB/$f"
-done
-if [[ -d "$OUT/hub-machines" ]]; then rm -rf "$LIB/hub-machines.new"; cp -r "$OUT/hub-machines" "$LIB/hub-machines.new"; rm -rf "$LIB/hub-machines"; mv "$LIB/hub-machines.new" "$LIB/hub-machines"; fi
-mv -f "$OUT/VERSION.new" "$LIB/VERSION"
-if [[ $DESKTOP == 1 ]]; then
-  mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/scalable/apps" "$HOME/.config/autostart"
-  ln -sfn "$LIB/hub" "$HOME/.local/bin/hub"
-  sed "s#^Exec=hub#Exec=$LIB/hub#" packaging/hub.desktop > "$HOME/.local/share/applications/hub.desktop"
-  cp packaging/hub.svg "$HOME/.local/share/icons/hicolor/scalable/apps/hub.svg"
-  printf '[Desktop Entry]\nType=Application\nName=Hub\nComment=Starts Hub in the background\nExec=%s --background\nIcon=hub\nTerminal=false\nX-GNOME-Autostart-enabled=true\n' "$LIB/hub" > "$HOME/.config/autostart/hub.desktop"
-  command -v update-desktop-database >/dev/null && update-desktop-database -q "$HOME/.local/share/applications" 2>/dev/null || true
-  command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-fi
-say "installed Hub $VERSION in $LIB"
+install_files "$OUT"
