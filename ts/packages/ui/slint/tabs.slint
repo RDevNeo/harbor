@@ -4,7 +4,7 @@
 // A tab: its own .slint file exporting `<Name>Bus` (a global the TS side drives, src/tabs/<id>/ui.ts) and
 // `<Name>Page`; app.slint draws `if TabsBus.current == "<id>": TabFrame { <Name>Page { … } }`.
 import { Theme } from "theme.slint";
-import { TipArea } from "widgets.slint";
+import { HLine, TipArea } from "widgets.slint";
 
 export global TabsBus {
     /** "projects", "persons", "routine". */
@@ -91,11 +91,9 @@ export component TabFrame inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
         }
-        // The one divider under the tab row, one physical row (as app.slint's: no flicker at fractional scales).
-        Rectangle {
-            y: parent.height - 1phx;
-            height: 1phx;
-            background: Theme.border;
+        // The one divider under the tab row (as app.slint's; widgets.slint HLine: no flicker at fractional scales).
+        HLine {
+            at: parent.height - 1phx;
         }
     }
     Rectangle {

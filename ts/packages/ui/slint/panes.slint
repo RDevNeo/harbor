@@ -3,7 +3,7 @@
 // Composer, compact, which hands the keyboard to them with a click.
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Glyph, Spinner, Btn, TipArea, StatusData, StatusView } from "widgets.slint";
+import { Glyph, HLine, Spinner, Btn, TipArea, StatusData, StatusView } from "widgets.slint";
 import { Transcript, CardData } from "chat.slint";
 import { ChatCaptchaData } from "captcha.slint";
 import { MdBlock } from "markdown.slint";
@@ -155,10 +155,8 @@ export component PaneHeader inherits Rectangle {
             }
         }
     }
-    Rectangle {
-        y: parent.height - 1phx;
-        height: 1phx;
-        background: Theme.border;
+    HLine {
+        at: parent.height - 1phx;
     }
     HorizontalLayout {
         padding-left: 14px + root.lead;

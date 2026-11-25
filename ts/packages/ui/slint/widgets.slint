@@ -503,6 +503,33 @@ export component Separator inherits Rectangle {
     background: Theme.border;
 }
 
+// The window's structural dividers (under the tab row and the page bars, the sidebars' and panes' edges): one physical
+// pixel thick on a whole physical pixel, and repainted whenever anything next to them is.
+// Slint's partial repaint clears the changed area rounded out to whole physical pixels, then redraws only the items whose
+// logical box overlaps it. At a fractional scale (125% times Hub's zoom: 1.375) a neighbour's edge, e.g. the content's
+// top right under the tab row, lands at 62.999996 physical px: its repaint (a streaming chat's timer, a hover) clears
+// row 62, the line's, while the line, whose box only touches the neighbour's, is skipped. That back buffer lost the line
+// and the next one still has it: the line flickered. So each line's box is three physical pixels across (clear, the
+// line, clear): anything that clears its pixel also overlaps its box and draws it again.
+
+/** A horizontal divider: its pixel row starts at `at` (snapped to a whole physical pixel), as wide as the parent. */
+export component HLine inherits Rectangle {
+    in property <length> at;
+    in property <color> line: Theme.border;
+    y: round(root.at / 1phx) * 1phx - 1phx;
+    height: 3phx;
+    background: @linear-gradient(180deg, transparent 33.3%, root.line 33.3%, root.line 66.7%, transparent 66.7%);
+}
+
+/** A vertical divider: its pixel column starts at `at` (snapped to a whole physical pixel), as tall as the parent. */
+export component VLine inherits Rectangle {
+    in property <length> at;
+    in property <color> line: Theme.border;
+    x: round(root.at / 1phx) * 1phx - 1phx;
+    width: 3phx;
+    background: @linear-gradient(90deg, transparent 33.3%, root.line 33.3%, root.line 66.7%, transparent 66.7%);
+}
+
 export component VSep {
     in property <length> h: 18px;
     width: 9px;

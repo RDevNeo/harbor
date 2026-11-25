@@ -4,35 +4,29 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Ds } from "ds-tokens.slint";
-import { Btn, BtnSize, Glyph, Input, PopoverFrame, TipArea, Variant, TextKeys } from "widgets.slint";
+import { Btn, BtnSize, Glyph, HLine, Input, PopoverFrame, TipArea, Variant, TextKeys, VLine } from "widgets.slint";
 
 // ---------- frames ----------
 
 /** Every tab's sidebar: the sunken fill and its edge lines (sidebar.slint's look). No top line: the tab row's divider
  *  is the only line over it (a second 1px border right under it doubled it and flickered on partial redraws). Each
- *  line is one physical row/column, so it stays crisp at fractional scales. */
+ *  line is a widgets.slint VLine/HLine: one physical pixel, drawn again whenever its neighbours are. */
 export component SideSurface inherits Rectangle {
     background: Theme.bg200;
-    Rectangle {
-        x: 0;
+    VLine {
+        at: 0;
         y: 0;
-        width: 1phx;
         height: root.height;
-        background: Theme.border;
     }
-    Rectangle {
-        x: root.width - 1phx;
+    VLine {
+        at: root.width - 1phx;
         y: 0;
-        width: 1phx;
         height: root.height;
-        background: Theme.border;
     }
-    Rectangle {
+    HLine {
+        at: root.height - 1phx;
         x: 0;
-        y: root.height - 1phx;
         width: root.width;
-        height: 1phx;
-        background: Theme.border;
     }
 }
 
@@ -137,10 +131,8 @@ export component PageBar inherits Rectangle {
         }
         @children
     }
-    Rectangle {
-        y: root.bar-h;
-        height: 1phx;
-        background: Theme.border;
+    HLine {
+        at: root.bar-h;
     }
 }
 
@@ -174,10 +166,8 @@ export component PageHead inherits HorizontalLayout {
 /** The detail panel on a page's right (a person's details): the page's fill and a hairline on its left. */
 export component PanelSurface inherits Rectangle {
     background: Theme.bg100;
-    Rectangle {
-        x: 0;
-        width: 1px;
-        background: Theme.border;
+    VLine {
+        at: 0;
     }
 }
 
