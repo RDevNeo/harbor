@@ -189,6 +189,16 @@ export function isOffline(env: Record<string, string | undefined> = process.env)
   return env.HARBOR_OFFLINE === "1";
 }
 
+/**
+ * HARBOR_EMBEDDED=1: this Harbor is the engine inside another app (Person Hub's desktop shell), which starts and
+ * stops it and ships its copy. No window (a bare `harbor` runs as `--background`), no tray, no start at login, no
+ * update, follow-main or preview taken, and asking it to show itself does nothing. Mesh, phones, agents and
+ * everything else run as in any Harbor.
+ */
+export function isEmbedded(env: Record<string, string | undefined> = process.env): boolean {
+  return env.HARBOR_EMBEDDED === "1";
+}
+
 /** How soon after a change the shared drafts are written (kv `shared_drafts`). */
 const DRAFTS_SAVE_MS = 300;
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
@@ -1537,10 +1547,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, versionsOwn: () => ({ update: versionsOwn().update, served: versionsOwn().served }), account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : o.hookPort === undefined ? {} : { hookPort: o.hookPort }) });
   if (!offline) void funnel.check();
-  if (!offline) {
+  // HARBOR_OFFLINE_LISTEN=1 (a check of an offline copy, e.g. Person Hub's engine check): the phone API listens
+  // anyway (on HARBOR_LISTEN), with no mesh.
+  if (!offline || env.HARBOR_OFFLINE_LISTEN === "1") {
     const bound = await api.listen();
     hub.net = { addrs: addrs(), bound, error: hub.net.error };
-    mesh.start();
+    if (!offline) mesh.start();
   }
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
   const disc = offline || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });

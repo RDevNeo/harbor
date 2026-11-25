@@ -22,7 +22,7 @@ import {
   type Snapshot,
 } from "./packages/update/src/index.ts";
 import type * as slint from "slint-ui";
-import { isOffline, startHub } from "./hub.ts";
+import { isEmbedded, isOffline, startHub } from "./hub.ts";
 import { autostart, autostartByDefault, BACKGROUND_FLAG, healAutostart, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
 import { admin, autostart as osAutostart, env as osEnv, proc } from "./packages/os/src/index.ts";
@@ -35,6 +35,9 @@ export interface RunOptions {
 }
 
 export async function runApp(o: RunOptions): Promise<number> {
+  // The engine of another app (hub.ts isEmbedded): never a window, whatever asked for one.
+  const embedded = isEmbedded();
+  if (embedded && o.window) o = { ...o, window: false, argv: [BACKGROUND_FLAG, ...o.argv.filter((a) => a !== BACKGROUND_FLAG)] };
   const cfg = defaultConfig();
   // Before the native libraries start work on Bun's threads: each would get an arena of its own.
   malloc.capArenas();
@@ -108,7 +111,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     whatsappKeep: true,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
     preview: {
-      refuses: (full, offer) => preview.refuses(cfg, full, offer),
+      refuses: (full, offer) => (embedded ? "this PC's Harbor runs inside Person Hub, which ships its own copy" : preview.refuses(cfg, full, offer)),
       take: (from, name, offer) => {
         // One offer at a time: its file is fetched to a fixed name.
         taking = taking.then(async () => {
@@ -132,6 +135,8 @@ export async function runApp(o: RunOptions): Promise<number> {
   /** Quits as the tray's Quit does; set below once the window (or the background wait) is up. */
   let quitApp = (): void => {};
   const reopen = (): void => {
+    // Embedded: the app around it is the window; a restart into Harbor's own would open a second one.
+    if (embedded) return;
     hidden = false;
     void reloader?.now();
   };
@@ -234,12 +239,13 @@ export async function runApp(o: RunOptions): Promise<number> {
   // last, once the runtime and the bundle are both there. Watching the executable reloaded a PC into
   // a new runtime while its bundle was still downloading (0.110.0), and the failed start rolled it
   // back to do it all again.
-  if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
-  if (!offline) updater.start();
+  if (cfg.dir !== null && bundle !== undefined && !cfg.preview && !embedded) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
+  // Embedded: the app around it ships its copy (no update, no follow-main) and starts it (no start at login).
+  if (!offline && !embedded) updater.start();
   // Runs offline too (rigs): a checkout's main, or HARBOR_FOLLOW_REMOTE's.
-  follow.start();
-  autostartByDefault(store, updater.managed() && !cfg.preview && !offline);
-  if (!cfg.preview) healAutostart();
+  if (!embedded) follow.start();
+  autostartByDefault(store, updater.managed() && !cfg.preview && !offline && !embedded);
+  if (!cfg.preview && !embedded) healAutostart();
 
   // Offline rigs restore only their own restarts (a copied database may hold the real window's snapshot).
   const restore = offline && reloadedFrom === 0 ? null : takeSnapshot(run.store);
@@ -248,7 +254,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   if (!o.window) {
     void confirmStart(cfg);
     let quit = (): void => {};
-    const tray = offline && !process.env.HARBOR_TRAY ? null : trayStart({ onOpen: reopen, onQuit: () => quit(), hidden: () => true });
+    const tray = embedded || (offline && !process.env.HARBOR_TRAY) ? null : trayStart({ onOpen: reopen, onQuit: () => quit(), hidden: () => true });
     await new Promise<void>((resolve) => {
       quit = resolve;
       quitApp = resolve;
