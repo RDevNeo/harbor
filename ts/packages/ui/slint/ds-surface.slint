@@ -45,29 +45,80 @@ export component ShowSideBtn inherits Btn {
     tip: "Show sidebar (Ctrl+B)";
 }
 
-/** A page's header bar over its content (a chat, a person): 46px, a hairline under it. While the sidebar is hidden it
- *  starts with show-sidebar, where the sidebar's header had hide. */
+/** Every page's header bar (Projects' chat breadcrumbs, a person's chat, All people, Routine's screens): one height,
+ *  padding and baseline in every tab. 46px (whole physical pixels) and a 1px line under it. While the tab's sidebar
+ *  is hidden it starts with show-sidebar, in the same place in every tab. With a `title` it draws the breadcrumb
+ *  (icon, `section` /, `title`, then `sub` in quiet text); the bar's own buttons (children) go after it, on the right. */
 export component PageBar inherits Rectangle {
     in property <bool> side-hidden;
+    in property <string> icon;
+    in property <string> section;
+    in property <string> title;
+    in property <string> sub;
     callback show-side();
-    height: Ds.bar-h;
+    out property <length> bar-h: round(Ds.bar-h / 1phx) * 1phx;
+    height: self.bar-h + 1phx;
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 8px;
-        if root.side-hidden: VerticalLayout {
-            alignment: center;
-            ShowSideBtn {
-                clicked => {
-                    root.show-side();
-                }
+        y: 0;
+        height: root.bar-h;
+        padding-left: 18px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 6px;
+        if root.side-hidden: ShowSideBtn {
+            y: 1px;
+            clicked => {
+                root.show-side();
+            }
+        }
+        if root.title != "": HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 6px;
+            if root.icon != "": Glyph {
+                width: 16px;
+                icon: root.icon;
+                size: 14px;
+                color: Theme.subtle;
+                horizontal-alignment: left;
+            }
+            if root.section != "": Text {
+                text: root.section;
+                font-size: Ds.t-body;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.section != "": Text {
+                text: "/";
+                font-size: Ds.t-body;
+                color: Theme.gray-600;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 0;
+                max-width: self.preferred-width;
+                text: root.title;
+                font-size: Ds.t-body;
+                color: Theme.fg;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if root.sub != "": Text {
+                text: root.sub;
+                font-size: Ds.t-sm;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
             }
         }
         @children
     }
     Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
+        y: root.bar-h;
+        height: 1phx;
         background: Theme.border;
     }
 }

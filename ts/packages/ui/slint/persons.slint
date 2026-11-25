@@ -2,7 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { ShowSideBtn, Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PageHead, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip } from "ds.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip } from "ds.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct PRow {
@@ -325,7 +325,7 @@ component Sidebar inherits SideSurface {
             vertical-stretch: 1;
             VerticalLayout {
                 padding: Ds.side-pad;
-                padding-top: 6px;
+                padding-top: Ds.side-list-top;
                 spacing: 2px;
                 alignment: start;
                 for r in PersonsBus.side: SideRow {
@@ -371,70 +371,66 @@ component ListPane inherits Rectangle {
         self.take-search();
     }
     VerticalLayout {
-        padding-left: Ds.page-pad;
-        padding-right: Ds.page-pad;
-        padding-top: Ds.sp8;
-        spacing: Ds.sp6;
-        HorizontalLayout {
-            spacing: 10px;
-            if PersonsBus.side-hidden: VerticalLayout {
-                alignment: center;
-                ShowSideBtn {
-                    clicked => {
-                        PersonsBus.side-hidden = false;
-                    }
-                }
+        // The page's header: the shared PageBar (as Projects' breadcrumbs), "Persons / All people  68 people".
+        PageBar {
+            side-hidden: PersonsBus.side-hidden;
+            icon: Icons.users;
+            section: "Persons";
+            title: PersonsBus.list-title;
+            sub: PersonsBus.list-sub;
+            show-side => {
+                PersonsBus.side-hidden = false;
             }
-            PageHead {
-                title: PersonsBus.list-title;
-                sub: PersonsBus.list-sub;
-                VerticalLayout {
-                    alignment: center;
-                    Btn {
-                        text: "Add person";
-                        icon: Icons.plus;
-                        variant: Variant.primary;
-                        size: BtnSize.sm;
-                        clicked => {
-                            PersonsBus.add-person();
-                        }
-                    }
-                }
-            }
-        }
-        Rectangle {
-            height: 34px;
-            border-radius: Ds.radius-md;
-            border-width: 1px;
-            border-color: search.focused ? Theme.gray-1000 : Theme.border;
-            search := SearchField {
-                x: 8px;
-                width: parent.width - 16px;
+            Btn {
                 y: 1px;
-                hint: "Search name, username, id, email, notes…";
-                text <=> PersonsBus.query;
-                edited(t) => {
-                    PersonsBus.edited-query(t);
+                text: "Add person";
+                icon: Icons.plus;
+                variant: Variant.primary;
+                size: BtnSize.xs;
+                clicked => {
+                    PersonsBus.add-person();
                 }
             }
         }
-        ScrollView {
-            vertical-stretch: 1;
-            VerticalLayout {
-                alignment: start;
-                spacing: 2px;
-                for r in PersonsBus.list: PersonRow {
-                    r: r;
+        VerticalLayout {
+            padding-left: Ds.page-pad;
+            padding-right: Ds.page-pad;
+            padding-top: Ds.sp7;
+            spacing: Ds.sp6;
+            Rectangle {
+                height: 34px;
+                border-radius: Ds.radius-md;
+                border-width: 1px;
+                border-color: search.focused ? Theme.gray-1000 : Theme.border;
+                search := SearchField {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    y: 1px;
+                    hint: "Search name, username, id, email, notes…";
+                    text <=> PersonsBus.query;
+                    edited(t) => {
+                        PersonsBus.edited-query(t);
+                    }
                 }
-                if PersonsBus.list.length == 0: VerticalLayout {
-                    padding-top: 40px;
-                    Empty {
-                        icon: PersonsBus.query != "" ? Icons.search : Icons.users;
-                        title: PersonsBus.query != "" ? "No match" : "No people yet";
-                        desc: PersonsBus.query != "" ? "No one matches “" + PersonsBus.query + "”." : "";
-                        action: PersonsBus.query != "" ? "" : "Add person";
-                        act => {
-                            PersonsBus.add-person();
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 2px;
+                    for r in PersonsBus.list: PersonRow {
+                        r: r;
+                    }
+                    if PersonsBus.list.length == 0: VerticalLayout {
+                        padding-top: 40px;
+                        Empty {
+                            icon: PersonsBus.query != "" ? Icons.search : Icons.users;
+                            title: PersonsBus.query != "" ? "No match" : "No people yet";
+                            desc: PersonsBus.query != "" ? "No one matches “" + PersonsBus.query + "”." : "";
+                            action: PersonsBus.query != "" ? "" : "Add person";
+                            act => {
+                                PersonsBus.add-person();
+                            }
                         }
                     }
                 }
@@ -1414,6 +1410,8 @@ component Dialog inherits DialogFrame {
 // ---------- the page ----------
 
 export component PersonsPage {
+    /** The sidebar's width: Projects' (app.slint side-shown), so the header's buttons sit where they do there. */
+    in property <length> side-w: Ds.side-w;
     FocusScope {
         key-pressed(e) => {
             if e.text == Key.Escape {
@@ -1430,7 +1428,7 @@ export component PersonsPage {
         }
         HorizontalLayout {
             if !PersonsBus.side-hidden: Sidebar {
-                width: Ds.side-w;
+                width: root.side-w;
             }
             Rectangle {
                 horizontal-stretch: 1;

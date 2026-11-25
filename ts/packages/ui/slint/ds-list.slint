@@ -27,7 +27,8 @@ export component CountPill {
 }
 
 /** A section's small head ("PROJECTS", "CREATORS"): upper-case caps, an optional fold chevron after it, and on its
- *  right a status dot, an unread pill and a + (all optional). A click on the title folds it when it folds. */
+ *  right a status dot, an unread pill and a + (all optional). When it folds, the whole row but the + (title, chevron,
+ *  the empty room after them, the dot and the pill) is one target: pointer cursor, the rows' hover fill, a click folds. */
 export component SectionHead {
     in property <string> title;
     /** "" doesn't fold, "open", "folded". */
@@ -43,15 +44,15 @@ export component SectionHead {
     callback plus(length, length);
     height: (first ? 2px : 10px) + 22px + 2px;
     property <length> line-y: first ? 2px : 10px;
-    head := TouchArea {
+    // The +'s room on the right (22px and the 6px before it), outside the fold's target.
+    property <length> plus-w: root.plus-tip != "" ? 28px : 0px;
+    if root.fold != "": Rectangle {
+        x: 0;
         y: root.line-y;
         height: 22px;
-        width: label.x + label.width + (root.fold != "" ? 20px : 4px);
-        enabled: root.fold != "";
-        mouse-cursor: root.fold != "" ? pointer : default;
-        clicked => {
-            root.toggled();
-        }
+        width: root.width - root.plus-w;
+        border-radius: Ds.radius-md;
+        background: head.has-hover ? Ds.hover : transparent;
     }
     label := Text {
         x: 6px;
@@ -75,6 +76,19 @@ export component SectionHead {
         size: 11px;
         color: head.has-hover ? Theme.fg : Ds.caps-fg;
     }
+    // From the row's left edge (without x it was centred: the target sat right of the title), over the title and
+    // chevron, under the right side's +.
+    head := TouchArea {
+        x: 0;
+        y: root.line-y;
+        height: 22px;
+        width: root.fold != "" ? root.width - root.plus-w : label.x + label.width + 4px;
+        enabled: root.fold != "";
+        mouse-cursor: root.fold != "" ? pointer : default;
+        clicked => {
+            root.toggled();
+        }
+    }
     right := HorizontalLayout {
         x: root.width - self.preferred-width;
         y: root.line-y;
@@ -84,7 +98,13 @@ export component SectionHead {
         if root.dot != transparent: TipArea {
             width: 8px;
             tip: root.dot-tip;
-            mouse-cursor: default;
+            // Part of the fold's target (only the + is its own).
+            mouse-cursor: root.fold != "" ? pointer : default;
+            clicked => {
+                if root.fold != "" {
+                    root.toggled();
+                }
+            }
             Rectangle {
                 width: 7px;
                 height: 7px;
