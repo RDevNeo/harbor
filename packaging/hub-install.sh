@@ -55,6 +55,9 @@ install_files() { # DIR with hub, harbor-app.js, RUNTIME, hub.svg, VERSION(.new)
   local from="$1" version
   version=$(cat "$from/VERSION.new" 2>/dev/null || cat "$from/VERSION")
   mkdir -p "$LIB"
+  # Harbor's mark of an install it runs from (the start watchdog, the VERSION watch that restarts into a new build, the
+  # APK it serves). Hub's updater never fetches Harbor's releases (delivery.ts harborsReleases).
+  touch "$LIB/.managed"
   for f in hub harbor-app.js RUNTIME hub.svg; do
     cp "$from/$f" "$LIB/.$f.new" && mv -f "$LIB/.$f.new" "$LIB/$f"
   done
