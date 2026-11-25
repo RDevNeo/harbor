@@ -82,8 +82,8 @@ if [ "${1:-}" = --inner ]; then
     if [ -n "$SHOT_RUNNER" ] && [[ $view =~ ^settings(:(account|general|notifications|appearance|keybindings|voice|providers|integrations|secrets|devices|phones|webhooks))?$ ]]; then
       entry=(packages/ui/src/settingsrun.ts "${BASH_REMATCH[2]:-general}"); ready=""
     fi
-    rm -rf "$h" "$T/data"; mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache" "$T/data/harbor"; chmod 700 "$h/run"
-    [ -f "$SHOT_DB" ] && cp --reflink=auto "$SHOT_DB" "$T/data/harbor/harbor.db"
+    rm -rf "$h" "$T/data"; mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache" "$T/data/hub"; chmod 700 "$h/run"
+    [ -f "$SHOT_DB" ] && cp --reflink=auto "$SHOT_DB" "$T/data/hub/harbor.db"
     [ -n "$SHOT_HOME" ] && cp -a "$SHOT_HOME/." "$h/home/"
     start=$(now)
     (cd "$ts" && exec env -i HOME="$h/home" XDG_DATA_HOME="$T/data" XDG_STATE_HOME="$h/state" XDG_CONFIG_HOME="$h/cfg" XDG_CACHE_HOME="$h/cache" \
