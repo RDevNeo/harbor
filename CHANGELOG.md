@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Hub: agents' Discord tools (the `discord` app: the same 31 tools, names and arguments) run on the **Persons tab's
+  Discord connection** (Stores, account #1; `<persons>/agents.json` `{"discord": "<id>"}` or `PUT v1/persons/agent/discord`
+  picks another), over Discord's API and gateway in Bun: no Electron, Vencord or Chromium anywhere, nothing downloaded.
+  `hub app discord` sends each call to the running Hub (`POST v1/persons/agent/discord` on its control socket).
+  Signed out, the tools say how to sign in (Persons › Stores › + › Discord, QR code); the Settings card and the
+  phone's Discord sheet show that connection and sign it in by the same QR code. With no Discord page,
+  discord_view/discord_open read a channel through the API (each chat has its own open channel), discord_screenshot
+  answers with the channel as text, discord_onboarding answers through the API (new optional `guildId`), and a join
+  Discord gates behind a captcha is left for the user's own Discord app (Hub's captcha overlay and cards no longer
+  show; the phone's captcha screens get "No captcha is waiting"). Pacing of new DMs, uploads, messages and reactions
+  is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
+
 ### Fixed
 - A table in a reply stays inside the message column: wider than the reply, its columns narrow (the longest the
   most, short ones keep their width) and their cells wrap onto more lines, instead of running under the right

@@ -207,9 +207,6 @@ page by name too (`general|appearance|keybindings|providers|limits|integrations|
 ## Licences and credits
 
 - **Harbor** (this repository, apart from what's listed below): MIT, see [LICENSE](LICENSE).
-- **Discord shell** (`discord/`): GPL-3.0-or-later, see [discord/LICENSE](discord/LICENSE). A separate
-  program, not part of the Harbor binary: Harbor downloads it on first use and talks to it over
-  stdin and stdout. Harbor stays MIT.
 - **Slint** (the window toolkit), triple-licensed (GPLv3, royalty-free or commercial): Harbor uses it
   under the [Slint Royalty-free License](https://slint.dev/terms-and-conditions), with the attribution
   below. Harbor builds Slint's native module itself, with one small patch (`slint/`: a compiled UI

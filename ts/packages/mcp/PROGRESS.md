@@ -23,7 +23,7 @@
 - `control.ts`: `Incoming` is generic over the net `Api`/`Msg` and the update `Offer` types. The webhook port serves through
   `Bun.serve`; there is no cap of 32 simultaneous connections (Rust's `Conns`), Bun's idle timeout (10 s) stays.
   `serveHook` takes a web `Request`, so the public HTTPS listener (hookcert) shares it.
-- `serve.ts` is `harbor app <gmail|discord|discord-host|discord-repair>`; it sets Discord's setup version from `harborVersion()` (`version.ts`, set by the app at startup with `setHarborVersion`).
+- `serve.ts` is `harbor app <gmail|discord|whatsapp|whatsapp-host>`; it wires `appsetup.ts` (version, build ref, bundle) from what the app passes.
 - `serveHook` follows Rust on bodies: a declared length above 1 MB is cut at 1 MB and answered 202, a chunked body above 1 MB gets 413.
 - `mcpshim.ts` is the whole of `harbor mcp`: `run(args)` reads stdin, `bun build` of it is about 17 KB and starts in about 50 ms.
 - bun test trap: `expect(promise).rejects` on a promise that is still pending blocks the test forever; await `.then(ok, err)`.
@@ -114,46 +114,13 @@ Wiring left for the app (ports, not stubs; each has a default or a setter):
 
 Not done: nothing from these four modules is missing. Not tested: a real Let's Encrypt or Pebble run (needs the internet), a real router.
 
-## discord, discordhost, discordfreeze, discordrepair, discordsetup (src/discord*.rs -> src/discord*.ts)
+## discord (src/discord.ts, src/discordtools.ts)
 
-Done. Rust tests ported: 20 of 20 (freeze 3, setup 4, discord 4, repair 2, host 7), plus 49 tests that run the code against fakes:
-a fake Electron (`test/fakeelectron.ts`, an executable speaking the shell's JSON-lines protocol on stdin and stdout, told what to do
-through a file), a fake `harbor` command (`test/fakeharbor.ts`: `app discord-host`, `app discord-repair`), the repo's
-`discord/test/fake-claude.mjs` for repair, and local `Bun.serve` servers for the Electron, shell and Vencord downloads. No test
-starts a real Discord, Electron, Claude or touches the real socket or data (every test file has its own XDG_DATA_HOME,
-XDG_RUNTIME_DIR and HOME).
-
-What really runs: the MCP stdio server (`discord.run`, same 3 protocol answers, tool list from the installed shell's `tools.json`,
-notes, status, screenshots, attachments, files for `discord_send`), the host (`discordhost.run`: lock on `h.lock` through
-`flock`, Unix socket, engine start/stop/freeze/thaw/quit policy, pacing, self-test and Vencord rollback, sign-in, sign-out, the
-captcha window, session-ended handling, left-over client cleanup), setup (pinned Electron download and unzip, shell fetch checked
-against `discord/SHA256SUMS`, Vencord versions, repair's override with the forbidden-text check), freeze (cgroup v2 or SIGSTOP),
-and repair (a Claude run with only repair's MCP server, 3 attempts per failure, notices).
-
-- Same tool names, schemas (from `discord/tools.json`) and reply texts. Objects printed by the tools have their keys sorted, as
-  `serde_json` printed them.
-- Every Rust thread became async code. `Host` is a state object with a `Signal` for the Condvar; Rust's `Mutex` needed no
-  replacement because nothing awaits between a check and its change. `Host.tick()` is the clock (Rust's `watch` thread);
-  `listen(host)` and `run()` give the lock, socket and exit.
-- Ports instead of the packages that do not exist yet: `discordsetup.configure({ selfCommand, version, claude })`. `selfCommand`
-  is the command that starts Harbor (`HARBOR_EXE` or the running binary, plus the script when run from source), `version` is
-  `update::VERSION` and goes into `serverInfo.version` and the shell's download ref, `claude` is the `providers::discover` choice
-  (a logged-in Claude Code: `{ bin, env }`). Wire them when the update and agents packages land. `discord.watch(notify)` takes
-  the notification function instead of the `Hub`; `trouble(changed)` replaces the egui context.
-- `login(signal, update)` follows the host with an `AbortSignal`; `signOut()` is fire and forget. `Pending` is the one of apps.ts.
-- Added to the Rust behaviour for testing: `HARBOR_DISCORD_SHELL_URL` (base URL for the shell download; the files are still checked
-  against `SHA256SUMS`) and a `sums` argument to `ensureElectron`. Downloads use `fetch` (redirects, three tries) instead of `curl`;
-  the attachment fetch has the same limits as before (https only, Discord's CDN only, the byte cap, 45 s).
-- The shell is fetched at `HARBOR_DISCORD_REF`, else `HARBOR_GIT_SHA` (a build can set it), else `v<version>` (Rust took the commit at compile time).
-- The shell's `SHA256SUMS` is embedded with a text import of the repo's `discord/SHA256SUMS`, as Rust's `include_str!`.
-- Zip reading uses `node:zlib` and the central directory, no dependency.
-- The shell is started detached (own session and process group, so the whole tree can be frozen or killed), the engine's pid is
-  kept in `engine.pid` and a new host kills what an old one left.
-- `discordjson.ts` is this module's own small JSON helper set (the lead's `json.ts` has a different shape); not exported.
-- Not covered: running real Electron (the repo's `discord/test/rig.mjs` does that on a desktop); cgroup freezing is tested in its
-  parts (cgroup file parsing, reclaim against a fake cgroup folder) and SIGSTOP end to end, not against a real systemd scope.
-- Not wired yet: `serve.ts` cases for `discord`, `discord-host` and `discord-repair` (the lead's dispatcher), and
-  `mcp.integrate({ discord })`.
+The Electron + Vencord host, its setup, freezer and repair are gone (Hub has no Electron or Chromium). `hub app discord` is
+the agents' MCP stdio server: the same 31 tool names and input schemas (`discordtools.ts`, from the old `tools.json`), each
+call sent to the running Hub over its control socket (`POST v1/persons/agent/discord`) and run there on the Persons tab's
+Discord connection (`persons/src/agent/discord.ts`: Discord's API and gateway). discord_notes and discord_attachment's CDN
+download run in the app. Tests: `test/discord.test.ts`; the tools in `persons/test/agent-discord*.test.ts`.
 
 ## issues (src/issues.rs -> src/github/issues.ts)
 
