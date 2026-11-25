@@ -91,7 +91,7 @@ final class Sidebar {
 
         LinearLayout head = Ui.row(a);
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
-        head.addView(Ui.heading(a, "Hub", 26), Ui.weight());
+        head.addView(Ds.pageTitle(a, "Hub"), Ui.weight());
         // Which workspace's chats show; hidden until `render` knows there are any.
         wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspaces());
         wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
@@ -366,13 +366,13 @@ final class Sidebar {
             if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), ""), projectPc.get(g.getKey()), projectShared.get(g.getKey())) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
                     && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
             // The desktop's small section heads: PROJECTS over the projects, THREADS over the chats without one.
-            if (!headed) list.addView(section("PROJECTS", first), Ui.fill());
+            if (!headed) list.addView(Ds.caps(a, "PROJECTS", first), Ui.fill());
             headed = true;
             first = false;
             group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty(), main, withMains.contains(g.getKey()));
         }
         if (!loose.isEmpty()) {
-            list.addView(section("THREADS", first), Ui.fill());
+            list.addView(Ds.caps(a, "THREADS", first), Ui.fill());
             first = false;
             for (JSONObject c : loose) list.addView(chatRow(c, you), Ui.inset());
         }
@@ -388,7 +388,7 @@ final class Sidebar {
         }
         if (!settled.isEmpty() || !settledProjects.isEmpty()) {
             if (!first) divider();
-            list.addView(settledHead(settled.size() + settledProjects.size(), () -> { showSettled = !showSettled; render(st); }), Ui.fill());
+            list.addView(Ds.foldBar(a, "Settled (" + (settled.size() + settledProjects.size()) + ")", showSettled, v -> { showSettled = !showSettled; render(st); }), Ui.fill());
             if (showSettled) {
                 for (String pid : settledProjects) list.addView(settledProjectRow(pid, projects.get(pid)), Ui.inset());
                 for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
@@ -396,23 +396,6 @@ final class Sidebar {
         } else if (first) {
             none(nothing); // nothing to show, or only main chats of projects the filter left out
         }
-    }
-
-    /** The desktop's Settled header: "Settled (N)", a hairline to the edge and the fold's chevron
-     *  (up while open, down while folded); a tap folds or unfolds it. */
-    private View settledHead(int n, Runnable toggle) {
-        LinearLayout h = Ui.row(a);
-        h.setGravity(Gravity.CENTER_VERTICAL);
-        h.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(18), Ui.dp(6));
-        h.setBackground(Ui.press(0, 0, 0));
-        h.setContentDescription("Settled, " + n + (showSettled ? ", open" : ", folded"));
-        h.addView(Ui.text(a, "Settled (" + n + ")", 13, Ui.G700), Ui.wrap());
-        View line = new View(a);
-        line.setBackgroundColor(Ui.dark ? Ui.G400 : Ui.G300);
-        h.addView(line, Ui.margins(new LinearLayout.LayoutParams(0, Math.max(1, Ui.dp(1)), 1), 12, 0, 12, 0));
-        h.addView(Ui.icon(a, showSettled ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 15, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
-        h.setOnClickListener(v -> toggle.run());
-        return h;
     }
 
     private void none(String text) {
@@ -634,15 +617,6 @@ final class Sidebar {
     /** Projects folded on this phone, per PC ("" is Threads). */
     private Set<String> folded() { return new HashSet<>(Ui.prefs(a).getStringSet("folded-" + a.hub.id, new HashSet<>())); }
 
-    /** A section's small head ("PROJECTS", "THREADS"), as the desktop sidebar's. */
-    private TextView section(String text, boolean top) {
-        TextView t = Ui.text(a, text, 11.5f, Ui.G600);
-        t.setTypeface(Ui.semi);
-        t.setLetterSpacing(0.06f);
-        t.setPadding(Ui.dp(20), Ui.dp(top ? 6 : 16), Ui.dp(20), Ui.dp(4));
-        return t;
-    }
-
     /** A project's first letter or digit, upper case (the desktop row's icon without one of its own). */
     private static String initial(String name) {
         if (name != null) for (int i = 0; i < name.length(); i++) if (Character.isLetterOrDigit(name.charAt(i))) return name.substring(i, i + 1).toUpperCase();
@@ -679,10 +653,7 @@ final class Sidebar {
         // Snoozed (the desktop's muted project row): its place kept, its name and icon muted, and
         // when it wakes before its status.
         String asleep = snoozedProjects.get(key);
-        TextView letter = Ui.bold(a, initial(name), 11.5f, Ui.FG);
-        letter.setGravity(Gravity.CENTER);
-        letter.setIncludeFontPadding(false);
-        letter.setBackground(Ui.round(Ui.dark ? Ui.G300 : Ui.G200, 0, 5));
+        TextView letter = Ds.letter(a, initial(name), 0, 20);
         letter.setAlpha(asleep != null ? 0.45f : 1f);
         // Its own icon or its website's, as the desktop's row shows it, once it's here.
         ProjectIcons.into(letter, a.hub, key, projectIcon.get(key));

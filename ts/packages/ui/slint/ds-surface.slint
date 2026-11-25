@@ -21,7 +21,7 @@ export component SideHead inherits HorizontalLayout {
     in property <bool> can-hide: true;
     callback hide();
     height: Ds.side-head-h;
-    spacing: 2px;
+    spacing: 6px;
     if root.can-hide: Btn {
         icon: Icons.panel-left-close;
         size: icon-xs;
@@ -152,11 +152,15 @@ export component DialogFrame inherits Rectangle {
     /** 448 for confirms, 512 for forms (content width). */
     in property <length> box-w: 448px;
     in property <bool> closable: true;
+    /** A click on the scrim dismisses it (Projects' own dialogs: only Cancel, × or Esc do). */
+    in property <bool> scrim-dismisses: true;
     callback dismiss();
     background: Theme.scrim;
     TouchArea {
         clicked => {
-            root.dismiss();
+            if root.scrim-dismisses {
+                root.dismiss();
+            }
         }
     }
     box := Rectangle {

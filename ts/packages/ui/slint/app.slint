@@ -29,6 +29,8 @@ import { MemPill, MiniBar, MemLine } from "memory.slint";
 import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, Panes, PaneHeader, LayoutGlyph, DropOverlay, DragGhost, PaneGhost } from "panes.slint";
 // Hub's top-level tabs: the bar (tabs.slint) and every tab besides Projects (its own file and global).
 import { TabsBus, AppTabs, TabFrame } from "tabs.slint";
+// Hub's design system (DESIGN.md): the modal dialog and the toast are the shared ones every tab uses.
+import { DialogFrame, DialogActions, Toast } from "ds-surface.slint";
 import { PersonsBus, PersonsPage } from "persons.slint";
 import { RoutineBus, RoutinePage } from "routine.slint";
 
@@ -2548,99 +2550,50 @@ export component AppWindow inherits Window {
 
         // pages.rs `dialogs`: egui's Modal, 512px of content for forms and 448 for confirms, 24px margins,
         // a 20px title, the close button in its corner; egui's 8px item spacing comes on top of each gap.
-        if root.dialog-id != "": Rectangle {
-            background: Theme.scrim;
-            TouchArea { }
-            Rectangle {
-                width: min((root.dialog-has-input ? 512px : 448px) + 50px, root.width - 32px);
-                height: dialog-body.preferred-height;
-                background: Theme.bg100;
-                border-width: 1px;
-                border-color: Theme.border;
-                border-radius: Theme.radius-xl;
-                drop-shadow-offset-y: 12px;
-                drop-shadow-blur: 28px;
-                drop-shadow-color: black.with-alpha(Theme.dark ? 56 / 255 : 20 / 255);
-                dialog-body := VerticalLayout {
-                    padding: 25px;
-                    Text {
-                        text: root.dialog-title;
-                        font-size: 20px;
-                        font-weight: 600;
-                        letter-spacing: -0.4px;
-                        color: Theme.fg;
-                    }
-                    // One rhythm for every dialog: title, 12px, note, 16px, field, 24px, buttons (a field
-                    // without a note sits 20px under the title).
-                    if root.dialog-text != "" || root.dialog-has-input: Rectangle {
-                        height: root.dialog-text != "" ? 12px : 20px;
-                    }
-                    if root.dialog-text != "": Text {
-                        text: root.dialog-text;
-                        font-size: 14px;
-                        color: Theme.subtle;
-                        wrap: word-wrap;
-                    }
-                    if root.dialog-text != "" && root.dialog-has-input: Rectangle {
-                        height: 16px;
-                    }
-                    if root.dialog-has-input: dialog-field := Input {
-                        text <=> root.dialog-input;
-                        accepted => {
-                            root.dialog-done(root.dialog-id, true);
-                        }
-                        init => {
-                            self.focus-end();
-                        }
-                    }
-                    Rectangle {
-                        height: 24px;
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        if root.dialog-extra != "": Btn {
-                            text: root.dialog-extra;
-                            icon: Icons.branch;
-                            variant: ghost;
-                            size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
-                            clicked => {
-                                root.dialog-extra-clicked();
-                            }
-                        }
-                        if root.dialog-extra != "": Rectangle {
-                            horizontal-stretch: 1;
-                        }
-                        Btn {
-                            text: "Cancel";
-                            size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
-                            clicked => {
-                                root.dialog-done(root.dialog-id, false);
-                            }
-                        }
-                        Btn {
-                            text: root.dialog-ok;
-                            size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
-                            variant: root.dialog-stop ? Variant.stop : root.dialog-danger ? Variant.destructive : Variant.primary;
-                            clicked => {
-                                root.dialog-done(root.dialog-id, true);
-                            }
-                        }
+        if root.dialog-id != "": DialogFrame {
+            title: root.dialog-title;
+            text: root.dialog-text;
+            box-w: root.dialog-has-input ? 512px : 448px;
+            // Only Cancel, the corner's × or Esc dismiss it (a click outside doesn't).
+            scrim-dismisses: false;
+            dismiss => {
+                root.dialog-done(root.dialog-id, false);
+            }
+            if root.dialog-has-input: dialog-field := Input {
+                text <=> root.dialog-input;
+                accepted => {
+                    root.dialog-done(root.dialog-id, true);
+                }
+                init => {
+                    self.focus-end();
+                }
+            }
+            DialogActions {
+                if root.dialog-extra != "": Btn {
+                    text: root.dialog-extra;
+                    icon: Icons.branch;
+                    variant: ghost;
+                    size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
+                    clicked => {
+                        root.dialog-extra-clicked();
                     }
                 }
-                close-x := TouchArea {
-                    x: parent.width - 37px;
-                    y: 17px;
-                    width: 28px;
-                    height: 28px;
-                    mouse-cursor: pointer;
+                if root.dialog-extra != "": Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Btn {
+                    text: "Cancel";
+                    size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
                     clicked => {
                         root.dialog-done(root.dialog-id, false);
                     }
-                    Glyph {
-                        icon: Icons.x;
-                        size: 16px;
-                        color: close-x.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
+                }
+                Btn {
+                    text: root.dialog-ok;
+                    size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
+                    variant: root.dialog-stop ? Variant.stop : root.dialog-danger ? Variant.destructive : Variant.primary;
+                    clicked => {
+                        root.dialog-done(root.dialog-id, true);
                     }
                 }
             }
@@ -2758,29 +2711,13 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.toast != "": PopoverFrame {
+        if root.toast != "": Toast {
             x: (root.width - self.width) / 2;
             y: root.height - 24px - self.height;
-            width: toast-text.width + 10px + (root.toast-action != "" ? toast-btn.width + 12px : 0px);
-            height: max(toast-text.preferred-height, root.toast-action != "" ? toast-btn.height : 0px) + 10px;
-            toast-text := Text {
-                x: 5px;
-                y: (parent.height - self.height) / 2;
-                width: min(self.preferred-width, 586px);
-                wrap: word-wrap;
-                text: root.toast;
-                font-size: 14px;
-                color: Theme.fg;
-            }
-            toast-btn := Btn {
-                x: toast-text.x + toast-text.width + 12px;
-                y: (parent.height - self.height) / 2;
-                visible: root.toast-action != "";
-                text: root.toast-action;
-                size: BtnSize.xs;
-                clicked => {
-                    root.toast-act();
-                }
+            text: root.toast;
+            action: root.toast-action;
+            act => {
+                root.toast-act();
             }
         }
 

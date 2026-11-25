@@ -1,6 +1,11 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
+// Hub's design system (DESIGN.md): the sidebar frame, its header, section heads, the lead square and the Settled fold are
+// the shared ones Persons and Routine use too.
+import { Ds } from "ds-tokens.slint";
+import { SectionHead, LeadLetter, FoldBar } from "ds-list.slint";
+import { SideSurface, SideHead } from "ds-surface.slint";
 import { MemGauge } from "memory.slint";
 
 export struct SideRow {
@@ -538,19 +543,12 @@ component ProjectRow {
         source: root.data.avatar;
         opacity: root.data.snoozed ? 0.45 : 1;
     }
-    if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Rectangle {
+    if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): LeadLetter {
         x: root.icon-x;
-        width: 16px;
-        height: 16px;
-        border-radius: 4px;
-        background: root.data.active || root.hovering ? Theme.gray-400 : Theme.gray-300;
+        y: (root.height - self.height) / 2;
+        letter: root.data.letter;
+        lit: root.data.active || root.hovering;
         opacity: root.data.snoozed ? 0.45 : 1;
-        Text {
-            text: root.data.letter;
-            font-size: 10.5px;
-            font-weight: 600;
-            color: Theme.fg;
-        }
     }
     // The name, then its marks right after it (as on a chat row): the room left of the status,
     // or of the hover buttons, is what the name and its place hint share.
@@ -705,7 +703,7 @@ component MeBtn {
     }
 }
 
-export component Sidebar inherits Rectangle {
+export component Sidebar inherits SideSurface {
     in property <[SideRow]> rows;
     in property <[SideRow]> settled;
     in property <int> settled-count;
@@ -766,27 +764,13 @@ export component Sidebar inherits Rectangle {
     callback settings();
     callback back();
     callback refresh();
-    background: Theme.bg200;
-    border-width: 1px;
-    border-color: Theme.border;
     VerticalLayout {
         padding: 11px;
         padding-top: 13px;
         spacing: 2px;
-        HorizontalLayout {
-            height: 28px;
-            spacing: 6px;
-            Btn {
-                icon: Icons.panel-left-close;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Hide sidebar (Ctrl+B)";
-                clicked => {
-                    root.hide();
-                }
-            }
-            Rectangle {
-                horizontal-stretch: 1;
+        SideHead {
+            hide => {
+                root.hide();
             }
             Btn {
                 icon: Icons.refresh;
@@ -986,54 +970,20 @@ export component Sidebar inherits Rectangle {
                             root.chat-menu(r.id, x, y);
                         }
                     }
-                    // "PROJECTS", "THREADS": a section's small head.
-                    if r.kind == "label": VerticalLayout {
-                        padding-top: r.id == 1 ? 2px : 10px;
-                        padding-bottom: 2px;
-                        Text {
-                            x: 6px;
-                            height: 18px;
-                            text: r.title;
-                            font-size: 11px;
-                            font-weight: 500;
-                            letter-spacing: 0.6px;
-                            color: Theme.gray-800;
-                            vertical-alignment: center;
-                        }
+                    // "PROJECTS", "THREADS": a section's small head (ds-list.slint SectionHead).
+                    if r.kind == "label": SectionHead {
+                        title: r.title;
+                        first: r.id == 1;
                     }
                 }
             }
         }
         // "Settled (N)", a hairline to the edge and the fold's chevron: up while open, down while folded.
-        if root.settled-count > 0: Rectangle {
-            height: Theme.row-h;
-            property <color> ink: settled-area.has-hover ? Theme.fg.mix(Theme.gray-700, 0.5) : Theme.gray-700;
-            settled-label := Text {
-                x: 8px;
-                text: "Settled (" + root.settled-count + ")";
-                font-size: 12px;
-                font-weight: 500;
-                color: parent.ink;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                x: settled-label.x + settled-label.preferred-width + 10px;
-                width: max(0px, parent.width - self.x - 34px);
-                height: 1px;
-                background: settled-area.has-hover ? Theme.gray-600 : Theme.gray-500;
-            }
-            Glyph {
-                x: parent.width - 21px;
-                width: 14px;
-                icon: root.settled-open ? Icons.up : Icons.down;
-                size: 12px;
-                color: parent.ink;
-            }
-            settled-area := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    root.settled-open = !root.settled-open;
-                }
+        if root.settled-count > 0: FoldBar {
+            label: "Settled (" + root.settled-count + ")";
+            open: root.settled-open;
+            toggled => {
+                root.settled-open = !root.settled-open;
             }
         }
         if root.settled-count > 0 && root.settled-open: settled-list := Flickable {
