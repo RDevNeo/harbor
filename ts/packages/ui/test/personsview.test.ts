@@ -112,3 +112,37 @@ describe("Persons chat rows", () => {
     expect(shortAgo("2026-11-22T12:00:00Z", now)).toBe("3d ago");
   });
 });
+
+describe("the Person AI's answer", () => {
+  test("its markdown becomes Projects' blocks and its ```reply drafts cards, in order", async () => {
+    const { aiSlintParts, DRAFT_GAP } = await import("../src/tabs/persons/aiparts.ts");
+    // as the engine splits it (persons aiparts.ts, tested there)
+    const parts = aiSlintParts([
+      { type: "text", text: "The payment side is fixed.\n\n- **#28853 is paid.** Approved at 00:29.\n- Deliver to `Rafarib113`.\n\nHere's an update:" },
+      { type: "draft", text: "Opa Yagas, verifiquei aqui." },
+      { type: "text", text: "Anything else?" },
+    ]);
+    expect(parts.map((p) => (p.draft ? `draft:${p.text}` : p.block.kind))).toEqual(["p", "li", "li", "p", "draft:Opa Yagas, verifiquei aqui.", "p"]);
+    // no literal markers left: bold and inline code are styling, the bullet is the list's
+    expect(parts[1]?.block.plain).toBe("#28853 is paid. Approved at 00:29.");
+    expect(parts[2]?.block.plain).toBe("Deliver to Rafarib113.");
+    const { blocks } = await import("../src/markdown.ts");
+    expect(blocks("**#28853 is paid.** Approved", true)[0]).toMatchObject({ text: "**\\#28853 is paid\\.** Approved" });
+    expect(parts.every((p) => !p.block.plain.includes("**") && !p.block.plain.includes("```"))).toBe(true);
+    // a bubble's spacing: half of Projects' blank row, and a gap around the draft
+    expect(parts.map((p) => p.block.gap)).toEqual([0, 11, 0, 11, 0, 0]);
+    expect(parts.map((p) => p.gap)).toEqual([0, 0, 0, 0, DRAFT_GAP, DRAFT_GAP]);
+  });
+
+  test("chat rows carry the parts; an answer without them is all markdown; a question is to the AI", () => {
+    const c: ChatJson = { person: { id: "p", name: "Ana", initials: "AN", color: "#000", avatar: null, avatarPath: null, presence: null, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: [
+      { id: "q", role: "user", text: "Has it been resolved?", at: "2026-11-25T10:33:00" },
+      { id: "a", role: "assistant", text: "**Yes.**", at: "2026-11-25T10:35:00" },
+    ] };
+    const rows = chatRows(c, Date.parse("2026-11-25T12:00:00")).filter((r) => r.kind !== "day");
+    expect(rows.map((r) => [r.kind, r.toAi, r.meta, r.parts])).toEqual([
+      ["out", true, "", []],
+      ["ai", false, "", [{ type: "text", text: "**Yes.**" }]],
+    ]);
+  });
+});

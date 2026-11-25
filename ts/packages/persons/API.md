@@ -31,7 +31,10 @@ Within a section, people are sorted by `rows[section].lastAt` desc; settled ones
                reply: { text, fromMe }|null,
                files: [{ name, url: "/v1/persons/file?...", type, size, width, height, image: bool, duration }],
                ai: false }] ,
-  ai: [{ id, role: "user"|"assistant", text, at }] }   // the Person AI chat for this person+section
+  ai: [{ id, role: "user"|"assistant", text, at, streaming?,
+         parts? }] }   // the Person AI chat for this person+section; an answer's `parts` (aiparts.ts):
+                       // [{ type: "text", text, blocks }   markdown, `blocks` the phone's block model (android/PROTOCOL.md)
+                       //  | { type: "draft", text }]       a message it drafted for the person (```reply)
 ```
 `?account=ID` picks another of `accounts`. `?before=MSGID` returns an older page (same shape, `messages` only older).
 

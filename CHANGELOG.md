@@ -6,6 +6,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- Hub Persons: the Person AI's answers in a person's chat draw their markdown as Projects' chat does (bold, italics,
+  lists, inline code, links, paragraphs) instead of raw `**`/`- `, and each ```` ```reply ```` draft as a card in the
+  user's bubble colour with "Use as reply" (into the composer) and Copy, on the PC and on Android (the engine splits
+  the answer: `ai[].parts`, with the phone's blocks). The AI's thread has one look: a tinted bubble with a small
+  "AI · time" / "TO THE AI · time" label, an answer as wide as the column with a copy button.
+- Hub Persons: the person panel keeps the header (picture, name, email, Edit, Rename, delete), Notes and Socials; its
+  Identities, Stores and lists and Settled sections are gone (PC and Android). Identities are edited with Edit (PC; the
+  phone has no editor for them and no longer lists them); Settle / Unsettle is in a person's right-click menu (PC) and
+  long-press menu (Android), in All people as "Settle in <section>" for each section they're in.
 - Hub: agents' Discord tools (the `discord` app: the same 31 tools, names and arguments) run on the **Persons tab's
   Discord connection** (Stores, account #1; `<persons>/agents.json` `{"discord": "<id>"}` or `PUT v1/persons/agent/discord`
   picks another), over Discord's API and gateway in Bun: no Electron, Vencord or Chromium anywhere, nothing downloaded.

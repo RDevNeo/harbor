@@ -35,19 +35,21 @@ function code(s: string): string {
 
 /** One span as inline markdown; markers hug the text, so spaces at its ends stay outside them. Bold stays
  *  regular, as egui_commonmark draws it (the strong colour, which is the text's). */
-function span(s: Span): string {
+function span(s: Span, bold = false): string {
   const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s.text);
   const [lead, body, tail] = [m?.[1] ?? "", m?.[2] ?? s.text, m?.[3] ?? ""];
   if (body === "") return escape(s.text);
   let t = s.code ? code(body) : escape(body).replace(/\n/g, "\\\n");
   if (s.strike) t = `~~${t}~~`;
   if (s.italic) t = `*${t}*`;
+  if (bold && s.bold) t = `**${t}**`;
   if (s.link !== undefined) t = `[${t}](<${s.link.replace(/[<>]/g, "")}>)`;
   return `${lead}${t}${tail}`;
 }
 
-export function inline(spans: readonly Span[]): string {
-  return spans.map(span).join("");
+/** `bold`: draw bold spans bold (a Person AI bubble; a reply keeps egui's regular). */
+export function inline(spans: readonly Span[], bold = false): string {
+  return spans.map((s) => span(s, bold)).join("");
 }
 
 /** A run of text as drawn, and its links. */
@@ -67,15 +69,15 @@ export function plainOf(spans: readonly Span[]): Plain {
   return { plain, links };
 }
 
-function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Block[], item: boolean): void {
+function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Block[], item: boolean, bold: boolean): void {
   const at = item ? { quote, item: true as const } : { quote };
   for (const b of bs) {
     switch (b.type) {
       case "paragraph":
-        out.push({ kind: "p", text: inline(b.spans), ...plainOf(b.spans), ...at });
+        out.push({ kind: "p", text: inline(b.spans, bold), ...plainOf(b.spans), ...at });
         break;
       case "heading":
-        out.push({ kind: "h", text: inline(b.spans), ...plainOf(b.spans), level: b.level, ...at });
+        out.push({ kind: "h", text: inline(b.spans, bold), ...plainOf(b.spans), level: b.level, ...at });
         break;
       case "code":
         out.push({ kind: "code", text: b.text, lang: b.lang, ...at });
@@ -84,10 +86,10 @@ function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Blo
         out.push({ kind: "hr", ...at });
         break;
       case "quote":
-        flatten(b.blocks, quote + 1, depth, out, item);
+        flatten(b.blocks, quote + 1, depth, out, item, bold);
         break;
       case "table":
-        out.push({ kind: "table", rows: b.rows.map((row) => row.map(inline)), cells: b.rows.map((row) => row.map(plainOf)), ...at });
+        out.push({ kind: "table", rows: b.rows.map((row) => row.map((c) => inline(c, bold))), cells: b.rows.map((row) => row.map(plainOf)), ...at });
         break;
       case "list":
         b.items.forEach((it, i) => {
@@ -95,18 +97,18 @@ function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Blo
           const marker = b.ordered ? `${b.start + i}.` : depth > 0 ? "◦" : "•";
           const [first, ...rest] = it;
           const spans = first?.type === "paragraph" ? first.spans : [];
-          out.push({ kind: "li", text: inline(spans), ...plainOf(spans), marker, depth, quote });
-          flatten(first?.type === "paragraph" ? rest : it, quote, depth + 1, out, true);
+          out.push({ kind: "li", text: inline(spans, bold), ...plainOf(spans), marker, depth, quote });
+          flatten(first?.type === "paragraph" ? rest : it, quote, depth + 1, out, true, bold);
         });
         break;
     }
   }
 }
 
-/** A reply's blocks, quotes and lists flattened with their depth. */
-export function blocks(md: string): Block[] {
+/** A reply's blocks, quotes and lists flattened with their depth; `bold`: bold spans drawn bold. */
+export function blocks(md: string, bold = false): Block[] {
   const out: Block[] = [];
-  flatten(netBlocks(md), 0, 0, out, false);
+  flatten(netBlocks(md), 0, 0, out, false, bold);
   return out;
 }
 

@@ -7,7 +7,9 @@ import { basename } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
 import { syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
-import { chatRows, listRows, sideRows, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
+import { releaseBlocks } from "../../markdown.ts";
+import { aiSlintParts, type PPartData } from "./aiparts.ts";
+import { chatRows, listRows, personSections, sideRows, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -159,6 +161,11 @@ class PersonsTab {
     });
     on("save_notes", ((text: string) => void this.saveNotes(text)) as Cb);
     on("open_url", ((url: string) => ctx.openExternal(url)) as Cb);
+    // markdown.slint also reports selections ("sel:…") and keys ("scroll:…"): only web and mail links open
+    on("md_link", ((url: string) => {
+      if (/^(https?:|mailto:)/i.test(url)) ctx.openExternal(url);
+    }) as Cb);
+    on("use_draft", ((text: string) => this.useDraft(text)) as Cb);
     on("menu_pick", ((id: string) => this.pick(id)) as Cb);
     on("menu_close", () => {
       b.menu_open = false;
@@ -176,7 +183,6 @@ class PersonsTab {
     on("add_person", () => this.personDialog(null));
     on("prev", () => this.step(-1));
     on("next", () => this.step(1));
-    on("settle", ((sec: string) => void this.settle(sec)) as Cb);
     on("toast_act", () => {
       const f = this.toastAction;
       this.setToast("");
@@ -345,11 +351,43 @@ class PersonsTab {
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
     const rows = chatRows(c).slice(-400);
+    this.keepParts(rows);
     const js = rows.map((r) => this.msgJs(r));
     syncRows(this.msgModel, js, (x, y) => x.image === y.image && JSON.stringify({ ...x, image: 0 }) === JSON.stringify({ ...y, image: 0 }));
   }
 
   private attachPaths = new Map<string, string | null>();
+  /** Each AI answer's parts for its bubble, by row id, while its text stays the same (a streaming one is redone). */
+  private aiParts = new Map<string, { key: string; parts: PPartData[] }>();
+
+  private partsOf(r: MsgRow): PPartData[] {
+    if (r.kind !== "ai") return [];
+    const key = JSON.stringify(r.parts);
+    const had = this.aiParts.get(r.id);
+    if (had?.key === key) return had.parts;
+    const owner = `persons-${r.id}`;
+    releaseBlocks(owner);
+    const parts = aiSlintParts(r.parts, owner);
+    this.aiParts.set(r.id, { key, parts });
+    return parts;
+  }
+
+  /** Forgets the parts of answers no longer shown (another chat open). */
+  private keepParts(rows: readonly MsgRow[]): void {
+    const shown = new Set(rows.map((r) => r.id));
+    for (const id of this.aiParts.keys()) {
+      if (shown.has(id)) continue;
+      releaseBlocks(`persons-${id}`);
+      this.aiParts.delete(id);
+    }
+  }
+
+  /** A draft from the AI's answer into the composer, to send to the person. */
+  private useDraft(text: string): void {
+    this.aiMode = false;
+    this.bus.draft = text;
+    this.render();
+  }
 
   private msgJs(r: MsgRow): Record<string, unknown> {
     let px: Pixels | null = null;
@@ -381,6 +419,8 @@ class PersonsTab {
       failed: r.failed,
       sending: r.sending,
       streaming: r.streaming,
+      to_ai: r.toAi,
+      parts: this.partsOf(r),
     };
   }
 
@@ -407,10 +447,6 @@ class PersonsTab {
     b.p_has_avatar = !!px;
     const p = d.person;
     b.p_sub = [p.discordUsername ? `@${p.discordUsername}` : "", p.email ?? ""].filter(Boolean).join(" · ");
-    b.p_details = d.identities.map((i) => ({ label: i.section ? SECTION_LABEL[i.section] ?? "" : "", value: i.label, icon: i.kind, link: "" }));
-    b.p_groups = [...d.stores.map((s) => ({ id: `s:${s.id}`, label: s.name, on: s.owner, color: s.color })), ...d.lists.map((l) => ({ id: `l:${l.id}`, label: l.name, on: false, color: "#64748b" }))];
-    const secs = [...(d.stores.length ? ["stores"] : []), ...d.lists.map((l) => l.id).filter((x) => x in SECTION_LABEL)];
-    b.p_settle = secs.map((sec) => ({ id: sec, label: SECTION_LABEL[sec] ?? sec, on: !!this.person(p.id)?.settled[sec], color: "#64748b" }));
     b.p_socials = d.socials.map((s) => ({
       platform: s.platform ?? "Link",
       handle: s.handle ?? s.url,
@@ -649,7 +685,13 @@ class PersonsTab {
       { label: "Open", run: () => void this.openPerson(id, sec, store) },
       { label: "Rename", icon: "", run: () => this.renameDialog(id) },
       { label: "Edit…", run: () => this.personDialog(id) },
-      ...(sec ? [{ label: settled ? "Unsettle" : "Settle", run: () => void this.api("PATCH", `person/${encodeURIComponent(id)}`, { settle: { section: sec, on: !settled } }) }] : []),
+      // in a section: Settle / Unsettle there; in All people: one for each section they're in (the panel has none)
+      ...(sec
+        ? [{ label: settled ? "Unsettle" : "Settle", run: () => void this.api("PATCH", `person/${encodeURIComponent(id)}`, { settle: { section: sec, on: !settled } }) }]
+        : personSections(p).map((x) => {
+            const on = !!p.settled[x];
+            return { label: `${on ? "Unsettle" : "Settle"} in ${SECTION_LABEL[x] ?? x}`, run: () => void this.api("PATCH", `person/${encodeURIComponent(id)}`, { settle: { section: x, on: !on } }) };
+          })),
       ...(store ? [{ label: `Remove from ${this.state?.stores.find((s) => s.id === store)?.name ?? "the store"}`, run: () => void this.removeFromStore(id, store) }] : []),
       ...(store ? [{ label: "Make store owner", run: () => void this.api("PATCH", `stores/${encodeURIComponent(store)}`, { ownerId: id }) }] : []),
       { sep: true, label: "" },
@@ -692,13 +734,9 @@ class PersonsTab {
     if (id.startsWith("ai")) {
       const a = c.ai.find((x) => `ai${x.id}` === id);
       if (!a) return;
-      // the drafts the AI fenced as ```reply (personAi.ts aiParts), else the whole answer
-      const drafts = [...a.text.matchAll(/```reply[^\n]*\n([\s\S]*?)(?:```|$)/g)].map((m) => (m[1] ?? "").replace(/\n+$/, ""));
-      const use = (t: string): void => {
-        this.aiMode = false;
-        this.bus.draft = t;
-        this.render();
-      };
+      // the drafts the AI fenced as ```reply (the engine's persons aiparts.ts), else the whole answer
+      const drafts = (a.parts ?? []).flatMap((p) => (p.type === "draft" ? [p.text] : []));
+      const use = (t: string): void => this.useDraft(t);
       this.showMenu(x, y, [
         ...(drafts.length ? drafts.map((d, i) => ({ label: drafts.length > 1 ? `Use reply ${i + 1}` : "Use as reply", sub: d.slice(0, 60), run: () => use(d) })) : [{ label: "Use as reply", run: () => use(a.text) }]),
       ]);
@@ -747,15 +785,6 @@ class PersonsTab {
     if (!open || !this.panelData || (this.panelData.person.notes ?? "") === text) return;
     this.panelData.person.notes = text;
     await this.api("PATCH", `person/${encodeURIComponent(open.id)}`, { notes: text });
-  }
-
-  private async settle(sec: string): Promise<void> {
-    const open = this.ui.open;
-    if (!open) return;
-    const on = !this.person(open.id)?.settled[sec];
-    await this.api("PATCH", `person/${encodeURIComponent(open.id)}`, { settle: { section: sec, on } });
-    await this.refresh();
-    this.render();
   }
 
   // ---------- dialogs ----------

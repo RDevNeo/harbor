@@ -4,6 +4,7 @@ export { personsDir, loadConnections, saveConnections } from "./store.ts";
 export type { Connection, ConnContext, ConnFactory, ConnMeta } from "./conn/types.ts";
 export * from "./model/types.ts";
 export { PersonAi } from "./ai.ts";
+export { aiParts, aiPartsJson, type AiPart, type AiPartJson } from "./aiparts.ts";
 export { FACTORIES } from "./conn/index.ts";
 export { createSocials, formatAge, formatCount, type Socials, type SocialResult } from "./socials.ts";
 export { createSpokpay } from "./spokpay.ts";

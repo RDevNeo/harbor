@@ -20,8 +20,8 @@ import java.util.Iterator;
 import java.util.List;
 
 /** A person's details, full screen over their chat (Person Hub's PersonPanel on the phone): the
- *  big avatar and name (a tap renames), their identities, stores and lists, Settle / Unsettle per
- *  section, their socials with the latest uploads, notes, and Delete. GET/PATCH/DELETE
+ *  big avatar and name (a tap renames), their socials with the latest uploads, notes, and Delete.
+ *  Settle / Unsettle is in the person's long-press menu (PersonsHome.menu). GET/PATCH/DELETE
  *  /v1/persons/person/{id}. */
 final class PersonsPanel {
     final PersonsState p;
@@ -148,65 +148,6 @@ final class PersonsPanel {
             body.addView(h, Ui.fill());
         }
 
-        // Accounts.
-        List<JSONObject> ids = PersonsHome.objs(PersonsUi.arr(data, "identities"));
-        if (ids.isEmpty()) {
-            if (!PersonsUi.s(q, "discordId").isEmpty()) ids.add(ident("discord", PersonsUi.s(q, "discordId"), ""));
-            if (!PersonsUi.s(q, "whatsapp").isEmpty()) ids.add(ident("whatsapp", "+" + PersonsUi.s(q, "whatsapp"), ""));
-            if (!PersonsUi.s(q, "email").isEmpty()) ids.add(ident("gmail", PersonsUi.s(q, "email"), ""));
-        }
-        if (!ids.isEmpty()) {
-            body.addView(label("Accounts"));
-            LinearLayout card = Ui.card(a);
-            boolean firstRow = true;
-            for (JSONObject i : ids) {
-                if (!firstRow) card.addView(Ui.gap(a));
-                firstRow = false;
-                String kind = PersonsUi.s(i, "kind"), value = PersonsUi.s(i, "value"), lab = PersonsUi.s(i, "label");
-                String sec = PersonsUi.s(i, "section");
-                String title = lab.isEmpty() ? value : lab;
-                String sub = (lab.isEmpty() || lab.equals(value) ? "" : value) + (sec.isEmpty() ? "" : (lab.isEmpty() || lab.equals(value) ? "" : " · ") + PersonsUi.sectionLabel(sec));
-                LinearLayout r = Ui.cardRow(a, PersonsUi.channel(a, kind, 22), title, sub, Ui.FG, v -> Ui.copy(a, value));
-                r.setMinimumHeight(Ui.dp(52));
-                r.addView(Ui.icon(a, Ui.I_COPY, 16, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
-                r.setContentDescription(PersonsUi.kindLabel(kind) + " " + title + ": copy");
-                card.addView(r, Ui.fill());
-            }
-            body.addView(card, Ui.fill());
-        }
-
-        // Stores and lists.
-        List<JSONObject> stores = PersonsHome.objs(PersonsUi.arr(data, "stores"));
-        body.addView(label("Stores"));
-        body.addView(chips(stores, "Not in any store."), Ui.fill());
-        List<JSONObject> lists = PersonsHome.objs(PersonsUi.arr(data, "lists"));
-        if (lists.isEmpty() && st != null) {
-            JSONArray li = PersonsUi.arr(st, "listIds");
-            for (JSONObject l : PersonsHome.objs(PersonsUi.arr(p.st, "lists")))
-                if (PersonsUi.has(li, PersonsUi.s(l, "id"))) lists.add(l);
-        }
-        body.addView(label("Lists"));
-        body.addView(chips(lists, "In no list."), Ui.fill());
-
-        // Settle / Unsettle in each section they're in.
-        List<String> secs = sections(st, stores, lists);
-        if (!secs.isEmpty() && st != null) {
-            body.addView(label("Settled"));
-            LinearLayout card = Ui.card(a);
-            boolean firstRow = true;
-            for (String s : secs) {
-                if (!firstRow) card.addView(Ui.gap(a));
-                firstRow = false;
-                boolean done = PersonsHome.settled(st, s);
-                String lab = (done ? "Unsettle in " : "Settle in ") + PersonsUi.sectionLabel(s);
-                LinearLayout r = Ui.cardRow(a, Ui.I_ARCHIVE, lab, done ? "Settled: in the section's Settled fold" : "Leaves the section's list for its Settled fold", Ui.FG,
-                        v -> PersonsHome.settle(p, pid, s, !done));
-                r.setMinimumHeight(Ui.dp(56));
-                card.addView(r, Ui.fill());
-            }
-            body.addView(card, Ui.fill());
-        }
-
         // Socials.
         List<JSONObject> socials = PersonsHome.objs(PersonsUi.arr(data, "socials"));
         {
@@ -258,63 +199,10 @@ final class PersonsPanel {
         body.addView(del, Ui.margins(Ui.fill(), 0, 28, 0, 0));
     }
 
-    private static JSONObject ident(String kind, String value, String section) {
-        JSONObject o = PersonsUi.put(new JSONObject(), "kind", kind);
-        PersonsUi.put(o, "value", value);
-        PersonsUi.put(o, "section", section);
-        return o;
-    }
-
     private TextView label(String s) {
         TextView t = Ui.text(a, s, 13, Ui.G700);
         t.setPadding(Ui.dp(6), Ui.dp(20), Ui.dp(6), Ui.dp(6));
         return t;
-    }
-
-    /** Names as chips that wrap onto as many lines as they need. */
-    private View chips(List<JSONObject> items, String none) {
-        if (items.isEmpty()) {
-            TextView t = Ui.text(a, none, 14, Ui.G700);
-            t.setPadding(Ui.dp(6), 0, Ui.dp(6), 0);
-            return t;
-        }
-        LinearLayout col = Ui.col(a);
-        int avail = a.getResources().getDisplayMetrics().widthPixels - Ui.dp(32);
-        LinearLayout row = null;
-        int used = 0;
-        for (JSONObject o : items) {
-            TextView c = Ui.text(a, PersonsUi.s(o, "name"), 14, Ui.FG);
-            c.setPadding(Ui.dp(12), Ui.dp(5), Ui.dp(12), Ui.dp(5));
-            c.setBackground(Ui.round(Ui.CARD, Ui.LINE, 14));
-            c.setSingleLine(true);
-            c.setEllipsize(TextUtils.TruncateAt.END);
-            c.setMaxWidth(avail);
-            int w = (int) c.getPaint().measureText(c.getText().toString()) + Ui.dp(32);
-            if (row == null || used + w > avail) {
-                row = Ui.row(a);
-                col.addView(row, Ui.margins(Ui.fill(), 0, 0, 0, 6));
-                used = 0;
-            }
-            row.addView(c, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            used += w;
-        }
-        return col;
-    }
-
-    /** The sections they're in: Stores (a member or an owner), and each section list. */
-    private List<String> sections(JSONObject st, List<JSONObject> stores, List<JSONObject> lists) {
-        List<String> out = new ArrayList<>();
-        boolean inStore = !stores.isEmpty() || (st != null && PersonsUi.arr(st, "storeIds").length() > 0);
-        if (!inStore && p.st != null) for (JSONObject s : PersonsHome.objs(PersonsUi.arr(p.st, "stores")))
-            if (pid.equals(PersonsUi.s(s, "ownerId"))) inStore = true;
-        if (inStore) out.add("stores");
-        JSONArray li = PersonsUi.arr(st, "listIds");
-        for (String s : new String[]{"creators", "spokpay"}) {
-            boolean in = PersonsUi.has(li, s);
-            for (JSONObject l : lists) if (s.equals(PersonsUi.s(l, "id"))) in = true;
-            if (in) out.add(s);
-        }
-        return out;
     }
 
     private List<String> socialUrls() {

@@ -7,6 +7,7 @@
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
     "@harbor/os": "workspace:*",
+    "@harbor/net": "workspace:*",
     "@harbor/store": "workspace:*",
     "@harbor/mcp": "workspace:*"
   }

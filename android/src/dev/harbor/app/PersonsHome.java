@@ -408,12 +408,36 @@ final class PersonsHome {
     static void menu(PersonsState p, JSONObject person, String section, boolean settled) {
         String id = PersonsUi.s(person, "id"), name = PersonsUi.s(person, "name");
         List<String> opts = new ArrayList<>();
+        List<String[]> settles = new ArrayList<>(); // {section, "1" to settle}
         opts.add("Rename");
-        if (isSection(section)) opts.add(settled ? "Unsettle" : "Settle");
+        if (isSection(section)) {
+            opts.add(settled ? "Unsettle" : "Settle");
+            settles.add(new String[]{section, settled ? "" : "1"});
+        } else {
+            // All people: one for each section they're in (the person panel has none).
+            for (String s : sectionsOf(p, person)) {
+                boolean done = settled(person, s);
+                opts.add((done ? "Unsettle in " : "Settle in ") + PersonsUi.sectionLabel(s));
+                settles.add(new String[]{s, done ? "" : "1"});
+            }
+        }
         Ui.dialog(p.a).setTitle(name).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) rename(p, id, name);
-            else settle(p, id, section, !settled);
+            else settle(p, id, settles.get(w - 1)[0], !settles.get(w - 1)[1].isEmpty());
         }).show();
+    }
+
+    /** The sections a person is in: Stores (a member or an owner), and each section list. */
+    static List<String> sectionsOf(PersonsState p, JSONObject person) {
+        List<String> out = new ArrayList<>();
+        String id = PersonsUi.s(person, "id");
+        boolean inStore = PersonsUi.arr(person, "storeIds").length() > 0;
+        if (!inStore && p.st != null) for (JSONObject s : objs(PersonsUi.arr(p.st, "stores")))
+            if (id.equals(PersonsUi.s(s, "ownerId"))) inStore = true;
+        if (inStore) out.add("stores");
+        JSONArray li = PersonsUi.arr(person, "listIds");
+        for (String s : new String[]{"creators", "spokpay"}) if (PersonsUi.has(li, s)) out.add(s);
+        return out;
     }
 
     static void rename(PersonsState p, String id, String name) {

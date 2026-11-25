@@ -71,6 +71,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@harbor/mcp": "workspace:*",
+        "@harbor/net": "workspace:*",
         "@harbor/os": "workspace:*",
         "@harbor/store": "workspace:*",
       },

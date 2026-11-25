@@ -20,7 +20,8 @@ Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
   --wait S      shot S seconds after the window came up; "2,6" takes one at each time. Default:
                 as soon as it has drawn and stopped changing (after the last step)
   --size WxH    the window's size (default 1400x900)
-  --env K=V     a HARBOR_* variable for the app (repeatable; no spaces), e.g. a dev fake like
+  --env K=V     a HARBOR_* or HUB_* variable for the app (repeatable; no spaces), e.g. HUB_PERSONS_DIR=a copy
+                of ~/.local/share/hub/persons for the Persons tab, or a dev fake like
                 HARBOR_FAKE_CAPTCHA=PNG (ts/packages/ui/src/fakecaptcha.ts)
   --out DIR     where the PNGs go (default ~/.cache/harbor-shots/<time>)
   --empty       fresh empty data instead of a copy of harbor.db (no personal content)
@@ -173,7 +174,7 @@ done
 [[ $size =~ ^[0-9]+x[0-9]+$ ]] || { echo "shot: --size wants WxH, like 1400x900" >&2; exit 2; }
 [[ $wait =~ ^(auto|[0-9.]+(,[0-9.]+)*)$ ]] || { echo "shot: --wait wants seconds, like 3 or 2,6" >&2; exit 2; }
 [[ $idle =~ ^[0-9]+$ ]] || { echo "shot: --idle wants minutes" >&2; exit 2; }
-for e in "${envs[@]}"; do [[ $e =~ ^HARBOR_[A-Z0-9_]+=[^[:space:]]*$ ]] || { echo "shot: --env wants HARBOR_NAME=VALUE with no spaces, not $e" >&2; exit 2; }; done
+for e in "${envs[@]}"; do [[ $e =~ ^(HARBOR|HUB)_[A-Z0-9_]+=[^[:space:]]*$ ]] || { echo "shot: --env wants HARBOR_NAME=VALUE or HUB_NAME=VALUE (e.g. HUB_PERSONS_DIR=a copy) with no spaces, not $e" >&2; exit 2; }; done
 for v in "${views[@]}"; do [[ $v =~ ^[a-z]+(:[A-Za-z0-9_-]+)?$ ]] || { echo "shot: bad --view $v" >&2; exit 2; }; done
 [ ${#views[@]} -gt 0 ] || { [ $empty = 1 ] && views=(draft) || views=(chat); }
 

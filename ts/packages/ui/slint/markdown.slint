@@ -311,6 +311,8 @@ component LinkLayer {
 // A read-only TextInput holds the drawn words invisibly, for selecting; the links lie over both (`LinkLayer`).
 // Also a user's bubble: its text selects and copies, its links open.
 export component Selectable inherits Rectangle {
+    // false: drawn only, not selectable (text drawn bold is wider than the plain text the selection lies on).
+    in property <bool> select: true;
     in property <styled-text> text;
     in property <string> plain;
     in property <[MdLink]> links;
@@ -350,6 +352,7 @@ export component Selectable inherits Rectangle {
         ink: root.ink;
     }
     field := TextInput {
+        visible: root.select;
         width: parent.width;
         height: parent.height;
         read-only: true;
@@ -415,6 +418,8 @@ component Linked inherits Rectangle {
 export component MdBlockView {
     in property <MdBlock> block;
     in property <length> size: 16px;
+    // false: its text isn't selectable (a Person AI bubble, whose bold is drawn bold: see Selectable).
+    in property <bool> select: true;
     callback link(string);
     callback copy(string);
     property <length> indent: block.quote * 10px;
@@ -441,6 +446,7 @@ export component MdBlockView {
             plain: root.block.plain;
             links: root.block.links;
             key: root.block.key;
+            select: root.select;
             size: root.size;
             ink: root.ink;
             link(u) => {
@@ -452,6 +458,7 @@ export component MdBlockView {
             plain: root.block.plain;
             links: root.block.links;
             key: root.block.key;
+            select: root.select;
             size: MdSizes.heading(root.block.level);
             ink: root.ink;
             link(u) => {
@@ -461,12 +468,13 @@ export component MdBlockView {
         if root.block.kind == "li": Rectangle {
             min-height: li-text.min-height;
             preferred-height: li-text.preferred-height;
+            // Sized for 16px text; smaller text (a Person AI bubble's 14px) gets a smaller dot, higher up.
             if root.block.marker == "•": Rectangle {
-                x: root.box + 4px;
-                y: 7px;
-                width: 7px;
-                height: 7px;
-                border-radius: 3.5px;
+                x: root.box + 4px + (16px - root.size) * 0.2;
+                y: 7px - (16px - root.size) * 0.6;
+                width: 7px - (16px - root.size) * 0.4;
+                height: self.width;
+                border-radius: self.width / 2;
                 background: root.ink;
             }
             if root.block.marker == "◦": Rectangle {
@@ -494,6 +502,7 @@ export component MdBlockView {
                     plain: root.block.plain;
                     links: root.block.links;
                     key: root.block.key;
+                    select: root.select;
                     size: root.size;
                     ink: root.ink;
                     link(u) => {

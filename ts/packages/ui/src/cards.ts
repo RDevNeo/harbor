@@ -137,9 +137,10 @@ export function columnWeights(cols: string[][]): number[] {
 const sources = new WeakMap<MdBlockData, string>();
 
 /** `seq`: the transcript item the text is in, so a selection of it can be mentioned (-1: none). `owner`: the card
- * whose blocks these are (`blockOwner`), so their keys are its own and go with it; null: numbered ones (other pages). */
-export function mdBlocks(md: string, seq = -1, owner: string | null = null): MdBlockData[] {
-  const bs = blocks(md);
+ * whose blocks these are (`blockOwner`), so their keys are its own and go with it; null: numbered ones (other pages).
+ * `bold`: bold spans drawn bold (a Person AI bubble). */
+export function mdBlocks(md: string, seq = -1, owner: string | null = null, bold = false): MdBlockData[] {
+  const bs = blocks(md, bold);
   const at = place(bs);
   const out = bs.map((b, i) => {
     const d = blockData(b, at[i] as Placed, seq, owner, i);

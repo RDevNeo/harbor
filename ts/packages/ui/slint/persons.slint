@@ -4,6 +4,7 @@
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
 import { ShowSideBtn, Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PageHead, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip } from "ds.slint";
 import { ScrollView } from "std-widgets.slint";
+import { MdBlock, MdBlockView } from "markdown.slint";
 
 export struct PRow {
     kind: string, // all | section | store | person | settled | empty
@@ -30,6 +31,15 @@ export struct PRow {
     dim: bool,
 }
 
+// One piece of the Person AI's answer: a markdown block (markdown.slint, as Projects' chat draws it) or a message it
+// drafted for the person (a ```reply block: `draft`, its text in `text`).
+export struct PPart {
+    draft: bool,
+    text: string,
+    block: MdBlock,
+    gap: length,
+}
+
 export struct PMsg {
     kind: string, // msg | day | unread | subject | ai | out
     id: string,
@@ -48,11 +58,12 @@ export struct PMsg {
     failed: bool,
     sending: bool,
     streaming: bool,
+    // The Person AI's thread: its answers' parts (markdown blocks and ```reply drafts) and the user's questions.
+    to-ai: bool,
+    parts: [PPart],
 }
 
 export struct PMenu { id: string, label: string, icon: string, sub: string, danger: bool, sep: bool, header: bool, disabled: bool }
-
-export struct PDetail { label: string, value: string, icon: string, link: string }
 
 export struct PUpload { title: string, meta: string, url: string, thumb: image, has-thumb: bool }
 
@@ -109,11 +120,8 @@ export global PersonsBus {
     in property <bool> p-has-avatar;
     in property <string> p-sub;
     in-out property <string> p-notes;
-    in property <[PDetail]> p-details;
-    in property <[PChip]> p-groups;
     in property <[PSocial]> p-socials;
     in property <bool> p-socials-loading;
-    in property <[PChip]> p-settle; // per section: on = settled there
     in property <string> p-pos; // "3 of 12"
     // popup menu
     in property <[PMenu]> menu;
@@ -164,6 +172,10 @@ export global PersonsBus {
     callback toggle-ai();
     callback save-notes(string);
     callback open-url(string);
+    // a link in the AI's answer (markdown.slint reports selections too: ui.ts keeps web links only)
+    callback md-link(string);
+    // a draft's "Use as reply": into the composer, to the person
+    callback use-draft(string);
     callback menu-pick(string);
     callback menu-close();
     callback dialog-ok();
@@ -173,7 +185,6 @@ export global PersonsBus {
     callback add-person();
     callback prev();
     callback next();
-    callback settle(string);
     callback toast-act();
 }
 
@@ -445,34 +456,165 @@ component ListPane inherits Rectangle {
 
 // ---------- chat ----------
 
+// A message the Person AI drafted for the person (a ```reply block in its answer): in the user's own bubble colour,
+// as it would go out, with copy and "Use as reply" (into the composer) once the answer is done.
+component DraftCard inherits Rectangle {
+    in property <string> text;
+    in property <bool> done;
+    property <bool> copied;
+    min-height: lay.min-height;
+    preferred-height: lay.preferred-height;
+    border-radius: Ds.radius-lg;
+    background: Theme.dark ? #1f2a44 : #e6f0ff;
+    border-width: 1px;
+    border-color: Theme.dark ? #2d3d63 : #c9dcfa;
+    lay := VerticalLayout {
+        padding-left: Ds.sp6;
+        padding-right: Ds.sp4;
+        padding-top: Ds.sp3;
+        padding-bottom: Ds.sp5;
+        spacing: Ds.sp2;
+        HorizontalLayout {
+            height: 28px;
+            spacing: Ds.sp3;
+            Glyph {
+                icon: Icons.corner-up-right;
+                size: Ds.icon-xs;
+                color: Ds.caps-fg;
+            }
+            Text {
+                text: root.done ? "REPLY DRAFT" : "REPLY DRAFT · WRITING…";
+                font-size: Ds.t-caps;
+                font-weight: 500;
+                letter-spacing: Ds.caps-spacing * 1px;
+                color: Ds.caps-fg;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            if root.done: Btn {
+                icon: root.copied ? Icons.check : Icons.copy;
+                size: BtnSize.icon-xs;
+                variant: Variant.ghost-muted;
+                tip: root.copied ? "Copied" : "Copy";
+                clicked => {
+                    clip.text = root.text;
+                    clip.select-all();
+                    clip.copy();
+                    clip.text = "";
+                    root.copied = true;
+                }
+            }
+            if root.done: Btn {
+                text: "Use as reply";
+                icon: Icons.corner-up-right;
+                size: BtnSize.xs;
+                variant: Variant.outline;
+                tip: "Put it in the message box, to send to them";
+                clicked => {
+                    PersonsBus.use-draft(root.text);
+                }
+            }
+        }
+        HorizontalLayout {
+            padding-right: Ds.sp2;
+            Text {
+                text: root.text;
+                font-size: Ds.t-body;
+                color: Theme.fg;
+                wrap: word-wrap;
+            }
+        }
+    }
+    clip := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+    }
+    Timer {
+        interval: 1500ms;
+        running: root.copied;
+        triggered => {
+            root.copied = false;
+        }
+    }
+}
+
+// A message, the user's note to the Person AI, or the AI's answer. The AI's thread has its own tint and a small
+// caps label with the time ("AI · 10:35", "TO THE AI · 10:33"); an answer is as wide as the column and draws its
+// markdown as Projects' chat does (markdown.slint), its ```reply drafts as DraftCards.
 component Bubble {
     in property <PMsg> m;
     in property <length> max-w;
     callback menu(length, length);
-    property <color> bg: m.kind == "ai" ? (Theme.dark ? #1d1830 : #f3effe) : m.mine ? (Theme.dark ? #1f2a44 : #e6f0ff) : Theme.gray-100;
-    property <length> text-w: min(root.max-w - 24px, body.preferred-width);
-    property <length> w: max(root.m.has-image ? root.m.img-w : 0px, max(text-w, root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 24px;
+    property <bool> ai: m.kind == "ai";
+    property <bool> thread: ai || m.to-ai;
+    property <bool> copied;
+    property <color> ai-ink: Theme.dark ? #b9a6ff : #6d4ad6;
+    property <color> bg: ai ? (Theme.dark ? #1d1830 : #f3effe) : m.to-ai ? (Theme.dark ? #241d3b : #ebe4fd) : m.mine ? (Theme.dark ? #1f2a44 : #e6f0ff) : Theme.gray-100;
+    property <length> pad-x: thread ? Ds.sp6 : 12px;
+    property <length> text-w: min(root.max-w - 2 * pad-x, body.preferred-width);
+    // "TO THE AI · 00:00" fits.
+    property <length> label-w: thread ? 124px : 0px;
+    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
     height: lay.preferred-height;
     lay := HorizontalLayout {
         width: root.width;
-        alignment: root.m.mine && root.m.kind != "ai" ? end : start;
-        padding-top: root.m.first ? 6px : 1px;
+        alignment: root.m.mine && !root.ai ? end : start;
+        padding-top: root.m.first ? (root.thread ? 8px : 6px) : 1px;
         Rectangle {
             width: min(root.max-w, root.w);
             border-radius: Ds.radius-xl;
             background: root.bg;
-            border-width: root.m.failed ? 1px : 0px;
-            border-color: Theme.red-800;
+            border-width: root.m.failed ? 1px : root.thread ? 1px : 0px;
+            border-color: root.m.failed ? Theme.red-800 : root.ai-ink.with-alpha(Theme.dark ? 0.22 : 0.18);
             col := VerticalLayout {
-                padding: 8px;
-                padding-left: 12px;
-                padding-right: 12px;
-                spacing: 4px;
-                if root.m.kind == "ai": Text {
-                    text: root.m.streaming ? "AI · writing…" : "AI";
-                    font-size: 10.5px;
-                    font-weight: 600;
-                    color: Theme.dark ? #b9a6ff : #6d4ad6;
+                padding-top: root.thread ? Ds.sp5 : 8px;
+                padding-bottom: root.thread ? Ds.sp6 : 8px;
+                padding-left: root.pad-x;
+                padding-right: root.pad-x;
+                spacing: root.thread ? Ds.sp3 : 4px;
+                if root.thread: HorizontalLayout {
+                    spacing: Ds.sp2;
+                    HorizontalLayout {
+                        spacing: Ds.sp3;
+                        Glyph {
+                            icon: Icons.sparkles;
+                            size: Ds.icon-xs;
+                            color: root.ai-ink;
+                        }
+                        Text {
+                            text: root.ai ? (root.m.streaming ? "AI · WRITING…" : "AI") : "TO THE AI";
+                            font-size: Ds.t-caps;
+                            font-weight: 600;
+                            letter-spacing: Ds.caps-spacing * 1px;
+                            color: root.ai-ink;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "· " + root.m.time;
+                            font-size: Ds.t-caps;
+                            color: Ds.muted-fg;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    if root.ai && !root.m.streaming: Btn {
+                        height: 16px;
+                        icon: root.copied ? Icons.check : Icons.copy;
+                        size: BtnSize.icon-xs;
+                        variant: Variant.ghost-muted;
+                        tip: root.copied ? "Copied" : "Copy the answer";
+                        clicked => {
+                            clip.text = root.m.text;
+                            clip.select-all();
+                            clip.copy();
+                            clip.text = "";
+                            root.copied = true;
+                        }
+                    }
                 }
                 if root.m.has-reply: Rectangle {
                     height: rt.preferred-height + 6px;
@@ -539,14 +681,37 @@ component Bubble {
                     }
                 }
                 body := Text {
-                    visible: root.m.text != "";
-                    height: root.m.text != "" ? self.preferred-height : 0px;
-                    text: root.m.text;
+                    visible: !root.ai && root.m.text != "";
+                    height: self.visible ? self.preferred-height : 0px;
+                    text: root.ai ? "" : root.m.text;
                     font-size: Ds.t-body;
                     color: Theme.fg;
                     wrap: word-wrap;
                 }
-                HorizontalLayout {
+                if root.ai: VerticalLayout {
+                    for p in root.m.parts: VerticalLayout {
+                        padding-top: p.gap;
+                        if !p.draft: MdBlockView {
+                            block: p.block;
+                            size: Ds.t-body;
+                            select: false;
+                            link(u) => {
+                                PersonsBus.md-link(u);
+                            }
+                            copy(t) => {
+                                clip.text = t;
+                                clip.select-all();
+                                clip.copy();
+                                clip.text = "";
+                            }
+                        }
+                        if p.draft: DraftCard {
+                            text: p.text;
+                            done: !root.m.streaming;
+                        }
+                    }
+                }
+                if !root.thread: HorizontalLayout {
                     alignment: end;
                     spacing: 4px;
                     Text {
@@ -556,7 +721,21 @@ component Bubble {
                     }
                 }
             }
+            clip := TextInput {
+                visible: false;
+                width: 0px;
+                height: 0px;
+            }
+            Timer {
+                interval: 1500ms;
+                running: root.copied;
+                triggered => {
+                    root.copied = false;
+                }
+            }
+            // Under the answer's text and buttons (they come later): a right-click anywhere else opens the menu.
             TouchArea {
+                z: -1;
                 pointer-event(e) => {
                     if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
                         root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
@@ -1035,73 +1214,6 @@ component Panel inherits PanelSurface {
                             tip: "Delete";
                             clicked => {
                                 PersonsBus.menu-pick("panel:delete");
-                            }
-                        }
-                    }
-                }
-                if PersonsBus.p-details.length > 0: PanelSection {
-                    title: "IDENTITIES";
-                    for d in PersonsBus.p-details: HorizontalLayout {
-                        spacing: 8px;
-                        height: 24px;
-                        VerticalLayout {
-                            alignment: center;
-                            ChannelMark {
-                                kind: d.icon;
-                            }
-                        }
-                        Text {
-                            text: d.value;
-                            font-size: Ds.t-sm;
-                            color: Theme.fg;
-                            overflow: elide;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        if d.label != "": Text {
-                            text: d.label;
-                            font-size: Ds.t-xs;
-                            color: Theme.subtle;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-                if PersonsBus.p-groups.length > 0: PanelSection {
-                    title: "STORES AND LISTS";
-                    for g in PersonsBus.p-groups: HorizontalLayout {
-                        spacing: 8px;
-                        height: 24px;
-                        StatusDot {
-                            color: g.color;
-                            size: 8px;
-                        }
-                        Text {
-                            text: g.label;
-                            font-size: Ds.t-sm;
-                            color: Theme.fg;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        if g.on: Text {
-                            text: "owner";
-                            font-size: Ds.t-xs;
-                            color: Theme.amber-900;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-                if PersonsBus.p-settle.length > 0: PanelSection {
-                    title: "SETTLED";
-                    HorizontalLayout {
-                        spacing: 6px;
-                        alignment: start;
-                        for s in PersonsBus.p-settle: Btn {
-                            text: s.on ? s.label + " · settled" : "Settle in " + s.label;
-                            icon: s.on ? Icons.unarchive : Icons.archive;
-                            size: BtnSize.xs;
-                            variant: s.on ? Variant.secondary : Variant.outline;
-                            clicked => {
-                                PersonsBus.settle(s.id);
                             }
                         }
                     }

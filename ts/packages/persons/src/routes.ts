@@ -3,6 +3,7 @@
 import type { AgentDiscord } from "./agent/index.ts";
 import { statSync } from "node:fs";
 import { KIND_LABEL, peerOf, isSection, normWhatsApp, validPeer } from "./model/accounts.ts";
+import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
 import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel } from "./model/data.ts";
@@ -31,6 +32,8 @@ const q = (c: Call, k: string): string | null => c.query.find(([x]) => x === k)?
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const json = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json;
+/** The AI thread for a chat: each answer also split into its markdown (with the phone's blocks) and its ```reply drafts. */
+const aiJson = (items: readonly { role: string; text: string }[]): Json => json(items.map((a) => (a.role === "user" ? a : { ...a, parts: aiPartsJson(a.text) })));
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
 export const colorOf = (id: string): string => {
@@ -338,7 +341,7 @@ export class PersonsRoutes {
     const row = this.s.rowInfo(p, section);
     const personJson = { id: p.id, name: personLabel(p), initials: initials(personLabel(p)), color: colorOf(p.id), avatar: pic, avatarPath: this.picture(p), presence: row.presence ?? null };
     const ai = this.extra.ai ? await this.extra.ai.items(p, section ?? conn?.section ?? "stores").catch(() => []) : [];
-    if (!conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: json(ai) });
+    if (!conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: aiJson(ai) });
     const peer = peerOf(p, conn.kind, conn.section);
     const before = q(c, "before");
     if (before) {
@@ -366,7 +369,7 @@ export class PersonsRoutes {
       unreadFrom: firstUnread?.id ?? null,
       messages: shown.map((m) => this.msgJson(m, cur, byId)),
       outgoing: (cur.outgoing[peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })) })),
-      ai: json(ai),
+      ai: aiJson(ai),
     });
   }
 

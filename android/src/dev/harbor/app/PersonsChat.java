@@ -656,16 +656,81 @@ final class PersonsChat {
         h.addView(Ui.subtitle(Ui.text(a, " · Only you see this" + (t > 0 ? " · " + PersonsUi.clock(t) : ""), 12, Ui.G600)));
         b.addView(h, Ui.margins(Ui.wrap(), 0, 0, 0, 4));
         String text = PersonsUi.s(e, "text");
+        JSONArray parts = mine ? null : e.optJSONArray("parts");
+        // "Use as reply" in the menu: the first draft it wrote, else the whole answer.
+        String use = text;
+        for (int i = 0; parts != null && i < parts.length(); i++) {
+            JSONObject p = parts.optJSONObject(i);
+            if (p != null && "draft".equals(PersonsUi.s(p, "type"))) { use = PersonsUi.s(p, "text"); break; }
+        }
+        String useText = use;
+        View.OnLongClickListener lp = v -> { aiMenu(text, useText, mine); return true; };
+        b.setOnLongClickListener(lp);
+        if (parts != null && parts.length() > 0) {
+            // The answer's markdown as the hub's blocks (Projects' Render), its ```reply drafts as cards
+            // (the engine's persons aiparts.ts splits them).
+            boolean done = !e.optBoolean("streaming");
+            Render r = new Render(a, lp);
+            for (int i = 0; i < parts.length(); i++) {
+                JSONObject p = parts.optJSONObject(i);
+                if (p == null) continue;
+                View v;
+                if ("draft".equals(PersonsUi.s(p, "type"))) v = draftCard(PersonsUi.s(p, "text"), done);
+                else {
+                    LinearLayout col = Ui.col(a);
+                    JSONArray bs = p.optJSONArray("blocks");
+                    if (bs != null && bs.length() > 0) r.blocks(col, bs);
+                    else col.addView(r.para(PersonsUi.s(p, "text")));
+                    v = col;
+                }
+                b.addView(v, Ui.margins(Ui.fill(), 0, b.getChildCount() > 1 ? 10 : 0, 0, 0));
+            }
+            wrap.addView(b, new LinearLayout.LayoutParams(maxW() + Ui.dp(24), LinearLayout.LayoutParams.WRAP_CONTENT));
+            return wrap;
+        }
         TextView tv = Ui.text(a, text.isEmpty() ? "…" : text, 15, Ui.FG);
         tv.setMaxWidth(maxW());
         tv.setLinkTextColor(Ui.BLUE);
         Linkify.addLinks(tv, Linkify.WEB_URLS);
         b.addView(tv);
-        View.OnLongClickListener lp = v -> { aiMenu(text, mine); return true; };
-        b.setOnLongClickListener(lp);
         tv.setOnLongClickListener(lp);
         wrap.addView(b, Ui.wrap());
         return wrap;
+    }
+
+    /** A message the AI drafted for the person (a ```reply block): in the user's own bubble colour, as it
+     *  would go out, with "Use as reply" (into the composer) and Copy once the answer is done. */
+    private View draftCard(String draft, boolean done) {
+        LinearLayout card = Ui.col(a);
+        card.setBackground(Ui.round(Ui.G100, Ui.LINE, 14));
+        card.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(10));
+        LinearLayout h = Ui.row(a);
+        h.setGravity(Gravity.CENTER_VERTICAL);
+        h.addView(Ui.icon(a, Ui.I_SEND, 12, Ui.G600));
+        TextView label = Ui.bold(a, done ? "REPLY DRAFT" : "REPLY DRAFT · WRITING…", 11.5f, Ui.G600);
+        label.setLetterSpacing(0.06f);
+        h.addView(label, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        card.addView(h);
+        TextView t = Ui.text(a, draft, 15, Ui.FG);
+        t.setTextIsSelectable(true);
+        card.addView(t, Ui.margins(Ui.fill(), 0, 6, 0, 0));
+        if (done) {
+            LinearLayout acts = Ui.row(a);
+            acts.setGravity(Gravity.END);
+            acts.addView(Ds.chip(a, "Copy", false, v -> Ui.copy(a, draft)));
+            acts.addView(Ds.chip(a, "Use as reply", true, v -> useReply(draft)), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            card.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+        }
+        return card;
+    }
+
+    /** A draft into the composer, to send to the person. */
+    private void useReply(String text) {
+        toAi = false;
+        composer();
+        edit.setText(text);
+        edit.setSelection(edit.length());
+        edit.requestFocus();
     }
 
     private View pendingView(JSONObject o) {
@@ -713,19 +778,14 @@ final class PersonsChat {
         }).show();
     }
 
-    private void aiMenu(String text, boolean mine) {
+    private void aiMenu(String text, String use, boolean mine) {
         List<String> opts = new ArrayList<>();
         if (!mine && acctId() != null) opts.add("Use as reply");
         if (!text.isEmpty()) opts.add("Copy text");
         if (opts.isEmpty()) return;
         Ui.dialog(a).setItems(opts.toArray(new String[0]), (d, w) -> {
-            if (opts.get(w).equals("Use as reply")) {
-                toAi = false;
-                composer();
-                edit.setText(text);
-                edit.setSelection(edit.length());
-                edit.requestFocus();
-            } else Ui.copy(a, text);
+            if (opts.get(w).equals("Use as reply")) useReply(use);
+            else Ui.copy(a, text);
         }).show();
     }
 

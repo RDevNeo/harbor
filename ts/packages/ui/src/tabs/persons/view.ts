@@ -198,7 +198,9 @@ export function listRows(s: StateJson, q: string, open: UiState["open"]): Row[] 
 export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null }
 export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[] }
 export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[] }
-export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean }
+/** An answer's pieces (the engine's persons aiparts.ts): markdown, and the messages it drafted for the person (```reply). */
+export type AiPartJson = { type: "text"; text: string } | { type: "draft"; text: string };
+export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; parts?: AiPartJson[] }
 export interface ChatJson {
   person: { id: string; name: string; initials: string; color: string; avatar: string | null; avatarPath: string | null; presence: string | null; status: { text: string; tone: string } | null };
   account: { id: string; kind: string; section: string; label: string; connected: boolean } | null;
@@ -229,6 +231,10 @@ export interface MsgRow {
   failed: boolean;
   sending: boolean;
   streaming: boolean;
+  /** The user's question to the Person AI (kind "out"). */
+  toAi: boolean;
+  /** The AI's answer in pieces (kind "ai"); a whole answer as markdown when the engine sent none. */
+  parts: AiPartJson[];
 }
 
 const hhmm = (iso: string): string => {
@@ -264,7 +270,7 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
-  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false });
+  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [] });
   let lastThread: string | null = null;
   for (const m of c.messages) {
     const r = blank("msg", m.id);
@@ -290,9 +296,10 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     if (a.role === "user") {
       r.kind = "out";
       r.mine = true;
-      r.meta = "to the AI";
+      r.toAi = true;
     }
     r.text = a.text || (a.streaming ? "…" : "");
+    if (a.role !== "user") r.parts = a.parts ?? (r.text ? [{ type: "text", text: r.text }] : []);
     r.time = hhmm(a.at);
     r.streaming = !!a.streaming;
     items.push({ at: a.at, row: r });
@@ -329,4 +336,9 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     out.push(it.row);
   }
   return out;
+}
+
+/** The sections a person is in (for Settle in the All people menu): Stores when in a store, and their lists that are sections. */
+export function personSections(p: Pick<PersonJson, "storeIds" | "listIds">): string[] {
+  return [...(p.storeIds.length ? ["stores"] : []), ...p.listIds.filter((x) => x === "creators" || x === "spokpay")];
 }
