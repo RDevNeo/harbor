@@ -409,10 +409,50 @@ export function createRoutineEngine(): TabEngine & { store(): RoutineStore } {
     start: (c) => {
       ctx = c;
       s = new RoutineStore(join(c.dir, "store.json"));
+      // Screenshots (scripts/shot --env HARBOR_FAKE_ROUTINE=1): Igor's Plan with two weeks of made-up days.
+      if (c.env.HARBOR_FAKE_ROUTINE === "1" && !s.items[DATA_KEY]) {
+        s.setData(fakeData());
+        s.items[WALK_KEY] = JSON.stringify({ days: fakeWalk() });
+        s.save();
+      }
     },
     route,
     store: () => s,
   };
+}
+
+/** Made-up data for screenshots: Igor's Plan, the last 16 days partly done, today half done, a stopwatch paused. */
+export function fakeData(now = new Date()): AppData {
+  let d = apply(defaultData(), { act: "plan", id: "igor" }, now.getTime());
+  const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  for (let i = 16; i >= 1; i--) {
+    const at = day0.getTime() - i * 86400_000;
+    const k = dateKey(new Date(at));
+    for (const g of d.goals) {
+      const part = (i * 7 + g.name.length) % 5 === 0 ? 0.4 : 1;
+      if ((i + g.name.length) % 6 === 0) continue;
+      const entry: AppData["entries"][string][number] = { id: uid(), goalId: g.id, amount: Math.round(g.target * part), at };
+      if (g.kind === "ride") entry.ride = { km: 8 + (i % 5), gainM: 40 + i * 3, durationSec: g.target, avgKmh: 18, thumb: [[0, 0.2], [0.3, 0.1], [0.6, 0.4], [0.9, 0.3], [1, 0.8], [0.5, 1], [0.1, 0.7], [0, 0.2]] };
+      d = { ...d, entries: { ...d.entries, [k]: [...(d.entries[k] ?? []), entry] } };
+    }
+  }
+  const t = now.getTime();
+  d = apply(d, { act: "log", goal: "water", amount: 1750 }, t);
+  d = apply(d, { act: "log", goal: "pushups", amount: 36 }, t);
+  d = apply(d, { act: "log", goal: "abs", amount: 15 }, t);
+  d = apply(d, { act: "timer", goal: "plank", cmd: "start" }, t - 75_000);
+  d = apply(d, { act: "timer", goal: "plank", cmd: "pause" }, t);
+  return d;
+}
+
+function fakeWalk(now = new Date()): WalkDays {
+  const out: WalkDays = {};
+  for (let i = 0; i < 56; i++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const km = Math.round((2 + 4 * Math.abs(Math.sin(i * 1.7)) + (day.getDay() === 0 ? 3 : 0)) * 100) / 100;
+    out[dateKey(day)] = i % 9 === 4 ? { km, approx: true } : { km };
+  }
+  return out;
 }
 
 export const routineEngine = createRoutineEngine();

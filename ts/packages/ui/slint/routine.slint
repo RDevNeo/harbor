@@ -1,14 +1,1416 @@
+// Routine tab (Schedule Fixer, moved into Hub): Today, History, Sleep, Goals and Coach, as its React screens were
+// (creators-hub src/routine), drawn natively. RoutineBus is driven by src/tabs/routine/ui.ts; the data is the
+// engine's (ts/tabs/routine), shared with Hub for Android.
 import { Theme } from "theme.slint";
+import { Btn, Variant, BtnSize, Input, TipArea, Card } from "widgets.slint";
+
+export struct RtQuick { label: string, amount: int }
+export struct RtGoal {
+    id: string, name: string, color: int, glyph: string, done: bool, bonus: bool, value: string, rest: string,
+    frac: float, ring: string, streak: int, kind: string, quick: [RtQuick], session: string, clock: string,
+    sub: string, can-undo: bool, can-reset: bool, disabled: bool,
+}
+export struct RtSeg { id: string, label: string }
+export struct RtStreak { id: string, name: string, color: int, glyph: string, line: string, streak: int }
+export struct RtCell { col: int, row: int, level: int, today: bool, tip: string }
+export struct RtRide { day: string, km: string, time: string, gain: string, thumb: string }
+export struct RtBar { frac: float, approx: bool, today: bool, tip: string }
+export struct RtWake { time: string, meta: string, rec: bool }
+export struct RtRow { id: string, name: string, color: int, glyph: string, line: string }
+export struct RtPlan { id: string, name: string, meta: string, on: bool }
+export struct RtChip { key: string, ok: bool, label: string, can-undo: bool, undone: bool }
+export struct RtMsg { id: string, agent: bool, text: string, done: bool, chips: [RtChip] }
+export struct RtDay { label: string, state: int }
 
 export global RoutineBus {
-    in-out property <bool> ready;
+    // Goal colors (Schedule Fixer's COLORS, then water's blue): goals carry an index.
+    out property <[color]> palette: [#7c5cff, #22c55e, #f97316, #06b6d4, #ec4899, #eab308, #ef4444, #3b82f6];
+    in property <string> section: "today";
+    in property <bool> loading: true;
+    in property <bool> picking;
+    in property <string> error;
+    // Today
+    in property <float> pct;
+    in property <string> pct-ring;
+    in property <string> walk;
+    in property <string> empty;
+    in property <bool> dense;
+    in property <[RtGoal]> goals;
+    in property <string> confirm-reset;
+    // History
+    in property <string> hsel: "all";
+    in property <[RtSeg]> segs;
+    in property <[RtStreak]> streaks;
+    in property <[RtCell]> cells;
+    in property <int> heat: -1;
+    in property <string> full-days;
+    in property <bool> walk-view;
+    in property <[string]> walk-totals;
+    in property <[RtBar]> walk-bars;
+    in property <string> walk-from;
+    in property <string> walk-to;
+    in property <[RtRide]> rides;
+    in property <string> rides-week;
+    in property <string> rides-total;
+    // Sleep
+    in property <string> wake-by;
+    in property <string> last-alarm;
+    in property <[RtWake]> wakes;
+    // Goals
+    in property <[RtRow]> rows;
+    in property <string> plan-label;
+    in property <[RtPlan]> plans;
+    in property <string> confirm-del;
+    // The goal form
+    in property <string> f-title;
+    in-out property <string> f-name;
+    in property <int> f-type;
+    in-out property <string> f-target;
+    in-out property <string> f-unit;
+    in property <[RtDay]> f-days;
+    in property <[string]> f-icons;
+    in property <int> f-icon;
+    in property <int> f-color;
+    in property <string> f-error;
+    // Import (Schedule Fixer's export)
+    in-out property <string> imp-text;
+    in property <string> imp-error;
+    in property <string> imp-summary;
+    in property <bool> imp-busy;
+    // Coach
+    in property <[RtMsg]> msgs;
+    in property <bool> coach-running;
+    in property <string> coach-note;
+    in-out property <string> coach-text;
+    // "" none, "form", "plans", "wake", "import"
+    in property <string> sheet;
+
+    callback pick-section(string);
+    callback quick(string, int);
+    callback undo(string);
+    callback reset-ask(string);
+    callback reset(string);
+    callback timer(string, string);
+    callback pick-history(string);
+    callback sleep-now();
+    callback pick-wake(int);
+    callback wake-by-set(string);
+    callback close-sheet();
+    callback goal-new();
+    callback goal-edit(string);
+    callback del-ask(string);
+    callback del(string);
+    callback f-pick-type(int);
+    callback f-day(int);
+    callback f-pick-icon(int);
+    callback f-pick-color(int);
+    callback f-save();
+    callback plans-open();
+    callback plan-pick(string);
+    callback import-open();
+    callback import-read();
+    callback import-go();
+    callback coach-send();
+    callback coach-undo(string);
+}
+
+/** A progress ring: the arc's path comes from ui.ts (0..100 box), the goal's mark in the middle. */
+component Ring {
+    in property <string> arc;
+    in property <color> tint;
+    in property <length> size: 46px;
+    in property <length> stroke: 5px;
+    width: size;
+    height: size;
+    Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: Theme.gray-300;
+        stroke-width: root.stroke;
+        fill: transparent;
+        commands: "M 50 6 A 44 44 0 1 1 49.99 6";
+    }
+    if root.arc != "": Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: root.tint;
+        stroke-width: root.stroke;
+        stroke-line-cap: round;
+        fill: transparent;
+        commands: root.arc;
+    }
+    @children
+}
+
+component Mark inherits Text {
+    in property <string> glyph;
+    in property <length> size: 18px;
+    text: glyph;
+    font-family: "lucide";
+    font-size: size;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+/** A pill button (quick adds, Start/Pause/Stop). */
+component Chip {
+    in property <string> text;
+    in property <string> glyph;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    in property <bool> danger;
+    callback clicked();
+    height: 32px;
+    min-width: 40px;
+    Rectangle {
+        border-radius: 16px;
+        background: !root.enabled ? Theme.gray-100 : root.danger ? Theme.red-200 : root.on ? Theme.gray-1000 : area.has-hover ? Theme.gray-300 : Theme.gray-200;
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        alignment: center;
+        if root.glyph != "": Mark {
+            glyph: root.glyph;
+            size: 15px;
+            color: root.on ? Theme.bg100 : Theme.fg;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            font-size: 13px;
+            font-weight: 600;
+            color: !root.enabled ? Theme.gray-700 : root.danger ? Theme.red-900 : root.on ? Theme.bg100 : Theme.fg;
+            vertical-alignment: center;
+        }
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+/** A round icon button (undo, reset, edit, delete). */
+component IconBtn {
+    in property <string> glyph;
+    in property <bool> enabled: true;
+    in property <string> tip;
+    callback clicked();
+    width: 32px;
+    height: 32px;
+    Rectangle {
+        border-radius: 16px;
+        background: area.has-hover && root.enabled ? Theme.gray-200 : transparent;
+    }
+    Mark {
+        glyph: root.glyph;
+        size: 16px;
+        color: root.enabled ? Theme.subtle : Theme.gray-500;
+    }
+    area := TipArea {
+        tip: root.tip;
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Title inherits Text {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    color: Theme.fg;
+}
+
+component Muted inherits Text {
+    font-size: 13px;
+    color: Theme.subtle;
+    wrap: word-wrap;
+}
+
+component TodayScreen inherits VerticalLayout {
+    spacing: 12px;
+    HorizontalLayout {
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Title {
+                text: "Today";
+            }
+            if RoutineBus.walk != "": HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Mark {
+                    glyph: "\u{e3b9}";
+                    size: 14px;
+                    color: Theme.subtle;
+                }
+                Muted {
+                    text: RoutineBus.walk;
+                }
+            }
+        }
+        Ring {
+            arc: RoutineBus.pct-ring;
+            tint: Theme.green-800;
+            size: 56px;
+            stroke: 6px;
+            Text {
+                text: Math.round(RoutineBus.pct * 100) + "%";
+                font-size: 14px;
+                font-weight: 700;
+                color: Theme.fg;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if RoutineBus.empty == "first": Card {
+        height: 110px;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+            alignment: center;
+            Muted {
+                text: "Add your first daily goal to get started.";
+                horizontal-alignment: center;
+            }
+            HorizontalLayout {
+                alignment: center;
+                Btn {
+                    text: "Add a goal";
+                    variant: primary;
+                    clicked => {
+                        RoutineBus.goal-new();
+                    }
+                }
+            }
+        }
+    }
+    if RoutineBus.empty == "rest": Card {
+        height: 60px;
+        Muted {
+            text: "Rest day — nothing scheduled today.";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    for g in RoutineBus.goals: Card {
+        height: RoutineBus.dense ? 104px : 124px;
+        background: g.done ? Theme.bg200 : Theme.bg100;
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 12px;
+                Ring {
+                    arc: g.ring;
+                    tint: RoutineBus.palette[g.color];
+                    size: RoutineBus.dense ? 36px : 46px;
+                    stroke: RoutineBus.dense ? 4px : 5px;
+                    Mark {
+                        glyph: g.done ? "\u{e06c}" : g.glyph;
+                        size: RoutineBus.dense ? 16px : 20px;
+                        color: RoutineBus.palette[g.color];
+                    }
+                }
+                VerticalLayout {
+                    spacing: 3px;
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: g.name;
+                            font-size: 15px;
+                            font-weight: 600;
+                            color: Theme.fg;
+                            horizontal-stretch: 0;
+                        }
+                        if g.bonus: Text {
+                            text: "Bonus";
+                            font-size: 11px;
+                            color: Theme.amber-900;
+                            vertical-alignment: center;
+                        }
+                        if g.done: Text {
+                            text: "Done";
+                            font-size: 11px;
+                            color: Theme.green-900;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        alignment: start;
+                        Text {
+                            text: g.value;
+                            font-size: 15px;
+                            font-weight: 700;
+                            color: Theme.fg;
+                        }
+                        Text {
+                            text: g.rest;
+                            font-size: 13px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if !RoutineBus.dense: Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.gray-200;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * min(1, g.frac);
+                            border-radius: 2px;
+                            background: RoutineBus.palette[g.color];
+                        }
+                    }
+                }
+                if g.streak > 0: HorizontalLayout {
+                    spacing: 3px;
+                    alignment: start;
+                    Mark {
+                        glyph: "\u{e0d2}";
+                        size: 13px;
+                        color: Theme.amber-800;
+                    }
+                    Text {
+                        text: g.streak;
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: Theme.amber-900;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                if g.kind == "ride" || g.kind == "timer": Text {
+                    text: g.clock;
+                    font-size: 18px;
+                    font-weight: 700;
+                    font-family: "Geist Mono";
+                    color: g.session == "running" ? RoutineBus.palette[g.color] : Theme.fg;
+                    vertical-alignment: center;
+                    min-width: 64px;
+                }
+                if g.sub != "": Text {
+                    text: g.sub;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if (g.kind == "ride" || g.kind == "timer") && g.session == "idle": Chip {
+                    glyph: "\u{e13c}";
+                    text: "Start";
+                    enabled: !g.disabled;
+                    clicked => {
+                        RoutineBus.timer(g.id, "start");
+                    }
+                }
+                if (g.kind == "ride" || g.kind == "timer") && g.session == "running": Chip {
+                    glyph: "\u{e12e}";
+                    text: "Pause";
+                    on: true;
+                    enabled: !g.disabled;
+                    clicked => {
+                        RoutineBus.timer(g.id, "pause");
+                    }
+                }
+                if (g.kind == "ride" || g.kind == "timer") && g.session == "paused": Chip {
+                    glyph: "\u{e13c}";
+                    text: "Resume";
+                    enabled: !g.disabled;
+                    clicked => {
+                        RoutineBus.timer(g.id, "resume");
+                    }
+                }
+                if (g.kind == "ride" || g.kind == "timer") && g.session != "idle": Chip {
+                    glyph: "\u{e167}";
+                    enabled: !g.disabled;
+                    clicked => {
+                        RoutineBus.timer(g.id, "stop");
+                    }
+                }
+                for q in g.quick: Chip {
+                    text: q.label;
+                    clicked => {
+                        RoutineBus.quick(g.id, q.amount);
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                if g.session == "idle": IconBtn {
+                    glyph: "\u{e2a1}";
+                    tip: "Undo last";
+                    enabled: g.can-undo;
+                    clicked => {
+                        RoutineBus.undo(g.id);
+                    }
+                }
+                if RoutineBus.confirm-reset == g.id: Chip {
+                    text: "Reset?";
+                    danger: true;
+                    clicked => {
+                        RoutineBus.reset(g.id);
+                    }
+                }
+                if RoutineBus.confirm-reset != g.id: IconBtn {
+                    glyph: "\u{e148}";
+                    tip: "Reset today";
+                    enabled: g.can-reset;
+                    clicked => {
+                        RoutineBus.reset-ask(g.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component HistoryScreen inherits VerticalLayout {
+    spacing: 12px;
+    Title {
+        text: "History";
+    }
+    // The goal picker: All, each goal, Walking (when the phone reads it)
+    Flickable {
+        height: 34px;
+        viewport-width: seg-row.preferred-width;
+        seg-row := HorizontalLayout {
+            spacing: 4px;
+            for s in RoutineBus.segs: Rectangle {
+                property <bool> on: RoutineBus.hsel == s.id;
+                width: seg-text.preferred-width + 24px;
+                height: 30px;
+                border-radius: 15px;
+                background: on ? Theme.gray-1000 : seg-area.has-hover ? Theme.gray-300 : Theme.gray-200;
+                seg-text := Text {
+                    text: s.label;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: on ? Theme.bg100 : Theme.fg;
+                }
+                seg-area := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        RoutineBus.pick-history(s.id);
+                    }
+                }
+            }
+        }
+    }
+    if RoutineBus.walk-view: Card {
+        height: 220px;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 8px;
+                for t[i] in RoutineBus.walk-totals: VerticalLayout {
+                    Text {
+                        text: t;
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Theme.fg;
+                    }
+                    Muted {
+                        text: i == 0 ? "this week" : i == 1 ? "today" : "a day";
+                    }
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                HorizontalLayout {
+                    spacing: 1px;
+                    for b in RoutineBus.walk-bars: Rectangle {
+                        Rectangle {
+                            y: parent.height * (1 - b.frac);
+                            height: parent.height * b.frac;
+                            background: b.today ? Theme.green-800 : b.approx ? Theme.gray-500 : Theme.green-600;
+                            border-radius: 1px;
+                        }
+                        TipArea {
+                            tip: b.tip;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                Muted {
+                    text: RoutineBus.walk-from;
+                }
+                Muted {
+                    text: RoutineBus.walk-to;
+                    horizontal-alignment: right;
+                }
+            }
+        }
+    }
+    if !RoutineBus.walk-view: VerticalLayout {
+        spacing: 8px;
+        for s in RoutineBus.streaks: Card {
+            height: 60px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 12px;
+                Mark {
+                    glyph: s.glyph;
+                    size: 18px;
+                    color: RoutineBus.palette[s.color];
+                    width: 24px;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: s.name;
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.fg;
+                    }
+                    Muted {
+                        text: s.line;
+                        font-size: 12px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: s.streak;
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: Theme.fg;
+                        horizontal-alignment: right;
+                    }
+                    Muted {
+                        text: "streak";
+                        font-size: 11px;
+                        horizontal-alignment: right;
+                    }
+                }
+            }
+        }
+    }
+    if !RoutineBus.walk-view: Card {
+        height: 7 * 22px + 64px;
+        property <color> heat: RoutineBus.heat < 0 ? Theme.green-800 : RoutineBus.palette[RoutineBus.heat];
+        // Weeks as columns (8), Mon..Sun as rows
+        for d[i] in ["M", "", "W", "", "F", "", "S"]: Text {
+            x: 14px;
+            y: 14px + i * 22px;
+            width: 14px;
+            height: 18px;
+            text: d;
+            font-size: 10px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        for c in RoutineBus.cells: Rectangle {
+            x: 34px + c.col * 24px;
+            y: 14px + c.row * 22px;
+            width: 20px;
+            height: 18px;
+            border-radius: 4px;
+            border-width: c.today ? 1.5px : 0px;
+            border-color: Theme.fg;
+            background: c.level == 6 ? transparent : c.level == 5 ? Theme.gray-100 : c.level == 0 ? Theme.gray-200
+                : heat.with-alpha(c.level == 1 ? 0.3 : c.level == 2 ? 0.55 : c.level == 3 ? 0.78 : 1.0);
+            TipArea {
+                tip: c.tip;
+            }
+        }
+        Muted {
+            x: 14px;
+            y: 14px + 7 * 22px + 10px;
+            width: parent.width - 28px;
+            text: RoutineBus.full-days;
+            font-size: 12px;
+        }
+    }
+    if !RoutineBus.walk-view && RoutineBus.rides-total != "": Card {
+        height: 56px + RoutineBus.rides.length * 30px;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 16px;
+                Text {
+                    text: RoutineBus.rides-week + " km this week";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                }
+                Text {
+                    text: RoutineBus.rides-total + " km total";
+                    font-size: 13px;
+                    color: Theme.subtle;
+                }
+            }
+            for r in RoutineBus.rides: HorizontalLayout {
+                height: 24px;
+                spacing: 10px;
+                Path {
+                    width: 22px;
+                    height: 22px;
+                    viewbox-width: 1.2;
+                    viewbox-height: 1.2;
+                    stroke: Theme.fg;
+                    stroke-width: 1.5px;
+                    fill: transparent;
+                    commands: r.thumb;
+                }
+                Text {
+                    text: r.day;
+                    font-size: 13px;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: r.km + " km";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                Muted {
+                    text: r.time;
+                    vertical-alignment: center;
+                }
+                Muted {
+                    text: "↑" + r.gain + " m";
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component SleepScreen inherits VerticalLayout {
+    spacing: 12px;
+    HorizontalLayout {
+        Title {
+            text: "Sleep";
+        }
+        Mark {
+            glyph: "\u{e11e}";
+            size: 36px;
+            color: Theme.subtle;
+            horizontal-alignment: right;
+        }
+    }
+    Btn {
+        text: "Going to sleep now";
+        icon: "\u{e11e}";
+        variant: primary;
+        full-width: true;
+        clicked => {
+            RoutineBus.sleep-now();
+        }
+    }
+    if RoutineBus.last-alarm != "": Card {
+        height: 56px;
+        HorizontalLayout {
+            padding-left: 14px;
+            spacing: 12px;
+            Mark {
+                glyph: "\u{e03a}";
+                size: 20px;
+                color: Theme.fg;
+                width: 24px;
+            }
+            Text {
+                text: RoutineBus.last-alarm;
+                font-size: 15px;
+                font-weight: 600;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+        }
+    }
+    Card {
+        height: 64px;
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            spacing: 12px;
+            Text {
+                text: "Wake up by";
+                font-size: 15px;
+                font-weight: 600;
+                color: Theme.fg;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            wake-field := Input {
+                width: 90px;
+                y: 14px;
+                text: RoutineBus.wake-by;
+                hint: "07:00";
+                mono: true;
+                accepted(t) => {
+                    RoutineBus.wake-by-set(t);
+                }
+                edited(t) => {
+                    if t.character-count == 5 {
+                        RoutineBus.wake-by-set(t);
+                    }
+                }
+            }
+        }
+    }
+    Muted {
+        text: "Sleep runs in cycles of about 90 minutes; waking at the end of one avoids being pulled out of deep sleep. The phone sets the alarm in its Clock app.";
+    }
+}
+
+component GoalsScreen inherits VerticalLayout {
+    spacing: 12px;
+    HorizontalLayout {
+        Title {
+            text: "Goals";
+        }
+        Btn {
+            text: "New";
+            icon: "\u{e13d}";
+            variant: primary;
+            clicked => {
+                RoutineBus.goal-new();
+            }
+        }
+    }
+    Rectangle {
+        height: 36px;
+        border-radius: 8px;
+        background: plan-area.has-hover ? Theme.gray-200 : Theme.gray-100;
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 10px;
+            spacing: 6px;
+            Muted {
+                text: "Plan";
+                vertical-alignment: center;
+                horizontal-stretch: 0;
+            }
+            Text {
+                text: RoutineBus.plan-label;
+                font-size: 14px;
+                font-weight: 600;
+                color: Theme.fg;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Mark {
+                glyph: "\u{e06d}";
+                size: 15px;
+                color: Theme.subtle;
+            }
+        }
+        plan-area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                RoutineBus.plans-open();
+            }
+        }
+    }
+    for g in RoutineBus.rows: Card {
+        height: 62px;
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 8px;
+            spacing: 12px;
+            Mark {
+                glyph: g.glyph;
+                size: 18px;
+                color: RoutineBus.palette[g.color];
+                width: 24px;
+            }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Text {
+                    text: g.name;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                }
+                Muted {
+                    text: g.line;
+                    font-size: 12px;
+                }
+            }
+            IconBtn {
+                y: 15px;
+                glyph: "\u{e1f9}";
+                tip: "Edit";
+                clicked => {
+                    RoutineBus.goal-edit(g.id);
+                }
+            }
+            if RoutineBus.confirm-del == g.id: Chip {
+                y: 15px;
+                text: "Delete?";
+                danger: true;
+                clicked => {
+                    RoutineBus.del(g.id);
+                }
+            }
+            if RoutineBus.confirm-del != g.id: IconBtn {
+                y: 15px;
+                glyph: "\u{e18e}";
+                tip: "Delete";
+                clicked => {
+                    RoutineBus.del-ask(g.id);
+                }
+            }
+        }
+    }
+    if RoutineBus.rows.length == 0: Muted {
+        text: "No goals. Click “New” to add one.";
+        horizontal-alignment: center;
+    }
+    HorizontalLayout {
+        alignment: center;
+        Btn {
+            text: "Import from Schedule Fixer";
+            icon: "\u{e19e}";
+            variant: ghost-muted;
+            size: sm;
+            clicked => {
+                RoutineBus.import-open();
+            }
+        }
+    }
+}
+
+component PickerScreen inherits VerticalLayout {
+    spacing: 12px;
+    Title {
+        text: "Choose a plan";
+    }
+    for p in RoutineBus.plans: Card {
+        height: 74px;
+        background: area.has-hover ? Theme.bg200 : Theme.bg100;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 4px;
+            Text {
+                text: p.name;
+                font-size: 15px;
+                font-weight: 600;
+                color: Theme.fg;
+            }
+            Muted {
+                text: p.meta;
+                font-size: 12px;
+            }
+        }
+        area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                RoutineBus.plan-pick(p.id);
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: center;
+        Btn {
+            text: "Import from Schedule Fixer";
+            icon: "\u{e19e}";
+            variant: outline;
+            clicked => {
+                RoutineBus.import-open();
+            }
+        }
+    }
+}
+
+component CoachScreen {
+    in property <length> avail-h;
+    Title {
+        x: 0;
+        y: 0;
+        text: "Coach";
+    }
+    if RoutineBus.coach-running: Muted {
+        x: root.width - 120px;
+        y: 8px;
+        width: 120px;
+        text: "writing…";
+        horizontal-alignment: right;
+    }
+    if RoutineBus.coach-note != "": Muted {
+        x: 0;
+        y: 40px;
+        width: root.width;
+        text: RoutineBus.coach-note;
+    }
+    property <length> list-y: RoutineBus.coach-note != "" ? 80px : 44px;
+    list := Flickable {
+        x: 0;
+        y: root.list-y;
+        width: root.width;
+        height: root.height - root.list-y - 52px;
+        viewport-width: root.width;
+        viewport-height: max(msgs.preferred-height, self.height);
+        msgs := VerticalLayout {
+            x: 0;
+            y: max(0px, list.height - self.preferred-height);
+            width: root.width;
+            spacing: 8px;
+            for m in RoutineBus.msgs: HorizontalLayout {
+                alignment: m.agent ? start : end;
+                VerticalLayout {
+                    spacing: 4px;
+                    Rectangle {
+                        width: min(root.width * 0.86, body.preferred-width + 24px);
+                        height: body.preferred-height + 16px;
+                        border-radius: 12px;
+                        background: m.agent ? Theme.gray-100 : Theme.gray-1000;
+                        body := Text {
+                            x: 12px;
+                            y: 8px;
+                            width: parent.width - 24px;
+                            text: m.text + (m.done ? "" : " …");
+                            font-size: 14px;
+                            color: m.agent ? Theme.fg : Theme.bg100;
+                            wrap: word-wrap;
+                        }
+                    }
+                    for c in m.chips: HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Text {
+                            text: (c.ok ? "✓ " : "✕ ") + c.label + (c.undone ? " (undone)" : "");
+                            font-size: 12px;
+                            color: c.ok ? Theme.green-900 : Theme.red-900;
+                            vertical-alignment: center;
+                        }
+                        if c.can-undo: Chip {
+                            text: "Undo";
+                            height: 24px;
+                            clicked => {
+                                RoutineBus.coach-undo(c.key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        x: 0;
+        y: root.height - 40px;
+        width: root.width;
+        height: 36px;
+        spacing: 8px;
+        Input {
+            text <=> RoutineBus.coach-text;
+            hint: "Message the Coach";
+            accepted => {
+                RoutineBus.coach-send();
+            }
+        }
+        Btn {
+            icon: "\u{e152}";
+            variant: primary;
+            size: icon;
+            enabled: RoutineBus.coach-text != "";
+            clicked => {
+                RoutineBus.coach-send();
+            }
+        }
+    }
+}
+
+/** A sheet over the page: a title, the content, a close button; a click outside closes it. */
+component Sheet inherits Rectangle {
+    in property <string> title;
+    in property <length> body-h: 300px;
+    background: #00000088;
+    TouchArea {
+        clicked => {
+            RoutineBus.close-sheet();
+        }
+    }
+    Rectangle {
+        width: min(480px, parent.width - 32px);
+        height: min(root.body-h + 64px, parent.height - 32px);
+        border-radius: 14px;
+        background: Theme.bg100;
+        border-width: 1px;
+        border-color: Theme.border;
+        TouchArea { }
+        Text {
+            x: 18px;
+            y: 16px;
+            text: root.title;
+            font-size: 17px;
+            font-weight: 700;
+            color: Theme.fg;
+        }
+        IconBtn {
+            x: parent.width - 44px;
+            y: 10px;
+            glyph: "\u{e1b2}";
+            tip: "Close";
+            clicked => {
+                RoutineBus.close-sheet();
+            }
+        }
+        Rectangle {
+            x: 18px;
+            y: 52px;
+            width: parent.width - 36px;
+            height: parent.height - 64px;
+            @children
+        }
+    }
+}
+
+component Label inherits Text {
+    font-size: 12px;
+    font-weight: 600;
+    color: Theme.subtle;
+}
+
+component GoalForm inherits VerticalLayout {
+    spacing: 8px;
+    Label {
+        text: "Name";
+    }
+    Input {
+        text <=> RoutineBus.f-name;
+        hint: "e.g. Squats";
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        for t[i] in ["Count", "Water", "Timer", "GPS ride"]: Chip {
+            text: t;
+            on: RoutineBus.f-type == i;
+            clicked => {
+                RoutineBus.f-pick-type(i);
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        VerticalLayout {
+            spacing: 4px;
+            Label {
+                text: RoutineBus.f-type >= 2 ? "Daily target (min)" : RoutineBus.f-type == 1 ? "Daily target (ml)" : "Daily target";
+            }
+            Input {
+                text <=> RoutineBus.f-target;
+                mono: true;
+            }
+        }
+        if RoutineBus.f-type == 0: VerticalLayout {
+            spacing: 4px;
+            Label {
+                text: "Unit";
+            }
+            Input {
+                text <=> RoutineBus.f-unit;
+                hint: "reps, km, pages";
+            }
+        }
+    }
+    Label {
+        text: "Days (a click cycles: on, bonus, off)";
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        for d[i] in RoutineBus.f-days: Rectangle {
+            height: 32px;
+            border-radius: 8px;
+            border-width: d.state == 2 ? 1px : 0px;
+            border-color: RoutineBus.palette[RoutineBus.f-color];
+            background: d.state == 1 ? RoutineBus.palette[RoutineBus.f-color] : d.state == 2 ? RoutineBus.palette[RoutineBus.f-color].with-alpha(0.15) : Theme.gray-200;
+            Text {
+                text: d.label;
+                font-size: 12px;
+                font-weight: 600;
+                color: d.state == 1 ? white : Theme.fg;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    RoutineBus.f-day(i);
+                }
+            }
+        }
+    }
+    Label {
+        text: "Icon";
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        for g[i] in RoutineBus.f-icons: Rectangle {
+            height: 32px;
+            border-radius: 8px;
+            background: RoutineBus.f-icon == i ? RoutineBus.palette[RoutineBus.f-color].with-alpha(0.2) : icon-area.has-hover ? Theme.gray-200 : transparent;
+            Mark {
+                glyph: g;
+                size: 16px;
+                color: RoutineBus.f-icon == i ? RoutineBus.palette[RoutineBus.f-color] : Theme.subtle;
+            }
+            icon-area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    RoutineBus.f-pick-icon(i);
+                }
+            }
+        }
+    }
+    Label {
+        text: "Color";
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        for c[i] in RoutineBus.palette: Rectangle {
+            width: 26px;
+            height: 26px;
+            border-radius: 13px;
+            background: c;
+            border-width: RoutineBus.f-color == i ? 2px : 0px;
+            border-color: Theme.fg;
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    RoutineBus.f-pick-color(i);
+                }
+            }
+        }
+    }
+    if RoutineBus.f-error != "": Text {
+        text: RoutineBus.f-error;
+        font-size: 12px;
+        color: Theme.red-900;
+    }
+    Btn {
+        text: RoutineBus.f-title == "Edit goal" ? "Save" : "Add goal";
+        variant: primary;
+        full-width: true;
+        clicked => {
+            RoutineBus.f-save();
+        }
+    }
 }
 
 export component RoutinePage {
-    Text {
-        text: "Routine";
+    Rectangle {
+        background: Theme.bg100;
+    }
+    property <length> col-w: min(640px, root.width - 32px);
+    property <length> col-x: (root.width - col-w) / 2;
+    // The sections (not while choosing the first plan)
+    if !RoutineBus.picking && !RoutineBus.loading: HorizontalLayout {
+        x: col-x;
+        y: 12px;
+        width: col-w;
+        height: 40px;
+        spacing: 4px;
+        for s in [{ id: "today", label: "Today", glyph: "\u{e178}" }, { id: "history", label: "History", glyph: "\u{e063}" }, { id: "sleep", label: "Sleep", glyph: "\u{e11e}" }, { id: "goals", label: "Goals", glyph: "\u{e180}" }, { id: "coach", label: "Coach", glyph: "\u{e116}" }]: Rectangle {
+            property <bool> on: RoutineBus.section == s.id;
+            border-radius: 8px;
+            background: on ? Theme.gray-200 : sec-area.has-hover ? Theme.gray-100 : transparent;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                Mark {
+                    glyph: s.glyph;
+                    size: 16px;
+                    color: on ? Theme.fg : Theme.subtle;
+                }
+                Text {
+                    text: s.label;
+                    font-size: 13px;
+                    font-weight: on ? 600 : 500;
+                    color: on ? Theme.fg : Theme.subtle;
+                    vertical-alignment: center;
+                }
+            }
+            sec-area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    RoutineBus.pick-section(s.id);
+                }
+            }
+        }
+    }
+    property <length> top: RoutineBus.picking || RoutineBus.loading ? 16px : 64px;
+    if RoutineBus.loading: Text {
+        text: RoutineBus.error != "" ? RoutineBus.error : "Loading…";
         color: Theme.subtle;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+    if !RoutineBus.loading && RoutineBus.section == "coach" && !RoutineBus.picking: CoachScreen {
+        x: col-x;
+        y: top;
+        width: col-w;
+        height: root.height - top - 16px;
+        avail-h: root.height - top;
+    }
+    if !RoutineBus.loading && (RoutineBus.section != "coach" || RoutineBus.picking): Flickable {
+        x: 0;
+        y: top;
+        width: root.width;
+        height: root.height - top;
+        viewport-height: screen.preferred-height + 32px;
+        screen := VerticalLayout {
+            x: col-x;
+            y: 0;
+            width: col-w;
+            if RoutineBus.picking: PickerScreen { }
+            if !RoutineBus.picking && RoutineBus.section == "today": TodayScreen { }
+            if !RoutineBus.picking && RoutineBus.section == "history": HistoryScreen { }
+            if !RoutineBus.picking && RoutineBus.section == "sleep": SleepScreen { }
+            if !RoutineBus.picking && RoutineBus.section == "goals": GoalsScreen { }
+        }
+    }
+    if RoutineBus.sheet == "form": Sheet {
+        title: RoutineBus.f-title;
+        body-h: 470px;
+        GoalForm {
+            width: parent.width;
+        }
+    }
+    if RoutineBus.sheet == "plans": Sheet {
+        title: "Plan";
+        body-h: RoutineBus.plans.length * 66px;
+        VerticalLayout {
+            spacing: 6px;
+            for p in RoutineBus.plans: Rectangle {
+                height: 60px;
+                border-radius: 10px;
+                background: p.on ? Theme.gray-200 : plan-row.has-hover ? Theme.gray-100 : transparent;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 2px;
+                    Text {
+                        text: p.name + (p.on ? "  ✓" : "");
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.fg;
+                    }
+                    Muted {
+                        text: p.meta;
+                        font-size: 12px;
+                    }
+                }
+                plan-row := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        RoutineBus.plan-pick(p.id);
+                    }
+                }
+            }
+        }
+    }
+    if RoutineBus.sheet == "wake": Sheet {
+        title: "Wake me up at…";
+        body-h: RoutineBus.wakes.length * 62px + 30px;
+        VerticalLayout {
+            spacing: 6px;
+            for w[i] in RoutineBus.wakes: Rectangle {
+                height: 56px;
+                border-radius: 10px;
+                background: w.rec ? Theme.gray-200 : wake-row.has-hover ? Theme.gray-100 : transparent;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 12px;
+                    Text {
+                        text: w.time;
+                        font-size: 20px;
+                        font-weight: 700;
+                        font-family: "Geist Mono";
+                        color: Theme.fg;
+                        vertical-alignment: center;
+                    }
+                    Muted {
+                        text: w.meta;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    if w.rec: Text {
+                        text: "Recommended";
+                        font-size: 11px;
+                        color: Theme.green-900;
+                        vertical-alignment: center;
+                    }
+                }
+                wake-row := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        RoutineBus.pick-wake(i);
+                    }
+                }
+            }
+            Muted {
+                text: "The phone sets the alarm (Hub for Android); here it's only shown.";
+                font-size: 12px;
+            }
+        }
+    }
+    if RoutineBus.sheet == "import": Sheet {
+        title: "Import from Schedule Fixer";
+        body-h: 300px;
+        VerticalLayout {
+            spacing: 8px;
+            Muted {
+                text: "Your goals, history, rides, walking and Coach chat. Type the code Schedule Fixer's “Export to Person Hub” shows, or paste its exported text.";
+            }
+            Input {
+                text <=> RoutineBus.imp-text;
+                hint: "ABCD-EFGH-JKMN, or the export's text";
+            }
+            if RoutineBus.imp-error != "": Text {
+                text: RoutineBus.imp-error;
+                font-size: 12px;
+                color: Theme.red-900;
+                wrap: word-wrap;
+            }
+            if RoutineBus.imp-summary != "": Text {
+                text: RoutineBus.imp-summary;
+                font-size: 13px;
+                color: Theme.fg;
+                wrap: word-wrap;
+            }
+            if RoutineBus.imp-summary == "": Btn {
+                text: RoutineBus.imp-busy ? "Reading…" : "Read";
+                variant: primary;
+                enabled: !RoutineBus.imp-busy && RoutineBus.imp-text != "";
+                clicked => {
+                    RoutineBus.import-read();
+                }
+            }
+            if RoutineBus.imp-summary != "": Btn {
+                text: RoutineBus.imp-busy ? "Importing…" : "Replace Routine's data with it";
+                variant: destructive;
+                enabled: !RoutineBus.imp-busy;
+                clicked => {
+                    RoutineBus.import-go();
+                }
+            }
+        }
     }
 }
