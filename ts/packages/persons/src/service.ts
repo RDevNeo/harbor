@@ -3,13 +3,14 @@
 // connections (Discord, Gmail, WhatsApp), their conversations, presence, typing and the outgoing
 // queue, and refreshes profiles and photos in the background. Every change bumps `rev`.
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allPeers, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, validPeer, channelsFor } from "./model/accounts.ts";
+import { allPeers, chatsFor, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, validPeer, type ChatRef } from "./model/accounts.ts";
+import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
-import { badgeChannels, chatUnread, defaultChat, laterMark, migrateAllSeen } from "./model/readState.ts";
+import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen } from "./model/readState.ts";
 import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, SectionId, SendResult } from "./model/types.ts";
 import type { Connection, ConnFactory, ConnMeta } from "./conn/types.ts";
 import { DataFile, loadConnections, personsDir, saveConnections } from "./store.ts";
@@ -130,12 +131,13 @@ export class PersonsService {
 
   /** A connection's conversations from its cache file, without starting it (offline: the screenshot rig). */
   private cachedConvos(m: ConnMeta): Record<string, Conversation> {
-    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : "";
-    if (!name) return {};
+    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : join(`whatsapp-${m.id}`, "chats.json");
     try {
-      const raw = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as { conversations?: Record<string, Conversation> };
+      const raw = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as { conversations?: Record<string, Conversation>; chats?: Record<string, Message[]> };
       const out: Record<string, Conversation> = {};
       for (const [k, v] of Object.entries(raw.conversations ?? {})) if (v && Array.isArray(v.messages)) out[k] = { channelId: v.channelId ?? null, messages: v.messages };
+      // WhatsApp's cache: the messages per number
+      for (const [k, v] of Object.entries(raw.chats ?? {})) if (Array.isArray(v)) out[k] = { channelId: k, messages: v };
       return out;
     } catch {
       return {};
@@ -506,11 +508,16 @@ export class PersonsService {
     return r;
   }
 
-  async send(personId: string, connId: string, text: string, opts: { files?: OutgoingFile[]; replyTo?: string; subject?: string } = {}): Promise<SendResult> {
+  /** Who a person is on a connection: `peer` when it is one of theirs (a linked person's number), else their own. */
+  peerFor(p: Person, m: ConnMeta, peer?: string): string {
+    return peer && allPeers(p, m.kind).includes(peer) ? peer : peerOf(p, m.kind, m.section);
+  }
+
+  async send(personId: string, connId: string, text: string, opts: { files?: OutgoingFile[]; replyTo?: string; subject?: string; peer?: string } = {}): Promise<SendResult> {
     const p = this.person(personId);
     const m = this.metas.find((x) => x.id === connId);
     if (!p || !m) return { ok: false, error: "Not found" };
-    const pid = peerOf(p, m.kind, m.section);
+    const pid = this.peerFor(p, m, opts.peer);
     if (!validPeer(m.kind, pid)) return { ok: false, error: m.kind === "gmail" ? "No email address" : m.kind === "whatsapp" ? "No WhatsApp number" : "No Discord id yet" };
     const key = `o${Date.now().toString(36)}${randomBytes(2).toString("hex")}`;
     const item: Outgoing = { key, text, status: "sending", at: new Date().toISOString() };
@@ -519,15 +526,15 @@ export class PersonsService {
     if (opts.subject) item.subject = opts.subject;
     this.setOut(m.id, pid, (l) => [...l, item]);
     const r = await this.deliver(m, pid, key, item);
-    if (r.ok) this.markSeen(personId, connId);
+    if (r.ok) this.markSeen(personId, connId, undefined, pid);
     return r;
   }
 
-  retry(personId: string, connId: string, key: string): void {
+  retry(personId: string, connId: string, key: string, peer?: string): void {
     const p = this.person(personId);
     const m = this.metas.find((x) => x.id === connId);
     if (!p || !m) return;
-    const pid = peerOf(p, m.kind, m.section);
+    const pid = this.peerFor(p, m, peer);
     const item = this.slices.get(m.id)?.outgoing[pid]?.find((x) => x.key === key);
     if (!item) return;
     const next: Outgoing = { ...item, status: "sending", at: new Date().toISOString() };
@@ -541,11 +548,11 @@ export class PersonsService {
   }
 
   /** The chat was seen up to its newest message (also read on the platform). */
-  markSeen(personId: string, connId: string, upTo?: string): void {
+  markSeen(personId: string, connId: string, upTo?: string, who?: string): void {
     const p = this.person(personId);
     const c = this.view(connId);
     if (!p || !c) return;
-    const peer = peerOf(p, c.kind, c.section);
+    const peer = this.peerFor(p, c, who);
     if (!validPeer(c.kind, peer)) return;
     const key = seenKey(connId, peer);
     const mark = laterMark(upTo, c.convos[peer]?.messages.at(-1)?.timestamp);
@@ -553,11 +560,11 @@ export class PersonsService {
     if (c.connected) void this.conns.get(connId)?.markRead?.(peer).catch(() => {});
   }
 
-  markUnread(personId: string, connId: string, message: Message): void {
+  markUnread(personId: string, connId: string, message: Message, who?: string): void {
     const p = this.person(personId);
     const c = this.view(connId);
     if (!p || !c) return;
-    const peer = peerOf(p, c.kind, c.section);
+    const peer = this.peerFor(p, c, who);
     const key = seenKey(connId, peer);
     const before = new Date(Date.parse(message.timestamp) - 1).toISOString();
     this.updatePerson(personId, (x) => ({ ...x, seen: { ...x.seen, [key]: before } }));
@@ -586,7 +593,8 @@ export class PersonsService {
   async fetchAttachment(url: string, name: string, connId?: string): Promise<string | null> {
     const kind: ChannelKind = url.startsWith("chmail:") ? "gmail" : url.startsWith("chwa:") ? "whatsapp" : "discord";
     const views = this.views();
-    const c = (connId ? views.find((x) => x.id === connId) : undefined) ?? views.find((x) => x.kind === kind && x.connected) ?? views.find((x) => x.kind === kind);
+    const cid = connId?.split(":")[0];
+    const c = (cid ? views.find((x) => x.id === cid) : undefined) ?? views.find((x) => x.kind === kind && x.connected) ?? views.find((x) => x.kind === kind);
     const conn = c ? this.conns.get(c.id) : undefined;
     if (!conn?.fetchAttachment) return null;
     return conn.fetchAttachment(url, name);
@@ -597,17 +605,18 @@ export class PersonsService {
   /** Card info for a person as seen from a section (null: All people). App.tsx `info`. */
   rowInfo(p: Person, section: SectionId | null = null): RowInfo {
     const views = this.views();
-    const chans = badgeChannels(p, views, section);
+    const chans = badgeChats(p, views, section);
     const readSince = this.data?.readSince;
     let unread = 0;
     let typing: "typing" | "recording" | undefined;
     let lastAt = "";
     let channel: ChannelKind | undefined;
-    for (const cn of chans) {
-      const key = peerOf(p, cn.kind, cn.section);
+    for (const ch of chans) {
+      const cn = ch.conn;
+      const key = ch.peer;
       if (!key) continue;
       const cv = cn.convos[key];
-      unread += chatUnread(p, cn, readSince);
+      unread += chatUnread(p, cn, readSince, key);
       const t = cn.typing[key];
       if (t && t.until > Date.now()) typing = t.kind;
       const at = lastMessage(cv)?.timestamp ?? "";
@@ -639,11 +648,51 @@ export class PersonsService {
   }
 
   /** The connections a person's chat can use from a section (App.tsx choicesFull), and the default one. */
-  chatChoices(p: Person, section: SectionId | null): { choices: ConnView[]; current: ConnView | undefined } {
+  /** The chats a person's page shows from a section (every channel of theirs and of their linked people), and the
+   *  one the composer sends on by default (where their latest message came in). */
+  chatChoices(p: Person, section: SectionId | null): { choices: ChatRef<ConnView>[]; current: ChatRef<ConnView> | undefined } {
     const views = this.views();
-    let choices = channelsFor(p, views, section);
-    if (!choices.length) choices = channelsFor(p, views, null);
+    let choices = chatsFor(p, views, section);
+    if (!choices.length) choices = chatsFor(p, views, null);
     return { choices, current: defaultChat(p, choices, this.data?.readSince) };
+  }
+
+  // ---------- Link with… / Unlink ----------
+
+  /** data.json as it was before the first link (Link with… is reversible with Unlink; this is the belt and braces). */
+  private backupBeforeLink(): void {
+    const file = join(this.dir, "data.json");
+    const backup = join(this.dir, "data.before-link.json");
+    try {
+      this.flush();
+      if (existsSync(file) && !existsSync(backup)) copyFileSync(file, backup);
+    } catch (e) {
+      this.log("backup before link failed", errText(e));
+      throw new Error("Couldn't back up data.json first, so nothing was linked");
+    }
+  }
+
+  /** `ids` become part of `primaryId` (model/link.ts). Returns the ids linked. */
+  link(primaryId: string, ids: string[]): string[] {
+    if (!this.data) throw new Error("Persons isn't loaded");
+    const r = linkPeople(this.data, primaryId, ids);
+    if (!r) return [];
+    this.backupBeforeLink();
+    this.log("linked", r.linked.join(","), "into", primaryId);
+    this.update(() => r.data);
+    this.flush();
+    return r.linked;
+  }
+
+  /** `linkedId` split back out of `personId` into their own person (same id as before). */
+  unlink(personId: string, linkedId: string): boolean {
+    if (!this.data) return false;
+    const r = unlinkPerson(this.data, personId, linkedId);
+    if (!r) return false;
+    this.log("unlinked", linkedId, "from", personId);
+    this.update(() => r.data);
+    this.flush();
+    return true;
   }
 
   /** Total unread over everyone (the tab badge). */

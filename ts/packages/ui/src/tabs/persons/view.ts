@@ -23,11 +23,15 @@ export interface PersonJson {
   settled: Record<string, boolean>;
   rows: Record<string, RowJson>;
   search: string;
+  /** People linked into them (Link with…). */
+  linked?: { id: string; name: string }[];
 }
 export interface StoreJson { id: string; name: string; color: string; image: string | null; imagePath: string | null; ownerId: string | null; count: number }
 export interface ListJson { id: string; name: string; accountId: string }
 export interface ConnJson { id: string; kind: string; section: string; status: string; gateway: string; label: string; who: string; error: string | null; qr: string | null; contacts: boolean | null }
-export interface StateJson { rev: number; unread: number; connections: ConnJson[]; stores: StoreJson[]; lists: ListJson[]; people: PersonJson[]; loading?: boolean }
+/** The PC's audio player (the engine plays voice messages): `pos` at `at` (ms), moving `speed` s/s while playing. */
+export interface AudioStateJson { key: string | null; playing: boolean; pos: number; speed: number; duration: number | null; at: number; error: string | null }
+export interface StateJson { rev: number; unread: number; connections: ConnJson[]; stores: StoreJson[]; lists: ListJson[]; people: PersonJson[]; loading?: boolean; audio?: AudioStateJson | null }
 
 /** One sidebar / list row, as PRow in persons.slint (images filled in by the driver). */
 export interface Row {
@@ -195,9 +199,12 @@ export function listRows(s: StateJson, q: string, open: UiState["open"]): Row[] 
 
 // ---------- chat ----------
 
-export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null }
-export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[] }
-export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[] }
+/** An attachment; audio ones carry their key (play, transcribe), bars 0..1, whether it was played and its transcript. */
+export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null; audio?: string; bars?: number[] | null; played?: boolean; transcript?: string | null }
+/** The chat a message is in (a person's page shows every chat of theirs in one timeline). */
+export interface ChannelJson { key: string; kind: string; label: string }
+export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[]; channel?: ChannelJson }
+export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[]; channel?: ChannelJson }
 /** An answer's pieces (the engine's persons aiparts.ts): markdown, and the messages it drafted for the person (```reply). */
 export type AiPartJson = { type: "text"; text: string } | { type: "draft"; text: string };
 export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; parts?: AiPartJson[]; forwarded?: { from: string; text: string } }
@@ -207,8 +214,9 @@ export interface ProposalJson { id: string; at: string; messageId: string | null
 export interface ProposingJson { personId: string; messageId: string; at: string; chat: string | null; error: string | null }
 export interface ChatJson {
   person: { id: string; name: string; initials: string; color: string; avatar: string | null; avatarPath: string | null; presence: string | null; status: { text: string; tone: string } | null };
-  account: { id: string; kind: string; section: string; label: string; connected: boolean } | null;
-  accounts: { id: string; kind: string; label: string }[];
+  /** The chat the composer sends on: `id` is its key ("<connection>:<who>", what `account` takes back). */
+  account: { id: string; conn?: string; kind: string; section: string; label: string; to?: string; connected: boolean } | null;
+  accounts: { id: string; conn?: string; kind: string; label: string; to?: string; connected?: boolean }[];
   peer: string | null;
   typing: string | null;
   more: boolean;
@@ -224,6 +232,22 @@ export interface ChatJson {
   siteRequests?: boolean;
   proposals?: ProposalJson[];
   proposing?: ProposingJson[];
+  /** People linked into this one (Unlink). */
+  linked?: { id: string; name: string }[];
+}
+
+/** An audio attachment in a bubble: play / pause, bars with seek, its length, speed, played, Transcribe. */
+export interface AudioRow {
+  key: string;
+  /** The file route (play, transcribe): account, raw url, name. */
+  account: string;
+  raw: string;
+  name: string;
+  duration: number;
+  bars: number[];
+  played: boolean;
+  transcript: string;
+  voice: boolean;
 }
 
 /** One chat row (PMsg); `imageUrl`: the file route of its first picture (the driver decodes it). */
@@ -255,7 +279,15 @@ export interface MsgRow {
   preview: string;
   /** Its first ```reply draft ("" none): the folded bubble keeps "Use as reply" on one line. */
   draft: string;
+  /** The channel it came or went on ("whatsapp"…) and its label, shown when the person has more than one chat. */
+  chan: string;
+  chanLabel: string;
+  /** Its voice message or audio file, drawn as a player. */
+  audio: AudioRow | null;
 }
+
+/** Bars of an audio without a waveform: a flat line (the player still seeks on it). */
+export const FLAT_BARS: number[] = Array.from({ length: 40 }, () => 0.18);
 
 const hhmm = (iso: string): string => {
   const d = new Date(iso);
@@ -290,7 +322,9 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
-  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "" });
+  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
+  // every message marked with its channel once the page shows more than one chat
+  const marks = c.accounts.length > 1;
   let lastThread: string | null = null;
   for (const m of c.messages) {
     const r = blank("msg", m.id);
@@ -304,8 +338,14 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
       r.imageUrl = img.url;
       [r.imgW, r.imgH] = fitImage(img.width, img.height);
     }
-    const rest = m.files.filter((f) => f !== img);
-    r.files = rest.map((f) => (m.voice || f.kind === "audio" ? `🎤 Voice message${f.duration ? ` · ${duration(f.duration)}` : ""}` : `${f.name}${f.size ? ` · ${formatBytes(f.size)}` : ""}`)).join("\n");
+    const sound = m.files.find((f) => f !== img && (f.kind === "audio" || (m.voice && !f.image)));
+    if (sound) r.audio = audioRow(sound, m.voice, c.account?.conn ?? c.account?.id ?? "");
+    const rest = m.files.filter((f) => f !== img && f !== sound);
+    r.files = rest.map((f) => `${f.name}${f.size ? ` · ${formatBytes(f.size)}` : ""}`).join("\n");
+    if (marks && m.channel) {
+      r.chan = m.channel.kind;
+      r.chanLabel = m.channel.label;
+    }
     if (m.subject && m.threadId !== lastThread) items.push({ at: m.at, row: { ...blank("subject", `s${m.id}`), text: m.subject } });
     if (m.threadId) lastThread = m.threadId;
     if (c.unreadFrom === m.id) items.push({ at: m.at, row: { ...blank("unread", `u${m.id}`), text: "New" } });
@@ -342,6 +382,10 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.sending = o.status === "sending";
     r.files = o.files.map((f) => `${f.name} · ${formatBytes(f.size)}`).join("\n");
     if (o.error) r.meta = o.error;
+    if (marks && o.channel) {
+      r.chan = o.channel.kind;
+      r.chanLabel = o.channel.label;
+    }
     items.push({ at: o.at, row: r });
   }
   for (const p of c.proposals ?? []) {
@@ -379,6 +423,33 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   }
   return out;
 }
+
+/** An audio attachment as the bubble's player: its account comes from its file route (the chat it is in). */
+export function audioRow(f: FileJson, voice: boolean, fallbackAccount: string): AudioRow {
+  let account = fallbackAccount;
+  try {
+    account = new URL(f.url, "http://hub").searchParams.get("account") ?? fallbackAccount;
+  } catch {
+    // keep the chat's
+  }
+  return {
+    key: f.audio ?? `${account}:${f.name}:0`,
+    account,
+    raw: f.raw,
+    name: f.name,
+    duration: f.duration ?? 0,
+    bars: f.bars?.length ? f.bars : FLAT_BARS,
+    played: f.played !== false,
+    transcript: f.transcript ?? "",
+    voice,
+  };
+}
+
+/** "0:08", "1:23" (an audio's length or position). */
+export const clock = (s: number): string => duration(Math.max(0, s));
+
+/** The next playback speed: 1x → 1.5x → 2x → 1x. */
+export const nextSpeed = (s: number): number => (s < 1.25 ? 1.5 : s < 1.75 ? 2 : 1);
 
 /** An answer's text parts as one plain paragraph for a folded bubble's first lines: markdown marks, links' urls,
  *  code fences and line breaks dropped (the bubble elides it after two lines). */

@@ -23,7 +23,7 @@ import java.util.Locale;
 /** The Persons tab's home, Person Hub's sidebar on the phone: "All people", then Stores (each
  *  store a fold with its people, the owner first with a crown), then each list (Creators,
  *  SpokPay) with its people by their last message, each section with a "Settled (N)" fold and its
- *  connections' chips. A long press on a person: Rename, Settle / Unsettle. */
+ *  connections' chips. A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink. */
 final class PersonsHome {
     static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7;
 
@@ -421,9 +421,18 @@ final class PersonsHome {
                 settles.add(new String[]{s, done ? "" : "1"});
             }
         }
+        // Link with… (the same human on another channel) and Unlink for each one linked into them
+        int linkAt = opts.size();
+        opts.add("Link with…");
+        List<JSONObject> linked = PersonsLink.linked(person);
+        for (JSONObject l : linked) opts.add("Unlink " + PersonsUi.s(l, "name") + "…");
         Ui.dialog(p.a).setTitle(name).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) rename(p, id, name);
-            else settle(p, id, settles.get(w - 1)[0], !settles.get(w - 1)[1].isEmpty());
+            else if (w == linkAt) PersonsLink.pick(p, id);
+            else if (w > linkAt) {
+                JSONObject l = linked.get(w - linkAt - 1);
+                PersonsLink.unlink(p, id, PersonsUi.s(l, "id"), PersonsUi.s(l, "name"), null);
+            } else settle(p, id, settles.get(w - 1)[0], !settles.get(w - 1)[1].isEmpty());
         }).show();
     }
 

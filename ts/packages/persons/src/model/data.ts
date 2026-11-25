@@ -1,5 +1,5 @@
 import { DATA_VERSION } from './types.ts'
-import type { AppData, ChannelUser, Identity, Person, PersonList, Store } from './types.ts'
+import type { AppData, ChannelUser, Identity, LinkAdded, Person, PersonLink, PersonList, Store } from './types.ts'
 import { normalizeSocials, parseSocialUrl, type SocialTarget } from '../socials.ts'
 
 export const STORE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#8b5cf6', '#0ea5e9']
@@ -62,66 +62,8 @@ export function normalizeData(raw: unknown): AppData {
   const listIds = new Set(lists.map((l) => l.id))
 
   const people: Person[] = (Array.isArray(r.people) ? r.people : [])
-    .map((x): Person => {
-      const p = obj(x)
-      const person: Person = {
-        id: str(p.id) ?? '',
-        name: (str(p.name) ?? '').trim(),
-        discordId: (str(p.discordId) ?? '').trim(),
-        storeIds: [...new Set(strArr(p.storeIds ?? p.groupIds))].filter((id) => storeIds.has(id)),
-        listIds: [...new Set(strArr(p.listIds))].filter((id) => listIds.has(id)),
-        createdAt: str(p.createdAt) ?? now,
-        updatedAt: str(p.updatedAt) ?? now,
-      }
-      const username = str(p.discordUsername)?.trim()
-      if (username) person.discordUsername = username
-      const email = str(p.email)?.trim().toLowerCase()
-      if (email && isEmail(email)) person.email = email
-      const ids = (Array.isArray(p.identities) ? p.identities : []).map((x): Identity | null => {
-        const i = obj(x)
-        const kind = str(i.kind), section = str(i.section)
-        let value = (str(i.value) ?? '').trim()
-        if (kind === 'gmail') value = value.toLowerCase()
-        if (kind === 'whatsapp') value = value.replace(/\D/g, '')
-        const ok = kind === 'discord' ? isDiscordId(value) : kind === 'gmail' ? isEmail(value) : kind === 'whatsapp' ? value.length >= 8 && value.length <= 15 : false
-        if (!ok || !section || !['stores', 'creators', 'spokpay'].includes(section)) return null
-        const id: Identity = { kind: kind as Identity['kind'], value, section: section as Identity['section'] }
-        if (str(i.username)) id.username = str(i.username)!
-        if (str(i.displayName)) id.displayName = str(i.displayName)!
-        if (typeof i.avatar === 'string' || i.avatar === null) id.avatar = i.avatar as string | null
-        if (str(i.profileAt)) id.profileAt = str(i.profileAt)!
-        return id
-      }).filter((x): x is Identity => !!x)
-      // one identity per (kind, section)
-      const uniq = ids.filter((x, n) => ids.findIndex((y) => y.kind === x.kind && y.section === x.section) === n)
-      if (uniq.length) person.identities = uniq
-      const seen = obj(p.seen)
-      const seenOk = Object.fromEntries(Object.entries(seen).filter(([k, v]) => SEEN_KEY.test(k) && typeof v === 'string' && Number.isFinite(Date.parse(v))))
-      if (Object.keys(seenOk).length) person.seen = seenOk as Record<string, string>
-      const settled = Object.fromEntries(Object.entries(obj(p.settled)).filter(([k, v]) => SETTLE_SECTIONS.includes(k) && typeof v === 'string' && Number.isFinite(Date.parse(v))))
-      if (Object.keys(settled).length) person.settled = settled as Record<string, string>
-      const wa = (str(p.whatsapp) ?? '').replace(/\D/g, '')
-      if (wa.length >= 8 && wa.length <= 15) person.whatsapp = wa
-      const display = str(p.displayName)?.trim()
-      if (display) person.displayName = display
-      if (typeof p.avatar === 'string' || p.avatar === null) person.avatar = p.avatar as string | null
-      if (str(p.profileAt)) person.profileAt = str(p.profileAt)!
-      const https = (v: unknown) => { const u = str(v); return u && /^https:\/\//.test(u) ? u : undefined }
-      if (https(p.photo)) person.photo = https(p.photo)!
-      if (str(p.photoAt)) person.photoAt = str(p.photoAt)!
-      if (typeof p.photoFull === 'boolean') person.photoFull = p.photoFull
-      if (https(p.socialPhoto)) person.socialPhoto = https(p.socialPhoto)!
-      if (str(p.socialPhotoAt)) person.socialPhotoAt = str(p.socialPhotoAt)!
-      if (str(p.socialPhotoOf)) person.socialPhotoOf = str(p.socialPhotoOf)!
-      const notes = str(p.notes)
-      if (notes) person.notes = notes
-      const socials = normalizeSocials(p.socials)
-      if (socials.length) person.socials = socials
-      const tags = strArr(p.tags)
-      if (tags.length) person.tags = tags
-      return person
-    })
-    .filter((p) => p.id && (p.name || p.discordId || p.discordUsername || p.email || p.whatsapp))
+    .map((x) => normPerson(x, storeIds, listIds, now))
+    .filter(validPerson)
   const personIds = new Set(people.map((p) => p.id))
   for (const s of stores) if (s.ownerId && !personIds.has(s.ownerId)) delete s.ownerId
 
@@ -132,6 +74,96 @@ export function normalizeData(raw: unknown): AppData {
   if (Object.keys(legacy).length) out.legacy = legacy
   return out
 }
+
+/** One person of data.json, checked (`storeIds` / `listIds`: the ones that exist); their links' people too (depth 8 at most). */
+function normPerson(x: unknown, storeIds: Set<string>, listIds: Set<string>, now: string, depth = 0): Person {
+  const p = obj(x)
+  const person: Person = {
+    id: str(p.id) ?? '',
+    name: (str(p.name) ?? '').trim(),
+    discordId: (str(p.discordId) ?? '').trim(),
+    storeIds: [...new Set(strArr(p.storeIds ?? p.groupIds))].filter((id) => storeIds.has(id)),
+    listIds: [...new Set(strArr(p.listIds))].filter((id) => listIds.has(id)),
+    createdAt: str(p.createdAt) ?? now,
+    updatedAt: str(p.updatedAt) ?? now,
+  }
+  const username = str(p.discordUsername)?.trim()
+  if (username) person.discordUsername = username
+  const email = str(p.email)?.trim().toLowerCase()
+  if (email && isEmail(email)) person.email = email
+  const ids = (Array.isArray(p.identities) ? p.identities : []).map((x): Identity | null => {
+    const i = obj(x)
+    const kind = str(i.kind), section = str(i.section)
+    let value = (str(i.value) ?? '').trim()
+    if (kind === 'gmail') value = value.toLowerCase()
+    if (kind === 'whatsapp') value = value.replace(/\D/g, '')
+    const ok = kind === 'discord' ? isDiscordId(value) : kind === 'gmail' ? isEmail(value) : kind === 'whatsapp' ? value.length >= 8 && value.length <= 15 : false
+    if (!ok || !section || !['stores', 'creators', 'spokpay'].includes(section)) return null
+    const id: Identity = { kind: kind as Identity['kind'], value, section: section as Identity['section'] }
+    if (str(i.username)) id.username = str(i.username)!
+    if (str(i.displayName)) id.displayName = str(i.displayName)!
+    if (typeof i.avatar === 'string' || i.avatar === null) id.avatar = i.avatar as string | null
+    if (str(i.profileAt)) id.profileAt = str(i.profileAt)!
+    return id
+  }).filter((x): x is Identity => !!x)
+  // one identity per (kind, section)
+  const uniq = ids.filter((x, n) => ids.findIndex((y) => y.kind === x.kind && y.section === x.section) === n)
+  if (uniq.length) person.identities = uniq
+  const seen = obj(p.seen)
+  const seenOk = Object.fromEntries(Object.entries(seen).filter(([k, v]) => SEEN_KEY.test(k) && typeof v === 'string' && Number.isFinite(Date.parse(v))))
+  if (Object.keys(seenOk).length) person.seen = seenOk as Record<string, string>
+  const settled = Object.fromEntries(Object.entries(obj(p.settled)).filter(([k, v]) => SETTLE_SECTIONS.includes(k) && typeof v === 'string' && Number.isFinite(Date.parse(v))))
+  if (Object.keys(settled).length) person.settled = settled as Record<string, string>
+  const wa = (str(p.whatsapp) ?? '').replace(/\D/g, '')
+  if (wa.length >= 8 && wa.length <= 15) person.whatsapp = wa
+  const display = str(p.displayName)?.trim()
+  if (display) person.displayName = display
+  if (typeof p.avatar === 'string' || p.avatar === null) person.avatar = p.avatar as string | null
+  if (str(p.profileAt)) person.profileAt = str(p.profileAt)!
+  const https = (v: unknown) => { const u = str(v); return u && /^https:\/\//.test(u) ? u : undefined }
+  if (https(p.photo)) person.photo = https(p.photo)!
+  if (str(p.photoAt)) person.photoAt = str(p.photoAt)!
+  if (typeof p.photoFull === 'boolean') person.photoFull = p.photoFull
+  if (https(p.socialPhoto)) person.socialPhoto = https(p.socialPhoto)!
+  if (str(p.socialPhotoAt)) person.socialPhotoAt = str(p.socialPhotoAt)!
+  if (str(p.socialPhotoOf)) person.socialPhotoOf = str(p.socialPhotoOf)!
+  const notes = str(p.notes)
+  if (notes) person.notes = notes
+  const socials = normalizeSocials(p.socials)
+  if (socials.length) person.socials = socials
+  const tags = strArr(p.tags)
+  if (tags.length) person.tags = tags
+  const links = depth < 8 ? normLinks(p.links, storeIds, listIds, now, depth) : []
+  if (links.length) person.links = links
+  return person
+}
+
+const validPerson = (p: Person): boolean => !!(p.id && (p.name || p.discordId || p.discordUsername || p.email || p.whatsapp))
+
+function normLinks(v: unknown, storeIds: Set<string>, listIds: Set<string>, now: string, depth: number): PersonLink[] {
+  if (!Array.isArray(v)) return []
+  const out: PersonLink[] = []
+  for (const x of v) {
+    const l = obj(x)
+    const person = normPerson(l.person, storeIds, listIds, now, depth + 1)
+    if (!validPerson(person) || out.some((o) => o.person.id === person.id)) continue
+    const a = obj(l.added)
+    const fields: LinkAdded['fields'] = {}
+    for (const [k, val] of Object.entries(obj(a.fields))) if (LINK_FIELDS.includes(k) && (typeof val === 'string' || typeof val === 'boolean' || val === null)) fields[k] = val
+    const ids = Array.isArray(a.identities) ? normPerson({ id: 'x', name: 'x', identities: a.identities }, storeIds, listIds, now, 99).identities ?? [] : []
+    out.push({
+      person,
+      at: str(l.at) ?? now,
+      added: { fields, identities: ids, storeIds: strArr(a.storeIds).filter((i) => storeIds.has(i)), listIds: strArr(a.listIds).filter((i) => listIds.has(i)), socials: strArr(a.socials), notes: str(a.notes) ?? '', owned: strArr(a.owned) },
+    })
+    const uns = Object.fromEntries(Object.entries(obj(a.unsettled)).filter(([k, val]) => SETTLE_SECTIONS.includes(k) && typeof val === 'string'))
+    if (Object.keys(uns).length) out.at(-1)!.added.unsettled = uns as Record<string, string>
+  }
+  return out
+}
+
+/** The fields Link may copy into the person they join (link.ts). */
+export const LINK_FIELDS = ['name', 'discordId', 'discordUsername', 'displayName', 'avatar', 'profileAt', 'email', 'photo', 'photoAt', 'photoFull', 'whatsapp']
 
 const SETTLE_SECTIONS = ['stores', 'creators', 'spokpay']
 const ms = (iso: string | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : NaN }
@@ -198,10 +230,16 @@ export const isDiscordId = (s: string) => /^\d{15,21}$/.test(s.trim())
 
 export const cleanUsername = (s: string) => s.trim().replace(/^@/, '')
 
+/** What search looks at: names, identifiers and notes, theirs and their linked people's (lowercase). */
+export function searchText(p: Person): string {
+  const one = (x: Person): string[] => [x.name, x.displayName ?? '', x.discordUsername ?? '', x.discordId, x.email ?? '', x.whatsapp ?? '', x.notes ?? '', ...(x.identities ?? []).flatMap((i) => [i.value, i.username ?? '', i.displayName ?? '']), ...(x.links ?? []).flatMap((l) => one(l.person))]
+  return one(p).filter(Boolean).join('\n').toLowerCase()
+}
+
 export function matchesQuery(p: Person, q: string): boolean {
   const needle = q.trim().toLowerCase().replace(/^@/, '')
   if (!needle) return true
-  const hay = [p.name, p.displayName ?? '', p.discordUsername ?? '', p.discordId, p.email ?? '', p.whatsapp ?? '', p.notes ?? '', ...(p.identities ?? []).flatMap((i) => [i.value, i.username ?? '', i.displayName ?? ''])].join('\n').toLowerCase()
+  const hay = searchText(p)
   return needle.split(/\s+/).every((w) => hay.includes(w))
 }
 

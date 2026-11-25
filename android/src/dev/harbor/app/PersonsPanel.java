@@ -148,6 +148,33 @@ final class PersonsPanel {
             body.addView(h, Ui.fill());
         }
 
+        // Linked: people linked into this one (one chat over all their channels); Link… adds, Unlink splits one back out
+        {
+            List<JSONObject> linked = PersonsHome.objs(PersonsUi.arr(data, "linked"));
+            LinearLayout lh = Ui.row(a);
+            lh.addView(label(linked.isEmpty() ? "Linked" : "Linked (" + linked.size() + ")"), Ui.weight());
+            TextView link = Ui.text(a, "+ Link with…", 14, Ui.FG);
+            link.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(4), Ui.dp(6));
+            link.setOnClickListener(v -> PersonsLink.pick(p, pid));
+            lh.addView(link);
+            body.addView(lh, Ui.fill());
+            for (JSONObject l : linked) {
+                LinearLayout r = Ui.row(a);
+                r.setGravity(Gravity.CENTER_VERTICAL);
+                r.setPadding(0, Ui.dp(4), 0, Ui.dp(4));
+                LinearLayout t = Ui.col(a);
+                t.addView(Ui.subtitle(Ui.bold(a, PersonsUi.s(l, "name"), 15, Ui.FG)));
+                List<String> ids = new ArrayList<>();
+                for (int i = 0; i < PersonsUi.arr(l, "ids").length(); i++) ids.add(PersonsUi.arr(l, "ids").optString(i));
+                if (!ids.isEmpty()) t.addView(Ui.subtitle(Ui.text(a, TextUtils.join(" · ", ids), 12, Ui.G600)));
+                r.addView(t, Ui.weight());
+                String lid = PersonsUi.s(l, "id"), ln = PersonsUi.s(l, "name");
+                r.addView(Ds.chip(a, "Unlink", false, v -> PersonsLink.unlink(p, pid, lid, ln, this::load)));
+                body.addView(r, Ui.fill());
+            }
+            if (linked.isEmpty()) body.addView(Ui.text(a, "The same person on another channel? Link them: one chat for all.", 13, Ui.G700), Ui.margins(Ui.fill(), 0, 0, 0, 10));
+        }
+
         // Socials.
         List<JSONObject> socials = PersonsHome.objs(PersonsUi.arr(data, "socials"));
         {

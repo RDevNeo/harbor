@@ -1,5 +1,5 @@
 import { isDiscordId, isEmail } from './data.ts'
-import { channelsFor, KINDS, normPhone, peerOf, SECTIONS, seenKey, validPeer, type ChannelKind, type ConnMeta, type SectionId } from './accounts.ts'
+import { chatsFor, facets, KINDS, normPhone, peerOf, SECTIONS, seenKey, validPeer, type ChannelKind, type ChatRef, type ConnMeta, type SectionId } from './accounts.ts'
 import type { AppData, Conversation, Person } from './types.ts'
 
 /**
@@ -33,27 +33,37 @@ export function unreadSince(conv: Conversation | undefined, seen: string | undef
 /** The fields of a connection the badge needs. */
 export type BadgeConn = ConnMeta & { convos: Record<string, Conversation> }
 
-/** Unread count of a person's chat on one connection. */
-export function chatUnread(p: Person, c: BadgeConn, readSince: string | undefined): number {
-  const peer = peerOf(p, c.kind, c.section)
+/** Unread count of a person's chat on one connection (`peer`: who they are there, default their own identifier). */
+export function chatUnread(p: Person, c: BadgeConn, readSince: string | undefined, peer = peerOf(p, c.kind, c.section)): number {
   if (!peer) return 0
   return unreadSince(c.convos[peer], seenOf(p, c.id, peer), readSince)
 }
 
 /**
- * The connections a person's card counts from a section (null = All people: all of their sections;
- * a person in no section: every connection they have an identifier on).
+ * The chats a person's card counts from a section (null = All people: all of their sections;
+ * a person in no section: every connection they, or someone linked into them, have an identifier on).
  */
+export function badgeChats<T extends ConnMeta>(p: Person, conns: T[], section: SectionId | null): ChatRef<T>[] {
+  if (section) return chatsFor(p, conns, section)
+  const mine = chatsFor(p, conns, null)
+  if (mine.length) return mine
+  const out: ChatRef<T>[] = []
+  for (const f of facets(p)) for (const conn of conns) {
+    const peer = peerOf(f, conn.kind, conn.section)
+    if (validPeer(conn.kind, peer) && !out.some((x) => x.conn.id === conn.id && x.peer === peer)) out.push({ conn, peer })
+  }
+  return out
+}
+
+/** The connections of badgeChats (one entry per chat). */
 export function badgeChannels<T extends ConnMeta>(p: Person, conns: T[], section: SectionId | null): T[] {
-  if (section) return channelsFor(p, conns, section)
-  const mine = channelsFor(p, conns, null)
-  return mine.length ? mine : conns.filter((c) => validPeer(c.kind, peerOf(p, c.kind, c.section)))
+  return badgeChats(p, conns, section).map((c) => c.conn)
 }
 
 /** A person's badge: unread messages over the chats they have from a section. */
 export function personUnread(p: Person, conns: BadgeConn[], section: SectionId | null, readSince: string | undefined): number {
   let n = 0
-  for (const c of badgeChannels(p, conns, section)) n += chatUnread(p, c, readSince)
+  for (const c of badgeChats(p, conns, section)) n += chatUnread(p, c.conn, readSince, c.peer)
   return n
 }
 
@@ -135,11 +145,12 @@ export function mergeSeen(into: AppData, base: AppData | null, local: AppData, r
 }
 
 /**
- * The chat a person opens on: the connection with their newest unread message (so opening the card
- * clears what its badge counted), else the most recent conversation.
+ * The chat a person's composer sends on: the one their latest message came in on (they're answered where they
+ * wrote), else the most recent conversation, else the first.
  */
-export function defaultChat<T extends BadgeConn>(p: Person, choices: T[], readSince: string | undefined): T | undefined {
-  const lastAt = (c: T) => time(c.convos[peerOf(p, c.kind, c.section)]?.messages.at(-1)?.timestamp) || 0
-  const unread = choices.filter((c) => chatUnread(p, c, readSince) > 0)
-  return [...(unread.length ? unread : choices)].sort((a, b) => lastAt(b) - lastAt(a))[0]
+export function defaultChat<T extends BadgeConn>(p: Person, choices: ChatRef<T>[], _readSince?: string): ChatRef<T> | undefined {
+  const msgs = (c: ChatRef<T>) => c.conn.convos[c.peer]?.messages ?? []
+  const lastIn = (c: ChatRef<T>) => time(msgs(c).findLast((m) => !m.fromMe)?.timestamp) || 0
+  const lastAny = (c: ChatRef<T>) => time(msgs(c).at(-1)?.timestamp) || 0
+  return [...choices].sort((a, b) => lastIn(b) - lastIn(a) || lastAny(b) - lastAny(a))[0]
 }

@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Hub Persons: **Link with…** (a person's right-click menu, the panel's ⋯ and LINKED section; Android: long press and
+  the panel) makes the same human on several channels one person: identifiers combined, notes concatenated, stores,
+  lists and socials unioned, read marks kept; their chat is one timeline of every channel (each message marked with
+  its channel) and **Send on** picks where to answer (default: where their latest message came in). **Unlink** splits
+  one back out as they were; data.json is copied to `data.before-link.json` before the first link (`model/link.ts`,
+  unit tested). Linked people's own AI chats stay reachable from the panel's ⋯.
+- Hub Persons: voice messages and audio files (WhatsApp, Discord, email) are a player: play / pause, bars with seek,
+  1x / 1.5x / 2x, a dot until played, and **Transcribe** (the PC's local speech to text, kept). The PC plays them
+  natively (`@harbor/os` audio: ffmpeg into PipeWire / PulseAudio / ALSA, else mpv or ffplay; macOS also afplay;
+  Windows needs mpv or ffplay), one at a time, stopped when the chat closes; Android plays them with MediaPlayer.
+
 ### Changed
 - Hub Projects: a project without its own icon (favicon or emoji) shows a neutral Lucide folder in the same 12px slot
   in the sidebar's section head (SectionHead `glyph`), so every project's name starts at the same x; the same on

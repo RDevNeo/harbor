@@ -347,6 +347,7 @@ final class PersonsChat {
     void close() {
         closed = true;
         typingOff();
+        PersonsAudio.stop();
     }
 
     // ---- header ----
@@ -407,9 +408,11 @@ final class PersonsChat {
         String[] labels = new String[accounts.length()];
         for (int i = 0; i < labels.length; i++) {
             JSONObject o = accounts.optJSONObject(i);
-            labels[i] = o == null ? "" : PersonsUi.kindLabel(PersonsUi.s(o, "kind")) + " · " + PersonsUi.s(o, "label");
+            String to = o == null ? "" : PersonsUi.s(o, "to");
+            labels[i] = o == null ? "" : PersonsUi.s(o, "label") + (to.contains(" · ") ? " → " + to.substring(to.indexOf(" · ") + 3) : "");
         }
-        Ui.dialog(a).setTitle("Talk to them on").setItems(labels, (d, w) -> {
+        // every chat shows in the one timeline: this picks where the next message goes
+        Ui.dialog(a).setTitle("Send on").setItems(labels, (d, w) -> {
             JSONObject o = accounts.optJSONObject(w);
             if (o == null) return;
             typingOff();
@@ -498,7 +501,7 @@ final class PersonsChat {
                 prevSubject = subj;
                 broke = true;
             }
-            boolean joined = !broke && prev != null && prev.optBoolean("fromMe") == o.optBoolean("fromMe") && t - prevAt < GROUP_MS;
+            boolean joined = !broke && prev != null && prev.optBoolean("fromMe") == o.optBoolean("fromMe") && t - prevAt < GROUP_MS && chanOf(prev).equals(chanOf(o));
             content.addView(bubble(o, joined, gallery));
             prev = o;
             prevAt = t;
@@ -551,7 +554,17 @@ final class PersonsChat {
         if (!joined) {
             String meta = (me ? "" : name() + " · ") + (t > 0 ? PersonsUi.clock(t) : "");
             TextView mt = Ui.subtitle(Ui.text(a, meta, 12, Ui.G600));
-            wrap.addView(mt, Ui.margins(Ui.wrap(), 6, 0, 6, 2));
+            // the channel it came or went on, once the page shows more than one chat (a linked person's)
+            String chan = chanOf(m);
+            if (!chan.isEmpty()) {
+                LinearLayout mr = Ui.row(a);
+                mr.setGravity(Gravity.CENTER_VERTICAL);
+                View mark = PersonsUi.channel(a, chan, 12);
+                mark.setAlpha(0.8f);
+                mr.addView(mark, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(12), Ui.dp(12)), 0, 0, 5, 0));
+                mr.addView(mt);
+                wrap.addView(mr, Ui.margins(Ui.wrap(), 6, 0, 6, 2));
+            } else wrap.addView(mt, Ui.margins(Ui.wrap(), 6, 0, 6, 2));
         }
         LinearLayout b = Ui.col(a);
         b.setBackground(me ? Ui.round(Ui.G100, 0, 18) : Ui.round(Ui.CARD, Ui.LINE, 18));
@@ -594,7 +607,10 @@ final class PersonsChat {
             if (sb.length() > 0) b.addView(tv);
         }
         for (JSONObject f : fs) {
-            View fv = f.optBoolean("image") ? imageView(f, inner, gallery) : fileRow(f, m.optBoolean("voice"), inner);
+            boolean audio = "audio".equals(PersonsUi.s(f, "kind")) || (m.optBoolean("voice") && !f.optBoolean("image"));
+            View fv = f.optBoolean("image") ? imageView(f, inner, gallery)
+                    : audio ? PersonsAudio.view(a, p.hub, f, me, fileAccount(f), inner, () -> load(false))
+                    : fileRow(f, m.optBoolean("voice"), inner);
             b.addView(fv, Ui.margins(Ui.wrap(), 0, b.getChildCount() > 0 ? 6 : 0, 0, 0));
         }
         String status = PersonsUi.s(m, "status");
@@ -602,6 +618,23 @@ final class PersonsChat {
         b.setOnLongClickListener(v -> { menu(m); return true; });
         wrap.addView(b, Ui.wrap());
         return wrap;
+    }
+
+    /** A message's channel kind when the page shows more than one chat ("" otherwise: no marks). */
+    private String chanOf(JSONObject m) {
+        if (PersonsUi.arr(data, "accounts").length() < 2) return "";
+        JSONObject c = PersonsUi.obj(m, "channel");
+        return c == null ? "" : PersonsUi.s(c, "kind");
+    }
+
+    /** The connection an attachment came through (its file route's `account`). */
+    private String fileAccount(JSONObject f) {
+        try {
+            String v = Uri.parse("http://hub" + PersonsUi.s(f, "url")).getQueryParameter("account");
+            if (v != null) return v;
+        } catch (Exception ignored) { }
+        String ac = acctId();
+        return ac == null ? "" : ac;
     }
 
     private static LinearLayout.LayoutParams endWrap() {

@@ -11,7 +11,7 @@ import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, type MenuEntry } from "./menus.ts";
-import { aiFolds, chatRows, listRows, personSections, sideRows, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -34,12 +34,24 @@ interface PanelJson {
   stores: { id: string; name: string; owner: boolean; color: string }[];
   lists: { id: string; name: string }[];
   identities: { kind: string; value: string; section: string | null; label: string }[];
+  /** People linked into them: who, their identifiers, their own AI chats (still reachable). */
+  linked?: { id: string; name: string; at: string; ids: string[]; aiChats: { section: string; chat: string }[] }[];
   socials: { url: string; platform: string | null; handle: string | null; note?: string; uploads: { title: string; url: string; thumb: string | null; meta?: string }[] }[];
 }
 
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", pdf: "application/pdf", mp4: "video/mp4", mov: "video/quicktime", mp3: "audio/mpeg", ogg: "audio/ogg", m4a: "audio/mp4", wav: "audio/wav", txt: "text/plain", zip: "application/zip" };
 const mimeOf = (f: string): string => MIME[f.toLowerCase().split(".").pop() ?? ""] ?? "application/octet-stream";
 
+const initials = (name: string): string => {
+  const w = name.trim().split(/\s+/).filter(Boolean);
+  return w.length > 1 ? `${w[0]![0] ?? ""}${w.at(-1)![0] ?? ""}`.toUpperCase() : (w[0] ?? "?").slice(0, 2).toUpperCase();
+};
+const hash = (id: string): number => {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+};
+const shortAgoText = (iso: string): string => shortAgo(iso);
 const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay" };
 const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp" };
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
@@ -124,6 +136,7 @@ class PersonsTab {
       b[name] = f;
     };
     on("all_people", () => {
+      this.stopAudio();
       this.ui.open = null;
       this.ui.allActive = true;
       this.chat = null;
@@ -140,6 +153,7 @@ class PersonsTab {
       this.render();
     }) as Cb);
     on("close_chat", () => {
+      this.stopAudio();
       this.ui.open = null;
       this.chat = null;
       this.render();
@@ -210,6 +224,27 @@ class PersonsTab {
       this.setToast("");
       f?.();
     });
+    on("audio_toggle", ((id: string) => void this.audioToggle(id)) as Cb);
+    on("audio_seek", ((id: string, f: number) => void this.audioSeek(id, f)) as Cb);
+    on("audio_speed", () => void this.audioSpeed());
+    on("audio_transcribe", ((id: string) => void this.audioTranscribe(id)) as Cb);
+    on("pick_toggle", ((id: string) => {
+      if (this.picks.has(id)) this.picks.delete(id);
+      else this.picks.add(id);
+      this.renderPicks();
+    }) as Cb);
+    on("pick_query", ((q: string) => {
+      this.pickQ = q;
+      this.renderPicks();
+    }) as Cb);
+    on("unlink", ((id: string) => {
+      const open = this.ui.open;
+      if (open) this.unlinkDialog(open.id, id);
+    }) as Cb);
+    on("panel_menu", ((x: number, y: number) => {
+      const open = this.ui.open;
+      if (open) this.panelMenu(open.id, x, y);
+    }) as Cb);
     ctx.onChanged(() => void this.refresh());
   }
 
@@ -248,6 +283,7 @@ class PersonsTab {
     if (s.loading) return;
     const before = this.state;
     this.state = s;
+    if (s.audio !== undefined) this.applyAudio(s.audio ?? null);
     if (this.ui.open && !s.people.some((p) => p.id === this.ui.open?.id)) {
       this.ui.open = null;
       this.chat = null;
@@ -361,7 +397,8 @@ class PersonsTab {
     b.c_status = c.typing ? (c.typing === "recording" ? "recording audio…" : "typing…") : pp.status?.text ?? "";
     b.c_tone = c.typing ? "green" : pp.status?.tone ?? "";
     b.c_channel = c.account?.kind ?? "";
-    b.c_account = c.account ? c.account.label : "No channel";
+    // the chat the composer sends on; with two of a kind (a linked person's other number) it says which
+    b.c_account = c.account ? (c.account.to && c.account.to.includes(" · ") ? `${c.account.label} → ${c.account.to.split(" · ").slice(1).join(" · ")}` : c.account.label) : "No channel";
     b.c_accounts = c.accounts.length > 1;
     b.c_gmail = c.account?.kind === "gmail";
     b.c_connected = !!c.account?.connected;
@@ -495,6 +532,16 @@ class PersonsTab {
       card_note: r.card.note,
       card_why: r.card.why,
       card_chat: r.card.chat,
+      chan: r.chan,
+      chan_label: r.chanLabel,
+      has_audio: !!r.audio,
+      a_key: r.audio?.key ?? "",
+      a_dur: r.audio?.duration ?? 0,
+      a_bars: r.audio?.bars ?? [],
+      a_played: r.audio ? r.audio.played || (this.audioSt?.key === r.audio.key && this.audioSt.playing) : true,
+      a_voice: !!r.audio?.voice,
+      a_transcript: r.audio?.transcript ?? "",
+      a_transcribing: !!r.audio && this.transcribing.has(r.audio.key),
     };
   }
 
@@ -540,6 +587,7 @@ class PersonsTab {
         return { title: u.title, meta: u.meta ?? "", url: u.url, thumb: tpx ?? NO_PX, has_thumb: !!tpx };
       }),
     }));
+    b.p_linked = (d.linked ?? []).map((l) => ({ id: l.id, name: l.name, sub: l.ids.join(" · "), initials: initials(l.name), color: COLORS[hash(l.id) % COLORS.length]!, avatar: NO_PX, has_avatar: false, on: false }));
     const order = this.order();
     const i = order.indexOf(p.id);
     b.p_pos = i >= 0 ? `${i + 1} of ${order.length}` : "";
@@ -568,6 +616,7 @@ class PersonsTab {
     if (this.ui.open?.id === id && this.ui.open.section === section && this.ui.open.store === store) return;
     const was = this.chatKey();
     if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
+    this.stopAudio();
     this.ui.open = { id, section, store };
     this.ui.allActive = false;
     this.chat = null;
@@ -727,6 +776,176 @@ class PersonsTab {
     else this.setToast("Couldn't download that file");
   }
 
+  // ---------- voice messages and audio files ----------
+
+  /** The engine's player as last heard (play, pause, its end). */
+  private audioSt: AudioStateJson | null = null;
+  /** Audio being transcribed (their bubble says so). */
+  private transcribing = new Set<string>();
+
+  private applyAudio(st: AudioStateJson | null): void {
+    const was = this.audioSt;
+    this.audioSt = st;
+    const b = this.bus;
+    b.a_key = st?.key ?? "";
+    b.a_playing = !!st?.playing;
+    b.a_pos = st ? st.pos + (st.playing ? Math.max(0, (Date.now() - st.at) / 1000) * st.speed : 0) : 0;
+    b.a_dur = st?.duration ?? 0;
+    b.a_speed = st?.speed ?? 1;
+    if (st?.error && st.error !== was?.error) this.setToast(`Couldn't play it: ${st.error}`);
+    // the played dot goes as it starts
+    if (st?.playing && st.key !== was?.key) this.render();
+  }
+
+  /** The audio of a message in the open chat. */
+  private audioOf(id: string): AudioRow | null {
+    const c = this.chat;
+    const m = c?.messages.find((x) => x.id === id);
+    const f = m?.files.find((x) => x.kind === "audio" || (m.voice && !x.image));
+    return m && f && c ? audioRow(f, m.voice, c.account?.conn ?? c.account?.id ?? "") : null;
+  }
+
+  private async audioCall(act: string, body: Record<string, unknown> = {}): Promise<void> {
+    const r = await this.api("POST", `audio/${act}`, body).catch(() => null);
+    if (!r) return;
+    if (r.status !== 200) {
+      this.setToast(String(r.body.error ?? "Audio didn't work"));
+      return;
+    }
+    if (act !== "transcribe" && act !== "played") this.applyAudio(r.body as unknown as AudioStateJson);
+  }
+
+  private fileBody(a: AudioRow): Record<string, unknown> {
+    return { key: a.key, account: a.account, url: a.raw, name: a.name, ...(a.duration ? { duration: a.duration } : {}) };
+  }
+
+  private async audioToggle(id: string): Promise<void> {
+    const a = this.audioOf(id);
+    if (!a) return;
+    const st = this.audioSt;
+    if (st?.key === a.key && st.playing) return this.audioCall("pause");
+    // the same one paused: on from there; another one: from the start (the engine stops the one playing)
+    await this.audioCall("play", { ...this.fileBody(a), ...(st?.key === a.key ? {} : { at: 0 }) });
+  }
+
+  private async audioSeek(id: string, frac: number): Promise<void> {
+    const a = this.audioOf(id);
+    if (!a) return;
+    const st = this.audioSt;
+    const dur = (st?.key === a.key ? st.duration : null) ?? a.duration;
+    if (!dur) return this.audioToggle(id);
+    const pos = frac * dur;
+    if (st?.key === a.key && st.playing) return this.audioCall("play", { ...this.fileBody(a), at: pos });
+    await this.audioCall("seek", { key: a.key, pos, duration: dur });
+  }
+
+  private async audioSpeed(): Promise<void> {
+    const st = this.audioSt;
+    const speed = nextSpeed(st?.speed ?? 1);
+    const a = st?.playing && st.key ? this.chat?.messages.map((m) => this.audioOf(m.id)).find((x) => x?.key === st.key) : null;
+    this.bus.a_speed = speed;
+    await this.audioCall("speed", { speed, ...(a ? this.fileBody(a) : {}) });
+  }
+
+  private async audioTranscribe(id: string): Promise<void> {
+    const a = this.audioOf(id);
+    if (!a || this.transcribing.has(a.key)) return;
+    this.transcribing.add(a.key);
+    this.render();
+    try {
+      const r = await this.api("POST", "audio/transcribe", this.fileBody(a)).catch(() => null);
+      if (!r || r.status !== 200) this.setToast(String(r?.body.error ?? "Couldn't transcribe it"));
+      else if (!String(r.body.text ?? "").trim()) this.setToast("No speech in it");
+    } finally {
+      this.transcribing.delete(a.key);
+    }
+    await this.loadChat(false);
+  }
+
+  /** Stops what plays (another chat, the chat closed). */
+  private stopAudio(): void {
+    if (this.audioSt?.key) void this.audioCall("stop");
+  }
+
+  // ---------- Link with… / Unlink ----------
+
+  private linkFor: string | null = null;
+  private picks = new Set<string>();
+  private pickQ = "";
+
+  /** Link with…: pick the others who are the same human; they become one person (Unlink splits them back). */
+  private linkDialog(id: string): void {
+    const p = this.person(id);
+    if (!p) return;
+    this.linkFor = id;
+    this.picks.clear();
+    this.pickQ = "";
+    this.bus.f_query = "";
+    this.renderPicks();
+    this.openDialog("link", `Link ${p.name} with…`, "Pick the people who are the same person on another channel. They become one: every channel's messages in one chat, their notes, stores and lists together. Unlink splits them back out.", "Link", async () => {
+      const ids = [...this.picks];
+      if (!ids.length) throw new Error("Pick at least one person");
+      const names = ids.map((x) => this.person(x)?.name ?? "them");
+      const r = await this.api("POST", `person/${encodeURIComponent(id)}/link`, { ids });
+      if (r.status !== 200 || r.body.ok === false) throw new Error(String(r.body.error ?? "Not linked"));
+      const linked = (r.body.linked as string[] | undefined) ?? ids;
+      this.setToast(`Linked ${names.join(", ")} into ${p.name}`, "Undo", () => void (async () => {
+        for (const x of linked) await this.api("POST", `person/${encodeURIComponent(id)}/unlink`, { id: x });
+        await this.refresh();
+        if (this.ui.open?.id === id) void Promise.all([this.loadChat(false), this.loadPanel()]);
+      })());
+      await this.refresh();
+      if (this.ui.open && linked.includes(this.ui.open.id)) void this.openPerson(id, this.ui.open.section, "");
+      else if (this.ui.open?.id === id) void Promise.all([this.loadChat(false), this.loadPanel()]);
+    });
+  }
+
+  /** The picker's people: everyone else matching the search, picked ones first, then the same first name, then recent. */
+  private renderPicks(): void {
+    const s = this.state;
+    const me = this.linkFor ? this.person(this.linkFor) : undefined;
+    if (!s || !me) return;
+    const first = (n: string): string => n.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^\p{L}\p{N}]+/u)[0] ?? "";
+    const mine = first(me.name);
+    const rank = (p: PersonJson): number => (this.picks.has(p.id) ? 0 : mine && first(p.name) === mine ? 1 : 2);
+    const people = s.people
+      .filter((p) => p.id !== me.id && (this.picks.has(p.id) || matches(p, this.pickQ)))
+      .sort((a, b) => rank(a) - rank(b) || byRecent(a, b))
+      .slice(0, 200);
+    this.bus.f_picks = people.map((p) => {
+      const px = this.pics.get(p.avatarPath, 96);
+      const r = p.rows[""];
+      const sub = [r?.channel ? KIND_LABEL[r.channel] ?? r.channel : "", r?.lastAt ? shortAgoText(r.lastAt) : "", p.linked?.length ? `+${p.linked.length} linked` : ""].filter(Boolean).join(" · ");
+      return { id: p.id, name: p.name, sub, initials: p.initials, color: p.color, avatar: px ?? NO_PX, has_avatar: !!px, on: this.picks.has(p.id) };
+    });
+    const names = [...this.picks].map((x) => this.person(x)?.name ?? "?");
+    this.bus.f_picked = names.length ? `${names.length} picked: ${names.join(", ")}` : "Nobody picked yet.";
+  }
+
+  private unlinkDialog(id: string, linkedId: string): void {
+    const p = this.person(id);
+    const l = p?.linked?.find((x) => x.id === linkedId) ?? this.panelData?.linked?.find((x) => x.id === linkedId);
+    if (!p || !l) return;
+    this.confirm(`Unlink ${l.name}?`, `${l.name} goes back to being their own person, with their channels, notes, stores and lists as they were when linked. ${p.name} keeps the rest.`, "Unlink", async () => {
+      const r = await this.api("POST", `person/${encodeURIComponent(id)}/unlink`, { id: linkedId });
+      if (r.status !== 200) throw new Error(String(r.body.error ?? "Not unlinked"));
+      await this.refresh();
+      this.setToast(`${l.name} is on their own again`);
+      if (this.ui.open?.id === id) void Promise.all([this.loadChat(false), this.loadPanel()]);
+    });
+  }
+
+  /** The panel's ⋯: Link with…, Unlink, a linked person's own AI chats. */
+  private panelMenu(id: string, x: number, y: number): void {
+    const d = this.panelData;
+    const linked = d?.person.id === id ? d.linked ?? [] : [];
+    this.showMenu(x, y, [
+      { label: "Link with…", run: () => this.linkDialog(id) },
+      ...linked.map((l) => ({ label: `Unlink ${l.name}…`, run: () => this.unlinkDialog(id, l.id) })),
+      ...linked.flatMap((l) => l.aiChats.map((c) => ({ label: `${l.name}'s AI chat`, sub: SECTION_LABEL[c.section] ?? c.section, run: () => this.ctx.openChat?.(c.chat) }))),
+    ]);
+  }
+
   // ---------- menus ----------
 
   private showMenu(x: number, y: number, items: { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; run?: () => void }[], width = 264): void {
@@ -783,6 +1002,8 @@ class PersonsTab {
       { label: "Open", run: () => void this.openPerson(id, sec, store) },
       { label: "Rename", icon: "", run: () => this.renameDialog(id) },
       { label: "Edit…", run: () => this.personDialog(id) },
+      { label: "Link with…", run: () => this.linkDialog(id) },
+      ...(p.linked ?? []).map((l) => ({ label: `Unlink ${l.name}…`, run: () => this.unlinkDialog(id, l.id) })),
       // in a section: Settle / Unsettle there; in All people: one for each section they're in (the panel has none)
       ...(sec
         ? [{ label: settled ? "Unsettle" : "Settle", run: () => void this.api("PATCH", `person/${encodeURIComponent(id)}`, { settle: { section: sec, on: !settled } }) }]
@@ -811,10 +1032,14 @@ class PersonsTab {
   private accountMenu(x: number, y: number): void {
     const c = this.chat;
     if (!c) return;
-    this.showMenu(x, y, c.accounts.map((a) => ({ label: a.label, icon: a.kind, sub: a.id === c.account?.id ? "In use" : "", run: () => {
-      this.account = a.id;
-      void this.loadChat(false);
-    } })));
+    // every chat shows in the one timeline; this picks where the next message goes
+    this.showMenu(x, y, [
+      { header: true, label: "SEND ON" },
+      ...c.accounts.map((a) => ({ label: a.to && a.to.includes(" · ") ? `${a.label} → ${a.to.split(" · ").slice(1).join(" · ")}` : a.label, icon: a.kind, sub: a.id === c.account?.id ? "In use" : a.connected === false ? "Not connected" : "", run: () => {
+        this.account = a.id;
+        void this.loadChat(false);
+      } })),
+    ]);
   }
 
   /** A shared menu's entries (menus.ts) with their actions; compact, as Person Hub's. */

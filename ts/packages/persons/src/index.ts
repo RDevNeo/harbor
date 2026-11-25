@@ -10,3 +10,4 @@ export { createSocials, formatAge, formatCount, type Socials, type SocialResult 
 export { createSpokpay } from "./spokpay.ts";
 export { SiteRequests } from "./siterequests.ts";
 export { AgentDiscord, cardLine as discordCardLine, DiscordTools, type AgentDiscordInfo } from "./agent/index.ts";
+export { AudioService, audioKey, waveBars, type AudioMeta, type PlayState } from "./audio.ts";

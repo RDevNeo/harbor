@@ -2,11 +2,11 @@
 // phone API, so both see and change the same state. JSON only (pictures and files as base64).
 import type { AgentDiscord } from "./agent/index.ts";
 import { statSync } from "node:fs";
-import { KIND_LABEL, peerOf, isSection, normWhatsApp, validPeer } from "./model/accounts.ts";
+import { chatKey, KIND_LABEL, isSection, normWhatsApp, pickChat, validPeer, type ChatRef } from "./model/accounts.ts";
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
-import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel } from "./model/data.ts";
+import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel, searchText } from "./model/data.ts";
 import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
 import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, Store } from "./model/types.ts";
@@ -16,6 +16,7 @@ import type { ConnView, PersonsService, RowInfo } from "./service.ts";
 import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
 import type { SiteRequests } from "./siterequests.ts";
 import type { Proposal, ProposalFields } from "./spokpay-core.ts";
+import { audioKey, waveBars, type AudioService } from "./audio.ts";
 
 export interface Call {
   method: string;
@@ -75,7 +76,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; audio?: AudioService } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -99,6 +100,8 @@ export class PersonsRoutes {
       if (rest[0] === "proposal" && rest[1]) return await this.proposal(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "proposing" && rest[1]) return await this.proposing(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "person" && rest[1]) {
+        if (m === "POST" && rest[2] === "link") return this.link(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "unlink") return this.unlinkRoute(rest[1], obj(c.body));
         if (m === "GET") return await this.panel(rest[1], q(c, "socials") !== "cached");
         if (m === "PATCH") return this.patchPerson(rest[1], obj(c.body));
         if (m === "DELETE") return this.deletePerson(rest[1]);
@@ -120,6 +123,7 @@ export class PersonsRoutes {
         if (m === "DELETE" && rest[1]) return await this.connRemove(rest[1]);
       }
       if (rest[0] === "agent" && rest[1] === "discord" && rest.length === 2) return await this.agentDiscord(m, obj(c.body));
+      if (rest[0] === "audio") return await this.audioRoute(m, rest[1] ?? "", obj(c.body));
       if (m === "GET" && rest[0] === "img") return await this.img(rest, c);
       if (m === "GET" && rest[0] === "file") return await this.file(c);
     } catch (e) {
@@ -291,12 +295,14 @@ export class PersonsRoutes {
         listIds: p.listIds,
         settled,
         rows,
-        search: [p.name, p.displayName ?? "", p.discordUsername ?? "", p.discordId, p.email ?? "", p.whatsapp ?? "", p.notes ?? ""].join(" ").toLowerCase(),
+        search: searchText(p).replace(/\n/g, " "),
+        linked: (p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person) })),
       };
     });
     return {
       rev: this.s.rev,
       unread,
+      audio: this.audioState(),
       connections: this.s.views().map((v) => this.connJson(v)),
       stores: d.stores.map((st) => {
         const f = storeImageFile(this.s.dir, st);
@@ -322,26 +328,62 @@ export class PersonsRoutes {
 
   // ---------- chat ----------
 
-  /** The connection a chat uses: `account` if it's one of the person's choices, else the default. */
-  private chatConn(p: Person, section: SectionId | null, account?: string | null): { conn: ConnView | undefined; choices: ConnView[] } {
+  /** The chat the composer uses: `account` (a chat key, or a connection id) if it's one of the person's, else the default. */
+  private chatConn(p: Person, section: SectionId | null, account?: string | null): { chat: ChatRef<ConnView> | undefined; choices: ChatRef<ConnView>[] } {
     const { choices, current } = this.s.chatChoices(p, section);
-    const pick = account ? choices.find((x) => x.id === account) : undefined;
-    return { conn: pick ?? current, choices };
+    return { chat: pickChat(choices, account) ?? current, choices };
   }
 
-  private msgJson(m: Message, conn: ConnView, mine: Map<string, Message>): Json {
-    const files = (m.attachments ?? []).map((a) => ({
-      name: a.name,
-      url: `/v1/persons/file?account=${encodeURIComponent(conn.id)}&url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.name)}`,
-      raw: a.url,
-      type: a.type ?? null,
-      size: a.size ?? null,
-      width: a.width ?? null,
-      height: a.height ?? null,
-      kind: attachmentKind(a, m.voice),
-      image: attachmentKind(a, m.voice) === "image",
-      duration: a.duration ?? null,
-    }));
+  /** Every message of a person's chats (oldest first), each with the chat it is in: their page's one timeline. */
+  private timeline(choices: ChatRef<ConnView>[]): { m: Message; chat: ChatRef<ConnView> }[] {
+    const out: { m: Message; chat: ChatRef<ConnView> }[] = [];
+    for (const ch of choices) {
+      const cur = this.s.view(ch.conn.id) ?? ch.conn;
+      for (const m of cur.convos[ch.peer]?.messages ?? []) out.push({ m, chat: { conn: cur, peer: ch.peer } });
+    }
+    return out.sort((a, b) => Date.parse(a.m.timestamp) - Date.parse(b.m.timestamp) || (a.m.timestamp < b.m.timestamp ? -1 : a.m.timestamp > b.m.timestamp ? 1 : 0));
+  }
+
+  /** A message of the person's chats by id, with its chat (menus, Forward to AI, site requests). */
+  private findMessage(choices: ChatRef<ConnView>[], id: string | undefined): { m: Message; chat: ChatRef<ConnView> } | undefined {
+    return id ? this.timeline(choices).find((x) => x.m.id === id) : undefined;
+  }
+
+  /** The chats' channel as the timeline marks it: kind, and a label when the person has more than one chat. */
+  private channelJson(ch: ChatRef<ConnView>, choices: ChatRef<ConnView>[]): Json {
+    return { key: chatKey(ch), kind: ch.conn.kind, label: this.chatLabel(ch, choices) };
+  }
+
+  /** "WhatsApp", or "WhatsApp · +55 11 9…" when they have two chats of that kind (a linked person's other number). */
+  private chatLabel(ch: ChatRef<ConnView>, choices: ChatRef<ConnView>[]): string {
+    const same = choices.filter((c) => c.conn.kind === ch.conn.kind);
+    if (same.length < 2) return KIND_LABEL[ch.conn.kind];
+    const twoConns = new Set(same.map((c) => c.conn.id)).size > 1;
+    const who = ch.conn.kind === "whatsapp" ? `+${ch.peer}` : ch.conn.kind === "discord" ? ch.peer.slice(-4).padStart(5, "…") : ch.peer;
+    return `${KIND_LABEL[ch.conn.kind]} · ${twoConns && new Set(same.map((c) => c.peer)).size < 2 ? (ch.conn.state.me?.globalName || ch.conn.state.me?.username || ch.conn.section) : who}`;
+  }
+
+  private msgJson(m: Message, ch: ChatRef<ConnView>, mine: Map<string, Message>, choices: ChatRef<ConnView>[]): Json {
+    const conn = ch.conn;
+    const files = (m.attachments ?? []).map((a, i) => {
+      const kind = attachmentKind(a, m.voice);
+      const key = audioKey(conn.id, m.id, i);
+      const meta = kind === "audio" ? this.extra.audio?.meta(key) : undefined;
+      return {
+        name: a.name,
+        url: `/v1/persons/file?account=${encodeURIComponent(conn.id)}&url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.name)}`,
+        raw: a.url,
+        type: a.type ?? null,
+        size: a.size ?? null,
+        width: a.width ?? null,
+        height: a.height ?? null,
+        kind,
+        image: kind === "image",
+        duration: a.duration ?? meta?.duration ?? null,
+        // audio: the bubble's bars (the platform's waveform, else measured once played), played, its transcript
+        ...(kind === "audio" ? { audio: key, bars: waveBars(a.waveform) ?? meta?.bars ?? null, played: !!meta?.played || m.fromMe, transcript: meta?.transcript ?? null } : {}),
+      };
+    });
     const r = m.reply;
     const quoted = r ? mine.get(r.id) : undefined;
     return {
@@ -357,15 +399,20 @@ export class PersonsRoutes {
       embed: !!m.embed,
       reply: r ? { id: r.id, text: quoted?.content ?? r.content ?? (r.attachments ? "📎 Attachment" : r.deleted ? "Deleted message" : ""), fromMe: quoted?.fromMe ?? !!r.fromMe } : null,
       files,
+      channel: this.channelJson(ch, choices),
       ai: false,
     };
   }
+
+  /** Chats whose oldest page was reached (`before` stops asking them). */
+  private exhausted = new Set<string>();
 
   private async chat(personId: string, c: Call): Promise<Reply> {
     const p = this.s.person(decodeURIComponent(personId));
     if (!p) return err(404, "no such person");
     const section = sectionOf(q(c, "section"));
-    const { conn, choices } = this.chatConn(p, section, q(c, "account"));
+    const { chat: picked, choices } = this.chatConn(p, section, q(c, "account"));
+    const conn = picked?.conn;
     const pic = this.pictureRef(p);
     const row = this.s.rowInfo(p, section);
     const personJson = { id: p.id, name: personLabel(p), initials: initials(personLabel(p)), color: colorOf(p.id), avatar: pic, avatarPath: this.picture(p), presence: row.presence ?? null };
@@ -378,35 +425,57 @@ export class PersonsRoutes {
       siteRequests: !!sites && !!this.s.data && sites.offered(p, this.s.data),
       proposals: sites ? sites.proposals(p.id).map(proposalJson) : [],
       proposing: sites ? json(sites.proposing(p.id).map((x) => ({ ...x, at: new Date(x.at).toISOString() }))) : [],
+      linked: (p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person) })),
     };
-    if (!conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: aiJson(ai), ...extras });
-    const peer = peerOf(p, conn.kind, conn.section);
+    if (!picked || !conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: aiJson(ai), ...extras });
     const before = q(c, "before");
     if (before) {
-      const n = await this.s.loadHistory(conn.id, peer, before).catch(() => 0);
-      if (!n) return ok({ messages: [], more: false });
-    } else if (!conn.convos[peer]?.messages.length && conn.connected) {
-      await this.s.loadHistory(conn.id, peer).catch(() => 0);
+      // an older page of the timeline: each chat that may still have messages before that one loads its page
+      const at = this.timeline(choices).find((x) => x.m.id === before)?.m.timestamp ?? "";
+      await Promise.all(choices.map(async (ch) => {
+        const cur = this.s.view(ch.conn.id) ?? ch.conn;
+        const first = cur.convos[ch.peer]?.messages[0];
+        const k = chatKey(ch);
+        if (!first || this.exhausted.has(k) || (at && Date.parse(first.timestamp) < Date.parse(at))) return;
+        const n = await this.s.loadHistory(ch.conn.id, ch.peer, first.id).catch(() => 0);
+        if (!n) this.exhausted.add(k);
+      }));
+      const older = this.timeline(choices).filter((x) => at && Date.parse(x.m.timestamp) < Date.parse(at));
+      const byId = new Map(older.map((x) => [x.m.id, x.m]));
+      return ok({ messages: older.map((x) => this.msgJson(x.m, x.chat, byId, choices)), more: older.length > 0 });
     }
-    if (!before) this.s.watch(conn.id, peer);
+    await Promise.all(choices.map(async (ch) => {
+      const cur = this.s.view(ch.conn.id) ?? ch.conn;
+      if (!cur.convos[ch.peer]?.messages.length && cur.connected) await this.s.loadHistory(ch.conn.id, ch.peer).catch(() => 0);
+    }));
+    this.s.watch(conn.id, picked.peer);
     const cur = this.s.view(conn.id) ?? conn;
-    const msgs = cur.convos[peer]?.messages ?? [];
-    const byId = new Map(msgs.map((m) => [m.id, m]));
-    const shown = before ? msgs.filter((m) => m.timestamp < (byId.get(before)?.timestamp ?? "")) : msgs;
-    const seen = seenOf(p, conn.id, peer);
-    const firstUnread = shown.find((m) => !m.fromMe && (seen ? Date.parse(m.timestamp) > Date.parse(seen) : m.unread === true));
-    const typing = cur.typing[peer];
-    const status = headerStatus(conn.kind, this.s.presenceOf(peer), cur.lastSeen[peer], typing && typing.until > Date.now() ? typing.kind : undefined);
+    const all = this.timeline(choices);
+    const byId = new Map(all.map((x) => [x.m.id, x.m]));
+    // the first unread message over every chat
+    const firstUnread = all.find((x) => {
+      if (x.m.fromMe) return false;
+      const seen = seenOf(p, x.chat.conn.id, x.chat.peer);
+      return seen ? Date.parse(x.m.timestamp) > Date.parse(seen) : x.m.unread === true;
+    });
+    const typingOf = (ch: ChatRef<ConnView>) => {
+      const t = (this.s.view(ch.conn.id) ?? ch.conn).typing[ch.peer];
+      return t && t.until > Date.now() ? t.kind : undefined;
+    };
+    const typing = typingOf(picked) ?? choices.map(typingOf).find(Boolean);
+    const status = headerStatus(conn.kind, this.s.presenceOf(picked.peer), cur.lastSeen[picked.peer], typing);
+    const outgoing = choices.flatMap((ch) => ((this.s.view(ch.conn.id) ?? ch.conn).outgoing[ch.peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })), channel: this.channelJson(ch, choices) })));
     return ok({
       person: { ...personJson, status: status ? { text: status.text, tone: TONE[status.tone] ?? "muted" } : null },
-      account: { id: conn.id, kind: conn.kind, section: conn.section, label: this.connLabel(cur), connected: cur.connected },
-      accounts: choices.map((x) => ({ id: x.id, kind: x.kind, label: this.connLabel(x) })),
-      peer,
-      typing: typing && typing.until > Date.now() ? typing.kind : null,
-      more: shown.length > 0,
-      unreadFrom: firstUnread?.id ?? null,
-      messages: shown.map((m) => this.msgJson(m, cur, byId)),
-      outgoing: (cur.outgoing[peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })) })),
+      // `id` is the chat's key ("<connection>:<who>"): what `account` takes back; `conn` the connection
+      account: { id: chatKey(picked), conn: conn.id, kind: conn.kind, section: conn.section, label: this.connLabel(cur), to: this.chatLabel(picked, choices), connected: cur.connected },
+      accounts: choices.map((x) => ({ id: chatKey(x), conn: x.conn.id, kind: x.conn.kind, label: this.connLabel(x.conn), to: this.chatLabel(x, choices), connected: x.conn.connected })),
+      peer: picked.peer,
+      typing: typing ?? null,
+      more: all.length > 0,
+      unreadFrom: firstUnread?.m.id ?? null,
+      messages: all.map((x) => this.msgJson(x.m, x.chat, byId, choices)),
+      outgoing: json(outgoing),
       ai: aiJson(ai),
       ...extras,
     });
@@ -417,11 +486,11 @@ export class PersonsRoutes {
     return who ? `${KIND_LABEL[v.kind]} · ${who}` : KIND_LABEL[v.kind];
   }
 
-  private resolve(personId: string, b: Record<string, unknown>): { p: Person; conn: ConnView } | null {
+  private resolve(personId: string, b: Record<string, unknown>): { p: Person; conn: ConnView; peer: string; choices: ChatRef<ConnView>[] } | null {
     const p = this.s.person(decodeURIComponent(personId));
     if (!p) return null;
-    const { conn } = this.chatConn(p, sectionOf(str(b.section)), str(b.account));
-    return conn ? { p, conn } : null;
+    const { chat, choices } = this.chatConn(p, sectionOf(str(b.section)), str(b.account));
+    return chat ? { p, conn: chat.conn, peer: chat.peer, choices } : null;
   }
 
   private async send(personId: string, b: Record<string, unknown>): Promise<Reply> {
@@ -433,7 +502,7 @@ export class PersonsRoutes {
       return { name: str(f.name) ?? "file", type: str(f.type) ?? "application/octet-stream", data: new Uint8Array(Buffer.from(str(f.data) ?? "", "base64")) };
     }).filter((f) => f.data.length > 0);
     if (!text.trim() && !files.length) return err(400, "nothing to send");
-    const opts: { files?: OutgoingFile[]; replyTo?: string; subject?: string } = {};
+    const opts: { files?: OutgoingFile[]; replyTo?: string; subject?: string; peer?: string } = { peer: r.peer };
     if (files.length) opts.files = files;
     const replyTo = str(b.replyTo);
     if (replyTo) opts.replyTo = replyTo;
@@ -443,32 +512,34 @@ export class PersonsRoutes {
     return ok(json(res));
   }
 
+  /** Seen: every chat on the page (one timeline shows them all). */
   private read(personId: string, b: Record<string, unknown>): Reply {
     const r = this.resolve(personId, b);
-    if (r) this.s.markSeen(r.p.id, r.conn.id, str(b.upTo));
+    if (r) for (const ch of r.choices) this.s.markSeen(r.p.id, ch.conn.id, str(b.upTo), ch.peer);
     return ok({ ok: !!r });
   }
 
   private unread(personId: string, b: Record<string, unknown>): Reply {
     const r = this.resolve(personId, b);
-    const id = str(b.messageId);
-    const m = r && id ? r.conn.convos[peerOf(r.p, r.conn.kind, r.conn.section)]?.messages.find((x) => x.id === id) : undefined;
-    if (r && m) this.s.markUnread(r.p.id, r.conn.id, m);
-    return ok({ ok: !!m });
+    const hit = r ? this.findMessage(r.choices, str(b.messageId)) : undefined;
+    if (r && hit) this.s.markUnread(r.p.id, hit.chat.conn.id, hit.m, hit.chat.peer);
+    return ok({ ok: !!hit });
   }
 
   private typing(personId: string, b: Record<string, unknown>): Reply {
     const r = this.resolve(personId, b);
-    if (r) this.s.sendTyping(r.conn.id, peerOf(r.p, r.conn.kind, r.conn.section), b.on !== false);
+    if (r) this.s.sendTyping(r.conn.id, r.peer, b.on !== false);
     return ok({ ok: !!r });
   }
 
+  /** A failed message: retried or dismissed in the chat it was sent on (`key` is the outgoing item's). */
   private retry(personId: string, b: Record<string, unknown>): Reply {
     const r = this.resolve(personId, b);
     const key = str(b.key);
     if (r && key) {
-      if (b.dismiss === true) this.s.dismiss(r.conn.id, peerOf(r.p, r.conn.kind, r.conn.section), key);
-      else this.s.retry(r.p.id, r.conn.id, key);
+      const ch = r.choices.find((c) => ((this.s.view(c.conn.id) ?? c.conn).outgoing[c.peer] ?? []).some((o) => o.key === key)) ?? { conn: r.conn, peer: r.peer };
+      if (b.dismiss === true) this.s.dismiss(ch.conn.id, ch.peer, key);
+      else this.s.retry(r.p.id, ch.conn.id, key, ch.peer);
     }
     return ok({ ok: !!r });
   }
@@ -479,28 +550,30 @@ export class PersonsRoutes {
     if (!this.extra.ai) return err(503, "Person AI isn't available");
     const section = sectionOf(str(b.section)) ?? "stores";
     let text = str(b.text) ?? "";
-    const { conn } = this.chatConn(p, section, str(b.account));
-    const peer = conn ? peerOf(p, conn.kind, conn.section) : "";
-    const msgs = conn ? conn.convos[peer]?.messages ?? [] : [];
+    const { chat, choices } = this.chatConn(p, section, str(b.account));
+    const conn = chat?.conn;
+    // the conversation over every chat of theirs (one timeline)
+    const msgs = this.timeline(choices).map((x) => x.m);
     // Forward to AI: the message quoted in the note (its images and PDFs fetched to this PC for the agent to read)
     const fwdId = str(b.forward);
-    const fwd = fwdId ? msgs.find((m) => m.id === fwdId) : undefined;
+    const fwdHit = this.findMessage(choices, fwdId);
+    const fwd = fwdHit?.m;
     if (fwdId && !fwd) return err(404, "That message isn't in this chat any more");
     // files attached to the note: paths on this PC (the window's attach button)
     const attached = (Array.isArray(b.paths) ? b.paths : []).filter((x): x is string => typeof x === "string" && x.startsWith("/")).slice(0, 10);
-    if (fwd && conn) {
+    if (fwd && fwdHit) {
       const files: string[] = [];
       for (const f of forwardableFiles(fwd)) {
-        const path = await this.s.fetchAttachment(f.url, f.name, conn.id).catch(() => null);
+        const path = await this.s.fetchAttachment(f.url, f.name, fwdHit.chat.conn.id).catch(() => null);
         if (path) files.push(path);
       }
-      const me = conn.state.me?.globalName || conn.state.me?.username;
+      const me = fwdHit.chat.conn.state.me?.globalName || fwdHit.chat.conn.state.me?.username;
       text = forwardedNote({ message: fwd, from: fwd.fromMe ? `Me${me ? ` (${me})` : ""}` : personLabel(p), question: text, files });
     }
     if (attached.length) text = `${text.trim()}\n\nFiles attached to this note (on this PC): ${attached.join(", ")}`.trim();
     if (!text.trim()) return err(400, "empty");
-    const chat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!);
-    return ok({ ok: true, chat });
+    const aiChat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!);
+    return ok({ ok: true, chat: aiChat });
   }
 
   // ---------- SpokPay site requests ----------
@@ -511,12 +584,13 @@ export class PersonsRoutes {
     const r = this.resolve(personId, b);
     if (!sites || !r || !this.s.data) return err(404, "no chat");
     if (!sites.offered(r.p, this.s.data)) return err(409, "Site requests aren't offered for this person");
-    const peer = peerOf(r.p, r.conn.kind, r.conn.section);
-    const msgs = r.conn.convos[peer]?.messages ?? [];
-    const m = msgs.find((x) => x.id === str(b.messageId));
-    if (!m) return err(404, "That message isn't in this chat any more");
-    const handle = r.conn.kind === "discord" ? (r.p.discordUsername ? `@${r.p.discordUsername}` : "") : r.conn.kind === "gmail" ? (r.p.email ?? "") : r.p.whatsapp ? `+${r.p.whatsapp}` : "";
-    sites.fromMessage({ person: r.p, message: m, recent: msgs.slice(-30), account: r.conn.id, handle, data: this.s.data });
+    const hit = this.findMessage(r.choices, str(b.messageId));
+    if (!hit) return err(404, "That message isn't in this chat any more");
+    const m = hit.m;
+    const msgs = this.timeline(r.choices).map((x) => x.m);
+    const k = hit.chat.conn.kind;
+    const handle = k === "discord" ? (r.p.discordUsername ? `@${r.p.discordUsername}` : "") : k === "gmail" ? (hit.chat.peer || r.p.email || "") : `+${hit.chat.peer}`;
+    sites.fromMessage({ person: r.p, message: m, recent: msgs.filter((x) => x.timestamp <= m.timestamp).slice(-30), account: hit.chat.conn.id, handle, data: this.s.data });
     return ok({ ok: true });
   }
 
@@ -560,9 +634,85 @@ export class PersonsRoutes {
     if (m !== "POST" || act !== "local") return err(405, "POST local or DELETE");
     const r = this.resolve(str(b.personId) ?? "", b);
     if (!r) return err(404, "no chat");
-    const msgs = r.conn.convos[peerOf(r.p, r.conn.kind, r.conn.section)]?.messages ?? [];
+    const msgs = this.timeline(r.choices).map((x) => x.m);
     await sites.local(messageId, { person: r.p, message: msgs.find((x) => x.id === messageId), recent: msgs.slice(-30), data: this.s.data });
     return ok({ ok: true });
+  }
+
+  // ---------- voice messages and audio files ----------
+
+  private audioState(): Json {
+    const a = this.extra.audio;
+    return a ? (a.state() as unknown as Json) : null;
+  }
+
+  /**
+   * `POST audio/play {key, account, url, name, at?, speed?, duration?}` (the attachment downloaded and decrypted
+   * once, then played here), `pause`, `stop`, `seek {key, pos, duration?}`, `speed {speed}`, `played {key}` (the
+   * phone plays it itself), `transcribe {key, account, url, name}` → `{ text }`; `GET audio` → the player's state.
+   */
+  private async audioRoute(m: string, act: string, b: Record<string, unknown>): Promise<Reply> {
+    const a = this.extra.audio;
+    if (!a) return err(503, "Audio isn't available here");
+    if (m === "GET" && !act) return ok(this.audioState());
+    if (m !== "POST") return err(405, "GET or POST");
+    const key = str(b.key) ?? "";
+    const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const speedOf = (v: unknown): number | null => { const n = num(v); return n === null ? null : Math.min(2, Math.max(0.5, n)); };
+    const fileOf = async (): Promise<string> => {
+      const url = str(b.url) ?? "";
+      if (!url) throw new Error("no file");
+      const f = await this.s.fetchAttachment(url, str(b.name) ?? "audio", str(b.account));
+      if (!f) throw new Error("Couldn't download that audio");
+      return f;
+    };
+    if (act === "play") {
+      if (!/^[\w-]{1,60}:.{1,200}:\d{1,3}$/.test(key)) return err(400, "bad key");
+      if (!a.canPlay()) return err(501, "No audio player on this PC (install ffmpeg, or mpv)");
+      const f = await fileOf();
+      return ok((await a.play(key, f, num(b.at), speedOf(b.speed), num(b.duration))) as unknown as Json);
+    }
+    if (act === "pause") return ok(a.pause() as unknown as Json);
+    if (act === "stop") return ok(a.stop() as unknown as Json);
+    if (act === "seek") return ok(a.seek(key, num(b.pos) ?? 0, num(b.duration)) as unknown as Json);
+    if (act === "speed") {
+      const sp = speedOf(b.speed) ?? 1;
+      const st = a.state();
+      // playing: it goes on from where it is at the new speed
+      if (st.playing && st.key && str(b.url)) return ok((await a.play(st.key, await fileOf(), null, sp, st.duration)) as unknown as Json);
+      return ok(a.setSpeed(sp) as unknown as Json);
+    }
+    if (act === "played") {
+      if (key) a.markPlayed(key);
+      return ok({ ok: !!key });
+    }
+    if (act === "transcribe") {
+      if (!a.canTranscribe()) return err(501, "Speech to text isn't set up on this PC");
+      const text = await a.transcribe(key, await fileOf());
+      return ok({ ok: true, text });
+    }
+    return err(404, "no such call");
+  }
+
+  // ---------- Link with… / Unlink ----------
+
+  /** `POST person/{id}/link {ids}`: they become part of this person (data.json backed up before the first link). */
+  private link(personId: string, b: Record<string, unknown>): Reply {
+    const id = decodeURIComponent(personId);
+    const ids = (Array.isArray(b.ids) ? b.ids : []).filter((x): x is string => typeof x === "string");
+    if (!this.s.person(id)) return err(404, "no such person");
+    if (!ids.length) return err(400, "pick who to link");
+    const linked = this.s.link(id, ids);
+    if (!linked.length) return err(400, "nobody to link");
+    return ok({ ok: true, linked, person: json(this.s.person(id)) });
+  }
+
+  /** `POST person/{id}/unlink {id}`: someone linked into this person back on their own. */
+  private unlinkRoute(personId: string, b: Record<string, unknown>): Reply {
+    const id = decodeURIComponent(personId);
+    const other = str(b.id) ?? "";
+    if (!this.s.unlink(id, other)) return err(400, "they aren't linked here");
+    return ok({ ok: true, person: json(this.s.person(other)) });
   }
 
   // ---------- people ----------
@@ -589,6 +739,7 @@ export class PersonsRoutes {
       stores: d.stores.filter((s) => p.storeIds.includes(s.id) || s.ownerId === p.id).map((s) => ({ id: s.id, name: s.name, owner: s.ownerId === p.id, color: s.color ?? "#64748b" })),
       lists: d.lists.filter((l) => p.listIds.includes(l.id)).map((l) => ({ id: l.id, name: l.name })),
       identities: json(identities),
+      linked: json((p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person), at: l.at, ids: [l.person.discordUsername ? `@${l.person.discordUsername}` : l.person.discordId, l.person.email ? l.person.email : "", l.person.whatsapp ? `+${l.person.whatsapp}` : "", ...(l.person.identities ?? []).map((i) => (i.kind === "whatsapp" ? `+${i.value}` : i.value))].filter(Boolean), aiChats: this.extra.ai?.chatsOf?.(l.person) ?? [] }))),
       socials: socials ?? (p.socials ?? []).map((url) => ({ url, platform: null, handle: null, uploads: [] })),
     });
   }
@@ -762,6 +913,8 @@ export interface AiPort {
   ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData): Promise<string | number>;
   /** The person's AI chat once it exists (known after items or ask). */
   chatOf?(p: Person, section: SectionId): string | null;
+  /** Every AI chat known for a person (a linked person's stay reachable from the panel). */
+  chatsOf?(p: Person): { section: SectionId; chat: string }[];
 }
 
 export { validPeer };
