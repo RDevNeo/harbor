@@ -1989,8 +1989,10 @@ expired start: `409 {"error": "…"}`.
 
 ### Discord: `GET /v1/apps/discord`, `POST /v1/apps/discord/{signout,cancel,captcha_input,captcha_cancel}`, `GET /v1/apps/discord/captcha`
 
-The Discord app on this PC (packages/mcp discord*.ts): agents running here use the user's Discord
-account through a hidden client on the PC. The account and its sign-in live on the PC: the phone
+The Discord app on this PC (packages/mcp discord.ts): agents running here use the user's Discord
+account through the Persons tab's Discord connection (Stores, token-based, no browser). Since then
+there is never a captcha: `GET /v1/apps/discord/captcha` and the captcha calls answer `404`, and
+`captcha` is always null; `signout` signs that Persons connection out. The account and its sign-in live on the PC: the phone
 shows them, signs out, cancels a sign-in the PC runs, and solves captchas; it never signs in.
 Hubs without it answer `404`; the phone then hides the Discord row of Settings › Apps. These are
 calls to one PC (`callOn`): the PC Settings shows, or the one a captcha note came from.
