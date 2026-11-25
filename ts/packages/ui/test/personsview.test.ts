@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chatRows, fitImage, listRows, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, fitImage, listRows, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -144,5 +144,29 @@ describe("the Person AI's answer", () => {
       ["out", true, "", []],
       ["ai", false, "", [{ type: "text", text: "**Yes.**" }]],
     ]);
+  });
+
+  test("older answers start folded, the newest one open; the user's toggle wins; one being written never folds", () => {
+    const c: ChatJson = { person: { id: "p", name: "Ana", initials: "AN", color: "#000", avatar: null, avatarPath: null, presence: null, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: [
+      { id: "1", role: "assistant", text: "old", at: "2026-11-24T10:00:00", parts: [{ type: "text", text: "First **answer**." }, { type: "draft", text: "Opa Ana" }] },
+      { id: "2", role: "assistant", text: "mid", at: "2026-11-25T09:00:00" },
+      { id: "q", role: "user", text: "And now?", at: "2026-11-25T10:00:00" },
+      { id: "3", role: "assistant", text: "new", at: "2026-11-25T10:01:00" },
+    ] };
+    const folds = (toggled = new Map<string, boolean>(), cc = c) => aiFolds(chatRows(cc), toggled).filter((r) => r.kind === "ai").map((r) => `${r.id}:${r.folded ? "folded" : "open"}`);
+    expect(folds()).toEqual(["ai1:folded", "ai2:folded", "ai3:open"]);
+    // the user opened an old one and folded the newest: kept, also once a newer answer comes
+    const t = new Map([["ai1", false], ["ai3", true]]);
+    expect(folds(t)).toEqual(["ai1:open", "ai2:folded", "ai3:folded"]);
+    const more = { ...c, ai: [...c.ai, { id: "4", role: "assistant" as const, text: "", at: "2026-11-25T10:05:00", streaming: true }] };
+    expect(folds(t, more)).toEqual(["ai1:open", "ai2:folded", "ai3:folded", "ai4:open"]);
+    // a folded answer keeps its first draft and a plain preview
+    const r = chatRows(c).find((x) => x.id === "ai1")!;
+    expect([r.preview, r.draft]).toEqual(["First answer.", "Opa Ana"]);
+  });
+
+  test("a folded answer's preview is one plain paragraph", () => {
+    expect(aiPreview([{ type: "text", text: "The payment is fixed.\n\n- **#28853 is paid.** See [the order](https://x.y/1).\n- Deliver to `Rafarib113`.\n\n```\ncode\n```" }, { type: "draft", text: "Opa" }])).toBe("The payment is fixed. #28853 is paid. See the order. Deliver to Rafarib113. code");
+    expect(aiPreview([{ type: "text", text: "x".repeat(500) }]).length).toBe(400);
   });
 });

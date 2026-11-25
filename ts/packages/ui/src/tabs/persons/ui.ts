@@ -11,7 +11,7 @@ import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, type MenuEntry } from "./menus.ts";
-import { chatRows, listRows, personSections, sideRows, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, chatRows, listRows, personSections, sideRows, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -184,6 +184,10 @@ class PersonsTab {
       if (/^(https?:|mailto:)/i.test(url)) ctx.openExternal(url);
     }) as Cb);
     on("use_draft", ((text: string) => this.useDraft(text)) as Cb);
+    on("ai_fold", ((id: string) => {
+      this.aiFold.set(id, !this.foldedNow.has(id));
+      this.render();
+    }) as Cb);
     on("menu_pick", ((id: string) => this.pick(id)) as Cb);
     on("menu_close", () => {
       b.menu_open = false;
@@ -382,13 +386,18 @@ class PersonsTab {
     b.attached = (this.aiMode ? this.aiFiles : this.files).map((f) => basename(f)).join(", ");
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
-    const rows = chatRows(c).slice(-400);
+    const rows = aiFolds(chatRows(c).slice(-400), this.aiFold);
+    this.foldedNow = new Set(rows.filter((r) => r.folded).map((r) => r.id));
     this.keepParts(rows);
     const js = rows.map((r) => this.msgJs(r));
     syncRows(this.msgModel, js, (x, y) => x.image === y.image && JSON.stringify({ ...x, image: 0 }) === JSON.stringify({ ...y, image: 0 }));
   }
 
   private attachPaths = new Map<string, string | null>();
+  /** The AI answers the user folded (true) or opened (false) with their chevron, by row id: kept for the session. */
+  private aiFold = new Map<string, boolean>();
+  /** The answers folded on screen now (what a chevron click turns around). */
+  private foldedNow = new Set<string>();
   /** Each AI answer's parts for its bubble, by row id, while its text stays the same (a streaming one is redone). */
   private aiParts = new Map<string, { key: string; parts: PPartData[] }>();
 
@@ -477,6 +486,9 @@ class PersonsTab {
       streaming: r.streaming,
       to_ai: r.toAi,
       parts: this.partsOf(r),
+      folded: r.folded,
+      preview: r.preview,
+      draft: r.draft,
       card_title: r.card.title,
       card_sub: r.card.sub,
       card_state: r.card.state,

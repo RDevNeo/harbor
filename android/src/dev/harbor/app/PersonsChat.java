@@ -65,6 +65,11 @@ final class PersonsChat {
     private JSONObject data;
     private final List<JSONObject> msgs = new ArrayList<>();
     private JSONArray ai = new JSONArray();
+    /** The AI answers the user folded (true) or opened (false) by tapping their header, by id: kept for the session
+     *  (the app's process). Otherwise the newest answer is open and older ones fold (the PC's view.ts aiFolds). */
+    private static final Map<String, Boolean> AI_FOLD = new java.util.HashMap<>();
+    /** The newest answer's id in this chat: it starts open. */
+    private String newestAi = "";
     private boolean more, loading, loadingOlder, first = true, closed, toAi, toBottom;
     private String loadError;
     private String rowSig = "";
@@ -445,6 +450,8 @@ final class PersonsChat {
             }
             content.addView(t, Ui.fill());
         }
+        newestAi = "";
+        for (JSONObject e : PersonsHome.objs(ai)) if (!"user".equals(PersonsUi.s(e, "role"))) newestAi = PersonsUi.s(e, "id");
         // The conversation and the AI's thread, by time.
         List<Object[]> line = new ArrayList<>();
         for (JSONObject m : msgs) line.add(new Object[]{at(m), m, "msg"});
@@ -690,7 +697,43 @@ final class PersonsChat {
         long t = PersonsUi.ms(PersonsUi.s(e, "at"));
         h.addView(Ui.subtitle(Ui.bold(a, mine ? "To the AI" : "AI", 13, Ui.FG)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         h.addView(Ui.subtitle(Ui.text(a, " · Only you see this" + (t > 0 ? " · " + PersonsUi.clock(t) : ""), 12, Ui.G600)));
-        b.addView(h, Ui.margins(Ui.wrap(), 0, 0, 0, 4));
+        // An answer folds to its header, two lines and its first draft: tap the header (or the folded text) to toggle.
+        JSONArray fparts = mine ? null : e.optJSONArray("parts");
+        String aid = PersonsUi.s(e, "id");
+        boolean foldable = fparts != null && fparts.length() > 0 && !e.optBoolean("streaming");
+        Boolean toggled = AI_FOLD.get(aid);
+        boolean folded = foldable && (toggled != null ? toggled : !aid.equals(newestAi));
+        if (foldable) {
+            View.OnClickListener flip = v -> { AI_FOLD.put(aid, !folded); render(); };
+            h.setGravity(Gravity.CENTER_VERTICAL);
+            h.addView(new View(a), Ui.weight());
+            h.addView(Ui.icon(a, folded ? Ui.I_DOWN : Ui.I_UP, 14, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            h.setOnClickListener(flip);
+            h.setContentDescription(folded ? "AI answer, folded: tap to show it all" : "AI answer: tap to fold it");
+            b.addView(h, Ui.margins(Ui.fill(), 0, 0, 0, 4));
+        } else b.addView(h, Ui.margins(Ui.wrap(), 0, 0, 0, 4));
+        if (folded) {
+            String draft = "";
+            for (int i = 0; i < fparts.length(); i++) {
+                JSONObject p = fparts.optJSONObject(i);
+                if (p != null && "draft".equals(PersonsUi.s(p, "type"))) { draft = PersonsUi.s(p, "text"); break; }
+            }
+            View.OnClickListener flip = v -> { AI_FOLD.put(aid, false); render(); };
+            String pv = aiPreview(fparts);
+            if (!pv.isEmpty()) {
+                TextView tv = Ui.text(a, pv, 15, Ui.G700);
+                tv.setMaxLines(2);
+                tv.setEllipsize(TextUtils.TruncateAt.END);
+                tv.setOnClickListener(flip);
+                b.addView(tv, Ui.fill());
+            }
+            if (!draft.isEmpty()) b.addView(draftLine(draft, flip), Ui.margins(Ui.fill(), 0, pv.isEmpty() ? 0 : 8, 0, 0));
+            String all = PersonsUi.s(e, "text");
+            String use = draft.isEmpty() ? all : draft;
+            b.setOnLongClickListener(v -> { aiMenu(all, use, false); return true; });
+            wrap.addView(b, new LinearLayout.LayoutParams(maxW() + Ui.dp(24), LinearLayout.LayoutParams.WRAP_CONTENT));
+            return wrap;
+        }
         String raw = PersonsUi.s(e, "text");
         // Forward to AI: the forwarded message quoted over the question (empty: the default one)
         JSONObject fw = mine ? PersonsUi.obj(e, "forwarded") : null;
@@ -742,6 +785,41 @@ final class PersonsChat {
         tv.setOnLongClickListener(lp);
         wrap.addView(b, Ui.wrap());
         return wrap;
+    }
+
+    /** A folded answer's text as one plain paragraph (markdown marks, links' urls and fences dropped; the PC's
+     *  view.ts aiPreview): the bubble shows its first two lines. */
+    static String aiPreview(JSONArray parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject p = parts.optJSONObject(i);
+            if (p == null || "draft".equals(PersonsUi.s(p, "type"))) continue;
+            sb.append(PersonsUi.s(p, "text")).append('\n');
+        }
+        String t = sb.toString()
+                .replaceAll("(?m)^```.*$", "")
+                .replaceAll("(?m)^\\s{0,3}(#{1,6}|>+|[-*+]|\\d+[.)])\\s+", "")
+                .replaceAll("!?\\[([^\\]]*)\\]\\([^)]*\\)", "$1")
+                .replaceAll("(\\*\\*|__|~~|`)", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return t.length() > 400 ? t.substring(0, 399).trim() + "…" : t;
+    }
+
+    /** A folded answer's draft on one line (DraftCard's colours) with "Use as reply"; a tap elsewhere opens the answer. */
+    private View draftLine(String draft, View.OnClickListener open) {
+        LinearLayout r = Ui.row(a);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setBackground(Ui.round(Ui.G100, Ui.LINE, 14));
+        r.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(6), Ui.dp(6));
+        r.addView(Ui.icon(a, Ui.I_SEND, 12, Ui.G600));
+        TextView t = Ui.text(a, draft, 14, Ui.FG);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        r.addView(t, Ui.margins(Ui.weight(), 8, 0, 8, 0));
+        r.addView(Ds.chip(a, "Use as reply", true, v -> useReply(draft)));
+        r.setOnClickListener(open);
+        return r;
     }
 
     /** A message the AI drafted for the person (a ```reply block): in the user's own bubble colour, as it
