@@ -8,6 +8,7 @@ import { activeGoals, COLORS, PLANS, planLabel } from "../../../../../tabs/routi
 import { DAY_SHORT, fmtDays, isBonus, isScheduled, isShownOn, normalizeBonusDays, normalizeDays, WEEK_ORDER } from "../../../../../tabs/routine/lib/schedule.ts";
 import { elapsedMs, isPaused, type Session } from "../../../../../tabs/routine/lib/session.ts";
 import { wakeOptions } from "../../../../../tabs/routine/lib/sleepCycles.ts";
+import { colorIndex, goalsView, historyView, todayView } from "../../../../../tabs/routine/view.ts";
 import { amount, bestStreak, bonusDone, dayCompletion, isDone, streak } from "../../../../../tabs/routine/lib/stats.ts";
 import { quickAddsFor, totalsFrom } from "../../../../../tabs/routine/lib/store.ts";
 import type { AppData, DailyTotals, Entry, Goal } from "../../../../../tabs/routine/lib/types.ts";
@@ -57,31 +58,8 @@ type Bus = Record<string, unknown> & {
   coach_text: string;
 };
 
-/** An arc from 12 o'clock, clockwise, `frac` of the circle (r 44 in a 100 box): "" for none. */
-export function ringPath(frac: number): string {
-  const f = Math.max(0, Math.min(1, frac));
-  if (f <= 0) return "";
-  if (f >= 0.9999) return "M 50 6 A 44 44 0 1 1 49.99 6";
-  const a = f * 2 * Math.PI - Math.PI / 2;
-  const x = 50 + 44 * Math.cos(a);
-  const y = 50 + 44 * Math.sin(a);
-  return `M 50 6 A 44 44 0 ${f > 0.5 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)}`;
-}
+export { colorIndex, ringPath, thumbPath } from "../../../../../tabs/routine/view.ts";
 
-/** A goal's color as an index of the palette (COLORS; water's blue is COLORS[7]). */
-export function colorIndex(c: string): number {
-  const i = COLORS.findIndex((x) => x.toLowerCase() === c.trim().toLowerCase());
-  return i < 0 ? 2 : i;
-}
-
-/** A ride's thumbnail (0..1 points) as a path in a -0.1..1.1 box. */
-export function thumbPath(points: [number, number][] | undefined): string {
-  if (!points || points.length < 2) return "";
-  return points.map(([x, y], i) => `${i === 0 ? "M" : "L"} ${(x + 0.1).toFixed(3)} ${(y + 0.1).toFixed(3)}`).join(" ");
-}
-
-const ddmm = (d: Date): string => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
-const days = (n: number): string => `${n} ${n === 1 ? "day" : "days"}`;
 const typeOf = (g: Pick<Goal, "unit" | "kind">): GoalType => (g.kind === "ride" ? 3 : isTimerUnit(g.unit) ? 2 : g.unit.trim().toLowerCase() === "ml" ? 1 : 0);
 
 export function createRoutineUi(): TabUi {
@@ -151,11 +129,10 @@ export function createRoutineUi(): TabUi {
     set("picking", d.plan === null);
     set("section", section);
     set("sheet", sheet);
-    const goals = activeGoals(d.goals);
-    if (section === "today") renderToday(d, goals);
-    if (section === "history") renderHistory(d, goals);
+    if (section === "today") renderToday(d);
+    if (section === "history") renderHistory(d);
     if (section === "sleep") renderSleep(d);
-    renderGoals(d, goals);
+    renderGoals(d);
     renderForm();
     if (section === "coach") renderCoach();
     const running = Object.values(d.timers).some((t) => !isPaused(t)) || (st.ride !== null && !isPaused(st.ride.session));
@@ -166,145 +143,58 @@ export function createRoutineUi(): TabUi {
     }
   }
 
-  function renderToday(d: AppData, all: Goal[]): void {
-    const today = dateKey();
-    const now = Date.now();
-    const ride = st?.ride ?? null;
-    const goals = all
-      .filter((g) => isShownOn(g, today) || d.timers[g.id] != null || ride?.goalId === g.id)
-      .sort((a, b) => Number(isBonus(a, today)) - Number(isBonus(b, today)));
-    const pct = dayCompletion(totals, today, goals) ?? 0;
-    set("pct", pct);
-    set("pct_ring", ringPath(pct));
-    const w = st?.walking ?? {};
-    set("walk", Object.keys(w).length > 0 ? fmtWalk(w[today]) : "");
-    set("empty", all.length === 0 ? "first" : goals.length === 0 ? "rest" : "");
-    set("dense", goals.length >= 5);
+  function renderToday(d: AppData): void {
+    const v = todayView(d, st?.walking ?? {}, st?.ride ?? null);
+    set("pct", v.pct);
+    set("pct_ring", v.ring);
+    set("walk", v.walk);
+    set("empty", v.empty);
+    set("dense", v.dense);
     set("confirm_reset", confirmReset);
-    const todayEntries = d.entries[today] ?? [];
     set(
       "goals",
-      goals.map((g) => {
-        const n = amount(totals, today, g.id);
-        const prog = fmtProgress(n, g);
-        const started = d.timers[g.id];
-        const riding = ride?.goalId === g.id;
-        const isRide = isRideGoal(g);
-        const timer = !isRide && isTimerGoal(g);
-        const todayKm = todayEntries.reduce((km, e) => km + (e.goalId === g.id && e.ride ? e.ride.km : 0), 0);
-        const session = isRide ? (riding && ride ? (isPaused(ride.session) ? "paused" : "running") : "idle") : timer && started ? (isPaused(started) ? "paused" : "running") : "idle";
-        const secs = isRide ? (riding && ride ? elapsedMs(ride.session, now) / 1000 : 0) : started ? elapsedMs(started, now) / 1000 : 0;
-        return {
-          id: g.id,
-          name: g.name,
-          color: colorIndex(g.color),
-          glyph: goalGlyph(g.icon),
-          done: n >= g.target,
-          bonus: isBonus(g, today),
-          value: prog.value,
-          rest: prog.rest,
-          frac: g.target > 0 ? n / g.target : 0,
-          ring: ringPath(g.target > 0 ? n / g.target : 0),
-          streak: streak(totals, g),
-          kind: isRide ? "ride" : timer ? "timer" : "count",
-          quick: isRide || timer ? [] : quickAddsFor(g.unit).map((k) => ({ label: quickLabel(k, g.unit), amount: k })),
-          session,
-          clock: isRide || timer ? fmtSecs(secs) : "",
-          sub: isRide ? (riding && ride ? `${fmtKm(ride.distM / 1000)} km · ↑${Math.round(ride.gainM)} m` : `${fmtKm(todayKm)} km · recorded on the phone`) : "",
-          can_undo: todayEntries.some((e) => e.goalId === g.id),
-          can_reset: todayEntries.some((e) => e.goalId === g.id) || started != null,
-          // GPS rides are recorded by Hub for Android; the PC shows them.
-          disabled: isRide,
-        };
-      }),
+      v.goals.map((g) => ({
+        id: g.id,
+        name: g.name,
+        color: g.color,
+        glyph: g.glyph,
+        done: g.done,
+        bonus: g.bonus,
+        value: g.value,
+        rest: g.rest,
+        frac: g.frac,
+        ring: g.ring,
+        streak: g.streak,
+        kind: g.kind,
+        quick: g.quick,
+        session: g.session,
+        clock: g.kind === "count" ? "" : fmtSecs(g.secs),
+        sub: g.kind === "ride" ? (g.session === "idle" ? `${g.sub} · recorded on the phone` : g.sub) : "",
+        can_undo: g.canUndo,
+        can_reset: g.canReset,
+        // GPS rides are recorded by Hub for Android; the PC shows them.
+        disabled: g.kind === "ride",
+      })),
     );
   }
 
-  function renderHistory(d: AppData, goals: Goal[]): void {
-    const today = dateKey();
-    const walk = st?.walking ?? {};
-    const hasWalk = Object.keys(walk).length > 0;
-    if (hsel !== "all" && hsel !== WALK && !goals.some((g) => g.id === hsel)) hsel = "all";
-    if (hsel === WALK && !hasWalk) hsel = "all";
-    set("hsel", hsel);
-    set("segs", [{ id: "all", label: "All" }, ...goals.map((g) => ({ id: g.id, label: g.name })), ...(hasWalk ? [{ id: WALK, label: "Walking" }] : [])]);
-    set("walk_view", hsel === WALK);
-    const t = parseKey(today);
-    if (hsel === WALK) {
-      const list = Array.from({ length: HISTORY_DAYS }, (_, i) => {
-        const dd = addDays(t, i - (HISTORY_DAYS - 1));
-        const k = dateKey(dd);
-        return { k, dd, w: walk[k] };
-      });
-      const max = Math.max(1, ...list.map((x) => x.w?.km ?? 0));
-      const logged = list.filter((x) => x.w);
-      const avg = logged.length ? logged.reduce((s, x) => s + (x.w?.km ?? 0), 0) / logged.length : 0;
-      set("walk_totals", [fmtWalk(weekKm(walk, t)), fmtWalk(walk[today]), fmtWalk({ km: avg })]);
-      set("walk_bars", list.map(({ k, dd, w }) => ({ frac: (w?.km ?? 0) / max, approx: w?.approx === true, today: k === today, tip: `${ddmm(dd)} — ${fmtWalk(w)}` })));
-      set("walk_from", ddmm(list[0]?.dd ?? t));
-      set("walk_to", ddmm(t));
-      return;
-    }
-    const goal = goals.find((g) => g.id === hsel);
-    const shown = goal ? [goal] : goals;
-    set(
-      "streaks",
-      shown.map((g) => ({
-        id: g.id,
-        name: g.name,
-        color: colorIndex(g.color),
-        glyph: goalGlyph(g.icon),
-        line: `Best ${days(bestStreak(totals, g))} · ${isDone(totals, today, g) ? "done today" : isScheduled(g, today) ? "not done today" : isBonus(g, today) ? "bonus today" : "rest today"}`,
-        streak: streak(totals, g),
-      })),
-    );
-    const mondayOffset = (t.getDay() + 6) % 7;
-    const start = addDays(t, -mondayOffset - (WEEKS - 1) * 7);
-    const level = (k: string): number => {
-      const lv = (v: number): number => (v >= 1 ? 4 : v >= 0.66 ? 3 : v >= 0.33 ? 2 : v > 0 ? 1 : 0);
-      if (goal) {
-        const v = amount(totals, k, goal.id) / goal.target;
-        if (isBonus(goal, k)) return bonusDone(totals, k, goal) ? 4 : 5;
-        return !isScheduled(goal, k) && v <= 0 ? 5 : lv(v);
-      }
-      const v = dayCompletion(totals, k, goals);
-      return v == null ? 5 : lv(v);
-    };
-    const cells: { col: number; row: number; level: number; today: boolean; tip: string }[] = [];
-    let full = 0;
-    for (let w = 0; w < WEEKS; w++) {
-      for (let r = 0; r < 7; r++) {
-        const day = addDays(start, w * 7 + r);
-        const k = dateKey(day);
-        const future = day > t;
-        const l = future ? 6 : level(k);
-        if (l === 4) full++;
-        cells.push({ col: w, row: r, level: l, today: k === today, tip: future ? k : `${k} — ${l === 5 ? "rest day" : l === 4 ? "completed" : "not completed"}` });
-      }
-    }
-    set("cells", cells);
-    set("heat", goal ? colorIndex(goal.color) : -1);
-    set("full_days", `${full} full ${full === 1 ? "day" : "days"} in the last ${WEEKS} weeks`);
-    if (goal && isRideGoal(goal)) {
-      const rides = Object.values(d.entries)
-        .flat()
-        .filter((e): e is Entry & { ride: NonNullable<Entry["ride"]> } => e.goalId === goal.id && e.ride !== undefined)
-        .sort((a, b) => b.at - a.at);
-      const weekStart = addDays(t, -((t.getDay() + 6) % 7)).getTime();
-      const km = (list: typeof rides): number => list.reduce((s, e) => s + e.ride.km, 0);
-      set("rides_week", fmtKm(km(rides.filter((e) => e.at >= weekStart))));
-      set("rides_total", fmtKm(km(rides)));
-      set(
-        "rides",
-        rides.slice(0, 4).map((e) => {
-          const dd = new Date(e.at);
-          return { day: `${DAY_SHORT[dd.getDay()]} ${ddmm(dd)}`, km: fmtKm(e.ride.km), time: fmtSecs(e.ride.durationSec), gain: String(e.ride.gainM), thumb: thumbPath(e.ride.thumb) };
-        }),
-      );
-    } else {
-      set("rides_total", "");
-      set("rides", []);
-    }
+  function renderHistory(d: AppData): void {
+    const v = historyView(d, st?.walking ?? {}, hsel);
+    hsel = v.sel;
+    set("hsel", v.sel);
+    set("segs", v.segs);
+    set("walk_view", v.walkView);
+    set("walk_totals", v.walkTotals);
+    set("walk_bars", v.walkBars);
+    set("walk_from", v.walkFrom);
+    set("walk_to", v.walkTo);
+    set("streaks", v.streaks.map((x) => ({ id: x.id, name: x.name, color: x.color, glyph: x.glyph, line: x.line, streak: x.streak })));
+    set("cells", v.cells);
+    set("heat", v.heat);
+    set("full_days", v.fullDays);
+    set("rides_week", v.ridesWeek);
+    set("rides_total", v.ridesTotal);
+    set("rides", v.rides);
   }
 
   function renderSleep(d: AppData): void {
@@ -312,17 +202,12 @@ export function createRoutineUi(): TabUi {
     set("last_alarm", lastAlarm);
   }
 
-  function renderGoals(d: AppData, goals: Goal[]): void {
+  function renderGoals(d: AppData): void {
+    const v = goalsView(d);
     set("confirm_del", confirmDel);
-    set("plan_label", planLabel(d.plan));
-    set(
-      "rows",
-      goals.map((g) => ({ id: g.id, name: g.name, color: colorIndex(g.color), glyph: goalGlyph(g.icon), line: [fmtQty(g.target, g.unit), fmtDays(g.days, g.bonusDays)].join(" · ") })),
-    );
-    set("plans", [
-      ...PLANS.map((p) => ({ id: p.id, name: p.name, meta: p.goals.map((g) => `${g.name} ${fmtQty(g.target, g.unit)}`).join(" · "), on: d.plan?.id === p.id })),
-      { id: "empty", name: "Empty", meta: "No goals: add your own", on: false },
-    ]);
+    set("plan_label", v.planLabel);
+    set("rows", v.rows.map((r) => ({ id: r.id, name: r.name, color: r.color, glyph: r.glyph, line: r.line })));
+    set("plans", v.plans);
   }
 
   function renderForm(): void {

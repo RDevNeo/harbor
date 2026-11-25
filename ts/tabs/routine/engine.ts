@@ -4,7 +4,9 @@
 //   GET  v1/routine                 {rev, data, walking, ride}            everything the screens draw
 //   POST v1/routine/act             {act, …} (lib/actions.ts)             a change; answers like GET
 //   POST v1/routine/walking         {days, from, to}                      the phone's Health Connect read (km per day)
+//   GET  v1/routine/view?sel=…      what the phone's screens draw (view.ts: today, history, goals, wake-up times)
 //   POST v1/routine/ride            {active: {goalId, session, distM, gainM} | null}   the phone's ride being recorded
+//   POST v1/routine/ride/finish     {goal, points: Fix[], movingMs, at}   a finished ride: summarized here, logged, its track kept
 //   POST v1/routine/import          {text} | {code}                       a Schedule Fixer export (JSON, SFX1:, or its code)
 //   GET  v1/routine/export          the export bundle (Schedule Fixer's format)
 //   GET  v1/routine/coach           {messages, running, ready}            the Coach chat (a Hub chat "Coach" in "creators")
@@ -24,6 +26,8 @@ import { DATA_KEY, defaultData, migrate, totalsFrom, uid } from "./lib/store.ts"
 import { EXPORT_APP, ImportError, readByCode, readExport, restore, ROUTINE_PREFIX, type ExportBundle } from "./lib/transfer.ts";
 import type { AppData } from "./lib/types.ts";
 import { mergeWalk, type WalkDays } from "./lib/walking.ts";
+import { filterFixes, summarize, type Fix } from "./lib/track.ts";
+import { fullView, type ActiveRide } from "./view.ts";
 
 const WALK_KEY = `${ROUTINE_PREFIX}walking`;
 const COACH_KEY = `${ROUTINE_PREFIX}coach-hub`;
@@ -369,6 +373,35 @@ export function createRoutineEngine(): TabEngine & { store(): RoutineStore } {
           s.items[WALK_KEY] = JSON.stringify({ ...saved, days: mergeWalk(s.walking(), days, from, to) });
           changed();
           return ok(s.state());
+        }
+        case "GET view": {
+          const sel = call.query.find(([k]) => k === "sel")?.[1] ?? "all";
+          return ok(asJson({ rev: s.rev, ...fullView(s.data(), s.walking(), s.ride as ActiveRide | null, sel) }));
+        }
+        case "POST ride/finish": {
+          const goal = typeof b.goal === "string" ? b.goal : "";
+          const raw = Array.isArray(b.points) ? (b.points as unknown[]) : [];
+          const points: Fix[] = raw.map(obj).map((p) => ({
+            t: Number(p.t),
+            lat: Number(p.lat),
+            lon: Number(p.lon),
+            acc: Number(p.acc),
+            ...(typeof p.alt === "number" ? { alt: p.alt } : {}),
+            ...(typeof p.altAcc === "number" ? { altAcc: p.altAcc } : {}),
+            ...(typeof p.speed === "number" ? { speed: p.speed } : {}),
+            ...(typeof p.seg === "number" ? { seg: p.seg } : {}),
+          }));
+          const movingMs = Number(b.movingMs);
+          if (!goal || !Number.isFinite(movingMs) || movingMs < 0) return err(400, "ride/finish needs goal and movingMs");
+          const kept = filterFixes(points);
+          const ride = summarize(kept, movingMs);
+          const id = uid();
+          const at = Number.isFinite(Number(b.at)) ? Number(b.at) : Date.now();
+          s.setData(apply(s.data(), { act: "ride", goal, ride, at, id }));
+          s.items[`${ROUTINE_PREFIX}ride:${id}`] = JSON.stringify(kept);
+          s.ride = null;
+          changed();
+          return ok(asJson({ ride, id }));
         }
         case "POST ride": {
           s.ride = b.active === null || b.active === undefined ? null : asJson(b.active);

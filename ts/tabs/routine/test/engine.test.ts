@@ -88,3 +88,21 @@ describe("Routine engine", () => {
     expect(m.map((x) => [x.role, x.text, x.done])).toEqual([["user", "q", true], ["agent", "x\n\ny", false]]);
   });
 });
+
+describe("Routine for the phone", () => {
+  test("the view, and a finished ride summarized and logged", async () => {
+    const { r } = rig();
+    await r("POST", "v1/routine/act", { act: "plan", id: "igor" });
+    const v = (await r("GET", "v1/routine/view")).body as { picking: boolean; goals: { rows: unknown[] }; history: { cells: unknown[] }; wakes: unknown[] };
+    expect(v.picking).toBe(false);
+    expect(v.goals.rows.length).toBe(7);
+    expect(v.history.cells.length).toBe(56);
+    expect(v.wakes.length).toBe(4);
+    const points = Array.from({ length: 61 }, (_, i) => ({ t: 1_000_000 + i * 1000, lat: -23.55 + (i * 5) / 111_195, lon: -46.63, acc: 5, alt: 700 }));
+    const f = (await r("POST", "v1/routine/ride/finish", { goal: "bike", points, movingMs: 60_000, at: Date.now() })).body as { ride: { km: number; durationSec: number } };
+    expect(f.ride.km).toBeCloseTo(0.3, 2);
+    expect(f.ride.durationSec).toBe(60);
+    const t = (await r("GET", "v1/routine/view")).body as { today: { goals: { id: string; todayKm: number }[] } };
+    expect(t.today.goals.find((g) => g.id === "bike")?.todayKm).toBeCloseTo(0.3, 2);
+  });
+});
