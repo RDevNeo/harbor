@@ -9,6 +9,7 @@ import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
 import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, Store } from "./model/types.ts";
 import { Avatars, pictureUrls, storeImageFile, whatsappNumber } from "./avatars.ts";
+import { normalizeSocials } from "./socials.ts";
 import type { ConnView, PersonsService, RowInfo } from "./service.ts";
 
 export interface Call {
@@ -44,7 +45,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[]) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null> } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null> } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -65,7 +66,7 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
       }
       if (rest[0] === "person" && rest[1]) {
-        if (m === "GET") return await this.panel(rest[1]);
+        if (m === "GET") return await this.panel(rest[1], q(c, "socials") !== "cached");
         if (m === "PATCH") return this.patchPerson(rest[1], obj(c.body));
         if (m === "DELETE") return this.deletePerson(rest[1]);
       }
@@ -427,11 +428,12 @@ export class PersonsRoutes {
 
   // ---------- people ----------
 
-  private async panel(personId: string): Promise<Reply> {
+  /** `fresh` false: socials as cached (instant); true: read now where stale (may take a few seconds). */
+  private async panel(personId: string, fresh = true): Promise<Reply> {
     const d = this.s.data;
     const p = this.s.person(decodeURIComponent(personId));
     if (!d || !p) return err(404, "no such person");
-    const socials = this.extra.socials && p.socials?.length ? await this.extra.socials(p.socials).catch(() => null) : null;
+    const socials = this.extra.socials && p.socials?.length ? await this.extra.socials(p.socials, fresh).catch(() => null) : null;
     const identities = [
       ...(p.discordId ? [{ kind: "discord", value: p.discordId, section: null, label: p.discordUsername ? `@${p.discordUsername}` : p.discordId }] : []),
       ...(p.email ? [{ kind: "gmail", value: p.email, section: null, label: p.email }] : []),
@@ -491,8 +493,9 @@ export class PersonsRoutes {
         changed = true;
       }
       if (Array.isArray(b.socials)) {
-        const urls = b.socials.filter((x): x is string => typeof x === "string" && /^https:\/\//.test(x));
-        if (urls.length) n.socials = [...new Set(urls)];
+        // TikTok / Instagram / YouTube profile links, canonical (tiktok.com/@x without https too)
+        const urls = normalizeSocials(b.socials);
+        if (urls.length) n.socials = urls;
         else delete n.socials;
         changed = true;
       }

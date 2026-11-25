@@ -412,7 +412,7 @@ class PersonsTab {
     const secs = [...(d.stores.length ? ["stores"] : []), ...d.lists.map((l) => l.id).filter((x) => x in SECTION_LABEL)];
     b.p_settle = secs.map((sec) => ({ id: sec, label: SECTION_LABEL[sec] ?? sec, on: !!this.person(p.id)?.settled[sec], color: "#64748b" }));
     b.p_socials = d.socials.map((s) => ({
-      platform: s.platform ? s.platform[0]!.toUpperCase() + s.platform.slice(1) : "Link",
+      platform: s.platform ?? "Link",
       handle: s.handle ?? s.url,
       url: s.url,
       note: s.note ?? "",
@@ -487,14 +487,24 @@ class PersonsTab {
     if (unread > 0 && this.ctx.shown()) void this.api("POST", `chat/${encodeURIComponent(open.id)}/read`, { section: open.section, account: c.account?.id });
   }
 
+  /** The panel: at once with the socials as cached, then again once their latest uploads are read. */
   private async loadPanel(): Promise<void> {
     const open = this.ui.open;
     if (!open) return;
-    const r = await this.api("GET", `person/${encodeURIComponent(open.id)}`).catch(() => null);
-    if (!r || r.status !== 200 || this.ui.open?.id !== open.id) return;
-    this.panelData = r.body as unknown as PanelJson;
-    this.bus.p_notes = this.panelData.person.notes ?? "";
-    this.render();
+    const get = async (socials: string): Promise<boolean> => {
+      const r = await this.api("GET", `person/${encodeURIComponent(open.id)}`, undefined, { socials }).catch(() => null);
+      if (!r || r.status !== 200 || this.ui.open?.id !== open.id) return false;
+      const first = this.panelData?.person.id !== open.id;
+      this.panelData = r.body as unknown as PanelJson;
+      if (first) this.bus.p_notes = this.panelData.person.notes ?? "";
+      this.render();
+      return true;
+    };
+    if (!(await get("cached"))) return;
+    if (!this.panelData?.person.socials?.length) return;
+    this.bus.p_socials_loading = true;
+    await get("fresh");
+    this.bus.p_socials_loading = false;
   }
 
   private async older(): Promise<void> {
@@ -604,6 +614,8 @@ class PersonsTab {
     if (id === "panel:edit" && this.ui.open) return this.personDialog(this.ui.open.id);
     if (id === "panel:rename" && this.ui.open) return this.renameDialog(this.ui.open.id);
     if (id === "panel:delete" && this.ui.open) return void this.deletePerson(this.ui.open.id);
+    if (id === "panel:add-social" && this.ui.open) return this.socialDialog(this.ui.open.id);
+    if (id.startsWith("panel:remove-social:") && this.ui.open) return void this.setSocials(this.ui.open.id, (l) => l.filter((u) => u !== id.slice(20)));
     this.menuActions.get(id)?.();
   }
 
@@ -796,6 +808,24 @@ class PersonsTab {
     this.openDialog("rename", `Rename ${p.name}`, "Your own name for them: shown everywhere, never overwritten by Discord, Gmail or WhatsApp.", "Rename", async () => {
       const name = String(this.bus.f_name ?? "").trim();
       if (name) await this.api("PATCH", `person/${encodeURIComponent(id)}`, { name });
+    });
+  }
+
+  private async setSocials(id: string, fn: (l: string[]) => string[]): Promise<void> {
+    const cur = this.panelData?.person.id === id ? this.panelData.person.socials ?? [] : [];
+    const r = await this.api("PATCH", `person/${encodeURIComponent(id)}`, { socials: fn(cur) });
+    if (r.status !== 200) throw new Error(String(r.body.error ?? "Not saved"));
+    if (this.ui.open?.id === id) await this.loadPanel();
+  }
+
+  private socialDialog(id: string): void {
+    this.bus.f_socials = "";
+    this.openDialog("social", "Add a social profile", "Paste their TikTok, Instagram or YouTube profile link: the panel shows its 3 latest uploads, and their picture becomes the profile's.", "Add", async () => {
+      const url = String(this.bus.f_socials ?? "").trim();
+      if (!/(tiktok\.com|instagram\.com|youtube\.com|youtu\.be)/i.test(url)) throw new Error("Paste a TikTok, Instagram or YouTube profile link");
+      const before = this.panelData?.person.socials?.length ?? 0;
+      await this.setSocials(id, (l) => [...l, url]);
+      if ((this.panelData?.person.socials?.length ?? 0) === before) throw new Error("That isn't a profile link, or it's there already");
     });
   }
 

@@ -3,6 +3,7 @@
 // ~/.config/Creators Hub is ever moved, changed or deleted, so Person Hub keeps working on its own data.
 //
 //   bun ts/packages/persons/scripts/migrate.ts [--dry-run] [--sessions] [--force] [--from DIR] [--profile DIR] [--to DIR]
+//   bun …/migrate.ts --fields socials,socialPhoto [--from-data FILE] [--dry-run]   (fill missing fields only)
 //
 // Repeatable: each run copies what changed in Person Hub since the last run (manifest: <to>/.import.json). A file Hub
 // changed since it was imported is kept (reported as "kept: changed in Hub") unless --force; anything overwritten is
@@ -14,7 +15,7 @@
 // Verified by counts (people, stores, lists, notes, read marks, conversations and messages per cache, WhatsApp chats,
 // pictures, Discord logins) of the source and the copy; exit 1 when they differ. Prints names and counts only, never contents.
 import { createHash } from "node:crypto";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { paths } from "@harbor/os";
 import { discordToken } from "../src/import/leveldb.ts";
 import { tokenStore } from "../src/tokens.ts";
@@ -34,6 +35,44 @@ const FROM = opt("--from", join(paths.systemDataHome(), "creators-hub"));
 const PROFILE = opt("--profile", join(paths.configHome(), "Creators Hub"));
 const TO = opt("--to", join(paths.dataHome(), "hub", "persons"));
 const STAMP = new Date().toISOString().replace(/[:.]/g, "-");
+
+// --fields a,b[,c] [--from-data FILE]: only fills those person fields into Hub's data.json where Hub's person lacks
+// them (same id), from Person Hub's data.json or an older copy of it; everything else of Hub's stays. A backup of
+// Hub's file is kept first. For fields Person Hub lost after an import (e.g. socials), never to overwrite Hub's.
+const FIELDS = opt("--fields", "").split(",").map((x) => x.trim()).filter(Boolean);
+if (FIELDS.length) {
+  const srcFile = opt("--from-data", join(FROM, "data.json"));
+  const dstFile = join(TO, "data.json");
+  const src = JSON.parse(readFileSync(srcFile, "utf8")) as { people?: Record<string, unknown>[] };
+  const dst = JSON.parse(readFileSync(dstFile, "utf8")) as { people: Record<string, unknown>[]; updatedAt?: string };
+  const byId = new Map((src.people ?? []).map((p) => [String(p.id), p]));
+  const filled: Record<string, number> = {};
+  for (const p of dst.people) {
+    const o = byId.get(String(p.id));
+    if (!o) continue;
+    for (const k of FIELDS) {
+      const v = o[k];
+      const empty = p[k] === undefined || p[k] === null || (Array.isArray(p[k]) && (p[k] as unknown[]).length === 0);
+      if (v === undefined || v === null || !empty) continue;
+      p[k] = v;
+      filled[k] = (filled[k] ?? 0) + 1;
+    }
+  }
+  const total = Object.values(filled).reduce((a, b) => a + b, 0);
+  console.log(`Fields from ${srcFile} into ${dstFile} (only where Hub's person has none):`);
+  for (const k of FIELDS) console.log(`  ${k.padEnd(16)} filled for ${filled[k] ?? 0} people`);
+  if (!DRY && total) {
+    const bak = join(TO, ".import-backup", STAMP, "data.json");
+    mkdirSync(dirname(bak), { recursive: true });
+    copyFileSync(dstFile, bak);
+    dst.updatedAt = new Date().toISOString();
+    const tmp = `${dstFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(dst, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, dstFile);
+    console.log(`  saved (Hub's previous file kept in ${bak})`);
+  }
+  process.exit(0);
+}
 
 if (!existsSync(join(FROM, "data.json"))) {
   console.error(`No Person Hub data at ${FROM} (data.json missing).`);
