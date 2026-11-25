@@ -69,7 +69,6 @@ export interface SettingsDeps {
   theme: { dark: () => boolean; set: (dark: boolean) => void };
   back: () => void;
   providers: Omit<ProvidersHost, "modelsFor">;
-  integrations: Omit<IntHost, "changed" | "openUrl" | "copy">;
   qr: (url: string) => Pixels;
   notify: NotifyEnv;
   copy: (text: string) => void;
@@ -122,7 +121,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const { store, keys, speech } = deps;
   let tab = first;
   const logos = await providerLogos();
-  const integrationsTab = await integrationsFeed({ ...deps.integrations, changed: () => show(), openUrl: (u) => mcp.openUrl(u), copy: deps.copy }, deps.qr);
+  const integrationsTab = await integrationsFeed({ changed: () => show(), openUrl: (u) => mcp.openUrl(u), copy: deps.copy }, deps.qr);
   const providersTab = await providersFeed(store, { ...deps.providers, modelsFor: providers.staticModels }, logos);
   const blocks = await blockTabs(store, () => show(), deps.copy, deps.runtime);
 

@@ -5,7 +5,8 @@ import * as whatsapp from "./whatsapp.ts";
 
 integrate({
   profileEmail: (token) => gmail.profileEmail(token),
-  discord: { signedIn: () => discord.signedIn(), accountName: () => discord.accountName(), signOut: () => discord.signOut(), login: (signal, update) => discord.login(signal, update) },
+  // Discord is Persons' connection (discord.ts `provide`): turns get the tools while it exists, signed in or not.
+  discord: { signedIn: () => discord.signedIn(), available: () => discord.available(), accountName: () => discord.accountName(), signOut: () => discord.signOut(), login: (signal, update) => discord.login(signal, update) },
   whatsapp: {
     signedIn: () => whatsapp.signedIn(),
     accountName: () => whatsapp.accountName(),

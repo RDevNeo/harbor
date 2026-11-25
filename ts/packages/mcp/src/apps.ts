@@ -103,7 +103,8 @@ export function localFor(name: string): Local | undefined {
 }
 
 export interface Integrations {
-  discord?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> };
+  /** `available`: turns get the app (its tools say how to sign in when signed out). */
+  discord?: { signedIn(): boolean; available?(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> };
   whatsapp?: { signedIn(): boolean; accountName(): string | undefined; signOut(): void; login(signal: AbortSignal, update: (p: Pending) => void): Promise<void> };
   profileEmail?: (token: string) => Promise<string>;
 }
@@ -314,7 +315,7 @@ export async function token(id: string): Promise<string | undefined> {
       return first === undefined ? undefined : loadAccount(id, first)?.access_token;
     }
     case "discord":
-      return integrations.discord?.signedIn() ? "" : undefined;
+      return (integrations.discord?.available?.() ?? integrations.discord?.signedIn()) ? "" : undefined;
     case "whatsapp":
       return integrations.whatsapp?.signedIn() ? "" : undefined;
   }

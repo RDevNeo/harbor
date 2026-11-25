@@ -14,9 +14,9 @@ export const GIT_SHA: string | null = typeof HARBOR_GIT_SHA === "string" && HARB
 export const GIT_COMMIT: string | null = typeof HARBOR_GIT_SHA === "string" && /^[0-9a-f]{7,40}$/.test(HARBOR_GIT_SHA) ? HARBOR_GIT_SHA : null;
 
 /**
- * The repository ref whose `discord/` goes with this build: its commit, else its own release tag.
+ * The repository ref whose `whatsapp/` engine goes with this build: its commit, else its own release tag.
  * Never the runtime's version: an installed runtime only updates when it changes, and it advertises
- * the Rust parity version besides. Undefined for a build from source (rigs set HARBOR_DISCORD_SHELL).
+ * the Rust parity version besides. Undefined for a build from source (rigs set HARBOR_WHATSAPP_ENGINE).
  */
 export function repoRef(commit: string | null = GIT_COMMIT, version: string = VERSION): string | undefined {
   if (commit !== null) return commit;

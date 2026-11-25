@@ -26,7 +26,7 @@ test("a build of main is named 0.x.y+commit, and the commit doesn't order versio
 });
 
 test("what the app bundle is built from: sources, packages, assets; not tests, docs, rigs or scripts", () => {
-  for (const p of ["discord/SHA256SUMS", "whatsapp/SHA256SUMS", "ts/run.ts", "ts/packages/ui/src/shell.ts", "ts/package.json", "ts/bun.lock", "ts/packages/ui/slint/app.slint", "assets/fonts/lucide.ttf", "ts/scripts/build.ts"]) expect(shipsInApp(p)).toBe(true);
+  for (const p of ["whatsapp/SHA256SUMS", "ts/run.ts", "ts/packages/ui/src/shell.ts", "ts/package.json", "ts/bun.lock", "ts/packages/ui/slint/app.slint", "assets/fonts/lucide.ttf", "ts/scripts/build.ts"]) expect(shipsInApp(p)).toBe(true);
   for (const p of ["ts/test/x.test.ts", "ts/packages/update/test/support.ts", "ts/README.md", "ts/rig/phonehub.ts", "ts/scripts/soaked.ts", "ts/proto/main.ts", "ts/parity.ts", "android/app.java", "CHANGELOG.md", "docs/x.md"]) expect(shipsInApp(p)).toBe(false);
   expect(ships("android/src/Main.java")).toBe(true);
   expect(ships("ts/test/a.test.ts")).toBe(false);

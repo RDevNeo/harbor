@@ -108,7 +108,6 @@ export async function runApp(o: RunOptions): Promise<number> {
     build: o.version,
     updater,
     store,
-    discordNotices: true,
     whatsappKeep: true,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
     preview: {

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { ChannelUser, ConnState, ConnStatus, Conversation, LookupResult, Message, OutgoingFile, PresenceStatus, SendResult } from "../model/types.ts";
 import { tokenStore, type TokenStore } from "../tokens.ts";
 import * as core from "./discord-core.ts";
+import { createWorld, type World } from "./discord-world.ts";
 import { remoteAuth } from "./remoteauth.ts";
 import type { Connection, ConnContext } from "./types.ts";
 
@@ -42,17 +43,45 @@ interface ClientHeaders {
   timezone: string | null;
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     msg: string,
     readonly status: number,
     readonly code?: number,
+    /** Discord answered with a captcha to solve (a join, a new DM): only a person can, in Discord's own app. */
+    readonly captcha = false,
   ) {
     super(msg);
   }
 }
 
-export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Connection {
+/** A file going up to Discord: what `upload` gives back goes in a message's `attachments`. */
+export type UploadedFile = { id: string; filename: string; uploaded_filename: string; duration_secs?: number; waveform?: string };
+
+/**
+ * The raw side of a Discord connection, for Hub's agents (../agent/discord.ts): its HTTP API with the login and the
+ * client's headers (the token itself never leaves), the world READY and the gateway describe, and the dispatches as
+ * they come. Nothing here sends anything by itself.
+ */
+export interface DiscordLink {
+  status(): ConnStatus;
+  me(): core.SlimUser | null;
+  gatewayUp(): boolean;
+  /** Discord's API (`/users/@me`…): JSON back, an ApiError for an answer that isn't 2xx. */
+  api<T = unknown>(method: string, path: string, body?: unknown, opts?: { tries?: number }): Promise<T>;
+  /** Uploads files to a channel the way the web client does; their entries for the message's `attachments`. */
+  upload(channelId: string, files: core.Upload[]): Promise<UploadedFile[]>;
+  readonly world: World;
+  presence(userId: string): PresenceStatus | null;
+  /** Every gateway dispatch from now on (type, data); returns what stops it. */
+  on(fn: (t: string, d: unknown) => void): () => void;
+}
+
+export type DiscordConnection = Connection & { readonly link: DiscordLink };
+
+export const isDiscordConnection = (c: Connection | undefined): c is DiscordConnection => !!c && c.kind === "discord" && "link" in c;
+
+export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): DiscordConnection {
   const id = ctx.id;
   const log = (...a: unknown[]): void => ctx.log(`discord[${id}]:`, ...a);
   const ORIGIN = (opts.origin ?? process.env.PERSONS_DISCORD_ORIGIN ?? "https://discord.com").replace(/\/$/, "");
@@ -95,6 +124,8 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
   const memberBucket = core.createBucket({ capacity: 40, perMs: 60_000 });
   const searchCache = new Map<string, { at: number; users: core.SlimUser[] }>();
   const profileCache = new Map<string, { at: number; user: core.SlimUser | null }>();
+  const world = createWorld();
+  const listeners = new Set<(t: string, d: unknown) => void>();
 
   try {
     convos.load((JSON.parse(readFileSync(CACHE_FILE, "utf8")) as { conversations?: unknown }).conversations);
@@ -293,6 +324,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     token = null;
     me = null;
     gw.stop();
+    world.clear();
     setStatus("signed-out", reason);
     if (clear) {
       try {
@@ -389,7 +421,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
       }
       const j = (json ?? {}) as { captcha_key?: unknown; message?: unknown; code?: unknown };
       const msg = j.captcha_key ? "Discord asked for a captcha. Send this one from the Discord app." : typeof j.message === "string" ? j.message : `Discord answered HTTP ${res.status}`;
-      throw new ApiError(msg, res.status, typeof j.code === "number" ? j.code : undefined);
+      throw new ApiError(msg, res.status, typeof j.code === "number" ? j.code : undefined, !!j.captcha_key);
     }
   }
 
@@ -467,6 +499,14 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
   const s = (v: unknown): string => (v === undefined || v === null ? "" : String(v));
 
   function onDispatch(t: string, data: unknown): void {
+    world.apply(t, data, t === "READY" ? (core.slimUser((data as Raw | null)?.user as core.RawUser)?.id ?? me?.id ?? null) : (me?.id ?? null));
+    for (const l of listeners) {
+      try {
+        l(t, data);
+      } catch (e) {
+        log("listener failed", errMsg(e));
+      }
+    }
     const d = (data ?? {}) as Raw;
     switch (t) {
       case "READY": {
@@ -888,6 +928,44 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     return slim;
   }
 
+  /**
+   * Discord's upload flow (as the web client does it): ask for upload slots, PUT the bytes to the signed URLs; the
+   * message then points at the uploaded files.
+   */
+  async function upload(cid: string, ups: core.Upload[]): Promise<UploadedFile[]> {
+    const slots = await api<{ attachments?: { upload_url: string; upload_filename: string }[] }>("POST", `/channels/${cid}/attachments`, {
+      files: ups.map((f, i) => ({ filename: f.name, file_size: f.data.byteLength, id: String(i), is_clip: false })),
+    });
+    const list = slots?.attachments ?? [];
+    if (list.length !== ups.length) throw new Error("Discord didn’t accept the files");
+    for (let i = 0; i < ups.length; i++) {
+      const up = ups[i] as core.Upload;
+      const slot = list[i] as { upload_url: string };
+      const res = await fetch(slot.upload_url, { method: "PUT", headers: { "Content-Type": up.type }, body: up.data, signal: AbortSignal.timeout(120_000) });
+      if (!res.ok) throw new Error(`Upload of ${up.name} failed (HTTP ${res.status})`);
+    }
+    return ups.map((f, i) => ({
+      id: String(i),
+      filename: f.name,
+      uploaded_filename: (list[i] as { upload_filename: string }).upload_filename,
+      ...(f.voice ? { duration_secs: f.voice.duration, waveform: f.voice.waveform } : {}),
+    }));
+  }
+
+  const link: DiscordLink = {
+    status: () => status,
+    me: () => me,
+    gatewayUp,
+    api: (method, p, body, o) => api(method, p, body, { tries: o?.tries ?? 3 }),
+    upload,
+    world,
+    presence: (uid) => presence.get(uid) ?? null,
+    on(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+  };
+
   // ---------- what the app calls ----------
   const needConnected = (): void => {
     if (status !== "connected" || !token) throw new Error("Connect Discord first");
@@ -906,6 +984,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     token = null;
     me = null;
     gw.stop();
+    world.clear();
     convos.clear();
     users.clear();
     profileCache.clear();
@@ -913,7 +992,8 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
   }
 
   let started = false;
-  const conn: Connection = {
+  const conn: DiscordConnection = {
+    link,
     id,
     kind: ctx.kind,
     section: ctx.section,
@@ -1120,32 +1200,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
         const body: Record<string, unknown> = { mobile_network_type: "unknown", content: voice ? "" : text, nonce: core.nowSnowflake(), tts: false, flags: voice ? 8192 : 0 };
         // a reply, as the client sends it (the replied-to message's author is pinged, as in Discord)
         if (replyTo && core.isSnowflake(String(replyTo))) body.message_reference = { channel_id: cid, message_id: String(replyTo) };
-        if (ups.length) {
-          // Discord's upload flow (as the web client does it): ask for upload slots, PUT the bytes
-          // to the signed URLs, then post the message pointing at the uploaded files.
-          const slots = await api<{ attachments?: { upload_url: string; upload_filename: string }[] }>("POST", `/channels/${cid}/attachments`, {
-            files: ups.map((f, i) => ({ filename: f.name, file_size: f.data.byteLength, id: String(i), is_clip: false })),
-          });
-          const list = slots?.attachments ?? [];
-          if (list.length !== ups.length) throw new Error("Discord didn’t accept the files");
-          for (let i = 0; i < ups.length; i++) {
-            const up = ups[i] as core.Upload;
-            const slot = list[i] as { upload_url: string };
-            const res = await fetch(slot.upload_url, { method: "PUT", headers: { "Content-Type": up.type }, body: up.data, signal: AbortSignal.timeout(120_000) });
-            if (!res.ok) throw new Error(`Upload of ${up.name} failed (HTTP ${res.status})`);
-          }
-          Object.assign(body, {
-            channel_id: cid,
-            type: 0,
-            sticker_ids: [],
-            attachments: ups.map((f, i) => ({
-              id: String(i),
-              filename: f.name,
-              uploaded_filename: (list[i] as { upload_filename: string }).upload_filename,
-              ...(f.voice ? { duration_secs: f.voice.duration, waveform: f.voice.waveform } : {}),
-            })),
-          });
-        }
+        if (ups.length) Object.assign(body, { channel_id: cid, type: 0, sticker_ids: [], attachments: await upload(cid, ups) });
         const m = await api<core.RawMessage>("POST", `/channels/${cid}/messages`, body, { tries: 2 });
         const slim = core.slimMessage(m, me?.id);
         channelLast.set(cid, slim.id);
@@ -1176,6 +1231,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
 
     async stop() {
       stopped = true;
+      listeners.clear();
       helperRun++;
       killHelper();
       gw.stop();

@@ -179,8 +179,8 @@ export interface FollowDeps {
 
 /** What the app bundle is built from: a change elsewhere (tests, docs, rigs, the other apps) builds nothing. */
 export function shipsInApp(path: string): boolean {
-  // build.ts, and the engine checksums the bundle embeds (discordsetup.ts, whatsappsetup.ts).
-  if (path === "ts/scripts/build.ts" || path === "discord/SHA256SUMS" || path === "whatsapp/SHA256SUMS") return true;
+  // build.ts, and the engine checksums the bundle embeds (whatsappsetup.ts).
+  if (path === "ts/scripts/build.ts" || path === "whatsapp/SHA256SUMS") return true;
   if (!path.startsWith("ts/") && !path.startsWith("assets/")) return false;
   if (/(^|\/)test\//.test(path) || /\.test\.ts$/.test(path) || /\.md$/i.test(path)) return false;
   return !/^ts\/(rig|scripts|proto)\//.test(path) && !/^ts\/parity/.test(path) && path !== "ts/run.sh";

@@ -7,7 +7,7 @@ import { createConnection } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import type { Pending } from "./apps.ts";
-import { selfCommand } from "./discordsetup.ts";
+import { selfCommand } from "./appsetup.ts";
 import * as setup from "./whatsappsetup.ts";
 import { phoneOf } from "./whatsappstore.ts";
 import { askRemote, claimHere, remoteOf } from "./remotehost.ts";

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { join } from "node:path";
 import { dataDir, privateDir } from "@harbor/store";
 import ENGINE_SUMS from "../../../../whatsapp/SHA256SUMS" with { type: "text" };
-import { buildRef, download, fileSha256, sha256Hex } from "./discordsetup.ts";
+import { buildRef, download, fileSha256, sha256Hex } from "./appsetup.ts";
 
 export const NAME = "whatsapp";
 export const HOST = "whatsapp-host";

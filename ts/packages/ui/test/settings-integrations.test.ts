@@ -95,10 +95,9 @@ test("integrations opens the form each kind of sign-in needs", () => {
   expect(find(d, "gmail")).toMatchObject({ sub: "Add your Google OAuth client below", form: "google", client_id: "id", client_secret: "sec" });
 });
 
-test("integrations shows Discord's login code, and its window button until the window is open", () => {
-  const qr = (window: boolean) => find(data(view({ pending: (id) => (id === "discord" ? { qr: "https://example.test/login", window } : undefined) })), "discord");
-  expect(qr(false)).toMatchObject({ form: "discord-qr", has_qr: true, window_btn: true });
-  expect(qr(true)).toMatchObject({ window_btn: false });
+test("integrations shows Discord's QR code, with no sign-in window button (Persons' QR sign-in only)", () => {
+  const d = find(data(view({ pending: (id) => (id === "discord" ? { qr: "https://discord.com/ra/abc" } : undefined) })), "discord");
+  expect(d).toMatchObject({ form: "discord-qr", has_qr: true, window_btn: false });
 });
 
 test("integrations shows Discord's trouble in amber", () => {
@@ -106,16 +105,16 @@ test("integrations shows Discord's trouble in amber", () => {
   expect([d?.sub, d?.sub_tone]).toEqual(["Repairing the tools for a new Discord\u{2026}", 2]);
 });
 
-test("the Discord card's line, which the phone shows too", () => {
+test("the Discord card's line, which the phone shows too: the agents' Persons connection", () => {
   const about = "About";
-  const base = { phase: "frozen", account: { id: "1", username: "ana", name: "Ana" }, attention: "", failing: [], repairing: false, signin: { active: false }, captcha: null };
-  expect(discord.cardLine(base, about)).toEqual({ text: "Signed in as Ana", tone: 0 });
-  expect(discord.cardLine({ ...base, phase: "ready" }, about).text).toBe("Signed in as Ana");
-  expect(discord.cardLine({ ...base, account: null }, about)).toEqual({ text: "About", tone: 0 });
-  expect(discord.cardLine({ ...base, failing: ["ReactionActions"] }, about)).toEqual({ text: "Signed in as Ana · Discord changed: some tools can't work", tone: 2 });
-  expect(discord.cardLine({ ...base, attention: "Discord tools need attention" }, about)).toEqual({ text: "Discord tools need attention", tone: 2 });
-  expect(discord.cardLine({ ...base, captcha: { guild: "G" } }, about)).toEqual({ text: "Signed in as Ana · A captcha waits for you", tone: 1 });
-  expect(discord.cardLine({ ...base, signin: { active: true, note: "Scan with the Discord app" } }, about)).toEqual({ text: "Scan with the Discord app", tone: 1 });
+  const base = { connection: "stores", label: "Stores Discord", status: "connected", account: { id: "1", username: "ana", name: "Ana" }, error: null, qr: null };
+  expect(discord.cardLine(base, about)).toEqual({ text: "Signed in as Ana (Persons › Stores Discord)", tone: 0 });
+  expect(discord.cardLine({ ...base, connection: null }, about)).toEqual({ text: "About", tone: 0 });
+  expect(discord.cardLine({ ...base, status: "signing-in", account: null }, about).tone).toBe(1);
+  expect(discord.cardLine({ ...base, status: "connecting" }, about)).toEqual({ text: "Connecting (Persons › Stores Discord)…", tone: 1 });
+  const out = discord.cardLine({ ...base, status: "signed-out", account: null }, about);
+  expect(out.tone).toBe(2);
+  expect(out.text).toContain("Persons › Stores › + › Discord");
 });
 
 test("integrations lists errors and the local servers with what a click does", () => {
@@ -152,7 +151,7 @@ function rig() {
     toggleOff: (id) => calls.push(`toggleOff ${id}`),
     pendingUrl: () => "https://example.test/page",
   };
-  const host: IntHost = { changed: () => calls.push("changed"), openUrl: (u) => calls.push(`open ${u}`), copy: (t) => calls.push(`copy ${t}`), discordWindow: () => calls.push("discordWindow") };
+  const host: IntHost = { changed: () => calls.push("changed"), openUrl: (u) => calls.push(`open ${u}`), copy: (t) => calls.push(`copy ${t}`) };
   const forms = new Map<string, Form>();
   return { calls, api, host, forms, act: (what: string, id: string, a = "", b = "") => integrationsAct(api, forms, host, what, id, a, b) };
 }

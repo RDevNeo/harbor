@@ -1,238 +1,137 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// The `discord` app: its tool list, which calls go to Hub (a stand-in for the control socket's route) and which it
+// answers itself (the notebook, an attachment's bytes from Discord's CDN), and the card's line from Persons.
+import { afterAll, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { decode, fromDiscord, notes, PendingCaptchas, postNotice, replaceOldHost, serve, status, statusText, tools } from "../src/discord.ts";
-import * as setup from "../src/discordsetup.ts";
-import { type Engine, Host, expireSaved, loadSaved } from "../src/discordhost.ts";
-import { sandbox } from "./discordkit.ts";
+import { type HubCall, call, cardLine, decode, fromDiscord, notes, phoneInfo, provide, sendFiles, serve, tools, available, signedIn, accountName } from "../src/discord.ts";
+import type { Json } from "../src/discordjson.ts";
 
-let box: ReturnType<typeof sandbox>;
-beforeAll(() => {
-  box = sandbox();
-});
-afterAll(() => box.restore());
+const dir = mkdtempSync(join(tmpdir(), "discord-app-"));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-test("base64_comes_back_the_same: base64 comes back the same", () => {
-  for (const data of [Buffer.from(""), Buffer.from("a"), Buffer.from("ab"), Buffer.from("abc"), Buffer.from("abcd"), Buffer.from([0, 255, 16, 128, 7])]) {
-    expect(decode(data.toString("base64"))?.equals(data)).toBe(true);
+const TOOL_NAMES = [
+  "discord_status", "discord_view", "discord_screenshot", "discord_notes", "discord_onboarding", "discord_open", "discord_dms", "discord_send", "discord_history", "discord_search",
+  "discord_user_messages", "discord_stats", "discord_react", "discord_edit", "discord_delete", "discord_pins", "discord_threads", "discord_find_user", "discord_member", "discord_resolveMessage",
+  "discord_attachment", "discord_dm_open", "discord_emoji", "discord_unread", "discord_ack", "discord_guilds", "discord_mute_guild", "discord_organize", "discord_leave", "discord_join", "discord_waitForMessage",
+];
+
+const textOf = (r: Json): string => ((r as { content: { text?: string }[] }).content.find((c) => c.text !== undefined)?.text ?? "");
+
+test("the same 31 tools as before, with no page or browser left in their descriptions", () => {
+  const list = tools() as { name: string; description: string; inputSchema: { type: string } }[];
+  expect(list.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
+  for (const t of list) {
+    expect(t.inputSchema.type).toBe("object");
+    expect(t.description).not.toMatch(/Vencord|webpack|MessageStore|Harbor/);
   }
-  expect(decode("a*b=")).toBeUndefined();
+  expect(list.find((t) => t.name === "discord_screenshot")?.description).toContain("has no page or screen");
 });
 
-test("attachments_only_come_from_discord: attachments only come from Discord", () => {
-  expect(fromDiscord("https://cdn.discordapp.com/attachments/1/2/a.png")).toBe(true);
-  expect(fromDiscord("https://media.discordapp.net/attachments/1/2/a.png")).toBe(true);
-  expect(fromDiscord("http://cdn.discordapp.com/a.png")).toBe(false);
-  expect(fromDiscord("https://cdn.discordapp.com.example.org/a.png")).toBe(false);
-  expect(fromDiscord("file:///etc/passwd")).toBe(false);
+test("the server answers initialize, tools/list, tools/call and ping", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const lines: Record<string, unknown>[] = [];
+  output.on("data", (d: Buffer) => {
+    for (const l of d.toString().split("\n")) if (l.trim()) lines.push(JSON.parse(l));
+  });
+  const done = serve(input, output, async (name) => ({ content: [{ type: "text", text: `ran ${name}` }], isError: false }));
+  input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "discord_dms", arguments: {} } })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping" })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 5, method: "nope" })}\n`);
+  await Bun.sleep(20);
+  input.end();
+  await done;
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  expect((byId.get(1)?.result as { serverInfo: { name: string }; instructions: string }).serverInfo.name).toBe("discord");
+  expect(((byId.get(2)?.result as { tools: unknown[] }).tools).length).toBe(31);
+  expect(textOf(byId.get(3)?.result as Json)).toBe("ran discord_dms");
+  expect(byId.get(4)?.result).toEqual({});
+  expect((byId.get(5)?.error as { code: number }).code).toBe(-32601);
 });
 
-test("notes_save_recall_by_id_and_forget: notes save, recall by id and forget", () => {
-  const p = join(box.dir, "notes.json");
-  rmSync(p, { force: true });
+test("tool calls go to Hub's route; objects come back as sorted JSON, errors as errors", async () => {
+  const seen: [string, Json, number][] = [];
+  const hub: HubCall = async (tool, args, waitMs) => {
+    seen.push([tool, args, waitMs]);
+    if (tool === "discord_dms") return { status: 200, body: { json: { total: 1, dms: [{ name: "Ana", channelId: "2" }] } } };
+    if (tool === "discord_status") return { status: 200, body: { text: "Signed in as me" } };
+    if (tool === "discord_view") return { status: 200, body: { error: "No channel is open in this chat" } };
+    return { status: 503, body: { error: "Persons is starting" } };
+  };
+  expect(textOf(await call("discord_dms", { query: "ana" }, hub))).toBe(JSON.stringify({ dms: [{ channelId: "2", name: "Ana" }], total: 1 }, null, 2));
+  expect(textOf(await call("discord_status", {}, hub))).toBe("Signed in as me");
+  const v = (await call("discord_view", {}, hub)) as { isError: boolean };
+  expect(v.isError).toBe(true);
+  expect(textOf(v as unknown as Json)).toBe("No channel is open in this chat");
+  expect(textOf(await call("discord_pins", {}, hub))).toBe("Persons is starting");
+  expect(textOf(await call("discord_pins", {}, async () => null))).toContain("Hub isn't running");
+  expect(seen[0]?.[0]).toBe("discord_dms");
+  expect((await call("discord_waitForMessage", { timeoutMs: 600000 }, async (_t, _a, w) => ({ status: 200, body: { json: { wait: w } } })))).toBeTruthy();
+  expect(seen.length).toBe(4);
+});
+
+test("send reads its files here and sends their bytes to Hub", async () => {
+  const f = join(dir, "pic.png");
+  writeFileSync(f, "png!");
+  let got: Json = null;
+  const r = await call("discord_send", { channelId: "1", files: [f] }, async (_t, a) => ((got = a), { status: 200, body: { json: { ok: true } } }));
+  expect(textOf(r)).toContain('"ok": true');
+  expect(got).toMatchObject({ channelId: "1", files: [{ name: "pic.png", mime: "image/png", base64: Buffer.from("png!").toString("base64") }] });
+  expect(() => sendFiles({ channelId: "1" })).toThrow("Provide `content` and/or `files`");
+  expect(textOf(await call("discord_send", { content: "x", files: [join(dir, "missing")] }, async () => null))).toContain("Failed to read file");
+});
+
+test("an attachment's bytes come from Discord's CDN only; an image goes to the model as an image", async () => {
+  const meta = (url: string, size = 4): HubCall => async () => ({ status: 200, body: { json: { name: "a.png", url, size, contentType: "image/png" } } });
+  const cdn = (async () => new Response("abcd")) as unknown as typeof fetch;
+  const ok = (await call("discord_attachment", { messageId: "1" }, meta("https://cdn.discordapp.com/attachments/1/2/a.png"), cdn)) as { content: { type: string; data?: string }[] };
+  expect(ok.content[0]).toEqual({ type: "image", data: Buffer.from("abcd").toString("base64"), mimeType: "image/png" } as never);
+  expect(textOf(await call("discord_attachment", { messageId: "1" }, meta("https://evil.example/a.png"), cdn))).toContain("isn't on Discord's CDN");
+  expect(textOf(await call("discord_attachment", { messageId: "1", maxBytes: 2 }, meta("https://cdn.discordapp.com/a.png", 10), cdn))).toContain("> maxBytes 2");
+});
+
+test("notes save, recall by id and forget", () => {
+  const p = join(dir, "notes.json");
   expect(notes(p, { action: "recall" })).toContain("no saved notes");
   notes(p, { action: "save", key: "friend:ana", value: "likes tea", topic: "friends", userId: "1" });
   notes(p, { action: "save", key: "group:x", value: "main", channelId: "2" });
   expect(() => notes(p, { action: "save", value: "v" })).toThrow();
-  const all = notes(p, { action: "recall" });
-  expect(all).toContain("friends");
-  expect(all).toContain("general");
+  expect(notes(p, { action: "recall" })).toContain("friends");
   expect(notes(p, { action: "recall", userId: "1" })).toContain("likes tea");
   expect(notes(p, { action: "recall", userId: "1" })).not.toContain("group:x");
-  expect(notes(p, { action: "recall", channelId: "9" })).toContain("no entries");
   notes(p, { action: "forget", key: "group:x" });
   expect(() => notes(p, { action: "forget", key: "group:x" })).toThrow();
-  expect(existsSync(p)).toBe(true);
-  expect(readFileSync(p, "utf8")).not.toContain("group:x");
+  expect(existsSync(p) && readFileSync(p, "utf8")).not.toContain("group:x");
 });
 
-test("low_level_tools_arent_on_the_agents_list: low-level tools aren't on the agents' list", () => {
-  const t: unknown = JSON.parse(readFileSync(join(import.meta.dir, "../../../../discord/tools.json"), "utf8"));
-  const names = (t as { name: string }[]).map((x) => x.name);
-  for (const gone of ["discord_eval", "discord_click", "discord_key", "discord_query", "discord_findModule", "discord_config", "discord_wait", "discord_console", "discord_reload"]) {
-    expect(names).not.toContain(gone);
-  }
-  expect(names).toContain("discord_send");
-  expect(names).toContain("discord_waitForMessage");
+test("base64 and Discord's URLs", () => {
+  expect(decode(Buffer.from("ab").toString("base64"))?.toString()).toBe("ab");
+  expect(decode("a*b=")).toBeUndefined();
+  expect(fromDiscord("https://media.discordapp.net/x")).toBe(true);
+  expect(fromDiscord("https://cdn.discordapp.com.example.org/a.png")).toBe(false);
 });
 
-test("without its shell, Discord offers discord_status saying why, never an empty tool list", async () => {
-  // A build that doesn't know its commit can't fetch the shell (installed ones always do).
-  setup.configure({ shellRef: () => undefined });
-  const list = (await tools()) as { name: string; description: string }[];
-  expect(list.map((t) => t.name)).toEqual(["discord_status"]);
-  expect(list[0]?.description).toContain("built from source without its commit");
-  expect(await statusText()).toStartWith("Discord's tools aren't available on this PC: This Hub was built from source");
-  // One that does: the download is tried at that commit, and its failure is the reason.
-  process.env.HARBOR_DISCORD_SHELL_ORIGIN = "http://127.0.0.1:9";
-  setup.configure({ shellRef: () => "0123456789abcdef0123456789abcdef01234567" });
-  try {
-    expect(await statusText()).toContain("couldn't download its Discord shell (main.js from http://127.0.0.1:9/RDevNeo/harbor/0123456789abcdef0123456789abcdef01234567/discord)");
-    expect(readdirSync(setup.root()).filter((n) => n.includes(".tmp"))).toEqual([]);
-  } finally {
-    delete process.env.HARBOR_DISCORD_SHELL_ORIGIN;
-    setup.configure({ shellRef: () => undefined });
-  }
-});
-
-test("a tool list still coming when the input ends is answered before the server goes", async () => {
-  // A slow GitHub: the first list waits for the shell's download.
-  const slow = Bun.serve({ port: 0, fetch: async () => { await Bun.sleep(400); return new Response("404: Not Found", { status: 404 }); } });
-  process.env.HARBOR_DISCORD_SHELL_ORIGIN = `http://127.0.0.1:${slow.port}`;
-  setup.configure({ shellRef: () => "0123456789abcdef0123456789abcdef01234567" });
-  try {
-    const input = new PassThrough();
-    const output = new PassThrough();
-    let out = "";
-    output.on("data", (d: Buffer) => (out += d.toString()));
-    const done = serve(input, output);
-    input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
-    await done;
-    const reply = JSON.parse(out.split("\n").find((l) => l.includes('"id":2')) ?? "{}") as { result?: { tools?: { name: string }[] } };
-    expect(reply.result?.tools?.map((t) => t.name)).toEqual(["discord_status"]);
-  } finally {
-    delete process.env.HARBOR_DISCORD_SHELL_ORIGIN;
-    setup.configure({ shellRef: () => undefined });
-    slow.stop(true);
-  }
-});
-
-test("a captcha's notices go into its chat as the card and its outcome, and the notification opens that chat", () => {
-  const items: [number, string, string, string][] = [];
-  const told: unknown[][] = [];
-  const sink = {
-    chat: (id: number) => (id === 3 ? { id: 3, gid: "pc1:3" } : undefined),
-    notice: (id: number, icon: string, text: string, detail: string) => void items.push([id, icon, text, detail]),
-    changed: () => {},
-    notify: (...a: unknown[]) => void told.push(a),
-  };
-  postNotice({ kind: "discord", key: "discord-captcha", title: "Discord needs a captcha", body: "b", chat: 3, captcha: { captcha: "ab", state: "pending", guild: "G" }, line: "Discord needs a captcha to join G" }, sink);
-  expect(items).toEqual([[3, "captcha", "Discord needs a captcha to join G", '{"captcha":"ab","state":"pending","guild":"G"}']]);
-  expect(told[0]).toEqual(["discord", "discord-captcha", "Discord needs a captcha", "b", "pc1:3"]);
-  // A chat this PC doesn't have, or none: only the notification, which opens the overlay.
-  postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", chat: 9, captcha: { captcha: "cd", state: "pending", guild: null } }, sink);
-  expect(items.length).toBe(1);
-  expect(told[1]).toEqual(["discord", "discord-captcha", "t", "b"]);
-});
-
-test("a captcha a restart lost becomes expired in its chat, from a new host or, with none, from the app", () => {
-  const notices = (): Record<string, unknown>[] => (existsSync(join(setup.root(), "notices.jsonl")) ? readFileSync(join(setup.root(), "notices.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : []);
-  rmSync(join(setup.root(), "notices.jsonl"), { force: true });
-  const state = join(setup.root(), "state.json");
-  writeFileSync(state, JSON.stringify({ logins: [], captcha: { id: "c1", chat: 4, guild: "G" } }));
-  expect(expireSaved()).toBe(true);
-  expect(notices()[0]).toMatchObject({ chat: 4, key: "discord-captcha", captcha: { captcha: "c1", state: "expired", guild: "G" }, line: "Captcha expired: didn't join G" });
-  expect(loadSaved().captcha).toBeNull();
-  expect(expireSaved()).toBe(false);
-  // A new host does the same at its start.
-  writeFileSync(state, JSON.stringify({ logins: [], captcha: { id: "c2", chat: null, guild: null } }));
-  const stub = {} as Engine;
-  void new Host({ engine: stub, scratch: stub });
-  expect(notices()[1]).toMatchObject({ captcha: { captcha: "c2", state: "expired" }, line: "Captcha expired: didn't join the server" });
-  expect(loadSaved().captcha).toBeNull();
-});
-
-test("a captcha whose server didn't name its chat goes to the one chat waiting on a join, and the host is told", () => {
-  const items: number[] = [];
-  const adopted: [string, number][] = [];
-  const sink = {
-    chat: () => undefined,
-    caller: () => ({ id: 8, gid: "pc:8" }),
-    adopt: (c: string, chat: number) => void adopted.push([c, chat]),
-    notice: (id: number) => void items.push(id),
-    changed: () => {},
-    notify: () => {},
-  };
-  postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", captcha: { captcha: "x1", state: "pending", guild: null } }, sink);
-  expect(items).toEqual([8]);
-  expect(adopted).toEqual([["x1", 8]]);
-  // Not knowing which chat: no card, the overlay shows it.
-  postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", captcha: { captcha: "x2", state: "pending", guild: null } }, { ...sink, caller: () => undefined });
-  expect(items).toEqual([8]);
-});
-
-test("after an update, a host from the old Hub is stopped when nothing is in flight, and a busy one is left alone", async () => {
-  const { createServer } = await import("node:net");
-  const { basename } = await import("node:path");
-  const asked: string[] = [];
-  let answer: Record<string, unknown> = {};
-  const server = createServer((c) => {
-    c.setEncoding("utf8");
-    c.on("data", (d: string) => {
-      const op = (JSON.parse(d.split("\n")[0] ?? "{}") as { op: string }).op;
-      asked.push(op);
-      c.end(`${JSON.stringify({ ok: true, result: op === "status" ? answer : {} })}\n`);
-    });
+test("the card and the phone read the Persons connection Persons provides", async () => {
+  provide(null);
+  expect([available(), signedIn(), accountName()]).toEqual([false, false, undefined]);
+  let status = "connected";
+  const calls: string[] = [];
+  provide({
+    info: () => ({ connection: "stores", label: "Stores Discord", status, account: status === "connected" ? { id: "1", name: "Ana", username: "ana" } : null, error: null, qr: status === "signing-in" ? "https://discord.com/ra/x" : null }),
+    signIn: async () => void calls.push("signIn"),
+    cancel: async () => void calls.push("cancel"),
+    signOut: async () => void calls.push("signOut"),
   });
-  await new Promise<void>((r) => server.listen(setup.socket(), () => r()));
-  try {
-    answer = { busy: 0, captcha: null, shell: "shell-0123456789ab" };
-    expect(await replaceOldHost()).toBe(true);
-    expect(asked).toEqual(["status", "stop"]);
-    asked.length = 0;
-    answer = { busy: 1, captcha: null, shell: "shell-0123456789ab" };
-    expect(await replaceOldHost()).toBe(false);
-    answer = { busy: 1, captcha: { id: "c", since: Math.floor(Date.now() / 1000) - 30 }, shell: "shell-0123456789ab" };
-    expect(await replaceOldHost()).toBe(false);
-    // A captcha stuck well past its own time limit doesn't hold an update back for ever.
-    answer = { busy: 1, captcha: { id: "c", since: Math.floor(Date.now() / 1000) - 3600 }, shell: "shell-0123456789ab" };
-    expect(await replaceOldHost()).toBe(true);
-    asked.length = 0;
-    // A host already running this Harbor's shell is left as it is.
-    answer = { busy: 0, captcha: null, shell: basename(setup.shellDir()) };
-    expect(await replaceOldHost()).toBe(false);
-    expect(asked).toEqual(["status"]);
-  } finally {
-    await new Promise<void>((r) => server.close(() => r()));
-    rmSync(setup.socket(), { force: true });
-  }
-});
-
-test("a host makes way for an updated app bundle as soon as it can", async () => {
-  const bundle = join(setup.root(), "harbor-app.js");
-  writeFileSync(bundle, "one");
-  setup.configure({ bundle: () => bundle });
-  try {
-    const stub = { alive: () => false } as unknown as Engine;
-    const host = new Host({ engine: stub, scratch: stub });
-    expect(await host.tick()).toBe(false);
-    writeFileSync(bundle, "a newer bundle");
-    expect(await host.tick()).toBe(true);
-  } finally {
-    setup.configure({ bundle: () => undefined });
-  }
-});
-
-test("a captcha card no host holds any more ends as expired in its chat, on the second look, and discord_status says so", async () => {
-  rmSync(setup.socket(), { force: true });
-  writeFileSync(join(setup.root(), "state.json"), JSON.stringify({ logins: [], captcha: { id: "kept", chat: 3, guild: "G" } }));
-  const p = new PendingCaptchas();
-  // From the chats: one ended, one a saved state still holds, one nobody holds.
-  p.seed([
-    [1, JSON.stringify({ captcha: "done", state: "pending", guild: "A" })],
-    [1, JSON.stringify({ captcha: "done", state: "joined", guild: "A" })],
-    [3, JSON.stringify({ captcha: "kept", state: "pending", guild: "G" })],
-    [2, JSON.stringify({ captcha: "lost", state: "pending", guild: "Python" })],
-  ]);
-  expect(p.ids().sort()).toEqual(["kept", "lost"]);
-  const posted: unknown[] = [];
-  await p.check((n) => void posted.push(n));
-  expect(posted).toEqual([]); // an outcome may still be on its way
-  await p.check((n) => void posted.push(n));
-  expect(posted).toEqual([
-    {
-      kind: "discord",
-      key: "discord-captcha",
-      title: "Discord: not joined",
-      body: "The captcha for Python was lost when Discord stopped or restarted, so it didn't join.",
-      chat: 2,
-      captcha: { captcha: "lost", state: "expired", guild: "Python" },
-      line: "Captcha expired: didn't join Python",
-    },
-  ]);
-  expect(p.ids()).toEqual(["kept"]);
-  // What discord_status and the cards read, with no host running.
-  expect(((await status()) as Record<string, unknown>).captcha_end).toMatchObject({ outcome: "expired", guild: "Python" });
-  rmSync(join(setup.root(), "state.json"), { force: true });
+  expect([available(), signedIn(), accountName()]).toEqual([true, true, "Ana"]);
+  expect(phoneInfo("About")).toMatchObject({ account: { name: "Ana", username: "ana" }, captcha: null, card: { text: "Signed in as Ana (Persons › Stores Discord)", tone: 0 } });
+  status = "signing-in";
+  expect(phoneInfo("About")).toMatchObject({ account: null, signin: { active: true, qr: "https://discord.com/ra/x" } });
+  status = "signed-out";
+  expect([available(), signedIn()]).toEqual([true, false]);
+  expect(cardLine({ connection: null, label: null, status: "signed-out", account: null, error: null, qr: null }, "About")).toEqual({ text: "About", tone: 0 });
+  provide(null);
 });

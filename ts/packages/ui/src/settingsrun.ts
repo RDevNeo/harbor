@@ -47,7 +47,6 @@ await mountSettings(
     },
     back: () => {},
     providers: { login: () => {}, addClaudeAccount: () => {} },
-    integrations: { discordWindow: () => {} },
     qr: await loadQr(),
     notify,
     copy: () => {},

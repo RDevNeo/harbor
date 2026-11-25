@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { CaptchaPane, type CaptchaApi, type CaptchaWindow, noCaptcha } from "../src/captchapane.ts";
-import type { discord } from "@harbor/mcp";
+import { CaptchaPane, type CaptchaApi, type CaptchaFrame, type CaptchaWindow, noCaptcha } from "../src/captchapane.ts";
+
 
 const pixels = { width: 2, height: 1, data: new Uint8ClampedArray(8) };
 
-function rig(frames: (discord.CaptchaFrame | undefined)[]) {
+function rig(frames: (CaptchaFrame | undefined)[]) {
   const sent: [string, number, number][] = [];
   let cancelled = 0;
   const api: CaptchaApi = {
@@ -27,7 +27,7 @@ function rig(frames: (discord.CaptchaFrame | undefined)[]) {
   return { w, pane, sent, decoded, cancelled: () => cancelled };
 }
 
-const frame = (data?: string): discord.CaptchaFrame => ({ guild: "Big Server", width: 1280, height: 720, rect: { x: 400, y: 200, width: 300, height: 200 }, ...(data !== undefined ? { data } : {}) });
+const frame = (data?: string): CaptchaFrame => ({ guild: "Big Server", width: 1280, height: 720, rect: { x: 400, y: 200, width: 300, height: 200 }, ...(data !== undefined ? { data } : {}) });
 
 test("a captcha comes up in front with its frame, and goes when the host has none", async () => {
   const r = rig([frame(Buffer.from("jpeg").toString("base64")), undefined]);
