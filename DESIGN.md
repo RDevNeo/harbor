@@ -26,14 +26,14 @@ A new shared need goes into `ds-*.slint` / `Ds.java` first and is then used by t
 | Tab switcher | in the sidebar's header (icons); since fork's 81cf8de5 a labelled tab row across the window | TabFrame's top row (labelled) | TabFrame's top row | **The window's tab row** (`tabs.slint` AppTabs, 46px), the same in every tab |
 | Sidebar frame | bg200, 1px border, 11/13px padding, 256px | bg200, right hairline, 264px | none: sections as pills over the page | **SideSurface** + **SideHead**, 256px (`Ds.side-w`), in all three tabs |
 | Sidebar header row | hide, tabs, refresh, search (28px ghost icon buttons) | none | none | **SideHead**: hide on the left (every tab; Ctrl+B), the tab's ghost icon buttons on the right |
-| Section head | "PROJECTS": 11px/500, 0.6 spacing, gray-800, 18px | "STORES": 11px/600, 0.4 spacing, subtle, chevron, dot, blue pill, + | none | **SectionHead**: Projects' caps; optional fold chevron, status dot, blue count pill, + (a 22px ghost Btn) |
+| Section head | "PROJECTS": 11px/500, 0.6 spacing, gray-800, 18px | "STORES": 11px/600, 0.4 spacing, subtle, chevron, dot, blue pill, + | none | **SectionHead**: Projects' caps; optional fold chevron, status dot, blue count pill, + (a 22px ghost Btn); a folding head is one click / hover target across the row (pointer, accent fill) except its + |
 | List row | ProjectRow / ThreadRow: 32 (34 head, 46 two-line), radius 6, accent on hover and selected, chevron 0..22, 16px lead at 22 (8 unfolded), title 14px at 46 (32), meta 12.5px gray-800 | PersonRow 30/38/52, gray-100 hover, 13px titles, 10.5px meta, avatars 22–36 | section pills 40px, radius 8 | **ListRow** on Projects' metrics: avatars 22 (one line) / 28 (two lines), second line 11.5px, unread CountPill and meta on the right, marks (channel, crown…) after the title |
 | Lead mark | 16px letter square (radius 4, gray-300/400) or the project's picture | store picture 20px (radius 5) or a 9px colour dot | glyphs 16px | **LeadLetter** (picture, else letter on gray, or on a store's colour), **Avatar** (photo / initials, presence), a glyph, or a dot |
 | Fold | chevron 12px gray-800 at x 5, hover fg | chevron 11–12px in-line | n/a | the same chevron in ListRow and SectionHead |
 | Settled fold | "Settled (N)", hairline to the edge, chevron up/down | "› Settled (N)" 11.5px | n/a | **FoldBar** (Projects') |
 | Counts / badges | gray mono numbers, StatusView words | Pill 16px (ink or blue) | n/a | **CountPill** (ink: unread on a row; blue: a section's total), meta numbers 12.5px gray-800 |
 | Status dots | 6px amber / blue (LeadMark) | 7px Discord colours | n/a | **StatusDot**, tones via `Ds.tone()` / `Ds.tone-dot()` (green, amber, red, blue, muted) |
-| Page header bar | chat TopBar 46px, hairline | chat header 56px (36px avatar) | none | **PageBar** 46px + hairline; a person's chat: 28px avatar, 14px name |
+| Page header bar | chat TopBar 46px, hairline | chat header 56px (36px avatar) | none | **PageBar** 46px + 1px line, the one header of every page (Projects' TopBar is built on it): padding 18/10, 8 top and bottom, ShowSideBtn first while the sidebar is hidden, breadcrumb `icon section / title sub` at 14px; a person's chat: 28px avatar, 14px name |
 | Page title | Settings 24px | "All people" 18px/600 | Title 24px/700 | **PageHead** 20px/600, −0.4 spacing, sub 13px subtle, actions on the right |
 | Detail panel | team panel (now a floating card) | Panel 340px, top bar 44px, sections 11px caps | n/a | **PanelSurface** 340px, 46px top bar (in line with PageBar), **PanelSection** (caps title + small ghost action) |
 | Cards | `Card` (bg100, border, radius 8) | upload cards radius 6 | `Card` | `Card`; thumbnails radius 6 |
@@ -58,7 +58,8 @@ A new shared need goes into `ds-*.slint` / `Ds.java` first and is then used by t
 - **Icons**: 12 (row marks), 14 (row and menu glyphs), 16 (buttons), 24 (empty states).
 - **Rows**: 32 one line, 34 head row, 46 two lines. Lead column: chevron 0..22, lead mark at 22 (8 without a fold),
   title at 46 (32). Indent 16px per level.
-- **Frames**: sidebar 256px, padding 11 (13 at the top), header row 28; page bar 46; detail panel 340; a page's column
+- **Frames**: sidebar 256px (Persons and Routine take Projects' resizable width, so the header's buttons line up),
+  padding 11 (13 at the top), header row 28, first row 7px under it (`side-list-top`); page bar 46; detail panel 340; a page's column
   at most 680px with 24px sides.
 - **States**: hover = selected = `Theme.accent` on rows; pressed toggles use `Btn.pressed`; disabled is 50% opacity.
 - **Tones**: `Ds.tone(t)` (text) and `Ds.tone-dot(t)` (dots) for green / amber (yellow) / red / blue / muted, from
@@ -72,8 +73,9 @@ A new shared need goes into `ds-*.slint` / `Ds.java` first and is then used by t
    hides with that button or Ctrl+B (the `toggle_sidebar` binding) and comes back from **ShowSideBtn** at the page's
    top-left (in the PageBar, or before the PageHead). Each tab keeps its own state: Projects' `sidebar-open`,
    `PersonsBus.side-hidden`, `RoutineBus.side-hidden` (shell.ts `tabSidebarKey` routes Ctrl+B to the tab on screen).
-3. The **page** on the right: a PageBar (46px) for a thing that's open (a chat, a person), or a PageHead over a
-   centred column for a screen (All people, Today, History…).
+3. The **page** on the right, always under a **PageBar** (46px + line; same height, baseline and show-sidebar spot in
+   every tab): a chat or a person ("hub / chat", the person), All people ("Persons / All people  68 people"), Routine's
+   screens ("Routine / Today"). A screen's column may still open with a PageHead.
 4. An optional **detail panel** (PanelSurface, 340px) on the far right, its top bar in line with the PageBar.
 5. Overlays: MenuPanel at the pointer, DialogFrame over a scrim, Toast over the bottom edge.
 

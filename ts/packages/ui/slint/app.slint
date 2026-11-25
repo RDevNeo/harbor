@@ -30,7 +30,7 @@ import { PaneHead, PaneBody, PaneDiv, PaneDrop, PaneMetrics, Panes, PaneHeader, 
 // Hub's top-level tabs: the bar (tabs.slint) and every tab besides Projects (its own file and global).
 import { TabsBus, AppTabs, TabFrame } from "tabs.slint";
 // Hub's design system (DESIGN.md): the modal dialog and the toast are the shared ones every tab uses.
-import { DialogFrame, DialogActions, Toast } from "ds-surface.slint";
+import { DialogFrame, DialogActions, Toast, PageBar } from "ds-surface.slint";
 import { PersonsBus, PersonsPage } from "persons.slint";
 import { RoutineBus, RoutinePage } from "routine.slint";
 
@@ -162,22 +162,15 @@ component TopBar {
     callback restore();
     // Whole physical pixels, so the 1px line under it is one crisp row at any scale (zoom 90% on a 1.25 display
     // put it at 51.75: drawn on two half-lit rows that partial redraws left uneven, as a flickering stroke).
-    height: round(46px / 1phx) * 1phx;
-    HorizontalLayout {
-        padding-left: 18px;
-        padding-right: 10px;
-        padding-top: 8px;
-        padding-bottom: 8px;
-        spacing: 6px;
-        if !root.sidebar-open: Btn {
-            y: 1px;
-            icon: Icons.panel-left;
-            size: icon-xs;
-            variant: ghost-muted;
-            tip: "Show sidebar (Ctrl+B)";
-            clicked => {
-                root.show-sidebar();
-            }
+    // The shared PageBar (ds-surface.slint): the same height, padding, show-sidebar and line under it as every tab's.
+    height: bar.height;
+    bar := PageBar {
+        x: 0;
+        y: 0;
+        width: root.width;
+        side-hidden: !root.sidebar-open;
+        show-side => {
+            root.show-sidebar();
         }
         HorizontalLayout {
             horizontal-stretch: 1;
@@ -1121,7 +1114,6 @@ export component AppWindow inherits Window {
                             root.mem-pop("mem-chat", x, y);
                         }
                     }
-                    if (root.view == "draft" || root.view == "chat") && !root.panes-on: Separator { }
                     body := Rectangle {
                         vertical-stretch: 1;
                         // Split panes: each one is drawn by Panes; the focused one has this usual composer under it.
@@ -1913,9 +1905,11 @@ export component AppWindow inherits Window {
                 x: 12px;
                 y: (parent.height - self.height) / 2;
             }
+            // The one divider under the tab row: one physical row (a 1px line at a fractional scale lands on two
+            // half-lit rows that partial redraws, e.g. a streaming chat, relight unevenly: a flicker).
             Rectangle {
-                y: parent.height - 1px;
-                height: 1px;
+                y: parent.height - 1phx;
+                height: 1phx;
                 background: Theme.border;
             }
         }
@@ -2797,6 +2791,8 @@ export component AppWindow inherits Window {
             PersonsPage {
                 x: 0;
                 y: 0;
+                // Projects' sidebar width (resizable there), so every tab's sidebar header lines up.
+                side-w: root.side-shown;
                 width: parent.width;
                 height: parent.body-h;
             }
@@ -2809,6 +2805,8 @@ export component AppWindow inherits Window {
             RoutinePage {
                 x: 0;
                 y: 0;
+                // Projects' sidebar width (resizable there), so every tab's sidebar header lines up.
+                side-w: root.side-shown;
                 width: parent.width;
                 height: parent.body-h;
             }
