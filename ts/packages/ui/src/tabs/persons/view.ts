@@ -200,7 +200,7 @@ export function listRows(s: StateJson, q: string, open: UiState["open"]): Row[] 
 // ---------- chat ----------
 
 /** An attachment; audio ones carry their key (play, transcribe), bars 0..1, whether it was played and its transcript. */
-export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null; audio?: string; bars?: number[] | null; played?: boolean; transcript?: string | null }
+export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null; audio?: string; bars?: number[] | null; played?: boolean; transcript?: string | null; transcribing?: boolean; transcriptFailed?: boolean }
 /** The chat a message is in (a person's page shows every chat of theirs in one timeline). */
 export interface ChannelJson { key: string; kind: string; label: string }
 export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[]; channel?: ChannelJson }
@@ -247,6 +247,9 @@ export interface AudioRow {
   bars: number[];
   played: boolean;
   transcript: string;
+  /** Being transcribed now (in the background or on a click); the background one failed. */
+  transcribing: boolean;
+  failed: boolean;
   voice: boolean;
 }
 
@@ -441,6 +444,8 @@ export function audioRow(f: FileJson, voice: boolean, fallbackAccount: string): 
     bars: f.bars?.length ? f.bars : FLAT_BARS,
     played: f.played !== false,
     transcript: f.transcript ?? "",
+    transcribing: !!f.transcribing,
+    failed: !!f.transcriptFailed,
     voice,
   };
 }

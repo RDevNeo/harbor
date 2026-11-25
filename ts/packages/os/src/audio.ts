@@ -147,11 +147,16 @@ export function play(file: string, at: number, speed: number, onEnd: (error?: st
   };
 }
 
-/** A file decoded to mono signed 16-bit samples at `rate` (ffmpeg), at most `maxSecs`; null without ffmpeg. */
-export async function decode(file: string, rate: number, maxSecs = 1200): Promise<Int16Array | null> {
+/**
+ * A file decoded to mono signed 16-bit samples at `rate` (ffmpeg), at most `maxSecs`; null without ffmpeg. `low`:
+ * background work, ffmpeg at the lowest CPU priority (nice 19 where there is `nice`).
+ */
+export async function decode(file: string, rate: number, maxSecs = 1200, low = false): Promise<Int16Array | null> {
   if (!which("ffmpeg")) return null;
+  const nice = low && platform() !== "win32" ? which("nice") : null;
   return new Promise((resolve, reject) => {
-    const k = spawnChild("ffmpeg", ["-nostdin", "-v", "error", "-i", file, "-t", String(maxSecs), "-f", "s16le", "-ac", "1", "-ar", String(rate), "pipe:1"], { stdio: ["ignore", "pipe", "pipe"] });
+    const args = ["-nostdin", "-v", "error", "-i", file, "-t", String(maxSecs), "-f", "s16le", "-ac", "1", "-ar", String(rate), "pipe:1"];
+    const k = spawnChild(nice ?? "ffmpeg", nice ? ["-n", "19", "ffmpeg", ...args] : args, { stdio: ["ignore", "pipe", "pipe"] });
     const parts: Buffer[] = [];
     let err = "";
     k.stdout?.on("data", (b: Buffer) => parts.push(b));

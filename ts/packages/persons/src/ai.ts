@@ -8,6 +8,8 @@ import { SECTION_LABEL } from "./model/accounts.ts";
 import { personLabel } from "./model/data.ts";
 import type { AppData, ChannelKind, Message, Person, SectionId } from "./model/types.ts";
 import { writeAtomic } from "./store.ts";
+import { formatDuration } from "./model/conversation.ts";
+import { isAudio } from "./voicequeue.ts";
 import type { AiPort } from "./routes.ts";
 
 export const AI_PROJECT_PATH = "creators-hub/tabs/Persons";
@@ -27,7 +29,23 @@ export const SECTION_MEANING: Record<SectionId, string> = {
 };
 
 /** The hidden context of a question (personAi.ts aiContext, unchanged wording). */
-export function aiContext(o: { person: Person; section: SectionId; data: Pick<AppData, "stores" | "lists"> | null; channel: string; messages: readonly Message[]; me?: string }): string {
+/** What a message's attachments say in the context: "[voice 0:20] <transcript>" for speech, else their names. */
+export function attachmentsLine(m: Message, transcriptOf?: (m: Message, index: number) => string | null | undefined): string {
+  const atts = m.attachments ?? [];
+  if (!atts.length) return "";
+  const parts: string[] = [];
+  const others: string[] = [];
+  atts.forEach((a, i) => {
+    if (!isAudio(m, a)) return void others.push(a.name);
+    const len = a.duration ? ` ${formatDuration(a.duration)}` : "";
+    const t = transcriptOf?.(m, i)?.replace(/\s+/g, " ").trim();
+    parts.push(`[${m.voice ? "voice" : "audio"}${len}]${t ? ` ${t}` : t === "" ? " (no speech)" : " (not transcribed)"}`);
+  });
+  if (others.length) parts.push(`[${others.join(", ")}]`);
+  return parts.join(" ");
+}
+
+export function aiContext(o: { person: Person; section: SectionId; data: Pick<AppData, "stores" | "lists"> | null; channel: string; messages: readonly Message[]; me?: string; transcriptOf?: (m: Message, index: number) => string | null | undefined }): string {
   const { person: p, section, data } = o;
   const name = personLabel(p);
   const ids: string[] = [];
@@ -40,9 +58,10 @@ export function aiContext(o: { person: Person; section: SectionId; data: Pick<Ap
   const lists = (data?.lists ?? []).filter((l) => p.listIds.includes(l.id)).map((l) => l.name);
   const recent = o.messages.slice(-CONTEXT_MESSAGES);
   const line = (m: Message): string => {
-    const files = m.attachments?.length ? ` [${m.voice ? "voice message" : m.attachments.map((a) => a.name).join(", ")}]` : "";
+    const files = attachmentsLine(m, o.transcriptOf);
     const subj = m.subject ? ` (subject: ${m.subject})` : "";
-    return `[${m.timestamp.slice(0, 16).replace("T", " ")}] ${m.fromMe ? (o.me ? `Me (${o.me})` : "Me") : name}${subj}: ${m.content.replace(/\n+/g, " ⏎ ")}${files}`;
+    const text = m.content.replace(/\n+/g, " ⏎ ");
+    return `[${m.timestamp.slice(0, 16).replace("T", " ")}] ${m.fromMe ? (o.me ? `Me (${o.me})` : "Me") : name}${subj}: ${text}${text && files ? " " : ""}${files}`;
   };
   return [
     "You are the user's assistant inside Hub's Persons tab, for their conversation with one person. The user writes to you here; you never talk to the person.",
@@ -163,9 +182,9 @@ export class PersonAi implements AiPort {
     return cardsToAi(b.items ?? [], !!b.running || (b.queued ?? 0) > 0);
   }
 
-  async ask(p: Person, s: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData): Promise<string> {
+  async ask(p: Person, s: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData, transcriptOf?: (m: Message, index: number) => string | null | undefined): Promise<string> {
     const channel = kind === "gmail" ? "Gmail" : kind === "whatsapp" ? "WhatsApp" : "Discord";
-    const full = withAiContext(text, aiContext({ person: p, section: s, data, channel, messages: conversation }));
+    const full = withAiContext(text, aiContext({ person: p, section: s, data, channel, messages: conversation, ...(transcriptOf ? { transcriptOf } : {}) }));
     const { project, chat } = await this.locate(p, s);
     if (chat) {
       const r = await this.call("POST", `v1/chats/${encodeURIComponent(chat)}/send`, {}, { text: full, mode: "queue", client_id: crypto.randomUUID() });

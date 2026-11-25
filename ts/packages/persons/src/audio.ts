@@ -19,6 +19,9 @@ export interface AudioMeta {
   /** When it was first played here. */
   played?: string;
   transcript?: string;
+  /** The last time making its transcript failed (the file couldn't be fetched, speech to text failed), and how often. */
+  failed?: string;
+  attempts?: number;
 }
 
 /** Bars a bubble draws. */
@@ -86,7 +89,7 @@ export interface AudioDeps {
   changed: () => void;
   log?: (...a: unknown[]) => void;
   /** Tests: the OS calls. */
-  os?: Pick<typeof osAudio, "play" | "decode" | "player">;
+  os?: { play: typeof osAudio.play; decode: (file: string, rate: number, maxSecs?: number, low?: boolean) => Promise<Int16Array | null>; player: typeof osAudio.player };
   now?: () => number;
 }
 
@@ -242,7 +245,15 @@ export class AudioService {
   }
 
   /** The text of an audio attachment (cached once made; a second ask waits for the first). */
-  async transcribe(key: string, file: string): Promise<string> {
+  /** Making its transcript failed: remembered, so the background queue doesn't try again at once (Transcribe still can). */
+  markFailed(key: string): void {
+    const m = this.metas[key];
+    this.set(key, { failed: new Date(this.now()).toISOString(), attempts: (m?.attempts ?? 0) + 1 });
+    this.d.changed();
+  }
+
+  /** `low`: the background queue's (ffmpeg at low CPU priority). */
+  async transcribe(key: string, file: string, low = false): Promise<string> {
     const had = this.metas[key]?.transcript;
     if (had !== undefined) return had;
     const busy = this.transcribing.get(key);
@@ -250,13 +261,18 @@ export class AudioService {
     const stt = this.d.transcribe;
     if (!stt) throw new Error("Speech to text isn't set up on this PC (Settings › Voice)");
     const run = (async () => {
-      const samples = await this.os.decode(file, STT_RATE, STT_MAX_SECS);
-      if (!samples) throw new Error("ffmpeg is needed to read audio files");
-      if (samples.length < STT_RATE / 4) return "";
-      const text = (await stt(samples)).trim();
-      this.set(key, { transcript: text });
-      this.d.changed();
-      return text;
+      try {
+        const samples = await this.os.decode(file, STT_RATE, STT_MAX_SECS, low);
+        if (!samples) throw new Error("ffmpeg is needed to read audio files");
+        const text = samples.length < STT_RATE / 4 ? "" : (await stt(samples)).trim();
+        this.set(key, { transcript: text });
+        this.d.changed();
+        return text;
+      } catch (e) {
+        // the speech model still on its way (dictate's Fail "wait") isn't this audio's failure
+        if ((e as { kind?: string } | null)?.kind !== "wait") this.markFailed(key);
+        throw e;
+      }
     })();
     this.transcribing.set(key, run);
     try {

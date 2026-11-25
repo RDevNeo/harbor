@@ -541,7 +541,8 @@ class PersonsTab {
       a_played: r.audio ? r.audio.played || (this.audioSt?.key === r.audio.key && this.audioSt.playing) : true,
       a_voice: !!r.audio?.voice,
       a_transcript: r.audio?.transcript ?? "",
-      a_transcribing: !!r.audio && this.transcribing.has(r.audio.key),
+      a_transcribing: !!r.audio && (r.audio.transcribing || this.transcribing.has(r.audio.key)),
+      a_hidden: !!r.audio && this.hiddenTranscripts.has(r.audio.key),
     };
   }
 
@@ -847,8 +848,17 @@ class PersonsTab {
     await this.audioCall("speed", { speed, ...(a ? this.fileBody(a) : {}) });
   }
 
+  /** Transcripts the user folded away (show / hide), for the session. */
+  private hiddenTranscripts = new Set<string>();
+
+  /** The bubble's button: show / hide its transcript, or make one (none yet, or the background one failed). */
   private async audioTranscribe(id: string): Promise<void> {
     const a = this.audioOf(id);
+    if (a?.transcript) {
+      if (!this.hiddenTranscripts.delete(a.key)) this.hiddenTranscripts.add(a.key);
+      this.render();
+      return;
+    }
     if (!a || this.transcribing.has(a.key)) return;
     this.transcribing.add(a.key);
     this.render();

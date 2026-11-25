@@ -41,6 +41,8 @@ final class PersonsAudio {
     private static final Map<String, File> files = new HashMap<>();
     private static final Set<String> transcribing = new HashSet<>();
     private static final Set<String> playedHere = new HashSet<>();
+    /** Transcripts folded away (Hide transcript), for the app's run. */
+    private static final Set<String> hidden = new HashSet<>();
     /** The bubble of the one playing (its bars and time move). */
     private static WeakReference<Bubble> shown = new WeakReference<>(null);
 
@@ -132,14 +134,26 @@ final class PersonsAudio {
             speedChip.setOnClickListener(v -> nextSpeed());
             row.addView(speedChip, Ui.wrap());
             root.addView(row, Ui.wrap());
+            // its transcript (made on the PC, in the background or on a tap): under it, with Hide / Show; else Transcribe
             String tr = PersonsUi.s(f, "transcript");
             if (!tr.isEmpty()) {
                 TextView t = Ui.text(a, tr, 14, Ui.G700);
                 t.setMaxWidth(inner);
                 t.setTextIsSelectable(true);
+                t.setVisibility(hidden.contains(key) ? View.GONE : View.VISIBLE);
                 root.addView(t, Ui.margins(Ui.wrap(), 2, 6, 0, 0));
+                TextView tog = Ui.text(a, hidden.contains(key) ? "Show transcript" : "Hide transcript", 13, Ui.G600);
+                tog.setPadding(Ui.dp(2), Ui.dp(4), Ui.dp(8), Ui.dp(2));
+                tog.setOnClickListener(v -> {
+                    boolean hide = !hidden.remove(key);
+                    if (hide) hidden.add(key);
+                    t.setVisibility(hide ? View.GONE : View.VISIBLE);
+                    tog.setText(hide ? "Show transcript" : "Hide transcript");
+                });
+                root.addView(tog, Ui.wrap());
             } else {
-                TextView t = Ui.text(a, transcribing.contains(key) ? "Transcribing…" : "Transcribe", 13, Ui.BLUE);
+                boolean busy = transcribing.contains(key) || f.optBoolean("transcribing");
+                TextView t = Ui.text(a, busy ? "Transcribing…" : "Transcribe", 13, Ui.BLUE);
                 t.setPadding(Ui.dp(2), Ui.dp(6), Ui.dp(8), Ui.dp(2));
                 t.setOnClickListener(v -> transcribe(t));
                 t.setContentDescription("Transcribe this audio (on the PC)");

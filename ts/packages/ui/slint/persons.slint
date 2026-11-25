@@ -83,6 +83,7 @@ export struct PMsg {
     a-voice: bool,
     a-transcript: string,
     a-transcribing: bool,
+    a-hidden: bool, // its transcript folded away (show / hide)
 }
 
 // Someone to link with (the Link with… picker), or someone linked (the panel's LINKED).
@@ -248,7 +249,7 @@ export global PersonsBus {
     callback audio-toggle(string); // a message's play / pause
     callback audio-seek(string, float); // a message's audio to that fraction
     callback audio-speed(); // 1x → 1.5x → 2x
-    callback audio-transcribe(string);
+    callback audio-transcribe(string); // no transcript yet (or the background one failed): make it; else show / hide it
     callback pick-toggle(string); // Link with…: a person picked or not
     callback pick-query(string);
     callback unlink(string); // the panel's LINKED: back on their own
@@ -748,21 +749,22 @@ component AudioPlayer {
                 }
             }
         }
-        if root.m.a-transcript != "": Text {
+        // its transcript (made in the background, or on a click), shown under it; the button hides or shows it
+        if root.m.a-transcript != "" && !root.m.a-hidden: Text {
             text: root.m.a-transcript;
             font-size: 12.5px;
             color: Theme.subtle;
             wrap: word-wrap;
         }
-        if root.m.a-transcript == "": HorizontalLayout {
+        HorizontalLayout {
             alignment: start;
             Btn {
-                text: root.m.a-transcribing ? "Transcribing…" : "Transcribe";
+                text: root.m.a-transcript != "" ? (root.m.a-hidden ? "Show transcript" : "Hide transcript") : root.m.a-transcribing ? "Transcribing…" : "Transcribe";
                 icon: Icons.file-text;
                 size: BtnSize.xs;
                 variant: Variant.ghost-muted;
-                enabled: !root.m.a-transcribing;
-                tip: "Write down what it says (on this PC)";
+                enabled: root.m.a-transcript != "" || !root.m.a-transcribing;
+                tip: root.m.a-transcript != "" ? "What it says (transcribed on this PC)" : "Write down what it says (on this PC)";
                 clicked => {
                     PersonsBus.audio-transcribe(root.m.id);
                 }

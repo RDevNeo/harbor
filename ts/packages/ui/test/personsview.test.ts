@@ -103,7 +103,7 @@ describe("Persons chat rows", () => {
     const { audio: _a, bars: _b, played: _p, transcript: _t, ...plain } = voice;
     const doc = { ...plain, name: "a.pdf", kind: "file", type: "application/pdf", size: 2048 };
     const r = chatRows(chat({ messages: [msg("ABC", "2026-11-24T10:00:00", false, { voice: true, text: "", files: [voice, doc] })] })).find((x) => x.kind === "msg")!;
-    expect(r.audio).toEqual({ key: "wa1:ABC:0", account: "wa1", raw: "chwa://wa1/ABC", name: "voice-ABC.ogg", duration: 20, bars: [0.2, 1], played: false, transcript: "Oi, tudo bem?", voice: true });
+    expect(r.audio).toEqual({ key: "wa1:ABC:0", account: "wa1", raw: "chwa://wa1/ABC", name: "voice-ABC.ogg", duration: 20, bars: [0.2, 1], played: false, transcript: "Oi, tudo bem?", transcribing: false, failed: false, voice: true });
     expect(r.files).toBe("a.pdf · 2 KB");
     // an audio file without a waveform: flat bars
     const mp3 = { ...voice, name: "song.mp3", type: "audio/mpeg", bars: null, played: true, transcript: null };

@@ -17,6 +17,7 @@ import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
 import type { SiteRequests } from "./siterequests.ts";
 import type { Proposal, ProposalFields } from "./spokpay-core.ts";
 import { audioKey, waveBars, type AudioService } from "./audio.ts";
+import type { VoiceQueue } from "./voicequeue.ts";
 
 export interface Call {
   method: string;
@@ -76,7 +77,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; audio?: AudioService } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; audio?: AudioService; voice?: VoiceQueue } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -381,7 +382,7 @@ export class PersonsRoutes {
         image: kind === "image",
         duration: a.duration ?? meta?.duration ?? null,
         // audio: the bubble's bars (the platform's waveform, else measured once played), played, its transcript
-        ...(kind === "audio" ? { audio: key, bars: waveBars(a.waveform) ?? meta?.bars ?? null, played: !!meta?.played || m.fromMe, transcript: meta?.transcript ?? null } : {}),
+        ...(kind === "audio" ? { audio: key, bars: waveBars(a.waveform) ?? meta?.bars ?? null, played: !!meta?.played || m.fromMe, transcript: meta?.transcript ?? null, transcribing: !!this.extra.audio?.isTranscribing(key) || this.extra.voice?.current === key, transcriptFailed: meta?.transcript === undefined && !!meta?.failed } : {}),
       };
     });
     const r = m.reply;
@@ -568,11 +569,18 @@ export class PersonsRoutes {
         if (path) files.push(path);
       }
       const me = fwdHit.chat.conn.state.me?.globalName || fwdHit.chat.conn.state.me?.username;
-      text = forwardedNote({ message: fwd, from: fwd.fromMe ? `Me${me ? ` (${me})` : ""}` : personLabel(p), question: text, files });
+      const said = (fwd.attachments ?? []).map((_, i) => this.extra.audio?.meta(audioKey(fwdHit.chat.conn.id, fwd.id, i))?.transcript).filter((t): t is string => !!t);
+      text = forwardedNote({ message: fwd, from: fwd.fromMe ? `Me${me ? ` (${me})` : ""}` : personLabel(p), question: text, files, transcripts: said });
     }
     if (attached.length) text = `${text.trim()}\n\nFiles attached to this note (on this PC): ${attached.join(", ")}`.trim();
     if (!text.trim()) return err(400, "empty");
-    const aiChat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!);
+    // what was said in their voice messages (transcribed in the background, voicequeue.ts): "[voice 0:20] …"
+    const connOf = new Map(this.timeline(choices).map((x) => [x.m.id, x.chat.conn.id]));
+    const transcriptOf = (m: Message, i: number): string | undefined => {
+      const c = connOf.get(m.id);
+      return c ? this.extra.audio?.meta(audioKey(c, m.id, i))?.transcript : undefined;
+    };
+    const aiChat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!, transcriptOf);
     return ok({ ok: true, chat: aiChat });
   }
 
@@ -910,7 +918,8 @@ export class PersonsRoutes {
 /** The Person AI side (ai.ts): its items for a person+section, and asking it. */
 export interface AiPort {
   items(p: Person, section: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]>;
-  ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData): Promise<string | number>;
+  /** `transcriptOf`: a message's voice transcript (attachment index), for the context's "[voice 0:20] …". */
+  ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData, transcriptOf?: (m: Message, index: number) => string | null | undefined): Promise<string | number>;
   /** The person's AI chat once it exists (known after items or ask). */
   chatOf?(p: Person, section: SectionId): string | null;
   /** Every AI chat known for a person (a linked person's stay reachable from the panel). */

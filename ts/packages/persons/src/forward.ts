@@ -32,7 +32,7 @@ export function forwardAttachmentInfo(m: Pick<Message, "attachments" | "voice">)
 }
 
 /** The note to the AI with a forwarded message. `files`: its attachments fetched to this PC (paths the agent can read). */
-export function forwardedNote(o: { message: Pick<Message, "content" | "timestamp" | "attachments" | "voice">; from: string; question: string; files?: readonly string[] }): string {
+export function forwardedNote(o: { message: Pick<Message, "content" | "timestamp" | "attachments" | "voice">; from: string; question: string; files?: readonly string[]; transcripts?: readonly string[] }): string {
   const m = o.message;
   const at = (m.timestamp ?? "").slice(0, 16).replace("T", " ");
   const info = forwardAttachmentInfo(m);
@@ -43,6 +43,7 @@ export function forwardedNote(o: { message: Pick<Message, "content" | "timestamp
     info ? `Attachment: ${info}` : "",
     ...(m.attachments ?? []).filter((a) => a?.url).map((a) => `Attachment URL: ${a.url}`),
     ...(o.files ?? []).map((f) => `Attachment file on this PC: ${f}`),
+    ...(o.transcripts ?? []).map((t) => `Transcript of the audio: ${t.replace(/\s+/g, " ").trim()}`),
     "Text:",
     (m.content ?? "").trim() || "(no text)",
     FWD_CLOSE,
