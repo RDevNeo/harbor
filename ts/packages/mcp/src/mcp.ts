@@ -128,11 +128,13 @@ export const PLAYWRIGHT_PACKAGE = "@playwright/mcp@latest";
 
 /**
  * The arguments of Hub's own Playwright entry (a user's own entry is never changed): @playwright/mcp drives Google
- * Chrome unless told otherwise, so without Chrome it's the user's Edge. Other args, other server key: a running
+ * Chrome unless told otherwise, so without Chrome it's the user's Edge, else their Helium (or another Chromium build)
+ * by its path. Other args, other server key: a running
  * bridge starts the new one.
  */
 export function playwrightArgs(browser: browsers.PlaywrightBrowser = browsers.playwrightBrowser() ?? "chrome"): string[] {
-  return ["-y", PLAYWRIGHT_PACKAGE, "--headless", ...(browser === "chrome" ? [] : ["--browser", browser])];
+  const pick = browser === "chrome" ? [] : typeof browser === "string" ? ["--browser", browser] : ["--executable-path", browser.executable];
+  return ["-y", PLAYWRIGHT_PACKAGE, "--headless", ...pick];
 }
 
 // Node installed (or failed): Playwright's entry and its chip change at once.
@@ -141,7 +143,7 @@ noderuntime.onChange(resetLocalsCache);
 /** Why a local server isn't set up yet (Node being installed or why that failed; no Chrome or Edge); null: nothing to add. */
 export function localNote(id: string): string | null {
   if (id !== "playwright") return null;
-  return noderuntime.tip() ?? (browsers.playwrightBrowser() === null ? "Needs Google Chrome or Microsoft Edge installed: Hub doesn't download a browser." : null);
+  return noderuntime.tip() ?? (browsers.playwrightBrowser() === null ? "Needs Google Chrome, Microsoft Edge or a Chromium build (Helium, Chromium, Brave) installed: Hub doesn't download a browser." : null);
 }
 
 export function tokenVar(id: string): string {
