@@ -1,0 +1,332 @@
+// Pure parts of the Persons tab: the v1/persons JSON (API.md) turned into the sidebar's, the list's and the chat's
+// rows (Sidebar.tsx, App.tsx, Chat.tsx in Person Hub). No Slint here, so it is unit tested.
+
+export type SectionId = "stores" | "creators" | "spokpay";
+
+export interface RowJson {
+  lastAt: string | null;
+  unread: number;
+  presence: string | null;
+  status: { text: string; tone: string } | null;
+  channel: string | null;
+  typing: string | null;
+}
+export interface PersonJson {
+  id: string;
+  name: string;
+  initials: string;
+  color: string;
+  avatar: string | null;
+  avatarPath: string | null;
+  storeIds: string[];
+  listIds: string[];
+  settled: Record<string, boolean>;
+  rows: Record<string, RowJson>;
+  search: string;
+}
+export interface StoreJson { id: string; name: string; color: string; image: string | null; imagePath: string | null; ownerId: string | null; count: number }
+export interface ListJson { id: string; name: string; accountId: string }
+export interface ConnJson { id: string; kind: string; section: string; status: string; gateway: string; label: string; who: string; error: string | null; qr: string | null; contacts: boolean | null }
+export interface StateJson { rev: number; unread: number; connections: ConnJson[]; stores: StoreJson[]; lists: ListJson[]; people: PersonJson[]; loading?: boolean }
+
+/** One sidebar / list row, as PRow in persons.slint (images filled in by the driver). */
+export interface Row {
+  kind: "all" | "section" | "store" | "person" | "settled" | "empty";
+  id: string;
+  section: string;
+  store: string;
+  name: string;
+  initials: string;
+  color: string;
+  avatarPath: string;
+  presence: string;
+  status: string;
+  tone: string;
+  channel: string;
+  time: string;
+  unread: number;
+  typing: string;
+  owner: boolean;
+  active: boolean;
+  expanded: boolean;
+  count: number;
+  depth: number;
+  dim: boolean;
+}
+
+export interface UiState {
+  /** Sections folded shut, store ids unfolded, sections whose Settled fold is open. */
+  closed: Set<string>;
+  stores: Set<string>;
+  settledOpen: Set<string>;
+  /** The open person and the row they were opened from. */
+  open: { id: string; section: string; store: string } | null;
+  allActive: boolean;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "now", "5m ago", "1h ago", "3d ago", then "Nov 3" (conversation.ts shortAgo). */
+export function shortAgo(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "";
+  const ms = now - Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  const t = new Date(iso);
+  return `${MONTHS[t.getMonth()]} ${t.getDate()}`;
+}
+
+const at = (iso: string | null | undefined): number => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : 0;
+};
+
+/** Newest message first (over all their channels); no messages: last, by name (calm.ts byRecent). */
+export function byRecent(a: PersonJson, b: PersonJson): number {
+  const x = at(a.rows[""]?.lastAt), y = at(b.rows[""]?.lastAt);
+  if (x !== y) return x && y ? y - x : x ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}
+
+const SECTION_NAMES: Record<string, string> = { stores: "STORES", creators: "CREATORS", spokpay: "SPOKPAY" };
+
+function base(kind: Row["kind"]): Row {
+  return { kind, id: "", section: "", store: "", name: "", initials: "", color: "#64748b", avatarPath: "", presence: "", status: "", tone: "", channel: "", time: "", unread: 0, typing: "", owner: false, active: false, expanded: false, count: 0, depth: 0, dim: false };
+}
+
+export function personRow(p: PersonJson, section: string, store = "", depth = 0, open: UiState["open"] = null): Row {
+  const r = p.rows[section] ?? p.rows[""];
+  return {
+    ...base("person"),
+    id: p.id,
+    section,
+    store,
+    name: p.name,
+    initials: p.initials,
+    color: p.color,
+    avatarPath: p.avatarPath ?? "",
+    presence: r?.presence ?? "",
+    status: r?.status?.text ?? "",
+    tone: r?.status?.tone ?? "",
+    channel: r?.channel ?? "",
+    time: shortAgo(r?.lastAt),
+    unread: r?.unread ?? 0,
+    typing: r?.typing ?? "",
+    depth,
+    active: !!open && open.id === p.id && open.section === section && open.store === store,
+  };
+}
+
+/** A section's connections as one status dot: red when one is signed out, yellow while one connects. */
+function connDot(conns: ConnJson[], section: string): { status: string; tone: string } {
+  const mine = conns.filter((c) => c.section === section);
+  if (!mine.length) return { status: "", tone: "" };
+  const off = mine.filter((c) => c.status === "signed-out" || c.status === "signing-in");
+  if (off.length) return { status: `${off.map((c) => c.label).join(", ")}: signed out`, tone: "red" };
+  const busy = mine.filter((c) => c.status !== "connected" || c.gateway === "down");
+  if (busy.length) return { status: "Connecting…", tone: "yellow" };
+  return { status: "", tone: "" };
+}
+
+/** The sidebar (Sidebar.tsx): All people, Stores (each store folds open: owner, then members), then each list. */
+export function sideRows(s: StateJson, ui: UiState): Row[] {
+  const out: Row[] = [];
+  out.push({ ...base("all"), name: "All people", count: s.people.length, active: ui.allActive && !ui.open });
+  const byId = new Map(s.people.map((p) => [p.id, p]));
+  const settledIn = (p: PersonJson, sec: string): boolean => !!p.settled[sec];
+  const sectionRows = (sec: SectionId, name: string, all: PersonJson[], body: () => void, settled: PersonJson[], storeOf?: (p: PersonJson) => string): void => {
+    const unread = all.filter((p) => !settledIn(p, sec)).reduce((n, p) => n + (p.rows[sec]?.unread ?? 0), 0);
+    const dot = connDot(s.connections, sec);
+    const open = !ui.closed.has(sec);
+    out.push({ ...base("section"), id: sec, section: sec, name, unread, expanded: open, status: dot.status, tone: dot.tone });
+    if (!open) return;
+    body();
+    if (settled.length) {
+      const so = ui.settledOpen.has(sec);
+      out.push({ ...base("settled"), section: sec, count: settled.length, expanded: so });
+      if (so) for (const p of [...settled].sort((a, b) => a.name.localeCompare(b.name))) out.push({ ...personRow(p, sec, storeOf?.(p) ?? "", 0, ui.open), dim: true });
+    }
+  };
+  const storePeople = s.people.filter((p) => p.storeIds.length > 0 || s.stores.some((st) => st.ownerId === p.id));
+  sectionRows("stores", SECTION_NAMES.stores!, storePeople, () => {
+    if (!s.stores.length) out.push({ ...base("empty"), name: "No stores yet." });
+    for (const st of [...s.stores].sort((a, b) => a.name.localeCompare(b.name))) {
+      const owner = st.ownerId ? byId.get(st.ownerId) : undefined;
+      const shownOwner = owner && !settledIn(owner, "stores") ? owner : undefined;
+      const members = s.people.filter((p) => p.storeIds.includes(st.id) && p.id !== owner?.id && !settledIn(p, "stores")).sort(byRecent);
+      const expanded = ui.stores.has(st.id);
+      const unread = [shownOwner, ...members].reduce((n, p) => n + (p?.rows.stores?.unread ?? 0), 0);
+      out.push({ ...base("store"), id: st.id, section: "stores", store: st.id, name: st.name, color: st.color, avatarPath: st.imagePath ?? (owner?.avatarPath ?? ""), count: st.count, expanded, unread: expanded ? 0 : unread });
+      if (!expanded) continue;
+      if (!shownOwner && !members.length) out.push({ ...base("empty"), name: "No one yet.", depth: 1 });
+      if (shownOwner) out.push({ ...personRow(shownOwner, "stores", st.id, 1, ui.open), owner: true });
+      for (const p of members) out.push(personRow(p, "stores", st.id, 1, ui.open));
+    }
+  }, storePeople.filter((p) => settledIn(p, "stores")), (p) => p.storeIds[0] ?? s.stores.find((st) => st.ownerId === p.id)?.id ?? "");
+  for (const l of s.lists) {
+    const sec = l.id as SectionId;
+    const all = s.people.filter((p) => p.listIds.includes(l.id)).sort(byRecent);
+    const settled = all.filter((p) => settledIn(p, sec));
+    const members = all.filter((p) => !settledIn(p, sec));
+    sectionRows(sec, l.name.toUpperCase(), all, () => {
+      if (!all.length) out.push({ ...base("empty"), name: "No one yet." });
+      for (const p of members) out.push(personRow(p, sec, "", 0, ui.open));
+    }, settled);
+  }
+  return out;
+}
+
+export function matches(p: PersonJson, q: string): boolean {
+  const n = q.trim().toLowerCase().replace(/^@/, "");
+  if (!n) return true;
+  const hay = `${p.name.toLowerCase()} ${p.search}`;
+  return n.split(/\s+/).every((w) => hay.includes(w));
+}
+
+export function listRows(s: StateJson, q: string, open: UiState["open"]): Row[] {
+  return s.people.filter((p) => matches(p, q)).sort(byRecent).map((p) => personRow(p, "", "", 0, open && open.section === "" ? open : null));
+}
+
+// ---------- chat ----------
+
+export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null }
+export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[] }
+export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[] }
+export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean }
+export interface ChatJson {
+  person: { id: string; name: string; initials: string; color: string; avatar: string | null; avatarPath: string | null; presence: string | null; status: { text: string; tone: string } | null };
+  account: { id: string; kind: string; section: string; label: string; connected: boolean } | null;
+  accounts: { id: string; kind: string; label: string }[];
+  peer: string | null;
+  typing: string | null;
+  more: boolean;
+  unreadFrom: string | null;
+  messages: MsgJson[];
+  outgoing: OutJson[];
+  ai: AiJson[];
+}
+
+/** One chat row (PMsg); `imageUrl`: the file route of its first picture (the driver decodes it). */
+export interface MsgRow {
+  kind: "msg" | "day" | "unread" | "subject" | "ai" | "out";
+  id: string;
+  mine: boolean;
+  text: string;
+  time: string;
+  meta: string;
+  reply: string;
+  imageUrl: string;
+  imgW: number;
+  imgH: number;
+  files: string;
+  first: boolean;
+  failed: boolean;
+  sending: boolean;
+  streaming: boolean;
+}
+
+const hhmm = (iso: string): string => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+const dayKey = (iso: string): string => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+export function dayLabel(iso: string, now = Date.now()): string {
+  const d = new Date(iso);
+  const n = new Date(now);
+  const start = (x: Date): number => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((start(n) - start(d)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ""}`;
+}
+
+export const formatBytes = (n: number): string => (n < 1024 ? `${n} B` : n < 1 << 20 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10 << 20 ? 1 : 0)} MB`);
+const duration = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const TICKS: Record<string, string> = { pending: "🕓", sent: "✓", delivered: "✓✓", read: "✓✓ read", error: "!" };
+
+/** The image size in the bubble: at most 280 × 320, keeping the ratio. */
+export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 320): [number, number] {
+  if (!w || !h) return [maxW, Math.round(maxW * 0.66)];
+  const k = Math.min(1, maxW / w, maxH / h);
+  return [Math.max(40, Math.round(w * k)), Math.max(40, Math.round(h * k))];
+}
+
+/** Messages, AI bubbles and what's being sent, by time, with day separators, the unread line and email subjects. */
+export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
+  type Item = { at: string; row: MsgRow };
+  const items: Item[] = [];
+  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false });
+  let lastThread: string | null = null;
+  for (const m of c.messages) {
+    const r = blank("msg", m.id);
+    r.mine = m.fromMe;
+    r.text = m.text || (m.embed ? "(embed)" : "");
+    r.time = hhmm(m.at);
+    r.meta = [m.edited ? "edited" : "", m.fromMe && m.status ? TICKS[m.status] ?? "" : ""].filter(Boolean).join(" · ");
+    if (m.reply) r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${m.reply.text || "…"}`;
+    const img = m.files.find((f) => f.image);
+    if (img) {
+      r.imageUrl = img.url;
+      [r.imgW, r.imgH] = fitImage(img.width, img.height);
+    }
+    const rest = m.files.filter((f) => f !== img);
+    r.files = rest.map((f) => (m.voice || f.kind === "audio" ? `🎤 Voice message${f.duration ? ` · ${duration(f.duration)}` : ""}` : `${f.name}${f.size ? ` · ${formatBytes(f.size)}` : ""}`)).join("\n");
+    if (m.subject && m.threadId !== lastThread) items.push({ at: m.at, row: { ...blank("subject", `s${m.id}`), text: m.subject } });
+    if (m.threadId) lastThread = m.threadId;
+    if (c.unreadFrom === m.id) items.push({ at: m.at, row: { ...blank("unread", `u${m.id}`), text: "New" } });
+    items.push({ at: m.at, row: r });
+  }
+  for (const a of c.ai) {
+    const r = blank("ai", `ai${a.id}`);
+    if (a.role === "user") {
+      r.kind = "out";
+      r.mine = true;
+      r.meta = "to the AI";
+    }
+    r.text = a.text || (a.streaming ? "…" : "");
+    r.time = hhmm(a.at);
+    r.streaming = !!a.streaming;
+    items.push({ at: a.at, row: r });
+  }
+  for (const o of c.outgoing) {
+    const r = blank("out", `o${o.key}`);
+    r.mine = true;
+    r.text = o.text;
+    r.time = hhmm(o.at);
+    r.failed = o.status === "failed";
+    r.sending = o.status === "sending";
+    r.files = o.files.map((f) => `${f.name} · ${formatBytes(f.size)}`).join("\n");
+    if (o.error) r.meta = o.error;
+    items.push({ at: o.at, row: r });
+  }
+  items.sort((a, b) => at(a.at) - at(b.at));
+  const out: MsgRow[] = [];
+  let day = "";
+  let prev: MsgRow | null = null;
+  let prevAt = 0;
+  for (const it of items) {
+    const k = dayKey(it.at);
+    if (k !== day) {
+      day = k;
+      out.push({ ...blank("day", `d${k}`), text: dayLabel(it.at, now) });
+      prev = null;
+    }
+    const t = at(it.at);
+    if (it.row.kind === "msg" || it.row.kind === "out" || it.row.kind === "ai") {
+      it.row.first = !(prev && prev.kind === it.row.kind && prev.mine === it.row.mine && t - prevAt < 7 * 60_000);
+      prev = it.row;
+      prevAt = t;
+    } else prev = null;
+    out.push(it.row);
+  }
+  return out;
+}

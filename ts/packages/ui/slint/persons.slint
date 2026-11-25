@@ -1,17 +1,1788 @@
-// Persons tab (owned by the Persons port; this is the placeholder it replaces). Exports PersonsBus and PersonsPage;
-// app.slint draws PersonsPage inside a TabFrame when TabsBus.current == "persons".
+// Persons tab (Person Hub, native): sidebar of sections (Stores, Creators, SpokPay) with their people, the list of
+// everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
+// packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner } from "widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct PRow {
+    kind: string, // all | section | store | person | settled | empty
+    id: string,
+    section: string,
+    store: string,
+    name: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    presence: string, // online | idle | dnd | offline | ""
+    status: string,
+    tone: string, // green | yellow | red | muted
+    channel: string, // discord | gmail | whatsapp | ""
+    time: string,
+    unread: int,
+    typing: string, // typing | recording | ""
+    owner: bool,
+    active: bool,
+    expanded: bool,
+    count: int,
+    depth: int,
+    dim: bool,
+}
+
+export struct PMsg {
+    kind: string, // msg | day | unread | subject | ai | out
+    id: string,
+    mine: bool,
+    text: string,
+    time: string,
+    meta: string, // "edited", ticks
+    reply: string,
+    has-reply: bool,
+    image: image,
+    has-image: bool,
+    img-w: length,
+    img-h: length,
+    files: string,
+    first: bool,
+    failed: bool,
+    sending: bool,
+    streaming: bool,
+}
+
+export struct PMenu { id: string, label: string, icon: string, sub: string, danger: bool, sep: bool, header: bool, disabled: bool }
+
+export struct PDetail { label: string, value: string, icon: string, link: string }
+
+export struct PUpload { title: string, meta: string, url: string, thumb: image, has-thumb: bool }
+
+export struct PSocial { platform: string, handle: string, url: string, uploads: [PUpload], note: string }
+
+export struct PChip { id: string, label: string, on: bool, color: color }
 
 export global PersonsBus {
     in-out property <bool> ready;
+    // sidebar
+    in property <[PRow]> side;
+    in property <int> unread-total;
+    in property <string> note; // a quiet line under the sidebar (offline, errors)
+    // main: "list" (All people), "chat" (a person open), "loading"
+    in property <string> view: "loading";
+    in property <string> list-title: "All people";
+    in property <string> list-sub;
+    in property <[PRow]> list;
+    in-out property <string> query;
+    // chat
+    in property <string> c-name;
+    in property <string> c-initials;
+    in property <color> c-color;
+    in property <image> c-avatar;
+    in property <bool> c-has-avatar;
+    in property <string> c-presence;
+    in property <string> c-status;
+    in property <string> c-tone;
+    in property <string> c-channel;
+    in property <string> c-account;
+    in property <bool> c-accounts; // more than one: the account chip opens a menu
+    in property <bool> c-gmail;
+    in property <bool> c-connected: true;
+    in property <string> c-empty: "No messages yet.";
+    in property <bool> c-more;
+    in property <bool> c-loading;
+    in property <[PMsg]> msgs;
+    in property <int> msgs-rev; // bumps when the conversation changes: the view sticks to the bottom
+    in-out property <string> draft;
+    in-out property <string> subject;
+    in property <string> reply-text;
+    in property <bool> ai-mode;
+    // panel
+    in property <bool> panel;
+    in property <string> p-name;
+    in property <string> p-initials;
+    in property <color> p-color;
+    in property <image> p-avatar;
+    in property <bool> p-has-avatar;
+    in property <string> p-sub;
+    in-out property <string> p-notes;
+    in property <[PDetail]> p-details;
+    in property <[PChip]> p-groups;
+    in property <[PSocial]> p-socials;
+    in property <[PChip]> p-settle; // per section: on = settled there
+    in property <string> p-pos; // "3 of 12"
+    // popup menu
+    in property <[PMenu]> menu;
+    in property <bool> menu-open;
+    in property <length> menu-x;
+    in property <length> menu-y;
+    // dialogs: "" | person | store | qr | confirm | rename
+    in property <string> dialog;
+    in property <string> d-title;
+    in property <string> d-text;
+    in property <string> d-ok: "Save";
+    in property <bool> d-danger;
+    in property <string> d-error;
+    in property <bool> d-busy;
+    in-out property <string> f-name;
+    in-out property <string> f-discord;
+    in-out property <string> f-email;
+    in-out property <string> f-whatsapp;
+    in-out property <string> f-socials;
+    in property <[PChip]> f-chips;
+    in property <[PChip]> f-colors;
+    in property <image> qr;
+    in property <bool> has-qr;
+    // the toast line at the bottom
+    in property <string> toast;
+    in property <string> toast-action;
+
+    callback all-people();
+    callback open-person(string, string, string);
+    callback toggle-store(string);
+    callback toggle-section(string);
+    callback section-menu(string, length, length);
+    callback row-menu(string, string, string, length, length);
+    callback store-menu(string, length, length);
+    callback edited-query(string);
+    callback close-chat();
+    callback send();
+    callback typing();
+    callback older();
+    callback toggle-panel();
+    callback account-menu(length, length);
+    callback msg-menu(string, length, length);
+    callback open-file(string, int);
+    callback cancel-reply();
+    callback toggle-ai();
+    callback save-notes(string);
+    callback open-url(string);
+    callback menu-pick(string);
+    callback menu-close();
+    callback dialog-ok();
+    callback dialog-cancel();
+    callback chip(string);
+    callback color(string);
+    callback add-person();
+    callback prev();
+    callback next();
+    callback settle(string);
+    callback toast-act();
 }
 
-export component PersonsPage {
-    Text {
-        text: "Persons";
-        font-size: 15px;
-        color: Theme.subtle;
+// ---------- small parts ----------
+
+component Avatar {
+    in property <string> initials;
+    in property <color> color;
+    in property <image> photo;
+    in property <bool> has-photo;
+    in property <length> size: 32px;
+    in property <string> presence;
+    width: size;
+    height: size;
+    Rectangle {
+        border-radius: root.size / 2;
+        background: root.color.with-alpha(0.25);
+        clip: true;
+        if root.has-photo: Image {
+            width: root.size;
+            height: root.size;
+            source: root.photo;
+            image-fit: cover;
+        }
+        if !root.has-photo: Text {
+            text: root.initials;
+            font-size: root.size * 0.38;
+            font-weight: 600;
+            color: root.color;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    // Discord's status shapes: online green, idle yellow, dnd red, offline a grey ring
+    if root.presence != "": Rectangle {
+        property <length> d: max(8px, root.size * 0.32);
+        x: root.size - self.d + 1px;
+        y: root.size - self.d + 1px;
+        width: self.d;
+        height: self.d;
+        border-radius: self.d / 2;
+        background: Theme.bg100;
+        Rectangle {
+            width: parent.d - 3px;
+            height: parent.d - 3px;
+            border-radius: self.width / 2;
+            background: root.presence == "online" ? #23a55a : root.presence == "idle" ? #f0b232 : root.presence == "dnd" ? #f23f43 : #80848e;
+            if root.presence == "offline" || root.presence == "invisible": Rectangle {
+                width: parent.width / 2;
+                height: parent.height / 2;
+                border-radius: self.width / 2;
+                background: Theme.bg100;
+            }
+            if root.presence == "dnd": Rectangle {
+                width: parent.width * 0.6;
+                height: max(1.5px, parent.height * 0.2);
+                border-radius: self.height / 2;
+                background: Theme.bg100;
+            }
+        }
+    }
+}
+
+// The platform of a chat as a small colored letter-mark.
+component ChannelMark {
+    in property <string> kind;
+    in property <length> size: 12px;
+    width: kind == "" ? 0px : size;
+    height: size;
+    if root.kind != "": Rectangle {
+        border-radius: root.kind == "whatsapp" ? root.size / 2 : 3px;
+        background: root.kind == "discord" ? #5865f2 : root.kind == "gmail" ? #ea4335 : #25d366;
+        Text {
+            text: root.kind == "discord" ? "D" : root.kind == "gmail" ? "M" : "W";
+            font-size: root.size * 0.62;
+            font-weight: 700;
+            color: white;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Pill {
+    in property <int> n;
+    in property <bool> blue;
+    height: 16px;
+    min-width: 16px;
+    preferred-width: max(16px, t.preferred-width + 8px);
+    Rectangle {
+        border-radius: 8px;
+        background: root.blue ? Theme.blue-700 : Theme.fg;
+    }
+    t := Text {
+        text: root.n > 99 ? "99+" : root.n;
+        font-size: 10px;
+        font-weight: 600;
+        color: root.blue ? white : Theme.bg100;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+}
+
+global Tones {
+    public pure function of(t: string) -> color {
+        return t == "green" ? #23a55a : t == "yellow" ? #f0b232 : t == "red" ? #f23f43 : Theme.subtle;
+    }
+}
+
+// One person: avatar with presence, name + channel mark (+ crown), status line, time and unread on the right.
+component PersonRow {
+    in property <PRow> r;
+    in property <bool> big;
+    callback clicked();
+    callback menu(length, length);
+    property <length> av: big ? 36px : r.depth > 0 ? 22px : 26px;
+    height: big ? 52px : r.status != "" || r.typing != "" ? 38px : 30px;
+    Rectangle {
+        border-radius: Theme.radius-md;
+        background: root.r.active ? Theme.accent : area.has-hover ? Theme.gray-100 : transparent;
+    }
+    HorizontalLayout {
+        padding-left: (root.big ? 10px : 6px) + root.r.depth * 14px;
+        padding-right: 6px;
+        spacing: root.big ? 10px : 8px;
+        opacity: root.r.dim ? 0.7 : 1;
+        Avatar {
+            y: (parent.height - self.height) / 2;
+            size: root.av;
+            initials: root.r.initials;
+            color: root.r.color;
+            photo: root.r.avatar;
+            has-photo: root.r.has-avatar;
+            presence: root.r.presence;
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 1px;
+            HorizontalLayout {
+                spacing: 5px;
+                Text {
+                    text: root.r.name;
+                    font-size: root.big ? 14px : 13px;
+                    font-weight: root.r.unread > 0 ? 650 : root.big ? 600 : 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                    max-width: self.preferred-width;
+                }
+                ChannelMark {
+                    y: (parent.height - self.height) / 2;
+                    kind: root.r.channel;
+                    size: root.big ? 13px : 11px;
+                }
+                if root.r.owner: Text {
+                    text: "♛";
+                    font-size: 11px;
+                    color: Theme.amber-900;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+            }
+            if root.r.typing != "": Text {
+                text: root.r.typing == "recording" ? "recording audio…" : "typing…";
+                font-size: 10.5px;
+                color: Theme.blue-900;
+            }
+            if root.r.typing == "" && root.r.status != "": Text {
+                text: root.r.status;
+                font-size: 10.5px;
+                color: Tones.of(root.r.tone);
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            if root.r.time != "": Text {
+                text: root.r.time;
+                font-size: 10.5px;
+                color: Theme.gray-800;
+                horizontal-alignment: right;
+            }
+            if root.r.unread > 0: HorizontalLayout {
+                alignment: end;
+                Pill {
+                    n: root.r.unread;
+                }
+            }
+        }
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+}
+
+// ---------- sidebar ----------
+
+component SideRow {
+    in property <PRow> r;
+    property <bool> hov: area.has-hover;
+    height: r.kind == "section" ? 30px : r.kind == "store" ? 32px : r.kind == "all" ? 32px : r.kind == "settled" ? 26px : r.kind == "empty" ? 24px : person.height;
+    if root.r.kind == "all": Rectangle {
+        border-radius: Theme.radius-md;
+        background: root.r.active ? Theme.accent : root.hov ? Theme.gray-100 : transparent;
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 8px;
+            Glyph {
+                icon: Icons.users;
+                size: 15px;
+                color: Theme.fg;
+            }
+            Text {
+                text: "All people";
+                font-size: 13px;
+                font-weight: 500;
+                color: Theme.fg;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.r.count;
+                font-family: "Geist Mono";
+                font-size: 11px;
+                color: Theme.gray-800;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if root.r.kind == "section": HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 2px;
+        padding-top: 8px;
+        spacing: 6px;
+        Text {
+            text: root.r.name;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Glyph {
+            icon: root.r.expanded ? Icons.down : Icons.right;
+            size: 11px;
+            color: Theme.gray-800;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        if root.r.status != "": Rectangle {
+            width: 8px;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: Tones.of(root.r.tone);
+            }
+        }
+        if root.r.unread > 0: VerticalLayout {
+            alignment: center;
+            Pill {
+                n: root.r.unread;
+                blue: true;
+            }
+        }
+        plus := Rectangle {
+            width: 22px;
+            border-radius: 4px;
+            background: plus-area.has-hover ? Theme.gray-200 : transparent;
+            Glyph {
+                icon: Icons.plus;
+                size: 14px;
+                color: Theme.subtle;
+            }
+            plus-area := TipArea {
+                tip: root.r.status != "" ? root.r.status : "Add or connections";
+                clicked => {
+                    PersonsBus.section-menu(root.r.section, self.absolute-position.x, self.absolute-position.y + self.height);
+                }
+            }
+        }
+    }
+    if root.r.kind == "store": Rectangle {
+        border-radius: Theme.radius-md;
+        background: root.hov ? Theme.gray-100 : transparent;
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 6px;
+            spacing: 6px;
+            Glyph {
+                icon: root.r.expanded ? Icons.down : Icons.right;
+                size: 12px;
+                color: Theme.gray-800;
+            }
+            Rectangle {
+                width: 20px;
+                if root.r.has-avatar: Rectangle {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 5px;
+                    clip: true;
+                    Image {
+                        width: 20px;
+                        height: 20px;
+                        source: root.r.avatar;
+                        image-fit: cover;
+                    }
+                }
+                if !root.r.has-avatar: Rectangle {
+                    width: 9px;
+                    height: 9px;
+                    border-radius: 4.5px;
+                    background: root.r.color;
+                }
+            }
+            Text {
+                text: root.r.name;
+                font-size: 13px;
+                font-weight: 500;
+                color: Theme.fg;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if root.r.unread > 0: VerticalLayout {
+                alignment: center;
+                Pill {
+                    n: root.r.unread;
+                }
+            }
+            Text {
+                text: root.r.count;
+                font-family: "Geist Mono";
+                font-size: 11px;
+                color: Theme.gray-800;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if root.r.kind == "settled": HorizontalLayout {
+        padding-left: 10px;
+        spacing: 6px;
+        Glyph {
+            icon: root.r.expanded ? Icons.down : Icons.right;
+            size: 11px;
+            color: Theme.gray-800;
+        }
+        Text {
+            text: "Settled (" + root.r.count + ")";
+            font-size: 11.5px;
+            color: Theme.gray-800;
+            vertical-alignment: center;
+        }
+    }
+    if root.r.kind == "empty": Text {
+        x: 10px + root.r.depth * 14px;
+        text: root.r.name;
+        font-size: 12px;
+        color: Theme.gray-800;
+        vertical-alignment: center;
+    }
+    person := PersonRow {
+        visible: root.r.kind == "person";
+        height: root.r.kind == "person" ? self.preferred-height : 0px;
+        r: root.r;
+        clicked => {
+            PersonsBus.open-person(root.r.id, root.r.section, root.r.store);
+        }
+        menu(x, y) => {
+            PersonsBus.row-menu(root.r.id, root.r.section, root.r.store, x, y);
+        }
+    }
+    area := TouchArea {
+        enabled: root.r.kind != "person" && root.r.kind != "empty";
+        mouse-cursor: pointer;
+        clicked => {
+            if root.r.kind == "all" {
+                PersonsBus.all-people();
+            } else if root.r.kind == "store" {
+                PersonsBus.toggle-store(root.r.id);
+            } else if root.r.kind == "section" {
+                PersonsBus.toggle-section(root.r.section);
+            } else if root.r.kind == "settled" {
+                PersonsBus.toggle-section("settled:" + root.r.section);
+            }
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right && root.r.kind == "store" {
+                PersonsBus.store-menu(root.r.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+}
+
+component Sidebar inherits Rectangle {
+    background: Theme.bg200;
+    VerticalLayout {
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 1px;
+                alignment: start;
+                for r in PersonsBus.side: SideRow {
+                    r: r;
+                }
+            }
+        }
+        if PersonsBus.note != "": Rectangle {
+            height: 30px;
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.border;
+            }
+            Text {
+                x: 12px;
+                width: parent.width - 24px;
+                text: PersonsBus.note;
+                font-size: 11.5px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.border;
+    }
+}
+
+// ---------- the list (All people) ----------
+
+component ListPane inherits Rectangle {
+    VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 16px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                Text {
+                    text: PersonsBus.list-title;
+                    font-size: 18px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                }
+                Text {
+                    text: PersonsBus.list-sub;
+                    font-size: 12.5px;
+                    color: Theme.subtle;
+                }
+            }
+            Btn {
+                text: "Add person";
+                icon: Icons.plus;
+                variant: Variant.primary;
+                size: BtnSize.sm;
+                clicked => {
+                    PersonsBus.add-person();
+                }
+            }
+        }
+        Rectangle {
+            height: 34px;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.border;
+            search := SearchField {
+                x: 8px;
+                width: parent.width - 16px;
+                y: 1px;
+                hint: "Search name, username, id, email, notes…";
+                text <=> PersonsBus.query;
+                edited(t) => {
+                    PersonsBus.edited-query(t);
+                }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                for r in PersonsBus.list: PersonRow {
+                    r: r;
+                    big: true;
+                    clicked => {
+                        PersonsBus.open-person(r.id, r.section, r.store);
+                    }
+                    menu(x, y) => {
+                        PersonsBus.row-menu(r.id, r.section, r.store, x, y);
+                    }
+                }
+                if PersonsBus.list.length == 0: Text {
+                    text: PersonsBus.query != "" ? "No one matches." : "No people yet: Add person.";
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// ---------- chat ----------
+
+component Bubble {
+    in property <PMsg> m;
+    in property <length> max-w;
+    callback menu(length, length);
+    property <color> bg: m.kind == "ai" ? (Theme.dark ? #1d1830 : #f3effe) : m.mine ? (Theme.dark ? #1f2a44 : #e6f0ff) : Theme.gray-100;
+    property <length> text-w: min(root.max-w - 24px, body.preferred-width);
+    property <length> w: max(root.m.has-image ? root.m.img-w : 0px, max(text-w, 60px)) + 24px;
+    height: lay.preferred-height;
+    lay := HorizontalLayout {
+        alignment: root.m.mine && root.m.kind != "ai" ? end : start;
+        padding-top: root.m.first ? 6px : 1px;
+        Rectangle {
+            width: min(root.max-w, root.w);
+            border-radius: 12px;
+            background: root.bg;
+            border-width: root.m.failed ? 1px : 0px;
+            border-color: Theme.red-800;
+            col := VerticalLayout {
+                padding: 8px;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 4px;
+                if root.m.kind == "ai": Text {
+                    text: root.m.streaming ? "AI · writing…" : "AI";
+                    font-size: 10.5px;
+                    font-weight: 600;
+                    color: Theme.dark ? #b9a6ff : #6d4ad6;
+                }
+                if root.m.has-reply: Rectangle {
+                    height: rt.preferred-height + 6px;
+                    border-radius: 4px;
+                    background: Theme.fg.with-alpha(0.06);
+                    Rectangle {
+                        x: 0;
+                        width: 2px;
+                        background: Theme.blue-700;
+                    }
+                    rt := Text {
+                        x: 8px;
+                        width: parent.width - 12px;
+                        text: root.m.reply;
+                        font-size: 11.5px;
+                        color: Theme.subtle;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.m.has-image: Rectangle {
+                    width: root.m.img-w;
+                    height: root.m.img-h;
+                    border-radius: 8px;
+                    clip: true;
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.m.image;
+                        image-fit: cover;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            PersonsBus.open-file(root.m.id, 0);
+                        }
+                    }
+                }
+                if root.m.files != "": Rectangle {
+                    height: ft.preferred-height + 8px;
+                    border-radius: 6px;
+                    background: Theme.fg.with-alpha(0.05);
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        spacing: 6px;
+                        Glyph {
+                            icon: Icons.file;
+                            size: 14px;
+                            color: Theme.subtle;
+                        }
+                        ft := Text {
+                            text: root.m.files;
+                            font-size: 12px;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            PersonsBus.open-file(root.m.id, 0);
+                        }
+                    }
+                }
+                body := Text {
+                    visible: root.m.text != "";
+                    height: root.m.text != "" ? self.preferred-height : 0px;
+                    text: root.m.text;
+                    font-size: 13.5px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 4px;
+                    Text {
+                        text: root.m.failed ? "Not sent · click to retry" : root.m.sending ? "Sending…" : root.m.meta != "" ? root.m.meta + " · " + root.m.time : root.m.time;
+                        font-size: 10px;
+                        color: root.m.failed ? Theme.red-900 : Theme.gray-800;
+                    }
+                }
+            }
+            TouchArea {
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                        root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                clicked => {
+                    if root.m.failed {
+                        PersonsBus.msg-menu(root.m.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component MsgRow {
+    in property <PMsg> m;
+    in property <length> max-w;
+    height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : bubble.preferred-height;
+    if root.m.kind == "day": Text {
+        text: root.m.text;
+        font-size: 11px;
+        font-weight: 600;
+        color: Theme.gray-800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.m.kind == "unread": Rectangle {
+        Rectangle {
+            height: 1px;
+            background: Theme.red-800;
+        }
+        Rectangle {
+            width: ut.preferred-width + 12px;
+            height: 18px;
+            background: Theme.bg100;
+            ut := Text {
+                text: root.m.text;
+                font-size: 10.5px;
+                font-weight: 600;
+                color: Theme.red-900;
+            }
+        }
+    }
+    if root.m.kind == "subject": HorizontalLayout {
+        spacing: 6px;
+        Glyph {
+            icon: Icons.message;
+            size: 12px;
+            color: Theme.subtle;
+        }
+        Text {
+            text: root.m.text;
+            font-size: 12px;
+            font-weight: 600;
+            color: Theme.subtle;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+    bubble := Bubble {
+        visible: root.m.kind == "msg" || root.m.kind == "ai" || root.m.kind == "out";
+        m: root.m;
+        max-w: root.max-w;
+        menu(x, y) => {
+            PersonsBus.msg-menu(root.m.id, x, y);
+        }
+    }
+}
+
+component Composer inherits Rectangle {
+    background: Theme.bg100;
+    height: col.preferred-height;
+    col := VerticalLayout {
+        padding: 12px;
+        padding-top: 8px;
+        spacing: 6px;
+        if PersonsBus.reply-text != "": HorizontalLayout {
+            spacing: 6px;
+            Glyph {
+                icon: Icons.corner-up-right;
+                size: 13px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: "Replying to " + PersonsBus.reply-text;
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.x;
+                size: BtnSize.icon-xs;
+                variant: Variant.ghost-muted;
+                clicked => {
+                    PersonsBus.cancel-reply();
+                }
+            }
+        }
+        if PersonsBus.c-gmail && !PersonsBus.ai-mode: Input {
+            hint: "Subject (empty: reply in the latest thread)";
+            text <=> PersonsBus.subject;
+        }
+        Rectangle {
+            height: min(180px, max(44px, field.preferred-height + 22px));
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: PersonsBus.ai-mode ? (Theme.dark ? #6d4ad6 : #b9a6ff) : field.has-focus ? Theme.gray-1000 : Theme.border;
+            background: Theme.bg100;
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 4px;
+                VerticalLayout {
+                    alignment: end;
+                    padding-bottom: 6px;
+                    Btn {
+                        icon: Icons.sparkles;
+                        size: BtnSize.icon-sm;
+                        variant: PersonsBus.ai-mode ? Variant.secondary : Variant.ghost-muted;
+                        tip: PersonsBus.ai-mode ? "Writing to the Person AI (click to write to them)" : "Ask the Person AI instead";
+                        clicked => {
+                            PersonsBus.toggle-ai();
+                        }
+                    }
+                }
+                FocusScope {
+                    horizontal-stretch: 1;
+                    key-pressed(e) => {
+                        if e.text == Key.Return && !e.modifiers.shift {
+                            PersonsBus.send();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    Rectangle {
+                        if field.text == "": Text {
+                            x: 4px;
+                            width: parent.width - 8px;
+                            text: PersonsBus.ai-mode ? "Ask the Person AI about " + PersonsBus.c-name + "…" : PersonsBus.c-connected ? "Message " + PersonsBus.c-name : "Not connected: sign in from the section's +";
+                            font-size: 13.5px;
+                            color: Theme.gray-800;
+                            vertical-alignment: center;
+                        }
+                        field := TextInput {
+                            x: 4px;
+                            width: parent.width - 8px;
+                            text <=> PersonsBus.draft;
+                            font-size: 13.5px;
+                            color: Theme.fg;
+                            wrap: word-wrap;
+                            single-line: false;
+                            vertical-alignment: center;
+                            selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+                            selection-foreground-color: Theme.fg;
+                            edited => {
+                                PersonsBus.typing();
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    padding-bottom: 6px;
+                    Btn {
+                        icon: Icons.send;
+                        size: BtnSize.icon-sm;
+                        variant: PersonsBus.draft != "" ? Variant.primary : Variant.ghost-muted;
+                        enabled: PersonsBus.draft != "";
+                        tip: "Send (Enter)";
+                        clicked => {
+                            PersonsBus.send();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ChatPane inherits Rectangle {
+    property <bool> at-bottom: true;
+    VerticalLayout {
+        // header
+        Rectangle {
+            height: 56px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                Btn {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.arrow-left;
+                    size: BtnSize.icon-sm;
+                    variant: Variant.ghost-muted;
+                    tip: "Close (Esc)";
+                    clicked => {
+                        PersonsBus.close-chat();
+                    }
+                }
+                Avatar {
+                    y: (parent.height - self.height) / 2;
+                    size: 36px;
+                    initials: PersonsBus.c-initials;
+                    color: PersonsBus.c-color;
+                    photo: PersonsBus.c-avatar;
+                    has-photo: PersonsBus.c-has-avatar;
+                    presence: PersonsBus.c-presence;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: PersonsBus.c-name;
+                        font-size: 15px;
+                        font-weight: 600;
+                        color: Theme.fg;
+                        overflow: elide;
+                    }
+                    if PersonsBus.c-status != "": Text {
+                        text: PersonsBus.c-status;
+                        font-size: 11.5px;
+                        color: Tones.of(PersonsBus.c-tone);
+                        overflow: elide;
+                    }
+                }
+                // the account this chat goes through (several: a menu)
+                acct := Rectangle {
+                    y: (parent.height - 26px) / 2;
+                    height: 26px;
+                    width: al.preferred-width + 16px;
+                    border-radius: 13px;
+                    background: acct-area.has-hover && PersonsBus.c-accounts ? Theme.gray-200 : Theme.gray-100;
+                    al := HorizontalLayout {
+                        x: 8px;
+                        spacing: 5px;
+                        ChannelMark {
+                            y: (parent.height - self.height) / 2;
+                            kind: PersonsBus.c-channel;
+                        }
+                        Text {
+                            text: PersonsBus.c-account;
+                            font-size: 11.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if PersonsBus.c-accounts: Glyph {
+                            icon: Icons.down;
+                            size: 11px;
+                            color: Theme.subtle;
+                        }
+                    }
+                    acct-area := TouchArea {
+                        enabled: PersonsBus.c-accounts;
+                        mouse-cursor: PersonsBus.c-accounts ? pointer : default;
+                        clicked => {
+                            PersonsBus.account-menu(self.absolute-position.x, self.absolute-position.y + self.height + 4px);
+                        }
+                    }
+                }
+                Btn {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.panel-right;
+                    size: BtnSize.icon-sm;
+                    variant: PersonsBus.panel ? Variant.secondary : Variant.ghost-muted;
+                    tip: "Details";
+                    clicked => {
+                        PersonsBus.toggle-panel();
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+        // messages
+        Rectangle {
+            vertical-stretch: 1;
+            sv := ScrollView {
+                property <length> max-w: min(640px, self.visible-width * 0.78);
+                changed content-height => {
+                    if root.at-bottom {
+                        self.content-y = min(0px, self.visible-height - self.content-height);
+                    }
+                }
+                scrolled => {
+                    root.at-bottom = self.content-y <= self.visible-height - self.content-height + 40px;
+                    if self.content-y >= -2px && PersonsBus.c-more && !PersonsBus.c-loading {
+                        PersonsBus.older();
+                    }
+                }
+                VerticalLayout {
+                    padding: 16px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    alignment: end;
+                    if PersonsBus.c-loading: HorizontalLayout {
+                        alignment: center;
+                        Spinner { }
+                    }
+                    if PersonsBus.msgs.length == 0 && !PersonsBus.c-loading: Text {
+                        text: PersonsBus.c-empty;
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        horizontal-alignment: center;
+                    }
+                    for m in PersonsBus.msgs: MsgRow {
+                        m: m;
+                        max-w: sv.max-w;
+                    }
+                }
+            }
+        }
+        Composer { }
+    }
+    changed width => {
+        root.at-bottom = true;
+    }
+}
+
+// ---------- the person panel ----------
+
+component Section {
+    in property <string> title;
+    VerticalLayout {
+        spacing: 6px;
+        if root.title != "": Text {
+            text: root.title;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            color: Theme.subtle;
+        }
+        @children
+    }
+}
+
+component Panel inherits Rectangle {
+    property <length> inner-w: self.width - 36px;
+    background: Theme.bg100;
+    Rectangle {
+        x: 0;
+        width: 1px;
+        background: Theme.border;
+    }
+    VerticalLayout {
+        // top bar: prev / next, close
+        Rectangle {
+            height: 44px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                spacing: 4px;
+                Text {
+                    text: PersonsBus.p-pos;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Btn {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.up;
+                    size: BtnSize.icon-xs;
+                    variant: Variant.ghost-muted;
+                    tip: "Previous";
+                    clicked => {
+                        PersonsBus.prev();
+                    }
+                }
+                Btn {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.down;
+                    size: BtnSize.icon-xs;
+                    variant: Variant.ghost-muted;
+                    tip: "Next";
+                    clicked => {
+                        PersonsBus.next();
+                    }
+                }
+                Btn {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.x;
+                    size: BtnSize.icon-xs;
+                    variant: Variant.ghost-muted;
+                    tip: "Close details";
+                    clicked => {
+                        PersonsBus.toggle-panel();
+                    }
+                }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 18px;
+                padding-top: 4px;
+                spacing: 18px;
+                alignment: start;
+                VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Avatar {
+                            size: 84px;
+                            initials: PersonsBus.p-initials;
+                            color: PersonsBus.p-color;
+                            photo: PersonsBus.p-avatar;
+                            has-photo: PersonsBus.p-has-avatar;
+                        }
+                    }
+                    Text {
+                        text: PersonsBus.p-name;
+                        font-size: 17px;
+                        font-weight: 600;
+                        color: Theme.fg;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    if PersonsBus.p-sub != "": Text {
+                        text: PersonsBus.p-sub;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Btn {
+                            text: "Edit";
+                            icon: Icons.pen-line;
+                            size: BtnSize.xs;
+                            clicked => {
+                                PersonsBus.menu-pick("panel:edit");
+                            }
+                        }
+                        Btn {
+                            text: "Rename";
+                            size: BtnSize.xs;
+                            clicked => {
+                                PersonsBus.menu-pick("panel:rename");
+                            }
+                        }
+                        Btn {
+                            icon: Icons.trash;
+                            size: BtnSize.icon-xs;
+                            variant: Variant.ghost-destructive;
+                            tip: "Delete";
+                            clicked => {
+                                PersonsBus.menu-pick("panel:delete");
+                            }
+                        }
+                    }
+                }
+                if PersonsBus.p-details.length > 0: Section {
+                    title: "IDENTITIES";
+                    for d in PersonsBus.p-details: HorizontalLayout {
+                        spacing: 8px;
+                        height: 22px;
+                        ChannelMark {
+                            y: (parent.height - self.height) / 2;
+                            kind: d.icon;
+                        }
+                        Text {
+                            text: d.value;
+                            font-size: 12.5px;
+                            color: Theme.fg;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        if d.label != "": Text {
+                            text: d.label;
+                            font-size: 11px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                if PersonsBus.p-groups.length > 0: Section {
+                    title: "STORES AND LISTS";
+                    for g in PersonsBus.p-groups: HorizontalLayout {
+                        spacing: 8px;
+                        height: 22px;
+                        Rectangle {
+                            width: 8px;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: g.color;
+                            }
+                        }
+                        Text {
+                            text: g.label;
+                            font-size: 12.5px;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        if g.on: Text {
+                            text: "owner";
+                            font-size: 11px;
+                            color: Theme.amber-900;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                if PersonsBus.p-settle.length > 0: Section {
+                    title: "SETTLED";
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        for s in PersonsBus.p-settle: Btn {
+                            text: s.on ? s.label + " · settled" : "Settle in " + s.label;
+                            icon: s.on ? Icons.unarchive : Icons.archive;
+                            size: BtnSize.xs;
+                            variant: s.on ? Variant.secondary : Variant.outline;
+                            clicked => {
+                                PersonsBus.settle(s.id);
+                            }
+                        }
+                    }
+                }
+                Section {
+                    title: "NOTES";
+                    Rectangle {
+                        height: max(72px, notes.preferred-height + 16px);
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: notes.has-focus ? Theme.gray-1000 : Theme.border;
+                        if notes.text == "": Text {
+                            x: 8px;
+                            y: 8px;
+                            text: "Notes about them…";
+                            font-size: 12.5px;
+                            color: Theme.gray-800;
+                        }
+                        notes := TextInput {
+                            x: 8px;
+                            y: 8px;
+                            width: parent.width - 16px;
+                            text <=> PersonsBus.p-notes;
+                            font-size: 12.5px;
+                            color: Theme.fg;
+                            wrap: word-wrap;
+                            single-line: false;
+                            changed has-focus => {
+                                if !self.has-focus {
+                                    PersonsBus.save-notes(self.text);
+                                }
+                            }
+                        }
+                    }
+                }
+                if PersonsBus.p-socials.length > 0: Section {
+                    title: "SOCIALS";
+                    for s in PersonsBus.p-socials: VerticalLayout {
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            height: 20px;
+                            Text {
+                                text: s.platform;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Theme.fg;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: s.handle;
+                                font-size: 12px;
+                                color: Theme.subtle;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        PersonsBus.open-url(s.url);
+                                    }
+                                }
+                            }
+                        }
+                        if s.note != "": Text {
+                            text: s.note;
+                            font-size: 11px;
+                            color: Theme.subtle;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            for u in s.uploads: VerticalLayout {
+                                width: (root.inner-w - 12px) / 3;
+                                spacing: 3px;
+                                Rectangle {
+                                    height: self.width * 9 / 16;
+                                    border-radius: 6px;
+                                    background: Theme.gray-200;
+                                    clip: true;
+                                    if u.has-thumb: Image {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        source: u.thumb;
+                                        image-fit: cover;
+                                    }
+                                }
+                                Text {
+                                    text: u.title;
+                                    font-size: 11.5px;
+                                    color: Theme.fg;
+                                    wrap: word-wrap;
+                                    max-height: 30px;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: u.meta;
+                                    font-size: 10.5px;
+                                    color: Theme.subtle;
+                                    overflow: elide;
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        PersonsBus.open-url(u.url);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- popups ----------
+
+component Menu inherits Rectangle {
+    background: Theme.dark ? Theme.gray-100 : Theme.bg100;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000040;
+    width: 264px;
+    height: col.preferred-height;
+    col := VerticalLayout {
+        padding: 4px;
+        for it in PersonsBus.menu: Rectangle {
+            height: it.sep ? 9px : it.header ? 24px : it.sub != "" ? 40px : 30px;
+            border-radius: 4px;
+            background: !it.sep && !it.header && !it.disabled && ta.has-hover ? Theme.accent : transparent;
+            if it.sep: Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            if it.header: Text {
+                x: 8px;
+                text: it.label;
+                font-size: 11px;
+                font-weight: 600;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if !it.sep && !it.header: HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                opacity: it.disabled ? 0.5 : 1;
+                if it.icon != "" && it.icon != "discord" && it.icon != "gmail" && it.icon != "whatsapp": Glyph {
+                    icon: it.icon;
+                    size: 14px;
+                    color: it.danger ? Theme.red-900 : Theme.fg;
+                }
+                if it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp": ChannelMark {
+                    y: (parent.height - self.height) / 2;
+                    kind: it.icon;
+                    size: 14px;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: it.label;
+                        font-size: 13px;
+                        color: it.danger ? Theme.red-900 : Theme.fg;
+                        overflow: elide;
+                    }
+                    if it.sub != "": Text {
+                        text: it.sub;
+                        font-size: 11px;
+                        color: Theme.subtle;
+                        overflow: elide;
+                    }
+                }
+            }
+            ta := TouchArea {
+                enabled: !it.sep && !it.header && !it.disabled;
+                mouse-cursor: pointer;
+                clicked => {
+                    PersonsBus.menu-pick(it.id);
+                }
+            }
+        }
+    }
+}
+
+component Field {
+    in property <string> label;
+    in property <string> hint;
+    in-out property <string> text;
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 500;
+            color: Theme.subtle;
+        }
+        Input {
+            hint: root.hint;
+            text <=> root.text;
+        }
+    }
+}
+
+component Dialog inherits Rectangle {
+    background: Theme.scrim;
+    TouchArea {
+        clicked => {
+            PersonsBus.dialog-cancel();
+        }
+    }
+    box := Rectangle {
+        width: min(parent.width - 40px, PersonsBus.dialog == "qr" ? 380px : 460px);
+        height: min(parent.height - 40px, col.preferred-height);
+        background: Theme.bg100;
+        border-radius: Theme.radius-xl;
+        border-width: 1px;
+        border-color: Theme.border;
+        TouchArea { }
+        col := VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+            Text {
+                text: PersonsBus.d-title;
+                font-size: 16px;
+                font-weight: 600;
+                color: Theme.fg;
+            }
+            if PersonsBus.d-text != "": Text {
+                text: PersonsBus.d-text;
+                font-size: 13px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+            if PersonsBus.dialog == "qr": HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 260px;
+                    height: 260px;
+                    background: white;
+                    border-radius: 8px;
+                    if PersonsBus.has-qr: Image {
+                        width: 240px;
+                        height: 240px;
+                        source: PersonsBus.qr;
+                        image-rendering: pixelated;
+                    }
+                    if !PersonsBus.has-qr: Text {
+                        text: "Getting a code…";
+                        color: #444;
+                        font-size: 13px;
+                    }
+                }
+            }
+            if PersonsBus.dialog == "rename": Input {
+                hint: "Name";
+                text <=> PersonsBus.f-name;
+                accepted => {
+                    PersonsBus.dialog-ok();
+                }
+            }
+            if PersonsBus.dialog == "person": VerticalLayout {
+                spacing: 10px;
+                Field {
+                    label: "Name";
+                    hint: "Shown everywhere (empty: their Discord name)";
+                    text <=> PersonsBus.f-name;
+                }
+                Field {
+                    label: "Discord";
+                    hint: "User id or @username";
+                    text <=> PersonsBus.f-discord;
+                }
+                Field {
+                    label: "Email (Gmail)";
+                    hint: "name@example.com";
+                    text <=> PersonsBus.f-email;
+                }
+                Field {
+                    label: "WhatsApp";
+                    hint: "+55 11 91234-5678";
+                    text <=> PersonsBus.f-whatsapp;
+                }
+                Field {
+                    label: "Socials";
+                    hint: "TikTok, Instagram, YouTube links (space separated)";
+                    text <=> PersonsBus.f-socials;
+                }
+            }
+            if PersonsBus.dialog == "store": Field {
+                label: "Name";
+                hint: "Store name";
+                text <=> PersonsBus.f-name;
+            }
+            if PersonsBus.dialog == "store": HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for c in PersonsBus.f-colors: Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 11px;
+                    border-width: c.on ? 2px : 0px;
+                    border-color: Theme.fg;
+                    Rectangle {
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 8px;
+                        background: c.color;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            PersonsBus.color(c.id);
+                        }
+                    }
+                }
+            }
+            if PersonsBus.f-chips.length > 0 && (PersonsBus.dialog == "person"): VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: "Stores and lists";
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: Theme.subtle;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for c in PersonsBus.f-chips: Rectangle {
+                        height: 26px;
+                        width: ct.preferred-width + 20px;
+                        border-radius: 13px;
+                        background: c.on ? Theme.blue-700 : Theme.gray-100;
+                        ct := Text {
+                            text: c.label;
+                            font-size: 12px;
+                            color: c.on ? white : Theme.fg;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                PersonsBus.chip(c.id);
+                            }
+                        }
+                    }
+                }
+            }
+            if PersonsBus.d-error != "": Text {
+                text: PersonsBus.d-error;
+                font-size: 12px;
+                color: Theme.red-900;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Btn {
+                    text: PersonsBus.dialog == "qr" ? "Close" : "Cancel";
+                    size: BtnSize.sm;
+                    clicked => {
+                        PersonsBus.dialog-cancel();
+                    }
+                }
+                if PersonsBus.dialog != "qr": Btn {
+                    text: PersonsBus.d-busy ? "…" : PersonsBus.d-ok;
+                    size: BtnSize.sm;
+                    enabled: !PersonsBus.d-busy;
+                    variant: PersonsBus.d-danger ? Variant.destructive : Variant.primary;
+                    clicked => {
+                        PersonsBus.dialog-ok();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- the page ----------
+
+export component PersonsPage {
+    FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Escape {
+                if PersonsBus.menu-open {
+                    PersonsBus.menu-close();
+                } else if PersonsBus.dialog != "" {
+                    PersonsBus.dialog-cancel();
+                } else if PersonsBus.view == "chat" {
+                    PersonsBus.close-chat();
+                }
+                return accept;
+            }
+            return reject;
+        }
+        HorizontalLayout {
+            Sidebar {
+                width: 264px;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                if PersonsBus.view == "loading": Spinner { }
+                if PersonsBus.view == "list": ListPane { }
+                if PersonsBus.view == "chat": ChatPane { }
+            }
+            if PersonsBus.view == "chat" && PersonsBus.panel: Panel {
+                width: 340px;
+            }
+        }
+    }
+    if PersonsBus.menu-open: TouchArea {
+        clicked => {
+            PersonsBus.menu-close();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                PersonsBus.menu-close();
+            }
+        }
+    }
+    if PersonsBus.menu-open: Menu {
+        x: min(PersonsBus.menu-x - root.absolute-position.x, root.width - self.width - 8px);
+        y: min(PersonsBus.menu-y - root.absolute-position.y, root.height - self.height - 8px);
+    }
+    if PersonsBus.dialog != "": Dialog { }
+    if PersonsBus.toast != "": Rectangle {
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 18px;
+        height: 36px;
+        width: tl.preferred-width + 28px;
+        border-radius: 8px;
+        background: Theme.gray-1000;
+        tl := HorizontalLayout {
+            x: 14px;
+            spacing: 12px;
+            Text {
+                text: PersonsBus.toast;
+                font-size: 13px;
+                color: Theme.bg100;
+                vertical-alignment: center;
+            }
+            if PersonsBus.toast-action != "": Text {
+                text: PersonsBus.toast-action;
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.blue-600;
+                vertical-alignment: center;
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        PersonsBus.toast-act();
+                    }
+                }
+            }
+        }
     }
 }

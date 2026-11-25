@@ -4,7 +4,7 @@ import { statSync } from "node:fs";
 import { KIND_LABEL, peerOf, isSection, normWhatsApp, validPeer } from "./model/accounts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
-import { cleanUsername, isDiscordId, isEmail, joinScope, personLabel } from "./model/data.ts";
+import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel } from "./model/data.ts";
 import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
 import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, Store } from "./model/types.ts";
@@ -136,6 +136,9 @@ export class PersonsRoutes {
         f = this.picture(p, size);
         if (!f) for (const u of pictureUrls(p, size)) if ((f = await this.avatars.fetch(u))) break;
       }
+    } else if (rest[1] === "url") {
+      const u = q(c, "u") ?? "";
+      if (/^https:\/\//.test(u)) f = this.avatars.file(u) ?? (await this.avatars.fetch(u));
     } else if (rest[1] === "store" && rest[2]) {
       const st = d.stores.find((x) => x.id === decodeURIComponent(rest[2]!));
       if (st) f = storeImageFile(this.s.dir, st);
@@ -491,6 +494,14 @@ export class PersonsRoutes {
   private createPerson(b: Record<string, unknown>): Reply {
     const d = this.s.data;
     if (!d) return err(503, "not loaded");
+    // Undo of a delete: the person as they were (same id), if nobody took the id meanwhile
+    if (b.restore === true && typeof b.id === "string" && !d.people.some((p) => p.id === b.id)) {
+      const { restore: _r, ...raw } = b;
+      const back = normalizeData({ ...d, people: [raw] }).people[0];
+      if (!back) return err(400, "can't restore that");
+      this.s.update((x) => ({ ...x, people: [...x.people, back] }));
+      return ok({ ok: true, person: json(back) });
+    }
     const at = new Date().toISOString();
     const discordId = str(b.discordId)?.trim() ?? "";
     const email = str(b.email)?.trim().toLowerCase() ?? "";
