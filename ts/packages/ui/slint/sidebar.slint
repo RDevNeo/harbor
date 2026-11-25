@@ -4,7 +4,7 @@ import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipAre
 // Hub's design system (DESIGN.md): the sidebar frame, its header, section heads, the lead square and the Settled fold are
 // the shared ones Persons and Routine use too.
 import { Ds } from "ds-tokens.slint";
-import { SectionHead, LeadLetter, FoldBar } from "ds-list.slint";
+import { SectionHead, FoldBar } from "ds-list.slint";
 import { SideSurface, SideHead } from "ds-surface.slint";
 import { MemGauge } from "memory.slint";
 
@@ -194,8 +194,7 @@ component ThreadRow {
     // drops the hover, the title widens, the mark slides off the pointer, the hover comes back and
     // the title narrows under it again, over and over.
     property <bool> hovering: area.has-hover || worktree.has-hover || pr.has-hover || shared.has-hover || owner.has-hover || settle-btn.hovered || snooze-btn.hovered;
-    property <bool> indented: data.kind == "thread";
-    // A loose chat (Threads, Settled) keeps its chat glyph until it has a status to show there.
+    // A chat keeps its chat glyph in the lead column (as a person's avatar in Persons) until it has a status to show there.
     property <bool> lead-status: data.status.kind == "working" || data.status.kind == "syncing" || data.status.kind == "waiting" || data.status.kind == "limited" || data.status.kind == "done" || data.status.kind == "failed";
     // The branch it works on, on a second line under the title.
     property <bool> two-lines: data.branch != "";
@@ -204,16 +203,10 @@ component ThreadRow {
     // The worktree glyph stands in for a branch that isn't known.
     property <bool> wt-glyph: data.worktree != "" && data.branch == "";
     height: two-lines ? 46px : Theme.row-h;
-    // The guide line down the project's chats: through the gap to the next one, unless this is the last.
-    if root.indented: Rectangle {
-        x: 9px;
-        y: 0;
-        width: 1px;
-        height: root.data.last ? root.height : root.height + 2px;
-        background: Theme.gray-300;
-    }
+    // Persons' row metrics (ds-list.slint ListRow): no indent under its project's head, the lead mark in the 16px
+    // column at 8, the title at 32, the second line under it.
     Rectangle {
-        x: root.indented ? 18px : 0px;
+        x: 0px;
         width: parent.width - self.x;
         background: root.data.active || root.hovering ? Theme.accent : transparent;
         border-radius: Theme.radius-md;
@@ -252,13 +245,13 @@ component ThreadRow {
         // The title's line: the whole row, or its top with the branch under it.
         property <length> line-y: root.two-lines ? 4px : 0px;
         property <length> line-h: root.two-lines ? 22px : Theme.row-h;
-        if root.indented || root.lead-status: LeadMark {
-            x: root.indented ? 6px : 10px;
+        if root.lead-status: LeadMark {
+            x: 10px;
             y: parent.line-y;
             height: parent.line-h;
             status: root.data.status;
         }
-        if !root.indented && !root.lead-status: Glyph {
+        if !root.lead-status: Glyph {
             x: 8px;
             y: parent.line-y;
             width: 16px;
@@ -275,13 +268,14 @@ component ThreadRow {
         property <length> marks-w: (root.wt-glyph ? 20px : 0px) + (root.data.pr != "" ? 20px : 0px) + (root.data.shared != "" ? 20px : 0px) + (root.data.place != "" ? place.width + 6px : 0px);
         property <length> room: self.width - title.x - self.right-w - self.marks-w;
         title := Text {
-            x: root.indented ? 24px : 32px;
+            x: 32px;
             y: parent.line-y;
             height: parent.line-h;
             width: min(self.preferred-width, max(parent.room, 10px));
             text: root.data.title;
             font-size: 14px;
-            font-weight: root.data.active || root.data.status.kind == "done" ? 500 : 400;
+            // As a person's row: unread (done) 600, open 500.
+            font-weight: root.data.status.kind == "done" ? 600 : root.data.active ? 500 : 400;
             // Snoozed: it stays in its place, muted, its status saying when it wakes.
             color: root.data.snoozed ? Theme.gray-800 : Theme.fg;
             overflow: elide;
@@ -429,10 +423,15 @@ component ThreadRow {
     }
 }
 
-component ProjectRow {
+// A project: a section head as Persons' (ds-list.slint SectionHead): its name in caps, the fold's chevron after it, the
+// row's hover fill, its status on the right and, hovered, Snooze and + (a new chat in it). A click opens its main chat;
+// a right click its menu. Dragged, it reorders the projects (while the order is yours); dragged out of the sidebar it
+// is its main chat's drag (a chat dropped on the centre splits it). A real icon (favicon, emoji) stays, small, before
+// the name; the letter square doesn't (Persons' heads have none).
+component ProjectHead {
     in property <SideRow> data;
+    in property <bool> first;
     callback open();
-    // The chevron: fold or unfold its chats.
     callback fold();
     callback new-chat();
     callback snooze(length, length);
@@ -443,200 +442,92 @@ component ProjectRow {
     in property <length> drag-y;
     callback drag(length);
     callback dropped();
-    // Dragged by the rest of the row (window coordinates), and let go: its main chat's drag, as that chat's row would
-    // (a chat dropped on the centre splits it). Only with a main chat (`data.chat`).
     callback chat-drag(length, length);
     callback chat-drop(length, length);
-    property <bool> chat-far;
+    // This drag carries its main chat (it left the sidebar, or the order isn't yours).
+    property <bool> chat-mode;
     property <bool> pointed: drag-y >= self.absolute-position.y && drag-y < self.absolute-position.y + self.height;
     out property <bool> under: drag-id >= 0 && drag-id != data.id && pointed;
     out property <bool> above: drag-y < self.absolute-position.y + self.height / 2;
-    property <bool> dragging: drag-id == data.id;
-    property <bool> far;
-    // The left button is down on this row (only it drags).
-    property <bool> left-held;
-    // While a drag runs the pressed handle keeps the hover, so the pointer's row shows it instead.
-    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || chevron.has-hover || shared.has-hover || plus.hovered || snooze.hovered;
-    // Its icon, after the fold's chevron; its name after that.
-    property <length> icon-x: 22px;
-    property <length> name-x: 46px;
-    height: Theme.row-h + 2px;
-    Rectangle {
-        background: root.data.active || root.hovering ? Theme.accent : transparent;
-        border-radius: Theme.radius-md;
-    }
-    // sidebar.rs: egui draws the drop line as a 2px stroke 1px outside the target row.
-    if root.under: Rectangle {
-        y: root.above ? -2px : parent.height;
-        height: 2px;
-        background: Theme.gray-1000;
-    }
-    area := TipArea {
-        tip: root.data.tip;
-        mouse-cursor: root.chat-far ? MouseCursor.grabbing : MouseCursor.pointer;
+    height: head.height;
+    head := SectionHead {
+        width: root.width;
+        title: root.data.title.to-uppercase();
+        first: root.first;
+        fold: root.data.fold;
+        opens: true;
+        active: root.data.active || root.under;
+        dim: root.data.snoozed;
+        icon: root.data.avatar;
+        has-icon: root.data.has-avatar;
+        tip: root.data.tip != "" ? root.data.tip : root.data.title;
+        draggable: root.grip || root.data.chat >= 0;
+        plus-tip: "New chat in this project";
+        plus-on-hover: true;
+        keep-hover: snooze.hovered || shared.has-hover;
         clicked => {
-            if !root.chat-far {
-                root.open();
-            }
+            root.open();
         }
-        pointer-event(e) => {
-            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
-                root.chat-far = false;
-                root.left-held = false;
-                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-            }
-            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
-                root.chat-far = false;
-                root.left-held = true;
-            }
-            if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
-                root.left-held = false;
-                if root.chat-far {
-                    root.chat-drop(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                }
-            }
-        }
-        moved => {
-            // Only the left button drags: a right press that moves (into its menu) isn't a drag (its ghost covered the menu).
-            root.chat-far = root.left-held && root.data.chat >= 0 && (root.chat-far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
-            if root.chat-far {
-                root.chat-drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-            }
-        }
-    }
-    handle := TouchArea {
-        x: root.icon-x - 4px;
-        width: 24px;
-        enabled: root.grip;
-        mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
-        pointer-event(e) => {
-            if e.kind == PointerEventKind.down {
-                root.far = false;
-                root.left-held = e.button == PointerEventButton.left;
-            }
-            if e.kind == PointerEventKind.up && root.dragging {
-                root.dropped();
-            }
-            if e.kind == PointerEventKind.up {
-                root.left-held = false;
-            }
-        }
-        moved => {
-            // egui's click distance: further than 6px is a drag (the left button only).
-            root.far = root.left-held && (root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
-            if root.far {
-                root.drag(self.absolute-position.y + self.mouse-y);
-            }
-        }
-        clicked => {
-            if !root.far {
-                root.open();
-            }
-        }
-    }
-    // The fold: down while its chats show, right while they're folded away.
-    chevron := TouchArea {
-        x: 0;
-        width: root.icon-x - 2px;
-        enabled: root.data.fold != "";
-        mouse-cursor: pointer;
-        clicked => {
+        toggled => {
             root.fold();
         }
-        if root.data.fold != "": Glyph {
-            x: 5px;
-            width: 14px;
-            icon: root.data.fold == "folded" ? Icons.right : Icons.down;
-            size: 12px;
-            color: chevron.has-hover ? Theme.fg : Theme.gray-800;
+        plus => {
+            root.new-chat();
         }
-    }
-    if root.grip && (root.hovering || root.dragging): Glyph {
-        x: root.icon-x;
-        width: 16px;
-        icon: Icons.grip;
-        size: 16px;
-        color: root.data.active ? Theme.fg : Theme.subtle;
-    }
-    if root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Image {
-        x: root.icon-x;
-        width: 16px;
-        height: 16px;
-        source: root.data.avatar;
-        opacity: root.data.snoozed ? 0.45 : 1;
-    }
-    if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): LeadLetter {
-        x: root.icon-x;
-        y: (root.height - self.height) / 2;
-        letter: root.data.letter;
-        lit: root.data.active || root.hovering;
-        opacity: root.data.snoozed ? 0.45 : 1;
-    }
-    // The name, then its marks right after it (as on a chat row): the room left of the status,
-    // or of the hover buttons, is what the name and its place hint share.
-    property <length> room: self.width - root.name-x - (root.hovering ? actions.preferred-width + 9px : status.preferred-width + 16px) - (root.data.shared != "" ? 22px : 0px);
-    title := Text {
-        x: root.name-x;
-        width: min(self.preferred-width, max(root.room - (root.data.place != "" ? place.width + 6px : 0px), 10px));
-        text: root.data.title;
-        font-size: 14px;
-        font-weight: root.data.active ? 600 : 500;
-        // Snoozed: it stays in its place, muted (its icon too), its status saying when it wakes.
-        color: root.data.snoozed ? Theme.gray-800 : Theme.fg;
-        overflow: elide;
-        vertical-alignment: center;
-    }
-    shared := SharedMark {
-        visible: root.data.shared != "";
-        x: title.x + title.width + 6px;
-        kind: root.data.shared;
-        active: root.data.active;
-        tip: root.data.shared-tip;
-    }
-    // The hint gets what the name leaves, and at least 106px of it before the name elides.
-    place := HorizontalLayout {
-        visible: root.data.place != "";
-        x: title.x + title.width + 6px + (root.data.shared != "" ? 22px : 0px);
-        width: root.data.place != "" ? max(0px, min(self.preferred-width, max(106px, root.room - title.preferred-width - 6px))) : 0px;
-        spacing: 3px;
-        Glyph {
-            width: 12px;
-            icon: root.data.place-pc ? Icons.monitor : Icons.folder;
-            size: 12px;
-            color: Theme.subtle;
+        menu(x, y) => {
+            root.chat-mode = false;
+            root.menu(x, y);
         }
-        Text {
-            text: root.data.place;
-            font-size: 12px;
-            color: Theme.subtle;
-            overflow: elide;
-            vertical-alignment: center;
-        }
-    }
-    status := StatusView {
-        visible: !root.hovering;
-        x: parent.width - 8px - self.width;
-        width: self.preferred-width;
-        status: root.data.status;
-    }
-    // The clock's glyph ends where the status text does (8px in), and the marks before it keep
-    // the buttons' step: 30px from glyph to glyph, as the clock and Settle on a chat row.
-    actions := HorizontalLayout {
-        visible: root.hovering;
-        x: parent.width - 1px - self.preferred-width;
-        y: (parent.height - 28px) / 2;
-        height: 28px;
-        spacing: 2px;
-        plus := Btn {
-            icon: Icons.plus;
-            size: icon-xs;
-            variant: ghost-muted;
-            tip: "New chat in this project";
-            clicked => {
-                root.new-chat();
+        drag(x, y) => {
+            if root.data.chat >= 0 && (root.chat-mode || !root.grip || x > root.absolute-position.x + root.width + 12px) {
+                root.chat-mode = true;
+                root.chat-drag(x, y);
+            } else {
+                root.drag(y);
             }
         }
+        dropped(x, y) => {
+            if root.chat-mode {
+                root.chat-mode = false;
+                root.chat-drop(x, y);
+            } else {
+                root.dropped();
+            }
+        }
+        // The project's PC when its folder isn't here, then the share mark and the status; hovered, Snooze (and the +).
+        if root.data.place != "" && !head.hovered: HorizontalLayout {
+            max-width: 96px;
+            spacing: 3px;
+            Glyph {
+                width: 12px;
+                icon: root.data.place-pc ? Icons.monitor : Icons.folder;
+                size: 12px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: root.data.place;
+                font-size: 12px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+        shared := SharedMark {
+            visible: root.data.shared != "";
+            width: root.data.shared != "" ? 16px : 0px;
+            kind: root.data.shared;
+            active: root.data.active;
+            tip: root.data.shared-tip;
+        }
+        status := StatusView {
+            visible: !head.hovered;
+            width: head.hovered ? 0px : self.preferred-width;
+            status: root.data.status;
+        }
         snooze := Btn {
+            visible: head.hovered;
+            width: head.hovered ? 22px : 0px;
+            height: 22px;
             icon: Icons.clock;
             size: icon-xs;
             variant: ghost-muted;
@@ -646,6 +537,12 @@ component ProjectRow {
                 root.snooze(self.absolute-position.x, self.absolute-position.y + self.height);
             }
         }
+    }
+    // A project dragged over it: the drop line above or under its head.
+    if root.under: Rectangle {
+        y: root.above ? head.y + (root.first ? 0px : 8px) - 2px : root.height;
+        height: 2px;
+        background: Theme.gray-1000;
     }
 }
 
@@ -910,65 +807,66 @@ export component Sidebar inherits SideSurface {
                         }
                     }
                 }
-                for r in root.rows: VerticalLayout {
+                for r[i] in root.rows: VerticalLayout {
                     property <bool> revealed: root.reveal == r.kind + ":" + r.id;
                     changed revealed => {
                         if self.revealed {
                             list.content-y = max(min(list.content-y, list.height - self.y - self.height), -self.y);
                         }
                     }
-                    if r.kind == "project": VerticalLayout {
-                        padding-bottom: 2px;
-                        ProjectRow {
-                            data: r;
-                            grip: root.can-drag;
-                            drag-id: root.drag-id;
-                            drag-y: root.drag-y;
-                            drag(y) => {
-                                root.drag-id = r.id;
-                                root.drag-y = y;
+                    if r.kind == "project": ProjectHead {
+                        data: r;
+                        first: i == 0;
+                        grip: root.can-drag;
+                        drag-id: root.drag-id;
+                        drag-y: root.drag-y;
+                        drag(y) => {
+                            root.drag-id = r.id;
+                            root.drag-y = y;
+                        }
+                        dropped => {
+                            if root.drop-id >= 0 {
+                                root.reorder(r.id, root.drop-id, root.drop-above);
                             }
-                            dropped => {
-                                if root.drop-id >= 0 {
-                                    root.reorder(r.id, root.drop-id, root.drop-above);
-                                }
-                                root.drag-id = -1;
+                            root.drag-id = -1;
+                            root.drop-id = -1;
+                        }
+                        changed under => {
+                            if self.under {
+                                root.drop-id = r.id;
+                                root.drop-above = self.above;
+                            } else if root.drop-id == r.id {
                                 root.drop-id = -1;
                             }
-                            changed under => {
-                                if self.under {
-                                    root.drop-id = r.id;
-                                    root.drop-above = self.above;
-                                } else if root.drop-id == r.id {
-                                    root.drop-id = -1;
-                                }
+                        }
+                        changed above => {
+                            if self.under {
+                                root.drop-above = self.above;
                             }
-                            changed above => {
-                                if self.under {
-                                    root.drop-above = self.above;
-                                }
-                            }
-                            chat-drag(x, y) => {
-                                root.chat-drag(r, x, y);
-                            }
-                            chat-drop(x, y) => {
-                                root.chat-drop(r, x, y);
-                            }
-                            open => {
-                                root.open-project(r.id);
-                            }
-                            fold => {
-                                root.fold-project(r.id);
-                            }
-                            new-chat => {
-                                root.new-chat(r.id);
-                            }
-                            snooze(x, y) => {
-                                root.snooze("r" + r.id, x, y);
-                            }
-                            menu(x, y) => {
-                                root.project-menu(r.id, x, y);
-                            }
+                        }
+                        chat-drag(x, y) => {
+                            // Out of the sidebar: no reorder is under way any more.
+                            root.drag-id = -1;
+                            root.drop-id = -1;
+                            root.chat-drag(r, x, y);
+                        }
+                        chat-drop(x, y) => {
+                            root.chat-drop(r, x, y);
+                        }
+                        open => {
+                            root.open-project(r.id);
+                        }
+                        fold => {
+                            root.fold-project(r.id);
+                        }
+                        new-chat => {
+                            root.new-chat(r.id);
+                        }
+                        snooze(x, y) => {
+                            root.snooze("r" + r.id, x, y);
+                        }
+                        menu(x, y) => {
+                            root.project-menu(r.id, x, y);
                         }
                     }
                     if r.kind == "thread" || r.kind == "loose": ThreadRow {
@@ -992,10 +890,10 @@ export component Sidebar inherits SideSurface {
                             root.chat-menu(r.id, x, y);
                         }
                     }
-                    // "PROJECTS", "THREADS": a section's small head (ds-list.slint SectionHead).
+                    // "THREADS": a section's small head (ds-list.slint SectionHead), as a project's.
                     if r.kind == "label": SectionHead {
                         title: r.title;
-                        first: r.id == 1;
+                        first: i == 0;
                     }
                 }
             }

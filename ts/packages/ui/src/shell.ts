@@ -2223,7 +2223,7 @@ export class Shell {
     // Folded projects show only their row (and the open chat, so you see where you are); a search unfolds them all.
     const folded = this.query.trim() === "" ? foldedOf(d.store.get(FOLDED_KEY)) : new Set<number>();
     const label = (id: number, title: string): SideRow => ({ kind: "label", id, title, active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "", place: "", place_pc: false, shared: "", shared_tip: "", ...ROW_PLAIN });
-    if (list.projects.length > 0) rows.push(label(1, "PROJECTS"));
+    // No "PROJECTS" label: each project is its own section head (sidebar.slint ProjectHead).
     for (const p of list.projects) {
       const main = d.mainChat(p.repo.id);
       const mainChat = main === null ? undefined : d.chat(main);

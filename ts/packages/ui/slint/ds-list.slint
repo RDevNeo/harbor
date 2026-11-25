@@ -26,9 +26,11 @@ export component CountPill {
     }
 }
 
-/** A section's small head ("PROJECTS", "CREATORS"): upper-case caps, an optional fold chevron after it, and on its
- *  right a status dot, an unread pill and a + (all optional). When it folds, the whole row but the + (title, chevron,
- *  the empty room after them, the dot and the pill) is one target: pointer cursor, the rows' hover fill, a click folds. */
+/** A section's small head ("PROJECTS", "CREATORS", a project in Projects' sidebar): upper-case caps, an optional fold
+ *  chevron after it, and on its right a status dot, an unread pill, the caller's own marks (children) and a + (all
+ *  optional). When it folds, the whole row but the + (title, chevron, the empty room after them, the dot and the pill)
+ *  is one target: pointer cursor, the rows' hover fill, a click folds. With `opens` a click opens what the head stands
+ *  for (Projects: the project's main chat) and only the chevron folds. */
 export component SectionHead {
     in property <string> title;
     /** "" doesn't fold, "open", "folded". */
@@ -40,53 +42,130 @@ export component SectionHead {
     in property <string> dot-tip;
     /** The +'s tip; "" no +. */
     in property <string> plus-tip;
+    /** The + only while the row is hovered (many heads, as Projects' projects). */
+    in property <bool> plus-on-hover;
+    /** What the head stands for is on screen: the rows' selected fill, the title in the text colour. */
+    in property <bool> active;
+    /** A click opens (`clicked`), the chevron folds. */
+    in property <bool> opens;
+    /** Muted (snoozed): the title fades. */
+    in property <bool> dim;
+    /** A small picture before the title (a project's favicon or emoji). */
+    in property <image> icon;
+    in property <bool> has-icon;
+    in property <string> tip;
+    /** The row drags (left button, past 6px): `drag` with the pointer in window coordinates, `dropped` on release. */
+    in property <bool> draggable;
+    /** The caller's children on the right keep the row hovered. */
+    in property <bool> keep-hover;
+    out property <bool> hovered: head.has-hover || chev.has-hover || root.plus-hovered || root.keep-hover;
     callback toggled();
+    callback clicked();
     callback plus(length, length);
+    callback menu(length, length);
+    callback drag(length, length);
+    callback dropped(length, length);
     height: (first ? 2px : 10px) + 22px + 2px;
     property <length> line-y: first ? 2px : 10px;
+    property <bool> plus-hovered;
+    property <bool> far;
+    property <bool> left-held;
+    property <bool> target: root.fold != "" || root.opens;
+    property <bool> show-plus: root.plus-tip != "" && (!root.plus-on-hover || root.hovered);
     // The +'s room on the right (22px and the 6px before it), outside the fold's target.
-    property <length> plus-w: root.plus-tip != "" ? 28px : 0px;
-    if root.fold != "": Rectangle {
+    property <length> plus-w: root.plus-tip != "" && !root.plus-on-hover ? 28px : 0px;
+    property <bool> lit: root.hovered || root.active;
+    if root.target || root.active: Rectangle {
         x: 0;
         y: root.line-y;
         height: 22px;
         width: root.width - root.plus-w;
         border-radius: Ds.radius-md;
-        background: head.has-hover ? Ds.hover : transparent;
+        background: root.hovered || root.active ? Ds.hover : transparent;
     }
-    label := Text {
-        x: 6px;
+    // From the row's left edge (without x it was centred: the target sat right of the title), over the title and
+    // chevron, under the right side's +.
+    head := TipArea {
+        x: 0;
         y: root.line-y;
         height: 22px;
-        width: min(self.preferred-width, root.width - 80px);
+        width: root.target ? root.width - root.plus-w : label.x + label.width + 4px;
+        tip: root.tip;
+        enabled: root.target;
+        mouse-cursor: root.far ? MouseCursor.grabbing : root.target ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            if !root.far && root.opens {
+                root.clicked();
+            } else if !root.far {
+                root.toggled();
+            }
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.far = false;
+                root.left-held = false;
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                root.far = false;
+                root.left-held = true;
+            }
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                root.left-held = false;
+                if root.far {
+                    root.dropped(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
+        moved => {
+            // Only the left button drags: a right press that moves (into its menu) isn't a drag.
+            root.far = root.draggable && root.left-held && (root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px);
+            if root.far {
+                root.drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    if root.has-icon: Image {
+        x: 6px;
+        y: root.line-y + 5px;
+        width: 12px;
+        height: 12px;
+        source: root.icon;
+        image-fit: contain;
+        opacity: root.dim ? 0.45 : 1;
+    }
+    label := Text {
+        x: root.has-icon ? 24px : 6px;
+        y: root.line-y;
+        height: 22px;
+        width: max(0px, min(self.preferred-width, right.x - self.x - 26px));
         text: root.title;
         font-size: Ds.t-caps;
         font-weight: 500;
         letter-spacing: Ds.caps-spacing * 1px;
-        color: head.has-hover ? Theme.fg : Ds.caps-fg;
+        color: root.lit ? Theme.fg : Ds.caps-fg;
+        opacity: root.dim ? 0.6 : 1;
         overflow: elide;
         vertical-alignment: center;
     }
-    if root.fold != "": Glyph {
-        x: label.x + label.width + 4px;
+    // The chevron: in a head that opens, its own target (a click folds, the rest opens).
+    chev := TouchArea {
+        x: label.x + label.width + 2px;
         y: root.line-y;
-        width: 12px;
+        width: root.fold != "" ? 16px : 0px;
         height: 22px;
-        icon: root.fold == "folded" ? Icons.right : Icons.down;
-        size: 11px;
-        color: head.has-hover ? Theme.fg : Ds.caps-fg;
-    }
-    // From the row's left edge (without x it was centred: the target sat right of the title), over the title and
-    // chevron, under the right side's +.
-    head := TouchArea {
-        x: 0;
-        y: root.line-y;
-        height: 22px;
-        width: root.fold != "" ? root.width - root.plus-w : label.x + label.width + 4px;
-        enabled: root.fold != "";
-        mouse-cursor: root.fold != "" ? pointer : default;
+        enabled: root.fold != "" && root.opens;
+        mouse-cursor: pointer;
         clicked => {
             root.toggled();
+        }
+        if root.fold != "": Glyph {
+            x: 2px;
+            width: 12px;
+            height: 22px;
+            icon: root.fold == "folded" ? Icons.right : Icons.down;
+            size: 11px;
+            color: root.lit ? Theme.fg : Ds.caps-fg;
         }
     }
     right := HorizontalLayout {
@@ -99,9 +178,11 @@ export component SectionHead {
             width: 8px;
             tip: root.dot-tip;
             // Part of the fold's target (only the + is its own).
-            mouse-cursor: root.fold != "" ? pointer : default;
+            mouse-cursor: root.target ? pointer : default;
             clicked => {
-                if root.fold != "" {
+                if root.opens {
+                    root.clicked();
+                } else if root.fold != "" {
                     root.toggled();
                 }
             }
@@ -119,13 +200,17 @@ export component SectionHead {
                 blue: true;
             }
         }
-        if root.plus-tip != "": Btn {
+        @children
+        if root.show-plus: Btn {
             width: 22px;
             height: 22px;
             icon: Icons.plus;
             size: icon-xs;
             variant: ghost-muted;
             tip: root.plus-tip;
+            changed hovered => {
+                root.plus-hovered = self.hovered;
+            }
             clicked => {
                 root.plus(self.absolute-position.x, self.absolute-position.y + self.height);
             }

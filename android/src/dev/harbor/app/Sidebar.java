@@ -357,7 +357,6 @@ final class Sidebar {
             }
         }
         boolean first = true;
-        boolean headed = false;
         for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
             JSONObject main = mains.get(g.getKey());
             // A project without chats yet shows too (hubs from 0.88: its header starts the main
@@ -365,9 +364,7 @@ final class Sidebar {
             boolean bare = g.getValue().isEmpty() && main == null;
             if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), ""), projectPc.get(g.getKey()), projectShared.get(g.getKey())) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
                     && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
-            // The desktop's small section heads: PROJECTS over the projects, THREADS over the chats without one.
-            if (!headed) list.addView(Ds.caps(a, "PROJECTS", first), Ui.fill());
-            headed = true;
+            // Each project is its own section head (as Persons' STORES / CREATORS); THREADS heads the chats without one.
             first = false;
             group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty(), main, withMains.contains(g.getKey()));
         }
@@ -632,14 +629,19 @@ final class Sidebar {
         Set<String> f = folded();
         boolean canFold = foldable && !cs.isEmpty();
         boolean fold = canFold && f.contains(key);
-        LinearLayout h = Ui.row(a);
-        h.setMinimumHeight(Ui.dp(44));
-        h.setPadding(Ui.dp(2), Ui.dp(4), Ui.dp(8), Ui.dp(4));
+        // Persons' section head (Ds.sectionHead): the name in caps, the fold's chevron after it, the row's press fill.
+        String asleep = snoozedProjects.get(key);
+        LinearLayout h = Ds.sectionHead(a, name == null || name.isEmpty() ? "Project" : name, !fold, 0, null);
         String mainId = main == null ? null : main.optString("id");
-        h.setBackground(mainId != null && mainId.equals(current) ? Ui.press(Ui.G100, 0, 10) : Ui.press(0, 0, 10));
-        // The chevron, in a box of its own so a tap there folds instead of opening.
-        TextView chev = Ui.icon(a, fold ? Ui.I_CHEV_RIGHT : Ui.I_DOWN, 14, Ui.G600);
-        chev.setVisibility(canFold ? View.VISIBLE : View.INVISIBLE);
+        if (mainId != null && mainId.equals(current)) h.setBackground(Ui.press(Ui.G100, 0, Ds.ROW_RADIUS));
+        TextView label = (TextView) h.getChildAt(0);
+        label.setMaxLines(1);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setMaxWidth(Ui.dp(190));
+        if (asleep != null) label.setTextColor(Ui.G500);
+        // The chevron, a target of its own so a tap there folds instead of opening.
+        TextView chev = (TextView) h.getChildAt(1);
+        chev.setVisibility(canFold ? View.VISIBLE : View.GONE);
         if (canFold) {
             chev.setBackground(Ui.press(0, 0, 14));
             chev.setContentDescription(fold ? "Unfold " + cs.size() + " chats" : "Fold its chats");
@@ -649,22 +651,21 @@ final class Sidebar {
                 render(st);
             });
         }
-        h.addView(chev, new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(36)));
-        // Snoozed (the desktop's muted project row): its place kept, its name and icon muted, and
-        // when it wakes before its status.
-        String asleep = snoozedProjects.get(key);
-        TextView letter = Ds.letter(a, initial(name), 0, 20);
-        letter.setAlpha(asleep != null ? 0.45f : 1f);
-        // Its own icon or its website's, as the desktop's row shows it, once it's here.
-        ProjectIcons.into(letter, a.hub, key, projectIcon.get(key));
-        h.addView(letter, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 10, 0));
+        // A real icon (its own or its website's) stays, small, before the name; the letter square doesn't.
+        String icon = projectIcon.get(key);
+        if (icon != null && !icon.isEmpty()) {
+            TextView tile = Ds.letter(a, "", 0, 14);
+            tile.setBackground(null);
+            tile.setAlpha(asleep != null ? 0.45f : 1f);
+            ProjectIcons.into(tile, a.hub, key, icon);
+            h.addView(tile, 0, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 0, 0, 6, 0));
+        }
         String where = Place.hint(st, key);
-        int color = asleep != null ? Ui.G600 : Ui.FG;
-        TextView nameView;
-        if (where.isEmpty()) {
-            nameView = Ui.subtitle(Ui.bold(a, name == null || name.isEmpty() ? "Project" : name, 15, color));
-            h.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1));
-        } else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), color), new LinearLayout.LayoutParams(0, -2, 1));
+        // Its PC when the folder isn't here, after the chevron (the spacer after it keeps the right side right).
+        if (!where.isEmpty()) {
+            TextView pl = Ui.subtitle(Ui.text(a, (Place.elsewhere(Place.project(st, key)) ? "on " : "") + where, 12, Ui.G600));
+            h.addView(pl, h.indexOfChild(chev) + 1, Ui.margins(new LinearLayout.LayoutParams(-2, -2), 6, 0, 0, 0));
+        }
         sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, ""), projectPc.get(key)), projectShared.getOrDefault(key, new ArrayList<>()));
         // Folded, the open chat stays under it; the others are what its status sums up.
         List<JSONObject> shown = new ArrayList<>();
@@ -691,7 +692,8 @@ final class Sidebar {
             if (canFold) h.setOnClickListener(v -> chev.performClick());
         }
         list.addView(h, Ui.inset());
-        for (int i = 0; i < shown.size(); i++) list.addView(chatRow(shown.get(i), you, true, i == shown.size() - 1), Ui.inset());
+        // Its chats as Persons' rows under a section: no indent, no guide line.
+        for (JSONObject c : shown) list.addView(chatRow(c, you), Ui.inset());
     }
 
     /** Nothing to say on its right but when it was last active. */
@@ -737,16 +739,6 @@ final class Sidebar {
     /** A settled project under Settled (the desktop's settled project row). */
     /** A project's name and, smaller after it, the PC that holds its folder (`pc`), or the
      *  folder's parent of one of two projects with a name (Place.hint). */
-    private LinearLayout titleWithPlace(String name, String where, boolean pc, int color) {
-        LinearLayout t = Ui.row(a);
-        t.addView(Ui.subtitle(Ui.bold(a, name == null || name.isEmpty() ? "Project" : name, 15, color)), new LinearLayout.LayoutParams(-2, -2, 0));
-        t.addView(Ui.icon(a, pc ? Ui.I_MONITOR : Ui.I_FOLDER, 11, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(13), Ui.dp(13)), 6, 0, 3, 0));
-        TextView w = Ui.text(a, where, 11, Ui.G600);
-        w.setSingleLine(true);
-        w.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        t.addView(w, new LinearLayout.LayoutParams(0, -2, 1));
-        return t;
-    }
 
     private View settledProjectRow(String pid, String name) {
         String title = name == null || name.isEmpty() ? "Project" : name;
