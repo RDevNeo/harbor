@@ -13,6 +13,9 @@ import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, St
 import { Avatars, pictureUrls, storeImageFile, whatsappNumber } from "./avatars.ts";
 import { normalizeSocials } from "./socials.ts";
 import type { ConnView, PersonsService, RowInfo } from "./service.ts";
+import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
+import type { SiteRequests } from "./siterequests.ts";
+import type { Proposal, ProposalFields } from "./spokpay-core.ts";
 
 export interface Call {
   method: string;
@@ -33,7 +36,30 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object"
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const json = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json;
 /** The AI thread for a chat: each answer also split into its markdown (with the phone's blocks) and its ```reply drafts. */
-const aiJson = (items: readonly { role: string; text: string }[]): Json => json(items.map((a) => (a.role === "user" ? a : { ...a, parts: aiPartsJson(a.text) })));
+const aiJson = (items: readonly { role: string; text: string }[]): Json =>
+  json(items.map((a) => {
+    if (a.role !== "user") return { ...a, parts: aiPartsJson(a.text) };
+    // a forwarded message (Forward to AI) shows as its quote and the question
+    const f = splitForwarded(a.text);
+    return f.forwarded ? { ...a, text: f.question, forwarded: { from: f.forwarded.from, text: f.forwarded.text || f.forwarded.attachment || "" } } : a;
+  }));
+/** A proposal as the chat's card shows it (Headquarters' ProposalCard). */
+const proposalJson = (p: Proposal): Json =>
+  json({
+    id: p.id,
+    at: new Date(p.createdAt).toISOString(),
+    messageId: p.source?.messageId ?? null,
+    store: p.store,
+    category: p.shown.category,
+    subject: p.shown.subject,
+    details: p.shown.details,
+    brief: p.shown.brief,
+    why: p.why,
+    from: p.from.name,
+    chat: p.from.chat,
+    images: p.images.filter((i) => i.picked).length,
+    state: p.state,
+  });
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
 export const colorOf = (id: string): string => {
@@ -49,7 +75,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -68,7 +94,10 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "typing") return this.typing(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "retry") return this.retry(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
       }
+      if (rest[0] === "proposal" && rest[1]) return await this.proposal(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
+      if (rest[0] === "proposing" && rest[1]) return await this.proposing(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "person" && rest[1]) {
         if (m === "GET") return await this.panel(rest[1], q(c, "socials") !== "cached");
         if (m === "PATCH") return this.patchPerson(rest[1], obj(c.body));
@@ -341,7 +370,16 @@ export class PersonsRoutes {
     const row = this.s.rowInfo(p, section);
     const personJson = { id: p.id, name: personLabel(p), initials: initials(personLabel(p)), color: colorOf(p.id), avatar: pic, avatarPath: this.picture(p), presence: row.presence ?? null };
     const ai = this.extra.ai ? await this.extra.ai.items(p, section ?? conn?.section ?? "stores").catch(() => []) : [];
-    if (!conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: aiJson(ai) });
+    // the composer's AI switch and Forward to AI; the message menu's Open Site Request, the proposals' cards
+    const sites = this.extra.sites;
+    const extras = {
+      aiOn: !!this.extra.ai,
+      aiChat: this.extra.ai?.chatOf?.(p, section ?? conn?.section ?? "stores") ?? null,
+      siteRequests: !!sites && !!this.s.data && sites.offered(p, this.s.data),
+      proposals: sites ? sites.proposals(p.id).map(proposalJson) : [],
+      proposing: sites ? json(sites.proposing(p.id).map((x) => ({ ...x, at: new Date(x.at).toISOString() }))) : [],
+    };
+    if (!conn) return ok({ person: { ...personJson, status: null }, account: null, accounts: [], peer: null, typing: null, more: false, unreadFrom: null, messages: [], outgoing: [], ai: aiJson(ai), ...extras });
     const peer = peerOf(p, conn.kind, conn.section);
     const before = q(c, "before");
     if (before) {
@@ -370,6 +408,7 @@ export class PersonsRoutes {
       messages: shown.map((m) => this.msgJson(m, cur, byId)),
       outgoing: (cur.outgoing[peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })) })),
       ai: aiJson(ai),
+      ...extras,
     });
   }
 
@@ -439,13 +478,91 @@ export class PersonsRoutes {
     if (!p) return err(404, "no such person");
     if (!this.extra.ai) return err(503, "Person AI isn't available");
     const section = sectionOf(str(b.section)) ?? "stores";
-    const text = str(b.text) ?? "";
-    if (!text.trim()) return err(400, "empty");
+    let text = str(b.text) ?? "";
     const { conn } = this.chatConn(p, section, str(b.account));
     const peer = conn ? peerOf(p, conn.kind, conn.section) : "";
     const msgs = conn ? conn.convos[peer]?.messages ?? [] : [];
+    // Forward to AI: the message quoted in the note (its images and PDFs fetched to this PC for the agent to read)
+    const fwdId = str(b.forward);
+    const fwd = fwdId ? msgs.find((m) => m.id === fwdId) : undefined;
+    if (fwdId && !fwd) return err(404, "That message isn't in this chat any more");
+    // files attached to the note: paths on this PC (the window's attach button)
+    const attached = (Array.isArray(b.paths) ? b.paths : []).filter((x): x is string => typeof x === "string" && x.startsWith("/")).slice(0, 10);
+    if (fwd && conn) {
+      const files: string[] = [];
+      for (const f of forwardableFiles(fwd)) {
+        const path = await this.s.fetchAttachment(f.url, f.name, conn.id).catch(() => null);
+        if (path) files.push(path);
+      }
+      const me = conn.state.me?.globalName || conn.state.me?.username;
+      text = forwardedNote({ message: fwd, from: fwd.fromMe ? `Me${me ? ` (${me})` : ""}` : personLabel(p), question: text, files });
+    }
+    if (attached.length) text = `${text.trim()}\n\nFiles attached to this note (on this PC): ${attached.join(", ")}`.trim();
+    if (!text.trim()) return err(400, "empty");
     const chat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!);
     return ok({ ok: true, chat });
+  }
+
+  // ---------- SpokPay site requests ----------
+
+  /** Open Site Request on a message: SpokPay's agent drafts the proposal (siterequests.ts); the card shows in the chat. */
+  private siteRequest(personId: string, b: Record<string, unknown>): Reply {
+    const sites = this.extra.sites;
+    const r = this.resolve(personId, b);
+    if (!sites || !r || !this.s.data) return err(404, "no chat");
+    if (!sites.offered(r.p, this.s.data)) return err(409, "Site requests aren't offered for this person");
+    const peer = peerOf(r.p, r.conn.kind, r.conn.section);
+    const msgs = r.conn.convos[peer]?.messages ?? [];
+    const m = msgs.find((x) => x.id === str(b.messageId));
+    if (!m) return err(404, "That message isn't in this chat any more");
+    const handle = r.conn.kind === "discord" ? (r.p.discordUsername ? `@${r.p.discordUsername}` : "") : r.conn.kind === "gmail" ? (r.p.email ?? "") : r.p.whatsapp ? `+${r.p.whatsapp}` : "";
+    sites.fromMessage({ person: r.p, message: m, recent: msgs.slice(-30), account: r.conn.id, handle, data: this.s.data });
+    return ok({ ok: true });
+  }
+
+  /** A proposal's card: POST …/open {fields?}, PATCH {fields?, store?}, DELETE (discard). */
+  private async proposal(m: string, id: string, act: string, b: Record<string, unknown>): Promise<Reply> {
+    const sites = this.extra.sites;
+    if (!sites) return err(503, "SpokPay isn't set up here");
+    const fields = b.fields && typeof b.fields === "object" ? (b.fields as ProposalFields) : undefined;
+    if (m === "POST" && act === "open") {
+      const p = await sites.open(id, fields);
+      return ok(p ? proposalJson(p) : null);
+    }
+    if (m === "PATCH") {
+      const patch: { fields?: ProposalFields; store?: { slug: string; name: string } | null } = {};
+      if (fields) patch.fields = fields;
+      if ("store" in b) {
+        const st = obj(b.store);
+        const slug = (str(st.slug) ?? "").trim().toLowerCase();
+        patch.store = slug ? { slug, name: str(st.name) || slug } : null;
+      }
+      const p = sites.sp.saveProposal(id, patch);
+      this.s.touch();
+      return ok(proposalJson(p));
+    }
+    if (m === "DELETE") {
+      sites.sp.discardProposal(id);
+      this.s.touch();
+      return ok({ ok: true });
+    }
+    return err(405, "POST open, PATCH or DELETE");
+  }
+
+  /** A proposal still drafting: POST …/local {personId, section, account} (the message itself), DELETE (dismiss). */
+  private async proposing(m: string, messageId: string, act: string, b: Record<string, unknown>): Promise<Reply> {
+    const sites = this.extra.sites;
+    if (!sites || !this.s.data) return err(503, "SpokPay isn't set up here");
+    if (m === "DELETE") {
+      sites.dismiss(messageId);
+      return ok({ ok: true });
+    }
+    if (m !== "POST" || act !== "local") return err(405, "POST local or DELETE");
+    const r = this.resolve(str(b.personId) ?? "", b);
+    if (!r) return err(404, "no chat");
+    const msgs = r.conn.convos[peerOf(r.p, r.conn.kind, r.conn.section)]?.messages ?? [];
+    await sites.local(messageId, { person: r.p, message: msgs.find((x) => x.id === messageId), recent: msgs.slice(-30), data: this.s.data });
+    return ok({ ok: true });
   }
 
   // ---------- people ----------
@@ -643,6 +760,8 @@ export class PersonsRoutes {
 export interface AiPort {
   items(p: Person, section: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]>;
   ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData): Promise<string | number>;
+  /** The person's AI chat once it exists (known after items or ask). */
+  chatOf?(p: Person, section: SectionId): string | null;
 }
 
 export { validPeer };

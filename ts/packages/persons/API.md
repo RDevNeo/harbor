@@ -32,9 +32,15 @@ Within a section, people are sorted by `rows[section].lastAt` desc; settled ones
                files: [{ name, url: "/v1/persons/file?...", type, size, width, height, image: bool, duration }],
                ai: false }] ,
   ai: [{ id, role: "user"|"assistant", text, at, streaming?,
-         parts? }] }   // the Person AI chat for this person+section; an answer's `parts` (aiparts.ts):
+         parts?, forwarded? }],   // the Person AI chat for this person+section; an answer's `parts` (aiparts.ts):
                        // [{ type: "text", text, blocks }   markdown, `blocks` the phone's block model (android/PROTOCOL.md)
                        //  | { type: "draft", text }]       a message it drafted for the person (```reply)
+                       // a note with a forwarded message: `text` is the question, `forwarded: { from, text }` the quote
+  aiOn: bool, aiChat: "<hub chat id>"|null,   // the composer's AI switch, "Open in Projects"
+  siteRequests: bool,  // the message menu's Open Site Request (SpokPay people / store owners, SpokPay connected)
+  proposals: [{ id, at, messageId, store: { slug, name }|null, category, subject, details, brief, why, from, chat,
+                images: <picked count>, state: { kind: waiting|opening|opened|failed, ref?, reason? } }],
+  proposing: [{ personId, messageId, at, chat, error }] }   // site requests SpokPay's agent is still drafting
 ```
 `?account=ID` picks another of `accounts`. `?before=MSGID` returns an older page (same shape, `messages` only older).
 
@@ -42,7 +48,17 @@ Within a section, people are sorted by `rows[section].lastAt` desc; settled ones
 → `{ ok, message?, error? }`
 ## POST /v1/persons/chat/{personId}/read  { section, account? }  → `{ ok }`
 ## POST /v1/persons/chat/{personId}/typing { section, account?, on } → `{ ok }`
-## POST /v1/persons/chat/{personId}/ai  { section, text } → `{ ok, chat: <hub chat id> }` (asks the Person AI; the answer shows in `ai`)
+## POST /v1/persons/chat/{personId}/ai  { section, account?, text, forward?: <message id>, paths?: [file on this PC] } → `{ ok, chat: <hub chat id> }`
+Asks the Person AI; the answer shows in `ai`. `forward` (Forward to AI) quotes that message in the note (its images and
+PDFs fetched to this PC for the agent), the question defaulting to "What should I reply to this?".
+## POST /v1/persons/chat/{personId}/site-request  { section, account?, messageId } → `{ ok }`
+Open Site Request: SpokPay's agent (a chat in the SpokPay project) drafts a proposal from the message and the
+conversation (`proposing`, then `proposals`); without a SpokPay project the message itself is the proposal.
+## POST /v1/persons/proposal/{id}/open  { fields? } → the proposal (opened, or failed with its reason)
+## PATCH /v1/persons/proposal/{id}  { fields?: { category, subject, details, brief }, store?: { slug, name }|null }
+## DELETE /v1/persons/proposal/{id}  (discard)
+## POST /v1/persons/proposing/{messageId}/local  { personId, section, account? }  (skip the agent: the message itself)
+## DELETE /v1/persons/proposing/{messageId}  (dismiss)
 
 ## GET /v1/persons/person/{id}
 The panel: `{ person: {...all fields of data.json's person}, avatarBig, stores: [{id,name}], lists: [...],

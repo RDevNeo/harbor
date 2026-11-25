@@ -2,7 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip } from "ds.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card } from "ds.slint";
 import { ScrollView } from "std-widgets.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 
@@ -61,9 +61,16 @@ export struct PMsg {
     // The Person AI's thread: its answers' parts (markdown blocks and ```reply drafts) and the user's questions.
     to-ai: bool,
     parts: [PPart],
+    // A SpokPay site request card (kind "proposal": proposed from a message; "proposing": the agent drafting it).
+    card-title: string,
+    card-sub: string,
+    card-state: string, // waiting | opening | opened | failed | drafting
+    card-note: string,
+    card-why: string,
+    card-chat: bool,
 }
 
-export struct PMenu { id: string, label: string, icon: string, sub: string, danger: bool, sep: bool, header: bool, disabled: bool }
+export struct PMenu { id: string, label: string, icon: string, sub: string, hint: string, danger: bool, sep: bool, header: bool, disabled: bool }
 
 export struct PUpload { title: string, meta: string, url: string, thumb: image, has-thumb: bool }
 
@@ -108,9 +115,20 @@ export global PersonsBus {
     in property <int> msgs-rev; // bumps when the conversation changes: the view sticks to the bottom
     in-out property <string> draft;
     in-out property <string> subject;
+    in property <string> reply-name; // the message being replied to: its author ("" none) and text
     in property <string> reply-text;
-    in property <string> attached; // the files going with the next message, one line
+    in property <string> attached; // the files going with the next message (or note), one line
+    // The composer (Person Hub's): to the person or to their AI ("To: AI | Name"), each with its own draft.
     in property <bool> ai-mode;
+    in property <bool> c-ai-on: true; // the person's AI is there: the switch shows
+    in property <bool> c-can-send: true;
+    in property <string> c-blocked; // why it can't write to the person (instead of the field)
+    in property <bool> c-need-subject; // Gmail with no thread yet: the first email's subject
+    in property <string> c-hint; // the field's placeholder
+    in property <bool> has-ai-chat; // "Open in Projects" (the AI's chat exists)
+    in property <string> fwd-name; // Forward to AI: the forwarded message's author and text ("" none)
+    in property <string> fwd-text;
+    in property <int> focus-rev; // bumps when the composer's field should take the focus (Reply, Forward, the switch)
     // panel
     in property <bool> panel;
     in property <string> p-name;
@@ -128,6 +146,7 @@ export global PersonsBus {
     in property <bool> menu-open;
     in property <length> menu-x;
     in property <length> menu-y;
+    in property <length> menu-w: 264px;
     // dialogs: "" | person | store | qr | confirm | rename
     in property <string> dialog;
     in property <string> d-title;
@@ -141,6 +160,9 @@ export global PersonsBus {
     in-out property <string> f-email;
     in-out property <string> f-whatsapp;
     in-out property <string> f-socials;
+    in-out property <string> f-store;
+    in-out property <string> f-subject;
+    in-out property <string> f-details;
     in property <[PChip]> f-chips;
     in property <[PChip]> f-lists;
     in property <[PChip]> f-colors;
@@ -170,6 +192,11 @@ export global PersonsBus {
     callback attach();
     callback clear-attached();
     callback toggle-ai();
+    callback set-to(string); // "ai" | "person"
+    callback cancel-forward();
+    callback open-ai-chat();
+    callback msg-unread(string); // Alt+Click on their message
+    callback card-act(string, string); // a site request card's button: (row id, open | edit | discard | local | dismiss | agent)
     callback save-notes(string);
     callback open-url(string);
     // a link in the AI's answer (markdown.slint reports selections too: ui.ts keeps web links only)
@@ -726,9 +753,12 @@ component Bubble {
             // Under the answer's text and buttons (they come later): a right-click anywhere else opens the menu.
             TouchArea {
                 z: -1;
+                // a right-click opens the menu; Alt+Click on their message marks it unread (Person Hub's)
                 pointer-event(e) => {
                     if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
                         root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    } else if e.kind == PointerEventKind.down && e.button == PointerEventButton.left && e.modifiers.alt && root.m.kind == "msg" && !root.m.mine {
+                        PersonsBus.msg-unread(root.m.id);
                     }
                 }
                 clicked => {
@@ -741,10 +771,150 @@ component Bubble {
     }
 }
 
+// A SpokPay site request proposed from a message (Headquarters' ProposalCard): what the store will read, the store and
+// category, who proposed it and why, then Open site request / Edit / Discard; or the agent still drafting it.
+component SiteCard {
+    in property <PMsg> m;
+    in property <length> max-w;
+    property <bool> drafting: m.kind == "proposing";
+    property <string> st: m.card-state;
+    property <color> ink: Theme.dark ? #b9a6ff : #6d4ad6;
+    height: row.preferred-height;
+    row := HorizontalLayout {
+        alignment: start;
+        padding-top: 8px;
+        padding-bottom: 2px;
+        Card {
+            width: min(root.max-w, 480px);
+            col := VerticalLayout {
+                padding-left: Ds.sp6;
+                padding-right: Ds.sp6;
+                padding-top: Ds.sp5;
+                padding-bottom: Ds.sp6;
+                spacing: Ds.sp3;
+                HorizontalLayout {
+                    spacing: Ds.sp3;
+                    Glyph {
+                        icon: Icons.file-plus;
+                        size: Ds.icon-xs;
+                        color: Ds.caps-fg;
+                    }
+                    Text {
+                        text: root.drafting ? (root.st == "failed" ? "SITE REQUEST · NOT DRAFTED" : "SITE REQUEST · DRAFTING…") : root.st == "opened" ? "SITE REQUEST · OPENED" : root.st == "opening" ? "SITE REQUEST · OPENING…" : root.st == "failed" ? "SITE REQUEST · NOT OPENED" : "SITE REQUEST · PROPOSED";
+                        font-size: Ds.t-caps;
+                        font-weight: 500;
+                        letter-spacing: Ds.caps-spacing * 1px;
+                        color: Ds.caps-fg;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "· " + root.m.time;
+                        font-size: Ds.t-caps;
+                        color: Ds.muted-fg;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    if root.m.card-chat: Btn {
+                        height: 16px;
+                        icon: Icons.external;
+                        size: BtnSize.icon-xs;
+                        variant: Variant.ghost-muted;
+                        tip: "The SpokPay agent's chat (Projects)";
+                        clicked => {
+                            PersonsBus.card-act(root.m.id, "agent");
+                        }
+                    }
+                }
+                Text {
+                    text: root.m.card-title;
+                    font-size: root.drafting ? Ds.t-sm : 15px;
+                    font-weight: root.drafting ? 400 : 600;
+                    color: root.drafting ? Theme.subtle : Theme.fg;
+                    wrap: word-wrap;
+                }
+                if !root.drafting && root.m.card-sub != "": Text {
+                    text: root.m.card-sub;
+                    font-size: 12.5px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                }
+                if !root.drafting && root.m.text != "": Text {
+                    text: root.m.text;
+                    font-size: Ds.t-sm;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+                if !root.drafting && root.m.card-why != "": Text {
+                    text: root.m.card-why;
+                    font-size: 12px;
+                    font-italic: true;
+                    color: Theme.subtle;
+                    wrap: word-wrap;
+                }
+                if root.m.card-note != "": Text {
+                    text: root.m.card-note;
+                    font-size: 12.5px;
+                    color: root.st == "opened" ? Ds.tone("green") : root.st == "failed" ? Theme.red-900 : Theme.subtle;
+                    wrap: word-wrap;
+                }
+                if root.st != "opened" && root.st != "opening": HorizontalLayout {
+                    padding-top: Ds.sp2;
+                    spacing: Ds.sp3;
+                    alignment: start;
+                    if root.drafting && root.st != "failed": Spinner { }
+                    if !root.drafting: Btn {
+                        text: root.st == "failed" ? "Try again" : "Open site request";
+                        size: BtnSize.xs;
+                        variant: Variant.primary;
+                        tip: "Sends it to SpokPay and the store";
+                        clicked => {
+                            PersonsBus.card-act(root.m.id, "open");
+                        }
+                    }
+                    if !root.drafting: Btn {
+                        text: "Edit";
+                        icon: Icons.pen-line;
+                        size: BtnSize.xs;
+                        variant: Variant.outline;
+                        clicked => {
+                            PersonsBus.card-act(root.m.id, "edit");
+                        }
+                    }
+                    if !root.drafting: Btn {
+                        text: "Discard";
+                        size: BtnSize.xs;
+                        variant: Variant.ghost-muted;
+                        clicked => {
+                            PersonsBus.card-act(root.m.id, "discard");
+                        }
+                    }
+                    if root.drafting: Btn {
+                        text: "Use the message";
+                        size: BtnSize.xs;
+                        variant: root.st == "failed" ? Variant.primary : Variant.outline;
+                        tip: "Skip the agent: the message itself becomes the proposal";
+                        clicked => {
+                            PersonsBus.card-act(root.m.id, "local");
+                        }
+                    }
+                    if root.drafting: Btn {
+                        text: root.st == "failed" ? "Dismiss" : "Cancel";
+                        size: BtnSize.xs;
+                        variant: Variant.ghost-muted;
+                        clicked => {
+                            PersonsBus.card-act(root.m.id, "dismiss");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component MsgRow {
     in property <PMsg> m;
     in property <length> max-w;
-    height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : bubble.preferred-height;
+    height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : m.kind == "proposal" || m.kind == "proposing" ? card.preferred-height : bubble.preferred-height;
     if root.m.kind == "day": Text {
         width: root.width;
         height: root.height;
@@ -793,6 +963,12 @@ component MsgRow {
             overflow: elide;
         }
     }
+    card := SiteCard {
+        width: root.width;
+        visible: root.m.kind == "proposal" || root.m.kind == "proposing";
+        m: root.m;
+        max-w: root.max-w;
+    }
     bubble := Bubble {
         width: root.width;
         visible: root.m.kind == "msg" || root.m.kind == "ai" || root.m.kind == "out";
@@ -804,147 +980,323 @@ component MsgRow {
     }
 }
 
-component Composer inherits Rectangle {
-    background: Theme.bg100;
-    height: col.preferred-height;
-    col := VerticalLayout {
-        padding: 12px;
-        padding-top: 8px;
+// A line over the field: the message being replied to, or the one forwarded to the AI (Person Hub's chips).
+component QuoteChip inherits Rectangle {
+    in property <string> glyph;
+    in property <string> lead;
+    in property <string> name;
+    in property <string> text;
+    in property <string> close-tip;
+    in property <bool> dashed;
+    callback close();
+    height: 32px;
+    border-radius: Ds.radius-md;
+    border-width: 1px;
+    border-color: root.dashed ? Theme.gray-600 : Theme.border;
+    background: Theme.bg200;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 2px;
         spacing: 6px;
-        if PersonsBus.reply-text != "": HorizontalLayout {
-            spacing: 6px;
-            Glyph {
-                icon: Icons.corner-up-right;
-                size: 13px;
-                color: Theme.subtle;
-            }
-            Text {
-                text: "Replying to " + PersonsBus.reply-text;
-                font-size: 12px;
-                color: Theme.subtle;
-                overflow: elide;
-                horizontal-stretch: 1;
-                vertical-alignment: center;
-            }
+        Glyph {
+            icon: root.glyph;
+            size: 13px;
+            color: Theme.subtle;
+        }
+        Text {
+            text: root.lead;
+            font-size: 12.5px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.name;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: Theme.fg;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.text;
+            font-size: 12.5px;
+            color: Theme.subtle;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        VerticalLayout {
+            alignment: center;
             Btn {
                 icon: Icons.x;
                 size: BtnSize.icon-xs;
                 variant: Variant.ghost-muted;
+                tip: root.close-tip;
                 clicked => {
-                    PersonsBus.cancel-reply();
+                    root.close();
                 }
             }
         }
-        if PersonsBus.attached != "": HorizontalLayout {
-            spacing: 6px;
-            Glyph {
-                icon: Icons.clip;
-                size: 13px;
-                color: Theme.subtle;
-            }
-            Text {
-                text: PersonsBus.attached;
-                font-size: 12px;
-                color: Theme.fg;
-                overflow: elide;
-                horizontal-stretch: 1;
-                vertical-alignment: center;
-            }
-            Btn {
-                icon: Icons.x;
-                size: BtnSize.icon-xs;
-                variant: Variant.ghost-muted;
-                clicked => {
-                    PersonsBus.clear-attached();
-                }
-            }
-        }
-        if PersonsBus.c-gmail && !PersonsBus.ai-mode: Input {
-            hint: "Subject (empty: reply in the latest thread)";
-            text <=> PersonsBus.subject;
-        }
+    }
+}
+
+// The composer (Person Hub's Chat.tsx): a card with who it goes to on top ("To <person>", or "Note to the AI · never
+// sent to them" in the AI's tint), then the first email's subject, the reply or the forwarded message, the files, the
+// field (or why it can't write to them), and the actions: attach (Open in Projects for the AI), the "To: AI | <person>"
+// switch, Send. Enter sends, Shift+Enter is a new line, Esc drops the reply or the forward.
+component Composer inherits Rectangle {
+    property <bool> ai: PersonsBus.ai-mode;
+    property <color> ai-ink: Theme.dark ? #b9a6ff : #6d4ad6;
+    property <bool> writes: root.ai || PersonsBus.c-can-send;
+    property <bool> has-text: PersonsBus.draft != "";
+    property <bool> focused;
+    height: wrap.preferred-height;
+    wrap := VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 6px;
+        padding-bottom: 14px;
         Rectangle {
-            height: min(180px, max(44px, field.preferred-height + 22px));
             border-radius: Ds.radius-xl;
             border-width: 1px;
-            border-color: PersonsBus.ai-mode ? (Theme.dark ? #6d4ad6 : #b9a6ff) : field.has-focus ? Theme.gray-1000 : Theme.border;
-            background: Theme.bg100;
-            HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 6px;
-                spacing: 4px;
-                VerticalLayout {
-                    alignment: end;
-                    padding-bottom: 6px;
-                    Btn {
-                        icon: Icons.sparkles;
-                        size: BtnSize.icon-sm;
-                        variant: PersonsBus.ai-mode ? Variant.secondary : Variant.ghost-muted;
-                        tip: PersonsBus.ai-mode ? "Writing to the Person AI (click to write to them)" : "Ask the Person AI instead";
-                        clicked => {
-                            PersonsBus.toggle-ai();
-                        }
-                    }
-                }
-                FocusScope {
-                    horizontal-stretch: 1;
-                    key-pressed(e) => {
-                        if e.text == Key.Return && !e.modifiers.shift {
-                            PersonsBus.send();
-                            return accept;
-                        }
-                        return reject;
-                    }
-                    Rectangle {
-                        if field.text == "": Text {
-                            x: 4px;
-                            width: parent.width - 8px;
-                            text: PersonsBus.ai-mode ? "Ask the Person AI about " + PersonsBus.c-name + "…" : PersonsBus.c-connected ? "Message " + PersonsBus.c-name : "Not connected: sign in from the section's +";
-                            font-size: Ds.t-body;
-                            color: Theme.gray-800;
-                            vertical-alignment: center;
-                        }
-                        field := TextInput {
-                            x: 4px;
-                            width: parent.width - 8px;
-                            text <=> PersonsBus.draft;
-                            font-size: Ds.t-body;
-                            color: Theme.fg;
-                            wrap: word-wrap;
-                            single-line: false;
-                            vertical-alignment: center;
-                            selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
-                            selection-foreground-color: Theme.fg;
-                            edited => {
-                                PersonsBus.typing();
+            border-color: root.ai ? root.ai-ink.with-alpha(Theme.dark ? 0.55 : 0.45) : root.focused ? Theme.gray-600 : Theme.border;
+            background: root.ai ? (Theme.dark ? #1a1726 : #fbfaff) : Theme.bg100;
+            VerticalLayout {
+                // who it goes to
+                HorizontalLayout {
+                    height: 40px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 8px;
+                    if root.ai: VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 10px;
+                            background: Theme.fg;
+                            Glyph {
+                                icon: Icons.sparkles;
+                                size: 11px;
+                                color: Theme.bg100;
                             }
                         }
                     }
-                }
-                if !PersonsBus.ai-mode: VerticalLayout {
-                    alignment: end;
-                    padding-bottom: 6px;
-                    Btn {
-                        icon: Icons.clip;
-                        size: BtnSize.icon-sm;
-                        variant: Variant.ghost-muted;
-                        tip: "Attach files";
-                        clicked => {
-                            PersonsBus.attach();
+                    if !root.ai: VerticalLayout {
+                        alignment: center;
+                        Avatar {
+                            size: 20px;
+                            initials: PersonsBus.c-initials;
+                            color: PersonsBus.c-color;
+                            photo: PersonsBus.c-avatar;
+                            has-photo: PersonsBus.c-has-avatar;
                         }
                     }
+                    if root.ai: Text {
+                        text: "Note to the AI";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if root.ai: Text {
+                        text: "Never sent to " + PersonsBus.c-name;
+                        font-size: 11.5px;
+                        color: Theme.gray-800;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if !root.ai: Text {
+                        text: "To";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    if !root.ai: Text {
+                        text: PersonsBus.c-name;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.fg;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: root.ai ? root.ai-ink.with-alpha(0.25) : Theme.border;
                 }
                 VerticalLayout {
-                    alignment: end;
-                    padding-bottom: 6px;
-                    Btn {
-                        icon: Icons.send;
-                        size: BtnSize.icon-sm;
-                        variant: PersonsBus.draft != "" || PersonsBus.attached != "" ? Variant.primary : Variant.ghost-muted;
-                        enabled: PersonsBus.draft != "" || PersonsBus.attached != "";
-                        tip: "Send (Enter)";
-                        clicked => {
-                            PersonsBus.send();
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 10px;
+                    padding-bottom: 8px;
+                    spacing: 8px;
+                    if !root.ai && PersonsBus.c-need-subject: Input {
+                        hint: "Subject (first email)";
+                        text <=> PersonsBus.subject;
+                    }
+                    if !root.ai && PersonsBus.reply-name != "": QuoteChip {
+                        glyph: Icons.reply;
+                        lead: "Replying to";
+                        name: PersonsBus.reply-name;
+                        text: PersonsBus.reply-text;
+                        close-tip: "Cancel reply (Esc)";
+                        close => {
+                            PersonsBus.cancel-reply();
+                        }
+                    }
+                    if root.ai && PersonsBus.fwd-name != "": QuoteChip {
+                        glyph: Icons.forward;
+                        lead: "Forwarding";
+                        name: PersonsBus.fwd-name;
+                        text: PersonsBus.fwd-text;
+                        dashed: true;
+                        close-tip: "Cancel forward (Esc)";
+                        close => {
+                            PersonsBus.cancel-forward();
+                        }
+                    }
+                    if PersonsBus.attached != "": QuoteChip {
+                        glyph: Icons.file;
+                        lead: "";
+                        name: PersonsBus.attached;
+                        close-tip: "Remove the files";
+                        close => {
+                            PersonsBus.clear-attached();
+                        }
+                    }
+                    if !root.writes: Text {
+                        text: PersonsBus.c-blocked;
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        wrap: word-wrap;
+                    }
+                    if root.writes: FocusScope {
+                        height: min(192px, max(32px, field.preferred-height + 10px));
+                        key-pressed(e) => {
+                            if e.text == Key.Return && !e.modifiers.shift {
+                                PersonsBus.send();
+                                return accept;
+                            }
+                            if e.text == Key.Escape && !root.ai && PersonsBus.reply-name != "" {
+                                PersonsBus.cancel-reply();
+                                return accept;
+                            }
+                            if e.text == Key.Escape && root.ai && PersonsBus.fwd-name != "" {
+                                PersonsBus.cancel-forward();
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        Rectangle {
+                            clip: true;
+                            if field.text == "": Text {
+                                x: 4px;
+                                width: parent.width - 8px;
+                                text: PersonsBus.c-hint;
+                                font-size: Ds.t-body;
+                                color: Theme.gray-800;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            field := TextInput {
+                                x: 4px;
+                                width: parent.width - 8px;
+                                text <=> PersonsBus.draft;
+                                font-size: Ds.t-body;
+                                color: Theme.fg;
+                                wrap: word-wrap;
+                                single-line: false;
+                                vertical-alignment: center;
+                                selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+                                selection-foreground-color: Theme.fg;
+                                edited => {
+                                    PersonsBus.typing();
+                                }
+                                changed has-focus => {
+                                    root.focused = self.has-focus;
+                                }
+                                property <int> want: PersonsBus.focus-rev;
+                                changed want => {
+                                    self.focus();
+                                }
+                            }
+                        }
+                    }
+                    // attach (+ Open in Projects for the AI), the recipient switch, send
+                    HorizontalLayout {
+                        height: 32px;
+                        spacing: 6px;
+                        Btn {
+                            icon: Icons.clip;
+                            size: BtnSize.icon-sm;
+                            variant: Variant.ghost-muted;
+                            enabled: root.writes;
+                            tip: root.ai ? "Attach files for the AI" : "Attach files";
+                            clicked => {
+                                PersonsBus.attach();
+                            }
+                        }
+                        if root.ai: Btn {
+                            icon: Icons.maximize;
+                            size: BtnSize.icon-sm;
+                            variant: Variant.ghost-muted;
+                            enabled: PersonsBus.has-ai-chat;
+                            tip: PersonsBus.has-ai-chat ? "Open the AI's chat in Projects" : "Open in Projects (after the first note)";
+                            clicked => {
+                                PersonsBus.open-ai-chat();
+                            }
+                        }
+                        if PersonsBus.c-ai-on: HorizontalLayout {
+                            horizontal-stretch: 0;
+                            padding-left: 4px;
+                            spacing: 6px;
+                            Text {
+                                text: "To";
+                                font-size: 12.5px;
+                                color: Theme.subtle;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                PillSwitch {
+                                    a-glyph: Icons.sparkles;
+                                    a-text: "AI";
+                                    a-tip: "Write to their AI (never sent to them)";
+                                    b-glyph: Icons.message;
+                                    b-text: PersonsBus.c-name;
+                                    b-tip: "Write to " + PersonsBus.c-name;
+                                    b-on: !root.ai;
+                                    pick(b) => {
+                                        PersonsBus.set-to(b ? "person" : "ai");
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                        if root.ai: Btn {
+                            icon: Icons.arrow-up;
+                            size: BtnSize.icon-sm;
+                            variant: Variant.outline;
+                            enabled: root.has-text || PersonsBus.fwd-name != "" || PersonsBus.attached != "";
+                            tip: "Send to the AI (Enter)";
+                            clicked => {
+                                PersonsBus.send();
+                            }
+                        }
+                        if !root.ai: Btn {
+                            text: "Send";
+                            trailing: Icons.arrow-up;
+                            size: BtnSize.sm;
+                            variant: root.writes && (root.has-text || PersonsBus.attached != "") ? Variant.primary : Variant.secondary;
+                            enabled: root.writes && (root.has-text || PersonsBus.attached != "");
+                            tip: "Send (Enter)";
+                            clicked => {
+                                PersonsBus.send();
+                            }
                         }
                     }
                 }
@@ -1053,6 +1405,12 @@ component ChatPane inherits Rectangle {
             sv := ScrollView {
                 property <length> max-w: min(640px, self.visible-width * 0.78);
                 changed content-height => {
+                    if root.at-bottom {
+                        self.content-y = min(0px, self.visible-height - self.content-height);
+                    }
+                }
+                // the composer grew (a reply, a forward, a longer text): the newest message stays in sight
+                changed visible-height => {
                     if root.at-bottom {
                         self.content-y = min(0px, self.visible-height - self.content-height);
                     }
@@ -1338,6 +1696,7 @@ component Panel inherits PanelSurface {
 // ---------- popups (ds-surface.slint's MenuPanel and DialogFrame) ----------
 
 component Menu inherits MenuPanel {
+    menu-w: PersonsBus.menu-w;
     for it in PersonsBus.menu: Rectangle {
         height: it.sep ? 9px : it.header ? 28px : it.sub != "" ? 44px : 32px;
         // Each entry fills its slot (without a size a child of a Rectangle gets its preferred width, 0, and is
@@ -1365,6 +1724,7 @@ component Menu inherits MenuPanel {
             icon: parent.brand ? " " : it.icon;
             label: it.label;
             desc: it.sub;
+            hint: it.hint;
             danger: it.danger;
             enabled: !it.disabled;
             clicked => {
@@ -1462,6 +1822,30 @@ component Dialog inherits DialogFrame {
             label: "Socials";
             hint: "TikTok, Instagram, YouTube links (space separated)";
             text <=> PersonsBus.f-socials;
+        }
+    }
+    if PersonsBus.dialog == "proposal": VerticalLayout {
+        spacing: 12px;
+        Field {
+            label: "Store";
+            hint: "Its SpokPay slug (loja-exemplo)";
+            text <=> PersonsBus.f-store;
+        }
+        Field {
+            label: "Subject";
+            hint: "What the store reads first";
+            text <=> PersonsBus.f-subject;
+        }
+        VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: "Details";
+            }
+            TextBox {
+                hint: "What to change, where, by when";
+                min-h: 96px;
+                text <=> PersonsBus.f-details;
+            }
         }
     }
     if PersonsBus.dialog == "store": Field {

@@ -411,6 +411,98 @@ export component Toast inherits PopoverFrame {
 
 // ---------- controls ----------
 
+component PillSegment {
+    in property <string> glyph;
+    in property <string> text;
+    in property <string> tip;
+    in property <bool> on;
+    callback clicked();
+    min-width: 24px + (root.glyph != "" ? 14px : 0px);
+    preferred-width: row.preferred-width;
+    max-width: row.preferred-width;
+    property <color> ink: root.on ? Theme.bg100 : area.has-hover ? Theme.fg : Theme.subtle;
+    Rectangle {
+        border-radius: root.height / 2;
+        background: root.on ? Theme.fg : transparent;
+    }
+    row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 5px;
+        if root.glyph != "": Glyph {
+            icon: root.glyph;
+            size: 13px;
+            color: root.ink;
+        }
+        Text {
+            text: root.text;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: root.ink;
+            vertical-alignment: center;
+            overflow: elide;
+            min-width: 0px;
+        }
+    }
+    area := TipArea {
+        tip: root.tip;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+/** A two-way switch as a pill of two segments (glyph + label each); the chosen one in the ink fill. Persons' composer
+ *  "To: AI | <person>". The second label elides when it runs out of room. */
+export component PillSwitch {
+    in property <string> a-glyph;
+    in property <string> a-text;
+    in property <string> b-glyph;
+    in property <string> b-text;
+    in property <string> a-tip;
+    in property <string> b-tip;
+    // the second segment is the chosen one
+    in property <bool> b-on;
+    callback pick(bool);
+    height: 28px;
+    min-width: a.min-width + 40px;
+    preferred-width: a.preferred-width + b.preferred-width + 6px;
+    max-width: self.preferred-width;
+    horizontal-stretch: 0;
+    Rectangle {
+        border-radius: root.height / 2;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.bg100;
+    }
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        a := PillSegment {
+            glyph: root.a-glyph;
+            text: root.a-text;
+            tip: root.a-tip;
+            on: !root.b-on;
+            horizontal-stretch: 0;
+            clicked => {
+                root.pick(false);
+            }
+        }
+        b := PillSegment {
+            glyph: root.b-glyph;
+            text: root.b-text;
+            tip: root.b-tip;
+            on: root.b-on;
+            horizontal-stretch: 1;
+            clicked => {
+                root.pick(true);
+            }
+        }
+    }
+}
+
+
 /** A pill: a choice in a row of them (a filter, a goal type, a store a person is in), a quick action (+250 ml, Start).
  *  On: the primary fill. `sm`: 26px (dense choices), else 32px. */
 export component Chip {

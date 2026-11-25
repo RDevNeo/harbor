@@ -6,6 +6,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- Hub Persons: a message's right-click menu (long-press on Android) is Person Hub's: Reply, Forward to AI, Open Site
+  Request | Copy text, Open attachment | Mark as unread (Alt+Click on the PC), with Lucide icons (reply, forward,
+  file-plus and mail-warning added to the font subset), hairlines between groups and nothing in red; compact (208px).
+  **Open Site Request** shows where the person panel has site requests (SpokPay people and store owners, or a chat with
+  a proposal, once the SpokPay key is saved): SpokPay's agent drafts the proposal in a chat of the SpokPay project and
+  it lands in the person's chat as a card (subject, store, category, details, why) with Open site request, Edit and
+  Discard (the message itself when there's no agent). **Forward to AI** switches the composer to the AI with the
+  message quoted; the note carries it (and its images / PDFs as files on the PC) and shows as a quote in the thread.
+- Hub Persons: the composer is Person Hub's, on the PC and Android: a card with who it goes to on top ("To <person>"
+  with their picture, or "Note to the AI · Never sent to <person>" in the AI's tint), then the first email's subject
+  (Gmail with no thread yet, required), the reply or the forwarded message, the files, the field (or why it can't write
+  to them), and the actions: attach, Open in Projects (the AI's chat), the "To: AI | <person>" switch and Send. Each
+  recipient keeps its own draft per chat.
 - Hub Persons: the Person AI's answers in a person's chat draw their markdown as Projects' chat does (bold, italics,
   lists, inline code, links, paragraphs) instead of raw `**`/`- `, and each ```` ```reply ```` draft as a card in the
   user's bubble colour with "Use as reply" (into the composer) and Copy, on the PC and on Android (the engine splits

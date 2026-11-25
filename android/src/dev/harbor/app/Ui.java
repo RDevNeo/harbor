@@ -67,6 +67,7 @@ final class Ui {
             I_CIRCLE_CHECK = "", I_CIRCLE_X = "", I_WEBHOOK = "", I_ACTIVITY = "",
             I_ROTATE = "", I_PLAY = "", I_UP_CHEVRON = "",
             I_CHEV_LEFT = "\ue06e", I_CHEV_RIGHT = "\ue06f",
+            I_REPLY = "\ue22a", I_FORWARD = "\ue229", I_FILE_PLUS = "\ue0c9", I_MAIL_WARNING = "\ue367", I_MESSAGE = "\ue116",
             I_PAUSE = "\ue12e", I_VOLUME = "\ue1ab", I_VOLUME_X = "\ue1ac", I_MAXIMIZE = "\ue113", I_MINIMIZE = "\ue11b",
             I_PANEL_RIGHT = "\ue431", I_PR_OPEN = "\ue555", I_PR_DRAFT = "\ue35b", I_PR_CLOSED = "\ue35a",
             I_MERGE = "\ue0e4", I_CIRCLE_DOT = "\ue345", I_CIRCLE_SLASH = "\ue402", I_CIRCLE_DASHED = "\ue4b0",

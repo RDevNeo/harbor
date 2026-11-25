@@ -115,6 +115,10 @@ export const GLYPHS = {
   CORNER_UP_RIGHT: "\u{e0a8}",
   LIST_ORDERED: "\u{e1d1}",
   REDO_2: "\u{e2a0}",
+  REPLY: "\u{e22a}",
+  FORWARD: "\u{e229}",
+  FILE_PLUS: "\u{e0c9}",
+  MAIL_WARNING: "\u{e367}",
 } as const;
 
 export type GlyphName = keyof typeof GLYPHS;

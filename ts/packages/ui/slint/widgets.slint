@@ -659,6 +659,8 @@ export component MenuItem {
     in property <bool> enabled: true;
     // A destructive entry (Delete…): its label and icon in red.
     in property <bool> danger;
+    // A shortcut on the right ("Alt+Click"), small and muted.
+    in property <string> hint;
     callback clicked;
     height: (desc != "" ? 44px : 32px);
     opacity: enabled ? 1 : 0.5;
@@ -675,10 +677,19 @@ export component MenuItem {
         size: 16px;
         color: root.danger ? Theme.red-900 : Theme.subtle;
     }
+    if root.hint != "": Text {
+        x: parent.width - self.width - 8px;
+        y: 0px;
+        height: 32px;
+        text: root.hint;
+        font-size: 11.5px;
+        color: Theme.gray-800;
+        vertical-alignment: center;
+    }
     Text {
         x: root.icon != "" ? 32px : 8px;
         y: 7px;
-        width: parent.width - self.x - (root.checked ? 32px : 8px);
+        width: parent.width - self.x - (root.checked ? 32px : 8px) - (root.hint != "" ? 72px : 0px);
         text: root.label;
         font-size: 14px;
         color: root.danger ? Theme.red-900 : Theme.fg;

@@ -63,6 +63,34 @@ export function spError(e: unknown): { code: string; message: string } {
   return m ? { code: m[1] ?? "", message: m[2] ?? "" } : { code: /^[A-Z0-9_]+$/.test(code) ? code : "", message: raw };
 }
 
+// ---------- where site requests are offered ----------
+
+/** The person panel offers SpokPay site requests for SpokPay people and store owners (PersonSpokpay.tsx wantsSpokpay). */
+export function wantsSpokpay(p: Pick<Person, "id" | "listIds">, data: Pick<AppData, "stores">): boolean {
+  return p.listIds.includes("spokpay") || data.stores.some((s) => s.ownerId === p.id);
+}
+
+/**
+ * "Open Site Request" in a message's menu (Person Hub d210e5a, f9c095e): wherever the person panel has site requests
+ * (SpokPay people and store owners, or a chat that already has a proposal), once SpokPay is connected, even when the
+ * key can't open them (the proposal card says so then).
+ */
+export function offersSiteRequests(o: { connected: boolean; person: Pick<Person, "id" | "listIds">; data: Pick<AppData, "stores">; proposals: number }): boolean {
+  return o.connected && (wantsSpokpay(o.person, o.data) || o.proposals > 0);
+}
+
+/** The images a proposal can carry: the message's first, then the conversation's newest (Person Hub's chatImages). */
+export function chatImages(message: Pick<Message, "attachments" | "voice"> | undefined, recent: readonly Pick<Message, "attachments" | "voice">[] = []): { url: string; name: string; type: string; picked: boolean }[] {
+  const out: { url: string; name: string; type: string; picked: boolean }[] = [];
+  const isImage = (a: { name: string; type?: string }, voice?: boolean): boolean => !voice && ((a.type ?? "").toLowerCase().startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(a.name));
+  const take = (m: Pick<Message, "attachments" | "voice">, own: boolean): void => {
+    for (const a of m.attachments ?? []) if (a?.url && isImage(a, m.voice) && !out.some((x) => x.url === a.url)) out.push({ url: a.url, name: a.name || "image", type: a.type ?? "", picked: own && out.filter((x) => x.picked).length < 5 });
+  };
+  if (message) take(message, true);
+  for (const m of [...recent].reverse()) take(m, false);
+  return out.slice(0, 20);
+}
+
 // ---------- which SpokPay store a person is ----------
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/;
