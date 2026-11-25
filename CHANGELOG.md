@@ -15,6 +15,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   Identities, Stores and lists and Settled sections are gone (PC and Android). Identities are edited with Edit (PC; the
   phone has no editor for them and no longer lists them); Settle / Unsettle is in a person's right-click menu (PC) and
   long-press menu (Android), in All people as "Settle in <section>" for each section they're in.
+- Hub Persons: people's rows (sidebar and All people, PC and Android) no longer carry the channel mark (Gmail / Discord /
+  WhatsApp) after the name; name, crown, status line, time and unread stay.
 - Hub: agents' Discord tools (the `discord` app: the same 31 tools, names and arguments) run on the **Persons tab's
   Discord connection** (Stores, account #1; `<persons>/agents.json` `{"discord": "<id>"}` or `PUT v1/persons/agent/discord`
   picks another), over Discord's API and gateway in Bun: no Electron, Vencord or Chromium anywhere, nothing downloaded.

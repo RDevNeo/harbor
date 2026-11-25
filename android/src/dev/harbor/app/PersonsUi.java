@@ -384,7 +384,7 @@ final class PersonsUi {
         return avatar(a, hub, s(person, "avatar"), s(person, "initials"), color(s(person, "color"), Ui.G500), size, presence);
     }
 
-    /** One person as Person Hub's PersonRow: avatar with presence, bold name + channel mark (+ a
+    /** One person as Person Hub's PersonRow: avatar with presence, bold name (no channel mark; + a
      *  crown for a store's owner), the status line under it coloured by its tone, and on the right
      *  "typing…" or the time of the last message over the unread count. */
     static LinearLayout row(Activity a, Hub hub, JSONObject person, String section, boolean owner) {
@@ -399,8 +399,6 @@ final class PersonsUi {
         LinearLayout top = Ui.row(a);
         TextView name = Ds.rowTitle(a, s(person, "name"), true, Ui.FG);
         top.addView(name, new LinearLayout.LayoutParams(-2, -2, 0));
-        String ch = s(info, "channel");
-        if (!ch.isEmpty()) top.addView(channel(a, ch, 14), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 6, 0, 0, 0));
         if (owner) {
             TextView crown = Ui.text(a, "♛", 13, Ui.AMBER);
             crown.setContentDescription("Store owner");

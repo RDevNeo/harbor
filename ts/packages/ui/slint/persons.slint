@@ -190,7 +190,7 @@ export global PersonsBus {
 
 // ---------- rows (ds-list.slint's ListRow, SectionHead, FoldBar) ----------
 
-// One person: avatar with presence, name, channel mark (+ crown), the status line under it, time and unread on the right.
+// One person: avatar with presence, name (+ crown; no channel mark), the status line under it, time and unread on the right.
 component PersonRow inherits ListRow {
     in property <PRow> r;
     active: r.active;
@@ -213,13 +213,6 @@ component PersonRow inherits ListRow {
     }
     menu(x, y) => {
         PersonsBus.row-menu(root.r.id, root.r.section, root.r.store, x, y);
-    }
-    if root.r.channel != "": VerticalLayout {
-        alignment: center;
-        ChannelMark {
-            kind: root.r.channel;
-            size: 12px;
-        }
     }
     if root.r.owner: Text {
         text: "♛";
