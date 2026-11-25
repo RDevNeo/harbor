@@ -42,8 +42,35 @@ export interface Person {
   socials?: string[];
   /** Kept from version 1 (no longer shown). */
   tags?: string[];
+  /** People linked into this one (Link with…): the same human on other channels. Unlink brings each back. */
+  links?: PersonLink[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** One person linked into another (model/link.ts): who they were, and what the link gave the person they joined. */
+export interface PersonLink {
+  /** The person as they were just before Link (same id, identities, notes, read state; their own links inside). */
+  person: Person;
+  /** When they were linked. */
+  at: string;
+  /** What Link added to the person they joined: Unlink takes back what is still the same. */
+  added: LinkAdded;
+}
+
+export interface LinkAdded {
+  /** Their identifiers and profile fields copied into empty ones (name → value as copied). */
+  fields: Record<string, string | boolean | null>;
+  identities: Identity[];
+  storeIds: string[];
+  listIds: string[];
+  socials: string[];
+  /** The text their notes added (appended under the person's own). */
+  notes: string;
+  /** Stores they owned, now owned by the person they joined. */
+  owned: string[];
+  /** Sections where the person was settled and the link made them active (they weren't): settled again by Unlink. */
+  unsettled?: Record<string, string>;
 }
 
 export interface Identity {

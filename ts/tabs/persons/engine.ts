@@ -3,7 +3,8 @@
 // HUB_PERSONS_OFFLINE=1 (or Hub's HARBOR_OFFLINE=1) starts it without connections or background reads, conversations from
 // the caches on disk (the screenshot rig); HARBOR_PERSONS_DIR points it at another folder (a copy of the data).
 import { desktop } from "../../packages/os/src/index.ts";
-import { AgentDiscord, createSocials, createSpokpay, SiteRequests, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
+import { AgentDiscord, AudioService, createSocials, createSpokpay, SiteRequests, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
+import { dictate } from "../../packages/media/src/index.ts";
 import { parseSocialUrl, PLATFORM_LABEL, socialHandle } from "../../packages/persons/src/socials.ts";
 import type { Call, Reply } from "../../packages/net/src/index.ts";
 import type { TabEngine } from "../api.ts";
@@ -13,6 +14,7 @@ import { discord as agentsDiscord } from "../../packages/mcp/src/index.ts";
 let service: PersonsService | null = null;
 let socials: Socials | null = null;
 let routes: PersonsRoutes | null = null;
+let audio: AudioService | null = null;
 
 export const personsEngine: TabEngine = {
   id: "persons",
@@ -56,7 +58,9 @@ export const personsEngine: TabEngine = {
     const spokpay = createSpokpay({ dir, log: (...a) => ctx.log(a.map(String).join(" ")) });
     if (!offline) spokpay.start();
     const sites = new SiteRequests(spokpay, async (m, p, q, b) => ctx.call(m, p, q, b), () => svc.touch(), (url, name, account) => svc.fetchAttachment(url, name, account));
-    routes = new PersonsRoutes(service, { agent, sites, ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
+    // voice messages: played here (ffmpeg into PipeWire…), transcribed with the composer mic's speech to text
+    audio = new AudioService({ dir, changed: () => svc.touch(), log: (...a) => ctx.log(a.map(String).join(" ")), transcribe: (samples) => dictate.local(samples, "auto") });
+    routes = new PersonsRoutes(service, { agent, sites, audio, ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
     service.onChange(() => ctx.changed());
     await service.start();
   },
@@ -67,6 +71,7 @@ export const personsEngine: TabEngine = {
   },
   async stop() {
     agentsDiscord.provide(null);
+    audio?.close();
     await service?.stop();
     await socials?.flush().catch(() => {});
   },

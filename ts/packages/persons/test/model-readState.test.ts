@@ -78,15 +78,18 @@ describe('badges across a restart', () => {
     expect(unreadSince(c, '2026-11-24T17:35:49.498Z', undefined)).toBe(0)
   })
 
-  it('opening a person goes to the chat with their unread messages', () => {
+  it('the composer sends on the chat of their latest message (the timeline shows every chat)', () => {
     const conns = shellAfterStart()
     const p = normalizeData(DISK).people[0]!
-    // spokpay has the unread ones, stores the most recent conversation
-    const seenStores: Person = { ...p, seen: { [`stores:${EVELLIN}`]: '2026-11-24T20:27:41.464000+00:00' } }
-    expect(defaultChat(seenStores, conns.slice(0, 2), READ_SINCE)?.id).toBe('spokpay')
-    // nothing unread: the most recent conversation
-    const allSeen: Person = { ...seenStores, seen: { ...seenStores.seen, [`spokpay:${EVELLIN}`]: '2026-11-24T18:01:48.961000+00:00' } }
-    expect(defaultChat(allSeen, conns.slice(0, 2), READ_SINCE)?.id).toBe('stores')
+    const chats = conns.slice(0, 2).map((conn) => ({ conn, peer: EVELLIN }))
+    // stores has their latest message (20:10; spokpay's is 18:01), whatever is unread
+    expect(defaultChat(p, chats, READ_SINCE)?.conn.id).toBe('stores')
+    // their latest message on spokpay: spokpay
+    const later = [chats[0]!, { conn: { ...conns[1]!, convos: { [EVELLIN]: conv(msg('6', '2026-11-24T21:00:00.000Z')) } }, peer: EVELLIN }]
+    expect(defaultChat(p, later, READ_SINCE)?.conn.id).toBe('spokpay')
+    // none of theirs anywhere: the most recent conversation
+    const mine = chats.map((c) => ({ ...c, conn: { ...c.conn, convos: { [EVELLIN]: conv(msg(`x${c.conn.id}`, c.conn.id === 'spokpay' ? '2026-11-25T00:00:00Z' : '2026-11-24T00:00:00Z', true)) } } }))
+    expect(defaultChat(p, mine, READ_SINCE)?.conn.id).toBe('spokpay')
   })
 })
 

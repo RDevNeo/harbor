@@ -144,6 +144,16 @@ export class PersonAi implements AiPort {
     return this.chats[this.key(p, s)] ?? null;
   }
 
+  /** Every AI chat remembered for a person, by section (Link keeps a linked person's chats under their own id). */
+  chatsOf(p: Person): { section: SectionId; chat: string }[] {
+    const out: { section: SectionId; chat: string }[] = [];
+    for (const [k, chat] of Object.entries(this.chats)) {
+      const i = k.lastIndexOf(":");
+      if (k.slice(0, i) === p.id) out.push({ section: k.slice(i + 1) as SectionId, chat });
+    }
+    return out;
+  }
+
   async items(p: Person, s: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]> {
     const chat = this.chats[this.key(p, s)] ?? (await this.locate(p, s)).chat;
     if (!chat) return [];

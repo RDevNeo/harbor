@@ -57,9 +57,59 @@ export function peerOf(p: Person, kind: ChannelKind, section?: SectionId): strin
   return p.discordId
 }
 
-/** Every identifier the person has on a kind (default and per-section), for tracking and duplicates. */
+/** Every identifier the person has on a kind (default and per-section, theirs and their linked people's), for tracking and duplicates. */
 export function allPeers(p: Person, kind: ChannelKind): string[] {
-  return [...new Set([peerOf(p, kind), ...(p.identities ?? []).filter((i) => i.kind === kind).map((i) => i.value)].filter((v) => validPeer(kind, v)))]
+  return [...new Set(facets(p).flatMap((f) => [peerOf(f, kind), ...(f.identities ?? []).filter((i) => i.kind === kind).map((i) => i.value)]).filter((v) => validPeer(kind, v)))]
+}
+
+/**
+ * The person and everyone linked into them (Link with…, link.ts), each with the person's own stores and lists: one
+ * human on several channels. Their own identifiers come first.
+ */
+export function facets(p: Person): Person[] {
+  const out: Person[] = [p]
+  const walk = (x: Person, depth: number): void => {
+    for (const l of x.links ?? []) {
+      out.push({ ...l.person, storeIds: p.storeIds, listIds: p.listIds })
+      if (depth < 8) walk(l.person, depth + 1)
+    }
+  }
+  walk(p, 0)
+  return out
+}
+
+/** One chat with a person: a connection and who they are on it. */
+export interface ChatRef<T extends ConnMeta = ConnMeta> {
+  conn: T
+  peer: string
+}
+
+/** A chat's key ("<connection id>:<identifier>", as read state's): what the API's `account` carries. */
+export const chatKey = (c: { conn: { id: string }; peer: string }) => seenKey(c.conn.id, c.peer)
+
+/**
+ * Every chat a person has from a section (channelsFor over them and their linked people): one per connection and
+ * identifier, so two WhatsApp numbers of a linked person are two chats on the same connection.
+ */
+export function chatsFor<T extends ConnMeta>(p: Person, conns: T[], from: SectionId | null): ChatRef<T>[] {
+  const out: ChatRef<T>[] = []
+  const seen = new Set<string>()
+  for (const f of facets(p)) {
+    for (const conn of channelsFor(f, conns, from)) {
+      const peer = peerOf(f, conn.kind, conn.section)
+      const k = seenKey(conn.id, peer)
+      if (seen.has(k)) continue
+      seen.add(k)
+      out.push({ conn, peer })
+    }
+  }
+  return out
+}
+
+/** The chat an API call names: `account` is a chat key (or a connection id alone: its first chat), else none. */
+export function pickChat<T extends ConnMeta>(chats: ChatRef<T>[], account: string | null | undefined): ChatRef<T> | undefined {
+  if (!account) return undefined
+  return chats.find((c) => chatKey(c) === account) ?? chats.find((c) => c.conn.id === account)
 }
 
 /** Read-state key of a chat: the connection and who the person is on it. */
