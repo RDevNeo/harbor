@@ -7,13 +7,17 @@
 // Repeatable: each run copies what changed in Person Hub since the last run (manifest: <to>/.import.json). A file Hub
 // changed since it was imported is kept (reported as "kept: changed in Hub") unless --force; anything overwritten is
 // first saved under <to>/.import-backup/<time>/. WhatsApp's linked-device keys are copied only with --sessions (the
-// cutover, with Person Hub stopped): two programs on one linked device's keys would break it. Discord and Gmail
-// sessions are copied always (several clients on one login are normal).
+// cutover, with Person Hub stopped): two programs on one linked device's keys would break it. Gmail's sign-in is copied
+// always; each Discord login is read once (read-only, no browser: src/import/leveldb.ts) from Person Hub's saved
+// session in ~/.config/Creators Hub and kept in the desktop keyring (src/tokens.ts), never printed. Several clients on
+// one Discord or Gmail login are normal.
 // Verified by counts (people, stores, lists, notes, read marks, conversations and messages per cache, WhatsApp chats,
-// pictures) of the source and the copy; exit 1 when they differ. Prints names and counts only, never contents.
+// pictures, Discord logins) of the source and the copy; exit 1 when they differ. Prints names and counts only, never contents.
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { paths } from "@harbor/os";
+import { discordToken } from "../src/import/leveldb.ts";
+import { tokenStore } from "../src/tokens.ts";
 import { dirname, join, relative } from "node:path";
 
 const args = process.argv.slice(2);
@@ -25,7 +29,7 @@ const opt = (f: string, d: string): string => {
 const DRY = flag("--dry-run");
 const SESSIONS = flag("--sessions");
 const FORCE = flag("--force");
-// Person Hub's data folder and Electron profile, and Hub's (the system's data and config folders: @harbor/os)
+// Person Hub's data folder and its app profile (saved Discord sessions), and Hub's (the system's folders: @harbor/os)
 const FROM = opt("--from", join(paths.systemDataHome(), "creators-hub"));
 const PROFILE = opt("--profile", join(paths.configHome(), "Creators Hub"));
 const TO = opt("--to", join(paths.dataHome(), "hub", "persons"));
@@ -72,26 +76,23 @@ for (const n of readdirSync(FROM)) {
     if (SESSIONS) dir(join(n, "auth"), "WhatsApp linked device (cutover)");
   }
 }
-// Discord logins: Person Hub's Electron partitions, one per Discord connection (discord.ts partitionOf / discordSessionDir)
+// Discord: Person Hub's client headers (no login in them) are copied; the logins themselves are read below
 const conns = (obj(readJson(join(FROM, "connections.json"))).connections as { id: string; kind: string }[] | undefined) ?? [];
+const discordConns = conns.filter((x) => x.kind === "discord");
 const partition = (id: string): string => (id === "stores" ? "discord" : id === "spokpay" ? "discord-spokpay" : `conn-${id}`);
 const clientFile = (id: string): string => (id === "stores" ? "discord-client.json" : id === "spokpay" ? "discord-client-spokpay.json" : `discord-client-${id}.json`);
-for (const c of conns.filter((x) => x.kind === "discord")) {
-  const p = partition(c.id);
-  if (existsSync(join(PROFILE, "Partitions", p))) items.push({ src: join(PROFILE, "Partitions", p), dst: join(TO, "discord", c.id, "Partitions", p), dir: true, why: `Discord login (${c.id})` });
+for (const c of discordConns) {
   if (existsSync(join(PROFILE, clientFile(c.id)))) items.push({ src: join(PROFILE, clientFile(c.id)), dst: join(TO, "discord", c.id, clientFile(c.id)), dir: false, why: `Discord client headers (${c.id})` });
 }
 
-/** Chromium's caches: not needed for a login, and big. */
-const SKIP_IN_PROFILE = /(^|\/)(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage|ScriptCache|Crashpad)(\/|$)/;
-/** Lock files of a running Chromium / LevelDB: copying them would make the copy look in use. */
+/** Lock files: copying them would make the copy look in use. */
 const SKIP_LOCKS = /(^|\/)(LOCK|SingletonLock|SingletonSocket|SingletonCookie)$/;
 
 function walk(d: string, base = d, out: string[] = []): string[] {
   for (const n of readdirSync(d, { withFileTypes: true })) {
     const p = join(d, n.name);
     const rel = relative(base, p);
-    if (SKIP_IN_PROFILE.test(rel) || SKIP_LOCKS.test(rel)) continue;
+    if (SKIP_LOCKS.test(rel)) continue;
     if (n.isDirectory()) walk(p, base, out);
     else if (n.isFile()) out.push(rel);
   }
@@ -141,6 +142,32 @@ for (const it of items) {
   if (!it.dir) copyOne(it.src, it.dst);
   else for (const rel of walk(it.src)) copyOne(join(it.src, rel), join(it.dst, rel));
 }
+// ---------- Discord logins: read once from Person Hub's saved session (LevelDB, read-only), into Hub's keyring ----------
+const tokens = tokenStore(TO);
+const logins = { found: 0, stored: 0, same: 0, kept: [] as string[], missing: [] as string[] };
+const imported: Record<string, string> = {};
+for (const c of discordConns) {
+  const t = discordToken(join(PROFILE, "Partitions", partition(c.id)));
+  if (!t) {
+    logins.missing.push(c.id);
+    continue;
+  }
+  logins.found++;
+  imported[c.id] = t;
+  const have = tokens.get(c.id);
+  if (have === t) {
+    logins.same++;
+    continue;
+  }
+  // a login Hub got itself (QR sign-in) since: keep it unless --force
+  if (have && !FORCE) {
+    logins.kept.push(c.id);
+    continue;
+  }
+  if (!DRY) tokens.set(c.id, t);
+  logins.stored++;
+}
+
 if (!DRY) {
   mkdirSync(TO, { recursive: true, mode: 0o700 });
   writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 1)}\n`, { mode: 0o600 });
@@ -175,9 +202,12 @@ function counts(root: string): Record<string, number> {
 
 const before = counts(FROM);
 const after = DRY ? before : counts(TO);
+before["Discord logins"] = logins.found;
+after["Discord logins"] = DRY ? logins.found : discordConns.filter((c) => tokens.get(c.id) !== null && (tokens.get(c.id) === imported[c.id] || logins.kept.includes(c.id))).length;
 console.log(`Person Hub → Hub Persons ${DRY ? "(dry run: nothing written)" : ""}`);
-console.log(`  from ${FROM}\n  and  ${PROFILE} (Discord logins)\n  to   ${TO}`);
+console.log(`  from ${FROM}\n  and  ${PROFILE} (Discord logins, read only)\n  to   ${TO}`);
 console.log(`  files copied ${report.copied}, already the same ${report.same}, backed up first ${report.backedUp}, ${(report.bytes / 1048576).toFixed(1)} MB`);
+console.log(`  Discord logins (${tokens.where}): found in Person Hub ${logins.found} of ${discordConns.length}, stored ${logins.stored}, already there ${logins.same}${logins.kept.length ? `, kept Hub's own for ${logins.kept.join(", ")}` : ""}${logins.missing.length ? `, none saved for ${logins.missing.join(", ")} (sign in by QR in Hub)` : ""}`);
 if (!SESSIONS) console.log("  WhatsApp's linked device NOT copied (run with --sessions at the cutover, Person Hub stopped)");
 for (const k of report.kept) console.log(`  kept: changed in Hub since the last import: ${k} (--force overwrites, after a backup)`);
 let bad = 0;
@@ -185,7 +215,7 @@ console.log("\n  count                                          Person Hub      
 for (const k of Object.keys(before)) {
   const a = before[k] ?? 0;
   const b = after[k] ?? 0;
-  const src = k.includes(": ") ? k.split(": ")[0]! : k.endsWith(" files") ? k.slice(0, -6) : k === "connections" ? "connections.json" : "data.json";
+  const src = k === "Discord logins" ? "discord" : k.includes(": ") ? k.split(": ")[0]! : k.endsWith(" files") ? k.slice(0, -6) : k === "connections" ? "connections.json" : "data.json";
   const keptFile = report.kept.some((x) => x === src || x.startsWith(`${src}/`));
   // pictures: Hub adds its own to the cache, so the copy may have more
   const grows = k.endsWith(" files");

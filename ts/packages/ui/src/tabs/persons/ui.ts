@@ -224,9 +224,13 @@ class PersonsTab {
       this.ui.open = null;
       this.chat = null;
     }
-    const linking = s.connections.find((c) => c.kind === "whatsapp" && c.status === "signing-in");
-    if (linking && (this.bus.dialog === "" || this.bus.dialog === "qr")) void this.showQr(linking.qr);
-    else if (!linking && this.bus.dialog === "qr") this.closeDialog();
+    // a sign-in by QR code (WhatsApp's linked device, Discord's "Scan QR code"): its code in a dialog
+    const linking = s.connections.find((c) => (c.kind === "whatsapp" || c.kind === "discord") && c.status === "signing-in");
+    if (linking && (this.bus.dialog === "" || this.bus.dialog === "qr")) void this.showQr(linking.kind, linking.qr, linking.error, linking.id);
+    else if (!linking && this.bus.dialog === "qr") {
+      this.dialogCancel = null; // signed in (or gave up): nothing to cancel
+      this.closeDialog();
+    }
     this.render();
     // the open chat follows its person's row (a message, typing, presence)
     const open = this.ui.open;
@@ -746,6 +750,7 @@ class PersonsTab {
 
   private openDialog(kind: string, title: string, text: string, ok: string, run: () => Promise<void> | void, danger = false): void {
     const b = this.bus;
+    this.dialogCancel = null;
     b.d_title = title;
     b.d_text = text;
     b.d_ok = ok;
@@ -756,9 +761,14 @@ class PersonsTab {
     b.dialog = kind;
   }
 
+  private dialogCancel: (() => void) | null = null;
+
   private closeDialog(): void {
+    const c = this.dialogCancel;
+    this.dialogCancel = null;
     this.bus.dialog = "";
     this.dialogOk = null;
+    c?.();
   }
 
   private async okDialog(): Promise<void> {
@@ -863,8 +873,18 @@ class PersonsTab {
     });
   }
 
-  private async showQr(text: string | null): Promise<void> {
-    if (this.bus.dialog !== "qr") this.openDialog("qr", "Link WhatsApp", "On your phone: WhatsApp › Settings › Linked devices › Link a device, then scan this code.", "", () => {});
+  private qrConn = "";
+
+  private async showQr(kind: string, text: string | null, note: string | null, connId: string): Promise<void> {
+    const how = kind === "discord"
+      ? `In the Discord app on your phone: You › Scan QR code, scan this code, then confirm.${note ? `\n${note}` : ""}`
+      : "On your phone: WhatsApp › Settings › Linked devices › Link a device, then scan this code.";
+    if (this.bus.dialog !== "qr" || this.qrConn !== connId) {
+      this.qrConn = connId;
+      // closing the dialog cancels the sign-in (the connection goes back to signed out)
+      this.openDialog("qr", kind === "discord" ? "Sign in to Discord" : "Link WhatsApp", how, "", () => {});
+      this.dialogCancel = () => void this.api("POST", `connections/${encodeURIComponent(connId)}/cancel`);
+    } else this.bus.d_text = how;
     if (!text) {
       this.bus.has_qr = false;
       return;

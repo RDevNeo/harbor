@@ -44,7 +44,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[]) => Promise<Json>; ai?: AiPort } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[]) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null> } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -79,6 +79,10 @@ export class PersonsRoutes {
       if (rest[0] === "connections") {
         if (m === "POST" && rest.length === 1) return await this.addConn(obj(c.body));
         if (m === "POST" && rest[1] && rest[2] === "connect") return this.connConnect(rest[1]);
+        if (m === "POST" && rest[1] && rest[2] === "cancel") {
+          await this.s.cancelSignIn(decodeURIComponent(rest[1]));
+          return ok({ ok: true });
+        }
         if (m === "DELETE" && rest[1]) return await this.connRemove(rest[1]);
       }
       if (m === "GET" && rest[0] === "img") return await this.img(rest, c);
@@ -87,6 +91,21 @@ export class PersonsRoutes {
       return err(500, e instanceof Error ? e.message : String(e));
     }
     return err(404, "no such call");
+  }
+
+  /** A QR code as rows of "0"/"1" for the phone to draw (computed once per code by the engine's encoder). */
+  private qrCache = new Map<string, string[] | null>();
+  private qrRowsOf(text: string): Json {
+    if (this.qrCache.has(text)) return this.qrCache.get(text) ?? null;
+    const enc = this.extra.qr;
+    if (!enc) return null;
+    this.qrCache.set(text, null);
+    void enc(text).then((rows) => {
+      if (this.qrCache.size > 20) this.qrCache.clear();
+      this.qrCache.set(text, rows);
+      if (rows) this.s.touch();
+    }, () => {});
+    return null;
   }
 
   // ---------- pictures ----------
@@ -185,6 +204,7 @@ export class PersonsRoutes {
       who,
       error: v.state.error ?? null,
       qr: v.state.qr ?? null,
+      qrRows: v.state.qr ? this.qrRowsOf(v.state.qr) : null,
       contacts: v.state.contacts ?? null,
     };
   }

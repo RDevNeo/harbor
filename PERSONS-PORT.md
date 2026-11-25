@@ -14,9 +14,11 @@ ts/packages/persons/            @harbor/persons (new workspace package; engine s
                                 normalizeData on load, external-edit watch)
   src/conn/types.ts             the Connection interface (= Person Hub's DiscordBridge, one per account)
   src/conn/discord*.ts          port of shell/discord.cjs + discord-core.cjs (REST + gateway in Bun);
-  src/conn/discord-session/     the token comes from a tiny hidden Electron helper run with Hub's pinned
-                                Electron (mcp discordsetup.ensureElectron), one profile per account,
-                                exits once the token is read (kept in memory only, never logged)
+  src/conn/remoteauth.ts        new Discord sign-ins: Discord's QR remote-auth (scanned in the Discord app),
+                                no browser engine anywhere; the QR is drawn by Slint and by the Android tab
+  src/tokens.ts                 Discord logins in the desktop keyring (Secret Service), else an AES-GCM sealed file
+  src/import/leveldb.ts         read-only LevelDB + snappy reader: the import reads Person Hub's saved Discord
+                                logins from its session storage once, without running Chromium
   src/conn/gmail*.ts            port of shell/gmail.cjs + gmail-core.cjs (OAuth PKCE loopback, REST, history poll)
   src/conn/whatsapp*.ts         port of shell/whatsapp.cjs on Hub's own Baileys engine (whatsapp/engine.mjs,
                                 plus Person Hub's extra ops: presence, profile_picture, add_contact)
@@ -62,8 +64,8 @@ android/src/dev/harbor/app/Persons*.java   the phone's Persons tab (same screens
 
 | Person Hub | Hub | Plan |
 | --- | --- | --- |
-| Discord (`discord.cjs`: hidden Electron window per account for the token; REST + gateway in Node) | Hub's discord host (Vencord page tools, ONE account, Igor's) | Port Person Hub's REST + gateway client to TS (needs 3 accounts: stores #1, spokpay #2 Fagner's, creators). Token via a minimal Electron helper using **Hub's** pinned Electron download; no resident browser. Migration copies Person Hub's partitions (`~/.config/Creators Hub/Partitions/{discord,discord-spokpay,conn-…}`) so nobody signs in again. |
-| Gmail (`gmail.cjs`) | `mcp/src/gmail.ts` (agents' Gmail) | Port Person Hub's (PKCE, contacts photos, history poll); reuse Hub's Google desktop client if the copied `google-client.json` is missing. Refresh token copied (re-encrypted with Hub's keyring where Electron's safeStorage was used; else the user reconnects once). |
+| Discord (`discord.cjs`: hidden Electron window per account for the token; REST + gateway in Node) | Hub's discord host (Vencord page tools, ONE account, Igor's) | Port Person Hub's REST + gateway client to TS (3 accounts: stores #1, spokpay #2 Fagner's, creators). **No Electron or Chromium**: the import reads each saved login once from Person Hub's session storage (LevelDB, read-only) into the keyring, so nobody signs in again; new sign-ins by Discord's QR remote-auth. |
+| Gmail (`gmail.cjs`) | `mcp/src/gmail.ts` (agents' Gmail) | Port Person Hub's (PKCE, contacts photos, history poll); reuse Hub's Google desktop client if the copied `google-client.json` is missing. Refresh token copied (Person Hub's file keeps it plain, 0600); Google's sign-in page opens in the user's own browser. |
 | WhatsApp (`whatsapp.cjs` + `whatsapp-engine.mjs`, a copy of Harbor's) | `whatsapp/engine.mjs` + `mcp/src/whatsapphost.ts` | Same Baileys engine; Person Hub's extra ops added to Hub's engine.mjs; auth folder copied (same linked device: Person Hub must be stopped at cutover, the lead does it). |
 | SpokPay admin API | — | Port as is. |
 | Phone server (`remote*.cjs`, :47960 + tunnel) | Hub phone API (:47950, pinned TLS, pairing) | Routes under `/v1/persons/*` on Hub's API; Hub's Android app gets the tab. |
@@ -74,8 +76,8 @@ android/src/dev/harbor/app/Persons*.java   the phone's Persons tab (same screens
 
 Copies, never moves or deletes: `data.json`, `connections.json`, `images/`, `avatars/`,
 `discord-cache*.json`, `gmail-account-*.json`, `gmail-cache-*.json`, `google-client.json`,
-`spokpay.json`, `spokpay-links.json`, `whatsapp-*/` → `~/.local/share/hub/persons/`; Electron
-partitions → `persons/discord/<conn id>/`. Refuses to overwrite a newer target unless `--force`.
+`spokpay.json`, `spokpay-links.json`, `whatsapp-*/` → `~/.local/share/hub/persons/`; Discord logins read from
+Person Hub's session storage (read-only) into the keyring; its client headers → `persons/discord/<conn id>/`. Refuses to overwrite a newer target unless `--force`.
 Prints file names and sizes only, never contents. The lead runs it at cutover.
 
 ## Order
@@ -95,12 +97,12 @@ on a copy of the data, one staged build (`packaging/hub-install.sh --stage`).
 Not yet: SpokPay site-request panes and the SpokPay key dialog in the UI (backend `createSpokpay` is ported, not
 routed), "Message a store" (bulk), Add members with lookup, store pictures upload, voice recording / in-app audio,
 "Open in Projects" from a Person AI bubble, the QR drawn on the phone. Nothing ran against real accounts yet
-(Discord was run against a fake Discord with Hub's Electron).
+(Discord's QR sign-in ran against a fake remote-auth gateway; the 3 imported logins answered Discord's /users/@me).
 
 ## Cutover (the lead runs it; Person Hub keeps its own data untouched)
 
 1. Before: `bun ts/packages/persons/scripts/migrate.ts --dry-run`, then without `--dry-run`: copies data, caches,
-   pictures, Gmail sign-in, SpokPay key and the Discord logins (Electron partitions) into `~/.local/share/hub/persons`.
+   pictures, Gmail sign-in and SpokPay key into `~/.local/share/hub/persons`, and the Discord logins into the keyring.
    Repeatable; prints counts of both sides and exits 1 if any differ. Hub's Persons can run beside Person Hub then
    (Discord and Gmail allow several clients), WhatsApp stays signed out in Hub.
 2. Switch: stop Person Hub, run `migrate.ts --sessions` (adds WhatsApp's linked-device keys and anything that changed),

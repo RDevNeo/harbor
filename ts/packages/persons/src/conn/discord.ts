@@ -1,17 +1,15 @@
 // One Discord account (port of Person Hub's shell/discord.cjs), running in Bun: Discord's HTTP API with
-// fetch and its gateway with the global WebSocket. The account's web login lives in an Electron session
-// (Person Hub's partitions, copied by the migration); a short-lived helper (../../discord-session/main.cjs,
-// run with Hub's pinned Electron) reads its token and exits. The token stays in this process's memory:
-// never logged, never written, never returned (state() carries no token).
-import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+// fetch and its gateway with the global WebSocket. No browser engine anywhere: the login is a token kept in the
+// keyring (../tokens.ts), imported once from Person Hub's saved session (scripts/migrate.ts) or got by signing in
+// with a QR code scanned in the Discord app (./remoteauth.ts). The token stays in that store and in this process's
+// memory: never logged, never returned (state() carries no token).
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
-import { env as osEnv, proc } from "@harbor/os";
 import type { ChannelUser, ConnState, ConnStatus, Conversation, LookupResult, Message, OutgoingFile, PresenceStatus, SendResult } from "../model/types.ts";
-import HELPER_SOURCE from "../../discord-session/main.cjs" with { type: "text" };
+import { tokenStore, type TokenStore } from "../tokens.ts";
 import * as core from "./discord-core.ts";
+import { remoteAuth } from "./remoteauth.ts";
 import type { Connection, ConnContext } from "./types.ts";
 
 export { discordFiles, partitionOf, partitionFolder } from "./discord-core.ts";
@@ -19,7 +17,7 @@ export { discordFiles, partitionOf, partitionFolder } from "./discord-core.ts";
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** A connection's Electron user-data folder: <persons dir>/discord/<conn id> (its Partitions/<name> holds the login). */
+/** A connection's folder: <persons dir>/discord/<conn id> (its client headers; no login in it). */
 export function discordSessionDir(dir: string, id: string): string {
   if (!/^[\w-]{1,40}$/.test(id)) throw new Error("Invalid connection id");
   return join(dir, "discord", id);
@@ -27,18 +25,15 @@ export function discordSessionDir(dir: string, id: string): string {
 
 export type SessionMode = "token" | "signin" | "signout";
 
-/** How long the helper may take per mode. */
-export const HELPER_TIMEOUT: Readonly<Record<SessionMode, number>> = { token: 90_000, signin: 15 * 60_000, signout: 90_000 };
-
 export interface DiscordOptions {
   /** Discord's origin (a test rig's fake one); default $PERSONS_DISCORD_ORIGIN or https://discord.com. */
   origin?: string;
-  /** Electron's app name in the helper (its keyring entry for cookies): Person Hub's, so copied sessions decrypt. */
-  appName?: string;
-  /** Path of the Electron binary; default Hub's pinned one (@harbor/mcp discordsetup, downloaded once). */
-  electron?: () => Promise<string>;
-  /** Replaces the helper process entirely (tests). */
-  session?: (mode: SessionMode) => Promise<core.HelperResult>;
+  /** Where the login is kept (default: the keyring, else a sealed file). */
+  tokens?: TokenStore;
+  /** Replaces the token store and the QR sign-in entirely (tests). */
+  session?: (mode: SessionMode) => Promise<core.SessionResult>;
+  /** The remote-auth gateway (tests). */
+  remoteAuthGateway?: string;
 }
 
 interface ClientHeaders {
@@ -55,31 +50,6 @@ class ApiError extends Error {
   ) {
     super(msg);
   }
-}
-
-async function defaultElectron(): Promise<string> {
-  const { discordsetup } = await import("@harbor/mcp");
-  await discordsetup.ensureElectron(() => {});
-  return discordsetup.electronBin();
-}
-
-/** The helper's script on disk (a compiled Hub carries it as text): written when missing or changed. */
-function helperScript(dir: string): string {
-  const d = join(dir, "discord", ".helper");
-  const file = join(d, "main.cjs");
-  let cur = "";
-  try {
-    cur = readFileSync(file, "utf8");
-  } catch {
-    // first run
-  }
-  if (cur !== HELPER_SOURCE) {
-    mkdirSync(d, { recursive: true, mode: 0o700 });
-    const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, HELPER_SOURCE, { mode: 0o600 });
-    renameSync(tmp, file);
-  }
-  return file;
 }
 
 export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Connection {
@@ -149,7 +119,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
 
   // ---------- state ----------
   const gatewayUp = (): boolean => gw.ready;
-  const state = (): ConnState => ({ status, me: me && core.withAvatar(me, 64), gateway: gatewayUp() ? "up" : "down", error });
+  const state = (): ConnState => ({ status, me: me && core.withAvatar(me, 64), gateway: gatewayUp() ? "up" : "down", error, qr: status === "signing-in" ? qr : null });
   let lastSent = "";
   function pushState(): void {
     const s = state();
@@ -185,74 +155,57 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     });
   }
 
-  // ---------- the session helper (Electron) ----------
-  let helperChild: ChildProcess | null = null;
+  // ---------- the login: the token store, and QR sign-in ----------
   let helperRun = 0;
+  const store: TokenStore = opts.tokens ?? tokenStore(ctx.dir);
+  let qr: string | null = null;
+  let signinAbort: AbortController | null = null;
+  const killHelper = (): void => {
+    signinAbort?.abort();
+    signinAbort = null;
+  };
 
-  function killHelper(): void {
-    const c = helperChild;
-    helperChild = null;
-    if (!c || c.exitCode !== null || c.pid === undefined) return;
-    const pid = c.pid;
-    try {
-      c.kill();
-    } catch {
-      // gone
+  async function realSession(mode: SessionMode): Promise<core.SessionResult> {
+    if (mode === "token") {
+      const t = store.get(id);
+      return t ? { token: t } : { signedOut: true };
     }
-    setTimeout(() => {
-      if (c.exitCode === null && c.signalCode === null) proc.killTree(pid);
-    }, 3000);
-  }
-
-  async function runHelper(mode: SessionMode): Promise<core.HelperResult> {
+    if (mode === "signout") {
+      store.remove(id);
+      return { ok: true };
+    }
     killHelper();
-    const bin = await (opts.electron ?? defaultElectron)();
-    mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
-    const script = helperScript(ctx.dir);
-    const args = [script, "--user-data", SESSION_DIR, "--partition", core.partitionOf(id), "--mode", mode, "--app-name", opts.appName ?? "Person Hub"];
-    // Hidden modes never need a display: Chromium's headless platform (ignored where there's no ozone).
-    if (mode !== "signin") args.push("--ozone-platform=headless", "--ozone-override-screen-size=1280,720");
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
-    if (customOrigin) env.PERSONS_DISCORD_ORIGIN = ORIGIN;
-    const [prog = bin, ...pre] = osEnv.argvOf(bin, env);
-    return await new Promise<core.HelperResult>((resolve) => {
-      let settled = false;
-      let child: ChildProcess;
-      const settle = (r: core.HelperResult): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (helperChild === child) killHelper();
-        resolve(r);
-      };
-      const timer = setTimeout(() => settle({ error: "Discord's session didn't answer in time" }), HELPER_TIMEOUT[mode]);
-      try {
-        // stderr ignored: Chromium's noise (the helper never writes the token there).
-        child = spawn(prog, [...pre, ...args], { env, stdio: ["ignore", "pipe", "ignore"] });
-      } catch (e) {
-        settle({ error: `Couldn't start Electron: ${errMsg(e)}` });
-        return;
-      }
-      helperChild = child;
-      child.on("error", (e) => settle({ error: `Couldn't start Electron: ${errMsg(e)}` }));
-      child.on("exit", () => {
-        // the line may still be in the pipe: give readline a moment
-        setTimeout(() => settle({ error: "Discord's session helper stopped" }), 200);
-      });
-      if (child.stdout) {
-        const lines = createInterface({ input: child.stdout });
-        lines.on("line", (line) => {
-          const r = core.parseHelperLine(line);
-          if (r) settle(r);
-        });
-      }
-    });
+    const abort = new AbortController();
+    signinAbort = abort;
+    const h = baseHeaders(true);
+    delete h.Authorization;
+    const r = await remoteAuth(
+      {
+        qr: (url) => {
+          qr = url;
+          error = null;
+          pushState();
+        },
+        scanned: (u) => {
+          error = `Scanned by ${u.username}: confirm on your phone`;
+          pushState();
+        },
+        log,
+      },
+      { signal: abort.signal, headers: h, api: API, ...(opts.remoteAuthGateway ? { gateway: opts.remoteAuthGateway } : {}) },
+    );
+    if (signinAbort === abort) signinAbort = null;
+    qr = null;
+    if ("token" in r) {
+      store.set(id, r.token);
+      return { token: r.token };
+    }
+    return "cancelled" in r ? { cancelled: true } : { error: r.error };
   }
 
-  const session = opts.session ?? runHelper;
+  const session = opts.session ?? realSession;
 
-  function applyClient(r: core.HelperResult): void {
+  function applyClient(r: core.SessionResult): void {
     if (!r.superProps || r.superProps === headers.superProps) return;
     headers = { superProps: r.superProps, locale: r.locale ?? headers.locale, timezone: r.timezone ?? headers.timezone };
     void (async () => {
@@ -273,7 +226,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     cancel(acquireRetry);
     acquireRetry = null;
     const run = ++helperRun;
-    let r: core.HelperResult;
+    let r: core.SessionResult;
     try {
       r = await session(mode);
     } catch (e) {
@@ -291,7 +244,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
       if (!token) setStatus("signed-out");
       return;
     }
-    // no answer (no network, Electron missing…): say so and try again later
+    // no answer (no network, keyring locked…): say so and try again later
     log(`session ${mode} failed:`, r.error ?? "no answer");
     if (mode === "signin") {
       if (!token) setStatus("signed-out", r.error ?? null);
@@ -356,9 +309,9 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     if (token !== bad) return Promise.resolve(token !== null);
     refreshing ??= (async () => {
       try {
-        log("Discord answered 401: reading the session again");
+        log("Discord answered 401: reading the saved login again");
         const run = ++helperRun;
-        let r: core.HelperResult;
+        let r: core.SessionResult;
         try {
           r = await session("token");
         } catch (e) {
@@ -966,7 +919,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
     section: ctx.section,
     state,
 
-    /** Reads the session's token in the background (the helper may take a while); never shows a window. */
+    /** Reads the saved login in the background; never starts a sign-in by itself. */
     async start() {
       if (started || stopped) return;
       started = true;
@@ -978,7 +931,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
       });
     },
 
-    /** Opens Discord's sign-in window (the helper, shown); returns at once with status signing-in. */
+    /** Starts a QR sign-in (the code arrives in state().qr); returns at once with status signing-in. */
     async connect() {
       if (status === "connected" || token) return state();
       killHelper();
@@ -989,6 +942,10 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Conn
 
     async reconnect() {
       return conn.connect();
+    },
+
+    cancelSignIn() {
+      if (status === "signing-in") killHelper();
     },
 
     async disconnect() {

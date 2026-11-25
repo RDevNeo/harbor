@@ -10,6 +10,7 @@ export * as desktop from "./desktop.ts";
 export * as paths from "./paths.ts";
 export * as folders from "./folders.ts";
 export * as keychain from "./keychain.ts";
+export * as secretService from "./secretservice.ts";
 export * as spawn from "./spawn.ts";
 export * as env from "./env.ts";
 export * as codesign from "./codesign.ts";

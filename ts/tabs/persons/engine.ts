@@ -5,6 +5,7 @@ import { desktop } from "../../packages/os/src/index.ts";
 import { createSocials, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
 import type { Call, Reply } from "../../packages/net/src/index.ts";
 import type { TabEngine } from "../api.ts";
+import { qrRows } from "../../packages/ui/src/qr.ts";
 
 let service: PersonsService | null = null;
 let socials: Socials | null = null;
@@ -40,7 +41,7 @@ export const personsEngine: TabEngine = {
           uploads: r.uploads.slice(0, 3).map((u) => ({ title: u.title ?? "", url: u.url, thumb: u.thumb ?? null, meta: [formatAge(u.at), u.views != null ? `${formatCount(u.views)} views` : ""].filter(Boolean).join(" · ") })),
         };
       }));
-    routes = new PersonsRoutes(service, { ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never });
+    routes = new PersonsRoutes(service, { ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
     service.onChange(() => ctx.changed());
     await service.start();
   },

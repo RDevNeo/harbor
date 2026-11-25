@@ -192,9 +192,10 @@ final class PersonsHome {
         ch.conns = mine;
         items.add(ch);
         for (JSONObject c : mine) {
-            if (!PersonsUi.s(c, "qr").isEmpty()) {
+            if (!PersonsUi.s(c, "qr").isEmpty() || ("signing-in".equals(PersonsUi.s(c, "status")) && "discord".equals(PersonsUi.s(c, "kind")))) {
                 Item q = new Item(QR);
                 q.text = PersonsUi.s(c, "label");
+                q.conns = Collections.singletonList(c);
                 items.add(q);
             }
         }
@@ -294,14 +295,33 @@ final class PersonsHome {
                 return hs;
             }
             case QR: {
+                // a sign-in by QR code: Discord's (scanned in the Discord app on another phone) or WhatsApp's link
+                JSONObject cn = it.conns.get(0);
+                String kind = PersonsUi.s(cn, "kind"), cid = PersonsUi.s(cn, "id"), note = PersonsUi.s(cn, "error");
+                boolean dc = "discord".equals(kind);
                 LinearLayout c = Ui.col(a);
                 c.setBackground(Ui.round(Ui.CARD, Ui.LINE, 16));
                 c.setPadding(Ui.dp(14), Ui.dp(12), Ui.dp(14), Ui.dp(12));
                 LinearLayout t = Ui.row(a);
-                t.addView(PersonsUi.channel(a, "whatsapp", 18), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 0, 0, 8, 0));
-                t.addView(Ui.bold(a, "Link WhatsApp", 15, Ui.FG));
+                t.addView(PersonsUi.channel(a, kind, 18), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 0, 0, 8, 0));
+                t.addView(Ui.bold(a, dc ? "Sign in to Discord" : "Link WhatsApp", 15, Ui.FG));
                 c.addView(t);
-                c.addView(Ui.text(a, "Scan the QR code on the PC: on the phone with that WhatsApp, open Settings › Linked devices › Link a device." + (it.text.isEmpty() ? "" : "\n" + it.text), 13, Ui.G700), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+                c.addView(Ui.text(a, (dc ? "Scan this code in the Discord app of that account (You › Scan QR code), then confirm there."
+                        : "On the phone with that WhatsApp: Settings › Linked devices › Link a device, then scan this code.") + (note.isEmpty() ? "" : "\n" + note), 13, Ui.G700), Ui.margins(Ui.fill(), 0, 6, 0, 8));
+                android.graphics.Bitmap bm = qrBitmap(cn.optJSONArray("qrRows"));
+                if (bm != null) {
+                    android.widget.ImageView iv = new android.widget.ImageView(a);
+                    iv.setImageBitmap(bm);
+                    iv.setBackgroundColor(0xffffffff);
+                    iv.setPadding(Ui.dp(10), Ui.dp(10), Ui.dp(10), Ui.dp(10));
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(240), Ui.dp(240));
+                    lp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+                    c.addView(iv, lp);
+                } else c.addView(Ui.text(a, "Getting a code…", 13, Ui.G700));
+                TextView cancel = Ui.text(a, "Cancel", 14, Ui.FG);
+                cancel.setPadding(Ui.dp(4), Ui.dp(10), Ui.dp(4), Ui.dp(2));
+                cancel.setOnClickListener(v -> connCall("/v1/persons/connections/" + PersonsUi.enc(cid) + "/cancel"));
+                c.addView(cancel);
                 LinearLayout w = Ui.col(a);
                 w.setPadding(Ui.dp(14), Ui.dp(2), Ui.dp(14), Ui.dp(8));
                 w.addView(c, Ui.fill());
@@ -368,10 +388,39 @@ final class PersonsHome {
         r.addView(Ui.text(a, PersonsUi.kindLabel(kind) + " · " + statusText(status), 12, Ui.G900));
         int dot = "connected".equals(status) ? 0xff23a55a : "signed-out".equals(status) ? Ui.RED : Ui.AMBER;
         r.addView(Ui.dot(a, dot, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 7, 0, 0, 0));
-        String label = PersonsUi.s(c, "label"), err = PersonsUi.s(c, "error");
-        r.setOnClickListener(v -> Ui.toast(a, (label.isEmpty() ? PersonsUi.kindLabel(kind) : label) + ": " + statusText(status)
-                + (err.isEmpty() ? "" : "\n" + err) + ("signed-out".equals(status) ? "\nSign in on the PC (the section's + menu)." : "")));
+        String label = PersonsUi.s(c, "label"), err = PersonsUi.s(c, "error"), cid = PersonsUi.s(c, "id");
+        r.setOnClickListener(v -> {
+            // Discord and WhatsApp sign in by QR code, right here; Gmail needs Google's page on the PC
+            if ("signed-out".equals(status) && !"gmail".equals(kind)) {
+                new android.app.AlertDialog.Builder(a)
+                        .setTitle(PersonsUi.kindLabel(kind) + " is signed out")
+                        .setMessage(err.isEmpty() ? "Sign in with a QR code?" : err + "\n\nSign in with a QR code?")
+                        .setPositiveButton("Sign in", (d, w) -> connCall("/v1/persons/connections/" + PersonsUi.enc(cid) + "/connect"))
+                        .setNegativeButton("Not now", null).show();
+                return;
+            }
+            Ui.toast(a, (label.isEmpty() ? PersonsUi.kindLabel(kind) : label) + ": " + statusText(status)
+                    + (err.isEmpty() ? "" : "\n" + err) + ("signed-out".equals(status) ? "\nSign in on the PC (the section's + menu)." : ""));
+        });
         return r;
+    }
+
+    private void connCall(String path) {
+        Ui.bg(a, () -> p.hub.call("POST", path, new JSONObject()), r -> p.refresh());
+    }
+
+    /** A QR code's rows ("0"/"1", 1 dark) as a bitmap, the PC's encoder's output. */
+    static android.graphics.Bitmap qrBitmap(JSONArray rows) {
+        if (rows == null || rows.length() == 0) return null;
+        int n = rows.length(), quiet = 2, side = n + 2 * quiet;
+        int[] px = new int[side * side];
+        java.util.Arrays.fill(px, 0xffffffff);
+        for (int y = 0; y < n; y++) {
+            String row = rows.optString(y, "");
+            for (int x = 0; x < row.length() && x < n; x++) if (row.charAt(x) == '1') px[(y + quiet) * side + x + quiet] = 0xff000000;
+        }
+        android.graphics.Bitmap small = android.graphics.Bitmap.createBitmap(px, side, side, android.graphics.Bitmap.Config.ARGB_8888);
+        return android.graphics.Bitmap.createScaledBitmap(small, side * 8, side * 8, false);
     }
 
     static String statusText(String s) {

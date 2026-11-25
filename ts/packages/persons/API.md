@@ -8,7 +8,7 @@ Long-poll: with `rev` equal to the current one, waits up to 25 s for a change, t
 ```
 { rev: 12, unread: 4,
   connections: [{ id, kind: "discord"|"gmail"|"whatsapp", section, status: "connected"|"connecting"|"signed-out"|"signing-in"|"starting",
-                  label: "Discord · igor", error: null, qr: null|"<raw QR payload>" }],
+                  label: "Discord · igor", error: null, qr: null|"<raw QR payload>", qrRows: null|["0101…", …] }],
   stores: [{ id, name, color: "#3b82f6", image: "/v1/persons/img/store/ID"|null, ownerId|null, count }],
   lists:  [{ id: "creators"|"spokpay", name, accountId }],
   people: [{ id, name, avatar: "/v1/persons/img/person/ID?v=HASH"|null, initials: "AB", color: "#hex",
@@ -55,3 +55,9 @@ spokpay: {...}|null }`
 - `GET /v1/persons/img/store/{id}` → same shape.
 - `GET /v1/persons/file?account=ID&url=ENC&name=ENC` → `{ type, name, size, data: "<base64>" }` (at most 20 MB).
 On the PC (in-process) rows also carry `avatarPath` / `imagePath`: a local file for Slint.
+
+## Connections
+- `POST /v1/persons/connections { section, kind }` adds one and starts its sign-in.
+- `POST /v1/persons/connections/{id}/connect` starts a sign-in (Discord, WhatsApp: a QR code appears in the state's
+  `qr` / `qrRows`; Discord's is scanned in the Discord app: You › Scan QR code).
+- `POST /v1/persons/connections/{id}/cancel` stops a sign-in under way. `DELETE /v1/persons/connections/{id}` signs out and removes it.

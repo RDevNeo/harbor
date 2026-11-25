@@ -25,8 +25,10 @@ export interface Connection extends ConnMeta {
   state(): ConnState;
   /** Starts (or resumes) the session from what's on disk; never opens a sign-in by itself. */
   start(): Promise<void>;
-  /** Sign in (Discord: a window; Gmail: the browser; WhatsApp: a QR in the state). */
+  /** Sign in (Discord and WhatsApp: a QR code in the state; Gmail: Google's page in the user's own browser). */
   connect(): Promise<ConnState>;
+  /** Stops a sign-in under way (Discord's QR code); the account stays as it was before it. */
+  cancelSignIn?(): void;
   /** Signs out and forgets the session. */
   disconnect(): Promise<ConnState>;
   /** Gmail: sign in again for more scopes. Others: same as connect. */

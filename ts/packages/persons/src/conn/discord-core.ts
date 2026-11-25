@@ -1,5 +1,5 @@
 // Pure helpers for the Discord connection (port of Person Hub's shell/discord-core.cjs, plus the
-// upload/attachment rules of its shell/files.cjs): no network, no Electron, so the unit tests load it.
+// upload/attachment rules of its shell/files.cjs): no network, so the unit tests load it.
 import type { Attachment, ChannelUser, Message, OutgoingFile, PresenceStatus, ReplyRef } from "../model/types.ts";
 
 const CDN = "https://cdn.discordapp.com";
@@ -553,7 +553,7 @@ export const SEND_ERRORS: Readonly<Record<number, string>> = {
   50006: "Discord says the message is empty",
 };
 
-// ---------- the account's files and Electron session ----------
+// ---------- the account's files (and Person Hub's session folder names, for the import) ----------
 
 /** The original two connections keep Person Hub's names, so their logins and caches carry over. */
 const ACCOUNTS: Readonly<Record<string, { partition: string; cache: string; client: string }>> = {
@@ -565,14 +565,14 @@ const ACCOUNTS: Readonly<Record<string, { partition: string; cache: string; clie
 export const discordFiles = (id: string): { partition: string; cache: string; client: string } =>
   ACCOUNTS[id] ?? { partition: `persist:conn-${id}`, cache: `discord-cache-${id}.json`, client: `discord-client-${id}.json` };
 
-/** The Electron partition of a connection ("persist:discord" for "stores"…). */
+/** Person Hub's session (partition) of a connection ("persist:discord" for "stores"…): where the import reads its login. */
 export const partitionOf = (id: string): string => discordFiles(id).partition;
 
-/** The partition's folder name under <user data>/Partitions/ (Electron drops "persist:"). */
+/** That session's folder name under Person Hub's Partitions/ (without "persist:"). */
 export const partitionFolder = (id: string): string => partitionOf(id).replace(/^persist:/, "");
 
-/** One JSON line the session helper writes on stdout. */
-export interface HelperResult {
+/** What reading or getting a login gives (the token store, a QR sign-in). */
+export interface SessionResult {
   token?: string;
   superProps?: string | null;
   locale?: string | null;
@@ -583,29 +583,3 @@ export interface HelperResult {
   error?: string;
 }
 
-/** Reads the helper's line (other lines on stdout, e.g. Chromium's, are skipped: undefined). */
-export function parseHelperLine(line: string): HelperResult | undefined {
-  const t = line.trim();
-  if (!t.startsWith("{")) return undefined;
-  let v: unknown;
-  try {
-    v = JSON.parse(t);
-  } catch {
-    return undefined;
-  }
-  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
-  const o = v as Record<string, unknown>;
-  const s = (x: unknown): string | null => (typeof x === "string" && x !== "" ? x : null);
-  const out: HelperResult = {};
-  if (typeof o.token === "string" && o.token !== "") {
-    out.token = o.token;
-    out.superProps = s(o.superProps);
-    out.locale = s(o.locale);
-    out.timezone = s(o.timezone);
-  }
-  if (o.signedOut === true) out.signedOut = true;
-  if (o.cancelled === true) out.cancelled = true;
-  if (o.ok === true) out.ok = true;
-  if (typeof o.error === "string") out.error = o.error;
-  return Object.keys(out).length ? out : undefined;
-}

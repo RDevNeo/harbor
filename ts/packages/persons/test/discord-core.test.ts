@@ -195,14 +195,4 @@ describe("session", () => {
     expect(core.discordFiles("x1").cache).toBe("discord-cache-x1.json");
   });
 
-  it("reads the helper's one line, skipping anything else", () => {
-    expect(core.parseHelperLine("[1234:ERROR:gpu] noise")).toBeUndefined();
-    expect(core.parseHelperLine("{not json")).toBeUndefined();
-    expect(core.parseHelperLine("{}")).toBeUndefined();
-    expect(core.parseHelperLine('{"signedOut":true}')).toEqual({ signedOut: true });
-    expect(core.parseHelperLine('{"cancelled":true}')).toEqual({ cancelled: true });
-    expect(core.parseHelperLine('{"error":"busy"}')).toEqual({ error: "busy" });
-    expect(core.parseHelperLine(' {"token":"T","superProps":"S","locale":"pt-BR","timezone":null} ')).toEqual({ token: "T", superProps: "S", locale: "pt-BR", timezone: null });
-    expect(core.parseHelperLine('{"token":""}')).toBeUndefined();
-  });
 });

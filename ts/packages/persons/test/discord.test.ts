@@ -1,4 +1,4 @@
-// The Discord connection's session handling with a stand-in for the Electron helper (no network, no Electron).
+// The Discord connection's login handling with a stand-in for the token store and QR sign-in (no network).
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,14 +6,14 @@ import { join } from "node:path";
 import type { ConnContext } from "../src/conn/types.ts";
 import { createDiscord, discordSessionDir, type SessionMode } from "../src/conn/discord.ts";
 import type { ConnEvent } from "../src/model/types.ts";
-import type { HelperResult } from "../src/conn/discord-core.ts";
+import type { SessionResult } from "../src/conn/discord-core.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function setup(id: string, answers: Partial<Record<SessionMode, HelperResult>>) {
+function setup(id: string, answers: Partial<Record<SessionMode, SessionResult>>) {
   const dir = mkdtempSync(join(tmpdir(), "persons-discord-"));
   dirs.push(dir);
   const events: ConnEvent[] = [];
@@ -31,7 +31,7 @@ function setup(id: string, answers: Partial<Record<SessionMode, HelperResult>>) 
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
 describe("Discord connection", () => {
-  it("puts each account's Electron profile in its own folder", () => {
+  it("puts each account's files in its own folder", () => {
     expect(discordSessionDir("/d", "stores")).toBe(join("/d", "discord", "stores"));
     expect(() => discordSessionDir("/d", "../x")).toThrow();
   });
@@ -42,12 +42,12 @@ describe("Discord connection", () => {
     await conn.start();
     await settle();
     expect(calls).toEqual(["token"]);
-    expect(conn.state()).toEqual({ status: "signed-out", me: null, gateway: "down", error: null });
+    expect(conn.state()).toEqual({ status: "signed-out", me: null, gateway: "down", error: null, qr: null });
     expect(events.at(-1)).toEqual({ type: "state", state: conn.state() });
     await conn.stop();
   });
 
-  it("signs in through the shown helper; closing it leaves the account signed out", async () => {
+  it("signs in by QR code; a cancelled sign-in leaves the account signed out", async () => {
     const { conn, calls } = setup("spokpay", { token: { signedOut: true }, signin: { cancelled: true } });
     await conn.start();
     await settle();

@@ -431,6 +431,15 @@ export class PersonsService {
     if (c) void c.connect().then((st) => this.patch(id, (s) => ({ ...s, state: st })), (e) => this.log("connect failed", errText(e)));
   }
 
+  /** The sign-in dialog was closed: Discord stops its QR code; a WhatsApp link never made is removed (Person Hub's way). */
+  async cancelSignIn(id: string): Promise<void> {
+    const c = this.conns.get(id);
+    const v = this.view(id);
+    if (!c || !v || v.state.status !== "signing-in") return;
+    if (c.cancelSignIn) c.cancelSignIn();
+    else if (v.kind === "whatsapp") await this.removeConnection(id);
+  }
+
   reconnect(id: string): void {
     const c = this.conns.get(id);
     const f = c?.reconnect ?? c?.connect;
