@@ -47,7 +47,7 @@ describe("Hub pairing", () => {
   });
 
   test("the link round-trips (android/PROTOCOL.md Hub pairing)", () => {
-    const info = { name: "Igor PC", id: "ts:abc", fp: FP_A, addrs: ["192.168.0.5:47940", "100.90.1.2:47940"], code: "ABCDE23456" };
+    const info = { name: "Igor PC", id: "ts:abc", fp: FP_A, addrs: ["192.168.0.5:47950", "100.90.1.2:47950"], code: "ABCDE23456" };
     const link = pairLink(info);
     expect(link.startsWith("hub://pair?fp=")).toBe(true);
     expect(parsePairLink(link)).toEqual(info);
@@ -55,7 +55,7 @@ describe("Hub pairing", () => {
   });
 
   test("addresses: LAN v4, then Tailscale, then v6; no loopback", () => {
-    expect(pairAddrs(["100.90.1.2", "127.0.0.1", "192.168.0.5", "fe80::1", "2001:db8::1", "::1"], 47940)).toEqual(["192.168.0.5:47940", "100.90.1.2:47940", "[2001:db8::1]:47940"]);
+    expect(pairAddrs(["100.90.1.2", "127.0.0.1", "192.168.0.5", "fe80::1", "2001:db8::1", "::1"], 47950)).toEqual(["192.168.0.5:47950", "100.90.1.2:47950", "[2001:db8::1]:47950"]);
   });
 
   test("a pairing token or, with Hub's account service, a sign-in", () => {

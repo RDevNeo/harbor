@@ -270,7 +270,7 @@ const commands: Record<string, Command> = {
     const { stateDir } = await import("./packages/store/src/index.ts");
     const s = await store();
     const portText = s.get("hub_api_port") ?? "";
-    const port = /^\d+$/.test(portText) ? Number(portText) : 47940;
+    const port = /^\d+$/.test(portText) ? Number(portText) : 47950;
     const svc = new AccountService({
       kv: s,
       stateDir: stateDir(),

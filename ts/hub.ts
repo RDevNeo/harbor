@@ -343,7 +343,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }
   const pairing = new HubPairing(store);
   const portText = store.get("hub_api_port") ?? "";
-  const port = /^\d+$/.test(portText) ? Number(portText) : 47940;
+  const port = /^\d+$/.test(portText) ? Number(portText) : 47950;
   // Screenshots only: a signed-in look (account.ts fakeAccount), written before the phones' tokens are read.
   const fakeOnline = env.HARBOR_FAKE_ACCOUNT ? fakeAccount(store, env.HARBOR_FAKE_ACCOUNT, id.fp) : [];
   const hub = new Hub(loadTokens(store), port);
