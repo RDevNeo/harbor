@@ -2,7 +2,7 @@ import pkg from "./package.json";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { env as osEnv } from "./packages/os/src/index.ts";
-import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, repoRef, updateCommands, versionLabel } from "./packages/update/src/index.ts";
+import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, repoRef, runtimeInfo, updateCommands, versionLabel } from "./packages/update/src/index.ts";
 
 declare const HARBOR_MIN_RUNTIME: string | undefined;
 
@@ -212,7 +212,9 @@ const commands: Record<string, Command> = {
   app: async (args) => {
     // An update replaces the installed bundle: the Discord host watches it, to make way for the new one.
     const dir = defaultConfig().dir;
-    const bundle = dir !== null && existsSync(join(dir, "harbor-app.js")) ? join(dir, "harbor-app.js") : undefined;
+    // Embedded (Person Hub's engine, an unmanaged copy): its bundle is the one beside the runtime, replaced by Person Hub's installs.
+    const own = process.env.HARBOR_EMBEDDED === "1" ? runtimeInfo()?.bundle : undefined;
+    const bundle = dir !== null && existsSync(join(dir, "harbor-app.js")) ? join(dir, "harbor-app.js") : own !== undefined && existsSync(own) ? own : undefined;
     return (await import("./packages/mcp/src/index.ts")).serve.serve(args, { version, shellRef: repoRef(), bundle });
   },
   net: async (args) => {
