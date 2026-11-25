@@ -8,11 +8,32 @@ import { Btn, BtnSize, Glyph, Input, PopoverFrame, TipArea, Variant } from "widg
 
 // ---------- frames ----------
 
-/** Every tab's sidebar: the sunken fill and its edge line (sidebar.slint's look). */
+/** Every tab's sidebar: the sunken fill and its edge lines (sidebar.slint's look). No top line: the tab row's divider
+ *  is the only line over it (a second 1px border right under it doubled it and flickered on partial redraws). Each
+ *  line is one physical row/column, so it stays crisp at fractional scales. */
 export component SideSurface inherits Rectangle {
     background: Theme.bg200;
-    border-width: 1px;
-    border-color: Theme.border;
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 1phx;
+        height: root.height;
+        background: Theme.border;
+    }
+    Rectangle {
+        x: root.width - 1phx;
+        y: 0;
+        width: 1phx;
+        height: root.height;
+        background: Theme.border;
+    }
+    Rectangle {
+        x: 0;
+        y: root.height - 1phx;
+        width: root.width;
+        height: 1phx;
+        background: Theme.border;
+    }
 }
 
 /** The sidebar's first row (under the window's tab row): hide-sidebar on the left, then the tab's own buttons

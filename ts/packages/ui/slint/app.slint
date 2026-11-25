@@ -1905,9 +1905,11 @@ export component AppWindow inherits Window {
                 x: 12px;
                 y: (parent.height - self.height) / 2;
             }
+            // The one divider under the tab row: one physical row (a 1px line at a fractional scale lands on two
+            // half-lit rows that partial redraws, e.g. a streaming chat, relight unevenly: a flicker).
             Rectangle {
-                y: parent.height - 1px;
-                height: 1px;
+                y: parent.height - 1phx;
+                height: 1phx;
                 background: Theme.border;
             }
         }

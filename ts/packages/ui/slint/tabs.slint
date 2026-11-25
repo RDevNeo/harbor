@@ -91,9 +91,10 @@ export component TabFrame inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
         }
+        // The one divider under the tab row, one physical row (as app.slint's: no flicker at fractional scales).
         Rectangle {
-            y: parent.height - 1px;
-            height: 1px;
+            y: parent.height - 1phx;
+            height: 1phx;
             background: Theme.border;
         }
     }
