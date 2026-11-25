@@ -4,6 +4,7 @@
 // the caches on disk (the screenshot rig); HARBOR_PERSONS_DIR points it at another folder (a copy of the data).
 import { desktop } from "../../packages/os/src/index.ts";
 import { AgentDiscord, createSocials, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
+import { parseSocialUrl, PLATFORM_LABEL, socialHandle } from "../../packages/persons/src/socials.ts";
 import type { Call, Reply } from "../../packages/net/src/index.ts";
 import type { TabEngine } from "../api.ts";
 import { qrRows } from "../../packages/ui/src/qr.ts";
@@ -31,13 +32,14 @@ export const personsEngine: TabEngine = {
       openExternal: (url) => desktop.open(url),
     });
     // the panel's Socials: each profile with its latest uploads ("22d ago · 140K views"); offline: what's cached
-    const panelSocials = async (urls: string[]) =>
+    const panelSocials = async (urls: string[], fresh: boolean) =>
       Promise.all(urls.map(async (url) => {
-        const r = offline ? social.cached(url) : await social.fetchSocial(url).catch(() => social.cached(url));
-        if (!r) return { url, platform: null, handle: url, note: "", uploads: [] };
+        const t = parseSocialUrl(url);
+        const r = offline || !fresh ? social.cached(url) : await social.fetchSocial(url).catch(() => social.cached(url));
+        if (!r) return { url, platform: t ? PLATFORM_LABEL[t.platform] : "Link", handle: t ? socialHandle(t) : url, note: offline || !fresh ? "" : "Couldn't read the latest uploads", uploads: [] };
         return {
           url: r.url,
-          platform: r.platform,
+          platform: PLATFORM_LABEL[r.platform],
           handle: r.handle,
           note: r.unsupported ? "Uploads can't be read without a login" : r.error && !r.uploads.length ? "Couldn't read the latest uploads" : "",
           uploads: r.uploads.slice(0, 3).map((u) => ({ title: u.title ?? "", url: u.url, thumb: u.thumb ?? null, meta: [formatAge(u.at), u.views != null ? `${formatCount(u.views)} views` : ""].filter(Boolean).join(" · ") })),

@@ -213,7 +213,15 @@ export class PersonsService {
     this.data = { ...next, updatedAt: new Date().toISOString() };
     this.changed();
     this.retrack();
+    // socials added or removed: their picture is read soon, not at the next half-hour pass
+    if (!this.o.offline && this.o.socialPhoto && this.data.people.some((p) => socialPhotoStale(p))) {
+      if (this.socialKick) clearTimeout(this.socialKick);
+      this.socialKick = setTimeout(() => void this.refreshSocialPhotos(), 3000);
+    }
   }
+
+  private socialKick: ReturnType<typeof setTimeout> | null = null;
+  private socialRunning = false;
 
   person(id: string): Person | undefined {
     return this.data?.people.find((p) => p.id === id);
@@ -739,7 +747,17 @@ export class PersonsService {
 
   private async refreshSocialPhotos(): Promise<void> {
     const read = this.o.socialPhoto;
-    if (this.stopped || !read || !this.data) return;
+    if (this.stopped || !read || !this.data || this.socialRunning) return;
+    this.socialRunning = true;
+    try {
+      await this.socialPass(read);
+    } finally {
+      this.socialRunning = false;
+    }
+  }
+
+  private async socialPass(read: (url: string) => Promise<string | null | undefined>): Promise<void> {
+    if (!this.data) return;
     for (const p of this.data.people.filter((x) => socialPhotoStale(x)).slice(0, 20)) {
       if (this.stopped) return;
       const key = socialPhotoKey(p);

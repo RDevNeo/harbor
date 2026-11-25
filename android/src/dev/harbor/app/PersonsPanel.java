@@ -209,9 +209,22 @@ final class PersonsPanel {
 
         // Socials.
         List<JSONObject> socials = PersonsHome.objs(PersonsUi.arr(data, "socials"));
-        if (!socials.isEmpty()) {
-            body.addView(label("Socials"));
-            for (JSONObject so : socials) body.addView(social(so), Ui.margins(Ui.fill(), 0, 0, 0, 10));
+        {
+            // Socials (Person Hub's): always there, with Add; a long press on a profile removes it
+            LinearLayout sh = Ui.row(a);
+            sh.addView(label(socials.isEmpty() ? "Socials" : "Socials (" + socials.size() + ")"), Ui.weight());
+            TextView add = Ui.text(a, "+ Add", 14, Ui.FG);
+            add.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(4), Ui.dp(6));
+            add.setOnClickListener(v -> addSocial());
+            sh.addView(add);
+            body.addView(sh, Ui.fill());
+            if (socials.isEmpty()) body.addView(Ui.text(a, "No profiles yet: add a TikTok, Instagram or YouTube link.", 13, Ui.G700), Ui.margins(Ui.fill(), 0, 0, 0, 10));
+            for (JSONObject so : socials) {
+                View card = social(so);
+                String u = PersonsUi.s(so, "url");
+                card.setOnLongClickListener(v -> { removeSocial(u); return true; });
+                body.addView(card, Ui.margins(Ui.fill(), 0, 0, 0, 10));
+            }
         }
 
         // SpokPay, as the PC gives it.
@@ -302,6 +315,45 @@ final class PersonsPanel {
             if (in) out.add(s);
         }
         return out;
+    }
+
+    private List<String> socialUrls() {
+        List<String> out = new java.util.ArrayList<>();
+        JSONObject person = data == null ? null : data.optJSONObject("person");
+        org.json.JSONArray arr = person == null ? null : person.optJSONArray("socials");
+        if (arr != null) for (int i = 0; i < arr.length(); i++) out.add(arr.optString(i));
+        return out;
+    }
+
+    private void saveSocials(List<String> urls) {
+        org.json.JSONArray arr = new org.json.JSONArray();
+        for (String u : urls) arr.put(u);
+        PersonsHome.patch(p, pid, PersonsUi.put(new JSONObject(), "socials", arr), this::load);
+    }
+
+    private void addSocial() {
+        EditText in = new EditText(a);
+        in.setHint("tiktok.com/@…, instagram.com/…, youtube.com/@…");
+        in.setSingleLine(true);
+        new android.app.AlertDialog.Builder(a).setTitle("Add a social profile").setView(in)
+                .setPositiveButton("Add", (d, w) -> {
+                    String t = in.getText().toString().trim();
+                    if (!t.matches("(?i).*(tiktok\\.com|instagram\\.com|youtube\\.com|youtu\\.be).*")) { Ui.toast(a, "Paste a TikTok, Instagram or YouTube profile link"); return; }
+                    List<String> l = socialUrls();
+                    l.add(t);
+                    saveSocials(l);
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void removeSocial(String url) {
+        new android.app.AlertDialog.Builder(a).setTitle("Remove this profile?").setMessage(url)
+                .setPositiveButton("Remove", (d, w) -> {
+                    List<String> l = socialUrls();
+                    l.remove(url);
+                    saveSocials(l);
+                })
+                .setNegativeButton("Cancel", null).show();
     }
 
     /** A profile: platform and handle (a tap opens it), then its latest uploads. */
