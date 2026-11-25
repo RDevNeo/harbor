@@ -48,3 +48,4 @@ export * from "./projectmoverun.ts";
 export * from "./projectfold.ts";
 export * from "./chatcloud.ts";
 export * from "./syncing.ts";
+export * from "./hubpair.ts";

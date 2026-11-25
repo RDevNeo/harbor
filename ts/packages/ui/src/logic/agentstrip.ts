@@ -149,7 +149,7 @@ function toolDoing(name: string, summary: string, input: string, root: string): 
 }
 
 function toolText(server: string, tool: string, summary: string, arg: (k: string) => string, path: () => string): string {
-  if (server === "harbor") {
+  if (server === "hub" || server === "harbor") {
     switch (tool) {
       case "send_message":
         return `messaging ${arg("to")}`;

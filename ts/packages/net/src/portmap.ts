@@ -721,7 +721,7 @@ export class Portmap {
 
   /** `harbor net`: asks the router now and says whether this PC is reachable from outside. Returns the exit code. */
   async cli(args: string[], io: PortmapCliIo): Promise<number> {
-    const port = parsePort(this.kv.get("api_port")) ?? DEFAULT_PORT;
+    const port = parsePort(this.kv.get("hub_api_port")) ?? DEFAULT_PORT;
     // `harbor net forward <port|off>` / `harbor net name <name|off>`: what Settings > Phones sets.
     const [cmd, v] = args;
     if (cmd === "forward" && v !== undefined) {

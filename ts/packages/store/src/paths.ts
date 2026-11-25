@@ -9,12 +9,12 @@ export const home = (env: Env = process.env): string => paths.home(env);
 
 /** Harbor's data on this computer: harbor.db and the app sign-ins under `apps/`. */
 export function dataDir(env: Env = process.env): string {
-  return join(paths.dataHome(env), "harbor");
+  return join(paths.dataHome(env), "hub");
 }
 
 /** Harbor's state on this computer (running turns, process logs), owner-only. */
 export function stateDir(env: Env = process.env): string {
-  return privateDir(join(paths.stateHome(env), "harbor"));
+  return privateDir(join(paths.stateHome(env), "hub"));
 }
 
 export function privateDir(p: string): string {
@@ -90,14 +90,14 @@ export function runDir(env: Env = process.env): string {
       return false;
     }
   };
-  let dir = join(base, runtime || uid === undefined ? "harbor" : `harbor-${uid}`);
+  let dir = join(base, runtime || uid === undefined ? "hub" : `hub-${uid}`);
   try {
     mkdirSync(dir, { mode: 0o700 });
   } catch {
     // exists already
   }
   for (let n = 0; !ours(dir) && n < 100; n++) {
-    dir = join(base, `harbor-${uid ?? "u"}-${randomHex(8)}`);
+    dir = join(base, `hub-${uid ?? "u"}-${randomHex(8)}`);
     try {
       mkdirSync(dir, { mode: 0o700 });
     } catch {

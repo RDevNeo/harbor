@@ -2092,7 +2092,7 @@ export class Engine {
   }
 
   chatLink(c: Chat): string {
-    return this.host.chatLink?.(c) ?? `harbor://chat/${c.gid}`;
+    return this.host.chatLink?.(c) ?? `hub://chat/${c.gid}`;
   }
 
   /** A webhook's local address, and its public one when /hooks is reachable from outside (team.rs `hook_url`). */

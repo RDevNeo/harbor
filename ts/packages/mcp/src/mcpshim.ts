@@ -37,7 +37,7 @@ export function tools(role: string): JsonObject[] {
     tool("list_agents", "List the project's agents: name, account id and provider/model, status (running, queued, paused at a usage limit, idle), current task and last report; for the lead, also the messages it queued for each (with their ids, for unqueue_message).", {}, []),
     tool(
       "find_chats",
-      "Find Hub chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (harbor://chat/…) to put in a reply so the user can open it.",
+      "Find Hub chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (hub://chat/…) to put in a reply so the user can open it.",
       { query: prop("string", "Words of the title or agent name (empty: the most recent chats)") },
       [],
     ),
@@ -123,7 +123,7 @@ export function tools(role: string): JsonObject[] {
       ),
       tool(
         "list_chats",
-        "The project's chats (sidebar threads): id, title, status (working, queued, idle, settled), link (harbor://chat/…, to put in a reply) and the messages you queued there (with their ids, for unqueue_message).",
+        "The project's chats (sidebar threads): id, title, status (working, queued, idle, settled), link (hub://chat/…, to put in a reply) and the messages you queued there (with their ids, for unqueue_message).",
         { project: prop("string", "Project name or folder (default: this chat's project)") },
         [],
       ),
@@ -382,7 +382,7 @@ export async function answer(req: JsonObject, chat: number, role: string, call: 
       result = {
         protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: "harbor", version },
+        serverInfo: { name: "hub", version },
       };
       break;
     case "tools/list":

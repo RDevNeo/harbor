@@ -8,11 +8,11 @@ import { totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { proc } from "@harbor/os";
 
-export const SLICE = "harbor-turns.slice";
+export const SLICE = "hub-turns.slice";
 
 /** The slice SLICE sits in (a dash in a slice's name nests it). It is what competes with the desktop's
  *  app.slice for CPU: a weight on SLICE alone, its only child, would change nothing. */
-export const PARENT = "harbor.slice";
+export const PARENT = "hub.slice";
 
 /** All turns together. Percentages of RAM so a small laptop and a big desktop both get sane limits:
  *  on 8 GB about 2.6 GB before throttling and 3.7 GB at most (swap comes on top). oomd acts on lasting
@@ -41,7 +41,7 @@ const GRACE_MS = 1500;
 
 /** The scope a turn folder's runner starts in. */
 export function unitOf(dir: string): string {
-  return `harbor-turn-${basename(dir).replace(/[^A-Za-z0-9:_.-]/g, "_")}.scope`;
+  return `hub-turn-${basename(dir).replace(/[^A-Za-z0-9:_.-]/g, "_")}.scope`;
 }
 
 /** Where systemd --user listens; Harbor may have been started without it in its environment. */
@@ -155,7 +155,7 @@ function ownUnit(): string | undefined {
   const path = cgroupOf("self");
   if (path === undefined || !/\/user@\d+\.service\//.test(path)) return undefined;
   const unit = basename(path);
-  if (unit.startsWith("harbor-turn-") || !/\.(scope|service)$/.test(unit)) return undefined;
+  if (unit.startsWith("hub-turn-") || !/\.(scope|service)$/.test(unit)) return undefined;
   return unit;
 }
 

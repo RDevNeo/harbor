@@ -96,7 +96,7 @@ export function toolLabel(name: string): string {
   const rest = name.slice(5);
   const i = rest.indexOf("__");
   const [server, tool] = i < 0 ? ["", rest] : [rest.slice(0, i), rest.slice(i + 2)];
-  if (server !== "harbor") return `${server} · ${tool}`;
+  if (server !== "hub" && server !== "harbor") return `${server} · ${tool}`;
   const t = tool.replaceAll("_", " ");
   const first = Array.from(t)[0];
   return first === undefined ? name : first.toUpperCase() + t.slice(first.length);

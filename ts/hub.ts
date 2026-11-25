@@ -142,6 +142,9 @@ import {
   fakePeerDevices,
   newPeer,
   Syncing,
+  HubPairing,
+  pairAddrs,
+  pairLink,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
@@ -189,6 +192,25 @@ export interface HubPreview {
  *  the Engine acts only on what the person sends. */
 export function isOffline(env: Record<string, string | undefined> = process.env): boolean {
   return env.HARBOR_OFFLINE === "1";
+}
+
+/**
+ * Hub is its own world, not a Harbor PC: no Harbor account (sign-in, workspace cloud, settings sync), no mesh with
+ * Harbor's PCs, no relay, no network discovery and no port mapping for phones. Its phones pair with it directly
+ * (packages/net/src/hubpair.ts, `hub pair`); its agents reach other PCs through their own MCP tools.
+ */
+export const STANDALONE = true;
+
+/** Keys of Harbor's world a copied database carries, dropped once at Hub's first start (kv `hub_forked`). */
+export const HARBOR_WORLD_KEYS = ["api_tokens", "api_revoked", "phones_seen", "mesh_peers", "mesh_remembered", "account_settings_rev"];
+
+/** Once: what made this database part of Harbor's world (its phones' handles, remembered peers) goes. */
+export function forkFromHarbor(store: { get(k: string): string | null; set(k: string, v: string): void }, del: (k: string) => void): string[] {
+  if (store.get("hub_forked") === "1") return [];
+  const gone = HARBOR_WORLD_KEYS.filter((k) => store.get(k) !== null);
+  for (const k of gone) del(k);
+  store.set("hub_forked", "1");
+  return gone;
 }
 
 /**
@@ -312,8 +334,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const state = stateDir(env);
   const id = loadOrCreate(state);
   const me = readMe(store, env);
-  const portText = store.get("api_port") ?? "";
-  const port = /^\d+$/.test(portText) ? Number(portText) : 47930;
+  if (STANDALONE) {
+    const gone = forkFromHarbor(store, (k) => store.del(k));
+    if (gone.length > 0) console.error(`hub: first start on a copy of Harbor's data: dropped ${gone.join(", ")}`);
+  }
+  const pairing = new HubPairing(store);
+  const portText = store.get("hub_api_port") ?? "";
+  const port = /^\d+$/.test(portText) ? Number(portText) : 47950;
   // Screenshots only: a signed-in look (account.ts fakeAccount), written before the phones' tokens are read.
   const fakeOnline = env.HARBOR_FAKE_ACCOUNT ? fakeAccount(store, env.HARBOR_FAKE_ACCOUNT, id.fp) : [];
   const hub = new Hub(loadTokens(store), port);
@@ -1497,6 +1524,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       dictate.setWords({ ...(typeof b.commands === "boolean" ? { commands: b.commands } : {}), ...(Array.isArray(b.dictionary) ? { dict: dictwords.parse(b.dictionary) } : {}) }, true);
       return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
     }
+    // Hub's pairing: a code for `hub pair` (the control socket and the window only, never a phone's call).
+    if (at === "POST v1/pair/start" || at === "GET v1/pair/devices" || at === "POST v1/pair/revoke") {
+      if (call.token !== "") return err(403, "only on this PC");
+      if (at === "GET v1/pair/devices") return ok(asJson({ devices: pairing.devices().map((d) => ({ fp: d.fp, name: d.name, created: d.created })) }));
+      if (at === "POST v1/pair/revoke") {
+        const b = typeof call.body === "object" && call.body !== null ? (call.body as Record<string, unknown>) : {};
+        return ok({ removed: pairing.revoke(typeof b.fp === "string" ? b.fp : "") });
+      }
+      const c = pairing.start();
+      const info = { name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrs(lanAddrs(env)), code: c.code };
+      return ok(asJson({ ...info, expires_ms: c.expires_ms, link: pairLink(info) }));
+    }
     if (at === "POST v1/voice/cleanup") {
       const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
       return ok({ text: await dictate.cleanupText(typeof b.text === "string" ? b.text : "") });
@@ -1526,7 +1565,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     id: () => id,
     uploadsDir,
     route,
-    account: account.phoneAuth(),
+    account: STANDALONE ? pairing.auth() : account.phoneAuth(),
+    pair: (code, fp, name) => {
+      const r = pairing.pair(code, fp, name);
+      if (!r.ok) return r;
+      hub.touch(null, true);
+      return { ok: true, token: r.token, pc: asJson({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrs(lanAddrs(env)) }) };
+    },
     appInfo: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
     apk,
     ...(o.preview ? { previewFile: (kind: string, id: string) => o.preview?.file(kind, id) ?? null } : {}),
@@ -1560,11 +1605,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   if (!offline || env.HARBOR_OFFLINE_LISTEN === "1") {
     const bound = await api.listen();
     hub.net = { addrs: addrs(), bound, error: hub.net.error };
-    if (!offline) mesh.start();
+    if (!offline && !STANDALONE) mesh.start();
   }
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
-  const disc = offline || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
-  const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => true) : () => {};
+  const disc = offline || STANDALONE || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
+  const stopMap = env.HARBOR_LISTEN === undefined && !offline && !STANDALONE ? portmap.start(port, () => true) : () => {};
   // The speech model comes by itself, so the first dictation (here, or from a phone or PC that picks this one) needn't wait.
   const stopSpeech = env.HARBOR_LISTEN === undefined && !offline ? voice.keepParakeet() : () => {};
   // The voice keys this PC's own (cleanup, Transcribe on) are read again now and then: a change written
@@ -1573,7 +1618,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   voiceKv.unref();
   // Uses of keys whose time is up end (not on a copy of someone's data: nothing acts on its own there).
   if (!offline) secretTools.start();
-  const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
+  const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && !STANDALONE && existsSync(join(state, "account.json"));
   signedIn = () => signIn && account.account() !== null;
   // Until the first read of the workspace cloud, its chats here may be older than theirs elsewhere: they sync.
   if (signIn) syncing.boot();

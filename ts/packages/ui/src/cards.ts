@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import * as slint from "slint-ui";
-import { actions, attachBefore, attachMeta, attachments, type Card, CHAT_SCHEME, fileGlyph, stripAttachments, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer, webLinks } from "@harbor/net";
+import { actions, attachBefore, attachMeta, attachments, type Card, hasChatLink, fileGlyph, stripAttachments, type Shown, chatLinks, dividerLook, FORK_DIVIDER, groups, labelChatLinks, noticeLook, project, runLook, senderLook, toolLook, type Viewer, webLinks } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
@@ -276,12 +276,12 @@ export type LinkTitle = (url: string) => string;
 
 /** A reply's text with its bare chat links as markdown links labelled with their chat's title (chat.rs `labelled`). */
 export function labelLinks(md: string, title: LinkTitle | null): string {
-  return title === null || !md.includes(CHAT_SCHEME) ? md : labelChatLinks(md, title);
+  return title === null || !hasChatLink(md) ? md : labelChatLinks(md, title);
 }
 
 /** What a reply's chat links read as now, for its card's signature: a renamed chat redraws it. */
 function linkSig(text: string, title: LinkTitle | null): string {
-  if (title === null || !text.includes(CHAT_SCHEME)) return "";
+  if (title === null || !hasChatLink(text)) return "";
   return chatLinks(text)
     .map(([u]) => title(u))
     .join("|");

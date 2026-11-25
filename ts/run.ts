@@ -111,7 +111,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     whatsappKeep: true,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
     preview: {
-      refuses: (full, offer) => (embedded ? "this PC's Hub runs inside Person Hub, which ships its own copy" : preview.refuses(cfg, full, offer)),
+      refuses: () => "Hub takes no previews from other PCs",
       take: (from, name, offer) => {
         // One offer at a time: its file is fetched to a fixed name.
         taking = taking.then(async () => {
@@ -241,9 +241,10 @@ export async function runApp(o: RunOptions): Promise<number> {
   // back to do it all again.
   if (cfg.dir !== null && bundle !== undefined && !cfg.preview && !embedded) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
   // Embedded: the app around it ships its copy (no update, no follow-main) and starts it (no start at login).
+  // Hub: no Harbor updates (delivery.ts HUB_UPDATES) and no follow-main; its own builds come from packaging/hub-install.sh.
   if (!offline && !embedded) updater.start();
   // Runs offline too (rigs): a checkout's main, or HARBOR_FOLLOW_REMOTE's.
-  if (!embedded) follow.start();
+  if (!embedded && process.env.HUB_FOLLOW_MAIN === "1") follow.start();
   autostartByDefault(store, updater.managed() && !cfg.preview && !offline && !embedded);
   if (!cfg.preview && !embedded) healAutostart();
 

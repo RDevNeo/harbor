@@ -35,7 +35,7 @@ export async function meshCli(args: string[], d: MeshCliDeps): Promise<number> {
   const { kv, io } = d;
   const me = d.id.fp;
   const who = readMe(kv, d.env ?? process.env);
-  const portText = kv.get("api_port") ?? "";
+  const portText = kv.get("hub_api_port") ?? "";
   const port = /^\d+$/.test(portText) && Number(portText) <= 65535 ? Number(portText) : DEFAULT_PORT;
   const addrs = d.addrs ?? (() => lanAddrs(d.env ?? process.env));
   const list = cachedMeshPeers(kv, me);

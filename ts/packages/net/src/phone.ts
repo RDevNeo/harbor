@@ -7,7 +7,7 @@ import { err, ok, query, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftEmpty, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { type Attachment, attachBefore, attachMeta, attachments, fileGlyph, fileKind, stripAttachments } from "./attach.ts";
-import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
+import { hasChatLink, type ChatLinkWorld, chatLinkTarget, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
 import { forHome, startsTurn, type Mesh } from "./mesh.ts";
 import { Once, sendKey } from "./once.ts";
 import { sameRemote } from "./meshstore.ts";
@@ -385,7 +385,7 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       break;
     case "text": {
       // A chat link reads as its chat's title, as on the desktop (api.rs `chat_links`).
-      const targets = links && c.text.includes(CHAT_SCHEME) ? links(c.text) : {};
+      const targets = links && hasChatLink(c.text) ? links(c.text) : {};
       const titled = Object.keys(targets).length > 0;
       const label = (md: string) => {
         // The paragraphs its file cards stand for go, as on the desktop.
@@ -982,7 +982,7 @@ export class PhoneRoutes {
       for (const [u, t] of Object.entries(chatLinkTargets((world ??= this.linkWorld()), md))) out[u] = { title: t.title, chat: byId(t.chat), missing: t.missing };
       return out;
     };
-    const linkSig = (text: string) => (text.includes(CHAT_SCHEME) ? JSON.stringify(links(text)) : "");
+    const linkSig = (text: string) => (hasChatLink(text) ? JSON.stringify(links(text)) : "");
     // How each card draws (look.ts): a captcha that ended or a run that grew changes an earlier card's look.
     const roles = captchaRoles(items);
     const runs = groups(cards);

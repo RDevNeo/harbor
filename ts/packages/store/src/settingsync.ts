@@ -55,7 +55,7 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["pin_project:", A],
   ["limits", D],
   ["recap_count", D],
-  ["api_port", D],
+  ["hub_api_port", D],
   ["api_tokens", D],
   ["api_revoked", D],
   ["phones_seen", D],

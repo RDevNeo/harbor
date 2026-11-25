@@ -85,7 +85,8 @@ export function defaultConfig(env: Record<string, string | undefined> = process.
     os: currentOs(),
     repo: REPO,
     github: GITHUB,
-    worker: env.HARBOR_UPDATE_WORKER === "off" ? null : (env.HARBOR_UPDATE_WORKER ?? WORKER),
+    // Hub: Harbor's worker (release and main pushes) is never asked.
+    worker: env.HUB_UPDATE_WORKER ?? null,
     pubkey: PUBKEY,
     fetch: globalThis.fetch,
     log: (m) => console.error(`harbor: ${m}`),

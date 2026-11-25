@@ -5,7 +5,7 @@ import { platform, proc } from "@harbor/os";
 export const MANAGED = ".managed";
 /** Windows can't delete or overwrite a running program's file, only rename it. */
 const WINDOWS = platform() === "win32";
-export const RUNTIME_FILE = WINDOWS ? "harbor.exe" : "harbor";
+export const RUNTIME_FILE = WINDOWS ? "hub.exe" : "hub";
 /** What a file renamed out of the way (Windows: still running) is called, until `sweepAside` deletes it. */
 export const ASIDE = ".old-";
 export const BUNDLE_FILE = "harbor-app.js";

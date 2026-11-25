@@ -396,6 +396,8 @@ export class FollowMain {
   }
 
   start(): void {
+    // Hub: Harbor's main is never followed (HUB_FOLLOW_MAIN=1 only for a checkout of Hub's own, by hand).
+    if (process.env.HUB_FOLLOW_MAIN !== "1") return;
     if (!this.possible() || this.toggleTimer !== null) return;
     this.toggleTimer = setInterval(() => this.sync(), TOGGLE_MS);
     this.toggleTimer.unref?.();
@@ -775,6 +777,7 @@ export class FollowMain {
   // ---- the look ----
 
   async check(): Promise<void> {
+    if (process.env.HUB_FOLLOW_MAIN !== "1") return;
     if (!this.on() || !this.possible()) return;
     this.looked = true;
     const checkout = this.checkout();

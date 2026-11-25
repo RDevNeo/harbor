@@ -9,7 +9,7 @@ export const MAX_CHARS = 8000;
 /** Its last turns sent: user prompts and final answers. */
 export const TURNS = 6;
 
-const LINK_SCHEME = "harbor://chat/";
+const LINK_SCHEME = "hub://chat/";
 
 /** The `$word` being typed: where it is (in chars) and what follows the `$` up to the cursor. */
 export interface Word {

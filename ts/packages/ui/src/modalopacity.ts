@@ -36,7 +36,7 @@ export class ModalOpacity {
   private async sync(): Promise<void> {
     if (this.desired && !this.saved) {
       const clients = JSON.parse(await this.run(["clients", "-j"])) as { pid: number; address: string; class: string }[];
-      const own = clients.find((c) => c.pid === this.pid && c.class === "harbor" && /^0x[\da-f]+$/i.test(c.address));
+      const own = clients.find((c) => c.pid === this.pid && c.class === "hub" && /^0x[\da-f]+$/i.test(c.address));
       if (!own) return;
       const opaque = await this.run(["getprop", `address:${own.address}`, "opaque"]);
       if (!this.desired || (opaque !== "true" && opaque !== "false")) return;

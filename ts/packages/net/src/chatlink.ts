@@ -1,7 +1,19 @@
 
 import { urlDecode, urlEncode } from "./http.ts";
 
-export const CHAT_SCHEME = "harbor://chat/";
+export const CHAT_SCHEME = "hub://chat/";
+/** Links written before Hub's fork (harbor://chat/…) still read and open as chat links. */
+export const OLD_CHAT_SCHEME = "harbor://chat/";
+
+/** Whether `s` holds a chat link (either scheme). */
+export function hasChatLink(s: string): boolean {
+  return s.includes(CHAT_SCHEME) || s.includes(OLD_CHAT_SCHEME);
+}
+
+/** Whether `s` starts with a chat link's scheme (either). */
+export function isChatLink(s: string): boolean {
+  return s.startsWith(CHAT_SCHEME) || s.startsWith(OLD_CHAT_SCHEME);
+}
 
 /** The link of chat `gid`; `pc` (its PC's name) when known. */
 export function chatLink(gid: string, pc: string): string {
@@ -26,12 +38,13 @@ function run(s: string, ok: RegExp): number {
 
 /** A chat link at the start of `s`. */
 export function parseChatLink(s: string): ParsedChatLink | null {
-  if (!s.startsWith(CHAT_SCHEME)) return null;
-  const rest = s.slice(CHAT_SCHEME.length);
+  const scheme = s.startsWith(CHAT_SCHEME) ? CHAT_SCHEME : s.startsWith(OLD_CHAT_SCHEME) ? OLD_CHAT_SCHEME : null;
+  if (scheme === null) return null;
+  const rest = s.slice(scheme.length);
   const n = run(rest, GID_CHAR);
   if (n === 0 || n > 64) return null;
   const gid = rest.slice(0, n);
-  let len = CHAT_SCHEME.length + n;
+  let len = scheme.length + n;
   let pc = "";
   const after = rest.slice(n);
   if (after.startsWith("?pc=")) {
@@ -53,7 +66,7 @@ interface Site {
 /** Where chat links start in `md` outside code spans and blocks. */
 function sites(md: string): Site[] {
   const out: Site[] = [];
-  if (!md.includes(CHAT_SCHEME)) return out;
+  if (!hasChatLink(md)) return out;
   let inCode = false;
   let i = 0;
   while (i < md.length) {

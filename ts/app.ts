@@ -147,6 +147,38 @@ const commands: Record<string, Command> = {
     return r.ok ? 0 : 1;
   },
   // Quits the running Harbor as its tray's Quit does, and waits until it's gone (installers, before replacing it).
+  // Hub's phones pair here (packages/net/src/hubpair.ts): a one-time code and its link/QR, the paired phones, removing one.
+  pair: async (args) => {
+    const { single } = await import("./packages/store/src/index.ts");
+    const [sub, arg] = args;
+    if (sub === "list") {
+      const r = await single.apiCall({ method: "GET", path: "v1/pair/devices" });
+      if (r === null) return (console.error("hub: Hub isn't running"), 1);
+      const list = ((r.body as { devices?: { fp: string; name: string; created: number }[] }).devices ?? []);
+      if (list.length === 0) console.log("No phone is paired with this PC yet: run `hub pair`.");
+      for (const d of list) console.log(`${d.name}  ${d.fp.slice(0, 16)}…  paired ${new Date(d.created * 1000).toLocaleString()}`);
+      return 0;
+    }
+    if (sub === "remove") {
+      if (!arg) return (console.error("usage: hub pair remove FINGERPRINT (from hub pair list)"), 2);
+      const all = await single.apiCall({ method: "GET", path: "v1/pair/devices" });
+      const fp = ((all?.body as { devices?: { fp: string }[] } | undefined)?.devices ?? []).find((d) => d.fp.startsWith(arg.toLowerCase()))?.fp ?? arg;
+      const r = await single.apiCall({ method: "POST", path: "v1/pair/revoke", body: { fp } });
+      if (r === null) return (console.error("hub: Hub isn't running"), 1);
+      console.log((r.body as { removed?: boolean }).removed ? "Removed: that phone has to pair again." : "No paired phone has that key.");
+      return 0;
+    }
+    if (sub !== undefined) return (console.error("usage: hub pair [list | remove FINGERPRINT]"), 2);
+    const r = await single.apiCall({ method: "POST", path: "v1/pair/start" });
+    if (r === null || !r.ok) return (console.error(`hub: ${r === null ? "Hub isn't running" : JSON.stringify(r.body)}`), 1);
+    const b = r.body as { code: string; link: string; name: string; port: number; addrs: string[]; expires_ms: number };
+    const qr = Bun.which("qrencode") === null ? null : Bun.spawnSync(["qrencode", "-t", "ansiutf8", "-m", "2", b.link]);
+    if (qr?.exitCode === 0) process.stdout.write(qr.stdout.toString());
+    console.log(`Pair a phone with Hub on ${b.name}: scan the code above in Hub for Android, or open this link on the phone:`);
+    console.log(b.link);
+    console.log(`Code ${b.code.slice(0, 5)}-${b.code.slice(5)} (port ${b.port}; ${b.addrs.join(", ")}), good for one phone until ${new Date(b.expires_ms).toLocaleTimeString()}.`);
+    return 0;
+  },
   quit: async () => {
     const { single } = await import("./packages/store/src/index.ts");
     if (!(await single.quitRunning())) {
@@ -237,8 +269,8 @@ const commands: Record<string, Command> = {
     const { AccountService, hostPort, lanAddrs, loadOrCreate, readMe } = await import("./packages/net/src/index.ts");
     const { stateDir } = await import("./packages/store/src/index.ts");
     const s = await store();
-    const portText = s.get("api_port") ?? "";
-    const port = /^\d+$/.test(portText) ? Number(portText) : 47930;
+    const portText = s.get("hub_api_port") ?? "";
+    const port = /^\d+$/.test(portText) ? Number(portText) : 47950;
     const svc = new AccountService({
       kv: s,
       stateDir: stateDir(),

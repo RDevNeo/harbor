@@ -90,6 +90,8 @@ export interface ApiDeps {
   /** The app's routes (api.rs `api_route`), for every call not served here. */
   route: (call: Call) => Promise<Reply>;
   account: Account | null;
+  /** Hub's pairing (hubpair.ts): `POST /v1/pair {code, name}` from a phone's own key, with no token yet. */
+  pair?: (code: string, fp: string, name: string) => { ok: true; token: string; pc: Json } | { ok: false; error: string };
   /** `GET /v1/app`: {version_code, url, hub}. */
   appInfo: () => Json;
   /** The APK this PC serves, if any. */
@@ -393,6 +395,22 @@ export class Api {
       w.destroy();
       return;
     }
+    if (is("v1", "pair") && req.method === "POST" && this.d.pair) {
+      if (peer.via.kind !== "tls" || peer.via.fp === null) return sendJson(w, 401, { error: "Pairing needs the phone's own key (TLS)" });
+      let b: Record<string, unknown> = {};
+      try {
+        b = obj(parseJson(await readBody(r, req.len, 8192)));
+      } catch {
+        return sendJson(w, 400, { error: "bad body" });
+      }
+      const res = this.d.pair(typeof b.code === "string" ? b.code : "", peer.via.fp, typeof b.name === "string" ? b.name : "");
+      if (!res.ok) {
+        this.fails.hit(ip);
+        noteRefused(ip, res.error);
+        return sendJson(w, 401, { error: res.error });
+      }
+      return sendJson(w, 200, { token: res.token, pc: res.pc });
+    }
     let who: { token: string; level: Level | null } | null = null;
     let refusal: HttpError | null = null;
     try {
@@ -565,7 +583,7 @@ export class Api {
     } catch {
       return sendJson(w, 404, { error: "the app file is unreadable" });
     }
-    w.write(response(200, "application/vnd.android.package-archive", len, 'Content-Disposition: attachment; filename="harbor.apk"\r\n'));
+    w.write(response(200, "application/vnd.android.package-archive", len, 'Content-Disposition: attachment; filename="hub.apk"\r\n'));
     if (headOnly) {
       w.end();
       return;

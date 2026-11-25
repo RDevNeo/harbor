@@ -136,7 +136,7 @@ const harborOnly: Servers = {
 /** The MCP servers Harbor itself gives a turn: its team server, every PC's files, its own apps. */
 export function harborServers(): Set<string> {
   const sv = integrations.servers;
-  return new Set(["harbor", sv.machinesName, ...(sv.ownApps ?? [])]);
+  return new Set(["hub", "harbor", sv.machinesName, ...(sv.ownApps ?? [])]);
 }
 
 export const integrations: Integrations = { servers: harborOnly, bridge: null, remote: null, workspace: null };
@@ -219,7 +219,7 @@ export interface Team {
 /** Harbor's own MCP server for a team turn: `harbor mcp --chat N --role R`. */
 export function teamServer(t: Team, chatId: number): [string, string[]] {
   const [exe, ...pre] = selfArgv();
-  return [exe ?? "harbor", [...pre, "mcp", "--chat", String(chatId), "--role", t.role]];
+  return [exe ?? "hub", [...pre, "mcp", "--chat", String(chatId), "--role", t.role]];
 }
 
 function teamMcpEntry(t: Team, chatId: number): unknown {
@@ -372,7 +372,7 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
         let note = spec.remote?.note ?? "";
         // Below full access, headless Claude Code refuses tools that would ask; the team's tools stay usable.
         const allowed = ws.map((t) => `mcp__${bridgeOrThrow().origin}__${t}`);
-        if (spec.team && spec.access !== "full") allowed.push("mcp__harbor");
+        if (spec.team && spec.access !== "full") allowed.push("mcp__hub");
         if (allowed.length > 0) args.push(`--allowedTools=${allowed.join(",")}`);
         if (ws.length > 0) {
           const w = workspaceOrThrow();
@@ -383,7 +383,7 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
         if (spec.team) args.push("--append-system-prompt", note === "" ? spec.team.system : `${spec.team.system}\n\n${note}`);
         else if (note !== "") args.push("--append-system-prompt", note);
         // Only Harbor's servers: not the user's global, project or claude.ai ones.
-        const harbor: [string, unknown] | null = spec.team ? ["harbor", teamMcpEntry(spec.team, spec.chatId)] : null;
+        const harbor: [string, unknown] | null = spec.team ? ["hub", teamMcpEntry(spec.team, spec.chatId)] : null;
         if (!spec.remote) {
           const apps = overlay === null || spec.context.signedIn;
           const extra: [string, unknown][] = harbor ? [harbor] : [];
@@ -440,7 +440,7 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
       if (effort !== null) args.push("-c", `model_reasoning_effort="${effort}"`);
       if (spec.fast) args.push("-c", 'service_tier="priority"');
       // Like a local Claude turn: the stdio servers go on a grant of the turn's own and start only when a tool is called. Codex's config is on its command line, so the URLs carry no token: it comes from the environment.
-      const extra: [string, unknown][] = spec.team ? [["harbor", teamMcpEntry(spec.team, spec.chatId)]] : [];
+      const extra: [string, unknown][] = spec.team ? [["hub", teamMcpEntry(spec.team, spec.chatId)]] : [];
       const br = integrations.bridge;
       const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: null };
       const port = br ? await br.grant(g) : null;

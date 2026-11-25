@@ -221,11 +221,11 @@ function itemProps(hidden: boolean): Prop[] {
   const tip = hidden ? "Running in the background" : "Open";
   return [
     ["Category", dv.s("ApplicationStatus")],
-    ["Id", dv.s("harbor")],
+    ["Id", dv.s("hub")],
     ["Title", dv.s("Hub")],
     ["Status", dv.s("Active")],
     ["WindowId", dv.i(0)],
-    ["IconName", dv.s("harbor")],
+    ["IconName", dv.s("hub")],
     ["IconThemePath", dv.s("")],
     ["IconPixmap", pixmaps()],
     ["OverlayIconName", dv.s("")],

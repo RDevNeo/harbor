@@ -153,6 +153,10 @@ export interface AccountStatus {
   notice: string;
 }
 
+/** Hub (its own world, hub.ts STANDALONE): Harbor's account service and Clerk are never called, nobody signs in to them. */
+export const HUB_NO_ACCOUNT = true;
+export const HUB_NO_ACCOUNT_TEXT = "Hub doesn't use Harbor accounts: phones pair with this PC directly (run `hub pair`).";
+
 /** What a Harbor token says. */
 export interface HarborClaims {
   iss: string;
@@ -1100,6 +1104,7 @@ export class AccountService {
     let text: string;
     let code: number;
     try {
+      if (HUB_NO_ACCOUNT) throw AccountFail.offline(HUB_NO_ACCOUNT_TEXT);
       const res = await fetch(url, { method, headers, ...(body ? { body: body.data } : {}), redirect: "manual", signal: AbortSignal.timeout(HTTP_TIMEOUT) });
       code = res.status;
       text = await res.text();
@@ -1373,6 +1378,7 @@ export class AccountService {
 
   /** The whole sign-in; throws an Error with the sentence to show. Also what `harbor account login` runs. */
   async signInFlow(): Promise<void> {
+    if (HUB_NO_ACCOUNT) throw new Error(HUB_NO_ACCOUNT_TEXT);
     if (!this.configured() && this.env("HARBOR_CLERK_URL") === undefined) throw new Error("This build of Hub has no account service set up.");
     const server = createServer();
     try {
@@ -1817,7 +1823,7 @@ export class AccountService {
   /** Loads what's cached and starts the account loop (once). */
   start(): void {
     this.load();
-    if (this.loop) return;
+    if (HUB_NO_ACCOUNT || this.loop) return;
     this.stopped = false;
     this.loop = this.run();
   }

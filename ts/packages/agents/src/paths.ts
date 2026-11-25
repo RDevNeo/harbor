@@ -8,7 +8,7 @@ export { dataDir, home, newUuid, now, privateDir, randomHex, runDir, stateDir, w
 export function socketPath(): string {
   const env = process.env.HARBOR_SOCK;
   if (env) return env;
-  return join(process.env.XDG_RUNTIME_DIR ?? runDir(), "harbor.sock");
+  return join(process.env.XDG_RUNTIME_DIR ?? runDir(), "hub.sock");
 }
 
 /** From source, Harbor starts itself as Bun with the entry script. */

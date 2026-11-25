@@ -7,7 +7,7 @@ import { basename, isAbsolute, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
 import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, pins, repoDir, secrets } from "@harbor/store";
-import { accountOn, chatOwner, AUTO_DEVICE, CHAT_SCHEME, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
+import { accountOn, chatOwner, AUTO_DEVICE, isChatLink, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
 import { WarmChats } from "./logic/warmchats.ts";
@@ -5688,7 +5688,7 @@ export class Shell {
     }
     // A chat link in a reply (chatlink.ts): opens that chat here, a copy of another PC's or a
     // sub-agent's too, never the system's harbor:// handler; a short notice says why it can't.
-    if (url.startsWith(CHAT_SCHEME)) {
+    if (isChatLink(url)) {
       const r = openChatLink(this.linkWorld(), url, (id) => this.openChat(id));
       if ("error" in r) this.toast(r.error);
       return;

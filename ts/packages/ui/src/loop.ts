@@ -47,7 +47,7 @@ const before = epolls();
  * it apart from the real Harbor.
  */
 export function appId(env: NodeJS.ProcessEnv = process.env): string {
-  return env.HARBOR_PREVIEW_APP ? "harbor-preview" : "harbor";
+  return env.HARBOR_PREVIEW_APP ? "hub-preview" : "hub";
 }
 
 /**

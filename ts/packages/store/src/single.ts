@@ -14,7 +14,7 @@ export const RELOADED_PID = "HARBOR_RELOADED_PID";
 /** The control socket: HARBOR_SOCK, else harbor.sock in the runtime folder. */
 export function socketPath(env: Record<string, string | undefined> = process.env): string {
   if (env.HARBOR_SOCK) return env.HARBOR_SOCK;
-  return join(env.XDG_RUNTIME_DIR || runDir(env), "harbor.sock");
+  return join(env.XDG_RUNTIME_DIR || runDir(env), "hub.sock");
 }
 
 export const lockPath = (env: Record<string, string | undefined> = process.env): string => socketPath(env).replace(/\.[^./]*$/, ".lock");
