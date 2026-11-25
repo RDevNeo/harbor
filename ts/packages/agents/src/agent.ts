@@ -6,6 +6,7 @@ import * as compaction from "./compaction.ts";
 import * as detach from "./detach.ts";
 import { arr, at, bool, compact, f64, firstLine, i64, isNull, obj, optStr, parse, pretty, str, takeChars, u64 } from "./json.ts";
 import { dataDir, home, now, privateDir, randomHex, selfArgv, socketPath, writePrivate } from "./paths.ts";
+import * as hubMachines from "./hubmachines.ts";
 import { alive, killTree } from "./procfs.ts";
 import { sessionDir } from "./movechat.ts";
 import * as turnscope from "./turnscope.ts";
@@ -393,7 +394,12 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
           const port = br ? await br.grant(g) : null;
           // Claude expands the variable in its config's URLs; the runner sets it (to its relay's port, relay.ts).
           const via = port === null ? "" : relayed(cmd, br, port);
-          if (port !== null && g.machines !== null) extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${via}/${g.token}/${sv.machinesName}` }]);
+          // Hub: the other PCs through hub-machines (hubmachines.ts), not the mesh's machines.
+          const hm = hubMachines.entry();
+          if (hm !== null) {
+            extra.push([hubMachines.NAME, hm]);
+            g.machines = null;
+          } else if (port !== null && g.machines !== null) extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${via}/${g.token}/${sv.machinesName}` }]);
           const lazy = port === null ? null : { servers: g.servers, base: `http://127.0.0.1:${via}/${g.token}/` };
           args.push("--strict-mcp-config", "--mcp-config", await sv.claudeConfig(spec.chatId, extra, apps, lazy));
           if (port !== null) {
@@ -441,6 +447,8 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
       if (spec.fast) args.push("-c", 'service_tier="priority"');
       // Like a local Claude turn: the stdio servers go on a grant of the turn's own and start only when a tool is called. Codex's config is on its command line, so the URLs carry no token: it comes from the environment.
       const extra: [string, unknown][] = spec.team ? [["hub", teamMcpEntry(spec.team, spec.chatId)]] : [];
+      const hm = hubMachines.entry();
+      if (hm !== null) extra.push([hubMachines.NAME, hm]);
       const br = integrations.bridge;
       const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: null };
       const port = br ? await br.grant(g) : null;
