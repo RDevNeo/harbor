@@ -1,0 +1,89 @@
+// Hub's design tokens (DESIGN.md): one scale for every tab (Projects, Persons, Routine). Colours stay in Theme
+// (theme.slint, generated from src/theme.ts); these are the sizes, the type scale and the states built on them.
+// Projects' look is the reference: a new size goes here first, then into the component that needs it.
+import { Theme } from "theme.slint";
+
+export global Ds {
+    // Spacing: 2, 4, 6, 8, 10, 12, 16, 20, 24.
+    out property <length> sp1: 2px;
+    out property <length> sp2: 4px;
+    out property <length> sp3: 6px;
+    out property <length> sp4: 8px;
+    out property <length> sp5: 10px;
+    out property <length> sp6: 12px;
+    out property <length> sp7: 16px;
+    out property <length> sp8: 20px;
+    out property <length> sp9: 24px;
+
+    // Radii: tags 4, rows and buttons 6, cards and popovers 8, dialogs 12; pills are height / 2.
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: Theme.radius-md;
+    out property <length> radius-lg: Theme.radius-lg;
+    out property <length> radius-xl: Theme.radius-xl;
+
+    // Type scale. caps: section heads (upper case, letter-spaced); xs: a row's second line; meta: a row's right side
+    // ("13m ago", counts); sm: notes and descriptions; body: titles of rows, buttons, inputs; lg: card and panel titles;
+    // page: a page's title; dialog: a dialog's title; hero: big numbers.
+    out property <length> t-caps: 11px;
+    out property <length> t-xs: 11.5px;
+    out property <length> t-meta: 12.5px;
+    out property <length> t-sm: 13px;
+    out property <length> t-body: 14px;
+    out property <length> t-lg: 15px;
+    out property <length> t-page: 20px;
+    out property <length> t-dialog: 20px;
+    out property <length> t-hero: 24px;
+    out property <float> caps-spacing: 0.6;
+
+    // Icon sizes: a row's marks 12, menu and row glyphs 14, buttons 16, empty states 24.
+    out property <length> icon-xs: 12px;
+    out property <length> icon-sm: 14px;
+    out property <length> icon-md: 16px;
+    out property <length> icon-lg: 24px;
+
+    // Rows: one line 32 (Theme.row-h), two lines 46, a project-like head 34.
+    out property <length> row-h: Theme.row-h;
+    out property <length> row2-h: 46px;
+    out property <length> head-row-h: 34px;
+    // Lead column: the fold's chevron 0..22, the lead mark (16px) at 22, the title at 46; without a fold the mark
+    // sits at 8 and the title at 32 (sidebar.slint ProjectRow / ThreadRow).
+    out property <length> lead-x: 8px;
+    out property <length> lead-fold-x: 22px;
+    out property <length> title-x: 32px;
+    out property <length> title-fold-x: 46px;
+    out property <length> indent: 16px;
+
+    // Frames: the sidebar (every tab), its padding, its header row; a page's header bar; a detail panel.
+    out property <length> side-w: 256px;
+    out property <length> side-pad: 11px;
+    out property <length> side-pad-top: 13px;
+    out property <length> side-head-h: 28px;
+    out property <length> bar-h: 46px;
+    out property <length> panel-w: 340px;
+    out property <length> page-max-w: 680px;
+    out property <length> page-pad: 24px;
+
+    // States: hover and selected share the accent fill (as Projects' rows); text on a muted row.
+    out property <color> hover: Theme.accent;
+    out property <color> selected: Theme.accent;
+    out property <color> muted-fg: Theme.gray-800;
+    out property <color> caps-fg: Theme.gray-800;
+
+    // Status colours (dots, lines): ok, warn, bad, info, quiet.
+    out property <color> ok: Theme.green-800;
+    out property <color> warn: Theme.amber-700;
+    out property <color> bad: Theme.red-800;
+    out property <color> info: Theme.blue-700;
+    out property <color> quiet: Theme.gray-600;
+
+    // A named tone ("green", "yellow"/"amber", "red", "blue", else muted) as a text colour.
+    public pure function tone(t: string) -> color {
+        return t == "green" ? Theme.green-900 : t == "yellow" || t == "amber" ? Theme.amber-900 : t == "red" ? Theme.red-900
+            : t == "blue" ? Theme.blue-900 : Theme.subtle;
+    }
+    // The same tone as a dot's fill.
+    public pure function tone-dot(t: string) -> color {
+        return t == "green" ? Theme.green-700 : t == "yellow" || t == "amber" ? Theme.amber-700 : t == "red" ? Theme.red-800
+            : t == "blue" ? Theme.blue-700 : Theme.gray-600;
+    }
+}

@@ -1,0 +1,398 @@
+// Hub's shared surfaces and controls (DESIGN.md "Surfaces", "Controls"): the sidebar's frame and header (the tab
+// switcher is the window's tab row, tabs.slint), a page's header bar and title, the detail panel and its sections,
+// dialogs, menus, the toast, chips, fields. Built on widgets.slint (buttons, inputs, popovers) and the tokens.
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Ds } from "ds-tokens.slint";
+import { Btn, BtnSize, Glyph, Input, PopoverFrame, TipArea, Variant } from "widgets.slint";
+
+// ---------- frames ----------
+
+/** Every tab's sidebar: the sunken fill and its edge line (sidebar.slint's look). */
+export component SideSurface inherits Rectangle {
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+}
+
+/** The sidebar's first row (under the window's tab row): hide-sidebar on the left, then the tab's own buttons
+ *  (children) on the right, ghost icon buttons as Projects' (refresh, search, add). */
+export component SideHead inherits HorizontalLayout {
+    in property <bool> can-hide: true;
+    callback hide();
+    height: Ds.side-head-h;
+    spacing: 2px;
+    if root.can-hide: Btn {
+        icon: Icons.panel-left-close;
+        size: icon-xs;
+        variant: ghost-muted;
+        tip: "Hide sidebar (Ctrl+B)";
+        clicked => {
+            root.hide();
+        }
+    }
+    Rectangle {
+        horizontal-stretch: 1;
+    }
+    @children
+}
+
+/** A page's header bar over its content (a chat, a person): 46px, a hairline under it. While the sidebar is hidden it
+ *  starts with show-sidebar, where the sidebar's header had hide. */
+export component PageBar inherits Rectangle {
+    in property <bool> side-hidden;
+    callback show-side();
+    height: Ds.bar-h;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        if root.side-hidden: VerticalLayout {
+            alignment: center;
+            Btn {
+                icon: Icons.panel-left;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Show sidebar (Ctrl+B)";
+                clicked => {
+                    root.show-side();
+                }
+            }
+        }
+        @children
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+/** A page's title block: the title, an optional line under it, the page's actions (children) on the right. */
+export component PageHead inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> sub;
+    spacing: 10px;
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        spacing: 2px;
+        Text {
+            text: root.title;
+            font-size: Ds.t-page;
+            font-weight: 600;
+            letter-spacing: -0.4px;
+            color: Theme.fg;
+            overflow: elide;
+        }
+        if root.sub != "": Text {
+            text: root.sub;
+            font-size: Ds.t-sm;
+            color: Theme.subtle;
+            overflow: elide;
+        }
+    }
+    @children
+}
+
+/** The detail panel on a page's right (a person's details): the page's fill and a hairline on its left. */
+export component PanelSurface inherits Rectangle {
+    background: Theme.bg100;
+    Rectangle {
+        x: 0;
+        width: 1px;
+        background: Theme.border;
+    }
+}
+
+/** A caps label: a section's title in a panel or a form ("NOTES", "SOCIALS (2)"). */
+export component CapsLabel inherits Text {
+    font-size: Ds.t-caps;
+    font-weight: 500;
+    letter-spacing: Ds.caps-spacing * 1px;
+    color: Ds.caps-fg;
+    vertical-alignment: center;
+}
+
+/** A panel's section: its caps title (and an optional small action on its right), then its content (children). */
+export component PanelSection inherits VerticalLayout {
+    in property <string> title;
+    in property <string> action;
+    in property <string> action-icon;
+    callback act();
+    spacing: 6px;
+    if root.title != "" || root.action != "": HorizontalLayout {
+        height: 22px;
+        spacing: 6px;
+        CapsLabel {
+            text: root.title;
+            horizontal-stretch: 1;
+        }
+        if root.action != "": Btn {
+            height: 22px;
+            text: root.action;
+            icon: root.action-icon;
+            size: xs;
+            variant: ghost-muted;
+            clicked => {
+                root.act();
+            }
+        }
+    }
+    @children
+}
+
+// ---------- dialogs, menus, toast ----------
+
+/** A modal dialog (app.slint's): the scrim, a 12px-round box, the title, an optional note, the content (children:
+ *  fields, then a DialogActions row) and the close button in its corner. A click on the scrim dismisses it. */
+export component DialogFrame inherits Rectangle {
+    in property <string> title;
+    in property <string> text;
+    /** 448 for confirms, 512 for forms (content width). */
+    in property <length> box-w: 448px;
+    in property <bool> closable: true;
+    callback dismiss();
+    background: Theme.scrim;
+    TouchArea {
+        clicked => {
+            root.dismiss();
+        }
+    }
+    box := Rectangle {
+        width: min(root.box-w + 50px, root.width - 32px);
+        height: min(root.height - 32px, body.preferred-height);
+        background: Theme.bg100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Ds.radius-xl;
+        drop-shadow-offset-y: 12px;
+        drop-shadow-blur: 28px;
+        drop-shadow-color: black.with-alpha(Theme.dark ? 56 / 255 : 20 / 255);
+        TouchArea { }
+        body := VerticalLayout {
+            padding: 25px;
+            spacing: 16px;
+            VerticalLayout {
+                spacing: 12px;
+                Text {
+                    text: root.title;
+                    font-size: Ds.t-dialog;
+                    font-weight: 600;
+                    letter-spacing: -0.4px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+                if root.text != "": Text {
+                    text: root.text;
+                    font-size: Ds.t-body;
+                    color: Theme.subtle;
+                    wrap: word-wrap;
+                }
+            }
+            @children
+        }
+        if root.closable: close-x := TouchArea {
+            x: parent.width - 37px;
+            y: 17px;
+            width: 28px;
+            height: 28px;
+            mouse-cursor: pointer;
+            clicked => {
+                root.dismiss();
+            }
+            Glyph {
+                icon: Icons.x;
+                size: 16px;
+                color: close-x.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
+            }
+        }
+    }
+}
+
+/** A dialog's buttons, on the right: Cancel, then the main one. */
+export component DialogActions inherits HorizontalLayout {
+    alignment: end;
+    spacing: 8px;
+    padding-top: 8px;
+}
+
+/** A form's label over its control. */
+export component FieldLabel inherits Text {
+    font-size: 12px;
+    font-weight: 500;
+    color: Theme.subtle;
+}
+
+/** A labelled field (forms in dialogs and sheets). */
+export component Field inherits VerticalLayout {
+    in property <string> label;
+    in property <string> hint;
+    in-out property <string> text;
+    callback accepted();
+    spacing: 6px;
+    FieldLabel {
+        text: root.label;
+    }
+    Input {
+        hint: root.hint;
+        text <=> root.text;
+        accepted => {
+            root.accepted();
+        }
+    }
+}
+
+/** A few lines of text (notes, a pasted export): an Input's frame around a wrapping TextInput. */
+export component TextBox {
+    in-out property <string> text <=> field.text;
+    in property <string> hint;
+    in property <length> min-h: 72px;
+    in property <bool> mono;
+    out property <bool> focused: field.has-focus;
+    callback edited(string);
+    callback left(string);
+    height: max(root.min-h, field.preferred-height + 16px);
+    Rectangle {
+        border-radius: Ds.radius-md;
+        border-width: 1px;
+        border-color: field.has-focus ? Theme.gray-1000 : Theme.border;
+        background: Theme.bg100;
+    }
+    if field.text == "": Text {
+        x: 10px;
+        y: 8px;
+        width: parent.width - 20px;
+        text: root.hint;
+        font-size: Ds.t-sm;
+        color: Theme.gray-800;
+        wrap: word-wrap;
+    }
+    field := TextInput {
+        x: 10px;
+        y: 8px;
+        width: parent.width - 20px;
+        font-size: Ds.t-sm;
+        font-family: root.mono ? "Geist Mono" : "Geist";
+        color: Theme.fg;
+        wrap: word-wrap;
+        single-line: false;
+        selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+        selection-foreground-color: Theme.fg;
+        edited => {
+            root.edited(self.text);
+        }
+        changed has-focus => {
+            if !self.has-focus {
+                root.left(self.text);
+            }
+        }
+    }
+}
+
+/** A menu's frame at a point: the popover, 4px in, its entries (children: MenuItem, MenuLabel, MenuSeparator). */
+export component MenuPanel inherits PopoverFrame {
+    in property <length> menu-w: 264px;
+    width: menu-w;
+    height: col.preferred-height;
+    col := VerticalLayout {
+        padding: 4px;
+        @children
+    }
+}
+
+/** A short message over the bottom edge, with an optional button (app.slint's toast). */
+export component Toast inherits PopoverFrame {
+    in property <string> text;
+    in property <string> action;
+    callback act();
+    width: toast-text.width + 10px + (root.action != "" ? toast-btn.width + 12px : 0px);
+    height: max(toast-text.preferred-height, root.action != "" ? toast-btn.height : 0px) + 10px;
+    toast-text := Text {
+        x: 5px;
+        y: (parent.height - self.height) / 2;
+        width: min(self.preferred-width, 586px);
+        wrap: word-wrap;
+        text: root.text;
+        font-size: Ds.t-body;
+        color: Theme.fg;
+    }
+    toast-btn := Btn {
+        x: toast-text.x + toast-text.width + 12px;
+        y: (parent.height - self.height) / 2;
+        visible: root.action != "";
+        text: root.action;
+        size: BtnSize.xs;
+        clicked => {
+            root.act();
+        }
+    }
+}
+
+// ---------- controls ----------
+
+/** A pill: a choice in a row of them (a filter, a goal type, a store a person is in), a quick action (+250 ml, Start).
+ *  On: the primary fill. `sm`: 26px (dense choices), else 32px. */
+export component Chip {
+    in property <string> text;
+    in property <string> glyph;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    in property <bool> danger;
+    in property <bool> sm;
+    in property <string> tip;
+    /** A colour mark before the text (a store's, a goal's); transparent none. */
+    in property <color> mark: transparent;
+    callback clicked();
+    height: sm ? 26px : 32px;
+    min-width: self.height;
+    preferred-width: row.preferred-width;
+    property <color> ink: !root.enabled ? Theme.gray-700 : root.danger ? Theme.red-900 : root.on ? Theme.on-primary : Theme.fg;
+    Rectangle {
+        border-radius: root.height / 2;
+        background: !root.enabled ? Theme.gray-100 : root.danger ? Theme.red-200 : root.on ? (area.has-hover ? Theme.primary.mix(Theme.bg100, 0.9) : Theme.primary) : area.has-hover ? Theme.gray-300 : Theme.gray-200;
+    }
+    row := HorizontalLayout {
+        padding-left: root.sm ? 10px : 12px;
+        padding-right: root.sm ? 10px : 12px;
+        spacing: 6px;
+        alignment: center;
+        if root.mark != transparent: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.mark;
+            }
+        }
+        if root.glyph != "": Glyph {
+            icon: root.glyph;
+            size: root.sm ? 13px : 15px;
+            color: root.ink;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            font-size: root.sm ? 12px : Ds.t-sm;
+            font-weight: 500;
+            color: root.ink;
+            vertical-alignment: center;
+        }
+    }
+    area := TipArea {
+        tip: root.tip;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+/** An empty or loading line in a list or page: centred, quiet. */
+export component Hint inherits Text {
+    font-size: Ds.t-sm;
+    color: Theme.subtle;
+    horizontal-alignment: center;
+    wrap: word-wrap;
+}

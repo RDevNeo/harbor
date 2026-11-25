@@ -1,0 +1,470 @@
+// Hub's shared list parts (DESIGN.md "Lists"): section heads, the one list row every sidebar and list draws (a
+// project, a store, a person, a Routine screen), its lead marks (letter square, avatar, glyph, dot), its badges and
+// the fold bar. Metrics are Projects' sidebar's (sidebar.slint), so a row reads the same in every tab.
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Ds } from "ds-tokens.slint";
+import { Btn, Glyph, TipArea } from "widgets.slint";
+
+/** A count in a small round pill: the text colour on the page's (unread on a row), or blue (a section's total). */
+export component CountPill {
+    in property <int> n;
+    in property <bool> blue;
+    height: 16px;
+    width: max(16px, t.preferred-width + 8px);
+    Rectangle {
+        border-radius: 8px;
+        background: root.blue ? Theme.blue-700 : Theme.fg;
+    }
+    t := Text {
+        text: root.n > 99 ? "99+" : root.n;
+        font-size: 10px;
+        font-weight: 600;
+        color: root.blue ? white : Theme.bg100;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+/** A section's small head ("PROJECTS", "CREATORS"): upper-case caps, an optional fold chevron after it, and on its
+ *  right a status dot, an unread pill and a + (all optional). A click on the title folds it when it folds. */
+export component SectionHead {
+    in property <string> title;
+    /** "" doesn't fold, "open", "folded". */
+    in property <string> fold;
+    /** The first head of a list: less room above it. */
+    in property <bool> first;
+    in property <int> count;
+    in property <color> dot: transparent;
+    in property <string> dot-tip;
+    /** The +'s tip; "" no +. */
+    in property <string> plus-tip;
+    callback toggled();
+    callback plus(length, length);
+    height: (first ? 2px : 10px) + 22px + 2px;
+    property <length> line-y: first ? 2px : 10px;
+    head := TouchArea {
+        y: root.line-y;
+        height: 22px;
+        width: label.x + label.width + (root.fold != "" ? 20px : 4px);
+        enabled: root.fold != "";
+        mouse-cursor: root.fold != "" ? pointer : default;
+        clicked => {
+            root.toggled();
+        }
+    }
+    label := Text {
+        x: 6px;
+        y: root.line-y;
+        height: 22px;
+        width: min(self.preferred-width, root.width - 80px);
+        text: root.title;
+        font-size: Ds.t-caps;
+        font-weight: 500;
+        letter-spacing: Ds.caps-spacing * 1px;
+        color: head.has-hover ? Theme.fg : Ds.caps-fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    if root.fold != "": Glyph {
+        x: label.x + label.width + 4px;
+        y: root.line-y;
+        width: 12px;
+        height: 22px;
+        icon: root.fold == "folded" ? Icons.right : Icons.down;
+        size: 11px;
+        color: head.has-hover ? Theme.fg : Ds.caps-fg;
+    }
+    right := HorizontalLayout {
+        x: root.width - self.preferred-width;
+        y: root.line-y;
+        height: 22px;
+        width: self.preferred-width;
+        spacing: 6px;
+        if root.dot != transparent: TipArea {
+            width: 8px;
+            tip: root.dot-tip;
+            mouse-cursor: default;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: root.dot;
+            }
+        }
+        if root.count > 0: VerticalLayout {
+            alignment: center;
+            CountPill {
+                n: root.count;
+                blue: true;
+            }
+        }
+        if root.plus-tip != "": Btn {
+            width: 22px;
+            height: 22px;
+            icon: Icons.plus;
+            size: icon-xs;
+            variant: ghost-muted;
+            tip: root.plus-tip;
+            clicked => {
+                root.plus(self.absolute-position.x, self.absolute-position.y + self.height);
+            }
+        }
+    }
+}
+
+/** A status dot (waiting, unread, a connection's state). */
+export component StatusDot {
+    in property <color> color;
+    in property <length> size: 6px;
+    width: 12px;
+    Rectangle {
+        width: root.size;
+        height: root.size;
+        border-radius: root.size / 2;
+        background: root.color;
+    }
+}
+
+/** A row's lead square: its picture, else its letter on a quiet square (a project; a store in its colour). */
+export component LeadLetter {
+    in property <string> letter;
+    in property <image> image;
+    in property <bool> has-image;
+    /** A store's colour; transparent: the quiet grey. */
+    in property <color> tint: transparent;
+    in property <bool> lit;
+    in property <length> size: 16px;
+    width: size;
+    height: size;
+    if root.has-image: Rectangle {
+        border-radius: root.size / 4;
+        clip: true;
+        Image {
+            width: root.size;
+            height: root.size;
+            source: root.image;
+            image-fit: cover;
+        }
+    }
+    if !root.has-image: Rectangle {
+        border-radius: root.size / 4;
+        background: root.tint != transparent ? root.tint : root.lit ? Theme.gray-400 : Theme.gray-300;
+        Text {
+            text: root.letter;
+            font-size: root.size * 0.66;
+            font-weight: 600;
+            color: root.tint != transparent ? white : Theme.fg;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+/** A person's round avatar: their photo, else their initials on their colour; Discord's presence in the corner. */
+export component Avatar {
+    in property <string> initials;
+    in property <color> color: Theme.gray-600;
+    in property <image> photo;
+    in property <bool> has-photo;
+    in property <length> size: 32px;
+    /** online | idle | dnd | offline | invisible | "" */
+    in property <string> presence;
+    width: size;
+    height: size;
+    Rectangle {
+        border-radius: root.size / 2;
+        background: root.color.with-alpha(0.25);
+        clip: true;
+        if root.has-photo: Image {
+            width: root.size;
+            height: root.size;
+            source: root.photo;
+            image-fit: cover;
+        }
+        if !root.has-photo: Text {
+            text: root.initials;
+            font-size: root.size * 0.38;
+            font-weight: 600;
+            color: root.color;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    // Discord's status shapes: online green, idle yellow, dnd red, offline a grey ring.
+    if root.presence != "": Rectangle {
+        property <length> d: max(8px, root.size * 0.32);
+        x: root.size - self.d + 1px;
+        y: root.size - self.d + 1px;
+        width: self.d;
+        height: self.d;
+        border-radius: self.d / 2;
+        background: Theme.bg100;
+        Rectangle {
+            width: parent.d - 3px;
+            height: parent.d - 3px;
+            border-radius: self.width / 2;
+            background: root.presence == "online" ? #23a55a : root.presence == "idle" ? #f0b232 : root.presence == "dnd" ? #f23f43 : #80848e;
+            if root.presence == "offline" || root.presence == "invisible": Rectangle {
+                width: parent.width / 2;
+                height: parent.height / 2;
+                border-radius: self.width / 2;
+                background: Theme.bg100;
+            }
+            if root.presence == "dnd": Rectangle {
+                width: parent.width * 0.6;
+                height: max(1.5px, parent.height * 0.2);
+                border-radius: self.height / 2;
+                background: Theme.bg100;
+            }
+        }
+    }
+}
+
+/** Where a conversation runs, as a small coloured letter mark: Discord, Gmail, WhatsApp. */
+export component ChannelMark {
+    in property <string> kind;
+    in property <length> size: 12px;
+    width: kind == "" ? 0px : size;
+    height: size;
+    if root.kind != "": Rectangle {
+        border-radius: root.kind == "whatsapp" ? root.size / 2 : 3px;
+        background: root.kind == "discord" ? #5865f2 : root.kind == "gmail" ? #ea4335 : #25d366;
+        Text {
+            text: root.kind == "discord" ? "D" : root.kind == "gmail" ? "M" : "W";
+            font-size: root.size * 0.62;
+            font-weight: 700;
+            color: white;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+/** The one list row (DESIGN.md "List row"): [fold chevron] lead mark, title and its marks (children), a second line,
+ *  and on the right an unread pill and a meta text ("13m ago", a count). Hover and selected fill the same accent.
+ *  Projects' sidebar rows (sidebar.slint) keep their own drag and hover buttons on these metrics. */
+export component ListRow {
+    in property <bool> active;
+    /** Indent steps (16px each). */
+    in property <int> depth;
+    /** "" no chevron, "open", "folded". */
+    in property <string> fold;
+    /** "glyph", "letter", "avatar", "dot", "" none. */
+    in property <string> lead;
+    in property <string> glyph;
+    in property <color> glyph-color: root.active ? Theme.fg : Theme.subtle;
+    /** The letter square's letter, an avatar's initials. */
+    in property <string> letter;
+    /** An avatar's or a store's colour, a dot's fill. */
+    in property <color> tint: transparent;
+    in property <image> image;
+    in property <bool> has-image;
+    in property <string> presence;
+    /** The lead mark's size: 16 for glyphs and squares; avatars 22 on one line, 28 on two. */
+    in property <length> lead-size: root.lead == "avatar" ? (root.sub != "" ? 28px : 22px) : 16px;
+    in property <string> title;
+    /** A head row (a project, a store): a little taller, its title 500 (600 selected). */
+    in property <bool> head;
+    /** Unread: the title 600. */
+    in property <bool> strong;
+    /** Muted (snoozed, settled): the title and the lead fade. */
+    in property <bool> dim;
+    in property <string> sub;
+    in property <color> sub-color: Theme.gray-800;
+    in property <string> meta;
+    in property <bool> meta-mono;
+    in property <color> meta-color: Theme.gray-800;
+    in property <int> count;
+    in property <string> tip;
+    out property <bool> hovered: area.has-hover || chev.has-hover;
+    callback clicked();
+    callback fold-clicked();
+    callback menu(length, length);
+    property <bool> two: sub != "";
+    height: two ? Ds.row2-h : head ? Ds.head-row-h : Ds.row-h;
+    property <length> base: root.depth * Ds.indent;
+    property <length> lead-x: base + (fold != "" ? Ds.lead-fold-x : Ds.lead-x);
+    property <length> title-x: lead-x + (lead != "" ? max(16px, lead-size) + 8px : 0px);
+    property <length> line-y: two ? 4px : 0px;
+    property <length> line-h: two ? 22px : root.height;
+    Rectangle {
+        x: root.base;
+        width: root.width - root.base;
+        background: root.active || root.hovered ? Ds.selected : transparent;
+        border-radius: Ds.radius-md;
+    }
+    area := TipArea {
+        tip: root.tip;
+        clicked => {
+            root.clicked();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    chev := TouchArea {
+        x: root.base;
+        width: root.fold != "" ? Ds.lead-fold-x - 2px : 0px;
+        enabled: root.fold != "";
+        mouse-cursor: pointer;
+        clicked => {
+            root.fold-clicked();
+        }
+        if root.fold != "": Glyph {
+            x: 5px;
+            width: 14px;
+            icon: root.fold == "folded" ? Icons.right : Icons.down;
+            size: Ds.icon-xs;
+            color: chev.has-hover ? Theme.fg : Theme.gray-800;
+        }
+    }
+    property <length> lead-y: root.two ? (root.height - root.lead-size) / 2 : (root.height - root.lead-size) / 2;
+    if root.lead == "glyph": Glyph {
+        x: root.lead-x;
+        y: root.line-y;
+        width: 16px;
+        height: root.line-h;
+        icon: root.glyph;
+        size: Ds.icon-sm;
+        color: root.glyph-color;
+        opacity: root.dim ? 0.6 : 1;
+    }
+    if root.lead == "letter": LeadLetter {
+        x: root.lead-x;
+        y: root.lead-y;
+        size: root.lead-size;
+        letter: root.letter;
+        image: root.image;
+        has-image: root.has-image;
+        tint: root.tint;
+        lit: root.active || root.hovered;
+        opacity: root.dim ? 0.45 : 1;
+    }
+    if root.lead == "avatar": Avatar {
+        x: root.lead-x;
+        y: root.lead-y;
+        size: root.lead-size;
+        initials: root.letter;
+        color: root.tint != transparent ? root.tint : Theme.gray-600;
+        photo: root.image;
+        has-photo: root.has-image;
+        presence: root.presence;
+        opacity: root.dim ? 0.7 : 1;
+    }
+    if root.lead == "dot": Rectangle {
+        x: root.lead-x;
+        y: root.line-y;
+        width: 16px;
+        height: root.line-h;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: root.tint;
+        }
+    }
+    // The right side: the unread pill, then the meta text.
+    right := HorizontalLayout {
+        x: root.width - 8px - self.width;
+        y: root.line-y;
+        height: root.line-h;
+        width: self.preferred-width;
+        spacing: 6px;
+        if root.count > 0: VerticalLayout {
+            alignment: center;
+            CountPill {
+                n: root.count;
+            }
+        }
+        if root.meta != "": Text {
+            text: root.meta;
+            font-size: Ds.t-meta;
+            font-family: root.meta-mono ? "Geist Mono" : "Geist";
+            color: root.meta-color;
+            vertical-alignment: center;
+        }
+    }
+    // The title, then its marks (children) right after it, in the room left of the right side.
+    HorizontalLayout {
+        x: root.title-x;
+        y: root.line-y;
+        height: root.line-h;
+        width: max(0px, right.x - self.x - 6px);
+        spacing: 5px;
+        Text {
+            horizontal-stretch: 0;
+            max-width: self.preferred-width;
+            text: root.title;
+            font-size: Ds.t-body;
+            font-weight: root.strong ? 600 : root.head ? (root.active ? 600 : 500) : root.active ? 500 : 400;
+            color: root.dim ? Theme.gray-800 : Theme.fg;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        @children
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+    }
+    if root.two: Text {
+        x: root.title-x;
+        y: root.line-y + root.line-h;
+        height: 16px;
+        width: root.width - self.x - 10px;
+        text: root.sub;
+        font-size: Ds.t-xs;
+        color: root.sub-color;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+}
+
+/** A fold under a list ("Settled (12)"): the label, a hairline to the edge and the chevron (up open, down folded). */
+export component FoldBar {
+    in property <string> label;
+    in property <bool> open;
+    callback toggled();
+    height: Theme.row-h;
+    property <color> ink: area.has-hover ? Theme.fg.mix(Theme.gray-700, 0.5) : Theme.gray-700;
+    lbl := Text {
+        x: 8px;
+        text: root.label;
+        font-size: 12px;
+        font-weight: 500;
+        color: root.ink;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: lbl.x + lbl.preferred-width + 10px;
+        width: max(0px, root.width - self.x - 34px);
+        height: 1px;
+        background: area.has-hover ? Theme.gray-600 : Theme.gray-500;
+    }
+    Glyph {
+        x: root.width - 21px;
+        width: 14px;
+        icon: root.open ? Icons.up : Icons.down;
+        size: 12px;
+        color: root.ink;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+/** A quiet line in a list (nothing here, a hint), at a row's title column. */
+export component ListNote inherits Text {
+    in property <int> depth;
+    x: 8px + depth * Ds.indent;
+    height: 24px;
+    font-size: 12px;
+    color: Theme.gray-800;
+    vertical-alignment: center;
+    overflow: elide;
+}

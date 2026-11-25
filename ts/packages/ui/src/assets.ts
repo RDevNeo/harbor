@@ -45,6 +45,11 @@ import team from "../slint/team.slint" with { type: "file" };
 import terminal from "../slint/terminal.slint" with { type: "file" };
 import theme from "../slint/theme.slint" with { type: "file" };
 import widgets from "../slint/widgets.slint" with { type: "file" };
+// Hub's design system (DESIGN.md): tokens, list parts, surfaces, and the index every tab imports.
+import ds from "../slint/ds.slint" with { type: "file" };
+import dsTokens from "../slint/ds-tokens.slint" with { type: "file" };
+import dsList from "../slint/ds-list.slint" with { type: "file" };
+import dsSurface from "../slint/ds-surface.slint" with { type: "file" };
 // Hub's tabs (tabs.slint) and each tab's own files (persons*.slint: the Persons port's; routine*.slint).
 import tabs from "../slint/tabs.slint" with { type: "file" };
 import persons from "../slint/persons.slint" with { type: "file" };
@@ -90,6 +95,10 @@ export const FILES: Readonly<Record<string, string>> = {
   "terminal.slint": terminal,
   "theme.slint": theme,
   "widgets.slint": widgets,
+  "ds.slint": ds,
+  "ds-tokens.slint": dsTokens,
+  "ds-list.slint": dsList,
+  "ds-surface.slint": dsSurface,
   "fonts/Geist-Regular.ttf": geistRegular,
   "fonts/Geist-Medium.ttf": geistMedium,
   "fonts/Geist-SemiBold.ttf": geistSemibold,
