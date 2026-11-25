@@ -27,6 +27,9 @@ final class Team {
     private JSONObject team;
     private boolean loading, again, showSettled;
     String lead = ""; // the lead whose team this is (the chat itself, or a subagent's lead)
+    /** Hub: after each load, how many agents the team has and how many are working (the chat's badge). */
+    interface Count { void set(int agents, int working); }
+    Count onCount;
 
     Team(Base a, String chat) {
         this.a = a;
@@ -97,6 +100,11 @@ final class Team {
         if (ag != null) for (int i = 0; i < ag.length(); i++) {
             JSONObject o = ag.optJSONObject(i);
             if (o != null) (o.optBoolean("settled") ? settled : active).add(o);
+        }
+        if (onCount != null) {
+            int working = 0;
+            for (JSONObject o : active) if (o.optBoolean("running")) working++;
+            onCount.set(active.size(), working);
         }
         header(Ui.I_BOT, "Agents", active.size());
         if (active.isEmpty()) note(settled.isEmpty() ? "The lead spawns subagents here as it delegates work." : "No agents working. Earlier ones are under Settled.", Ui.G700);
