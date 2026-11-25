@@ -16,6 +16,8 @@
 # Usage: bash packaging/hub-install.sh [--prefix DIR] [--stage DIR | --install-stage DIR] [--google-from BUNDLE] [--machines DIR] [--no-desktop]
 #   --stage DIR          only builds into DIR (nothing installed; for checks, and for the cutover's build step)
 #   --install-stage DIR  installs what --stage built in DIR (no build)
+#   --apk FILE           Hub for Android (android/build.sh) to serve to phones at /app.apk (versionCode from its name's
+#                        version file, else ts/package.json's version)
 #   --prefix DIR install the app there instead of ~/.local/lib/hub (and no launcher, menu entry or autostart)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,6 +29,7 @@ RUNTIME_SHA256=e3e0151608d17a0e32465c065d42537004fb18841a2c81c9a985d0ddd3d9d5b8
 LIB="$HOME/.local/lib/hub"
 STAGE_ONLY=""
 FROM_STAGE=""
+APK=""
 DESKTOP=1
 GOOGLE_FROM=()
 MACHINES=""
@@ -38,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --prefix) LIB="$2"; DESKTOP=0; shift ;;
     --stage) STAGE_ONLY="$2"; shift ;;
     --install-stage) FROM_STAGE="$2"; shift ;;
+    --apk) APK="$2"; shift ;;
     --google-from) GOOGLE_FROM+=("$2"); shift ;;
     --machines) MACHINES="$2"; shift ;;
     --no-desktop) DESKTOP=0 ;;
@@ -59,6 +63,13 @@ install_files() { # DIR with hub, harbor-app.js, RUNTIME, hub.svg, VERSION(.new)
     # the machines' policies are this PC's own once installed: an edited machines.json stays
     [[ -f "$LIB/hub-machines/machines.json" ]] && cp "$LIB/hub-machines/machines.json" "$LIB/hub-machines.new/machines.json"
     rm -rf "$LIB/hub-machines"; mv "$LIB/hub-machines.new" "$LIB/hub-machines"
+  fi
+  if [[ -n "$APK" ]]; then
+    local code
+    code=$(node -p "const [a,b,c]=require('./ts/package.json').version.split('.').map(Number); a*1000000+b*1000+c")
+    cp "$APK" "$LIB/.harbor-android.apk.new" && mv -f "$LIB/.harbor-android.apk.new" "$LIB/harbor-android.apk"
+    echo "$code" > "$LIB/harbor-android.version"
+    say "serving Hub for Android ($code) to phones"
   fi
   echo "$version" > "$LIB/.VERSION.new" && mv -f "$LIB/.VERSION.new" "$LIB/VERSION"
   if [[ $DESKTOP == 1 ]]; then
