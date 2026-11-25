@@ -119,13 +119,13 @@ final class DiscordKit {
 
     /** The chat card's line under its title (the desktop's). */
     static String cardIntro(String guild) {
-        return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild) + ". Only the captcha takes your taps; Harbor never answers it for you.";
+        return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild) + ". Only the captcha takes your taps; Hub never answers it for you.";
     }
 
     /** The captcha screen's line under its title (the desktop's, with taps for clicks). */
     static String intro(String guild) {
         return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild)
-                + ", Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.";
+                + ", Discord wants a person to solve this. Only the captcha takes your taps; Hub never answers it for you.";
     }
 
     /** What to say once the captcha is gone, from `captcha_end.outcome` (null: say nothing). */

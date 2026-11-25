@@ -164,7 +164,7 @@ final class Video {
                 if (!live) return;
                 if (picture.getAlpha() == 0) {
                     Stream s = stream;
-                    Log.i("HarborVideo", "first frame after " + (System.currentTimeMillis() - started) + " ms, " + (s == null || s.whole != null ? "from the cache" : s.fetchedKb() + " KB fetched"));
+                    Log.i("HubVideo", "first frame after " + (System.currentTimeMillis() - started) + " ms, " + (s == null || s.whole != null ? "from the cache" : s.fetchedKb() + " KB fetched"));
                 }
                 picture.setAlpha(1);
             }
@@ -281,7 +281,7 @@ final class Video {
         p.setOnSeekCompleteListener(x -> seeked(g));
         p.setOnCompletionListener(x -> Ui.main.post(() -> { if (g == gen) completed(); }));
         p.setOnErrorListener((x, what, extra) -> {
-            Log.w("HarborVideo", "player error " + what + "/" + extra);
+            Log.w("HubVideo", "player error " + what + "/" + extra);
             failed(g, "this phone can't play it");
             return true;
         });
@@ -447,7 +447,7 @@ final class Video {
         if (p != null) {
             try { stoppedAt = p.getCurrentPosition(); } catch (IllegalStateException ignored) { }
             p.release();
-            Log.i("HarborVideo", "player released at " + stoppedAt + " ms");
+            Log.i("HubVideo", "player released at " + stoppedAt + " ms");
         }
         if (s != null) s.close();
     }

@@ -41,7 +41,7 @@ final class ProjectMenu {
             try {
                 return hub.call("POST", "/v1/projects/menu", new JSONObject().put("project", pid));
             } catch (Hub.ApiError e) {
-                if (e.code == 404 && !e.getMessage().contains("project")) throw new Hub.ApiError(404, "This PC runs an older Harbor without the project menu: update it first.");
+                if (e.code == 404 && !e.getMessage().contains("project")) throw new Hub.ApiError(404, "This PC runs an older Hub without the project menu: update it first.");
                 throw e;
             }
         }, m -> sheet(a, hub, pid, name, m, newChat, after, gone));
@@ -172,9 +172,9 @@ final class ProjectMenu {
                 break;
             case "remove":
                 Ui.dialog(a).setTitle("Remove project?")
-                        .setMessage("Its chats are removed from Harbor. Nothing on disk is touched.")
+                        .setMessage("Its chats are removed from Hub. Nothing on disk is touched.")
                         .setNegativeButton("Cancel", null)
-                        .setPositiveButton("Remove", (d, w) -> Ui.bg(a, () -> run(hub, pid, act, null), r -> gone.on("Removed “" + m.optString("name", "Project") + "” from Harbor")))
+                        .setPositiveButton("Remove", (d, w) -> Ui.bg(a, () -> run(hub, pid, act, null), r -> gone.on("Removed “" + m.optString("name", "Project") + "” from Hub")))
                         .show();
                 break;
             default:
@@ -214,9 +214,9 @@ final class ProjectMenu {
             JSONObject c = choices.optJSONObject(i);
             if (c != null) o.add(new Sheet.Option(c.optString("id"), c.optString("label", c.optString("id")), "", true));
         }
-        if (pin != null) o.add(new Sheet.Option(UNPIN, "Unpin", "Harbor may switch its chats to another account again", true));
+        if (pin != null) o.add(new Sheet.Option(UNPIN, "Unpin", "Hub may switch its chats to another account again", true));
         String note = Run.pinBroken(pin) ? Run.sentence(pin.optString("tip")) + " Pick another account, or unpin it."
-                : "Its chats and agents stay on the account you pick: Harbor won't switch them, and at a usage limit they wait for the reset.";
+                : "Its chats and agents stay on the account you pick: Hub won't switch them, and at a usage limit they wait for the reset.";
         Sheet.pick(a, "Keep on one account", note, o, Run.pinAccount(pin), id -> Ui.bg(a,
                 () -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "pin_account")
                         .put("account", UNPIN.equals(id) ? JSONObject.NULL : id)),

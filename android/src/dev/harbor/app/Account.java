@@ -98,6 +98,7 @@ final class Account {
     /** Nothing works until the user signs in again: no account, or its token ran out and
      *  Clerk won't renew it. */
     static boolean needsSignIn(Context c) {
+        if (Pair.ON) return false; // Hub: no sign-in, its PCs are paired (Pair)
         JSONObject s = state(c);
         if (s.optString("id").isEmpty()) return true;
         boolean live = s.optLong("exp") * 1000 > System.currentTimeMillis();
@@ -128,6 +129,7 @@ final class Account {
 
     /** The Harbor token every call to a PC carries ("" when there's none). */
     static String token(Context c) {
+        if (Pair.ON) return "";
         JSONObject s = state(c);
         if (System.currentTimeMillis() - s.optLong("token_at") > RENEW_MS) renewSoon(c);
         return s.optString("token");
@@ -397,6 +399,7 @@ final class Account {
 
     /** A new Harbor token in the background, when one is due (at most once a minute). */
     static void renewSoon(Context c) {
+        if (Pair.ON) return;
         long now = System.currentTimeMillis();
         if (now - renewing < 60_000) return;
         renewing = now;
@@ -407,7 +410,7 @@ final class Account {
     /** A new Harbor token (and the directory), when due or forced. Expired: Clerk ended the
      *  session; the old token works on the PCs until it runs out. */
     static synchronized void renew(Context c, boolean force) throws IOException {
-        if (Rig.on()) return;
+        if (Rig.on() || Pair.ON) return;
         JSONObject s = state(c);
         if (s.optString("id").isEmpty()) return;
         long now = System.currentTimeMillis();
@@ -435,7 +438,7 @@ final class Account {
 
     /** GET /v1/directory (at most every 2 minutes unless forced) → the hubs. */
     static void directory(Context c, boolean force) throws IOException {
-        if (Rig.on()) return;
+        if (Rig.on() || Pair.ON) return;
         if (!force && System.currentTimeMillis() - dirAt < 120_000) return;
         String tok = state(c).optString("token");
         if (tok.isEmpty()) return;
@@ -463,7 +466,7 @@ final class Account {
     private static volatile long invAt;
 
     static void checkInvites(Context c, boolean force) throws IOException {
-        if (Rig.on() || (!force && System.currentTimeMillis() - invAt < 60_000)) return;
+        if (Rig.on() || Pair.ON || (!force && System.currentTimeMillis() - invAt < 60_000)) return;
         String tok = state(c).optString("token");
         if (tok.isEmpty()) return;
         invAt = System.currentTimeMillis();

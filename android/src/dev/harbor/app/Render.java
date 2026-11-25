@@ -231,7 +231,7 @@ final class Render {
                     @Override public void onClick(View w) { Ui.openUrl(w.getContext(), link); }
                     @Override public void updateDrawState(android.text.TextPaint p) { p.setColor(Ui.BLUE); p.setUnderlineText(true); }
                 }, a, z, f);
-            } else if (onChat != null && chatLinks != null && link.startsWith("harbor://chat/") && chatLinks.optJSONObject(link) != null) {
+            } else if (onChat != null && chatLinks != null && (link.startsWith(ChatLink.SCHEME) || link.startsWith(ChatLink.PC_SCHEME)) && chatLinks.optJSONObject(link) != null) {
                 // Only a chat link the hub resolved: it opens the chat in the app, nothing else.
                 JSONObject target = chatLinks.optJSONObject(link);
                 sb.setSpan(new android.text.style.ClickableSpan() {

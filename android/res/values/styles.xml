@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="icon_bg">#111111</color>
+    <color name="icon_bg">#3B3FD8</color>
     <!-- Warm paper background from the first frame (also behind the launch splash); the dark
          variant is in values-night. Ui.theme() repaints for a forced Color mode. -->
     <style name="Harbor" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">

@@ -123,7 +123,7 @@ final class Files {
                 line.setText("Couldn't download: " + g.error);
                 line.setTextColor(Ui.RED);
             } else if (g.saved != null) {
-                line.setText(meta.isEmpty() ? "In Download/Harbor" : meta + " · In Download/Harbor");
+                line.setText(meta.isEmpty() ? "In Download/Hub" : meta + " · In Download/Hub");
                 line.setTextColor(Ui.G700);
             } else {
                 line.setText(meta);
@@ -164,7 +164,7 @@ final class Files {
                 g.running = false;
                 changed(g);
                 Ui.main.post(() -> {
-                    Ui.toast(c, name + " saved to Download/Harbor");
+                    Ui.toast(c, name + " saved to Download/Hub");
                     if (FileText.isApk(name)) open(a, g, key, name, true);
                 });
             } catch (Exception e) {
@@ -242,7 +242,7 @@ final class Files {
         }
         if (apk) {
             if (!a.getPackageManager().canRequestPackageInstalls()) {
-                Ui.toast(a, "Allow Harbor to install apps, then tap Install again");
+                Ui.toast(a, "Allow Hub to install apps, then tap Install again");
                 try {
                     a.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.getPackageName())));
                 } catch (ActivityNotFoundException ignored) { }

@@ -54,6 +54,41 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
 - The app sends nothing but pinned TLS to PCs, and HTTPS (the platform's CAs) to Clerk and the
   account service.
 
+## Hub pairing
+
+Hub (this repository's `hub` branch: Harbor's apps rebranded as **Hub**, applicationId
+`dev.hub.app`) lives in a world of its own: the Hub phone app never signs in to Harbor's account
+service, never reads its directory and never reaches a Harbor PC, and a Hub PC takes only phones
+paired with it, so Harbor apps never see Hub's chats. Everything else in this file (the `/v1/*`
+calls, mutual TLS pinned to each side's key) is unchanged. Phone code: `Pair.java`,
+`PairLink.java` (`Pair.ON`), `Hubs.java` (start screen), `Settings.java` (Forget this PC).
+
+- **Port.** A Hub PC listens on **47940** by default (Harbor keeps 47930), so both run on one PC.
+  The phone's local API for other apps is on `127.0.0.1:47998` (Harbor's app keeps 47999).
+- **The link.** Hub › Settings › Phones › Pair a phone shows a QR code of
+  `hub://pair?fp=<64 hex: SHA-256 of the PC's certificate SPKI>&addrs=<host:port>,<host:port>…&name=<PC name>&id=<mesh id>&code=<one-time code>`
+  (URL-encoded values; `addrs` every address a phone may reach, LAN and Tailscale; `code` random,
+  ≤ 128 characters, good for about 10 minutes and one phone). The phone's camera opens it in Hub
+  (the manifest's `hub://pair` filter), or it's pasted on Hub's start screen. Hub asks the user
+  before pairing.
+- **`POST /v1/pair {"code", "name": "<phone name>"}`**, mutual TLS pinned to `fp`, the phone
+  showing its Keystore key's certificate, no `Authorization`. The PC checks the code (unknown,
+  used or expired: `401 {"error", "pair": true}`), then keeps the phone's client-key fingerprint
+  as paired (with its name) → `200 {"ok": true, "name": "<PC name>", "peers": [{"fp", "id", "name",
+  "addrs"}]}`. `peers` (optional): the other Hub PCs it meshes with, which share its chats and
+  its paired phones; the phone makes them endpoints of the same entry.
+- **Every other call** carries no `Authorization`, `X-Hub: 1`, and the usual `X-Harbor-Device`,
+  `X-Harbor-App`, `X-Harbor-Platform`. The PC lets a connection in when its client key is paired;
+  else `401 {"error": "…pair this phone again…", "pair": true}` (no TLS answer at all from outside
+  private networks, as before).
+- **`POST /v1/unpair`**: the phone forgets the PC (Settings › Forget this PC) and tells it; the PC
+  drops that key. The PC's Settings › Phones may also remove a phone.
+- **Chat links**: Hub's are `hub://chat/<gid>?pc=<PC name>`; the phone also takes
+  `harbor://chat/…`, and still asks the PC `GET /v1/chat_link?url=harbor://chat/…` (the API's own
+  form). A Hub PC should accept both schemes there.
+- **Updates**: Hub takes nothing from Harbor's releases (`Update.OFF`): no release news, no code
+  zips, no APK installs until Hub has a release channel of its own.
+
 ## Accounts
 
 From 0.85 every device, each Harbor desktop and each phone, signs in with Google. There's no

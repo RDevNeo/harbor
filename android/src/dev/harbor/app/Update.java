@@ -146,7 +146,12 @@ public class Update extends BroadcastReceiver {
         synchronized (looking) { return lookNow(c, force); }
     }
 
+    /** Hub takes no update from Harbor's releases (they'd swap Harbor's code in): it has no
+     *  release channel of its own yet, so it never looks, hears or installs. */
+    static final boolean OFF = Pair.ON;
+
     private static long lookNow(Context c, boolean force) throws IOException {
+        if (OFF) return 0;
         if (!force && System.currentTimeMillis() - checked < GAP) return known(c);
         checked = System.currentTimeMillis();
         SharedPreferences p = Ui.prefs(c);
@@ -265,6 +270,7 @@ public class Update extends BroadcastReceiver {
      *  is believed), or null when nothing newer came within the hold. Throws when it can't be
      *  reached. */
     static String hear(Context c, int holdS) throws IOException {
+        if (OFF) return null;
         SharedPreferences p = Ui.prefs(c);
         String have = Quiet.have(p.getString("gh_tag", ""), p.getString("news_heard", ""), Settings.myName(c));
         String service = Account.service();
@@ -387,7 +393,7 @@ public class Update extends BroadcastReceiver {
 
     // ---- the sheet that says an update is ready ----
 
-    /** "Harbor X is ready" over the chats, once per version (Quiet.prompt; Later or the X keeps
+    /** "Hub X is ready" over the chats, once per version (Quiet.prompt; Later or the X keeps
      *  it away until a newer one): Update installs it now, in front, through Settings (the same
      *  direct path as its row: no new check). Settings › App keeps the update for later. */
     static void prompt(Base a, long offered) {
@@ -401,10 +407,10 @@ public class Update extends BroadcastReceiver {
         // allow installs, so it shows the silent phones' line).
         String hint = !failure(a, offered).isEmpty() ? "It didn't install by itself."
                 : !code(a) && blocked(a) ? "Google Play Protect may ask to scan it first."
-                : silent(a, offered) || Rig.on() ? "Or it installs by itself once you leave Harbor."
+                : silent(a, offered) || Rig.on() ? "Or it installs by itself once you leave Hub."
                 : "";
         LinearLayout c = s.card();
-        LinearLayout row = Ui.cardRow(a, Ui.I_DOWNLOAD, "Harbor",
+        LinearLayout row = Ui.cardRow(a, Ui.I_DOWNLOAD, "Hub",
                 Settings.myName(a) + " → " + Settings.name(offered) + (hint.isEmpty() ? "" : "\n" + hint), Ui.FG, null);
         Ui.wrapSub(row, 3);
         c.addView(row, Ui.fill());
@@ -476,7 +482,7 @@ public class Update extends BroadcastReceiver {
      *  that one go round again. Android ends the process when it replaces the app; the next start
      *  opens where the user was. */
     static void round(Context c) {
-        if (Rig.on()) return; // the rig's offer is made up, and its APK is signed with another key
+        if (Rig.on() || OFF) return; // the rig's offer is made up, and its APK is signed with another key
         if (!rounding.compareAndSet(false, true)) { again = true; return; }
         try {
             do { again = false; roundOnce(c); } while (again);
@@ -605,7 +611,7 @@ public class Update extends BroadcastReceiver {
                 try {
                     Shell.stage(c, part, new String(sigBytes, StandardCharsets.UTF_8), release);
                 } catch (GeneralSecurityException e) {
-                    throw new Bad("the downloaded app code isn't Harbor's (" + e.getMessage() + ")");
+                    throw new Bad("the downloaded app code isn't Hub's (" + e.getMessage() + ")");
                 } catch (Boot.Unusable e) {
                     throw new Bad(e.getMessage());
                 }
@@ -668,7 +674,7 @@ public class Update extends BroadcastReceiver {
 
     /** Harbor came back on screen while the background's download ran: not now. */
     static final class Away extends IOException {
-        Away() { super("Harbor is on screen"); }
+        Away() { super("Hub is on screen"); }
     }
 
     /** The download isn't what Harbor's release key signed (not a network failure). */
@@ -743,7 +749,7 @@ public class Update extends BroadcastReceiver {
                 try {
                     Minisign.verify(Minisign.PUBKEY, hash.digest(), sig);
                 } catch (GeneralSecurityException e) {
-                    throw new Bad("the downloaded app isn't Harbor's (" + e.getMessage() + ")");
+                    throw new Bad("the downloaded app isn't Hub's (" + e.getMessage() + ")");
                 }
                 if (!part.renameTo(apk)) throw new IOException("can't keep the download");
                 p.edit().putString("apk_ready", to + "@" + release).putLong("apk_size", size).apply();
@@ -853,12 +859,12 @@ public class Update extends BroadcastReceiver {
                 if (Quiet.verifier(st, msg)) Ui.prefs(c).edit().putBoolean("auto_blocked", true).apply();
                 offer(c, to);
             } else if (front) {
-                Toast.makeText(c, "Harbor couldn't update: " + why, Toast.LENGTH_LONG).show();
+                Toast.makeText(c, "Hub couldn't update: " + why, Toast.LENGTH_LONG).show();
             }
         }
     }
 
-    /** "Harbor X is ready: tap to install": once per version. The tap opens Settings, which
+    /** "Hub X is ready: tap to install": once per version. The tap opens Settings, which
      *  installs it in front (Settings.update), where Play Protect can ask to scan it. */
     static void offer(Context c, long code) {
         SharedPreferences p = Ui.prefs(c);
@@ -875,7 +881,7 @@ public class Update extends BroadcastReceiver {
             Intent install = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("install", code);
             PendingIntent pi = PendingIntent.getActivities(c, 12, new Intent[] { home, install }, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             Notification n = new Notification.Builder(c, "update").setSmallIcon(Ui.statIcon(c))
-                    .setContentTitle("Harbor " + Settings.name(code) + " is ready")
+                    .setContentTitle("Hub " + Settings.name(code) + " is ready")
                     .setContentText("It couldn't install by itself: tap to install it.")
                     .setStyle(new Notification.BigTextStyle().bigText(blocked(c)
                             ? "It couldn't install by itself: tap to install it. Google Play Protect may ask to scan it first (Scan app)."
@@ -894,7 +900,7 @@ public class Update extends BroadcastReceiver {
             PendingIntent pi = PendingIntent.getActivity(c, 11, confirm, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             String v = to > 0 ? " " + Settings.name(to) : "";
             Notification n = new Notification.Builder(c, "update").setSmallIcon(Ui.statIcon(c))
-                    .setContentTitle("Harbor" + v + " is ready")
+                    .setContentTitle("Hub" + v + " is ready")
                     .setContentText("Android asks you to confirm the update: tap to install it.")
                     .setContentIntent(pi).setAutoCancel(true).build();
             nm.notify("update", 1, n);

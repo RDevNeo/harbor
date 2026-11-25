@@ -22,7 +22,7 @@ import java.util.List;
  *  Harbor's own composer) get the images too. The images are content:// URIs of CamProvider
  *  (clip/), which the clipboard lets the pasting app read. */
 final class Copied {
-    static final String LABEL = "Harbor message";
+    static final String LABEL = "Hub message";
     /** Past this, an image is left out (it would be a slow copy). */
     private static final int MAX_BYTES = 32 << 20;
 
@@ -72,7 +72,7 @@ final class Copied {
                 if (n != seq) return; // a later copy came first
                 if (uris.isEmpty()) {
                     // Said, not silent: a paste of just the text would look like this feature failing.
-                    ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Harbor", text));
+                    ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Hub", text));
                     Ui.toast(c, pics.size() == 1 ? "Copied the text: its image couldn't be fetched" : "Copied the text: its images couldn't be fetched");
                     return;
                 }

@@ -120,7 +120,7 @@ final class Attach {
     void permission(int req, int[] granted) {
         if (req != SHOT) return;
         if (granted.length > 0 && granted[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) camera();
-        else Ui.toast(a, "Harbor needs the camera permission to take a photo");
+        else Ui.toast(a, "Hub needs the camera permission to take a photo");
     }
 
     private void launch(Intent i) {

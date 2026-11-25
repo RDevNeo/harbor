@@ -1,3 +1,11 @@
+# Hub for Android
+
+Hub is Harbor's Android app rebranded on this branch: app name **Hub**, applicationId
+`dev.hub.app`, `hub://` links, its own icon. It installs beside Harbor and Person Hub and pairs
+only with Hub on the PC (QR code, `hub://pair?…`; [PROTOCOL.md](PROTOCOL.md#hub-pairing)), never
+with Harbor's account service or PCs. Build: `android/build.sh` → `android/build/hub-android.apk`.
+Harbor's notes below still describe the rest of the app.
+
 # Harbor for Android
 
 A chat-only phone client of a desktop Harbor (the "hub"). The phone runs no agent: it lists,

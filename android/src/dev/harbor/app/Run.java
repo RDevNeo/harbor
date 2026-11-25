@@ -301,13 +301,13 @@ final class Run {
         if (broken) ((android.widget.TextView) ((FrameLayout) mark).getChildAt(0)).setTextColor(Ui.AMBER);
         if (p != null && "project".equals(p.optString("scope"))) {
             LinearLayout r = Ui.cardRow(a, mark, "This project keeps its chats on " + p.optString("label"),
-                    broken ? p.optString("tip") : "Harbor won't switch them; at a usage limit they wait for the reset", Ui.FG, null);
+                    broken ? p.optString("tip") : "Hub won't switch them; at a usage limit they wait for the reset", Ui.FG, null);
             Ui.wrapSub(r, 3);
             if (!account.isEmpty()) r.addView(Ui.rowButton(a, "Pin this chat", false, v -> ch.apply("pin", account)));
             return r;
         }
         String title = p != null ? "Pinned to " + p.optString("label") : "Keep this chat on " + accountLabel();
-        String sub = broken ? p.optString("tip") : "Harbor won't switch it to another account; at a usage limit it waits for the reset";
+        String sub = broken ? p.optString("tip") : "Hub won't switch it to another account; at a usage limit it waits for the reset";
         LinearLayout r = Ui.cardRow(a, mark, title, sub, Ui.FG, null);
         Ui.wrapSub(r, 3);
         Switch sw = new Switch(a);
@@ -354,7 +354,7 @@ final class Run {
                 sub = j.optBoolean("auto") ? j.optString("desc", "") : "";
                 boolean off = j.has("online") && !j.isNull("online") && !j.optBoolean("online");
                 // Another PC running Harbor: the chat starts there, so it has to be on.
-                if (j.optBoolean("hub") && off) { sub = "Harbor · off"; ok = false; }
+                if (j.optBoolean("hub") && off) { sub = "Hub · off"; ok = false; }
                 if (j.has("enabled") && !j.optBoolean("enabled", true)) ok = false;
             }
             String why = no == null ? "" : no.optString(Hub.optId(e), "");
@@ -382,7 +382,7 @@ final class Run {
                 : p == null ? null
                 : pinBroken(p) ? sentence(p.optString("tip")) + " Pick another account to keep it on that one."
                 : "project".equals(p.optString("scope")) ? "This project keeps its chats on " + p.optString("label") + ". Pick another to keep this chat on that one."
-                : "Pinned to " + p.optString("label") + ": Harbor won't switch it. Pick another to keep it on that one.";
+                : "Pinned to " + p.optString("label") + ": Hub won't switch it. Pick another to keep it on that one.";
         Sheet.pick(a, "Account", note, o, account, id -> ch.apply("account", id));
     }
 

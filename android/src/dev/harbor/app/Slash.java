@@ -205,7 +205,7 @@ final class Slash {
         }
         // No list (until it's old): say why when the user can fix it.
         String note = null;
-        if (homeOld) note = (homeName.isEmpty() ? "The PC this chat runs on" : homeName) + " runs a Harbor without slash commands. Update Harbor there to use them.";
+        if (homeOld) note = (homeName.isEmpty() ? "The PC this chat runs on" : homeName) + " runs a Hub without slash commands. Update Hub there to use them.";
         else if (upgrade) note = "This PC refused your sign-in. Tap to sign in again.";
         return new Cached(old == null ? new ArrayList<>() : old.entries, System.currentTimeMillis(), false, null, note, upgrade && !homeOld);
     }

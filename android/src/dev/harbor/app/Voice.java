@@ -152,7 +152,7 @@ final class Voice {
     void permission(int req, int[] granted) {
         if (req != PERMISSION) return;
         if (granted.length > 0 && granted[0] == PackageManager.PERMISSION_GRANTED) start();
-        else Ui.toast(a, "Dictation needs the microphone: allow it in the phone's settings for Harbor");
+        else Ui.toast(a, "Dictation needs the microphone: allow it in the phone's settings for Hub");
     }
 
     private void show(boolean on) {

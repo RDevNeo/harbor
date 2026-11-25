@@ -17,7 +17,7 @@ import java.util.Map;
  *  the unit tests run it on the JVM with a clock of their own. */
 final class LocalGate {
     /** 127.0.0.1 only, this port. */
-    static final int PORT = 47999;
+    static final int PORT = 47998; // Hub's; Harbor's app keeps 47999, so both run on one phone
     static final int MAX_HEAD = 16 * 1024;
     static final int MAX_BODY = 64 * 1024;
     /** A message's text, in UTF-8 bytes once cleaned. */
@@ -306,7 +306,7 @@ final class LocalGate {
      *  couldn't confirm which app it is. */
     static String[] prompt(Who who, String title) {
         String name = who.name();
-        String rest = " asks to send messages to this chat and read its messages, through Harbor on this phone. It can't see your other chats.";
+        String rest = " asks to send messages to this chat and read its messages, through Hub on this phone. It can't see your other chats.";
         String back = "\n\nYou can take this back in Settings › Other apps.";
         if (who.verified()) {
             String said = who.claimed.isEmpty() || who.claimed.equals(name) ? "" : " It calls itself “" + who.claimed + "”.";
@@ -316,7 +316,7 @@ final class LocalGate {
                 : !who.hint.isEmpty() ? "An app that says it is " + who.hint : "An app that didn't give its name";
         String says = !who.claimed.isEmpty() && !who.hint.isEmpty() ? " (it says it is " + who.hint + ")" : "";
         String head = who.claimed.isEmpty() ? "Let an app chat with “" + title + "”?" : "Let “" + who.claimed + "” chat with “" + title + "”?";
-        return new String[] { head, what + says + rest + "\n\nHarbor couldn't confirm which app it is: allow it only if you just asked for this in that app." + back };
+        return new String[] { head, what + says + rest + "\n\nHub couldn't confirm which app it is: allow it only if you just asked for this in that app." + back };
     }
 
     // ---- rates ----
@@ -372,7 +372,7 @@ final class LocalGate {
     /** A large body may be read now: null (then bodyDone after it), or the 429 / 503 to answer. */
     synchronized LocalHttp.Res bodyStart(Grant g) {
         if (g.bodies >= 1) return LocalHttp.error(429, "rate_limited", "One message with attachments at a time: wait for the last one's answer").header("Retry-After", "2");
-        if (bodies >= BODIES) return LocalHttp.error(503, "busy", "Harbor is taking other attachments: try again").header("Retry-After", "2");
+        if (bodies >= BODIES) return LocalHttp.error(503, "busy", "Hub is taking other attachments: try again").header("Retry-After", "2");
         g.bodies++;
         bodies++;
         return null;
@@ -465,7 +465,7 @@ final class LocalGate {
         String origin = r.header("origin");
         if (origin != null) {
             if (!allowedOrigin(origin)) {
-                out.answer = LocalHttp.error(400, "origin_not_allowed", "Only apps on this phone may call Harbor's local API");
+                out.answer = LocalHttp.error(400, "origin_not_allowed", "Only apps on this phone may call Hub's local API");
                 return out;
             }
             out.origin = origin;
@@ -521,7 +521,7 @@ final class LocalGate {
         return out;
     }
 
-    /** 403 is kept for this one case (clients show "Allow <app> in Harbor" and pair). */
+    /** 403 is kept for this one case (clients show "Allow <app> in Hub" and pair). */
     static LocalHttp.Res notAllowed(String why) {
         return new LocalHttp.Res(403, "{\"error\":" + LocalHttp.q(why) + ",\"code\":\"not_allowed\",\"pair\":true}");
     }
@@ -604,7 +604,7 @@ final class LocalGate {
             }
         }
         if (down.length() > 0) return LocalHttp.error(503, "pc_offline", down.toString());
-        if (signin) return LocalHttp.error(503, "signed_out", "Harbor on this phone isn't signed in: open Harbor and sign in");
+        if (signin) return LocalHttp.error(503, "signed_out", "Hub on this phone isn't signed in: open Hub and sign in");
         if (refused.length() > 0) return LocalHttp.error(502, "pc_error", refused.toString());
         return LocalHttp.error(404, "unknown_chat", "None of your PCs has that chat");
     }

@@ -36,7 +36,7 @@ case "${1:-check}" in
   bump)
     v=$(have version); v=$(( ${v:-0} + 1 ))
     cat > "$LOCK" <<LOCK
-# Harbor for Android's shell version, and a hash of what the shell is made of (android/shell/lock.sh).
+# Hub for Android's shell version, and a hash of what the shell is made of (android/shell/lock.sh).
 # android/build.sh refuses to build when the hash no longer matches: run \`android/shell/lock.sh bump\`.
 version=$v
 inputs=$(inputs)

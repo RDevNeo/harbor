@@ -64,7 +64,7 @@ final class Quiet {
         return INSTALL;
     }
 
-    /** Whether the "Harbor X is ready" sheet shows for version `offered` (this phone runs
+    /** Whether the "Hub X is ready" sheet shows for version `offered` (this phone runs
      *  `mine`): once per version, so Later on one keeps it away until a newer one comes.
      *  dismissed: the version the sheet last showed for (Later, Update or its X). */
     static boolean prompt(long offered, long mine, long dismissed) {
@@ -99,7 +99,7 @@ final class Quiet {
     static String reason(int st, String message) {
         String m = message == null ? "" : message.trim();
         String s = "status " + st + (status(st).startsWith("status") ? "" : ", " + status(st));
-        String hint = m.contains("NO_MATCHING_ABIS") ? "This version wasn't built for this phone's processor: update Harbor on your PC, then try again. "
+        String hint = m.contains("NO_MATCHING_ABIS") ? "This version wasn't built for this phone's processor: update Hub on your PC, then try again. "
                 : m.contains("INSUFFICIENT_STORAGE") ? "The phone is out of space. "
                 : m.contains("UPDATE_INCOMPATIBLE") ? "This version is signed differently from the installed app. "
                 : "";

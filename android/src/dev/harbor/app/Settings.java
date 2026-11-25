@@ -75,7 +75,7 @@ public class Settings extends Base {
         // Who is who across the PCs, and whose instructions a chat run on another PC uses
         // (GET/PATCH /v1/people, hubs from 0.44; hidden on older ones): with the account.
         if (getIntent().getBooleanExtra("people", false)) people();
-        // The "Harbor X is ready: tap to install" notification (Update.offer): the install, in
+        // The "Hub X is ready: tap to install" notification (Update.offer): the install, in
         // front, where Play Protect can ask to scan it.
         long install = getIntent().getLongExtra("install", 0);
         if (b == null && install > Settings.myCode(this)) {
@@ -185,7 +185,7 @@ public class Settings extends Base {
         // with whatever keeps the automatic install from going in said on its line.
         section(col, "App");
         LinearLayout app = card(col);
-        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this), Ui.FG, null);
+        LinearLayout updateRow = Ui.cardRow(this, Ui.I_PHONE, "Hub for Android", myName(this), Ui.FG, null);
         updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
         updateBtn = Ui.button(this, "Update", true, v -> update());
         updateBtn.setVisibility(View.GONE);
@@ -195,7 +195,8 @@ public class Settings extends Base {
         showUpdate(Math.max(Update.known(this), available)); // the version already known to be on offer: no wait for a check
 
         LinearLayout bye = card(col);
-        bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
+        if (Pair.ON) bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Forget this PC", hub.label(), Ui.RED, v -> forgetPc()), Ui.fill());
+        else bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
     }
 
     /** A section's title over its cards. */
@@ -328,6 +329,7 @@ public class Settings extends Base {
      *  as "Your Workspace" or its owner's ("Sam's Workspace"), with its SSH machines ("SSH") under it. */
     private void workspaceRows() {
         wsBox.removeAllViews();
+        if (Pair.ON) { pairedRows(); return; }
         section(wsBox, "Account");
         LinearLayout acct = card(wsBox);
         acct.addView(Ui.cardRow(this, avatar(Account.name(this), myPhoto()), Account.name(this), Account.email(this) + " · Google", Ui.FG, v -> photoSheet()), Ui.fill());
@@ -385,8 +387,8 @@ public class Settings extends Base {
             if (people.getChildCount() > 0) people.addView(Ui.gap(this));
             // Same note as the desktop (account.ts inviteNote): nobody can accept it as it is.
             String note = !x.optBoolean("no_account") ? "" : x.optString("near").isEmpty()
-                    ? " · no Harbor account uses this address yet"
-                    : " · no Harbor account uses this address: did you mean " + x.optString("near") + "?";
+                    ? " · no Hub account uses this address yet"
+                    : " · no Hub account uses this address: did you mean " + x.optString("near") + "?";
             LinearLayout r = Ui.cardRow(this, Ui.disc(this, Ui.I_CLOCK, 36), x.optString("email"), "Invited" + note, Ui.G700,
                     owner ? v -> cancelInvite(ws, x.optString("id"), x.optString("email")) : null);
             Ui.wrapSub(r, 2);
@@ -444,12 +446,12 @@ public class Settings extends Base {
         FrameLayout f = new FrameLayout(this);
         f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
         f.addView(e);
-        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("They'll see the invitation in Harbor when they sign in with that Google account (no email is sent). Once they accept, they control all of this workspace's PCs and chats.")
+        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("They'll see the invitation in Hub when they sign in with that Google account (no email is sent). Once they accept, they control all of this workspace's PCs and chats.")
                 .setView(f).setNegativeButton("Cancel", null)
                 .setPositiveButton("Invite", (d, x) -> {
                     String m = e.getText().toString().trim();
                     if (!m.contains("@")) { Ui.toast(this, "Type an email address"); return; }
-                    act(() -> Account.invite(this, ws, m), "Invited " + m + ": they'll see it in Harbor when they sign in with that Google account.");
+                    act(() -> Account.invite(this, ws, m), "Invited " + m + ": they'll see it in Hub when they sign in with that Google account.");
                 }).show();
     }
 
@@ -487,7 +489,7 @@ public class Settings extends Base {
      *  after it. Back here with it allowed, a ready update installs (onResume). */
     private void allowInstalls() {
         installWhenAllowed = available > myCode(this);
-        Ui.toast(this, "Turn on “Allow from this source” for Harbor, then come back");
+        Ui.toast(this, "Turn on “Allow from this source” for Hub, then come back");
         try {
             startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
         } catch (Exception e) {
@@ -499,7 +501,7 @@ public class Settings extends Base {
     private void notifyRows(LinearLayout nt) {
         nt.removeAllViews();
         if (!Notes.allowed(this)) {
-            LinearLayout al = Ui.cardRow(this, Ui.I_BELL_OFF, "Allow notifications", "Android blocks Harbor's notifications: tap to allow them", Ui.AMBER, v -> {
+            LinearLayout al = Ui.cardRow(this, Ui.I_BELL_OFF, "Allow notifications", "Android blocks Hub's notifications: tap to allow them", Ui.AMBER, v -> {
                 if (Build.VERSION.SDK_INT >= 33) requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 42);
                 else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
             });
@@ -593,7 +595,7 @@ public class Settings extends Base {
                         ? (shownOwner.isEmpty() ? "Not set" : shownOwner + (detects ? unconf : " (from the PC's account)")) : owner, Ui.FG,
                 v -> editPerson("Your name", "owner", owner, shownOwner)), Ui.fill());
         you.addView(Ui.gap(this));
-        you.addView(Ui.cardRow(this, Ui.I_GLOBE, "Your GitHub login", gh.isEmpty() ? (shownGh.isEmpty() ? "Not set" : shownGh + (detects ? unconf : " (Harbor's sign-in)")) : gh, Ui.FG,
+        you.addView(Ui.cardRow(this, Ui.I_GLOBE, "Your GitHub login", gh.isEmpty() ? (shownGh.isEmpty() ? "Not set" : shownGh + (detects ? unconf : " (Hub's sign-in)")) : gh, Ui.FG,
                 v -> editPerson("Your GitHub login", "github", gh, shownGh)), Ui.fill());
         if (detects) {
             you.addView(Ui.gap(this));
@@ -614,7 +616,7 @@ public class Settings extends Base {
             boolean ghOut = m.optBoolean("share_github", true);
             you.addView(Ui.gap(this));
             you.addView(Ui.cardRow(this, Ui.I_GLOBE, "My chats on other PCs may use my GitHub here", ghOut
-                    ? "On: they can run gh on this PC with Harbor's GitHub sign-in, so their issues and PRs are yours"
+                    ? "On: they can run gh on this PC with Hub's GitHub sign-in, so their issues and PRs are yours"
                     : "Off: only PCs allowed everything get it", Ui.FG, v -> patchPeople("share_github", !ghOut)), Ui.fill());
         }
         org.json.JSONArray pcs = r.optJSONArray("pcs");
@@ -850,7 +852,7 @@ public class Settings extends Base {
     private void pcs() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
         for (Hub h : Hub.all(this)) o.add(new Sheet.Option(h.id, h.label(), pcCount(h), true));
-        Sheet.pick(this, "Workspaces", null, o, hub.id, id -> {
+        Sheet.pick(this, Pair.ON ? "PCs" : "Workspaces", null, o, hub.id, id -> {
             if (id.equals(hub.id)) return;
             Hub.setLast(this, id);
             startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
@@ -1014,9 +1016,42 @@ public class Settings extends Base {
                 updateBtn.setAlpha(1f);
                 updateNote.setText(fe != null ? "Update failed: " + fe
                         : code ? "Restarting into " + name(available) + "…"
-                        : "Installing " + name(available) + "… Harbor closes when it's done: open it again and it's back on your chat.");
+                        : "Installing " + name(available) + "… Hub closes when it's done: open it again and it's back on your chat.");
             });
         });
+    }
+
+    /** Hub: this phone and the paired PC (and the Hub PCs it meshes with), no account. */
+    private void pairedRows() {
+        section(wsBox, "This phone");
+        LinearLayout me = card(wsBox);
+        String fp = Net.myFp();
+        me.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_PHONE, 36), Hub.deviceName(), fp.isEmpty() ? "Paired by key" : "Key " + fp.substring(0, 16) + "…", Ui.FG, null), Ui.fill());
+        if (hasPeople) {
+            me.addView(Ui.gap(this));
+            LinearLayout pr = Ui.cardRow(this, Ui.I_BRAIN, "People and memory", "Who is who, and your instructions on other PCs", Ui.FG, v -> people());
+            pr.addView(Ui.chevron(this));
+            me.addView(pr, Ui.fill());
+        }
+        section(wsBox, "PCs");
+        LinearLayout pcCard = card(wsBox);
+        pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_MONITOR, 36), hub.pcName.isEmpty() ? hub.label() : hub.pcName,
+                "Paired · key " + (hub.fp.length() >= 16 ? hub.fp.substring(0, 16) + "…" : hub.fp), Ui.FG, null), Ui.fill());
+        for (Hub.Ep e : hub.eps) {
+            pcCard.addView(Ui.gap(this));
+            pcCard.addView(Ui.cardRow(this, Ui.disc(this, Ui.I_MONITOR, 36), e.label(), "Meshed with " + hub.label(), Ui.FG, null), Ui.fill());
+        }
+    }
+
+    private void forgetPc() {
+        Ui.dialog(this).setTitle("Forget " + hub.label() + "?")
+                .setMessage("This phone forgets the PC, and the PC stops taking it. Chats stay on the PC. To use it again, pair again from Hub › Settings › Phones there.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Forget", (d, w) -> {
+                    Pair.forget(this, hub.id);
+                    startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+                    finish();
+                }).show();
     }
 
     private void signOut() {

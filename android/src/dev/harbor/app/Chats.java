@@ -125,7 +125,7 @@ public class Chats extends Base {
         String gid = c.optString("gid", "");
         if (gid.isEmpty()) gid = c.optString("id");
         ((android.content.ClipboardManager) a.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
-                .setPrimaryClip(android.content.ClipData.newPlainText("Harbor chat link", ChatLink.SCHEME + gid));
+                .setPrimaryClip(android.content.ClipData.newPlainText("Hub chat link", ChatLink.SCHEME + gid));
         // Android 13+ shows its own "Copied" bubble.
         if (android.os.Build.VERSION.SDK_INT < 33) Ui.toast(a, "Link copied");
     }
@@ -261,7 +261,7 @@ public class Chats extends Base {
                 return hub.call("GET", "/v1/chats/" + id + "/move_targets", null);
             } catch (Hub.ApiError e) {
                 // A hub from before "Move to PC…".
-                if (e.code == 404) throw new Hub.ApiError(404, "This PC runs an older Harbor that can't move chats: update it first.");
+                if (e.code == 404) throw new Hub.ApiError(404, "This PC runs an older Hub that can't move chats: update it first.");
                 throw e;
             }
         }, r -> {

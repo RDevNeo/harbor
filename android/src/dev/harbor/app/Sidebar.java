@@ -91,7 +91,7 @@ final class Sidebar {
 
         LinearLayout head = Ui.row(a);
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
-        head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
+        head.addView(Ui.heading(a, "Hub", 26), Ui.weight());
         // Which workspace's chats show; hidden until `render` knows there are any.
         wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspaces());
         wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
@@ -423,7 +423,7 @@ final class Sidebar {
 
     // ---- the two update banners (the desktop's pop-ups, src/notices.rs), never merged ----
 
-    /** "Harbor X.Y.Z is available" (the hub's own update: blue sparkles, Update / What's new)
+    /** "Hub X.Y.Z is available" (the hub's own update: blue sparkles, Update / What's new)
      *  and apart from it "Updates available: N providers" (the hub's CLIs: their logos, Update /
      *  Details). Closing one remembers its version(s) on this phone; the next ones show again. */
     private void banners(JSONObject st) {
@@ -434,7 +434,7 @@ final class Sidebar {
         if (hu != null && hu.optBoolean("checking")) {
             TextView icon = Ui.icon(a, Ui.I_SPARKLES, 18, Ui.BLUE);
             icon.setBackground(Ui.round(Ui.G100, 0, 10));
-            list.addView(banner(icon, "Looking for the newest Harbor…", a.hub.label() + " installs it when found and reloads; running agents keep going.",
+            list.addView(banner(icon, "Looking for the newest Hub…", a.hub.label() + " installs it when found and reloads; running agents keep going.",
                     "Updating…", false, () -> { }, null, null, null), Ui.inset());
         }
         if (!v.isEmpty() && !v.equals(pr.getString("upd-hub-" + a.hub.id, ""))) {
@@ -443,11 +443,11 @@ final class Sidebar {
             icon.setBackground(Ui.round(Ui.G100, 0, 10));
             String notes = hu.optString("notes_url");
             list.addView(banner(icon,
-                    busy ? "Updating Harbor to " + v + "…" : "Harbor " + v + " is available",
+                    busy ? "Updating Hub to " + v + "…" : "Hub " + v + " is available",
                     busy ? a.hub.label() + " reloads when it's ready; running agents keep going."
                          : a.hub.label() + " runs " + hu.optString("current") + ". Update installs it there; this app follows.",
                     busy ? "Updating…" : "Update", !busy,
-                    () -> Ui.bg(a, () -> a.hub.call("POST", "/v1/hub/update", new JSONObject()), r -> Ui.toast(a, "Updating Harbor on " + a.hub.label() + "…")),
+                    () -> Ui.bg(a, () -> a.hub.call("POST", "/v1/hub/update", new JSONObject()), r -> Ui.toast(a, "Updating Hub on " + a.hub.label() + "…")),
                     notes.isEmpty() ? null : "What's new",
                     () -> { try { a.startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(notes))); } catch (Exception e) { Ui.copy(a, notes); } },
                     () -> { pr.edit().putString("upd-hub-" + a.hub.id, v).apply(); render(this.st); }), Ui.inset());
@@ -593,7 +593,7 @@ final class Sidebar {
      *  list it sent: Harbor not running there, or the PC offline, with when it last answered. */
     void offline(String title, String body, Runnable retry) {
         if (title == null && offTitle == null) return;
-        // "Harbor isn't running on desk. Start it there…" under the title "Harbor isn't running on desk".
+        // "Hub isn't running on desk. Start it there…" under the title "Hub isn't running on desk".
         if (title != null && body != null && body.startsWith(title)) body = body.substring(title.length()).replaceFirst("^[.:]?\\s*", "");
         offTitle = title; offBody = body; offRetry = retry;
         render(st != null ? st : new JSONObject());

@@ -48,7 +48,7 @@ final class Gmail {
 
     /** Why the last Add account didn't go the native way: logged, and shown in the sheet. */
     private static void note(Activity a, String why) {
-        android.util.Log.w("HarborGmail", why);
+        android.util.Log.w("HubGmail", why);
         Ui.prefs(a).edit().putString("gmail_why", why).apply();
     }
 
@@ -112,9 +112,9 @@ final class Gmail {
                     nativeOk ? "Pick it from your phone's accounts" : "Sign in with Google in the browser", Ui.FG, v -> add(a, hub, r));
             ar.addView(Ui.chevron(a));
             add.addView(ar, Ui.fill());
-            add.addView(Ui.text(a, "Google may say it hasn't verified Harbor: tap Advanced, then Go to Harbor.", 13, Ui.G700), Ui.margins(Ui.fill(), 16, 2, 16, 12));
+            add.addView(Ui.text(a, "Google may say it hasn't verified Hub: tap Advanced, then Go to Hub.", 13, Ui.G700), Ui.margins(Ui.fill(), 16, 2, 16, 12));
         } else {
-            add.addView(Ui.cardRow(a, Ui.I_ALERT, "Connect from the PC", "This PC's Harbor has no Google client to sign in with: connect Gmail in Settings › Integrations there.", Ui.FG, null), Ui.fill());
+            add.addView(Ui.cardRow(a, Ui.I_ALERT, "Connect from the PC", "This PC's Hub has no Google client to sign in with: connect Gmail in Settings › Integrations there.", Ui.FG, null), Ui.fill());
         }
         String why = Ui.prefs(a).getString("gmail_why", "");
         if (!why.isEmpty()) s.body.addView(Ui.text(a, "Last try: " + why, 12, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 8));
@@ -124,7 +124,7 @@ final class Gmail {
 
     private static void confirmOut(Activity a, Hub hub, String email) {
         Ui.dialog(a).setTitle("Sign " + email + " out?")
-                .setMessage("Agents on " + hub.label() + " lose its mail, and Google forgets Harbor's access.")
+                .setMessage("Agents on " + hub.label() + " lose its mail, and Google forgets Hub's access.")
                 .setPositiveButton("Sign out", (d, w) -> post(a, hub, "signout", email))
                 .setNegativeButton("Cancel", null).show();
     }
@@ -137,7 +137,7 @@ final class Gmail {
         String web = r.isNull("web_client_id") ? "" : r.optString("web_client_id");
         Ui.prefs(a).edit().remove("gmail_why").apply();
         if (web.isEmpty()) {
-            note(a, "this PC's Harbor has no Web client, so the browser");
+            note(a, "this PC's Hub has no Web client, so the browser");
             browser(a, hub, null);
         } else if (android.os.Build.VERSION.SDK_INT >= 34) {
             sheet(a, hub, web);
@@ -370,11 +370,11 @@ final class Gmail {
                         else if (k.equals("error")) error = v;
                     }
                     if (!want.equals(state) || (code == null && error == null)) {
-                        reply(s.getOutputStream(), 200, "This link isn't for the sign-in Harbor is waiting for. Finish signing in in the tab Harbor opened: Harbor is still waiting.");
+                        reply(s.getOutputStream(), 200, "This link isn't for the sign-in Hub is waiting for. Finish signing in in the tab Hub opened: Hub is still waiting.");
                         continue;
                     }
                     boolean ok = code != null;
-                    reply(s.getOutputStream(), 200, ok ? "Done. Go back to Harbor: it's connecting the account." : "Sign-in didn't finish (" + error + "). Go back to Harbor and try again.");
+                    reply(s.getOutputStream(), 200, ok ? "Done. Go back to Hub: it's connecting the account." : "Sign-in didn't finish (" + error + "). Go back to Hub and try again.");
                     return ok ? new String[] {code, state} : null;
                 }
             }
@@ -382,7 +382,7 @@ final class Gmail {
     }
 
     private static void reply(OutputStream o, int status, String msg) throws Exception {
-        String html = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>Harbor</title>"
+        String html = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>Hub</title>"
                 + "<body style='font:17px system-ui;padding:32px;background:#faf9f5;color:#141413'>" + msg.replace("<", "&lt;") + "</body>";
         byte[] b = html.getBytes(StandardCharsets.UTF_8);
         o.write(("HTTP/1.1 " + status + " OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " + b.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));

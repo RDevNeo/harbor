@@ -100,6 +100,7 @@ public class Listen extends Service {
      *  most every 5 minutes, the fallback). A release heard is downloaded and installs as soon as
      *  nobody sees Harbor. */
     private void news(int my) {
+        if (Update.OFF) return; // Hub: no release news (Update.OFF)
         int fails = 0;
         while (running && my == gen) {
             String v = null;

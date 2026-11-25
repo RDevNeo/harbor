@@ -49,7 +49,7 @@ final class LocalRig {
                     });
                     // Then Harbor steps back to the app that asked: no Harbor screen in front.
                     Ui.main.postDelayed(() -> Log.i(LocalApi.TAG, "LOCALAPI " + (Base.resumed == 0 ? "PASS" : "FAIL")
-                            + " back to the app (Harbor screens in front: " + Base.resumed + ")"), 2_500);
+                            + " back to the app (Hub screens in front: " + Base.resumed + ")"), 2_500);
                     return;
                 }
                 if (in.getAction().endsWith("RIG_LOCAL_BG")) {
@@ -145,9 +145,9 @@ final class LocalRig {
             String token = p.getString("token", null), chat = p.getString("chat", null);
             check(token != null && chat != null, "BG token from the pairing", "none kept: run RIG_LOCAL_PAIR and allow it first");
             if (token == null || chat == null) return;
-            Log.i(LocalApi.TAG, "LOCALAPI BG Harbor screens: " + Base.alive.size() + " alive, " + Base.resumed + " in front; Listen "
+            Log.i(LocalApi.TAG, "LOCALAPI BG Hub screens: " + Base.alive.size() + " alive, " + Base.resumed + " in front; Listen "
                     + (Listen.listening() ? "running" : "not running") + "; process up " + (android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()) + " ms");
-            check(Base.alive.isEmpty(), "BG no Harbor screen in this process", Base.alive.size() + " screens");
+            check(Base.alive.isEmpty(), "BG no Hub screen in this process", Base.alive.size() + " screens");
             // As Hub.learn does on a real mesh: the rig's PC knows its own mesh id, so the chat's own
             // PC is one the phone can call directly (LocalApi.on), not only through the PC in use.
             for (Hub h : Hub.all(Ui.app)) {
@@ -475,7 +475,7 @@ final class LocalRig {
 
             Ans p = call("POST", "/local/v1/pair", "https://localhost", null, "{\"chat\":\"" + chat + "\",\"app\":\"Planner\"}");
             String pair = p.json().optString("pair");
-            check(p.status == 200 && p.json().optString("link").equals("harbor://chat/" + chat + "?approve=" + LocalApi.RIG_CODE), "pair", p.status + " " + p.body);
+            check(p.status == 200 && p.json().optString("link").equals(ChatLink.SCHEME + chat + "?approve=" + LocalApi.RIG_CODE), "pair", p.status + " " + p.body);
             String token = null;
             long end = System.currentTimeMillis() + 5 * 60_000;
             while (System.currentTimeMillis() < end) {

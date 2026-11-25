@@ -174,7 +174,7 @@ public class NewProject extends Base {
     }
 
     private String older() {
-        return "Adding projects from the phone needs a newer Harbor on " + (pcName.isEmpty() ? hub.label() : pcName) + ": update it there.";
+        return "Adding projects from the phone needs a newer Hub on " + (pcName.isEmpty() ? hub.label() : pcName) + ": update it there.";
     }
 
     private void failed(String why) {

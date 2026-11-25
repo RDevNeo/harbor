@@ -104,7 +104,7 @@ final class LocalApi {
             Socket so;
             try { so = s.accept(); } catch (IOException e) { break; }
             if (!slots.tryAcquire()) {
-                try (Socket x = so) { LocalHttp.write(x.getOutputStream(), LocalHttp.error(503, "busy", "Harbor is busy: try again")); } catch (IOException ignored) { }
+                try (Socket x = so) { LocalHttp.write(x.getOutputStream(), LocalHttp.error(503, "busy", "Hub is busy: try again")); } catch (IOException ignored) { }
                 continue;
             }
             Ui.pool.execute(() -> {
@@ -144,7 +144,7 @@ final class LocalApi {
                 res = LocalHttp.error(b.status, b.code, b.getMessage());
             } catch (Exception e) {
                 Log.i(TAG, rt.kind + ": " + e);
-                res = LocalHttp.error(500, "internal", "Harbor couldn't do that: " + e.getClass().getSimpleName());
+                res = LocalHttp.error(500, "internal", "Hub couldn't do that: " + e.getClass().getSimpleName());
             }
             if (!res.sent) LocalGate.cors(res, rt.origin);
         }
@@ -254,7 +254,7 @@ final class LocalApi {
         String claimed = ChatLink.label(b.optString("app", ""));
         LocalGate.Pair p = gate.pairStart(chat, claimed, Rig.on() ? RIG_CODE : null);
         if (p == null) return LocalGate.tooMany(60_000, "Too many pairings wait for an answer");
-        return ok(new JSONObject().put("pair", p.id).put("link", "harbor://chat/" + chat + "?approve=" + p.code)
+        return ok(new JSONObject().put("pair", p.id).put("link", ChatLink.SCHEME + chat + "?approve=" + p.code)
                 .put("expires_in", LocalGate.PAIR_TTL / 1000));
     }
 
@@ -341,9 +341,9 @@ final class LocalApi {
         boolean moved = a.moveTaskToBack(true);
         Log.i(TAG, "LOCALAPI back: moveTaskToBack " + moved);
         Ui.main.postDelayed(() -> {
-            if (a.isDestroyed() || !a.front) { Log.i(TAG, "LOCALAPI back: Harbor left the front"); return; }
+            if (a.isDestroyed() || !a.front) { Log.i(TAG, "LOCALAPI back: Hub left the front"); return; }
             android.content.Intent l = who.verified() ? a.getPackageManager().getLaunchIntentForPackage(who.pkg) : null;
-            Log.i(TAG, "LOCALAPI back: Harbor still in front; " + (l == null ? "no app to open" : "opening " + who.pkg));
+            Log.i(TAG, "LOCALAPI back: Hub still in front; " + (l == null ? "no app to open" : "opening " + who.pkg));
             if (l == null) return;
             try { a.startActivity(l.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (RuntimeException ignored) { }
         }, 800);
@@ -362,7 +362,7 @@ final class LocalApi {
             String which = g.pkg.isEmpty() ? "Not confirmed by Android" : g.pkg;
             LinearLayout row = Ui.cardRow(a, Ui.I_PLUG, name, which + " · chats with “" + (g.title.isEmpty() ? g.chat : g.title) + "” · tap to remove", Ui.FG,
                     v -> Ui.dialog(a).setTitle("Stop " + name + " chatting with “" + (g.title.isEmpty() ? g.chat : g.title) + "”?")
-                            .setMessage(name + " won't be able to send or read messages of that chat through Harbor any more. It can ask again.")
+                            .setMessage(name + " won't be able to send or read messages of that chat through Hub any more. It can ask again.")
                             .setNegativeButton("Cancel", null)
                             .setPositiveButton("Remove", (d, w) -> { gate.revoke(g.hash); settingsRows(a, box); })
                             .show());
@@ -459,7 +459,7 @@ final class LocalApi {
                 f.pc = c.optString("home_name", "");
             } else {
                 try {
-                    JSONObject r = h.call("GET", "/v1/chat_link?url=" + URLEncoder.encode("harbor://chat/" + chat, "UTF-8"), null, 10_000);
+                    JSONObject r = h.call("GET", "/v1/chat_link?url=" + URLEncoder.encode(ChatLink.PC_SCHEME + chat, "UTF-8"), null, 10_000);
                     String to = r.isNull("chat") ? "" : r.optString("chat", "");
                     if (to.isEmpty()) return new LocalGate.Probe(ws, LocalGate.ABSENT, "", 0);
                     f.title = r.optString("title", "");
@@ -709,7 +709,7 @@ final class LocalApi {
             j = f.hub.transcribe(w.wav(), "", false, 120_000);
         } catch (Hub.ApiError e) {
             Log.i(TAG, "LOCALAPI transcribe refused (" + e.code + "): " + e.getMessage());
-            if (e.code == 401 || e.code == 403) throw new LocalHttp.Bad(503, "signed_out", "Harbor on this phone isn't signed in: open Harbor and sign in");
+            if (e.code == 401 || e.code == 403) throw new LocalHttp.Bad(503, "signed_out", "Hub on this phone isn't signed in: open Hub and sign in");
             if (e.code == 404 || e.code == 409 || e.code == 503)
                 throw new LocalHttp.Bad(503, "transcribe_unavailable", "No PC can transcribe the voice message now" + (e.getMessage() == null || e.getMessage().isEmpty() ? "" : ": " + e.getMessage()));
             if (e.code == 413) throw new LocalHttp.Bad(413, "audio_too_long", "The voice message is too long for the PC");
@@ -722,7 +722,7 @@ final class LocalApi {
         String words = j.optString("text", "").trim();
         Log.i(TAG, "LOCALAPI transcribed " + String.format(java.util.Locale.ROOT, "%.1f", w.seconds()) + " s of " + voice.mime + " on "
                 + j.optString("host", "?") + " in " + (System.currentTimeMillis() - t0) + " ms: " + words.length() + " characters");
-        if (words.isEmpty()) throw new LocalHttp.Bad(502, "transcribe_failed", "Harbor didn't hear any words in the voice message");
+        if (words.isEmpty()) throw new LocalHttp.Bad(502, "transcribe_failed", "Hub didn't hear any words in the voice message");
         return words;
     }
 
@@ -924,7 +924,7 @@ final class LocalApi {
         if (thumb) {
             if (!mime.startsWith("image/")) return LocalHttp.error(400, "no_thumb", "Only images have a thumbnail");
             byte[] j = thumbJpeg(f);
-            if (j == null) return LocalHttp.error(415, "no_thumb", "Harbor couldn't make a thumbnail of that image");
+            if (j == null) return LocalHttp.error(415, "no_thumb", "Hub couldn't make a thumbnail of that image");
             LocalHttp.head(out, 200, "image/jpeg", j.length, fileHeaders(origin, name, "image/jpeg"));
             out.write(j);
             out.flush();
@@ -1282,7 +1282,7 @@ final class LocalApi {
     }
 
     private static LocalHttp.Res signedOut() {
-        return LocalHttp.error(503, "signed_out", "Harbor on this phone isn't signed in: open Harbor and sign in");
+        return LocalHttp.error(503, "signed_out", "Hub on this phone isn't signed in: open Hub and sign in");
     }
 
     private static long waitMs(LocalHttp.Req r, int max) {

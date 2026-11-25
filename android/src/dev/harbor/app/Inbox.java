@@ -145,7 +145,7 @@ final class Inbox {
         if ("text".equals(kind)) {
             String text = it.optString("text");
             Ui.main.post(() -> {
-                ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Harbor", text));
+                ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Hub", text));
                 Ui.toast(c, "Copied text from " + from);
             });
             return;
@@ -170,15 +170,15 @@ final class Inbox {
                 break;
             case "image":
                 Ui.main.post(() -> {
-                    Ui.toast(c, "Image from " + from + " saved to Pictures/Harbor");
+                    Ui.toast(c, "Image from " + from + " saved to Pictures/Hub");
                     Activity a = current;
                     if (a != null) try { a.startActivity(view(uri, mime)); } catch (Exception ignored) { }
                 });
-                notify(c, name, "From " + from + ", in Pictures/Harbor", uri, mime);
+                notify(c, name, "From " + from + ", in Pictures/Hub", uri, mime);
                 break;
             default:
-                Ui.main.post(() -> Ui.toast(c, name + " from " + from + " saved to Download/Harbor"));
-                notify(c, name, "From " + from + ", in Download/Harbor. Tap to open it.", uri, mime);
+                Ui.main.post(() -> Ui.toast(c, name + " from " + from + " saved to Download/Hub"));
+                notify(c, name, "From " + from + ", in Download/Hub. Tap to open it.", uri, mime);
         }
     }
 
@@ -190,7 +190,7 @@ final class Inbox {
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
             cv.put(MediaStore.MediaColumns.MIME_TYPE, mime);
-            cv.put(MediaStore.MediaColumns.RELATIVE_PATH, (image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS) + "/Harbor");
+            cv.put(MediaStore.MediaColumns.RELATIVE_PATH, (image ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS) + "/Hub");
             cv.put(MediaStore.MediaColumns.IS_PENDING, 1);
             Uri where = image ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     : MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);

@@ -189,14 +189,14 @@ final class Avatars {
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inJustDecodeBounds = true;
         try (InputStream in = c.getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(in, null, o); }
-        if (o.outWidth <= 0 || o.outHeight <= 0) throw new IOException("That isn't an image Harbor can read.");
+        if (o.outWidth <= 0 || o.outHeight <= 0) throw new IOException("That isn't an image Hub can read.");
         int side = Math.min(o.outWidth, o.outHeight), s = 1;
         while (side / (s * 2) >= 512) s *= 2;
         BitmapFactory.Options d = new BitmapFactory.Options();
         d.inSampleSize = s;
         Bitmap b;
         try (InputStream in = c.getContentResolver().openInputStream(uri)) { b = BitmapFactory.decodeStream(in, null, d); }
-        if (b == null) throw new IOException("That isn't an image Harbor can read.");
+        if (b == null) throw new IOException("That isn't an image Hub can read.");
         b = rotated(c, uri, b);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         square(b, 512).compress(Bitmap.CompressFormat.JPEG, 88, out);

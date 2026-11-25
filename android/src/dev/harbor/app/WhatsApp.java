@@ -148,7 +148,7 @@ final class WhatsApp {
 
     private static void confirmOut(Activity a, Hub hub, String pc, Sheet s) {
         Ui.dialog(a).setTitle("Sign out of WhatsApp on " + hub.labelOn(pc) + "?")
-                .setMessage("WhatsApp drops that device, and the chats Harbor stored there are deleted. Agents there can't use WhatsApp until you link it again.")
+                .setMessage("WhatsApp drops that device, and the chats Hub stored there are deleted. Agents there can't use WhatsApp until you link it again.")
                 .setPositiveButton("Sign out", (d, w) -> post(a, hub, pc, s, "signout"))
                 .setNegativeButton("Cancel", null).show();
     }

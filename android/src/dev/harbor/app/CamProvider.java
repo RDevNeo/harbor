@@ -19,7 +19,7 @@ import java.util.Locale;
  *  and other apps a copied message's images (clip/<name>, Copied), without a support library's FileProvider. Only files under cache/camera (cache/clip), only to apps
  *  the intent (the clipboard) grants. Shots older than a day are removed when a new one starts. */
 public class CamProvider extends ContentProvider {
-    static final String AUTHORITY = "dev.harbor.app.cam";
+    static final String AUTHORITY = "dev.hub.app.cam";
 
     static File dir(Context c) {
         File d = new File(c.getCacheDir(), "camera");

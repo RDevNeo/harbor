@@ -24,7 +24,7 @@ final class ProjectMove {
         try {
             return hub.call("POST", "/v1/projects/move", body.put("project", pid));
         } catch (Hub.ApiError e) {
-            if (e.code == 404 && !e.getMessage().contains("project")) throw new Hub.ApiError(404, "This PC runs an older Harbor that can't move projects: update it first.");
+            if (e.code == 404 && !e.getMessage().contains("project")) throw new Hub.ApiError(404, "This PC runs an older Hub that can't move projects: update it first.");
             throw e;
         }
     }
@@ -47,7 +47,7 @@ final class ProjectMove {
             }
             if (o.isEmpty()) { Ui.toast(a, why.isEmpty() ? "No other PCs yet: invite their owner to your workspace (Settings › Workspace on a PC)" : "Can't move it: " + why); return; }
             String note = why.isEmpty()
-                    ? "Its folder and its chats go to the PC you pick and go on there. Harbor shows what it copies before it starts."
+                    ? "Its folder and its chats go to the PC you pick and go on there. Hub shows what it copies before it starts."
                     : "Can't move now: " + why;
             Sheet.pick(a, "Move " + name + " to PC", note, o, null, pc -> plan(a, hub, pid, name, pc, after));
         });

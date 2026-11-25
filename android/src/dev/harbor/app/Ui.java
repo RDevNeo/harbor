@@ -165,7 +165,7 @@ final class Ui {
     static void toast(Context c, String s) { Toast.makeText(c, s, Toast.LENGTH_LONG).show(); }
 
     static void copy(Context c, String s) {
-        ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Harbor", s));
+        ((ClipboardManager) c.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Hub", s));
         toast(c, "Copied");
     }
 

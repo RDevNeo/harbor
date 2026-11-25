@@ -155,24 +155,24 @@ final class Hub {
         long t = lastAnswer();
         String seen = t > 0 ? " Last answered " + (Ui.ago(t).equals("now") ? "just now." : Ui.ago(t) + " ago.") : "";
         String pc = labelOn(via());
-        if ("harbor".equals(d)) return "Harbor isn't running on " + pc + ". Start it there (it can keep running in the background)." + seen;
+        if ("harbor".equals(d)) return "Hub isn't running on " + pc + ". Start it there (it can keep running in the background)." + seen;
         return pc + " is offline or out of reach." + seen;
     }
 
     /** Why the PC calls went to before stopped answering, once another PC answered instead
-     *  ("Harbor isn't running on desk"): said with the move. Null: not known. */
+     *  ("Hub isn't running on desk"): said with the move. Null: not known. */
     volatile String movedWhy;
 
     private String downNote(String v, Throwable e) {
         String n = labelOn(v);
         String d = down(e);
-        return "harbor".equals(d) ? "Harbor isn't running on " + n : "pc".equals(d) ? n + " is offline" : null;
+        return "harbor".equals(d) ? "Hub isn't running on " + n : "pc".equals(d) ? n + " is offline" : null;
     }
 
-    /** A short title for the offline state ("Harbor isn't running on desk" / "desk is offline"). */
+    /** A short title for the offline state ("Hub isn't running on desk" / "desk is offline"). */
     String downTitle(Throwable e) {
         String d = down(e), pc = labelOn(via());
-        if ("harbor".equals(d)) return "Harbor isn't running on " + pc;
+        if ("harbor".equals(d)) return "Hub isn't running on " + pc;
         if ("pc".equals(d)) return pc + " is offline";
         return "Can't reach " + pc;
     }
@@ -541,7 +541,11 @@ final class Hub {
     /** The headers that say who calls: the account's Harbor token (every PC of the workspace
      *  checks it), the phone's name and its app's version. */
     private void authorize(Net.Http c) {
-        c.header("Authorization", "Bearer " + (Ui.app == null ? "" : Account.token(Ui.app)));
+        String tok = Ui.app == null ? "" : Account.token(Ui.app);
+        // Hub: no account token; the PC knows this phone by its paired key (Pair). X-Hub says
+        // it's Hub's app, so a Harbor PC reached by mistake can tell.
+        if (!tok.isEmpty()) c.header("Authorization", "Bearer " + tok);
+        if (Pair.ON) c.header("X-Hub", "1");
         c.header("X-Harbor-Device", deviceName());
         c.header("X-Harbor-App", String.valueOf(appCode()));
         c.header("X-Harbor-Platform", platform());
@@ -908,7 +912,7 @@ final class Hub {
         JSONObject j = null;
         try { j = new JSONObject(body); } catch (JSONException ignored) { }
         String msg = j == null ? null : j.optString("error", null);
-        ApiError e = new ApiError(code, msg != null ? msg : code == 401 ? "This PC refused the sign-in. Sign in again." : "HTTP " + code);
+        ApiError e = new ApiError(code, msg != null ? msg : code == 401 ? (Pair.ON ? "This PC doesn't know this phone any more: pair it again (Hub on the PC › Settings › Phones)." : "This PC refused the sign-in. Sign in again.") : "HTTP " + code);
         if (code == 401) {
             e.signin = true;
             if (Ui.app != null) Account.renewSoon(Ui.app);
@@ -940,7 +944,7 @@ final class Hub {
         if (e instanceof ApiError || e instanceof Net.Refused || e instanceof Net.WrongKey) return e.getMessage();
         if (e instanceof UnknownHostException) return "Can't find the PC on this network.";
         if (e instanceof ConnectException || e instanceof java.net.NoRouteToHostException)
-            return "The PC isn't answering. Is Harbor open there, and this phone on the same network?";
+            return "The PC isn't answering. Is Hub open there, and this phone on the same network?";
         if (e instanceof javax.net.ssl.SSLException) return "Couldn't set up the encrypted connection to the PC: " + e.getMessage();
         if (e instanceof SocketTimeoutException) return "The PC took too long to answer.";
         if (e instanceof FileNotFoundException) return "Not found";

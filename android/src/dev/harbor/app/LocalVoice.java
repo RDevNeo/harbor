@@ -29,7 +29,7 @@ final class LocalVoice {
             try {
                 ex.setDataSource(file.getPath());
             } catch (IOException | RuntimeException e) {
-                throw new LocalHttp.Bad(415, "bad_attachment", "Harbor can't read the voice message: " + e.getMessage());
+                throw new LocalHttp.Bad(415, "bad_attachment", "Hub can't read the voice message: " + e.getMessage());
             }
             int track = -1;
             MediaFormat f = null;

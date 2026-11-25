@@ -15,7 +15,7 @@ final class Limits {
         Ui.bg(a, () -> hub.get("/v1/usage"), r -> {
             Sheet s = new Sheet(a, "Claude usage");
             JSONArray list = r.optJSONArray("limits");
-            if (list == null) s.body.addView(note(a, "Update Harbor on this PC to see this."));
+            if (list == null) s.body.addView(note(a, "Update Hub on this PC to see this."));
             else if (list.length() == 0) s.body.addView(note(a, "No Claude account on this PC."));
             else for (int i = 0; i < list.length(); i++) account(a, s.card(), list.optJSONObject(i));
             s.show();

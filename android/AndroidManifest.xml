@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Harbor for Android: a chat-only client of the desktop Harbors (hubs) of its account.
-     Hubs signs in with Google (Account; the browser comes back as harbor://oauth) and lists the
+<!-- Hub for Android (applicationId dev.hub.app, set by android/build.sh's aapt2
+     rename-manifest-package; the Java classes stay in dev.harbor.app): Harbor's Android app
+     rebranded and in a world of its own. It pairs with Hub on the PC (hub://pair, Pair.java), never
+     with Harbor's account service or PCs, and installs beside Harbor and Person Hub.
+     What follows is Harbor's description: a chat-only client of the desktop Harbors (hubs) of its account.
+     Hubs signs in with Google (Account; the browser comes back as hub://oauth) and lists the
      account's workspaces, each with its PCs; Chats lists one workspace's
      chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
      one (its team slides in from the right), NewChat starts one, GhList and GhItem show the
      PC's pull requests and issues, Settings updates the app and sets the color mode. Other apps
-     and browsers open a chat with its link (harbor://chat/<gid>?pc=<PC name>) through Hubs.
+     and browsers open a chat with its link (hub://chat/<gid>?pc=<PC name>) through Hubs.
      This file is part of the shell (android/README.md, "Shell and code"): a change here needs
      android/shell/lock.sh bump, and phones get it only by installing the new APK. The app's
      components below are made by dev.harbor.shell.Factory from the newest good app code the phone
@@ -49,14 +53,14 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="harbor" android:host="pair" />
+                <data android:scheme="hub" android:host="pair" />
             </intent-filter>
             <!-- The Google sign-in's answer, bounced by the account service (Account) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="harbor" android:host="oauth" />
+                <data android:scheme="hub" android:host="oauth" />
             </intent-filter>
             <!-- A chat's link, harbor://chat/<gid>?pc=<PC name>, as agents write them, from another
                  app or a browser (shell 2): Hubs opens that chat (ChatLink) -->
@@ -64,7 +68,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="harbor" android:host="chat" />
+                <data android:scheme="hub" android:host="chat" />
             </intent-filter>
         </activity>
         <activity android:name=".Chats" android:exported="false" />
@@ -102,7 +106,7 @@
         </service>
         <!-- Attach › Camera: the camera app writes its photo into a file of ours; on Android 9
              and older it also shares what the PCs send (Inbox) -->
-        <provider android:name=".CamProvider" android:authorities="dev.harbor.app.cam"
+        <provider android:name=".CamProvider" android:authorities="dev.hub.app.cam"
             android:exported="false" android:grantUriPermissions="true" />
         <!-- What Play services' client libraries read (play-services-basement 18.9.0's
              google_play_services_version; android/build.sh pins that library). -->

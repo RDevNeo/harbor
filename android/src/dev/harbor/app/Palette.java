@@ -70,7 +70,7 @@ public class Palette extends Base {
                 String path = "/v1/palette?q=" + URLEncoder.encode(q, "UTF-8") + (chat == null ? "" : "&chat=" + URLEncoder.encode(chat, "UTF-8"));
                 r = hub.get(path);
             } catch (Hub.ApiError e) {
-                err = e.code == 404 ? "Search needs a newer Harbor on the PC: update it there." : Hub.why(e);
+                err = e.code == 404 ? "Search needs a newer Hub on the PC: update it there." : Hub.why(e);
             } catch (Exception e) {
                 err = Hub.why(e);
             }

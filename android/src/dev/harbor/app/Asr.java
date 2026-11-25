@@ -20,7 +20,7 @@ import java.io.OutputStream;
  *  a model an older app downloaded is deleted, {@link #dropModel}). Phones whose ABI the APK has
  *  no library for (it ships arm64-v8a and armeabi-v7a) record whole dictations for the PC. */
 final class Asr {
-    static final String TAG = "HarborVoice";
+    static final String TAG = "HubVoice";
 
     private Asr() { }
 

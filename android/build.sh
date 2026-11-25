@@ -1,6 +1,9 @@
 #!/bin/bash
-# Build Harbor for Android -> android/build/harbor-android.apk, and the same app code alone ->
-# harbor-phone-code.zip beside it (CODE_OUT=<path> elsewhere). No Gradle: aapt2 + javac + d8 +
+# Build Hub for Android -> android/build/hub-android.apk, and the same app code alone ->
+# hub-phone-code.zip beside it. Hub is Harbor's Android app rebranded: applicationId dev.hub.app
+# (aapt2 --rename-manifest-package below; the Java classes stay in dev.harbor.app), hub:// links,
+# paired with Hub's PCs only (Pair.java, PROTOCOL.md "Hub pairing"), so it installs and runs beside
+# Harbor and Person Hub. Signed with Harbor's keystore by default (the variables below pick another) (CODE_OUT=<path> elsewhere). No Gradle: aapt2 + javac + d8 +
 # zipalign + apksigner straight from an Android SDK. Third-party code: sherpa-onnx's Java bindings,
 # vendored as source in third_party/sherpa-onnx, and the few Google Play services client libraries
 # Gmail's native sign-in needs (below, third_party/play-services/NOTICE).
@@ -61,8 +64,11 @@ if [ -n "${ANDROID_KEYSTORE_PASS:-}" ]; then KSPASS="env:ANDROID_KEYSTORE_PASS"
 else KSPASS="file:${KEY%.jks}.pass"; fi
 [ -n "${UNSIGNED:-}" ] || [ -f "$KEY" ] || { echo "no signing keystore at $KEY (see the header of this script)" >&2; exit 1; }
 
-OUT=${OUT:-$HERE/build/harbor-android.apk}
-CODE_OUT=${CODE_OUT:-$(dirname "$OUT")/harbor-phone-code.zip}
+OUT=${OUT:-$HERE/build/hub-android.apk}
+CODE_OUT=${CODE_OUT:-$(dirname "$OUT")/hub-phone-code.zip}
+# Hub's applicationId: the manifest keeps package dev.harbor.app (its classes' package and the
+# relative names), aapt2 renames the installed package and the resource table's to this.
+APP_ID=${HUB_APP_ID:-dev.hub.app}
 mkdir -p "$(dirname "$OUT")" "$(dirname "$CODE_OUT")"
 CODE_OUT=$(cd "$(dirname "$CODE_OUT")" && pwd)/$(basename "$CODE_OUT")
 W=$(mktemp -d); trap 'kill $(jobs -p) 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$W"' EXIT
@@ -195,6 +201,7 @@ esac
 # No R.java: the app's code is also the code zip, which must run on shells whose resource ids
 # differ; it looks resources up by name (Ui.res).
 "$BT/aapt2" link -I "$JAR" --manifest "$HERE/AndroidManifest.xml" -o "$W/base.apk" "$W/res.zip" \
+  --rename-manifest-package "$APP_ID" --rename-resources-package "$APP_ID" \
   -A "$W/assets" --min-sdk-version 26 --target-sdk-version 34 \
   --version-code "$CODE" --version-name "$VER"
 # The native libraries (sherpa-onnx's) go into the APK in the background, beside compiling, the

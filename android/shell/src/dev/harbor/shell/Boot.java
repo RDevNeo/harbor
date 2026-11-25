@@ -237,7 +237,7 @@ public final class Boot {
     static Info describe(File file) throws IOException {
         try (ZipFile z = new ZipFile(file)) {
             ZipEntry e = z.getEntry(INFO);
-            if (e == null || z.getEntry("classes.dex") == null) throw new IOException("not Harbor's app code");
+            if (e == null || z.getEntry("classes.dex") == null) throw new IOException("not Hub's app code");
             Properties p = new Properties();
             try (InputStream in = z.getInputStream(e)) { p.load(new java.io.InputStreamReader(in, StandardCharsets.UTF_8)); }
             Info i = new Info();

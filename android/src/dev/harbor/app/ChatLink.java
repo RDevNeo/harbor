@@ -15,7 +15,11 @@ import java.util.Locale;
  *  net/chatlink.ts) and as another app or a browser hands it to the phone (Hubs; the manifest's
  *  harbor://chat filter). Plain Java, no Android classes: the unit tests run it on the JVM. */
 final class ChatLink {
-    static final String SCHEME = "harbor://chat/";
+    /** Hub's own links (the manifest's hub://chat filter; Copy link). */
+    static final String SCHEME = "hub://chat/";
+    /** What the PC's API parses (GET /v1/chat_link?url=, the engine's chatlink.ts): Harbor's
+     *  scheme, a protocol detail like the X-Harbor headers. Links in either scheme are taken. */
+    static final String PC_SCHEME = "harbor://chat/";
 
     /** The chat's gid (or, as some agents write, its number on PC `pc`). */
     final String gid;
@@ -52,8 +56,10 @@ final class ChatLink {
     static ChatLink parse(String s) {
         if (s == null) return null;
         s = s.trim();
-        if (s.length() < SCHEME.length() || !s.regionMatches(true, 0, SCHEME, 0, SCHEME.length())) return null;
-        String rest = s.substring(SCHEME.length());
+        String scheme = s.regionMatches(true, 0, SCHEME, 0, SCHEME.length()) ? SCHEME
+                : s.regionMatches(true, 0, PC_SCHEME, 0, PC_SCHEME.length()) ? PC_SCHEME : null;
+        if (scheme == null) return null;
+        String rest = s.substring(scheme.length());
         int hash = rest.indexOf('#');
         if (hash >= 0) rest = rest.substring(0, hash);
         int q = rest.indexOf('?');
@@ -120,7 +126,7 @@ final class ChatLink {
     }
 
     /** The link as the hub resolves it (GET /v1/chat_link?url=): what an agent would have written. */
-    String url() { return SCHEME + gid + (pc.isEmpty() ? "" : "?pc=" + encode(pc)); }
+    String url() { return PC_SCHEME + gid + (pc.isEmpty() ? "" : "?pc=" + encode(pc)); }
 
     /** Which of the phone's workspaces to ask, in order, given each one's PC names: those with
      *  the link's PC first (names without case, as the desktop compares them), then the rest

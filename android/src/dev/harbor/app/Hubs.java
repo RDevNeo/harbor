@@ -18,11 +18,13 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The start screen: "Sign in with Google" until this phone is signed in (Account), then the
- *  account's workspaces, each with its PCs (one Hub per workspace). The browser comes back
- *  here after the sign-in (harbor://oauth). There's no pairing: a PC shows up once its owner
- *  signed in on it, in a workspace this account is in. Another app or a browser opens a chat
- *  with its link, harbor://chat/<gid>?pc=<PC name> (ChatLink). */
+/** The start screen. Hub (Pair.ON): the PCs this phone is paired with, one entry each, and
+ *  "Pair a PC" (the PC's QR code opens hub://pair?… here, or the link is pasted). Harbor's
+ *  sign-in screens below stay for its code paths but never show. Another app or a browser opens
+ *  a chat with its link, hub://chat/<gid>?pc=<PC name> (ChatLink).
+ *
+ *  Room for Hub's top-level tabs (Persons, Routine, Projects): this screen and what it opens are
+ *  the Projects tab; the others come later (see TABS). */
 public class Hubs extends Base {
     private LinearLayout list;
     private boolean busy;
@@ -88,7 +90,15 @@ public class Hubs extends Base {
      *  screen (onCreate), else it came to the running one (onNewIntent). */
     private boolean handleLink(Intent i, boolean fresh) {
         if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return false;
-        if ("harbor".equalsIgnoreCase(i.getData().getScheme()) && "chat".equalsIgnoreCase(i.getData().getHost())) {
+        String scheme = i.getData().getScheme();
+        boolean ours = Pair.SCHEME.equalsIgnoreCase(scheme) || "harbor".equalsIgnoreCase(scheme);
+        if (Pair.ON && Pair.SCHEME.equalsIgnoreCase(scheme) && "pair".equalsIgnoreCase(i.getData().getHost())) {
+            String link = i.getDataString();
+            setIntent(new Intent(this, Hubs.class));
+            askPair(link);
+            return true;
+        }
+        if (ours && "chat".equalsIgnoreCase(i.getData().getHost())) {
             ChatLink link = ChatLink.parse(i.getDataString());
             // Another app asks to chat with a chat through the local API (LocalApi): Allow or not.
             if (link != null && link.approve != null) {
@@ -99,7 +109,7 @@ public class Hubs extends Base {
             }
             String[] app = link == null ? null : referrerApp(i);
             setIntent(new Intent(this, Hubs.class));
-            if (link == null) { Ui.toast(this, "That isn't a Harbor chat link"); return false; }
+            if (link == null) { Ui.toast(this, "That isn't a Hub chat link"); return false; }
             keepLink(this, i.getDataString(), app);
             openPending();
             return true;
@@ -152,11 +162,12 @@ public class Hubs extends Base {
     private void render() {
         list.removeAllViews();
         if (restoring) return;
-        list.addView(Ui.title(this, "Harbor", 44), Ui.margins(Ui.fill(), 4, 24, 4, 8));
+        list.addView(Ui.title(this, "Hub", 44), Ui.margins(Ui.fill(), 4, 24, 4, 8));
+        if (Pair.ON) { renderPaired(); return; }
         if (Account.needsSignIn(this)) {
             boolean ran = Account.signedIn(this);
             String intro = ran ? "Your sign-in ran out. Sign in again to reach your PCs."
-                    : "Your Harbor chats on your phone. Sign in with the Google account you use in Harbor on your PC, or the one a workspace invited.";
+                    : "Your Hub chats on your phone. Sign in with the Google account you use in Hub on your PC, or the one a workspace invited.";
             list.addView(Ui.text(this, intro, 17, Ui.G700), Ui.margins(Ui.fill(), 4, 8, 4, 28));
             if (busy) {
                 list.addView(Ui.text(this, "Signing in…", 15, Ui.G700), Ui.margins(Ui.fill(), 4, 0, 4, 12));
@@ -181,7 +192,7 @@ public class Hubs extends Base {
         List<Hub> hubs = Hub.all(this);
         list.addView(Ui.text(this, "Your workspaces", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
         if (hubs.isEmpty()) {
-            list.addView(Ui.text(this, busy ? "Looking for your PCs…" : "No PCs in your workspaces yet. Open Harbor 0.85 or newer on a PC and sign in there with this account, or ask whoever invited you to sign in on theirs.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
+            list.addView(Ui.text(this, busy ? "Looking for your PCs…" : "No PCs in your workspaces yet. Open Hub 0.85 or newer on a PC and sign in there with this account, or ask whoever invited you to sign in on theirs.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
             if (!busy) list.addView(Ui.button(this, "Check again", false, v -> recheck()), Ui.fill());
             return;
         }
@@ -420,7 +431,7 @@ public class Hubs extends Base {
                             .put("app", link.appPkg.isEmpty() ? JSONObject.NULL : new JSONObject().put("label", link.appLabel).put("package", link.appPkg));
                     found.call("POST", "/v1/chats/" + chat + "/context", body, 15_000);
                 } catch (Hub.ApiError e) {
-                    note = "no such call".equals(e.getMessage()) ? "The link's context wasn't passed on: update Harbor on that PC"
+                    note = "no such call".equals(e.getMessage()) ? "The link's context wasn't passed on: update Hub on that PC"
                             : "The link's context wasn't passed on: " + e.getMessage();
                 } catch (Exception e) {
                     note = "The link's context wasn't passed on: " + Hub.why(e);
@@ -439,6 +450,83 @@ public class Hubs extends Base {
                 open(fh.id);
                 Chat.open(this, fh, fc);
                 if (fnote != null) Ui.toast(this, fnote);
+            });
+        });
+    }
+
+    // ---- Hub: paired PCs (Pair) ----
+
+    /** Hub's top-level tabs, for the navigation to come: only Projects (this screen and the
+     *  chats it opens) is built; Persons and Routine are ported from Person Hub later. */
+    static final String[] TABS = {"Persons", "Routine", "Projects"};
+
+    /** The paired PCs and Pair a PC. */
+    private void renderPaired() {
+        List<Hub> hubs = Hub.all(this);
+        if (error != null) list.addView(Ui.text(this, error, 14, Ui.RED), Ui.margins(Ui.fill(), 4, 12, 4, 0));
+        list.addView(Ui.text(this, "Your PCs", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
+        if (hubs.isEmpty()) {
+            list.addView(Ui.text(this, busy ? "Pairing…" : "Your Hub chats on your phone. Pair it with Hub on your PC: open Settings › Phones there and scan its QR code with the phone's camera.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
+        } else {
+            LinearLayout c = Ui.card(this);
+            boolean first = true;
+            for (Hub h : hubs) {
+                if (!first) c.addView(Ui.gap(this));
+                first = false;
+                c.addView(hubRow(h), Ui.fill());
+            }
+            list.addView(c, Ui.fill());
+        }
+        if (!busy) list.addView(Ui.button(this, hubs.isEmpty() ? "Paste a pairing link" : "Pair another PC", hubs.isEmpty(), v -> pastePair()), Ui.margins(Ui.fill(), 0, 14, 0, 0));
+        TextView how = Ui.text(this, "Hub pairs only with Hub on your PCs, never with Harbor. Each connection is encrypted and pinned to the PC's own key; long-press a PC to forget it.", 13, Ui.G700);
+        list.addView(how, Ui.margins(Ui.fill(), 4, 24, 4, 0));
+    }
+
+    /** A pairing link typed or pasted (the QR code's text, from Hub on the PC). */
+    private void pastePair() {
+        android.widget.EditText in = new android.widget.EditText(this);
+        in.setHint("hub://pair?…");
+        in.setSingleLine(false);
+        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        try {
+            CharSequence clip = cm != null && cm.hasPrimaryClip() ? cm.getPrimaryClip().getItemAt(0).getText() : null;
+            if (clip != null && PairLink.parse(clip.toString()) != null) in.setText(clip);
+        } catch (Exception ignored) { }
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        box.addView(in, Ui.fill());
+        Ui.dialog(this).setTitle("Pair a PC")
+                .setMessage("On the PC: Hub › Settings › Phones › Pair a phone. Scan its QR code with the camera, or copy its link here.")
+                .setView(box)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Pair", (d, w) -> askPair(in.getText().toString()))
+                .show();
+    }
+
+    /** Pairs with the PC of link s, after the user says yes (a link can come from anywhere). */
+    private void askPair(String s) {
+        PairLink l = PairLink.parse(s);
+        if (l == null) { Ui.toast(this, "That isn't a Hub pairing link"); return; }
+        Ui.dialog(this).setTitle("Pair with " + PairLink.label(l) + "?")
+                .setMessage("This phone will reach Hub's chats on " + PairLink.label(l) + ". Its key: " + l.fp.substring(0, 16) + "…")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Pair", (d, w) -> pair(l))
+                .show();
+    }
+
+    private void pair(PairLink l) {
+        busy = true;
+        error = null;
+        render();
+        Ui.pool.execute(() -> {
+            String e = null, id = null;
+            try { id = Pair.pair(this, l); } catch (Exception x) { e = Hub.why(x); }
+            final String fe = e, fid = id;
+            Ui.main.post(() -> {
+                busy = false;
+                error = fe == null ? null : "Couldn't pair with " + PairLink.label(l) + ": " + fe;
+                render();
+                if (fid != null) { Ui.toast(this, "Paired with " + PairLink.label(l)); open(fid); }
             });
         });
     }

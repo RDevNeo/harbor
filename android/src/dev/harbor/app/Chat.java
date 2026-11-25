@@ -1134,7 +1134,7 @@ public class Chat extends Base implements Images.Gallery {
         try {
             return hub.call("POST", "/v1/chats/" + chatId + "/" + action, body);
         } catch (Hub.ApiError x) {
-            if (x.code == 404) throw new Hub.ApiError(404, "Update Harbor on that PC to do this from the phone.");
+            if (x.code == 404) throw new Hub.ApiError(404, "Update Hub on that PC to do this from the phone.");
             throw x;
         }
     }

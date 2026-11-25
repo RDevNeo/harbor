@@ -62,7 +62,7 @@ final class Net {
 
     /** The hub answered with another key than the pinned one. */
     static final class WrongKey extends IOException {
-        WrongKey() { super("This PC answered with another key than your workspace lists for it. If it was set up again, open Harbor on it and sign in."); }
+        WrongKey() { super("This PC answered with another key than your workspace lists for it. If it was set up again, open Hub on it and sign in."); }
     }
 
     // ---- this phone's key ----
@@ -81,7 +81,7 @@ final class Net {
                 g.initialize(new KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
                         .setAlgorithmParameterSpec(new ECGenParameterSpec("secp256r1"))
                         .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA384, KeyProperties.DIGEST_SHA512)
-                        .setCertificateSubject(new X500Principal("CN=Harbor phone"))
+                        .setCertificateSubject(new X500Principal("CN=Hub phone"))
                         .setCertificateSerialNumber(BigInteger.ONE)
                         .setCertificateNotBefore(new Date(1735689600000L))   // 2025-01-01
                         .setCertificateNotAfter(new Date(4891363200000L))    // 2125-01-01
@@ -218,7 +218,7 @@ final class Net {
             how = Addr.how(false, false, to != null, n != null || localUp());
         }
         if (how == Addr.How.REFUSE)
-            throw new Refused("This pairing is from before Harbor 0.13 and has no key for the PC: pair the phone again (Harbor › Settings › Phones › Pair a phone).");
+            throw new Refused("This pairing is from before Hub 0.13 and has no key for the PC: pair the phone again (Hub › Settings › Phones › Pair a phone).");
         Socket s = how == Addr.How.TLS_FIRST_USE && n != null ? bound(n) : null;
         if (s == null) s = new Socket();
         try {

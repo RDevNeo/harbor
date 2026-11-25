@@ -32,6 +32,10 @@ public final class ChatLinkTest {
         eq(parsed("harbor://chat/" + "x".repeat(65)), null, "an id too long");
         eq(parsed("harbor://pair/abc"), null, "another host");
         eq(parsed("https://chat/abc"), null, "another scheme");
+        // Hub's own scheme (the manifest's filter), and what the PC is asked stays Harbor's.
+        eq(parsed("hub://chat/" + gid + "?pc=desk"), gid + "|desk", "Hub's scheme");
+        eq(parsed("HUB://Chat/" + gid), gid + "|", "Hub's scheme without case");
+        eq(ChatLink.parse("hub://chat/" + gid + "?pc=desk").url(), "harbor://chat/" + gid + "?pc=desk", "url() of a hub:// link");
         eq(parsed(null), null, "nothing");
 
         // What the PC is asked about: the link as an agent writes it (ts chatLink()).

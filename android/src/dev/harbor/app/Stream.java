@@ -250,6 +250,6 @@ final class Stream extends MediaDataSource {
         boolean all;
         synchronized (lock) { all = blocks.complete(); }
         if (all) keep(); else part.delete();
-        Log.i("HarborVideo", "stream closed: fetched " + (fetched >> 10) + " of " + (total >> 10) + " KB in " + (System.currentTimeMillis() - born) + " ms");
+        Log.i("HubVideo", "stream closed: fetched " + (fetched >> 10) + " of " + (total >> 10) + " KB in " + (System.currentTimeMillis() - born) + " ms");
     }
 }
