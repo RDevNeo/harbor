@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipArea } from "widgets.slint";
+import { Btn, Glyph, Spinner, StatusData, StatusView, SearchField, Empty, TipArea, ScrollThumb } from "widgets.slint";
 // Hub's design system (DESIGN.md): the sidebar frame, its header, section heads, the lead square and the Settled fold are
 // the shared ones Persons and Routine use too.
 import { Ds } from "ds-tokens.slint";
@@ -773,128 +773,143 @@ export component Sidebar inherits SideSurface {
         // Kept in range when its rows or its height change (a search, a fold, settled chats, a restored
         // scroll): Slint doesn't, and ignores the wheel once the rows fit, so a list scrolled a little and then
         // shortened stayed scrolled for good, "PROJECTS" half under the search row.
-        list := Flickable {
-            interactive: false;
+        Rectangle {
             vertical-stretch: 1;
-            function keep-in() {
-                self.content-y = max(min(self.content-y, 0), min(0, self.height - self.content-height));
-            }
-            changed content-height => {
-                self.keep-in();
-            }
-            changed height => {
-                self.keep-in();
-            }
-            changed content-y => {
-                self.keep-in();
-            }
-            VerticalLayout {
-                alignment: start;
-                spacing: 2px;
-                if root.empty-kind != "": VerticalLayout {
-                    padding-top: 24px;
-                    Empty {
-                        icon: root.empty-kind == "search" ? Icons.search : root.empty-kind == "ws" ? Icons.users : Icons.folder-plus;
-                        title: root.empty-kind == "search" ? "No match" : root.empty-kind == "ws" ? "Nothing here" : "No projects yet";
-                        desc: root.empty-desc;
-                        action: root.empty-kind == "search" ? "" : root.empty-kind == "ws" ? "Show all" : "Add project";
-                        act => {
-                            if root.empty-kind == "ws" {
-                                root.ws-all();
-                            } else {
-                                root.add-project();
+            list := Flickable {
+                width: parent.width;
+                height: parent.height;
+                interactive: false;
+                function keep-in() {
+                    self.content-y = max(min(self.content-y, 0), min(0, self.height - self.content-height));
+                }
+                changed content-height => {
+                    self.keep-in();
+                }
+                changed height => {
+                    self.keep-in();
+                }
+                changed content-y => {
+                    self.keep-in();
+                }
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 2px;
+                    if root.empty-kind != "": VerticalLayout {
+                        padding-top: 24px;
+                        Empty {
+                            icon: root.empty-kind == "search" ? Icons.search : root.empty-kind == "ws" ? Icons.users : Icons.folder-plus;
+                            title: root.empty-kind == "search" ? "No match" : root.empty-kind == "ws" ? "Nothing here" : "No projects yet";
+                            desc: root.empty-desc;
+                            action: root.empty-kind == "search" ? "" : root.empty-kind == "ws" ? "Show all" : "Add project";
+                            act => {
+                                if root.empty-kind == "ws" {
+                                    root.ws-all();
+                                } else {
+                                    root.add-project();
+                                }
                             }
+                        }
+                    }
+                    for r[i] in root.rows: VerticalLayout {
+                        property <bool> revealed: root.reveal == r.kind + ":" + r.id;
+                        changed revealed => {
+                            if self.revealed {
+                                list.content-y = max(min(list.content-y, list.height - self.y - self.height), -self.y);
+                            }
+                        }
+                        if r.kind == "project": ProjectHead {
+                            data: r;
+                            first: i == 0;
+                            grip: root.can-drag;
+                            drag-id: root.drag-id;
+                            drag-y: root.drag-y;
+                            drag(y) => {
+                                root.drag-id = r.id;
+                                root.drag-y = y;
+                            }
+                            dropped => {
+                                if root.drop-id >= 0 {
+                                    root.reorder(r.id, root.drop-id, root.drop-above);
+                                }
+                                root.drag-id = -1;
+                                root.drop-id = -1;
+                            }
+                            changed under => {
+                                if self.under {
+                                    root.drop-id = r.id;
+                                    root.drop-above = self.above;
+                                } else if root.drop-id == r.id {
+                                    root.drop-id = -1;
+                                }
+                            }
+                            changed above => {
+                                if self.under {
+                                    root.drop-above = self.above;
+                                }
+                            }
+                            chat-drag(x, y) => {
+                                // Out of the sidebar: no reorder is under way any more.
+                                root.drag-id = -1;
+                                root.drop-id = -1;
+                                root.chat-drag(r, x, y);
+                            }
+                            chat-drop(x, y) => {
+                                root.chat-drop(r, x, y);
+                            }
+                            open => {
+                                root.open-project(r.id);
+                            }
+                            fold => {
+                                root.fold-project(r.id);
+                            }
+                            new-chat => {
+                                root.new-chat(r.id);
+                            }
+                            snooze(x, y) => {
+                                root.snooze("r" + r.id, x, y);
+                            }
+                            menu(x, y) => {
+                                root.project-menu(r.id, x, y);
+                            }
+                        }
+                        if r.kind == "thread" || r.kind == "loose": ThreadRow {
+                            data: r;
+                            open => {
+                                root.open-chat(r.id);
+                            }
+                            drag(x, y) => {
+                                root.chat-drag(r, x, y);
+                            }
+                            dropped(x, y) => {
+                                root.chat-drop(r, x, y);
+                            }
+                            settle(on) => {
+                                root.settle(r.id, on);
+                            }
+                            snooze(x, y) => {
+                                root.snooze("c" + r.id, x, y);
+                            }
+                            menu(x, y) => {
+                                root.chat-menu(r.id, x, y);
+                            }
+                        }
+                        // "THREADS": a section's small head (ds-list.slint SectionHead), as a project's.
+                        if r.kind == "label": SectionHead {
+                            title: r.title;
+                            first: i == 0;
                         }
                     }
                 }
-                for r[i] in root.rows: VerticalLayout {
-                    property <bool> revealed: root.reveal == r.kind + ":" + r.id;
-                    changed revealed => {
-                        if self.revealed {
-                            list.content-y = max(min(list.content-y, list.height - self.y - self.height), -self.y);
-                        }
-                    }
-                    if r.kind == "project": ProjectHead {
-                        data: r;
-                        first: i == 0;
-                        grip: root.can-drag;
-                        drag-id: root.drag-id;
-                        drag-y: root.drag-y;
-                        drag(y) => {
-                            root.drag-id = r.id;
-                            root.drag-y = y;
-                        }
-                        dropped => {
-                            if root.drop-id >= 0 {
-                                root.reorder(r.id, root.drop-id, root.drop-above);
-                            }
-                            root.drag-id = -1;
-                            root.drop-id = -1;
-                        }
-                        changed under => {
-                            if self.under {
-                                root.drop-id = r.id;
-                                root.drop-above = self.above;
-                            } else if root.drop-id == r.id {
-                                root.drop-id = -1;
-                            }
-                        }
-                        changed above => {
-                            if self.under {
-                                root.drop-above = self.above;
-                            }
-                        }
-                        chat-drag(x, y) => {
-                            // Out of the sidebar: no reorder is under way any more.
-                            root.drag-id = -1;
-                            root.drop-id = -1;
-                            root.chat-drag(r, x, y);
-                        }
-                        chat-drop(x, y) => {
-                            root.chat-drop(r, x, y);
-                        }
-                        open => {
-                            root.open-project(r.id);
-                        }
-                        fold => {
-                            root.fold-project(r.id);
-                        }
-                        new-chat => {
-                            root.new-chat(r.id);
-                        }
-                        snooze(x, y) => {
-                            root.snooze("r" + r.id, x, y);
-                        }
-                        menu(x, y) => {
-                            root.project-menu(r.id, x, y);
-                        }
-                    }
-                    if r.kind == "thread" || r.kind == "loose": ThreadRow {
-                        data: r;
-                        open => {
-                            root.open-chat(r.id);
-                        }
-                        drag(x, y) => {
-                            root.chat-drag(r, x, y);
-                        }
-                        dropped(x, y) => {
-                            root.chat-drop(r, x, y);
-                        }
-                        settle(on) => {
-                            root.settle(r.id, on);
-                        }
-                        snooze(x, y) => {
-                            root.snooze("c" + r.id, x, y);
-                        }
-                        menu(x, y) => {
-                            root.chat-menu(r.id, x, y);
-                        }
-                    }
-                    // "THREADS": a section's small head (ds-list.slint SectionHead), as a project's.
-                    if r.kind == "label": SectionHead {
-                        title: r.title;
-                        first: i == 0;
-                    }
+            }
+            ScrollThumb {
+                x: parent.width - self.width + 8px;
+                y: 0;
+                height: parent.height;
+                content-y: list.content-y;
+                content-height: list.content-height;
+                visible-height: list.height;
+                scroll-to(v) => {
+                    list.content-y = v;
                 }
             }
         }

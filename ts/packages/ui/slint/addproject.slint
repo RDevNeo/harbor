@@ -3,10 +3,9 @@ import "fonts/Geist-Medium.ttf";
 import "fonts/Geist-SemiBold.ttf";
 import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, BtnSize, Glyph, Separator, Variant } from "widgets.slint";
+import { Btn, BtnSize, Glyph, Separator, Variant, Scroll } from "widgets.slint";
 
 export enum StatusTone { subtle, error, warn }
 
@@ -230,7 +229,7 @@ export component AddProjectOverlay inherits Rectangle {
                         color: s.tone == StatusTone.error ? Theme.red-900 : s.tone == StatusTone.warn ? Theme.amber-900 : Theme.subtle;
                     }
                 }
-                ScrollView {
+                Scroll {
                     height: min(list.preferred-height, 340px);
                     list := VerticalLayout {
                         for r[i] in root.rows: row := Rectangle {

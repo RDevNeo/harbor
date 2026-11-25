@@ -2,8 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField } from "ds.slint";
-import { ScrollView } from "std-widgets.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll } from "ds.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 
 export struct PRow {
@@ -358,7 +357,7 @@ component Sidebar inherits SideSurface {
                 }
             }
         }
-        ScrollView {
+        Scroll {
             vertical-stretch: 1;
             VerticalLayout {
                 padding: Ds.side-pad;
@@ -450,7 +449,7 @@ component ListPane inherits Rectangle {
                     }
                 }
             }
-            ScrollView {
+            Scroll {
                 vertical-stretch: 1;
                 VerticalLayout {
                     alignment: start;
@@ -1464,7 +1463,7 @@ component ChatPane inherits Rectangle {
         // messages
         Rectangle {
             vertical-stretch: 1;
-            sv := ScrollView {
+            sv := Scroll {
                 property <length> max-w: min(640px, self.visible-width * 0.78);
                 changed content-height => {
                     if root.at-bottom {
@@ -1564,7 +1563,7 @@ component Panel inherits PanelSurface {
                 }
             }
         }
-        ScrollView {
+        Scroll {
             vertical-stretch: 1;
             VerticalLayout {
                 padding: 18px;

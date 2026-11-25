@@ -3,10 +3,9 @@ import "fonts/Geist-Medium.ttf";
 import "fonts/Geist-SemiBold.ttf";
 import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, Card, Glyph, MenuRow, SearchField, Separator, SettingRow, Tabs, Toggle } from "widgets.slint";
+import { Btn, Card, Glyph, MenuRow, SearchField, Separator, SettingRow, Tabs, Toggle, Scroll } from "widgets.slint";
 import { VoiceTab, VoiceView } from "settings-voice.slint";
 import { KeybindingsTab, KeysView } from "settings-keybindings.slint";
 import { Block, BlocksTab } from "settings-blocks.slint";
@@ -355,7 +354,7 @@ export component SettingsPage inherits Rectangle {
                 vertical-alignment: center;
             }
         }
-        sv := ScrollView {
+        sv := Scroll {
             vertical-stretch: 1;
             // Not `content-y <=> SettingsBus.scroll-y`: bound two-way to a global, the viewport stayed at 0 whatever the
             // wheel, touchpad or scrollbar did (Slint 1.18), so no page scrolled. The bus follows the page instead.

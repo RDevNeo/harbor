@@ -3,9 +3,8 @@ import "fonts/Geist-Medium.ttf";
 import "fonts/Geist-SemiBold.ttf";
 import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
-import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Glyph, SearchField, Separator } from "widgets.slint";
+import { Glyph, SearchField, Separator, Scroll } from "widgets.slint";
 
 export struct PaletteRow {
     icon: string,
@@ -102,7 +101,7 @@ export component PaletteOverlay inherits Rectangle {
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            if root.sections.length > 0: ScrollView {
+            if root.sections.length > 0: Scroll {
                 height: min(list.preferred-height, clamp(root.height * 0.6, 160px, 460px));
                 list := VerticalLayout {
                     for s in root.sections: VerticalLayout {

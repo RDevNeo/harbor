@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Glyph, Spinner, Btn, BtnSize, TipArea } from "widgets.slint";
+import { Glyph, Spinner, Btn, BtnSize, TipArea, ScrollThumb } from "widgets.slint";
 import { MdBlock, MdBlockView, Selectable } from "markdown.slint";
 import { CaptchaCard, ChatCaptchaData } from "captcha.slint";
 
@@ -1516,6 +1516,17 @@ export component Transcript {
                     }
                 }
             }
+        }
+    }
+    ScrollThumb {
+        x: root.width - self.width;
+        y: 0;
+        height: root.height;
+        content-y: list.content-y;
+        content-height: list.content-height;
+        visible-height: list.height;
+        scroll-to(v) => {
+            list.content-y = v;
         }
     }
     // chat.rs `scroll_to_bottom_button`: floats over the lower edge while reading back.
