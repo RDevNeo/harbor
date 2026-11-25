@@ -83,3 +83,26 @@ Prints file names and sizes only, never contents. The lead runs it at cutover.
 1. Engine package: model (+ tests), store, service, connection interface, routes. 2. Slint tab on
 fake data, then live. 3. Backends (Discord, Gmail, WhatsApp, SpokPay, socials) in parallel.
 4. Android tab. 5. Migration script, staged build, screenshots.
+
+## Status (2026-11-25, branch hub-persons)
+
+Done: engine (`@harbor/persons`: service, routes `v1/persons/*`, Person AI, avatars), Discord / Gmail / WhatsApp
+connections, SpokPay and socials backends, Slint tab (`persons.slint` + `src/tabs/persons/`), Android tab
+(`Persons*.java`, `PersonsTab implements HubTab`), import script. Checks: `tsc` clean, `bun test packages/persons`
+(125) and `packages/ui/test/personsview.test.ts` (7) pass, boundary test passes, `scripts/shot --view tab:persons`
+on a copy of the data, one staged build (`packaging/hub-install.sh --stage`).
+
+Not yet: SpokPay site-request panes and the SpokPay key dialog in the UI (backend `createSpokpay` is ported, not
+routed), "Message a store" (bulk), Add members with lookup, store pictures upload, voice recording / in-app audio,
+"Open in Projects" from a Person AI bubble, the QR drawn on the phone. Nothing ran against real accounts yet
+(Discord was run against a fake Discord with Hub's Electron).
+
+## Cutover (the lead runs it; Person Hub keeps its own data untouched)
+
+1. Before: `bun ts/packages/persons/scripts/migrate.ts --dry-run`, then without `--dry-run`: copies data, caches,
+   pictures, Gmail sign-in, SpokPay key and the Discord logins (Electron partitions) into `~/.local/share/hub/persons`.
+   Repeatable; prints counts of both sides and exits 1 if any differ. Hub's Persons can run beside Person Hub then
+   (Discord and Gmail allow several clients), WhatsApp stays signed out in Hub.
+2. Switch: stop Person Hub, run `migrate.ts --sessions` (adds WhatsApp's linked-device keys and anything that changed),
+   start Hub. Never run both on the WhatsApp keys at once.
+3. Rollback: stop Hub's use of it; Person Hub's folders were only read.

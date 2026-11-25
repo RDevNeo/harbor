@@ -673,6 +673,21 @@ class PersonsTab {
       ]);
       return;
     }
+    if (id.startsWith("ai")) {
+      const a = c.ai.find((x) => `ai${x.id}` === id);
+      if (!a) return;
+      // the drafts the AI fenced as ```reply (personAi.ts aiParts), else the whole answer
+      const drafts = [...a.text.matchAll(/```reply[^\n]*\n([\s\S]*?)(?:```|$)/g)].map((m) => (m[1] ?? "").replace(/\n+$/, ""));
+      const use = (t: string): void => {
+        this.aiMode = false;
+        this.bus.draft = t;
+        this.render();
+      };
+      this.showMenu(x, y, [
+        ...(drafts.length ? drafts.map((d, i) => ({ label: drafts.length > 1 ? `Use reply ${i + 1}` : "Use as reply", sub: d.slice(0, 60), run: () => use(d) })) : [{ label: "Use as reply", run: () => use(a.text) }]),
+      ]);
+      return;
+    }
     const m = c.messages.find((x) => x.id === id);
     if (!m) return;
     this.showMenu(x, y, [
