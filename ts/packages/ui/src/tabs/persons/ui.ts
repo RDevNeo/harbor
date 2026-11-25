@@ -2,7 +2,8 @@
 // through ctx.call — the same routes Hub for Android uses). Pictures are local files the engine cached, decoded here.
 import * as slint from "slint-ui";
 import { readFileSync, statSync } from "node:fs";
-import { images } from "@harbor/media";
+import { images, picker } from "@harbor/media";
+import { basename } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
 import { syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
@@ -31,6 +32,9 @@ interface PanelJson {
   identities: { kind: string; value: string; section: string | null; label: string }[];
   socials: { url: string; platform: string | null; handle: string | null; note?: string; uploads: { title: string; url: string; thumb: string | null; meta?: string }[] }[];
 }
+
+const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", pdf: "application/pdf", mp4: "video/mp4", mov: "video/quicktime", mp3: "audio/mpeg", ogg: "audio/ogg", m4a: "audio/mp4", wav: "audio/wav", txt: "text/plain", zip: "application/zip" };
+const mimeOf = (f: string): string => MIME[f.toLowerCase().split(".").pop() ?? ""] ?? "application/octet-stream";
 
 const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay" };
 const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp" };
@@ -80,6 +84,8 @@ class PersonsTab {
   private panelOpen = true;
   private aiMode = false;
   private replyTo: { id: string; text: string } | null = null;
+  /** Files going with the next message (paths on this PC). */
+  private files: string[] = [];
   private menuActions = new Map<string, () => void>();
   private dialogOk: (() => Promise<void> | void) | null = null;
   private chipState = new Map<string, boolean>();
@@ -138,6 +144,11 @@ class PersonsTab {
     on("account_menu", ((x: number, y: number) => this.accountMenu(x, y)) as Cb);
     on("msg_menu", ((id: string, x: number, y: number) => this.msgMenu(id, x, y)) as Cb);
     on("open_file", ((id: string) => void this.openFile(id)) as Cb);
+    on("attach", () => void this.attach());
+    on("clear_attached", () => {
+      this.files = [];
+      this.render();
+    });
     on("cancel_reply", () => {
       this.replyTo = null;
       this.render();
@@ -326,6 +337,7 @@ class PersonsTab {
     b.c_loading = false;
     b.c_empty = c.account ? "No messages yet." : "No channel to talk to them here: connect Discord, Gmail or WhatsApp in the section's +, and give them that identifier (Edit).";
     b.reply_text = this.replyTo?.text ?? "";
+    b.attached = this.files.map((f) => basename(f)).join(", ");
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
     const rows = chatRows(c).slice(-400);
@@ -501,7 +513,7 @@ class PersonsTab {
   private async send(): Promise<void> {
     const open = this.ui.open;
     const text = String(this.bus.draft ?? "").replace(/\s+$/, "");
-    if (!open || !text.trim()) return;
+    if (!open || (!text.trim() && (this.aiMode || !this.files.length))) return;
     this.bus.draft = "";
     if (this.aiMode) {
       const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/ai`, { section: open.section || this.chat?.account?.section || "stores", text, account: this.chat?.account?.id });
@@ -514,6 +526,19 @@ class PersonsTab {
     }
     const body: Record<string, unknown> = { section: open.section, account: this.chat?.account?.id, text };
     if (this.replyTo) body.replyTo = this.replyTo.id;
+    if (this.files.length) {
+      const out: { name: string; type: string; data: string }[] = [];
+      for (const f of this.files) {
+        try {
+          out.push({ name: basename(f), type: mimeOf(f), data: readFileSync(f).toString("base64") });
+        } catch {
+          this.setToast(`Can't read ${basename(f)}`);
+          return;
+        }
+      }
+      body.files = out;
+      this.files = [];
+    }
     const subject = String(this.bus.subject ?? "").trim();
     if (subject) body.subject = subject;
     this.replyTo = null;
@@ -522,6 +547,21 @@ class PersonsTab {
     const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/send`, body);
     if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "Not sent"));
     void this.loadChat(false);
+  }
+
+  private async attach(): Promise<void> {
+    const got = await picker.pick({ title: "Attach files", multiple: true }).catch(() => [] as string[]);
+    const ok: string[] = [];
+    for (const f of got) {
+      try {
+        if (statSync(f).size > 25 << 20) this.setToast(`${basename(f)} is over 25 MB`);
+        else ok.push(f);
+      } catch {
+        // gone
+      }
+    }
+    this.files = [...this.files, ...ok].slice(0, 10);
+    this.render();
   }
 
   private typing(): void {
@@ -737,7 +777,8 @@ class PersonsTab {
   private renderChips(): void {
     const s = this.state;
     if (!s) return;
-    this.bus.f_chips = [...s.stores.map((st) => ({ id: `s:${st.id}`, label: st.name, on: !!this.chipState.get(`s:${st.id}`), color: st.color })), ...s.lists.map((l) => ({ id: `l:${l.id}`, label: l.name, on: !!this.chipState.get(`l:${l.id}`), color: "#64748b" }))];
+    this.bus.f_chips = s.stores.map((st) => ({ id: `s:${st.id}`, label: st.name, on: !!this.chipState.get(`s:${st.id}`), color: st.color }));
+    this.bus.f_lists = s.lists.map((l) => ({ id: `l:${l.id}`, label: l.name, on: !!this.chipState.get(`l:${l.id}`), color: "#64748b" }));
   }
 
   private renderColors(): void {
@@ -798,6 +839,7 @@ class PersonsTab {
     this.colorPick = st?.color ?? COLORS[(this.state?.stores.length ?? 0) % COLORS.length]!;
     this.renderColors();
     this.bus.f_chips = [];
+    this.bus.f_lists = [];
     this.openDialog("store", st ? `Edit ${st.name}` : "New store", "", st ? "Save" : "Create", async () => {
       const name = String(this.bus.f_name ?? "").trim();
       if (!name) throw new Error("A store needs a name");

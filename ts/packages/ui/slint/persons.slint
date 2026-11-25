@@ -95,6 +95,7 @@ export global PersonsBus {
     in-out property <string> draft;
     in-out property <string> subject;
     in property <string> reply-text;
+    in property <string> attached; // the files going with the next message, one line
     in property <bool> ai-mode;
     // panel
     in property <bool> panel;
@@ -129,6 +130,7 @@ export global PersonsBus {
     in-out property <string> f-whatsapp;
     in-out property <string> f-socials;
     in property <[PChip]> f-chips;
+    in property <[PChip]> f-lists;
     in property <[PChip]> f-colors;
     in property <image> qr;
     in property <bool> has-qr;
@@ -153,6 +155,8 @@ export global PersonsBus {
     callback msg-menu(string, length, length);
     callback open-file(string, int);
     callback cancel-reply();
+    callback attach();
+    callback clear-attached();
     callback toggle-ai();
     callback save-notes(string);
     callback open-url(string);
@@ -564,6 +568,9 @@ component SideRow {
         }
     }
     area := TouchArea {
+        // a section's + (and its pill) stay clickable on their own
+        width: root.r.kind == "section" ? root.width - 64px : root.width;
+        x: 0;
         enabled: root.r.kind != "person" && root.r.kind != "empty";
         mouse-cursor: pointer;
         clicked => {
@@ -923,6 +930,30 @@ component Composer inherits Rectangle {
                 }
             }
         }
+        if PersonsBus.attached != "": HorizontalLayout {
+            spacing: 6px;
+            Glyph {
+                icon: Icons.clip;
+                size: 13px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: PersonsBus.attached;
+                font-size: 12px;
+                color: Theme.fg;
+                overflow: elide;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.x;
+                size: BtnSize.icon-xs;
+                variant: Variant.ghost-muted;
+                clicked => {
+                    PersonsBus.clear-attached();
+                }
+            }
+        }
         if PersonsBus.c-gmail && !PersonsBus.ai-mode: Input {
             hint: "Subject (empty: reply in the latest thread)";
             text <=> PersonsBus.subject;
@@ -985,14 +1016,27 @@ component Composer inherits Rectangle {
                         }
                     }
                 }
+                if !PersonsBus.ai-mode: VerticalLayout {
+                    alignment: end;
+                    padding-bottom: 6px;
+                    Btn {
+                        icon: Icons.clip;
+                        size: BtnSize.icon-sm;
+                        variant: Variant.ghost-muted;
+                        tip: "Attach files";
+                        clicked => {
+                            PersonsBus.attach();
+                        }
+                    }
+                }
                 VerticalLayout {
                     alignment: end;
                     padding-bottom: 6px;
                     Btn {
                         icon: Icons.send;
                         size: BtnSize.icon-sm;
-                        variant: PersonsBus.draft != "" ? Variant.primary : Variant.ghost-muted;
-                        enabled: PersonsBus.draft != "";
+                        variant: PersonsBus.draft != "" || PersonsBus.attached != "" ? Variant.primary : Variant.ghost-muted;
+                        enabled: PersonsBus.draft != "" || PersonsBus.attached != "";
                         tip: "Send (Enter)";
                         clicked => {
                             PersonsBus.send();
@@ -1683,6 +1727,27 @@ component Dialog inherits Rectangle {
                         border-radius: 13px;
                         background: c.on ? Theme.blue-700 : Theme.gray-100;
                         ct := Text {
+                            text: c.label;
+                            font-size: 12px;
+                            color: c.on ? white : Theme.fg;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                PersonsBus.chip(c.id);
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for c in PersonsBus.f-lists: Rectangle {
+                        height: 26px;
+                        width: ct2.preferred-width + 20px;
+                        border-radius: 13px;
+                        background: c.on ? Theme.blue-700 : Theme.gray-100;
+                        ct2 := Text {
                             text: c.label;
                             font-size: 12px;
                             color: c.on ? white : Theme.fg;
