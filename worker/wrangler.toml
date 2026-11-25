@@ -1,4 +1,4 @@
-name = "harbor-accounts"
+name = "hub-accounts"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
@@ -9,16 +9,16 @@ compatibility_date = "2026-10-01"
 CLERK_FRONTEND_URL = "https://maximum-feline-2818.clerk.accounts.dev"
 CLERK_API_URL = "https://api.clerk.com/v1"
 HARBOR_KID = "k1"
-APP_REDIRECT = "harbor://oauth"
+APP_REDIRECT = "hub://oauth"
 TOKEN_DAYS = "7"
-PUBLIC_URL = "https://harbor-accounts.rdevneo.workers.dev"
+PUBLIC_URL = "https://hub-accounts.rdevneo.workers.dev"
 # Bytes a workspace may keep in the workspace cloud (src/cloud.js): chats, projects, carried sessions and work.
 CLOUD_MAX_MB = "1024"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "harbor-accounts"
-database_id = "e2c5b9ac-4f42-4d02-b694-459c666ab61f"
+database_name = "hub-accounts"
+database_id = "45ef58c3-7870-46e3-9bf5-d5fca1cd4005"
 migrations_dir = "migrations"
 
 # Release news (src/release.js): one object holds every PC's long-poll. The class is new, so it needs this migration.

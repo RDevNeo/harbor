@@ -18,7 +18,8 @@ export const ACCOUNT_CLIENT_ID = "FWUnta6BgUIwVT9O";
 /** Harbor's account service (worker/). */
 export const ACCOUNTS_URL = "https://harbor-accounts.rdevneo.workers.dev";
 /** The public keys the service signs Harbor tokens with: [kid, base64url Ed25519 key]. Empty: this build trusts the keys fetched from `/v1/keys`. */
-export const ACCOUNT_KEYS: readonly (readonly [string, string])[] = [["k1", "AKiosel0Qd-0CFV2NmRpLpM8zchoVP1iDrpt_OgyoII"]];
+/** Hub's account service's token key (hub-accounts; never Harbor's: Harbor's tokens don't open Hub). */
+export const ACCOUNT_KEYS: readonly (readonly [string, string])[] = [["k1", "HDOd9fiM_kfM8vagDHJNME7a_8biVPeqZyGoYN7oU1Q"]];
 
 const SCOPE = "openid profile email offline_access";
 const ISSUER = "harbor-accounts";
@@ -159,7 +160,7 @@ export interface AccountStatus {
  * same workspaces (Clerk organizations, members, invitations). Harbor's service is never called. Empty until it's
  * deployed (or HUB_ACCOUNTS_URL): then Hub runs without accounts, and phones pair with the PC directly (hubpair.ts).
  */
-export const HUB_ACCOUNTS_URL = "";
+export const HUB_ACCOUNTS_URL = "https://hub-accounts.rdevneo.workers.dev";
 export function hubAccountsUrl(env: Record<string, string | undefined> = process.env): string {
   return env.HUB_ACCOUNTS_URL ?? HUB_ACCOUNTS_URL;
 }

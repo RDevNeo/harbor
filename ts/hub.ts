@@ -197,15 +197,18 @@ export function isOffline(env: Record<string, string | undefined> = process.env)
 }
 
 /**
- * Hub is its own world, never a Harbor PC: Harbor's account service is never used (account.ts HUB_ACCOUNTS_URL is
- * Hub's own). Until Hub's service exists (STANDALONE): no sign-in, workspace cloud or settings sync, no mesh, relay,
- * network discovery or port mapping. Phones pair with the PC directly either way (packages/net/src/hubpair.ts,
- * `hub pair`); agents reach other PCs through their own MCP tools.
+ * Hub is its own world, never a Harbor PC: its account service is Hub's own (account.ts HUB_ACCOUNTS_URL, hub-accounts:
+ * same Google sign-ins and workspaces as Harbor, but its own directory, tokens, cloud and vault), so its mesh, cloud and
+ * phones are Hub's only. STANDALONE (no service configured): no sign-in, cloud, mesh, relay or discovery. Phones may
+ * also pair with the PC directly (packages/net/src/hubpair.ts, `hub pair`). No router port mapping either way
+ * (HUB_PORTMAP=1 turns it on); agents reach other PCs through hub-machines.
  */
 export const STANDALONE = HUB_NO_ACCOUNT;
 
 /** Keys of Harbor's world a copied database carries, dropped once at Hub's first start (kv `hub_forked`). */
-export const HARBOR_WORLD_KEYS = ["api_tokens", "api_revoked", "phones_seen", "mesh_peers", "mesh_remembered", "account_settings_rev"];
+export const HARBOR_WORLD_KEYS = ["api_tokens", "api_revoked", "phones_seen", "mesh_peers", "mesh_remembered", "account_settings_rev",
+  // Harbor's account as this PC knew it: its directory lists Harbor's PCs, which Hub's mesh must never try.
+  "account", "account_dir", "account_sync", "account_sync_backup", "account_ws"];
 
 /** Once: what made this database part of Harbor's world (its phones' handles, remembered peers) goes. */
 export function forkFromHarbor(store: { get(k: string): string | null; set(k: string, v: string): void }, del: (k: string) => void): string[] {
@@ -1622,7 +1625,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
   const disc = offline || STANDALONE || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
-  const stopMap = env.HARBOR_LISTEN === undefined && !offline && !STANDALONE ? portmap.start(port, () => true) : () => {};
+  // Hub maps no router port for phones (they come over the network or Tailscale).
+  const stopMap = env.HARBOR_LISTEN === undefined && !offline && env.HUB_PORTMAP === "1" ? portmap.start(port, () => true) : () => {};
   // The speech model comes by itself, so the first dictation (here, or from a phone or PC that picks this one) needn't wait.
   const stopSpeech = env.HARBOR_LISTEN === undefined && !offline ? voice.keepParakeet() : () => {};
   // The voice keys this PC's own (cleanup, Transcribe on) are read again now and then: a change written

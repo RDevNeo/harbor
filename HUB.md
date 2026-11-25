@@ -18,20 +18,22 @@ never talks to Harbor's PCs, phones, account service or releases.
 | Chat links | `harbor://chat/…` | `hub://chat/…` (old links still open) |
 | Worktree branches | `harbor/<name>` | `hub/<name>` (old ones still known) |
 | Patches | `.harbor/patches` | `.hub/patches` (`.harbor/patches` still read) |
-| Phones | Google sign-in, account directory | pairing: `hub pair` (QR / `hub://pair?…`), android/PROTOCOL.md "Hub pairing" |
-| Account service, workspace cloud, settings sync | Harbor's (`harbor-accounts`) | none until Hub's own exists (`account.ts` `HUB_ACCOUNTS_URL`; see below). Harbor's is never called |
-| Mesh, relay, network discovery, UPnP for phones | on | off (`hub.ts` `STANDALONE`) |
+| Phones | Google sign-in, Harbor's directory | Google sign-in with Hub's service, or pairing: `hub pair` (QR / `hub://pair?…`), android/PROTOCOL.md "Hub pairing" |
+| Account service, workspace cloud, settings sync | Harbor's (`harbor-accounts`) | Hub's own: `hub-accounts.rdevneo.workers.dev` (`worker/`, own D1, signing key `k1:HDOd…`, vault secret; Harbor's Clerk). Harbor's is never called |
+| Mesh, relay, network discovery | with Harbor PCs of the workspace | with Hub PCs of the workspace only (Hub's directory; discovery on UDP 47950) |
+| UPnP port mapping for phones | on | off (`HUB_PORTMAP=1`) |
 | Updates, follow-main, previews from peers | Harbor's releases and main | none: running `packaging/hub-install.sh` again is the update (a running Hub restarts into it) |
 
 Internal identifiers (`HARBOR_*` variables, `@harbor/*` packages, `X-Harbor-*` headers, `harbor-app.js`) keep their
 names: nobody reads them, and renaming them would only make merging Harbor's changes harder.
 
-## Workspaces (planned)
+## Workspaces
 
-Hub's own account service = a separate deploy of `worker/` ("hub-accounts": its own D1, Durable Objects, signing key
-and vault secret, `APP_REDIRECT=hub://oauth`) on Harbor's Clerk instance and OAuth client: the same Google sign-ins
-and the same workspaces (Clerk organizations, members, invitations), with a device directory, tokens, cloud and vault
-of its own. Set `HUB_ACCOUNTS_URL` in `account.ts` (or the environment) once it's deployed; pairing keeps working.
+Hub's account service is a separate deploy of `worker/` ("hub-accounts": its own D1, Durable Objects, signing key and
+vault secret, `APP_REDIRECT=hub://oauth`) on Harbor's Clerk instance and OAuth client: the same Google sign-ins and
+the same workspaces (Clerk organizations, members, invitations), with a device directory, tokens, cloud and vault of
+its own. Each Hub (desktop and phone) signs in once (Settings › Account). `HUB_ACCOUNTS_URL` in the environment
+overrides `account.ts`; pairing keeps working beside it.
 
 ## Commands
 

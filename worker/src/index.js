@@ -963,9 +963,9 @@ async function answerInvite(req, env, id, accept) {
 }
 
 function invitePage() {
-  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harbor invite</title>
-<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem"><h1>You're invited to a Harbor workspace</h1>
-<p>Install Harbor on a PC or phone and sign in with Google using the address this invite was sent to.</p></body>`;
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hub invite</title>
+<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem"><h1>You're invited to a Hub workspace</h1>
+<p>Install Hub on a PC or phone and sign in with Google using the address this invite was sent to.</p></body>`;
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 }
 
@@ -973,8 +973,8 @@ function androidBounce(req, env) {
   const base = env.APP_REDIRECT || 'harbor://oauth';
   const search = new URL(req.url).search;
   const to = search ? base + (base.includes('?') ? '&' + search.slice(1) : search) : base;
-  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Harbor</title>
-<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem"><p><a href="${esc(to)}">Open Harbor</a></p></body>`;
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Hub</title>
+<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem"><p><a href="${esc(to)}">Open Hub</a></p></body>`;
   return new Response(html, { status: 302, headers: { location: to, 'content-type': 'text/html; charset=utf-8' } });
 }
 
