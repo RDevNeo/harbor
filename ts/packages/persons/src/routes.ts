@@ -2,7 +2,8 @@
 // phone API, so both see and change the same state. JSON only (pictures and files as base64).
 import type { AgentDiscord } from "./agent/index.ts";
 import { statSync } from "node:fs";
-import { chatKey, KIND_LABEL, isSection, normWhatsApp, personSections, pickChat, validPeer, type ChatRef } from "./model/accounts.ts";
+import { chatKey, KIND_LABEL, isSection, normWhatsApp, personSections, pickChat, SECTIONS, serves, validPeer, type ChatRef } from "./model/accounts.ts";
+import { isContactKind } from "./model/personal.ts";
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
@@ -128,6 +129,7 @@ export class PersonsRoutes {
         if (m === "DELETE") return this.deletePerson(rest[1]);
       }
       if (m === "POST" && rest[0] === "people") return this.createPerson(obj(c.body));
+      if (m === "POST" && rest[0] === "contacts" && rest.length === 1) return await this.addContact(obj(c.body));
       if (m === "GET" && rest[0] === "lookup") return await this.lookup(c);
       if (rest[0] === "stores") {
         if (m === "POST" && rest.length === 1) return this.saveStore(null, obj(c.body));
@@ -137,6 +139,11 @@ export class PersonsRoutes {
       if (rest[0] === "connections") {
         if (m === "POST" && rest.length === 1) return await this.addConn(obj(c.body));
         if (m === "POST" && rest[1] && rest[2] === "connect") return this.connConnect(rest[1]);
+        if (m === "POST" && rest[1] && rest[2] === "session") return await this.connSession(rest[1], obj(c.body));
+        if (m === "POST" && rest[1] && rest[2] === "disconnect") {
+          await this.s.disconnect(decodeURIComponent(rest[1]));
+          return ok({ ok: true });
+        }
         if (m === "POST" && rest[1] && rest[2] === "cancel") {
           await this.s.cancelSignIn(decodeURIComponent(rest[1]));
           return ok({ ok: true });
@@ -283,6 +290,8 @@ export class PersonsRoutes {
       id: v.id,
       kind: v.kind,
       section: v.section,
+      // the sections it serves besides its own (Personal shares the Stores Discord and WhatsApp)
+      also: v.also ?? [],
       status: v.state.status,
       gateway: v.state.gateway,
       label: who ? `${KIND_LABEL[v.kind]} · ${who}` : KIND_LABEL[v.kind],
@@ -297,7 +306,7 @@ export class PersonsRoutes {
   stateJson(): Json {
     const d = this.s.data;
     if (!d) return { rev: this.s.rev, loading: true };
-    const sections: SectionId[] = ["stores", "creators", "spokpay"];
+    const sections: SectionId[] = SECTIONS;
     const counts = new Map<string, number>();
     for (const p of d.people) for (const sid of p.storeIds) counts.set(sid, (counts.get(sid) ?? 0) + 1);
     let unread = 0;
@@ -963,6 +972,7 @@ export class PersonsRoutes {
       ...(p.discordId ? [{ kind: "discord", value: p.discordId, section: null, label: p.discordUsername ? `@${p.discordUsername}` : p.discordId }] : []),
       ...(p.email ? [{ kind: "gmail", value: p.email, section: null, label: p.email }] : []),
       ...(p.whatsapp ? [{ kind: "whatsapp", value: p.whatsapp, section: null, label: `+${p.whatsapp}` }] : []),
+      ...(p.instagram ? [{ kind: "instagram", value: p.instagram, section: null, label: p.instagramUsername ? `@${p.instagramUsername}` : p.instagram }] : []),
       ...(p.identities ?? []).map((i) => ({ kind: i.kind, value: i.value, section: i.section, label: i.kind === "discord" && i.username ? `@${i.username}` : i.kind === "whatsapp" ? `+${i.value}` : i.value })),
     ];
     return ok({
@@ -975,7 +985,7 @@ export class PersonsRoutes {
       stores: d.stores.filter((s) => p.storeIds.includes(s.id) || s.ownerId === p.id).map((s) => ({ id: s.id, name: s.name, owner: s.ownerId === p.id, color: s.color ?? "#64748b" })),
       lists: d.lists.filter((l) => p.listIds.includes(l.id)).map((l) => ({ id: l.id, name: l.name })),
       identities: json(identities),
-      linked: json((p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person), at: l.at, ids: [l.person.discordUsername ? `@${l.person.discordUsername}` : l.person.discordId, l.person.email ? l.person.email : "", l.person.whatsapp ? `+${l.person.whatsapp}` : "", ...(l.person.identities ?? []).map((i) => (i.kind === "whatsapp" ? `+${i.value}` : i.value))].filter(Boolean), aiChats: this.extra.ai?.chatsOf?.(l.person) ?? [] }))),
+      linked: json((p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person), at: l.at, ids: [l.person.discordUsername ? `@${l.person.discordUsername}` : l.person.discordId, l.person.email ? l.person.email : "", l.person.whatsapp ? `+${l.person.whatsapp}` : "", l.person.instagramUsername ? `@${l.person.instagramUsername}` : "", ...(l.person.identities ?? []).map((i) => (i.kind === "whatsapp" ? `+${i.value}` : i.value))].filter(Boolean), aiChats: this.extra.ai?.chatsOf?.(l.person) ?? [] }))),
       socials: socials ?? (p.socials ?? []).map((url) => ({ url, platform: null, handle: null, uploads: [] })),
     });
   }
@@ -1111,10 +1121,10 @@ export class PersonsRoutes {
     const text = (q(c, "q") ?? "").trim();
     if (!text) return ok({ matches: [] });
     const views = this.s.views();
-    const conn = kind === "discord" ? this.s.discordFor(section) : views.find((v) => v.kind === kind && v.section === section && v.connected) ?? views.find((v) => v.kind === kind && v.connected);
+    const conn = kind === "discord" ? this.s.discordFor(section) : views.find((v) => v.kind === kind && !!section && serves(v, section) && v.connected) ?? views.find((v) => v.kind === kind && v.connected);
     if (!conn) return ok({ matches: [], error: `No ${KIND_LABEL[kind]} connected` });
     const r = await this.s.lookup(conn.id, kind === "whatsapp" ? normWhatsApp(text) || text : text);
-    const known = (id: string): string | null => this.s.data?.people.find((p) => (kind === "discord" ? p.discordId === id : kind === "gmail" ? p.email === id : p.whatsapp === id))?.id ?? null;
+    const known = (id: string): string | null => this.s.data?.people.find((p) => (kind === "discord" ? p.discordId === id : kind === "gmail" ? p.email === id : kind === "instagram" ? p.instagram === id : p.whatsapp === id))?.id ?? null;
     return ok({
       matches: r.matches.map((u) => ({ id: u.id, username: u.username, name: u.globalName ?? u.username, avatar: u.avatar, avatarUrl: u.avatarUrl, known: known(u.id) })),
       notFound: !!r.notFound,
@@ -1127,9 +1137,35 @@ export class PersonsRoutes {
   private async addConn(b: Record<string, unknown>): Promise<Reply> {
     const section = sectionOf(str(b.section));
     const kind = str(b.kind) as ChannelKind | undefined;
-    if (!section || !kind || !["discord", "gmail", "whatsapp"].includes(kind)) return err(400, "section and kind");
+    if (!section || !kind || !["discord", "gmail", "whatsapp", "instagram"].includes(kind)) return err(400, "section and kind");
     const m = await this.s.addConnection(section, kind);
     return ok({ ok: true, id: m.id });
+  }
+
+  /**
+   * `POST contacts {kind, handle, name?}`: Personal › Add contact. `handle` is a WhatsApp number, a Discord username or
+   * an Instagram username, resolved on that platform before anything is saved. `{ ok: true, person, existed }`, or
+   * `{ ok: false, error }` with the reason it couldn't be resolved (nothing saved).
+   */
+  private async addContact(b: Record<string, unknown>): Promise<Reply> {
+    const kind = str(b.kind);
+    if (!isContactKind(kind)) return err(400, "kind: discord, whatsapp or instagram");
+    try {
+      const r = await this.s.addContact(kind, str(b.handle) ?? "", str(b.name) ?? "");
+      return ok({ ok: true, person: json(r.person), existed: r.existed });
+    } catch (e) {
+      return ok({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** `POST connections/{id}/session {cookie}`: Instagram's session pasted from a browser; checked before it's kept. */
+  private async connSession(id: string, b: Record<string, unknown>): Promise<Reply> {
+    try {
+      const st = await this.s.setSession(decodeURIComponent(id), str(b.cookie) ?? "");
+      return ok({ ok: true, status: st.status });
+    } catch (e) {
+      return ok({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   private connConnect(id: string): Reply {

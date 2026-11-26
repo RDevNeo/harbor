@@ -68,7 +68,7 @@ const DISCORD_TEXT: Record<PresenceStatus, string> = { online: 'Online', idle: '
  * Discord"…; WhatsApp "online", "online · typing…", "last seen today at 14:32". Typing (or recording)
  * shows on both. Undefined when nothing is known.
  */
-export function headerStatus(kind: 'discord' | 'gmail' | 'whatsapp', status: PresenceStatus | undefined, lastSeen: number | undefined, typing?: 'typing' | 'recording', now: number = Date.now()): { text: string; tone: StatusTone } | undefined {
+export function headerStatus(kind: 'discord' | 'gmail' | 'whatsapp' | 'instagram', status: PresenceStatus | undefined, lastSeen: number | undefined, typing?: 'typing' | 'recording', now: number = Date.now()): { text: string; tone: StatusTone } | undefined {
   const act = typing === 'recording' ? 'recording audio…' : typing ? 'typing…' : ''
   if (kind === 'discord') {
     if (act) return { text: act, tone: 'online' }

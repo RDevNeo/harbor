@@ -345,17 +345,17 @@ export component Avatar {
     }
 }
 
-/** Where a conversation runs, as a small coloured letter mark: Discord, Gmail, WhatsApp. */
+/** Where a conversation runs, as a small coloured letter mark: Discord, Gmail, WhatsApp, Instagram. */
 export component ChannelMark {
     in property <string> kind;
     in property <length> size: 12px;
     width: kind == "" ? 0px : size;
     height: size;
     if root.kind != "": Rectangle {
-        border-radius: root.kind == "whatsapp" ? root.size / 2 : 3px;
-        background: root.kind == "discord" ? #5865f2 : root.kind == "gmail" ? #ea4335 : #25d366;
+        border-radius: root.kind == "whatsapp" ? root.size / 2 : root.kind == "instagram" ? root.size * 0.3 : 3px;
+        background: root.kind == "discord" ? #5865f2 : root.kind == "gmail" ? #ea4335 : root.kind == "instagram" ? #e1306c : #25d366;
         Text {
-            text: root.kind == "discord" ? "D" : root.kind == "gmail" ? "M" : "W";
+            text: root.kind == "discord" ? "D" : root.kind == "gmail" ? "M" : root.kind == "instagram" ? "I" : "W";
             font-size: root.size * 0.62;
             font-weight: 700;
             color: white;

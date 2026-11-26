@@ -10,8 +10,8 @@ import { sameRow, syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
-import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -54,8 +54,8 @@ const hash = (id: string): number => {
   return h;
 };
 const shortAgoText = (iso: string): string => shortAgo(iso);
-const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay" };
-const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp" };
+const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay", personal: "Personal" };
+const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp", instagram: "Instagram" };
 /** One entry of a Persons menu (showMenu): `children` makes it open a submenu. */
 type MenuIn = { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; checked?: boolean; children?: MenuIn[]; run?: () => void };
 
@@ -245,6 +245,8 @@ class PersonsTab {
     on("dialog_ok", () => void this.okDialog());
     on("dialog_cancel", () => this.closeDialog());
     on("chip", ((id: string) => {
+      // Add contact's platform: one at a time
+      if (b.dialog === "contact") return this.renderContactKind(id);
       this.chipState.set(id, !this.chipState.get(id));
       this.renderChips();
     }) as Cb);
@@ -1107,10 +1109,19 @@ class PersonsTab {
   private sectionMenu(sec: string, x: number, y: number): void {
     const s = this.state;
     if (!s) return;
-    const mine = s.connections.filter((c) => c.section === sec);
+    const mine = s.connections.filter((c) => servesSection(c, sec));
     const status = (c: (typeof mine)[number]): string => (c.status === "connected" ? (c.gateway === "up" || c.kind !== "discord" ? "Connected" : "Reconnecting…") : c.status === "connecting" || c.status === "starting" ? "Connecting…" : c.status === "signing-in" ? "Signing in…" : "Signed out");
+    // Personal: the Stores Discord and WhatsApp (shared: managed in Stores) and its own Instagram (a pasted session)
+    const personal = sec === "personal";
+    const connKinds = personal ? ["discord", "whatsapp", "instagram"].filter((k) => !mine.some((c) => c.kind === k)) : ["discord", "gmail", "whatsapp"];
+    const run = (c: (typeof mine)[number]): void => {
+      if (c.section !== sec) return this.setToast(`Shared with ${SECTION_LABEL[c.section] ?? c.section}: connect or disconnect it there`);
+      if (c.status === "connected") return this.confirm(`Disconnect ${KIND_LABEL[c.kind]}${c.who ? ` (${c.who})` : ""}?`, "It leaves this section and signs out. Connect it again to use it.", "Disconnect", async () => void (await this.api(c.kind === "instagram" ? "POST" : "DELETE", c.kind === "instagram" ? `connections/${encodeURIComponent(c.id)}/disconnect` : `connections/${encodeURIComponent(c.id)}`)));
+      if (c.kind === "instagram") return this.sessionDialog(c.id);
+      void this.api("POST", `connections/${encodeURIComponent(c.id)}/connect`);
+    };
     this.showMenu(x, y, [
-      sec === "stores" ? { label: "New store", icon: "", run: () => this.storeDialog(null) } : { label: `Add to ${SECTION_LABEL[sec]}`, run: () => this.personDialog(null, sec) },
+      sec === "stores" ? { label: "New store", icon: "", run: () => this.storeDialog(null) } : personal ? { label: "Add contact", run: () => this.contactDialog() } : { label: `Add to ${SECTION_LABEL[sec]}`, run: () => this.personDialog(null, sec) },
       ...(sec === "stores" ? [{ label: "Add person", run: () => this.personDialog(null, sec) }] : []),
       { sep: true, label: "" },
       { header: true, label: "CONNECTIONS" },
@@ -1118,12 +1129,64 @@ class PersonsTab {
       ...mine.map((c) => ({
         label: c.who || KIND_LABEL[c.kind] || c.kind,
         icon: c.kind,
-        sub: `${KIND_LABEL[c.kind]} · ${status(c)}${c.error ? ` · ${c.error}` : ""}`,
-        run: () => (c.status === "connected" ? this.confirm(`Disconnect ${KIND_LABEL[c.kind]}${c.who ? ` (${c.who})` : ""}?`, "It leaves this section and signs out. Connect it again to use it.", "Disconnect", async () => void (await this.api("DELETE", `connections/${encodeURIComponent(c.id)}`))) : void this.api("POST", `connections/${encodeURIComponent(c.id)}/connect`)),
+        sub: `${KIND_LABEL[c.kind]} · ${status(c)}${c.section !== sec ? ` · from ${SECTION_LABEL[c.section] ?? c.section}` : ""}${c.error ? ` · ${c.error}` : ""}`,
+        run: () => run(c),
       })),
-      { sep: true, label: "" },
-      ...["discord", "gmail", "whatsapp"].map((k) => ({ label: `Connect ${KIND_LABEL[k]}`, icon: k, run: () => void this.api("POST", "connections", { section: sec, kind: k }) })),
+      ...(connKinds.length ? [{ sep: true, label: "" }] : []),
+      ...connKinds.map((k) => ({
+        label: `Connect ${KIND_LABEL[k]}`,
+        icon: k,
+        run: () => void (async () => {
+          const r = await this.api("POST", "connections", { section: sec, kind: k });
+          const id = String(r.body.id ?? "");
+          if (k === "instagram" && id) this.sessionDialog(id);
+        })(),
+      })),
     ]);
+  }
+
+  // ---------- Personal ----------
+
+  private contactKind = "discord";
+
+  /** Add contact's platform chips, `kind` picked; the field's label and hint follow it. */
+  private renderContactKind(kind: string): void {
+    const b = this.bus;
+    this.contactKind = CONTACT_FIELD[kind] ? kind : "discord";
+    b.f_chips = ["discord", "whatsapp", "instagram"].map((k) => ({ id: k, label: KIND_LABEL[k]!, on: k === this.contactKind, color: "#64748b" }));
+    b.f_handle_label = CONTACT_FIELD[this.contactKind]!.label;
+    b.f_handle_hint = CONTACT_FIELD[this.contactKind]!.hint;
+    b.d_error = "";
+  }
+
+  /**
+   * Personal › Add contact: the platform, their number or username, a name if wanted. The engine finds them on that
+   * platform first; when it can't, the reason shows in the form and nothing is saved. Their chat opens once added.
+   */
+  private contactDialog(): void {
+    const b = this.bus;
+    b.f_name = "";
+    b.f_discord = "";
+    b.f_lists = [];
+    this.renderContactKind(this.contactKind);
+    this.openDialog("contact", "Add contact", "Their WhatsApp number, or their Discord or Instagram username: their conversation shows here.", "Add", async () => {
+      const r = await this.api("POST", "contacts", { kind: this.contactKind, handle: String(b.f_discord ?? "").trim(), name: String(b.f_name ?? "").trim() });
+      if (r.status !== 200 || r.body.ok === false) throw new Error(String(r.body.error ?? "Not added"));
+      const np = r.body.person as { id?: string; name?: string } | undefined;
+      await this.refresh();
+      if (r.body.existed) this.setToast(`${this.person(String(np?.id ?? ""))?.name ?? "They"} were already in Persons: now in Personal too`);
+      if (np?.id) void this.openPerson(np.id, "personal", "");
+    });
+  }
+
+  /** Personal's Instagram: the session from a browser signed in to Instagram (its cookies), checked before it's kept. */
+  private sessionDialog(connId: string): void {
+    this.bus.f_socials = "";
+    this.openDialog("session", "Connect Instagram", "In a browser signed in to your Instagram: DevTools (F12) › Application › Cookies › instagram.com, copy sessionid and ds_user_id, and paste them here as sessionid=…; ds_user_id=…. It stays on this PC and is never shown again.", "Connect", async () => {
+      const r = await this.api("POST", `connections/${encodeURIComponent(connId)}/session`, { cookie: String(this.bus.f_socials ?? "").trim() });
+      if (r.status !== 200 || r.body.ok === false) throw new Error(String(r.body.error ?? "Not connected"));
+      this.setToast("Instagram connected");
+    });
   }
 
   private rowMenu(id: string, sec: string, store: string, x: number, y: number): void {
@@ -1158,7 +1221,7 @@ class PersonsTab {
     const p = this.person(id);
     if (!p) return [];
     const owned = (this.state?.stores ?? []).filter((s) => s.ownerId === id).map((s) => s.id);
-    return [...new Set([...p.storeIds, ...owned])].map((s) => `store:${s}`).concat(p.listIds.filter((l) => l === "creators" || l === "spokpay"));
+    return [...new Set([...p.storeIds, ...owned])].map((s) => `store:${s}`).concat(p.listIds.filter((l) => l === "creators" || l === "spokpay" || l === "personal"));
   }
 
   /** Move to…'s entries (menus.ts), with their actions. */

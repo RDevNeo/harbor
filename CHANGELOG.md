@@ -6,6 +6,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
+- Hub Persons: **Personal**, a section for the user's own contacts (PC and Android), after SpokPay. Its + menu (PC) or
+  its **Add contact** row (phone) asks for the platform (Discord, WhatsApp, Instagram) and one field: their WhatsApp
+  number, or their Discord or Instagram username. Persons finds them there first (a number that is on WhatsApp, the exact
+  Discord username, the exact Instagram account) and only then saves them, in Personal, and opens their conversation;
+  when it can't, the reason shows in the form and nothing is saved. Someone already in Persons just joins Personal.
+  Their chat is the person chats' own (history, newest at the bottom, live, the same composer, Person AI). Personal talks
+  through the Stores Discord and WhatsApp (the user's logins: no new sign-in; they show in Personal's connections "from
+  Stores") and its own **Instagram** connection: direct messages through Instagram's app API on a session pasted from a
+  browser's cookies (Personal's + › Connect Instagram; kept 0600 on the PC, checked before it's kept), the inbox read
+  every 30 s while connected, one call at a time; text, likes, links, photos, videos, voice messages, shared posts and
+  replies show; sending is text only (pictures and files to Instagram aren't supported yet). Move to… has Personal (PC
+  and phone). `POST v1/persons/contacts`, `POST v1/persons/connections/{id}/session|disconnect`.
 - Hub Persons: **the AI card in a site request's pane** (PC and Android). A note sent "To: AI" from a request's composer
   and the AI's answer show in the request's timeline, at the point the note was sent among its messages and events, as
   the person chats' AI card: "To the AI" with a forwarded message quoted, the answer as it's written ("AI · writing…"),

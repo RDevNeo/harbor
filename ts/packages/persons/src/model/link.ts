@@ -17,10 +17,11 @@ const time = (iso: string | undefined): number => {
 export const notesHeading = (name: string) => `— ${name} —`
 
 /** Profile fields that go with an identifier: copied (and taken back) together with it. */
-const GROUPS: { key: 'discordId' | 'email' | 'whatsapp'; with: string[] }[] = [
+const GROUPS: { key: 'discordId' | 'email' | 'whatsapp' | 'instagram'; with: string[] }[] = [
   { key: 'discordId', with: ['discordUsername', 'displayName', 'avatar', 'profileAt'] },
   { key: 'email', with: ['photo', 'photoAt', 'photoFull'] },
   { key: 'whatsapp', with: [] },
+  { key: 'instagram', with: ['instagramUsername'] },
 ]
 
 type Fields = Record<string, string | boolean | null | undefined>
@@ -171,7 +172,7 @@ export function unlinkPerson(d: AppData, personId: string, linkedId: string, at 
   // settled again where only the link had made them active
   for (const [sec, mark] of Object.entries(a.unsettled ?? {})) if (!next.settled?.[sec]) next.settled = { ...next.settled, [sec]: mark }
   // a person with nothing left to show keeps a name
-  if (!next.name && !next.discordId && !next.discordUsername && !next.email && !next.whatsapp) next.name = personLabel(p)
+  if (!next.name && !next.discordId && !next.discordUsername && !next.email && !next.whatsapp && !next.instagram) next.name = personLabel(p)
   // they come back with the read marks made on their chats meanwhile
   const restored: Person = { ...link.person, updatedAt: at }
   const seen: Record<string, string> = { ...restored.seen }

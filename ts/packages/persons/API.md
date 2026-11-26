@@ -1,19 +1,19 @@
 # Persons phone API (Hub's phone API, port 47950, same TLS + auth as every /v1 call)
 
-All JSON. Times are ISO strings. `section` is `stores` | `creators` | `spokpay` | `` (All people).
+All JSON. Times are ISO strings. `section` is `stores` | `creators` | `spokpay` | `personal` | `` (All people).
 Pictures are URLs on this same API (`/v1/persons/img/...`), fetched with the same client as JSON.
 
 ## GET /v1/persons/state?rev=N
 Long-poll: with `rev` equal to the current one, waits up to 25 s for a change, then answers.
 ```
 { rev: 12, unread: 4,
-  connections: [{ id, kind: "discord"|"gmail"|"whatsapp", section, status: "connected"|"connecting"|"signed-out"|"signing-in"|"starting",
+  connections: [{ id, kind: "discord"|"gmail"|"whatsapp"|"instagram", section, also: [sections it serves too], status: "connected"|"connecting"|"signed-out"|"signing-in"|"starting",
                   label: "Discord · igor", error: null, qr: null|"<raw QR payload>", qrRows: null|["0101…", …] }],
   stores: [{ id, name, color: "#3b82f6", image: "/v1/persons/img/store/ID"|null, ownerId|null, count }],
-  lists:  [{ id: "creators"|"spokpay", name, accountId }],
+  lists:  [{ id: "creators"|"spokpay"|"personal", name, accountId }],
   people: [{ id, name, avatar: "/v1/persons/img/person/ID?v=HASH"|null, initials: "AB", color: "#hex",
              storeIds: [], listIds: [], settled: { stores?: true, ... },
-             rows: { "": RowInfo, stores?: RowInfo, creators?: RowInfo, spokpay?: RowInfo } }],
+             rows: { "": RowInfo, stores?: RowInfo, creators?: RowInfo, spokpay?: RowInfo, personal?: RowInfo } }],
   siteRequests: null | { waits: bool, notices: [{ title, text }],
                          rows: [{ ref: "SR-121", subject, store, storeSlug|null, initials, line, waiting, unread, at: <ms>,
                                   side: { text: "Store replied"|"Store waiting", tone: "info"|"warning" }|null,
@@ -130,6 +130,19 @@ On the PC (in-process) rows also carry `avatarPath` / `imagePath`: a local file 
 - `POST /v1/persons/connections/{id}/connect` starts a sign-in (Discord, WhatsApp: a QR code appears in the state's
   `qr` / `qrRows`; Discord's is scanned in the Discord app: You › Scan QR code).
 - `POST /v1/persons/connections/{id}/cancel` stops a sign-in under way. `DELETE /v1/persons/connections/{id}` signs out and removes it.
+- `POST /v1/persons/connections/{id}/session { cookie }` (Instagram): the session pasted from a browser signed in to
+  Instagram (`sessionid=…; ds_user_id=…`), checked with Instagram before it's kept → `{ ok, status }` or `{ ok: false, error }`.
+  `POST /v1/persons/connections/{id}/disconnect` signs out and forgets the session; the connection stays, signed out.
+
+## Personal
+The user's own contacts. Personal talks through the Stores Discord and WhatsApp (the same logins: those connections
+list `personal` in `also`, set once at start when no connection of that kind serves Personal) and its own Instagram
+connection (Instagram's app API on a pasted session: the inbox read every 30 s while connected, one call at a time).
+- `POST /v1/persons/contacts { kind: "discord"|"whatsapp"|"instagram", handle, name? }`: `handle` is a WhatsApp number,
+  a Discord username (or id) or an Instagram username / profile link, found on that platform first (WhatsApp: on
+  WhatsApp; Discord and Instagram: that exact username). → `{ ok: true, person, existed }` (someone already in Persons
+  with that id joins Personal: `existed`), or `{ ok: false, error }` with the reason, and nothing saved. Their chat is
+  `GET chat/{id}?section=personal` as any other.
 
 ## Linked people (Link with… / Unlink)
 A person may hold others linked into them (`links` in data.json: each one kept whole, with what the link added), so one

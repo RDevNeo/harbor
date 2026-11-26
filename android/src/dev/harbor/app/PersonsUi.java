@@ -202,13 +202,14 @@ final class PersonsUi {
     static int aiFill() { return Ui.dark ? 0xff302c3d : 0xfff3f0fb; }
     static int aiLine() { return Ui.dark ? 0xff5d5674 : 0xffcbc2e6; }
 
-    static final String[] SECTIONS = {"stores", "creators", "spokpay"};
+    static final String[] SECTIONS = {"stores", "creators", "spokpay", "personal"};
 
     static String sectionLabel(String s) {
         switch (s == null ? "" : s) {
             case "stores": return "Stores";
             case "creators": return "Creators";
             case "spokpay": return "SpokPay";
+            case "personal": return "Personal";
             default: return "All people";
         }
     }
@@ -218,6 +219,7 @@ final class PersonsUi {
             case "discord": return "Discord";
             case "gmail": return "Gmail";
             case "whatsapp": return "WhatsApp";
+            case "instagram": return "Instagram";
             default: return k == null ? "" : k;
         }
     }
@@ -313,6 +315,20 @@ final class PersonsUi {
                     Path h = new Path();
                     h.moveTo(9, 8); h.quadTo(8.5f, 12.5f, 12.5f, 15); h.quadTo(14.5f, 16.2f, 16.5f, 15);
                     c.drawPath(h, p);
+                    break;
+                }
+                case "instagram": {
+                    // the camera: a pink rounded square, a white ring and its dot
+                    p.setStyle(Paint.Style.FILL);
+                    p.setColor(0xffe1306c);
+                    c.drawRoundRect(new RectF(2, 2, 22, 22), 6, 6, p);
+                    p.setColor(0xffffffff);
+                    p.setStyle(Paint.Style.STROKE);
+                    p.setStrokeWidth(2.2f);
+                    c.drawRoundRect(new RectF(6, 6, 18, 18), 4, 4, p);
+                    c.drawCircle(12, 12, 3, p);
+                    p.setStyle(Paint.Style.FILL);
+                    c.drawCircle(15.8f, 8.2f, 1, p);
                     break;
                 }
                 default: { // discord

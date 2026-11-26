@@ -1,7 +1,7 @@
 // Pure parts of the Persons tab: the v1/persons JSON (API.md) turned into the sidebar's, the list's and the chat's
 // rows (Sidebar.tsx, App.tsx, Chat.tsx in Person Hub). No Slint here, so it is unit tested.
 
-export type SectionId = "stores" | "creators" | "spokpay";
+export type SectionId = "stores" | "creators" | "spokpay" | "personal";
 
 export interface RowJson {
   lastAt: string | null;
@@ -28,7 +28,7 @@ export interface PersonJson {
 }
 export interface StoreJson { id: string; name: string; color: string; image: string | null; imagePath: string | null; ownerId: string | null; count: number }
 export interface ListJson { id: string; name: string; accountId: string }
-export interface ConnJson { id: string; kind: string; section: string; status: string; gateway: string; label: string; who: string; error: string | null; qr: string | null; contacts: boolean | null }
+export interface ConnJson { id: string; kind: string; section: string; also?: string[]; status: string; gateway: string; label: string; who: string; error: string | null; qr: string | null; contacts: boolean | null }
 /** The PC's audio player (the engine plays voice messages): `pos` at `at` (ms), moving `speed` s/s while playing. */
 export interface AudioStateJson { key: string | null; playing: boolean; pos: number; speed: number; duration: number | null; at: number; error: string | null }
 /** A SpokPay site request in the SpokPay section's list (the engine's routes.ts siteRequestsJson). */
@@ -169,7 +169,7 @@ export function byRecent(a: PersonJson, b: PersonJson): number {
   return a.name.localeCompare(b.name);
 }
 
-const SECTION_NAMES: Record<string, string> = { stores: "STORES", creators: "CREATORS", spokpay: "SPOKPAY" };
+const SECTION_NAMES: Record<string, string> = { stores: "STORES", creators: "CREATORS", spokpay: "SPOKPAY", personal: "PERSONAL" };
 
 function base(kind: Row["kind"]): Row {
   return { kind, id: "", section: "", store: "", name: "", initials: "", color: "#64748b", avatarPath: "", presence: "", status: "", tone: "", channel: "", time: "", unread: 0, typing: "", owner: false, active: false, expanded: false, count: 0, depth: 0, dim: false, tip: "" };
@@ -229,9 +229,12 @@ export function personRow(p: PersonJson, section: string, store = "", depth = 0,
   };
 }
 
+/** Whether a connection serves a section: its own, or one it's shared with (Personal uses the Stores Discord and WhatsApp). */
+export const servesSection = (c: Pick<ConnJson, "section" | "also">, section: string): boolean => c.section === section || !!c.also?.includes(section);
+
 /** A section's connections as one status dot: red when one is signed out, yellow while one connects. */
 function connDot(conns: ConnJson[], section: string): { status: string; tone: string } {
-  const mine = conns.filter((c) => c.section === section);
+  const mine = conns.filter((c) => servesSection(c, section));
   if (!mine.length) return { status: "", tone: "" };
   const off = mine.filter((c) => c.status === "signed-out" || c.status === "signing-in");
   if (off.length) return { status: `${off.map((c) => c.label).join(", ")}: signed out`, tone: "red" };

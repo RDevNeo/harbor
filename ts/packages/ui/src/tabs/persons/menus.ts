@@ -78,17 +78,24 @@ export function failedMenu(): MenuEntry[] {
   ];
 }
 
+/** Personal › Add contact: the one field's label and hint for each platform. */
+export const CONTACT_FIELD: Record<string, { label: string; hint: string }> = {
+  discord: { label: "Discord username", hint: "@username (or their user id)" },
+  whatsapp: { label: "WhatsApp number", hint: "+55 11 91234-5678" },
+  instagram: { label: "Instagram username", hint: "@username" },
+};
+
 /** What the composer's text field says (Person Hub's placeholders). */
 export function composerHint(o: { toAi: boolean; forwarded: boolean; name: string; kind: string; me: string }): string {
   if (o.toAi) return o.forwarded ? "Ask about this message (empty: “What should I reply to this?”)" : `Tell the AI what to do about ${o.name}`;
   if (o.kind === "gmail") return `Email ${o.name}${o.me ? ` as ${o.me}` : ""}…`;
-  return `Message ${o.name}${o.kind ? ` on ${o.kind === "whatsapp" ? "WhatsApp" : o.kind === "spokpay" ? "SpokPay" : "Discord"}` : ""}`;
+  return `Message ${o.name}${o.kind ? ` on ${o.kind === "whatsapp" ? "WhatsApp" : o.kind === "instagram" ? "Instagram" : o.kind === "spokpay" ? "SpokPay" : "Discord"}` : ""}`;
 }
 
 /** Why the composer can't write to the person (null: it can), Person Hub's notes. */
 export function blockedNote(o: { hasAccount: boolean; hasPeer: boolean; connected: boolean; kind: string }): string | null {
-  const what = o.kind === "gmail" ? "email address" : o.kind === "whatsapp" ? "WhatsApp number" : "Discord account";
-  const app = o.kind === "gmail" ? "Gmail" : o.kind === "whatsapp" ? "WhatsApp" : "Discord";
+  const what = o.kind === "gmail" ? "email address" : o.kind === "whatsapp" ? "WhatsApp number" : o.kind === "instagram" ? "Instagram account" : "Discord account";
+  const app = o.kind === "gmail" ? "Gmail" : o.kind === "whatsapp" ? "WhatsApp" : o.kind === "instagram" ? "Instagram" : "Discord";
   if (!o.hasAccount) return "No channel to talk to them here: connect Discord, Gmail or WhatsApp in the section’s +, and give them that identifier (Edit).";
   if (!o.hasPeer) return `Add their ${what} (Edit) to message them here.`;
   if (!o.connected) return `Sign in to ${app} (the section’s + menu › Connections) to message.`;
@@ -108,7 +115,7 @@ export interface MoveEntry {
 }
 
 /**
- * SpokPay · Creators · Stores › (every store, then New store…). `places` = where the person is ("spokpay", "creators",
+ * SpokPay · Creators · Stores › (every store, then New store…) · Personal. `places` = where the person is ("spokpay", "creators",
  * "store:<id>"); `from` = the place the menu was opened in ("" = All people: every place they're in counts as here).
  */
 export function moveEntries(o: { places: string[]; from: string; stores: { id: string; name: string }[] }): MoveEntry[] {
@@ -118,11 +125,12 @@ export function moveEntries(o: { places: string[]; from: string; stores: { id: s
     { to: "spokpay", label: "SpokPay", ...(here("spokpay") ? { here: true } : {}) },
     { to: "creators", label: "Creators", ...(here("creators") ? { here: true } : {}) },
     { to: "stores", label: "Stores", sub: [...stores, ...(stores.length ? [{ to: "", label: "", sep: true }] : []), { to: "new-store", label: "New store…" }] },
+    { to: "personal", label: "Personal", ...(here("personal") ? { here: true } : {}) },
   ];
 }
 
 /** The place a sidebar row stands for: "store:<id>" in a store, its section's list, "" in All people. */
-export const placeOfRow = (section: string, store: string): string => (store ? `store:${store}` : section === "creators" || section === "spokpay" ? section : "");
+export const placeOfRow = (section: string, store: string): string => (store ? `store:${store}` : section === "creators" || section === "spokpay" || section === "personal" ? section : "");
 
 /** Quote: the message's words as "> " lines, then an empty line, ahead of what the composer already holds. */
 export function quoteInto(draft: string, text: string): string {
