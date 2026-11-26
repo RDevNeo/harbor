@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import * as p from "../src/providers.ts";
@@ -312,6 +312,31 @@ test("Claude's models are read from the CLI's bundle in pieces, entries across p
     ["Haiku 5.5", false],
     ["Fable 5.1", true],
   ]);
+});
+
+test("a mise shim is read as the tool's install, not mise; a CLI with no model table is read once, not every minute", async () => {
+  const root = join(base, "mise-root");
+  mkdirSync(join(root, "mise", "shims"), { recursive: true });
+  mkdirSync(join(root, "mise", "installs", "claude", "9.9.9"), { recursive: true });
+  const mise = join(root, "mise-bin");
+  writeFileSync(mise, Buffer.alloc(1 << 16, 0x61));
+  const install = join(root, "mise", "installs", "claude", "9.9.9", "claude");
+  writeFileSync(install, `x{id:"claude-opus-9-9",family:"opus",display_name:"Opus 9.9"}x`);
+  symlinkSync(join(root, "mise", "installs", "claude", "9.9.9"), join(root, "mise", "installs", "claude", "latest"));
+  const shim = join(root, "mise", "shims", "claude");
+  symlinkSync(mise, shim);
+  expect(p.cliFile(shim)).toBe(realpathSync(install));
+  // No install behind the shim: the shim's own target.
+  const lone = join(root, "mise", "shims", "codex");
+  symlinkSync(mise, lone);
+  expect(p.cliFile(lone)).toBe(realpathSync(mise));
+
+  // A file with no table: cached as read (its key, no models), the built-in list meanwhile.
+  await p.scanClaudeModels(lone);
+  const saved = JSON.parse(readFileSync(p.claudeCachePath(), "utf8")) as { key: string; models: unknown[] };
+  expect(saved.key.startsWith(realpathSync(mise))).toBe(true);
+  expect(saved.models).toEqual([]);
+  expect(p.claudeModels(false)[0]?.id).toBe("claude-opus-5-5");
 });
 
 test("Claude's models follow Claude Code's own /model menu: the newest fetched catalog of any account, in its order", () => {

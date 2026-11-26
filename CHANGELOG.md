@@ -6,6 +6,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Fixed
+- **Hub no longer reads 140 MB from the disk every minute.** Claude's model list comes from the CLI's bundle, found
+  through `claude` on the PATH; with mise that is a shim linked to mise itself, which has no model table, so nothing
+  was kept and the whole file was read again each minute (on a PC short on memory, that pushed everything else out of
+  the page cache). A mise shim is now followed to the tool's current install, and a file with no table is remembered
+  as read until it changes.
+- **The window answers input at once on Linux again.** Slint's loop waits on the compositor's socket, but accesskit's
+  D-Bus connection came with the window too, and with two candidates the loop fell back to polling (a click or key
+  waited up to 100 ms for the next turn). The one whose socket leads to the display (Wayland or X11) is now picked.
+- **A Hub start no longer re-reads every transcript.** The first workspace-cloud round after a start compared each
+  chat's transcript digest, and with no digest kept it read, parsed and hashed every saved transcript (here 325 chats,
+  56k items: 3.7 s of the main thread, ~80% CPU for the first half-minute, more on a busy PC), at every restart and
+  every update. Each save now keeps the chat's length and digest beside its items (`item_sums`), checked against how
+  the items end; a start reads 2 rows a chat (9 ms in all).
 - Hub Persons: **Add contact never renames or adds someone else by mistake.** A WhatsApp number is asked in both
   Brazilian forms (55 71 9961-6108 and 55 71 9 9961-6108; the one WhatsApp confirms is kept). When it is already someone
   in Persons under another name than the one typed, the form says so ("+557199616108 is already Fagner (in Personal).
