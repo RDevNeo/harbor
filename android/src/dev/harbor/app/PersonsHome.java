@@ -727,7 +727,7 @@ final class PersonsHome {
                 }
                 d.dismiss();
                 JSONObject person = r.optJSONObject("person");
-                if (r.optBoolean("existed")) Ui.toast(p.a, "Already in Persons: now in Personal too");
+                if (r.optBoolean("existed")) Ui.toast(p.a, r.optString("message", "Already in Persons"));
                 p.refresh();
                 if (person != null) p.openChat(PersonsUi.s(person, "id"), "personal");
             });

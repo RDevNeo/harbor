@@ -51,13 +51,13 @@ export class AgentWaStore {
    * The page of `digits`' direct chat before `beforeSec` (seconds; none: the newest), `limit` messages, for account
    * `me` (phone digits): nothing when the store is another account's or missing.
    */
-  page(me: string, digits: string, beforeSec: number | null, limit = 50): StoredPage {
-    if (!me || !digits || this.accountDigits() !== me) return { raws: [], more: false };
+  page(me: string, digits: string | string[], beforeSec: number | null, limit = 50): StoredPage {
+    const all = (Array.isArray(digits) ? digits : [digits]).filter(Boolean);
+    if (!me || !all.length || this.accountDigits() !== me) return { raws: [], more: false };
     const db = this.open();
     if (!db) return { raws: [], more: false };
     try {
-      const pn = `${digits}@s.whatsapp.net`;
-      const jids = [pn, ...db.query("SELECT lid FROM lids WHERE pn = ?").all(pn).map((r) => String((r as { lid: string }).lid))];
+      const jids = this.jidsOf(db, all);
       const marks = jids.map(() => "?").join(",");
       const rows = db
         .query(`SELECT raw FROM messages WHERE chat IN (${marks}) AND deleted = 0 AND ts < ? ORDER BY ts DESC LIMIT ?`)
@@ -74,6 +74,37 @@ export class AgentWaStore {
     } catch {
       return { raws: [], more: false };
     }
+  }
+
+  /** A number's chat jids in the store: each form's phone jid and the lids WhatsApp gave it. */
+  private jidsOf(db: Database, digits: string[]): string[] {
+    const out: string[] = [];
+    for (const d of digits) {
+      const pn = `${d}@s.whatsapp.net`;
+      out.push(pn, ...db.query("SELECT lid FROM lids WHERE pn = ?").all(pn).map((r) => String((r as { lid: string }).lid)));
+    }
+    return out;
+  }
+
+  /**
+   * Which of a number's forms (`digits`: with and without a Brazilian mobile's 9th digit) the account has talked to:
+   * the one with a chat or messages in the store, else null (another account's store, or none).
+   */
+  known(me: string, digits: string[]): string | null {
+    if (!me || this.accountDigits() !== me) return null;
+    const db = this.open();
+    if (!db) return null;
+    try {
+      for (const d of digits) {
+        const jids = this.jidsOf(db, [d]);
+        const marks = jids.map(() => "?").join(",");
+        const hit = db.query(`SELECT 1 FROM chats WHERE jid IN (${marks}) UNION SELECT 1 FROM messages WHERE chat IN (${marks}) LIMIT 1`).get(...jids, ...jids);
+        if (hit) return d;
+      }
+    } catch {
+      // unreadable: unknown
+    }
+    return null;
   }
 
   close(): void {

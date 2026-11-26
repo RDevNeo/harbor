@@ -83,9 +83,27 @@ describe("Personal over the API", () => {
   it("someone already in Persons joins Personal instead of being added twice", async () => {
     const { s, call } = await setup();
     const r = (await call("POST", "contacts", { kind: "discord", handle: "xan" })).body as Record<string, any>;
-    expect(r).toMatchObject({ ok: true, existed: true });
+    expect(r).toMatchObject({ ok: true, existed: true, joined: true, renamed: false, message: "Already in Persons as Xan: added to Personal" });
     expect(s.person("px")!.listIds).toEqual(["spokpay", "personal"]);
     expect(s.data!.people.length).toBe(1);
+  });
+
+  it("the same WhatsApp number in its other Brazilian form: found, renamed to the name typed, said so", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hub-personal-wa-"));
+    dirs.push(dir);
+    // they're kept as WhatsApp answers (8 digits after the area code); the form gets the 9-digit mobile
+    writeFileSync(join(dir, "data.json"), JSON.stringify({ version: 7, updatedAt: T0, readSince: T0, stores: [], lists: [], people: [{ id: "pf", name: "Fagner", discordId: "", whatsapp: "557199616108", storeIds: [], listIds: ["personal"], createdAt: T0, updatedAt: T0 }] }));
+    writeFileSync(join(dir, "connections.json"), JSON.stringify({ version: 1, connections: [{ id: "wa1", kind: "whatsapp", section: "stores" }] }));
+    const asked: string[] = [];
+    const wa = (c: ConnContext): Connection => ({ ...fake(c, [], true), lookup: async (q: string) => (asked.push(q), { matches: [{ id: "557199616108", username: "+557199616108", globalName: "Fagner", avatar: null, avatarUrl: "" }] }) });
+    const s = new PersonsService({ dir, factories: { whatsapp: wa, instagram: (c) => fake(c, [], false) } });
+    services.push(s);
+    await s.start();
+    const r = new PersonsRoutes(s);
+    const res = (await r.route({ method: "POST", path: ["v1", "persons", "contacts"], query: [], body: { kind: "whatsapp", handle: "55 (71) 9961-6108", name: "Filipe" } }))!.body as Record<string, any>;
+    expect(asked).toEqual(["5571999616108"]);
+    expect(res).toMatchObject({ ok: true, existed: true, joined: false, renamed: true, message: "Already in Personal as Fagner, now named Filipe" });
+    expect(s.data!.people.map((p) => [p.id, p.name, p.listIds])).toEqual([["pf", "Filipe", ["personal"]]]);
   });
 
   it("can't resolve it: the reason, and nothing is saved", async () => {

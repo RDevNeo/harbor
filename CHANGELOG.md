@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Fixed
+- Hub Persons: **Add contact with someone who's already in Persons says so, and takes the name typed.** A WhatsApp number
+  typed as 55 (71) 9961-6108 is WhatsApp's 55 71 9961-6108 or 55 71 9 9961-6108 (both are asked; the one WhatsApp
+  confirms is kept). When that number was already someone's (in either form), the form used to close on a quick toast
+  and nothing new showed, the name typed dropped. Now that person joins Personal, the name typed becomes theirs, and the
+  toast says "Already in Personal as Fagner, now named Filipe" (PC and phone) as their chat opens. A number WhatsApp
+  doesn't confirm but this account already talks to (Hub's own WhatsApp store, either form) is accepted too, and a
+  chat's history is found under either form.
 - Hub Persons: **an open chat with nothing in it no longer keeps Hub busy.** Every change reloads the open chat, and the
   reload asked the platform for an empty chat's history again; the empty answer counted as a change, so it went round
   several times a second (all of Persons recomputed each time, the window laggy), most often with a just-added Personal
