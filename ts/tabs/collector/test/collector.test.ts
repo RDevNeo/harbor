@@ -15,6 +15,7 @@ import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.t
 import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
 import { fakePersons, type SendInput } from "../persons-bridge.ts";
 import { brandOf, linkTitle, normalizeReach, parseLinks, reachError, reachHref } from "../lib/reach.ts";
+import { crmRecord } from "../lib/crm.ts";
 import type { DetailView } from "../view.ts";
 
 const DAY = 86_400_000;
@@ -443,5 +444,48 @@ describe("lead detail", () => {
     yt.calls.length = 0;
     await call("POST", "fill", { id: "youtube:UC1" });
     expect(yt.calls).toEqual([]);
+  });
+});
+
+describe("SpokPay CRM import", () => {
+  const HC = "960a";
+  const card = (o: Record<string, unknown>) => ({ id: `crm-${o.platform_id}`, platform: "youtube", name: "N", handle: null, profile_url: null, avatar_url: null, subscriber_count: 1000, video_count: 10, view_count: 5000, description: "bio", links: [], country: null, discovered_via: "robux", captured_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-02T00:00:00Z", status_id: HC, reach_kind: null, reach_value: null, ...o });
+  const crmFetch = (cards: unknown[], calls: string[] = []) => async (url: string, init?: RequestInit) => {
+    if (!url.endsWith("/api/query")) return new Response("", { status: 404 });
+    const path = (JSON.parse(String(init?.body)) as { path: string }).path;
+    calls.push(path);
+    const value = path === "creators:listCreatorStatuses" ? [{ id: HC, name: "Has Contact" }, { id: "x", name: "Triaged" }] : cards;
+    return new Response(JSON.stringify({ status: "success", value }), { status: 200 });
+  };
+  it("maps a card: the detail's fields, its Reach typed (an email Reach is the email), where it came from", () => {
+    const r = crmRecord(card({ platform_id: "UC9", handle: "rreze", links: [{ label: "https://x.com/r", url: "https://x.com/r" }, { label: "Loja", url: "https://loja.com" }], reach_kind: "email", reach_value: "R@Pull.com.br" }) as never, "Has Contact");
+    expect([r.handle, r.subscriber_count, r.description, r.discovered_via, r.links.map((l) => l.label), r.reach, r.email, r.email_manual, r.imported_from]).toEqual(["@rreze", 1000, "bio", "robux", [null, "Loja"], { kind: "email", value: "r@pull.com.br" }, "r@pull.com.br", true, "SpokPay CRM · Has Contact"]);
+    expect("imported_from" in JSON.parse(exportText({ ...defaultData(), creators: [r] }))).toBe(false);
+  });
+  it("brings the Has Contact cards into Available once: again changes nothing, existing leads are completed, the same person isn't kept twice, missing data is read", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const calls: string[] = [];
+    const cards = [
+      card({ platform_id: "UCnew", name: "New", reach_kind: "discord", reach_value: "490259731382927360" }),
+      card({ platform_id: "UChere", name: "Here", description: "crm bio", reach_kind: "email", reach_value: "here@x.com" }),
+      card({ platform: "tiktok", platform_id: "77", handle: "@twin", name: "Twin" }),
+      card({ platform_id: "UCtriaged", status_id: "x" }),
+    ];
+    const yt = fakeYt({ UCnew: 1, UChere: 1 });
+    const c = new Collector(dir, deps({ youtube: yt as never, fetch: crmFetch(cards, calls) as never }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UChere", name: "Here", restricted: true, description: null }), rec({ platform: "tiktok", platform_id: "other-id", name: "Twin here", handle: "@twin" }));
+    const call = caller(c);
+    const r = (await call("POST", "import-crm", {}))!.body as { total: number; added: number; updated: number; skipped: string[]; byPlatform: Record<string, number> };
+    expect([r.total, r.added, r.updated, r.skipped.length, r.byPlatform]).toEqual([3, 1, 1, 1, { youtube: 1 }]);
+    await c.imported();
+    const here = c.data.creators.find((x) => x.platform_id === "UChere")!;
+    expect([here.restricted, here.description, here.email, here.reach?.kind, here.recent_videos?.length]).toEqual([true, "crm bio", "here@x.com", "email", 1]);
+    const added = c.data.creators.find((x) => x.platform_id === "UCnew")!;
+    expect([added.reach, added.recent_videos?.length, c.isKnown(["youtube:UCnew"])]).toEqual([{ kind: "discord", value: "490259731382927360" }, 1, true]);
+    expect(yt.calls.filter((x) => x.startsWith("about:"))).toEqual(["about:UCnew", "about:UChere"]);
+    const again = (await call("POST", "import-crm", {}))!.body as { added: number; updated: number };
+    await c.imported();
+    expect([again.added, again.updated, c.data.creators.length]).toEqual([0, 2, 3]);
+    expect(calls.every((p) => p.startsWith("creators:list"))).toBe(true);
   });
 });

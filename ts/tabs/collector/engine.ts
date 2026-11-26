@@ -13,6 +13,8 @@
 //   POST v1/collector/fill {id}       the detail after filling what an older lead misses (bio, counts, the videos'
 //                                     views and dates) from the platform: only on opening it, at most once a day
 //   POST v1/collector/reach           {id, kind, value}: the one way to contact them ("" clears it); never auto-found
+//   POST v1/collector/import-crm      {status?: "Has Contact"}: the SpokPay CRM's creators in that status (read-only, lib/crm.ts)
+//                                     into Available, once each (idempotent), then their missing data read one at a time
 //   POST v1/collector/edit            {id, name?, handle?, description?, links? (text, a link a line)}: typed by hand
 //   POST v1/collector/settings        {platform?, query?, gapDays?, target?}
 //   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
@@ -44,6 +46,7 @@ import { enrich } from "./lib/enrich.ts";
 import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
 import { Instagram } from "./lib/instagram.ts";
 import { kindOf, mergeLinks, normalizeUrl, whatsappOf } from "./lib/links.ts";
+import { crmCreators, crmRecord } from "./lib/crm.ts";
 import { isReachKind, normalizeReach, parseLinks, reachError } from "./lib/reach.ts";
 import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
@@ -592,6 +595,91 @@ export class Collector {
     return null;
   }
 
+  // ---------- the SpokPay CRM ----------
+
+  private importing: Promise<void> | null = null;
+
+  /**
+   * The SpokPay CRM's creators in `status` ("Has Contact"), into Available: each once (a lead already here by its id is
+   * only completed: empty fields filled, nothing typed replaced, a Restricted one stays Restricted; one matching another
+   * lead's keys is left out), every key into the never-twice ledger. Then, in the background, their missing data (bio,
+   * counts, the newest videos with views and dates) read one at a time through the usual fill. Read-only on the CRM.
+   */
+  async importCrm(status = "Has Contact"): Promise<{ total: number; added: number; updated: number; skipped: string[]; byPlatform: Record<string, number> }> {
+    if (this.o.offline) throw new Error("Collector is offline here.");
+    if (this.importing) throw new Error("An import is already going.");
+    const rows = await crmCreators(this.o.fetch ?? fetch, status);
+    const out = { total: rows.length, added: 0, updated: 0, skipped: [] as string[], byPlatform: {} as Record<string, number> };
+    const toFill: string[] = [];
+    for (const row of rows) {
+      const rec = crmRecord(row, status);
+      if (!PLATFORMS.includes(rec.platform as CreatorPlatform)) {
+        out.skipped.push(`${rec.name} (${rec.platform}): not a platform Collector knows`);
+        continue;
+      }
+      const id = recordId(rec);
+      const cur = this.find(id);
+      if (cur) {
+        const typed = new Set(cur.edited ?? []);
+        for (const k of ["profile_url", "avatar_url", "subscriber_count", "video_count", "view_count", "country"] as const) if ((cur[k] === null || cur[k] === undefined) && rec[k] !== null && rec[k] !== undefined) (cur as unknown as Record<string, unknown>)[k] = rec[k];
+        if (!typed.has("description") && !cur.description && rec.description) cur.description = rec.description;
+        if (!typed.has("handle") && !cur.handle && rec.handle) cur.handle = rec.handle;
+        if (!typed.has("links") && rec.links.length) cur.links = mergeLinks(cur.links, rec.links);
+        if (!cur.discovered_via && rec.discovered_via) cur.discovered_via = rec.discovered_via;
+        if (!cur.reach && rec.reach) cur.reach = rec.reach;
+        if (!cur.email && rec.email) Object.assign(cur, { email: rec.email, email_source: rec.email_source, email_manual: true });
+        if (!cur.whatsapp && rec.whatsapp) Object.assign(cur, { whatsapp: rec.whatsapp, whatsapp_manual: true });
+        if (!cur.imported_from && rec.imported_from) cur.imported_from = rec.imported_from;
+        for (const k of allKeys(cur)) this.seen.add(k);
+        out.updated++;
+        toFill.push(id);
+        continue;
+      }
+      // Only its own keys (id, handle): CRM cards share agency emails and link friends' channels.
+      const keys = ownKeys(rec);
+      const other = this.data.creators.find((c) => allKeys(c).some((k) => keys.includes(k)));
+      if (other) {
+        for (const k of ownKeys(rec)) this.seen.add(k);
+        out.skipped.push(`${rec.name} (${PLATFORM_LABEL[rec.platform as CreatorPlatform]}): same person as ${other.name} here`);
+        continue;
+      }
+      this.data.creators.push(rec);
+      for (const k of allKeys(rec)) this.seen.add(k);
+      this.avatarPath(rec.avatar_url);
+      out.added++;
+      out.byPlatform[rec.platform] = (out.byPlatform[rec.platform] ?? 0) + 1;
+      toFill.push(id);
+    }
+    this.logLine(`SpokPay CRM “${status}”: ${out.total} creator(s), ${out.added} added, ${out.updated} already here (completed), ${out.skipped.length} left out.`, "ok");
+    this.touch();
+    void this.flush();
+    this.importing = this.fillAll(toFill).finally(() => {
+      this.importing = null;
+    });
+    return out;
+  }
+
+  /** Each lead's missing data, one read at a time (TikTok's and YouTube's pace; Instagram keeps its own 2.5 s). */
+  private async fillAll(ids: string[]): Promise<void> {
+    let done = 0;
+    let failed = 0;
+    for (const id of ids) {
+      const c = this.find(id);
+      if (!c || !Collector.missing(c)) continue;
+      const ok = await this.fill(id).catch(() => false);
+      if (ok) done++;
+      else if (this.find(id)?.filled_at) failed++;
+      await (this.o.sleep ?? Bun.sleep)(c.platform === "instagram" ? 2500 : 1200);
+    }
+    this.logLine(`SpokPay CRM import: profile data read for ${done} lead(s)${failed ? `, ${failed} couldn't be read` : ""}.`, failed ? "info" : "ok");
+    void this.flush();
+  }
+
+  /** Until a CRM import's background reads end. */
+  async imported(): Promise<void> {
+    await this.importing;
+  }
+
   // ---------- Reach and Edit (the lead's detail) ----------
 
   /** The one way to contact them (the CRM's Reach). An email or WhatsApp Reach is also what Send message writes to,
@@ -857,6 +945,14 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       const why = c.setReach(String(b.id ?? ""), String(b.kind ?? ""), String(b.value ?? ""));
       if (why) return err(400, why);
       return ok((c.detail(String(b.id)) ?? {}) as never);
+    }
+    case "POST import-crm": {
+      const b = bodyOf(call);
+      try {
+        return ok((await c.importCrm(typeof b.status === "string" && b.status.trim() ? b.status : "Has Contact")) as never);
+      } catch (e) {
+        return err(409, errText(e));
+      }
     }
     case "POST edit": {
       const b = bodyOf(call);

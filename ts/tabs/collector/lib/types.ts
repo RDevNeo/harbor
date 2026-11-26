@@ -74,6 +74,8 @@ export interface CreatorRecord {
   edited?: string[];
   /** When opening the detail last filled missing data (bio, counts, videos' views and dates) from the platform. */
   filled_at?: string | null;
+  /** Brought in from elsewhere rather than found by a run ("SpokPay CRM · Has Contact"). */
+  imported_from?: string;
 }
 
 /** The CRM's Reach (creator-contacts.ts): one operator-owned way to contact a creator. */
@@ -205,7 +207,7 @@ export function migrate(raw: unknown): CollectorData {
 
 /** The CRM's fields (and the email), as the record it imports. */
 export function exportRecord(c: CreatorRecord): Record<string, unknown> {
-  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, ...rest } = c;
+  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, imported_from: _if, ...rest } = c;
   const out: Record<string, unknown> = { ...rest, links: c.links.map(({ label, url }) => ({ label, url })) };
   // The CRM's own Reach columns (creators.reach_kind / reach_value).
   if (reach) {
