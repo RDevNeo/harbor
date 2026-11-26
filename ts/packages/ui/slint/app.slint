@@ -2587,92 +2587,6 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.lb-open: Lightbox {
-            width: root.width;
-            height: root.height;
-            data: root.lb-data;
-            close => {
-                root.lb-close();
-            }
-            go(i) => {
-                root.lb-go(i);
-            }
-            copy-image => {
-                root.lb-copy-image();
-            }
-            copy-path => {
-                root.lb-copy-path();
-            }
-        }
-
-        if root.vid-open: VideoView {
-            width: root.width;
-            height: root.height;
-            data: root.vid-data;
-            frame: root.vid-frame;
-            toggle => {
-                root.vid-toggle();
-            }
-            fullscreen => {
-                root.vid-fullscreen();
-            }
-            mute => {
-                root.vid-mute();
-            }
-            volume(v) => {
-                root.vid-volume(v);
-            }
-            seek(v) => {
-                root.vid-seek(v);
-            }
-            release-seek => {
-                root.vid-release-seek();
-            }
-            moved => {
-                root.vid-moved();
-            }
-            over-bar(o) => {
-                root.vid-over-bar(o);
-            }
-            close => {
-                root.lb-close();
-            }
-            copy-path => {
-                root.lb-copy-path();
-            }
-            open-external => {
-                root.vid-open-external();
-            }
-            go(i) => {
-                root.lb-go(i);
-            }
-        }
-        if root.cap-open && root.cap-shown: CaptchaView {
-            width: root.width;
-            height: root.height;
-            data: root.cap-data;
-            pointer(kind, x, y) => {
-                root.cap-pointer(kind, x, y);
-            }
-            wheel(x, y, dy) => {
-                root.cap-wheel(x, y, dy);
-            }
-            hide => {
-                root.cap-show(false);
-            }
-            cancel => {
-                root.cap-cancel();
-            }
-        }
-        if root.cap-open && !root.cap-shown: CaptchaPill {
-            x: root.width - self.width - 16px;
-            y: root.height - self.height - 56px;
-            guild: root.cap-data.guild;
-            show => {
-                root.cap-show(true);
-            }
-        }
-
         // chat.rs `mention_selection_button`: above the selected text, kept in the transcript.
         if root.sel-shown && root.view == "chat": Rectangle {
             x: max(root.left-edge + 8px, min(root.sel-x, root.width - root.right-shown - self.width - 8px));
@@ -2696,16 +2610,6 @@ export component AppWindow inherits Window {
                         root.sel-mention();
                     }
                 }
-            }
-        }
-
-        if root.toast != "": Toast {
-            x: (root.width - self.width) / 2;
-            y: root.height - 24px - self.height;
-            text: root.toast;
-            action: root.toast-action;
-            act => {
-                root.toast-act();
             }
         }
 
@@ -2805,6 +2709,104 @@ export component AppWindow inherits Window {
                 height: parent.body-h;
             }
         }
+        // The image / video viewer, the captcha and the toast come after the tabs: they show over Persons and
+        // Routine as over Projects (a Persons picture opens here, on top of the person's chat).
+        if root.lb-open: Lightbox {
+            width: root.width;
+            height: root.height;
+            data: root.lb-data;
+            close => {
+                root.lb-close();
+            }
+            go(i) => {
+                root.lb-go(i);
+            }
+            copy-image => {
+                root.lb-copy-image();
+            }
+            copy-path => {
+                root.lb-copy-path();
+            }
+        }
+
+        if root.vid-open: VideoView {
+            width: root.width;
+            height: root.height;
+            data: root.vid-data;
+            frame: root.vid-frame;
+            toggle => {
+                root.vid-toggle();
+            }
+            fullscreen => {
+                root.vid-fullscreen();
+            }
+            mute => {
+                root.vid-mute();
+            }
+            volume(v) => {
+                root.vid-volume(v);
+            }
+            seek(v) => {
+                root.vid-seek(v);
+            }
+            release-seek => {
+                root.vid-release-seek();
+            }
+            moved => {
+                root.vid-moved();
+            }
+            over-bar(o) => {
+                root.vid-over-bar(o);
+            }
+            close => {
+                root.lb-close();
+            }
+            copy-path => {
+                root.lb-copy-path();
+            }
+            open-external => {
+                root.vid-open-external();
+            }
+            go(i) => {
+                root.lb-go(i);
+            }
+        }
+        if root.cap-open && root.cap-shown: CaptchaView {
+            width: root.width;
+            height: root.height;
+            data: root.cap-data;
+            pointer(kind, x, y) => {
+                root.cap-pointer(kind, x, y);
+            }
+            wheel(x, y, dy) => {
+                root.cap-wheel(x, y, dy);
+            }
+            hide => {
+                root.cap-show(false);
+            }
+            cancel => {
+                root.cap-cancel();
+            }
+        }
+        if root.cap-open && !root.cap-shown: CaptchaPill {
+            x: root.width - self.width - 16px;
+            y: root.height - self.height - 56px;
+            guild: root.cap-data.guild;
+            show => {
+                root.cap-show(true);
+            }
+        }
+
+        if root.toast != "": Toast {
+            x: (root.width - self.width) / 2;
+            y: root.height - 24px - self.height;
+            text: root.toast;
+            action: root.toast-action;
+            act => {
+                root.toast-act();
+            }
+        }
+
         if root.palette-open: PaletteOverlay {
             x: 0;
             y: 0;
