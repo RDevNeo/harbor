@@ -2099,6 +2099,12 @@ component SrGallery inherits HorizontalLayout {
             clicked => {
                 PersonsBus.sr-open-image(root.owner, i);
             }
+            // a message's picture: its message's menu (the brief's have none)
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.right && root.owner != "brief" {
+                    PersonsBus.msg-menu(root.owner, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
+            }
         }
     }
 }
@@ -2222,7 +2228,8 @@ component SrBrief inherits Rectangle {
 }
 
 // RequestLine: an event as a centered muted line; a message as the author and time over its bubble, with the avatar
-// beside the run's last one (the store's on the left, SpokPay's on the right).
+// beside the run's last one (the store's on the left, SpokPay's on the right). A right-click on a bubble opens the
+// person chats' message menu (ui.ts srMsgMenu).
 component SrLine {
     in property <PSrItem> it;
     in property <length> max-w;
@@ -2274,6 +2281,15 @@ component SrLine {
                     border-width: root.it.mine ? 0px : 1px;
                     border-color: Theme.border;
                     background: root.it.mine ? Theme.fg : Theme.bg200;
+                    // under the text and pictures: a right-click opens the person chats' message menu (msg-menu)
+                    TouchArea {
+                        z: -1;
+                        pointer-event(e) => {
+                            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                                PersonsBus.msg-menu(root.it.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                    }
                     VerticalLayout {
                         padding-left: root.it.text == "" ? 4px : root.pad-x;
                         padding-right: root.it.text == "" ? 4px : root.pad-x;

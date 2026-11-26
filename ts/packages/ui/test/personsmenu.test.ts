@@ -1,9 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { aiMenu, blockedNote, composerHint, messageMenu, moveEntries, placeOfRow, type MsgMenuIn } from "../src/tabs/persons/menus.ts";
+import { aiMenu, blockedNote, composerHint, messageMenu, moveEntries, placeOfRow, quoteInto, type MsgMenuIn } from "../src/tabs/persons/menus.ts";
 import { chatRows, proposalCard, type ChatJson, type ProposalJson } from "../src/tabs/persons/view.ts";
 
 const base: MsgMenuIn = { fromMe: false, hasText: true, hasFiles: false, canSend: true, aiOn: true, siteRequests: false };
 const labels = (m: Partial<MsgMenuIn>): string[] => messageMenu({ ...base, ...m }).map((e) => (e.sep ? "|" : e.label));
+
+describe("a site request message's menu (the same menu, as far as SpokPay's admin API goes)", () => {
+  test("the store's message: Quote, Forward to AI | Copy text, Open attachment; no Reply, Open Site Request or Mark as unread", () => {
+    expect(labels({ siteRequest: true, hasFiles: true })).toEqual(["Quote", "Forward to AI", "|", "Copy text", "Open attachment"]);
+    expect(labels({ siteRequest: true, fromMe: true })).toEqual(["Quote", "Forward to AI", "|", "Copy text"]);
+  });
+  test("a picture alone has nothing to quote; a finished or unwritable request only copies and opens", () => {
+    expect(labels({ siteRequest: true, hasText: false, hasFiles: true })).toEqual(["Forward to AI", "|", "Open attachment"]);
+    expect(labels({ siteRequest: true, canSend: false, aiOn: false })).toEqual(["Copy text"]);
+  });
+  test("Quote puts the words as > lines ahead of the draft", () => {
+    expect(quoteInto("", "Boa noite!\nObtiveram progresso?")).toBe("> Boa noite!\n> Obtiveram progresso?\n\n");
+    expect(quoteInto("  já vejo", "sim")).toBe("> sim\n\njá vejo");
+    expect(quoteInto("x", "  ")).toBe("x");
+  });
+});
 
 describe("a message's menu (Person Hub's MessageMenu)", () => {
   test("their message in a chat without site requests: Reply, Forward to AI | Copy text | Mark as unread", () => {

@@ -3,7 +3,7 @@
 // MenuItem / MenuSeparator. Pure, so it is unit tested.
 import type { GlyphName } from "@harbor/net";
 
-export type MsgAction = "reply" | "forward" | "site-request" | "copy" | "open-file" | "unread";
+export type MsgAction = "reply" | "quote" | "forward" | "site-request" | "copy" | "open-file" | "unread";
 
 export interface MenuEntry {
   action?: MsgAction;
@@ -29,16 +29,23 @@ export interface MsgMenuIn {
   siteRequests: boolean;
   /** A site request is already being drafted from this message. */
   proposing?: boolean;
+  /**
+   * A site request's message (its pane): SpokPay's admin API has no reply to a message, so Reply is Quote (the words
+   * into the composer as "> …"), and nothing is marked unread there (the open pane reads the request again).
+   */
+  siteRequest?: boolean;
 }
 
 /**
  * Reply · Forward to AI · Open Site Request | Copy text · Open attachment | Mark as unread (their messages; Alt+Click).
+ * A site request's message: Quote · Forward to AI | Copy text · Open attachment.
  * Each group only when it has entries, a separator between groups.
  */
 export function messageMenu(m: MsgMenuIn): MenuEntry[] {
   const groups: MenuEntry[][] = [
     [
-      ...(m.canSend ? [{ action: "reply" as const, label: "Reply", icon: "REPLY" as const }] : []),
+      ...(m.canSend && !m.siteRequest ? [{ action: "reply" as const, label: "Reply", icon: "REPLY" as const }] : []),
+      ...(m.canSend && m.siteRequest && m.hasText ? [{ action: "quote" as const, label: "Quote", icon: "REPLY" as const }] : []),
       ...(m.aiOn ? [{ action: "forward" as const, label: "Forward to AI", icon: "SPARKLES" as const }] : []),
       ...(m.siteRequests && !m.proposing ? [{ action: "site-request" as const, label: "Open Site Request", icon: "FILE_PLUS" as const }] : []),
     ],
@@ -46,7 +53,7 @@ export function messageMenu(m: MsgMenuIn): MenuEntry[] {
       ...(m.hasText ? [{ action: "copy" as const, label: "Copy text", icon: "COPY" as const }] : []),
       ...(m.hasFiles ? [{ action: "open-file" as const, label: "Open attachment", icon: "EXTERNAL" as const }] : []),
     ],
-    [...(!m.fromMe ? [{ action: "unread" as const, label: "Mark as unread", icon: "MAIL_WARNING" as const, hint: "Alt+Click" }] : [])],
+    [...(!m.fromMe && !m.siteRequest ? [{ action: "unread" as const, label: "Mark as unread", icon: "MAIL_WARNING" as const, hint: "Alt+Click" }] : [])],
   ];
   const out: MenuEntry[] = [];
   for (const g of groups) {
@@ -116,3 +123,14 @@ export function moveEntries(o: { places: string[]; from: string; stores: { id: s
 
 /** The place a sidebar row stands for: "store:<id>" in a store, its section's list, "" in All people. */
 export const placeOfRow = (section: string, store: string): string => (store ? `store:${store}` : section === "creators" || section === "spokpay" ? section : "");
+
+/** Quote: the message's words as "> " lines, then an empty line, ahead of what the composer already holds. */
+export function quoteInto(draft: string, text: string): string {
+  const t = text.trim();
+  if (!t) return draft;
+  const q = t
+    .split("\n")
+    .map((l) => `> ${l}`.trimEnd())
+    .join("\n");
+  return `${q}\n\n${draft.replace(/^\s+/, "")}`;
+}

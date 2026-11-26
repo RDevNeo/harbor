@@ -157,6 +157,12 @@ export class SiteRequestBoard {
     return { context: srAiContext(t, { now: Date.now(), url, ...(k.ownerEmail ? { owner: k.ownerEmail } : {}), ...(k.summary ? { summary: k.summary } : {}) }), ref: v.ref, store: v.store, storeSlug: v.storeSlug, owner: v.owner };
   }
 
+  /** A message of a request as last read (Forward to AI quotes it). */
+  message(ref: string, id: string): SrThread["messages"][number] | null {
+    const r = normalizeRef(ref);
+    return (r && this.threads[r]?.t.messages.find((m) => m.messageId === id)) || null;
+  }
+
   /** Which person / Persons store is which SpokPay store (spokpay-links.json). */
   links(): SpLinks {
     return this.sp.links();

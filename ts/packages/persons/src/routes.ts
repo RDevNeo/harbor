@@ -443,7 +443,7 @@ export class PersonsRoutes {
   }
 
   /**
-   * `POST site-request/{ref}/ai { text, paths? }`: the composer's "To: AI" note, to the Person AI as person chats send
+   * `POST site-request/{ref}/ai { text, paths?, forward? }`: the composer's "To: AI" note, to the Person AI as person chats send
    * theirs, with the request (ref, subject, status, brief, the newest messages) as hidden context: the chat of the
    * person linked to its store, else the store's own. Answers `{ ok, chat }`.
    */
@@ -455,10 +455,18 @@ export class PersonsRoutes {
     const attached = (Array.isArray(b.paths) ? b.paths : []).filter((x): x is string => typeof x === "string" && x.startsWith("/")).slice(0, 10);
     let text = str(b.text) ?? "";
     if (attached.length) text = `${text.trim()}\n\nFiles attached to this note (on this PC): ${attached.join(", ")}`.trim();
-    if (!text.trim()) return err(400, "empty");
+    if (!text.trim() && !str(b.forward)) return err(400, "empty");
     const r = normalizeRef(ref);
     if (!r) return err(400, "Not a site request ref (SR-…)");
     const c = await board.aiContext(r, siteRequestPageUrl(r));
+    // Forward to AI (a message's menu): the message quoted as person chats quote theirs, the question after it
+    const fwdId = str(b.forward);
+    if (fwdId) {
+      const m = board.message(r, fwdId);
+      if (!m) return err(404, "That message isn't in this request any more");
+      const from = m.side === "spokpay" ? `SpokPay (${m.authorName || "SpokPay"})` : `${m.authorName || c.store} (${c.store})`;
+      text = forwardedNote({ message: { content: m.text, timestamp: new Date(m.createdAt).toISOString(), attachments: m.attachments.filter((a) => a.url).map((a) => ({ name: a.name || "file", url: a.url!, ...(a.contentType ? { type: a.contentType } : {}) })) }, from, question: text });
+    }
     const who = this.srPerson(c.ref, c.storeSlug);
     if (who && this.s.data) {
       const { chat, choices } = this.chatConn(who.p, who.section);

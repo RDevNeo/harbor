@@ -40,7 +40,8 @@ admin page (Copy link).
   `{ ok, pane }`: sent to the store as SpokPay (site-requests:write); `key` is the Idempotency-Key of a retry.
 - `POST /v1/persons/site-request/{ref}/status { to: working|review|completed|closed }` → `{ ok, pane }`
   (site-requests:status; only the moves in `statuses`; completed and closed are final: ask first, with `confirms`).
-- `POST /v1/persons/site-request/{ref}/ai { text, paths? }` → `{ ok, chat }`: the composer's "To: AI" note to the Person
+- `POST /v1/persons/site-request/{ref}/ai { text, paths?, forward? }` → `{ ok, chat }` (`forward`: a message id, Forward
+  to AI: quoted as person chats quote theirs, `text` the question, empty = "What should I reply to this?"): the composer's "To: AI" note to the Person
   AI (as `chat/{id}/ai`), with the request as hidden context (ref, subject, status, store, owner, admin page, brief,
   its newest 40 messages and events): the chat of the person linked to its store (`pane.person`, that section's),
   else the store's own "<Store> · SpokPay". Its reply drafts come as ```reply blocks.

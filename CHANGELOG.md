@@ -6,6 +6,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
+- Hub Persons: **a site request's messages have the person chats' menu** (right-click on the PC, long-press on Android;
+  the same messageMenu / PersonsChat menu), with what works for a request: **Quote** (the words as "> " lines into the
+  composer; SpokPay's admin API has no reply to a message, so Reply is Quote), **Forward to AI** (the AI composer with the
+  message quoted, as in person chats; `POST v1/persons/site-request/{ref}/ai { forward }` sends it with its pictures'
+  links), **Copy text** and **Open attachment**. Left out because SpokPay's admin API can't do them: Edit, Delete, React,
+  Reply to a message; also Mark as unread (an open pane reads the request again at once) and Open Site Request (it is one).
 - Hub **Projects** tab shows a count on its button (PC and phone), as Persons shows its unread messages: the chats that
   need you, those whose turn ended (done, failed, or stopped on a question or a key asked) while you weren't looking and
   that you haven't opened since (the sidebar's blue/red dots). Opening a chat takes it off; looking at the tab alone

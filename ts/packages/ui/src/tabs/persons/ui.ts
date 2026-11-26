@@ -10,7 +10,7 @@ import { sameRow, syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
-import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, moveEntries, placeOfRow, type MenuEntry, type MoveEntry } from "./menus.ts";
+import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { aiFolds, audioRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, srImageSize, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
@@ -1230,6 +1230,7 @@ class PersonsTab {
     this.sr = null;
     this.srFiles = [];
     this.aiFiles = [];
+    this.forwarded = null;
     this.ui.srOpen = null;
   }
 
@@ -1275,12 +1276,12 @@ class PersonsTab {
     b.c_can_send = !!p && !p.writeBlocked;
     b.c_blocked = p ? p.writeBlocked ?? "" : "Reading the request…";
     b.c_need_subject = false;
-    b.c_hint = this.aiMode ? `Tell the AI what to do about ${sr.ref}` : composerHint({ toAi: false, forwarded: false, name, kind: "spokpay", me: "" });
+    b.c_hint = this.aiMode ? (this.forwarded ? composerHint({ toAi: true, forwarded: true, name, kind: "spokpay", me: "" }) : `Tell the AI what to do about ${sr.ref}`) : composerHint({ toAi: false, forwarded: false, name, kind: "spokpay", me: "" });
     b.has_ai_chat = !!p?.aiChat;
     b.reply_name = "";
     b.reply_text = "";
-    b.fwd_name = "";
-    b.fwd_text = "";
+    b.fwd_name = this.aiMode && this.forwarded ? this.forwarded.name : "";
+    b.fwd_text = this.aiMode && this.forwarded ? this.forwarded.text : "";
     b.attached = this.aiMode ? this.aiFiles.map((f) => basename(f)).join(", ") : this.srFiles.length ? `${this.srFiles.length === 1 ? "1 picture" : `${this.srFiles.length} pictures`}: ${this.srFiles.map((f) => basename(f)).join(", ")}` : "";
     b.ai_mode = this.aiMode;
     if (!p) {
@@ -1399,11 +1400,13 @@ class PersonsTab {
     const fail = (e: unknown): { status: number; body: Record<string, unknown> } => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } });
     if (this.aiMode) {
       const paths = this.aiFiles;
-      if (!text.trim() && !paths.length) return;
+      const fwd = this.forwarded;
+      if (!text.trim() && !paths.length && !fwd) return;
       this.bus.draft = "";
       this.aiFiles = [];
+      this.forwarded = null;
       this.render();
-      const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/ai`, { text, ...(paths.length ? { paths } : {}) }).catch(fail);
+      const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/ai`, { text, ...(paths.length ? { paths } : {}), ...(fwd ? { forward: fwd.id } : {}) }).catch(fail);
       if (r.status === 200 && r.body.chat != null) {
         const chat = String(r.body.chat);
         if (sr.pane) sr.pane.aiChat = chat;
@@ -1413,6 +1416,7 @@ class PersonsTab {
         if (this.sr === sr && this.aiMode) {
           if (!String(this.bus.draft ?? "")) this.bus.draft = text;
           if (!this.aiFiles.length) this.aiFiles = paths;
+          if (!this.forwarded) this.forwarded = fwd;
         } else this.drafts.set(key, text);
         this.setToast(`AI: ${String(r.body.error ?? "the Person AI didn't answer")}`);
       }
@@ -1524,6 +1528,7 @@ class PersonsTab {
   }
 
   private msgMenu(id: string, x: number, y: number): void {
+    if (this.sr) return this.srMsgMenu(id, x, y);
     const open = this.ui.open;
     const c = this.chat;
     if (!open || !c) return;
@@ -1568,6 +1573,40 @@ class PersonsTab {
       copy: () => this.copy(m.text),
       "open-file": () => void this.openFile(m.id),
       unread: () => this.markUnread(m.id),
+    };
+    this.showEntries(x, y, entries.map((e) => ({ ...e, ...(e.action ? { run: run[e.action] } : {}) })));
+  }
+
+  /**
+   * A site request message's menu: the person chats' (messageMenu) as far as SpokPay's admin API and Hub can do it:
+   * Quote (no reply to a message there), Forward to AI, Copy text, Open attachment.
+   */
+  private srMsgMenu(id: string, x: number, y: number): void {
+    const p = this.sr?.pane;
+    const it = p?.items.find((i) => i.id === id);
+    if (!p || !it || it.kind !== "msg") return;
+    const entries = messageMenu({ fromMe: it.mine, hasText: !!it.text, hasFiles: it.files.length > 0, canSend: !p.finished && !p.writeBlocked, aiOn: !p.finished, siteRequests: false, siteRequest: true });
+    const run: Record<string, () => void> = {
+      quote: () => {
+        this.setTo(false);
+        this.bus.draft = quoteInto(String(this.bus.draft ?? ""), it.text);
+        this.focusField();
+        this.render();
+      },
+      forward: () => {
+        const f = it.files[0];
+        this.forwarded = { id: it.id, name: it.author, text: it.text.slice(0, 160) || (f ? (f.image ? "Photo" : f.name) : "Message") };
+        this.setTo(true);
+        this.focusField();
+        this.render();
+      },
+      copy: () => this.copy(it.text),
+      "open-file": () => {
+        const f = it.files[0];
+        if (!f) return;
+        if (f.image && f.src) void this.srOpenImage(it.id, 0);
+        else this.ctx.openExternal(f.url);
+      },
     };
     this.showEntries(x, y, entries.map((e) => ({ ...e, ...(e.action ? { run: run[e.action] } : {}) })));
   }

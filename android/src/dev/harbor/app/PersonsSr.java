@@ -34,7 +34,8 @@ import java.util.List;
  *  lines, the author and time over each run's first bubble, the store's on the left, SpokPay's dark ones on the right)
  *  and the composer, the person chats' own (PersonsChat): "To <avatar> <owner>", up to 5 photos, the field "Message
  *  <owner> on SpokPay", attach / "To: AI | <owner>" / Send (to the store as SpokPay; the AI gets a note about the
- *  request in its Person AI chat on the PC). Read from the PC
+ *  request in its Person AI chat on the PC). A long-press on a message: PersonsChat's menu as far as SpokPay's admin
+ *  API goes (Quote, Forward to AI, Copy text, Open attachment). Read from the PC
  *  (GET /v1/persons/site-request/{ref}: opening it marks what the store wrote seen), again every 30 s while open and
  *  when its row in the list moves. Edit isn't there (SpokPay's API has no route). */
 final class PersonsSr {
@@ -55,6 +56,10 @@ final class PersonsSr {
     /** The composer writes to the AI (PersonsChat's "To: AI | <person>"), each side with its own words. */
     private boolean closed, sending, moving, toBottom = true, toAi;
     private String otherDraft = "";
+    /** A message forwarded to the AI (its menu's Forward to AI): quoted over the AI's field. */
+    private JSONObject forwarded;
+    private LinearLayout fwdBox;
+    private TextView fwdText;
     private long rowAt;
     /** Photos about to go: {name, type, data (base64)}, with their thumbnails. */
     private final List<JSONObject> files = new ArrayList<>();
@@ -107,6 +112,21 @@ final class PersonsSr {
         thumbs = Ui.row(a);
         hs.addView(thumbs);
         body.addView(hs, Ui.margins(Ui.fill(), 0, 0, 0, 8));
+        fwdBox = Ui.row(a);
+        fwdBox.setGravity(Gravity.CENTER_VERTICAL);
+        fwdBox.setPadding(Ui.dp(10), Ui.dp(2), Ui.dp(2), Ui.dp(2));
+        GradientDrawable fg = Ui.round(Ui.BG, Ui.G500, 10);
+        fg.setStroke(Ui.dp(1), Ui.G500, Ui.dp(4), Ui.dp(3));
+        fwdBox.setBackground(fg);
+        fwdBox.addView(Ui.icon(a, Ui.I_FORWARD, 14, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
+        fwdText = Ui.subtitle(Ui.text(a, "", 13, Ui.G700));
+        fwdBox.addView(fwdText, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        TextView fx = Ui.icon(a, Ui.I_X, 16, Ui.G700);
+        fx.setBackground(Ui.press(0, 0, 14));
+        fx.setOnClickListener(v -> { forwarded = null; composer(); });
+        fx.setContentDescription("Cancel forward");
+        fwdBox.addView(fx, new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(32)));
+        body.addView(fwdBox, Ui.margins(Ui.fill(), 0, 0, 0, 8));
         blocked = Ui.text(a, "", 13, Ui.G700);
         blocked.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(8));
         body.addView(blocked, Ui.fill());
@@ -396,13 +416,17 @@ final class PersonsSr {
         bubble.setPadding(Ui.dp(text.isEmpty() ? 4 : 12), Ui.dp(text.isEmpty() ? 4 : 8), Ui.dp(text.isEmpty() ? 4 : 12), Ui.dp(text.isEmpty() ? 4 : 8));
         if (!text.isEmpty()) {
             TextView t = linked(Ui.text(a, text, 14, mine ? Ui.ON_INK : Ui.FG));
-            t.setTextIsSelectable(true);
+            t.setOnLongClickListener(v -> { menu(it); return true; });
             bubble.addView(t);
         }
         View g = gallery(PersonsUi.arr(it, "files"), mine ? Ui.ON_INK : Ui.FG);
-        if (g != null) bubble.addView(g, Ui.margins(Ui.wrap(), 0, text.isEmpty() ? 0 : 6, 0, 0));
+        if (g != null) {
+            longPress(g, v -> { menu(it); return true; });
+            bubble.addView(g, Ui.margins(Ui.wrap(), 0, text.isEmpty() ? 0 : 6, 0, 0));
+        }
         int maxW = (int) (a.getResources().getDisplayMetrics().widthPixels * 0.72f);
         bubble.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+        bubble.setOnLongClickListener(v -> { menu(it); return true; });
         col.addView(bubble);
         r.addView(col, new LinearLayout.LayoutParams(-2, -2));
         if (!text.isEmpty()) ((TextView) bubble.getChildAt(0)).setMaxWidth(maxW);
@@ -411,6 +435,15 @@ final class PersonsSr {
             r.addView(mark, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(av), Ui.dp(av)), 8, 0, 0, 0));
         }
         return r;
+    }
+
+    /** The message's menu on a long-press of its pictures and files too (they take the taps). */
+    private static void longPress(View v, View.OnLongClickListener l) {
+        if (v.isClickable()) v.setOnLongClickListener(l);
+        if (v instanceof android.view.ViewGroup) {
+            android.view.ViewGroup g = (android.view.ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) longPress(g.getChildAt(i), l);
+        }
     }
 
     /** SpokPayAvatar: an "S" in a bordered circle (the mark itself is the PC's). */
@@ -518,10 +551,15 @@ final class PersonsSr {
             thumbs.addView(f, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(56), Ui.dp(56)), 0, 0, 6, 0));
         }
         ((View) thumbs.getParent()).setVisibility(toAi || thumbBits.isEmpty() ? View.GONE : View.VISIBLE);
+        if (toAi && forwarded != null) {
+            String ft = PersonsUi.s(forwarded, "text");
+            fwdText.setText(quote("Forwarding", PersonsUi.s(forwarded, "author"), ft.isEmpty() ? "Photo" : ft.replace('\n', ' ')));
+            fwdBox.setVisibility(View.VISIBLE);
+        } else fwdBox.setVisibility(View.GONE);
         blocked.setText(blockedNow ? why : "");
         blocked.setVisibility(blockedNow ? View.VISIBLE : View.GONE);
         edit.setVisibility(blockedNow ? View.GONE : View.VISIBLE);
-        edit.setHint(toAi ? "Tell the AI what to do about " + ref : PersonsUi.s(pane, "placeholder"));
+        edit.setHint(toAi ? (forwarded != null ? "Ask about this message (empty: \u201cWhat should I reply to this?\u201d)" : "Tell the AI what to do about " + ref) : PersonsUi.s(pane, "placeholder"));
         // attach (photos to the store), the switch, send
         attach.setVisibility(toAi ? View.GONE : View.VISIBLE);
         attach.setEnabled(!blockedNow && a instanceof Base);
@@ -538,7 +576,7 @@ final class PersonsSr {
 
     private void sendState() {
         boolean has = edit.getText().toString().trim().length() > 0;
-        boolean can = pane != null && (toAi ? has : !sending && PersonsUi.s(pane, "writeBlocked").isEmpty() && (has || !files.isEmpty()));
+        boolean can = pane != null && (toAi ? has || forwarded != null : !sending && PersonsUi.s(pane, "writeBlocked").isEmpty() && (has || !files.isEmpty()));
         sendPill.setEnabled(can);
         sendPill.setAlpha(can ? 1f : 0.45f);
         sendPill.setBackground(Ui.round(can ? Ui.INK : Ui.G300, 0, 18));
@@ -578,14 +616,50 @@ final class PersonsSr {
         s.setContentDescription("To " + label + (on ? ", selected" : ""));
     }
 
-    /** "To <b>Name</b>". */
-    private CharSequence quote(String lead, String name) {
+    /** "To <b>Name</b>" / "Forwarding <b>Name</b> text". */
+    private CharSequence quote(String lead, String name) { return quote(lead, name, ""); }
+
+    private CharSequence quote(String lead, String name, String text) {
         SpannableStringBuilder b = new SpannableStringBuilder(lead + " ");
         int s0 = b.length();
         b.append(name);
         b.setSpan(new ForegroundColorSpan(Ui.FG), s0, b.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         b.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), s0, b.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        if (!text.isEmpty()) b.append("  ").append(text);
         return b;
+    }
+
+    /**
+     * A message's long-press (PersonsChat's menu, as far as SpokPay's admin API goes): Quote (no reply to a message
+     * there) · Forward to AI | Copy text · Open attachment. No Mark as unread: the open pane reads the request again.
+     */
+    private void menu(JSONObject it) {
+        if (pane == null) return;
+        String text = PersonsUi.s(it, "text");
+        JSONArray fs = PersonsUi.arr(it, "files");
+        boolean live = !pane.optBoolean("finished");
+        boolean canSend = live && PersonsUi.s(pane, "writeBlocked").isEmpty();
+        List<Ds.Item> items = new ArrayList<>();
+        if (canSend && !text.isEmpty()) items.add(Ds.item(Ui.I_REPLY, "Quote", () -> {
+            if (toAi) switchTo(false);
+            StringBuilder q = new StringBuilder();
+            for (String l : text.trim().split("\n")) q.append(("> " + l).replaceAll("\\s+$", "")).append('\n');
+            String rest = edit.getText().toString().replaceAll("^\\s+", "");
+            edit.setText(q.append('\n').append(rest).toString());
+            edit.setSelection(edit.getText().length());
+            edit.requestFocus();
+        }));
+        if (live) items.add(Ds.item(Ui.I_SPARKLES, "Forward to AI", () -> {
+            forwarded = it;
+            if (!toAi) switchTo(true);
+            else composer();
+            edit.requestFocus();
+        }));
+        items.add(Ds.sep());
+        if (!text.isEmpty()) items.add(Ds.item(Ui.I_COPY, "Copy text", () -> Ui.copy(a, text)));
+        JSONObject f = fs.optJSONObject(0);
+        if (f != null && !PersonsUi.s(f, "url").isEmpty()) items.add(Ds.item(Ui.I_EXTERNAL, "Open attachment", () -> Ui.openUrl(a, PersonsUi.s(f, "url"))));
+        Ds.menu(a, items);
     }
 
     /** A photo from the picker: scaled to 1600 px and sent as JPEG (SpokPay takes up to 5 a message). */
@@ -614,10 +688,13 @@ final class PersonsSr {
     /** "To: AI": a note about the request to its Person AI chat on the PC (the request goes along as context). */
     private void askAi() {
         String text = edit.getText().toString().trim();
-        if (pane == null || text.isEmpty()) return;
+        JSONObject fwd = forwarded;
+        if (pane == null || (text.isEmpty() && fwd == null)) return;
         edit.setText("");
+        forwarded = null;
         composer();
         JSONObject b = PersonsUi.put(new JSONObject(), "text", text);
+        if (fwd != null) PersonsUi.put(b, "forward", PersonsUi.s(fwd, "id"));
         Ui.pool.execute(() -> {
             String why = null;
             try {
@@ -630,6 +707,7 @@ final class PersonsSr {
                 if (w == null) { Ui.toast(a, "Sent to the AI: its chat is in Projects on the PC"); return; }
                 Ui.toast(a, "AI: " + w);
                 if (!closed && toAi && edit.getText().length() == 0) edit.setText(text);
+                if (!closed && toAi && forwarded == null && fwd != null) { forwarded = fwd; composer(); }
             });
         });
     }
