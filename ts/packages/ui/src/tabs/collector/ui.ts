@@ -9,6 +9,7 @@ import { readFileSync, statSync } from "node:fs";
 import { clipboard, images } from "@harbor/media";
 import type { TabCtx, TabUi } from "../api.ts";
 import { REACH_META, reachError, reachHref } from "../../../../../tabs/collector/lib/reach.ts";
+import { compactCount } from "../../../../../tabs/collector/lib/format.ts";
 import { REACH_KINDS, type ReachKind } from "../../../../../tabs/collector/lib/types.ts";
 import type { DetailView } from "../../../../../tabs/collector/view.ts";
 
@@ -124,6 +125,16 @@ const listOfRow = (c: Row): Page => (c.restricted ? "restricted" : c.approved ? 
 
 /** The podium's render order (the CRM's 2-1-3): the newest in the middle, featured; a missing one leaves its place
  *  empty (pure: tested). */
+/** The bio as one paragraph for the detail dialog's three clamped lines: each run of line breaks (blank lines
+ *  too) becomes " · " and runs of spaces one space, so a bio that is a list (dates, links) can't outgrow the clamp. */
+export function bioLine(bio: string): string {
+  return bio
+    .split(/\r\n|\r|\n|\u2028|\u2029/)
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function podium<T>(videos: T[]): { v: T | null; featured: boolean }[] {
   if (!videos.length) return [];
   return [1, 0, 2].map((i) => ({ v: videos[i] ?? null, featured: i === 0 }));
@@ -357,7 +368,8 @@ export function createCollectorUi(): TabUi {
     set("s_channel_why", !c.channels.length ? "Persons › Creators has no Gmail or WhatsApp: add one there (Creators › Connections)." : (ch?.why ?? ""));
     set("s_is_email", (ch?.kind ?? c.kind) !== "whatsapp");
     const g = c.guard;
-    set("s_guard", g && g.limit ? `${g.sentToday}/${g.limit} new emails sent in the last 24 h from this account.` : "");
+    // The daily limit shows only once it's reached (the user doesn't want the running count).
+    set("s_guard", g && g.limit && g.sentToday >= g.limit ? `${g.limit} new emails in the last 24 h from this account already: try again later.` : "");
     set("s_already", g?.already ?? "");
     set("s_error", sendError);
     set("s_busy", sendBusy);
@@ -419,19 +431,10 @@ export function createCollectorUi(): TabUi {
           initials: initials(x.name),
           color: colorOf(x.id),
           email: x.email,
-          email_source: x.emailSource,
           restricted: x.restricted,
           approved: !!x.approved,
-          reach: x.reach ?? "",
-          reach_value: x.reachValue ?? "",
-          reach_color: x.reach && (REACH_KINDS as readonly string[]).includes(x.reach) ? REACH_META[x.reach as ReachKind].color : "#9aa4b2",
-          videos: new slint.ArrayModel(
-            x.videos.map((vd) => {
-              const t = pics.get(vd.thumbPath);
-              return { url: vd.url, title: vd.title, thumb: t ?? NO_PX, has_thumb: !!t };
-            }),
-          ),
-          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.emailSource}|${x.restricted}|${!!x.approved}|${x.reach ?? ""}${x.reachValue ?? ""}|${!!px}|${x.videos.map((vd) => `${vd.url}${pics.get(vd.thumbPath) ? 1 : 0}`).join(",")}`,
+          followers: x.subs !== null && x.subs !== undefined ? `${compactCount(x.subs)} followers` : "",
+          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}`,
         };
       }),
     );
@@ -492,6 +495,7 @@ export function createCollectorUi(): TabUi {
       sigs.d_videos = vidSig;
     }
     set("d_bio", d.bio);
+    set("d_bio_line", bioLine(d.bio));
     set("d_contacted", d.contacted);
     const reachSig = `${reachKind}`;
     if (sigs.d_reaches !== reachSig) {
@@ -550,8 +554,15 @@ export function createCollectorUi(): TabUi {
     reviewBusy = true;
     render();
     try {
-      if (what === "reject") take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: true })) as CollectorView);
-      if (what === "approve") {
+      // On a Restricted lead Reject is "Move to Available", on an Approved one Approve is.
+      if (what === "reject" && d.restricted) {
+        take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: false })) as CollectorView);
+        ctx?.toast(`${d.name} is back in Available.`);
+      } else if (what === "approve" && d.approved) {
+        take((await call("POST", "v1/collector/approve", { id: d.id, approved: false })) as CollectorView);
+        ctx?.toast(`${d.name} is back in Available.`);
+      } else if (what === "reject") take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: true })) as CollectorView);
+      else if (what === "approve") {
         take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to: "list" })) as CollectorView);
         ctx?.toast(`${d.name} approved.`);
       }
@@ -840,10 +851,6 @@ export function createCollectorUi(): TabUi {
     on("reach_send", () => {
       const d = detail;
       if (d?.reach) reachGo(d.id, d.reach, d.reachValue);
-    });
-    on("reach_go", (id: string) => {
-      const r = view?.creators.find((c) => c.id === id);
-      if (r?.reach) reachGo(id, r.reach, r.reachValue ?? "");
     });
     on("edit_show", () => {
       const d = detail;

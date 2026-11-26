@@ -1,21 +1,20 @@
 // Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Four views, picked in the sidebar:
 // Collector (the search form, one line while a run goes, and the leads it found), Available (every lead not
 // Approved or Restricted), Approved (approved in a lead's review bar) and Restricted (leads the user keeps out of
-// Available). A lead is a card: picture, name and handle,
-// platform, profile link, email (found, or typed by hand), the 3 newest videos, and Restrict / Unrestrict and Send
-// message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
+// Available). A lead is a card: picture, name and handle, platform, profile link, email (found, or typed by hand)
+// and followers; a click opens its detail, with the 3 newest videos, the review bar (Reject / Skip / Approve, or Move to
+// Available) and Send message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
 // driven by src/tabs/collector/ui.ts, the same data Hub for Android shows. Built on Hub's design system (ds.slint,
 // DESIGN.md): sidebar, page bar, cards, chips, inputs, a dialog.
 import { Scroll, PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, DialogFrame, DialogActions, TextBox, SearchField, PopoverFrame, MenuItem, MenuLabel, MenuSeparator } from "ds.slint";
 
 export struct ClChip { value: string, label: string, on: bool, available: bool, tip: string }
-export struct ClVid { url: string, title: string, thumb: image, has-thumb: bool }
 export struct ClRow {
     id: string, name: string, handle: string, platform: string, url: string, short: string,
     avatar: image, has-avatar: bool, initials: string, color: color,
-    email: string, email-source: string, restricted: bool, approved: bool, videos: [ClVid],
-    /** The Reach picked in the detail ("email", "discord", "whatsapp", "instagram" or ""), its value and brand colour. */
-    reach: string, reach-value: string, reach-color: color,
+    email: string, restricted: bool, approved: bool,
+    /** "9.2M followers" (YouTube subscribers count as followers); "" unknown. */
+    followers: string,
 }
 export struct ClStat { icon: string, value: string, label: string }
 /** One of the podium's videos (render order 2-1-3: the newest, featured, in the middle). */
@@ -57,6 +56,12 @@ export global CollectorBus {
     in property <string> empty-title;
     in property <string> empty-desc;
     in-out property <string> filter;
+    /** Each view's scroll, kept while Hub runs (the detail, a review, a refresh or another tab never moves it). A new
+     *  filter, sort or platform choice starts its list at the top. */
+    in-out property <length> y-collector;
+    in-out property <length> y-available;
+    in-out property <length> y-approved;
+    in-out property <length> y-restricted;
     in property <int> n-available;
     in property <int> n-restricted;
     in property <int> n-approved;
@@ -96,6 +101,8 @@ export global CollectorBus {
     in property <[ClStat]> d-stats;
     in property <[ClDVid]> d-videos;
     in property <string> d-bio;
+    /** The bio on one paragraph (its line breaks and blank lines as " · "), for the dialog's three clamped lines. */
+    in property <string> d-bio-line;
     in property <string> d-contacted;
     in property <[ClReach]> d-reaches;
     in property <string> d-reach-hint;
@@ -167,7 +174,6 @@ export global CollectorBus {
     callback reach-clear();
     callback reach-send();
     /** The Reach icon on a card: Send message (email, WhatsApp) or their Discord / Instagram. */
-    callback reach-go(string);
     callback edit-show();
     callback edit-save();
     callback edit-close();
@@ -477,63 +483,8 @@ component BrandGlyph inherits Rectangle {
     }
 }
 
-/** The Reach icon on a lead's card (the CRM's CreatorReachIcon): the brand's mark on its tint, 24px. */
-component ReachIcon inherits Rectangle {
-    in property <string> kind;
-    in property <color> tint;
-    in property <string> tip;
-    callback clicked;
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
-    background: root.tint.with-alpha(ta.has-hover ? 0.22 : 0.13);
-    BrandGlyph {
-        kind: root.kind;
-        size: 13px;
-        ink: root.tint;
-    }
-    ta := TipArea {
-        tip: root.tip;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
-
-/** One of the 3 newest videos: its thumbnail; a click opens it, the title is its tip. */
-component Thumb inherits Rectangle {
-    in property <ClVid> v;
-    width: 64px;
-    height: 48px;
-    border-radius: Ds.radius-md;
-    background: Theme.gray-200;
-    clip: true;
-    if root.v.has-thumb: Image {
-        width: parent.width;
-        height: parent.height;
-        source: root.v.thumb;
-        image-fit: cover;
-    }
-    if !root.v.has-thumb: Glyph {
-        icon: Icons.play;
-        size: 14px;
-        color: Theme.gray-700;
-    }
-    Rectangle {
-        border-radius: Ds.radius-md;
-        border-width: 1px;
-        border-color: ta.has-hover ? Theme.gray-1000 : Theme.border;
-    }
-    ta := TipArea {
-        mouse-cursor: pointer;
-        tip: root.v.title != "" ? root.v.title : root.v.url;
-        clicked => {
-            CollectorBus.open(root.v.url);
-        }
-    }
-}
-
-/** A lead: picture, name, platform, handle, profile link, email (or Add email), the 3 newest videos, Send and Restrict. */
+/** A lead: picture, name, platform, handle, profile link, email (or Add email). A click opens its detail, where the
+ *  review (Reject / Skip / Approve, or Move to Available), Send and the videos are. */
 component LeadCard inherits Rectangle {
     in property <ClRow> r;
     property <bool> editing: CollectorBus.email-for == root.r.id;
@@ -590,17 +541,6 @@ component LeadCard inherits Rectangle {
                     overflow: elide;
                     vertical-alignment: center;
                 }
-                if root.r.reach != "": VerticalLayout {
-                    alignment: center;
-                    ReachIcon {
-                        kind: root.r.reach;
-                        tint: root.r.reach-color;
-                        tip: (root.r.reach == "email" ? "Send email to " : root.r.reach == "whatsapp" ? "Send WhatsApp to " : root.r.reach == "discord" ? "Discord: " : "Instagram: ") + root.r.reach-value;
-                        clicked => {
-                            CollectorBus.reach-go(root.r.id);
-                        }
-                    }
-                }
                 Rectangle {
                     horizontal-stretch: 1;
                 }
@@ -653,12 +593,6 @@ component LeadCard inherits Rectangle {
                         }
                     }
                 }
-                if root.r.email-source != "": Text {
-                    text: "· " + root.r.email-source;
-                    font-size: 12px;
-                    color: Theme.gray-800;
-                    overflow: elide;
-                }
                 Rectangle {
                     horizontal-stretch: 1;
                 }
@@ -694,48 +628,14 @@ component LeadCard inherits Rectangle {
                 }
             }
         }
-        HorizontalLayout {
-            spacing: 6px;
-            alignment: end;
-            for v in root.r.videos: VerticalLayout {
-                alignment: center;
-                Thumb {
-                    v: v;
-                }
-            }
-        }
-        VerticalLayout {
+        // Followers, on the right (hidden when unknown).
+        if root.r.followers != "": VerticalLayout {
             alignment: center;
-            spacing: 4px;
-            if root.r.approved: Btn {
-                text: "Unapprove";
-                icon: Icons.rotate-cw;
-                size: sm;
-                variant: ghost-muted;
-                tip: "Back to Available";
-                clicked => {
-                    CollectorBus.approve-set(root.r.id, false);
-                }
-            }
-            if !root.r.approved: Btn {
-                text: root.r.restricted ? "Unrestrict" : "Restrict";
-                icon: root.r.restricted ? Icons.rotate-cw : Icons.circle-slash;
-                size: sm;
-                variant: ghost-muted;
-                tip: root.r.restricted ? "Back to Available" : "Keep out of Available (still never collected again)";
-                clicked => {
-                    CollectorBus.restrict(root.r.id, !root.r.restricted);
-                }
-            }
-            Btn {
-                text: "Send";
-                icon: Icons.send;
-                size: sm;
-                variant: ghost-muted;
-                tip: "Send message… (Gmail or WhatsApp; adds them to Persons › Creators)";
-                clicked => {
-                    CollectorBus.send-show(root.r.id);
-                }
+            Text {
+                text: root.r.followers;
+                font-size: 12.5px;
+                color: Theme.gray-900;
+                horizontal-alignment: right;
             }
         }
     }
@@ -1297,13 +1197,19 @@ component VidTile inherits Rectangle {
 /** MOST RECENT: the 3 newest as a podium (the CRM's CreatorRecentVideosPodium): #2, #1 (wider, raised), #3. */
 component Podium inherits Rectangle {
     /** At most this tall (the detail fits the window without scrolling): narrower tiles, centred. */
-    in property <length> max-h: 1000px;
     property <length> gap: 8px;
-    property <length> unit: max(60px, min((root.width - 2 * root.gap) / 3.25, ((root.max-h - 70px) * 16 / 9 + 12px) / 1.25));
+    /** The tiles' unit for the width alone, and as the height the layout gave allows: the detail's layout shrinks the
+     *  podium (its only give) so everything else fits the window above the review bar. */
+    property <length> wide-unit: (root.width - 2 * root.gap) / 3.25;
+    property <length> unit: max(60px, min(root.wide-unit, ((root.height - 70px) * 16 / 9 + 12px) / 1.25));
     property <length> mid-h: (1.25 * root.unit - 12px) * 9 / 16 + 70px;
+    preferred-height: (1.25 * root.wide-unit - 12px) * 9 / 16 + 70px;
+    max-height: self.preferred-height;
+    min-height: 90px;
+    vertical-stretch: 1;
     property <length> left: (root.width - 3.25 * root.unit - 2 * root.gap) / 2;
-    height: root.mid-h;
     for v[i] in CollectorBus.d-videos: Rectangle {
+        y: parent.height - self.height;
         x: root.left + (i == 0 ? 0px : i == 1 ? root.unit + root.gap : 2.25 * root.unit + 2 * root.gap);
         width: v.featured ? 1.25 * root.unit : root.unit;
         height: root.mid-h;
@@ -1439,8 +1345,22 @@ component DetailDialog inherits Rectangle {
     }
     property <length> box-w: min(720px, root.width - 32px);
     property <length> bar-h: 52px;
-    /** Everything but the podium, about (the podium gives way when the window is short). */
-    property <length> rest-h: 410px;
+    /** The bio's line and its three lines (one line of the same font, measured). */
+    property <length> bio-line: bio-fm.preferred-height;
+    property <length> bio-h: 3 * root.bio-line;
+    /** The whole bio in a popover over the dialog (nothing under it moves); closed by Esc, a click outside, or the next lead. */
+    property <bool> bio-open;
+    property <string> bio-of: CollectorBus.d-bio;
+    changed bio-of => {
+        self.bio-open = false;
+    }
+    bio-fm := Text {
+        visible: false;
+        width: 0;
+        height: 0;
+        text: "Ag";
+        font-size: 12.5px;
+    }
     // Edit or Send message closed over the detail: the keys come back to the review bar.
     property <bool> covered: CollectorBus.edit-open || CollectorBus.send-open;
     changed covered => {
@@ -1458,7 +1378,9 @@ component DetailDialog inherits Rectangle {
         }
         key-pressed(e) => {
             if e.text == Key.Escape {
-                if !self.has-focus {
+                if root.bio-open {
+                    root.bio-open = false;
+                } else if !self.has-focus {
                     self.focus();
                 } else {
                     CollectorBus.detail-close();
@@ -1500,278 +1422,323 @@ component DetailDialog inherits Rectangle {
                 keys.focus();
             }
         }
-        inner := VerticalLayout {
+        // The content above the review bar, clipped to it: whatever the window, nothing reaches the bar.
+        Rectangle {
             x: 0;
             y: 0;
             width: parent.width;
             height: parent.height - 1px - root.bar-h;
-            padding: 20px;
-            padding-bottom: 16px;
-            spacing: 12px;
-            alignment: start;
-            // Header: picture, name, PLATFORM @handle, Has Contact; Open channel, Edit, "3 of 12", × on the right.
-            HorizontalLayout {
+            clip: true;
+            inner := VerticalLayout {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                padding: 20px;
+                padding-bottom: 16px;
                 spacing: 12px;
-                Rectangle {
-                    width: 48px;
-                    height: 48px;
-                    border-radius: 10px;
-                    clip: true;
-                    background: CollectorBus.d-has-avatar ? Theme.fg.with-alpha(0.06) : CollectorBus.d-color;
-                    if CollectorBus.d-has-avatar: Image {
-                        width: parent.width;
-                        height: parent.height;
-                        source: CollectorBus.d-avatar;
-                        image-fit: cover;
+                alignment: start;
+                // Header: picture, name, PLATFORM @handle, Has Contact; Open channel, Edit, "3 of 12", × on the right.
+                HorizontalLayout {
+                    spacing: 12px;
+                    Rectangle {
+                        width: 48px;
+                        height: 48px;
+                        border-radius: 10px;
+                        clip: true;
+                        background: CollectorBus.d-has-avatar ? Theme.fg.with-alpha(0.06) : CollectorBus.d-color;
+                        if CollectorBus.d-has-avatar: Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: CollectorBus.d-avatar;
+                            image-fit: cover;
+                        }
+                        if !CollectorBus.d-has-avatar: Text {
+                            text: CollectorBus.d-initials;
+                            font-size: 16px;
+                            font-weight: 600;
+                            color: white;
+                        }
                     }
-                    if !CollectorBus.d-has-avatar: Text {
-                        text: CollectorBus.d-initials;
-                        font-size: 16px;
-                        font-weight: 600;
-                        color: white;
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 4px;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: CollectorBus.d-name;
-                        font-size: 16px;
-                        font-weight: 600;
-                        color: Theme.fg;
-                        overflow: elide;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: CollectorBus.d-name;
+                            font-size: 16px;
+                            font-weight: 600;
+                            color: Theme.fg;
+                            overflow: elide;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Text {
+                                text: CollectorBus.d-platform;
+                                font-size: 12px;
+                                letter-spacing: 0.5px;
+                                color: Theme.fg.with-alpha(0.3);
+                                vertical-alignment: center;
+                            }
+                            if CollectorBus.d-handle != "": Text {
+                                text: CollectorBus.d-handle;
+                                font-size: 12.5px;
+                                color: Theme.fg.with-alpha(0.45);
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            if CollectorBus.d-has-contact: Rectangle {
+                                width: hc.preferred-width + 14px;
+                                height: 19px;
+                                border-radius: 9.5px;
+                                background: Theme.fg.with-alpha(0.07);
+                                hc := Text {
+                                    text: "Has Contact";
+                                    font-size: 10.5px;
+                                    color: Theme.fg.with-alpha(0.55);
+                                }
+                            }
+                            if CollectorBus.d-approved || CollectorBus.d-restricted: Rectangle {
+                                width: st.preferred-width + 14px;
+                                height: 19px;
+                                border-radius: 9.5px;
+                                background: (CollectorBus.d-approved ? Theme.green-900 : Theme.red-900).with-alpha(0.12);
+                                st := Text {
+                                    text: CollectorBus.d-approved ? "Approved" : "Restricted";
+                                    font-size: 10.5px;
+                                    color: CollectorBus.d-approved ? Theme.green-900 : Theme.red-900;
+                                }
+                            }
+                        }
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        alignment: start;
-                        Text {
-                            text: CollectorBus.d-platform;
-                            font-size: 12px;
-                            letter-spacing: 0.5px;
-                            color: Theme.fg.with-alpha(0.3);
-                            vertical-alignment: center;
-                        }
-                        if CollectorBus.d-handle != "": Text {
-                            text: CollectorBus.d-handle;
-                            font-size: 12.5px;
-                            color: Theme.fg.with-alpha(0.45);
-                            overflow: elide;
-                            vertical-alignment: center;
-                        }
-                        if CollectorBus.d-has-contact: Rectangle {
-                            width: hc.preferred-width + 14px;
-                            height: 19px;
-                            border-radius: 9.5px;
-                            background: Theme.fg.with-alpha(0.07);
-                            hc := Text {
-                                text: "Has Contact";
-                                font-size: 10.5px;
-                                color: Theme.fg.with-alpha(0.55);
+                        alignment: end;
+                        VerticalLayout {
+                            alignment: center;
+                            if CollectorBus.d-url != "": Btn {
+                                text: CollectorBus.d-open-label;
+                                icon: Icons.external;
+                                size: sm;
+                                variant: outline;
+                                clicked => {
+                                    CollectorBus.open(CollectorBus.d-url);
+                                }
                             }
                         }
-                        if CollectorBus.d-approved || CollectorBus.d-restricted: Rectangle {
-                            width: st.preferred-width + 14px;
-                            height: 19px;
-                            border-radius: 9.5px;
-                            background: (CollectorBus.d-approved ? Theme.green-900 : Theme.red-900).with-alpha(0.12);
-                            st := Text {
-                                text: CollectorBus.d-approved ? "Approved" : "Restricted";
-                                font-size: 10.5px;
-                                color: CollectorBus.d-approved ? Theme.green-900 : Theme.red-900;
+                        VerticalLayout {
+                            alignment: center;
+                            Btn {
+                                text: "Edit";
+                                icon: Icons.pencil;
+                                size: sm;
+                                variant: primary;
+                                clicked => {
+                                    CollectorBus.edit-show();
+                                }
+                            }
+                        }
+                        if CollectorBus.d-position != "": Text {
+                            text: CollectorBus.d-position;
+                            font-size: 12.5px;
+                            color: Theme.gray-800;
+                            vertical-alignment: center;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            TouchArea {
+                                width: 28px;
+                                height: 28px;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    CollectorBus.detail-close();
+                                }
+                                Glyph {
+                                    icon: Icons.x;
+                                    size: 16px;
+                                    color: parent.has-hover ? Theme.fg : Theme.subtle;
+                                }
                             }
                         }
                     }
                 }
-                HorizontalLayout {
+                // The stat tiles (only those with data).
+                if CollectorBus.d-stats.length > 0: HorizontalLayout {
                     spacing: 8px;
-                    alignment: end;
-                    VerticalLayout {
+                    for s in CollectorBus.d-stats: StatTile {
+                        s: s;
+                        horizontal-stretch: 1;
+                        height: 48px;
+                    }
+                }
+                if CollectorBus.d-filling && CollectorBus.d-stats.length == 0: Text {
+                    text: "Reading their profile…";
+                    font-size: 12px;
+                    color: Theme.fg.with-alpha(0.3);
+                }
+                // MOST RECENT
+                if CollectorBus.d-videos.length > 0: VerticalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 1;
+                    HorizontalLayout {
                         alignment: center;
-                        if CollectorBus.d-url != "": Btn {
-                            text: CollectorBus.d-open-label;
-                            icon: Icons.external;
-                            size: sm;
-                            variant: outline;
+                        spacing: 6px;
+                        Glyph {
+                            icon: Icons.flame;
+                            size: 14px;
+                            color: Theme.fg.with-alpha(0.4);
+                        }
+                        Text {
+                            text: "MOST RECENT";
+                            font-size: 12px;
+                            font-weight: 600;
+                            letter-spacing: 2.4px;
+                            color: Theme.fg.with-alpha(0.7);
+                            vertical-alignment: center;
+                        }
+                    }
+                    Podium { }
+                }
+                DSection {
+                    icon: Icons.sticky-note;
+                    title: "BIO";
+                    // Three lines at most, clipped (its line breaks folded into " · "): the dialog never scrolls and the
+                    // bio never runs over the review bar. Not `overflow: elide`: on wrapped text Slint 1.18 elides every
+                    // font run of the last line ("2022▸…100"), so a cut bio ends in a fade and "… more" instead. A click
+                    // shows it all in a popover over the dialog.
+                    // 2px short of three lines: the accents of a fourth line (Ã, Õ) reach up into the third's box.
+                    Rectangle {
+                        height: min(bio-t.preferred-height, root.bio-h - 2px);
+                        clip: true;
+                        bio-t := Text {
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            height: root.bio-h;
+                            vertical-alignment: top;
+                            text: CollectorBus.d-bio != "" ? CollectorBus.d-bio-line : CollectorBus.d-filling ? "Reading their profile…" : "No bio on the profile.";
+                            font-size: 12.5px;
+                            color: CollectorBus.d-bio != "" ? (bio-ta.has-hover ? Theme.fg.with-alpha(0.8) : Theme.fg.with-alpha(0.65)) : Theme.fg.with-alpha(0.3);
+                            wrap: word-wrap;
+                        }
+                        if CollectorBus.d-bio != "" && bio-t.preferred-height > root.bio-h + 1px: HorizontalLayout {
+                            x: parent.width - self.width;
+                            y: root.bio-h - 2px - root.bio-line;
+                            width: 36px + more.preferred-width;
+                            height: root.bio-line;
+                            Rectangle {
+                                width: 28px;
+                                background: @linear-gradient(90deg, Theme.bg100.with-alpha(0) 0%, Theme.bg100 100%);
+                            }
+                            Rectangle {
+                                background: Theme.bg100;
+                                more := Text {
+                                    x: parent.width - self.width;
+                                    text: "… more";
+                                    font-size: 12.5px;
+                                    color: bio-ta.has-hover ? Theme.fg.with-alpha(0.8) : Theme.fg.with-alpha(0.45);
+                                }
+                            }
+                        }
+                        bio-ta := TipArea {
+                            enabled: CollectorBus.d-bio != "";
+                            mouse-cursor: CollectorBus.d-bio != "" ? pointer : default;
+                            tip: "Click to read the whole bio";
                             clicked => {
-                                CollectorBus.open(CollectorBus.d-url);
+                                root.bio-open = true;
                             }
                         }
                     }
-                    VerticalLayout {
-                        alignment: center;
+                }
+                DSection {
+                    icon: Icons.mail;
+                    title: "REACH";
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for k in CollectorBus.d-reaches: Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            border-radius: Ds.radius-md;
+                            background: k.on ? k.color.with-alpha(0.13) : kta.has-hover ? Theme.fg.with-alpha(0.08) : Theme.fg.with-alpha(0.04);
+                            border-width: k.on ? 1px : 0px;
+                            border-color: Theme.fg.with-alpha(0.4);
+                            BrandGlyph {
+                                kind: k.kind;
+                                size: 16px;
+                                ink: k.on ? k.color : kta.has-hover ? Theme.fg.with-alpha(0.7) : Theme.fg.with-alpha(0.4);
+                            }
+                            kta := TipArea {
+                                tip: k.label + ": one way to contact them (its icon shows on their card)";
+                                clicked => {
+                                    CollectorBus.reach-pick(k.kind);
+                                }
+                            }
+                        }
+                        Rectangle {
+                            width: 2px;
+                        }
+                        Input {
+                            horizontal-stretch: 1;
+                            text <=> CollectorBus.d-reach-text;
+                            hint: CollectorBus.d-reach-hint;
+                            edited(t) => {
+                                CollectorBus.reach-edited(t);
+                            }
+                            accepted => {
+                                CollectorBus.reach-save();
+                            }
+                        }
                         Btn {
-                            text: "Edit";
-                            icon: Icons.pencil;
+                            text: CollectorBus.d-reach-busy ? "Saving…" : "Save";
                             size: sm;
                             variant: primary;
+                            enabled: CollectorBus.d-reach-can-save && !CollectorBus.d-reach-busy;
                             clicked => {
-                                CollectorBus.edit-show();
+                                CollectorBus.reach-save();
                             }
                         }
-                    }
-                    if CollectorBus.d-position != "": Text {
-                        text: CollectorBus.d-position;
-                        font-size: 12.5px;
-                        color: Theme.gray-800;
-                        vertical-alignment: center;
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        TouchArea {
-                            width: 28px;
-                            height: 28px;
-                            mouse-cursor: pointer;
+                        if CollectorBus.d-reach-saved: Btn {
+                            text: "Clear";
+                            size: sm;
+                            variant: ghost-muted;
+                            enabled: !CollectorBus.d-reach-busy;
                             clicked => {
-                                CollectorBus.detail-close();
-                            }
-                            Glyph {
-                                icon: Icons.x;
-                                size: 16px;
-                                color: parent.has-hover ? Theme.fg : Theme.subtle;
+                                CollectorBus.reach-clear();
                             }
                         }
                     }
-                }
-            }
-            // The stat tiles (only those with data).
-            if CollectorBus.d-stats.length > 0: HorizontalLayout {
-                spacing: 8px;
-                for s in CollectorBus.d-stats: StatTile {
-                    s: s;
-                    horizontal-stretch: 1;
-                    height: 48px;
-                }
-            }
-            if CollectorBus.d-filling && CollectorBus.d-stats.length == 0: Text {
-                text: "Reading their profile…";
-                font-size: 12px;
-                color: Theme.fg.with-alpha(0.3);
-            }
-            // MOST RECENT
-            if CollectorBus.d-videos.length > 0: VerticalLayout {
-                spacing: 8px;
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Glyph {
-                        icon: Icons.flame;
-                        size: 14px;
-                        color: Theme.fg.with-alpha(0.4);
-                    }
-                    Text {
-                        text: "MOST RECENT";
-                        font-size: 12px;
-                        font-weight: 600;
-                        letter-spacing: 2.4px;
-                        color: Theme.fg.with-alpha(0.7);
-                        vertical-alignment: center;
-                    }
-                }
-                Podium {
-                    max-h: root.height - 32px - root.rest-h;
-                }
-            }
-            DSection {
-                icon: Icons.sticky-note;
-                title: "BIO";
-                Text {
-                    text: CollectorBus.d-bio != "" ? CollectorBus.d-bio : CollectorBus.d-filling ? "Reading their profile…" : "No bio on the profile.";
-                    font-size: 12.5px;
-                    color: CollectorBus.d-bio != "" ? Theme.fg.with-alpha(0.65) : Theme.fg.with-alpha(0.3);
-                    wrap: word-wrap;
-                    overflow: elide;
-                    // Three lines at most: the dialog never scrolls.
-                    max-height: 51px;
-                }
-            }
-            DSection {
-                icon: Icons.mail;
-                title: "REACH";
-                HorizontalLayout {
-                    spacing: 6px;
-                    for k in CollectorBus.d-reaches: Rectangle {
-                        width: 32px;
-                        height: 32px;
-                        border-radius: Ds.radius-md;
-                        background: k.on ? k.color.with-alpha(0.13) : kta.has-hover ? Theme.fg.with-alpha(0.08) : Theme.fg.with-alpha(0.04);
-                        border-width: k.on ? 1px : 0px;
-                        border-color: Theme.fg.with-alpha(0.4);
-                        BrandGlyph {
-                            kind: k.kind;
-                            size: 16px;
-                            ink: k.on ? k.color : kta.has-hover ? Theme.fg.with-alpha(0.7) : Theme.fg.with-alpha(0.4);
-                        }
-                        kta := TipArea {
-                            tip: k.label + ": one way to contact them (its icon shows on their card)";
-                            clicked => {
-                                CollectorBus.reach-pick(k.kind);
-                            }
-                        }
-                    }
-                    Rectangle {
-                        width: 2px;
-                    }
-                    Input {
-                        horizontal-stretch: 1;
-                        text <=> CollectorBus.d-reach-text;
-                        hint: CollectorBus.d-reach-hint;
-                        edited(t) => {
-                            CollectorBus.reach-edited(t);
-                        }
-                        accepted => {
-                            CollectorBus.reach-save();
-                        }
-                    }
-                    Btn {
-                        text: CollectorBus.d-reach-busy ? "Saving…" : "Save";
-                        size: sm;
-                        variant: primary;
-                        enabled: CollectorBus.d-reach-can-save && !CollectorBus.d-reach-busy;
-                        clicked => {
-                            CollectorBus.reach-save();
-                        }
-                    }
-                    if CollectorBus.d-reach-saved: Btn {
-                        text: "Clear";
-                        size: sm;
-                        variant: ghost-muted;
-                        enabled: !CollectorBus.d-reach-busy;
-                        clicked => {
-                            CollectorBus.reach-clear();
-                        }
-                    }
-                }
-                if CollectorBus.d-reach-error != "": Text {
-                    text: CollectorBus.d-reach-error;
-                    font-size: 11.5px;
-                    color: Theme.red-900;
-                    overflow: elide;
-                }
-                if CollectorBus.d-reach-error == "" && CollectorBus.d-reach-help != "": Text {
-                    text: CollectorBus.d-reach-help;
-                    font-size: 11.5px;
-                    color: Theme.fg.with-alpha(0.3);
-                    overflow: elide;
-                }
-                if CollectorBus.d-reach-send != "" || CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": HorizontalLayout {
-                    spacing: 10px;
-                    alignment: start;
-                    if CollectorBus.d-reach-send != "": Btn {
-                        text: CollectorBus.d-reach-send;
-                        icon: CollectorBus.d-reach-send-kind == "email" ? Icons.mail : CollectorBus.d-reach-send-kind == "whatsapp" ? Icons.send : Icons.external;
-                        size: sm;
-                        variant: secondary;
-                        clicked => {
-                            CollectorBus.reach-send();
-                        }
-                    }
-                    if CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": Text {
-                        text: CollectorBus.d-contacted != "" ? CollectorBus.d-contacted : CollectorBus.d-approved-note + ".";
+                    if CollectorBus.d-reach-error != "": Text {
+                        text: CollectorBus.d-reach-error;
                         font-size: 11.5px;
-                        color: Theme.fg.with-alpha(0.4);
-                        vertical-alignment: center;
+                        color: Theme.red-900;
                         overflow: elide;
+                    }
+                    if CollectorBus.d-reach-error == "" && CollectorBus.d-reach-help != "": Text {
+                        text: CollectorBus.d-reach-help;
+                        font-size: 11.5px;
+                        color: Theme.fg.with-alpha(0.3);
+                        overflow: elide;
+                    }
+                    if CollectorBus.d-reach-send != "" || CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        if CollectorBus.d-reach-send != "": Btn {
+                            text: CollectorBus.d-reach-send;
+                            icon: CollectorBus.d-reach-send-kind == "email" ? Icons.mail : CollectorBus.d-reach-send-kind == "whatsapp" ? Icons.send : Icons.external;
+                            size: sm;
+                            variant: secondary;
+                            clicked => {
+                                CollectorBus.reach-send();
+                            }
+                        }
+                        if CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": Text {
+                            text: CollectorBus.d-contacted != "" ? CollectorBus.d-contacted : CollectorBus.d-approved-note + ".";
+                            font-size: 11.5px;
+                            color: Theme.fg.with-alpha(0.4);
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
                     }
                 }
             }
@@ -1791,12 +1758,13 @@ component DetailDialog inherits Rectangle {
                 height: root.bar-h;
                 ReviewCell {
                     width: (root.box-w - 2px) / 3;
-                    label: "Reject";
-                    icon: Icons.x;
-                    ink: Theme.red-900;
+                    // A Restricted lead's Reject is Move to Available (an Approved one's is Approve's cell).
+                    label: CollectorBus.d-restricted ? "Move to Available" : "Reject";
+                    icon: CollectorBus.d-restricted ? Icons.rotate-cw : Icons.x;
+                    ink: CollectorBus.d-restricted ? Theme.fg.with-alpha(0.8) : Theme.red-900;
                     cap: "R";
                     cap-icon: Icons.arrow-left;
-                    tip: "To Restricted (never collected again), then the next lead";
+                    tip: CollectorBus.d-restricted ? "Back to Available, then the next lead" : "To Restricted (never collected again), then the next lead";
                     enabled: !CollectorBus.review-busy;
                     clicked => {
                         CollectorBus.review("reject");
@@ -1825,15 +1793,66 @@ component DetailDialog inherits Rectangle {
                 }
                 ReviewCell {
                     width: (root.box-w - 2px) / 3;
-                    label: "Approve";
-                    icon: Icons.check;
-                    ink: Theme.green-900;
+                    label: CollectorBus.d-approved ? "Move to Available" : "Approve";
+                    icon: CollectorBus.d-approved ? Icons.rotate-cw : Icons.check;
+                    ink: CollectorBus.d-approved ? Theme.fg.with-alpha(0.8) : Theme.green-900;
                     cap: "A";
                     cap-icon: Icons.arrow-right;
-                    tip: "To the Approved list, then the next lead";
+                    tip: CollectorBus.d-approved ? "Back to Available, then the next lead" : "To the Approved list, then the next lead";
                     enabled: !CollectorBus.review-busy;
                     clicked => {
                         CollectorBus.review("approve");
+                    }
+                }
+            }
+        }
+    }
+    // The whole bio, over the dialog (it doesn't push anything): scrolls inside when it's long.
+    if root.bio-open: Rectangle {
+        TouchArea {
+            clicked => {
+                root.bio-open = false;
+                keys.focus();
+            }
+        }
+        PopoverFrame {
+            width: root.box-w - 48px;
+            height: min(full.preferred-height + 2px, root.height * 0.6);
+            TouchArea { }
+            Scroll {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                content-height: full.preferred-height;
+                full := VerticalLayout {
+                    x: 0;
+                    y: 0;
+                    width: root.box-w - 50px;
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Glyph {
+                            icon: Icons.sticky-note;
+                            size: 12px;
+                            color: Theme.fg.with-alpha(0.35);
+                        }
+                        Text {
+                            text: "BIO";
+                            font-size: 10.5px;
+                            font-weight: 600;
+                            letter-spacing: 0.5px;
+                            color: Theme.fg.with-alpha(0.35);
+                            vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        text: CollectorBus.d-bio;
+                        font-size: 12.5px;
+                        color: Theme.fg.with-alpha(0.8);
+                        wrap: word-wrap;
                     }
                 }
             }
@@ -1916,13 +1935,36 @@ component EditDialog inherits DialogFrame {
     }
 }
 
-/** One scrolling column (a fresh one per view: switching views starts at the top). */
+/** One scrolling column (a fresh one per view), at the view's kept scroll (CollectorBus.y-…). */
 component Column inherits Rectangle {
     in property <length> col-w;
     in property <length> col-x;
+    /** "collector", "available", "approved" or "restricted". */
+    in property <string> key;
+    property <length> kept: root.key == "available" ? CollectorBus.y-available : root.key == "approved" ? CollectorBus.y-approved : root.key == "restricted" ? CollectorBus.y-restricted : CollectorBus.y-collector;
+    // Not `content-y <=> a global` (Slint 1.18 kept such a viewport at 0, settings.slint): set once, followed after.
+    init => {
+        f.content-y = root.kept;
+    }
+    // A new filter, sort or platform choice: back to the top.
+    property <string> asked: CollectorBus.filter + "|" + CollectorBus.sort-label + "|" + CollectorBus.plat-label;
+    changed asked => {
+        f.content-y = 0;
+    }
     f := Flickable {
         width: parent.width;
         height: parent.height;
+        changed content-y => {
+            if root.key == "available" {
+                CollectorBus.y-available = self.content-y;
+            } else if root.key == "approved" {
+                CollectorBus.y-approved = self.content-y;
+            } else if root.key == "restricted" {
+                CollectorBus.y-restricted = self.content-y;
+            } else {
+                CollectorBus.y-collector = self.content-y;
+            }
+        }
         content-height: inner.preferred-height + 40px;
         inner := VerticalLayout {
             x: root.col-x;
@@ -1996,6 +2038,7 @@ export component CollectorPage {
         vertical-alignment: center;
     }
     if !CollectorBus.loading && CollectorBus.page == "collector": Column {
+        key: "collector";
         x: root.main-x;
         y: root.top;
         width: root.main-w;
@@ -2005,6 +2048,7 @@ export component CollectorPage {
         CollectScreen { }
     }
     if !CollectorBus.loading && CollectorBus.page == "available": Column {
+        key: "available";
         x: root.main-x;
         y: root.list-top;
         width: root.main-w;
@@ -2014,6 +2058,7 @@ export component CollectorPage {
         ListScreen { }
     }
     if !CollectorBus.loading && CollectorBus.page == "approved": Column {
+        key: "approved";
         x: root.main-x;
         y: root.list-top;
         width: root.main-w;
@@ -2023,6 +2068,7 @@ export component CollectorPage {
         ListScreen { }
     }
     if !CollectorBus.loading && CollectorBus.page == "restricted": Column {
+        key: "restricted";
         x: root.main-x;
         y: root.list-top;
         width: root.main-w;

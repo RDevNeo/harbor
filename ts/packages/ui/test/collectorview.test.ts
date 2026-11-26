@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formOf, leadsOf, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, formOf, leadsOf, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -122,5 +122,16 @@ describe("collector lead detail", () => {
     expect(reachState(d, "email", "nope")).toMatchObject({ error: "That isn't an email address.", canSave: false });
     expect(reachState(d, "whatsapp", "").help).toContain("Country code first");
     expect(reachState(d, "discord", "").hint).toBe("Discord user ID (17-20 digits)");
+  });
+});
+
+describe("detail bio", () => {
+  it("folds line breaks and blank lines into one paragraph for the clamped lines", () => {
+    const bio = "Fala galera esse é o meu canal !!\n\n\n\n02/02/2022▸ CRIEI ESSE CANAL\r\n05/02/2022▸ PRIMEIRO VÍDEO\n  \n\t05/02/2022▸  1º INSCRITO  \n";
+    expect(bioLine(bio)).toBe("Fala galera esse é o meu canal !! · 02/02/2022▸ CRIEI ESSE CANAL · 05/02/2022▸ PRIMEIRO VÍDEO · 05/02/2022▸ 1º INSCRITO");
+    expect(bioLine(bio)).not.toMatch(/[\r\n]/);
+    expect(bioLine("")).toBe("");
+    expect(bioLine("\n\n")).toBe("");
+    expect(bioLine("one line")).toBe("one line");
   });
 });

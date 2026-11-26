@@ -14,10 +14,13 @@ Four views, picked in the sidebar (the phone: chips under the title):
   leads that run found.
 - **Available**: every lead not Approved or Restricted, newest first, with one filter box (name, handle, email,
   platform, link).
-- **Approved**: leads approved in the review bar (below), the same filter box, Unapprove on each card (back to
-  Available) and its own Copy JSONL.
-- **Restricted**: leads the user keeps out of Available (Restrict, or Reject in the review bar). They stay
-  remembered, so no run collects them again.
+- **Approved**: leads approved in the review bar (below), the same filter box and its own Copy JSONL. In their
+  detail the review bar's Approve is **Move to Available**.
+- **Restricted**: leads the user keeps out of Available (Reject in the review bar). They stay remembered, so no run
+  collects them again. In their detail the review bar's Reject is **Move to Available**.
+
+Each view keeps its scroll while Hub runs (the detail, a review, a refresh or another tab doesn't move it); a new
+filter, sort or platform choice starts the list at the top.
 
 The three lists share one bar over them (it stays put while they scroll): the filter box, then **Sort** and **Show
 only — platforms**, the SpokPay CRM's creator column menus (`creator-status-column.tsx`, `sortCreatorsForStatus`).
@@ -27,9 +30,9 @@ list's count on the right; several at once, the menu stays open). Both are remem
 `settings.platforms`, the phone's too) and give the review bar's next-lead order. Phone: two compact buttons beside
 the filter, each a simple menu.
 
-A lead is one card: picture, name, platform, handle and profile link, the Reach icon when one is set, the email (and
-where it was found) or "Add email", the 3 newest videos (thumbnails; a click opens the video), **Restrict / Unrestrict**,
-and **Send message**. Copy JSONL (Available's and Approved's page bar) gives that view's leads for SpokPayCRM → Creators → Import.
+A lead is one card: picture, name, platform, handle and profile link, the email or "Add email", and its followers on
+the right ("9.2M followers"; YouTube subscribers count as followers; none when unknown). Review, Send message and the
+videos are in its detail. Copy JSONL (Available's and Approved's page bar) gives that view's leads for SpokPayCRM → Creators → Import.
 
 A click anywhere else on a card (Collector, Available or Restricted) opens the lead's **detail**, the SpokPay CRM's
 creator profile dialog (`src/components/creators/creator-profile-dialog.tsx`, `creator-recent-videos.tsx`,
@@ -43,13 +46,16 @@ the same content as a full-screen sheet:
   Followers / Posts (570K, 1K, 69M).
 - MOST RECENT: the 3 newest videos as the CRM's podium (#2, #1 wider and raised, #3): thumbnail, two lines of title,
   "yesterday · 22K views"; a click opens the video.
-- Bio (three lines at most; the phone four, a tap shows it all); Reach. The search term and the links stay in the record
+- Bio (three lines at most, clipped, its line breaks folded into " · " so a bio that's a list can't grow; a cut one
+  ends in "… more", and a click shows it all, as written, in a popover over the dialog; the phone four lines, a tap
+  shows it all); Reach. The search term and the links stay in the record
   (and the export), not on screen.
 - **Reach**: one way to contact them (Email, Discord user ID, WhatsApp, Instagram handle; the CRM's checks), Save /
   Clear. Only ever typed: an email or WhatsApp Reach is also the address Send message uses, typed (never replaced by one
   found later). The saved Reach's button: Send email / Send WhatsApp (Send message on that channel), Open in Discord /
-  Open Instagram. Its icon shows on the card (a click does the same). Exported as the CRM's `reach_kind` / `reach_value`.
-- The **review bar** at the bottom (a review queue's: three equal cells, the keys' caps after each label):
+  Open Instagram. Exported as the CRM's `reach_kind` / `reach_value`.
+- The **review bar** at the bottom, always under the content (the podium gives way in a short window; nothing reaches
+  the bar) (a review queue's: three equal cells, the keys' caps after each label):
   **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
   it approved (out of Available, into Approved). Each then shows the next lead
   of the list the detail was opened from (its filter and order at that moment; a lead that left that list meanwhile
@@ -100,7 +106,7 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
 - **Send message**: a template (the SpokPay CRM's outreach emails, `{name}` / `{handle}` filled), the channel
   (Persons › Creators' Gmail; its WhatsApp when their bio gives a number), To, Subject, the message, then Send… and a
   second "Send now". The lead becomes a person in Persons › Creators and the message is in that chat. The CRM's guards:
-  30 new emails a rolling 24 h, no second send to the same person within 2 minutes. `HUB_COLLECTOR_SEND=fake` records
+  30 new emails a rolling 24 h (shown only once reached), no second send to the same person within 2 minutes. `HUB_COLLECTOR_SEND=fake` records
   instead of sending.
 
 **SpokPay CRM import** (`POST v1/collector/import-crm {status?}`, default "Has Contact"; `lib/crm.ts`): the CRM's
