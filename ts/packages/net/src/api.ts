@@ -100,6 +100,11 @@ export interface ApiDeps {
   appInfo: () => Json;
   /** The APK this PC serves, if any. */
   apk: () => string | null;
+  /**
+   * Hub's phone app over the air (update's phoneota.ts), to paired phones: `GET /phone/<file>` (hub-app.json, the
+   * code zip, the APK and their .minisig) and `GET /phone/wait?have=N&wait=S` (answers once the offer isn't N).
+   */
+  phoneOta?: { file: (name: string) => string | null; wait: (have: number, ms: number) => Promise<Json | null> };
   /** A file of the live preview this PC offers (update's preview.ts `offeredFile`). */
   previewFile?: (kind: string, id: string) => string | null;
   /** `/mesh/…` (mesh.rs `serve`); the body is still on the reader. */
@@ -470,6 +475,14 @@ export class Api {
       noteRefused(ip, "a pairing from before accounts");
       return sendJson(w, 401, { error: OLD_PAIRING, signin: true, upgrade: true });
     }
+    if (segs[0] === "phone" && segs.length === 2 && this.d.phoneOta && (req.method === "GET" || req.method === "HEAD")) {
+      const ota = this.d.phoneOta;
+      if (segs[1] === "wait") {
+        const m = await ota.wait(Number(query(req, "have") ?? 0) || 0, Math.min(240, Math.max(0, Number(query(req, "wait") ?? 0) || 0)) * 1000);
+        return sendJson(w, 200, m === null ? { changed: false } : { changed: true, offer: m });
+      }
+      return this.serveFileAt(w, ota.file(segs[1] ?? ""), req.method === "HEAD");
+    }
     const device = Array.from(header(req, "x-harbor-device") ?? "").slice(0, 60).join("");
     const global = header(req, "x-harbor-ids") === "global";
     hub.seen.set(token, [device, now()]);
@@ -623,6 +636,23 @@ export class Api {
       return sendJson(w, 404, { error: "the app file is unreadable" });
     }
     w.write(response(200, "application/vnd.android.package-archive", len, 'Content-Disposition: attachment; filename="hub.apk"\r\n'));
+    if (headOnly) {
+      w.end();
+      return;
+    }
+    createReadStream(path).pipe(w);
+  }
+
+  /** A whole file (the phone's update files), or 404. */
+  private serveFileAt(w: Duplex, path: string | null, headOnly: boolean): void {
+    let len = -1;
+    try {
+      if (path !== null) len = statSync(path).size;
+    } catch {
+      len = -1;
+    }
+    if (path === null || len < 0) return sendJson(w, 404, { error: "this PC has no such phone update file" });
+    w.write(response(200, path.endsWith(".json") ? "application/json" : "application/octet-stream", len, ""));
     if (headOnly) {
       w.end();
       return;

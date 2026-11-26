@@ -248,7 +248,8 @@ public final class Boot {
                 throw new IOException("unreadable " + INFO);
             }
             i.version = p.getProperty("version", "");
-            if (i.code <= 0 || !i.version.matches("\\d+\\.\\d+\\.\\d+")) throw new IOException("unreadable " + INFO);
+            // Hub names its builds as the desktop does: "0.194.0+abc1234" (phoneota.ts).
+            if (i.code <= 0 || !i.version.matches("\\d+\\.\\d+\\.\\d+(\\+[0-9a-f]{4,40})?")) throw new IOException("unreadable " + INFO);
             return i;
         }
     }

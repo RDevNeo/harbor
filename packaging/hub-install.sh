@@ -5,8 +5,9 @@
 #   ~/.local/share/applications/hub.desktop, ~/.local/share/icons/hicolor/scalable/apps/hub.svg
 #   ~/.config/autostart/hub.desktop                                        starts at login (`hub --background`)
 # Data: ~/.local/share/hub, state ~/.local/state/hub (made at its first start; scripts/hub-cutover.sh in
-# creators-hub copies Harbor's there). Port 47940. It never updates itself from Harbor: running this again is the
-# update (a running Hub restarts into the new build when VERSION changes).
+# creators-hub copies Harbor's there). Port 47940. It never updates itself from Harbor. It does follow Hub's own branch:
+# the running Hub builds every push to `hub` of RDevNeo/harbor and restarts into it (HUB.md "Updates"; SOURCE names
+# the checkout it watches for this PC's own pushes). Running this again is a manual update.
 #
 # The runtime is Harbor's signed release runtime (compiled Bun + native addons), pinned below and checked by sha256.
 # Google sign-in clients (baked into Harbor's bundles) come from HARBOR_GOOGLE_* in the environment, else from an
@@ -61,6 +62,8 @@ install_files() { # DIR with hub, harbor-app.js, RUNTIME, hub.svg, VERSION(.new)
   for f in hub harbor-app.js RUNTIME hub.svg; do
     cp "$from/$f" "$LIB/.$f.new" && mv -f "$LIB/.$f.new" "$LIB/$f"
   done
+  # The checkout it was built from: the running Hub follows its `hub` branch (followmain.ts, HUB.md "Updates").
+  [[ -f "$from/SOURCE" ]] && cp "$from/SOURCE" "$LIB/SOURCE"
   if [[ -d "$from/hub-machines" ]]; then
     rm -rf "$LIB/hub-machines.new"; cp -r "$from/hub-machines" "$LIB/hub-machines.new"
     # the machines' policies are this PC's own once installed: an edited machines.json stays
@@ -133,6 +136,8 @@ mkdir -p "$OUT"
 cp "$RT" "$OUT/hub"
 mv "$STAGE/harbor-app.js" "$OUT/harbor-app.js"
 echo "$RUNTIME" > "$OUT/RUNTIME"
+COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+[[ -n "$COMMON" && "$(basename "$COMMON")" == ".git" ]] && dirname "$COMMON" > "$OUT/SOURCE"
 cp packaging/hub.svg "$OUT/hub.svg"
 if [[ -n "$MACHINES" ]]; then
   mkdir -p "$OUT/hub-machines"

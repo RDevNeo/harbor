@@ -124,12 +124,12 @@ public final class Shell {
 
     // ---- new code (the app's Update) ----
 
-    /** Checks a downloaded harbor-phone-code.zip with Harbor's release key and keeps it for the
+    /** Checks a downloaded harbor-phone-code.zip with Hub's code key (Minisign.HUB_PUBKEY) and keeps it for the
      *  next start (Boot.stage). Throws GeneralSecurityException when it isn't Harbor's,
      *  Boot.Unusable when it can't run on this shell. */
     public static Boot.Info stage(Context c, File file, String sigText, String release) throws IOException, GeneralSecurityException {
         if (!loads()) throw new Boot.Unusable("Android " + Build.VERSION.RELEASE + " can't load app code: it updates by APK");
-        Boot.Info i = Boot.stage(dir(c), file, sigText, release, Minisign.PUBKEY, BUNDLED, code(), VERSION, System.currentTimeMillis());
+        Boot.Info i = Boot.stage(dir(c), file, sigText, release, Minisign.HUB_PUBKEY, BUNDLED, code(), VERSION, System.currentTimeMillis());
         Log.i(TAG, "staged code " + i.version + " for the next start");
         return i;
     }

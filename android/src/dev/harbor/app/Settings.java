@@ -984,6 +984,11 @@ public class Settings extends Base {
 
     /** 7001 -> 0.7.1 (android/build.sh: major*1000000 + minor*1000 + patch). */
     static String name(long code) {
+        // Hub's builds are numbered by their commit's time; their names come with the offer (Update.named).
+        if (code >= 100_000_000L) {
+            String n = Update.nameOf(code);
+            return n != null ? n : "build " + code;
+        }
         return (code / 1000000) + "." + (code / 1000 % 1000) + "." + (code % 1000);
     }
 

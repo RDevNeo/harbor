@@ -18,6 +18,11 @@ public final class Minisign {
 
     public static final String PUBKEY = "RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh";
 
+    /** Hub's code key (since shell 6): what Hub's PCs sign the phone's app code, the APK and the
+     *  offer with (ts/packages/update/src/phoneota.ts; its secret half stays on the PC that builds,
+     *  ~/.local/share/hub-android/hub-code.key). Hub never takes anything Harbor's key signed. */
+    public static final String HUB_PUBKEY = "RWRtUqRKqohqE7dmWWIOn3ASylEeUf2J/+8gd6vhUbd+2zYHRTUVU1Rx";
+
     private static final String TRUSTED = "trusted comment: ";
 
     /** A .minisig file: the key that made it, the signature over the file's BLAKE2b-512, the

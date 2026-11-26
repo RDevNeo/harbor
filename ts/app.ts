@@ -69,7 +69,14 @@ const commands: Record<string, Command> = {
     const on = followMain.enabled(kv);
     const { readJson } = await import("./packages/update/src/files.ts");
     const st = readJson<import("./packages/update/src/followmain.ts").FollowStatus>(join(dataDir(), followMain.DIR, "status.json"));
-    console.log(`main: ${process.env.HARBOR_FOLLOW_REMOTE || followMain.REMOTE}${checkout === null ? "" : `, or ${checkout} when it's ahead`}`);
+    const branch = process.env.HUB_FOLLOW_BRANCH || "hub";
+    console.log(`follows: ${process.env.HARBOR_FOLLOW_REMOTE || followMain.REMOTE} ${branch}${checkout === null ? "" : `, or ${checkout}'s ${branch} when it's ahead`}`);
+    const { defaultConfig, phoneOta } = await import("./packages/update/src/index.ts");
+    const lib = defaultConfig().dir;
+    if (lib !== null) {
+      const m = phoneOta.served(lib);
+      console.log(m === null ? "phones: no app code served yet (the first look builds it)" : `phones: serving ${m.release} (code ${m.phone.code}, shell ${m.phone.minShell}${m.apk ? `, APK ${m.apk.code}` : ""})`);
+    }
     const off = { state: "off" as const, checkout: "", commit: "", subject: "", version: "", reason: "", at: 0 };
     console.log(st === null || !on ? (on ? "On: the running Hub starts following main within 10 s." : followMain.statusLine(off, false)) : followMain.statusLine(st, on));
     if (st?.last) console.log(followMain.timelineText(st.last));

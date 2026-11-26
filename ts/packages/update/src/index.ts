@@ -14,6 +14,7 @@ export { updateCli, updateCommands, versionLabel } from "./commands.ts";
 export { releaseCli } from "./release-cli.ts";
 export { lane, buildManifest, type Lane } from "./lane.ts";
 export * as followMain from "./followmain.ts";
-export { FollowMain, REMOTE as FOLLOW_REMOTE } from "./followmain.ts";
+export { FollowMain, REMOTE as FOLLOW_REMOTE, defaultRunner } from "./followmain.ts";
+export * as phoneOta from "./phoneota.ts";
 export * as health from "./health.ts";
 export { abandonStart } from "./handoff.ts";

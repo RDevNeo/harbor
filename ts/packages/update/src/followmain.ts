@@ -44,7 +44,7 @@
 //   is made only when main isn't already in what runs, and never older than a running release).
 // - Run health per commit (health.ts) is what `ts/scripts/soaked.ts` releases from (`status` shows the
 //   last build's push-to-running time).
-import { appendFileSync, closeSync, copyFileSync, linkSync, openSync, watch, type FSWatcher } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, copyFileSync, linkSync, openSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { publicKey, type UpdateConfig } from "./config.ts";
 import { verifyFileSignature } from "./minisign.ts";
@@ -149,8 +149,24 @@ export interface FollowDeps {
   /** Harbor's data folder: the clone, the builds, health.json and status.json go in `follow-main/`. */
   dataDir: string;
   repos: () => { path: string; remote: string; local: string | null }[];
-  /** Hub: following main is off (run.ts turns it on only with HUB_FOLLOW_MAIN=1). */
+  /** Following is off (run.ts: HUB_FOLLOW_MAIN=0, for rigs that must never update). */
   off?: boolean;
+  /** The branch followed: "main" (Harbor) or Hub's "hub" (run.ts). */
+  branch?: string;
+  /**
+   * Hub: whether `tip` needs another runtime than this PC's is decided by the runtime packaging/hub-install.sh pins
+   * there (Hub's only source of runtimes), not by lane.ts against a release tag. A different pin installs
+   * the whole build through `runtimeInstall` (the runtime and the bundle, with `.previous` kept).
+   */
+  hubRuntime?: boolean;
+  /** Builds `tip` whole (hub-install.sh --stage in `src`) when its pinned runtime isn't this PC's: the staged folder, or null (said why). */
+  runtimeInstall?: (src: string, commit: string, version: string, log: string) => Promise<string | null>;
+  /** After a look: the tip followed (the phone's app code is built from it when android/ changed, phoneota.ts). */
+  tipSeen?: (src: string, tip: string) => void;
+  /** The checkout when no project is one (Hub: the one packaging/hub-install.sh built from, its SOURCE file). */
+  checkoutGuess?: () => string | null;
+  /** How often the remote is asked with `git ls-remote` besides the checkout's refs (REMOTE_POLL_MS). */
+  remotePollMs?: number;
   /** The updater is installing a release: nothing is installed beside it. */
   busy: () => boolean;
   /** Extra build environment (the running build's Google clients, so a build of main keeps them). */
@@ -184,6 +200,12 @@ export function shipsInApp(path: string): boolean {
   if (!path.startsWith("ts/") && !path.startsWith("assets/")) return false;
   if (/(^|\/)test\//.test(path) || /\.test\.ts$/.test(path) || /\.md$/i.test(path)) return false;
   return !/^ts\/(rig|scripts|proto)\//.test(path) && !/^ts\/parity/.test(path) && path !== "ts/run.sh";
+}
+
+/** The runtime packaging/hub-install.sh pins (`RUNTIME=0.189.0`): Hub's runtimes come from there only. */
+export function hubPinnedRuntime(script: string): string | null {
+  const m = /^RUNTIME=(\d+\.\d+\.\d+)\s*$/m.exec(script);
+  return m === null ? null : (m[1] as string);
 }
 
 /** `0.165.1+abc1234`: the release the source says, then the commit. */
@@ -246,7 +268,8 @@ export const defaultRunner: Runner = async (cmd, o) => {
 };
 
 /** Watches main's refs (local and origin's, loose and packed) in a repository's common git folder. */
-export function watchMainRefs(common: string, onChange: () => void): () => void {
+export function watchMainRefs(common: string, onChange: () => void, branch = "main"): () => void {
+  const ref = new RegExp(`^${branch.replace(/[^A-Za-z0-9_-]/g, "")}(\\.lock)?$`);
   const ws: FSWatcher[] = [];
   const on = (dir: string, match: RegExp): void => {
     try {
@@ -259,8 +282,8 @@ export function watchMainRefs(common: string, onChange: () => void): () => void 
       // not there: the 5-minute look still finds the change
     }
   };
-  on(join(common, "refs", "heads"), /^main(\.lock)?$/);
-  on(join(common, "refs", "remotes", "origin"), /^main(\.lock)?$/);
+  on(join(common, "refs", "heads"), ref);
+  on(join(common, "refs", "remotes", "origin"), ref);
   on(common, /^packed-refs$/);
   return () => {
     for (const w of ws) w.close();
@@ -271,7 +294,7 @@ export function watchMainRefs(common: string, onChange: () => void): () => void 
  * Installs a bundle built here as install.ts installs a release's: what runs is kept in `.previous` (the
  * start watchdog and `rollback` go back to it), VERSION is written last.
  */
-export function installLocal(cfg: UpdateConfig, bundle: string, version: string): void {
+export function installLocal(cfg: UpdateConfig, bundle: string, version: string, runtime?: string, runtimeVersion?: string): void {
   if (cfg.dir === null) throw new Error("not an installed copy");
   const dir = cfg.dir;
   const prev = fresh(join(dir, PREVIOUS));
@@ -290,6 +313,14 @@ export function installLocal(cfg: UpdateConfig, bundle: string, version: string)
     } catch {
       // another volume or no links: as before, nothing to go back to
     }
+  }
+  if (runtime !== undefined && runtimeVersion !== undefined) {
+    // Hub: a new pinned runtime, beside the bundle (`.previous` gets the one that ran, for the start watchdog).
+    const rt = join(dir, `.staging-${RUNTIME_FILE}`);
+    copyFileSync(runtime, rt);
+    chmodSync(rt, 0o755);
+    replace(rt, exe, prev);
+    writeAtomic(join(dir, "RUNTIME"), runtimeVersion);
   }
   const staged = join(dir, ".staging-local.js");
   copyFileSync(bundle, staged);
@@ -338,6 +369,11 @@ export class FollowMain {
     return this.d.cfg;
   }
 
+  /** The branch followed ("main" unless the deps say). */
+  get branch(): string {
+    return this.d.branch ?? "main";
+  }
+
   status(): FollowStatus {
     return this.st;
   }
@@ -358,7 +394,7 @@ export class FollowMain {
   }
 
   checkout(): string | null {
-    return findCheckout(this.d.kv, this.d.repos);
+    return findCheckout(this.d.kv, this.d.repos) ?? this.d.checkoutGuess?.() ?? null;
   }
 
   setOn(on: boolean): void {
@@ -443,10 +479,10 @@ export class FollowMain {
         this.unwatch = (this.d.watchRefs ?? watchMainRefs)(common, () => {
           this.nudgeSoon(checkout);
           this.soon();
-        });
+        }, this.branch);
       });
     }
-    this.pollTimer = setInterval(() => this.poke(), this.remote !== null ? REMOTE_POLL_MS : POLL_MS);
+    this.pollTimer = setInterval(() => this.poke(), this.remote !== null ? (this.d.remotePollMs ?? REMOTE_POLL_MS) : POLL_MS);
     this.pollTimer.unref?.();
     this.soonTimer = setTimeout(() => this.poke(), FIRST_MS);
     this.soonTimer.unref?.();
@@ -535,7 +571,7 @@ export class FollowMain {
   async nudge(checkout: string): Promise<boolean> {
     const token = this.d.token?.() ?? null;
     if (token === null || this.cfg.worker === null || this.remote === null) return false;
-    const sha = await this.revParse(checkout, "refs/remotes/origin/main");
+    const sha = await this.revParse(checkout, `refs/remotes/origin/${this.branch}`);
     if (sha === null || sha === this.nudged || sha === this.heard?.sha) return false;
     this.nudged = sha;
     try {
@@ -682,7 +718,7 @@ export class FollowMain {
   private async lsRemote(): Promise<string | null> {
     if (this.remote === null) return null;
     ensureDir(this.home);
-    const out = await this.git(this.home, ["ls-remote", "--", this.remote, "refs/heads/main"], LS_MS).catch((e: unknown) => {
+    const out = await this.git(this.home, ["ls-remote", "--", this.remote, `refs/heads/${this.branch}`], LS_MS).catch((e: unknown) => {
       this.cfg.log(`follow-main: ${this.remote} not reached: ${e instanceof Error ? e.message : String(e)}`);
       return "";
     });
@@ -709,8 +745,8 @@ export class FollowMain {
 
   /** The newer of the checkout's main and origin/main; origin/main when they've gone apart. */
   async tipOf(checkout: string): Promise<string | null> {
-    const local = await this.revParse(checkout, "refs/heads/main");
-    const origin = await this.revParse(checkout, "refs/remotes/origin/main");
+    const local = await this.revParse(checkout, `refs/heads/${this.branch}`);
+    const origin = await this.revParse(checkout, `refs/remotes/origin/${this.branch}`);
     if (local === null || origin === null) return local ?? origin;
     if (local === origin) return local;
     return (await this.ancestor(checkout, origin, local)) ? local : origin;
@@ -730,12 +766,16 @@ export class FollowMain {
       remove(this.src);
       ensureDir(this.home);
       if (checkout !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", checkout, this.src], INSTALL_MS);
-      else if (this.remote !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", "main", "--no-tags", "--", this.remote, this.src], INSTALL_MS);
+      else if (this.remote !== null) await this.git(this.home, ["clone", "--quiet", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", this.branch, "--no-tags", "--", this.remote, this.src], INSTALL_MS);
       else throw new Error("no Hub checkout found");
     }
-    if (checkout === null) return this.fetchRemote(["+refs/heads/main:refs/follow/remote-main"]);
-    await this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, "+refs/heads/main:refs/follow/main", "+refs/remotes/origin/main:refs/follow/origin-main"], INSTALL_MS).catch(() =>
-      this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, "+refs/heads/main:refs/follow/main"], INSTALL_MS),
+    if (checkout === null) return this.fetchRemote([`+refs/heads/${this.branch}:refs/follow/remote-main`]);
+    const b = this.branch;
+    await this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, `+refs/heads/${b}:refs/follow/main`, `+refs/remotes/origin/${b}:refs/follow/origin-main`], INSTALL_MS).catch(() =>
+      // A checkout with only one of them (no local branch, or never fetched).
+      this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, `+refs/remotes/origin/${b}:refs/follow/origin-main`], INSTALL_MS).catch(() =>
+        this.git(this.src, ["fetch", "--quiet", "--force", "--tags", checkout, `+refs/heads/${b}:refs/follow/main`], INSTALL_MS),
+      ),
     );
   }
 
@@ -768,7 +808,7 @@ export class FollowMain {
     if (!this.possible() || !this.on() || this.commit === null || buildOf(current(this.cfg)) === null) return false;
     const checkout = this.checkout();
     if (!isFile(join(this.src, ".git", "HEAD"))) await this.syncClone(checkout);
-    if (this.remote !== null && (await this.revParse(this.src, this.commit)) === null) await this.fetchRemote(["+refs/heads/main:refs/follow/remote-main"]).catch(() => undefined);
+    if (this.remote !== null && (await this.revParse(this.src, this.commit)) === null) await this.fetchRemote([`+refs/heads/${this.branch}:refs/follow/remote-main`]).catch(() => undefined);
     const tag = await this.tagCommit(version);
     if (tag === null) return false;
     const keep = await this.ancestor(this.src, tag, this.commit);
@@ -793,7 +833,14 @@ export class FollowMain {
     const noticedAt = news?.at ?? startedAt;
     const short = tip.slice(0, 7);
     const running = current(this.cfg);
-    if (tip === this.commit) return this.set({ state: "idle", commit: tip, version: running, reason: "" });
+    if (tip === this.commit) {
+      // Hub: the phone's app is built from what runs too (its first build, or one that failed before).
+      if (this.d.tipSeen !== undefined) {
+        await this.syncClone(from);
+        this.d.tipSeen(this.src, tip);
+      }
+      return this.set({ state: "idle", commit: tip, version: running, reason: "" });
+    }
     const mem = this.memory();
     if (mem.failed?.commit === tip) return this.set({ state: "failed", commit: tip, reason: mem.failed.why });
     const crashed = mem.crashed.find((c) => c.commit === tip);
@@ -811,6 +858,8 @@ export class FollowMain {
         return;
       }
     }
+    // Hub: the phone's app follows the same tip (phoneota.ts builds it only when a commit changed it).
+    this.d.tipSeen?.(this.src, tip);
     const subject = await this.git(this.src, ["log", "-1", "--format=%s", tip]).catch(() => "");
     const committedAt = Number(await this.git(this.src, ["log", "-1", "--format=%ct", tip]).catch(() => "0")) * 1000;
     const pkgText = await this.git(this.src, ["show", `${tip}:ts/package.json`]).catch(() => "");
@@ -832,6 +881,14 @@ export class FollowMain {
 
     // Bundle only: the runtime this PC has must run it.
     const rt = runtimeOnDisk(this.cfg);
+    if (this.d.hubRuntime === true) {
+      const script = await this.git(this.src, ["show", `${tip}:packaging/hub-install.sh`]).catch(() => "");
+      const pinned = hubPinnedRuntime(script);
+      if (pinned === null) return this.set({ state: "failed", commit: tip, subject, version, reason: `${short} pins no runtime in packaging/hub-install.sh` });
+      if (pinned !== rt) return this.installWhole({ tip, version, subject, committedAt, noticedAt, news, pinned });
+      const got = await this.obtain({ commit: tip, version, minRuntime: rt, subject, isPublic: false, pushedAt: news?.pushedAt ?? 0 });
+      return this.finish(got, { tip, version, subject, committedAt, noticedAt, news });
+    }
     const base = await this.tagCommit(rt);
     if (base === null) return this.set({ state: "skipped", commit: tip, subject, version, reason: `can't tell whether ${short} needs a new runtime: no tag v${rt} to compare with` });
     const sinceRuntime = (await this.git(this.src, ["diff", "--name-only", base, tip])).split("\n").filter(Boolean);
@@ -842,6 +899,12 @@ export class FollowMain {
     // The bundle asks for no more than the runtime that will run it: the older of RUNTIME and this one.
     const minRuntime = newer(rt, this.cfg.runtime) && parse(this.cfg.runtime) !== null ? this.cfg.runtime : rt;
     const got = await this.obtain({ commit: tip, version, minRuntime, subject, isPublic: pick.public, pushedAt: news?.pushedAt ?? 0 });
+    return this.finish(got, { tip, version, subject, committedAt, noticedAt, news });
+  }
+
+  /** Installs what a look got (a bundle), unless something else is installing or following stopped. */
+  private finish(got: { bundle: string; via: "github" | "here" } | null, o: { tip: string; version: string; subject: string; committedAt: number; noticedAt: number; news: { pushedAt: number } | null }): void {
+    const { tip, version, subject, committedAt, noticedAt, news } = o;
     if (got === null) return;
     if (this.d.busy() || onDisk(this.cfg) !== null) return this.waitThen(tip, "a release is being installed");
     if (!this.on() || !this.armed) return;
@@ -850,6 +913,38 @@ export class FollowMain {
       m.pending = { commit: tip, version, committedAt, noticedAt, builtAt: this.cfg.now(), ...(news?.pushedAt ? { pushedAt: news.pushedAt } : {}), ...(got.via === "github" ? { via: "github" as const } : {}) };
     });
     this.cfg.log(`follow-main: ${version} installed (${got.via === "github" ? "built by GitHub" : "built here"}), restarting into it`);
+    this.set({ state: "swapping", commit: tip, subject, version, reason: "" });
+  }
+
+  /**
+   * Hub, a commit that pins another runtime: the whole build (hub-install.sh --stage: the pinned runtime, checked
+   * by its sha256, and the bundle) goes in, the runtime and the bundle that ran kept in `.previous`.
+   */
+  private async installWhole(o: { tip: string; version: string; subject: string; committedAt: number; noticedAt: number; news: { pushedAt: number } | null; pinned: string }): Promise<void> {
+    const { tip, version, subject, committedAt, noticedAt, news } = o;
+    if (this.d.runtimeInstall === undefined) return this.set({ state: "skipped", commit: tip, subject, version, reason: `${tip.slice(0, 7)} needs runtime ${o.pinned}` });
+    const log = join(this.home, "build.log");
+    writeAtomic(log, `follow-main: building ${version} whole, for runtime ${o.pinned} (${subject})\n`);
+    this.set({ state: "building", commit: tip, subject, version, reason: `runtime ${o.pinned}` });
+    await this.git(this.src, ["checkout", "--quiet", "--force", "--detach", tip]);
+    await this.git(this.src, ["clean", "-fdq", "-e", "ts/node_modules"]);
+    const staged = await this.d.runtimeInstall(this.src, tip, version, log).catch((e: unknown) => {
+      appendFileSync(log, `${e instanceof Error ? e.message : String(e)}\n`);
+      return null;
+    });
+    if (staged === null) {
+      this.remember((m) => {
+        m.failed = { commit: tip, why: `the build for runtime ${o.pinned} failed` };
+      });
+      return this.set({ state: "failed", commit: tip, subject, version, reason: `the build for runtime ${o.pinned} failed (${log})` });
+    }
+    if (this.d.busy() || onDisk(this.cfg) !== null) return this.waitThen(tip, "a release is being installed");
+    if (!this.on() || !this.armed) return;
+    installLocal(this.cfg, join(staged, BUNDLE_FILE), version, join(staged, RUNTIME_FILE), o.pinned);
+    this.remember((m) => {
+      m.pending = { commit: tip, version, committedAt, noticedAt, builtAt: this.cfg.now(), ...(news?.pushedAt ? { pushedAt: news.pushedAt } : {}) };
+    });
+    this.cfg.log(`follow-main: ${version} installed with runtime ${o.pinned}, restarting into it`);
     this.set({ state: "swapping", commit: tip, subject, version, reason: "" });
   }
 

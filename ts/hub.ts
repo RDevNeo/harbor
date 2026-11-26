@@ -153,7 +153,7 @@ import { TAB_ENGINES } from "./tabs/index.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
 import { type Chat, dataDir, home, pins, repoDir, secrets, settingsync, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
-import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
+import { apk as updateApk, defaultConfig as updateConfig, notices, phoneOta, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 import { fileSource, secretSource, SingleHost } from "./accountvault.ts";
 import { chatCloud, cloudLog } from "./cloudsync.ts";
@@ -680,6 +680,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
+  const otaDir = o.updater ? updateConfig().dir : null;
   const profile = new ProfileScheduler();
   const profileCheckNow = (): Json => profileCheckJson(profileCheck(store, { confirmed: ownerConfirmed(store, owners), owner: ownerOf(store, owners), github: githubOf(store, owners) }));
   const peersNow = (): Peer[] => [...hub.mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -1576,6 +1577,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     appInfo: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
     apk,
+    // Hub's phone app over the air: what this installed Hub built from `hub` and serves (phoneota.ts).
+    ...(otaDir !== null ? { phoneOta: { file: (n: string) => phoneOta.servedFile(otaDir, n), wait: async (have: number, ms: number) => asJson(await phoneOta.waitOffer(otaDir, have, ms)) } } : {}),
     ...(o.preview ? { previewFile: (kind: string, id: string) => o.preview?.file(kind, id) ?? null } : {}),
     mesh: (p, q, r) => mesh.serve(p, q, r),
     meshAdmitted: (p, q) => mesh.admitted(p, q),

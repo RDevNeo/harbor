@@ -41,7 +41,18 @@ import dev.harbor.shell.Minisign;
 import dev.harbor.shell.Shell;
 
 
-/** Updates this app from Harbor's GitHub releases (RDevNeo/harbor), never from a PC: the
+/** Hub: updates this app from its own PC, not from GitHub (HUB.md "Updates"): the PC that
+ *  follows Hub's branch builds the app's code when a push changes it, signs it with Hub's code key
+ *  (Minisign.HUB_PUBKEY) and serves it under /phone/ (ts/packages/update/src/phoneota.ts):
+ *  hub-app.json names what's on offer (its code and APK, as harbor-app.json did), and
+ *  GET /phone/wait?have=N, held while a Hub screen is up (Listen, hold), says within a second that
+ *  something new is served. Everything below then works as it did with Harbor's releases: the code
+ *  goes in without an install (Shell.stage, a live restart back on the same screen: Swap), and only
+ *  a new shell (or Android 8) installs the APK, which the app downloads and offers itself.
+ *  Version numbers are the commit's time in seconds; names ("0.194.0+abc1234") come with the offer.
+ *
+ *  Harbor's notes, still true of what happens once an update is known: the
+ *  latest release's harbor-app.json (signed) names the phone app it ships, and its
  *  latest release's harbor-app.json (signed) names the phone app it ships, and its
  *  harbor-android.apk is downloaded from GitHub straight into a PackageInstaller session and
  *  installed only when its minisign signature checks out with Harbor's release key (Minisign,
@@ -78,13 +89,15 @@ public class Update extends BroadcastReceiver {
 
     static final String TAG = "harbor-update";
     static final String REPO = "https://github.com/RDevNeo/harbor";
+    /** Where the PC serves the phone's updates (phoneota.ts). */
+    static final String PHONE = "/phone/";
     /** How long the release news holds a question when nothing's new (seconds; the service
      *  allows 240). Each answer wakes the radio: fewer is less battery. */
     static final int HOLD_S = 240;
-    static final String APK = "harbor-android.apk", MANIFEST = "harbor-app.json", CODE = Boot.ASSET;
+    static final String APK = "harbor-android.apk", MANIFEST = "hub-app.json", CODE = Boot.ASSET;
     /** Between two looks at GitHub (a HEAD of releases/latest, ~5 KB: the website, not the API
      *  with its 60 calls an hour), unless forced. */
-    static final long GAP = 5 * 60_000;
+    static final long GAP = 60_000;
 
     /** The newest app the latest release ships (versionCode) and the release whose files hold it
      *  (a release that didn't change the app carries an earlier one's), from the last {@link #check}:
@@ -146,37 +159,88 @@ public class Update extends BroadcastReceiver {
         synchronized (looking) { return lookNow(c, force); }
     }
 
-    /** Hub takes no update from Harbor's releases (they'd swap Harbor's code in): it has no
-     *  release channel of its own yet, so it never looks, hears or installs. */
-    static final boolean OFF = Pair.ON;
+    /** Hub takes nothing from Harbor's releases: its updates come from its PC (above). */
+    static final boolean OFF = false;
 
     private static long lookNow(Context c, boolean force) throws IOException {
         if (OFF) return 0;
         if (!force && System.currentTimeMillis() - checked < GAP) return known(c);
         checked = System.currentTimeMillis();
         SharedPreferences p = Ui.prefs(c);
-        String tag = latestTag();
-        if (tag == null) throw new IOException("GitHub didn't name a latest release");
-        // (an app from before shells kept no code offer: it reads the manifest again once)
-        if (tag.equals(p.getString("gh_tag", "")) && p.contains("known_min_shell") && known(c) > 0) return bestCode;
-        byte[] json = get(REPO + "/releases/download/v" + tag + "/" + MANIFEST, 1 << 20);
-        byte[] sigBytes = json == null ? null : get(REPO + "/releases/download/v" + tag + "/" + MANIFEST + ".minisig", 4096);
-        if (json == null || sigBytes == null) return known(c); // the release is still uploading its files: next look
+        byte[] json = get(c, PHONE + MANIFEST, 1 << 20);
+        byte[] sigBytes = json == null ? null : get(c, PHONE + MANIFEST + ".minisig", 4096);
+        if (json == null || sigBytes == null) return known(c); // the PC serves no phone app (yet)
         String sig = new String(sigBytes, StandardCharsets.UTF_8);
         Offer o;
+        String tag;
         try {
-            Minisign.check(Minisign.PUBKEY, json, sig, tag, MANIFEST);
-            o = offerFrom(new JSONObject(new String(json, StandardCharsets.UTF_8)), tag);
+            JSONObject j = new JSONObject(new String(json, StandardCharsets.UTF_8));
+            tag = j.optString("release", "");
+            // Signed by Hub's code key, for the release it names.
+            Minisign.check(Minisign.HUB_PUBKEY, json, sig, tag, MANIFEST);
+            o = offerFrom(j, tag);
         } catch (GeneralSecurityException | org.json.JSONException e) {
-            throw new IOException("the latest release's " + MANIFEST + ": " + e.getMessage());
+            throw new IOException("the PC's " + MANIFEST + ": " + e.getMessage());
         }
         if (o.apkCode <= 0 && o.code <= 0) return known(c);
         offer = o;
+        named(c, o.code, o.codeRelease);
+        named(c, o.apkCode, o.apkRelease);
+        p.edit().putLong("ota_have", Math.max(o.code, o.apkCode)).apply();
         // Kept for the next start: Settings and the sheet know the version on offer at once.
         p.edit().putString("gh_tag", tag).putLong("known_code", o.apkCode).putString("known_release", o.apkRelease)
                 .putInt("known_shell", o.apkShell).putLong("known_phone", o.code).putString("known_phone_release", o.codeRelease)
                 .putInt("known_min_shell", o.minShell).apply();
         return pick(c, o);
+    }
+
+    /** Hub's version numbers are times; the names that go with them come with the offer. */
+    static void named(Context c, long code, String name) {
+        if (code <= 0 || name == null || name.isEmpty()) return;
+        SharedPreferences p = Ui.prefs(c);
+        if (!name.equals(p.getString("code_name_" + code, null))) p.edit().putString("code_name_" + code, name).apply();
+    }
+
+    /** The name of version `code` (null: not known here). */
+    static String nameOf(long code) {
+        if (code == Shell.code()) return Shell.name();
+        return Ui.app == null ? null : Ui.prefs(Ui.app).getString("code_name_" + code, null);
+    }
+
+    /** The PC this phone takes its updates from: the one in use, else the first. */
+    static Hub pc(Context c) {
+        Hub h = Hub.get(c, Hub.last(c));
+        if (h == null && !Hub.all(c).isEmpty()) h = Hub.all(c).get(0);
+        return h;
+    }
+
+    /** A GET to that PC (pinned TLS, as every call: Hub.open). */
+    private static Net.Http pcGet(Context c, String path, int readTimeout) throws IOException {
+        Hub h = pc(c);
+        if (h == null) throw new IOException("no PC paired yet");
+        return h.open("GET", path, readTimeout, true);
+    }
+
+    /** A small file the PC serves, whole; null when it has none. */
+    private static byte[] get(Context c, String path, int max) throws IOException {
+        Net.Http h = pcGet(c, path, 30_000);
+        try {
+            int code = h.code();
+            if (code == 404) return null;
+            if (code != 200) throw new IOException("the PC answered HTTP " + code);
+            try (InputStream in = h.in()) {
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    if (out.size() > max) throw new IOException("too big: " + path);
+                }
+                return out.toByteArray();
+            }
+        } finally {
+            h.close();
+        }
     }
 
     /** The newest app known to be on offer, without asking GitHub: the last {@link #check}'s,
@@ -255,9 +319,8 @@ public class Update extends BroadcastReceiver {
 
     /** What went wrong talking to GitHub, said plainly. */
     static String why(Throwable e) {
-        if (e instanceof java.net.UnknownHostException) return "No internet connection (can't find github.com).";
-        if (e instanceof java.net.ConnectException || e instanceof java.net.SocketTimeoutException) return "GitHub isn't answering. Try again soon.";
-        if (e instanceof javax.net.ssl.SSLException) return "Couldn't set up the encrypted connection to GitHub: " + e.getMessage();
+        if (e instanceof java.net.UnknownHostException || e instanceof java.net.ConnectException || e instanceof java.net.SocketTimeoutException) return "Your PC isn't answering (Hub updates come from it). Try again soon.";
+        if (e instanceof javax.net.ssl.SSLException) return "Couldn't set up the encrypted connection to your PC: " + e.getMessage();
         String m = e.getMessage();
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
     }
@@ -272,32 +335,22 @@ public class Update extends BroadcastReceiver {
     static String hear(Context c, int holdS) throws IOException {
         if (OFF) return null;
         SharedPreferences p = Ui.prefs(c);
-        String have = Quiet.have(p.getString("gh_tag", ""), p.getString("news_heard", ""), Settings.myName(c));
-        String service = Account.service();
-        if (service == null || service.isEmpty()) throw new IOException("no release news service");
-        HttpURLConnection h = (HttpURLConnection) new URL(service.replaceAll("/+$", "") + "/v1/release/wait?have=" + have + "&wait=" + holdS).openConnection();
+        long have = p.getLong("ota_have", 0);
+        Net.Http h = pcGet(c, PHONE + "wait?have=" + have + "&wait=" + holdS, holdS * 1000 + 30_000);
         try {
-            h.setConnectTimeout(15_000);
-            h.setReadTimeout(holdS * 1000 + 30_000);
-            h.setRequestProperty("User-Agent", "harbor-android");
-            int code = h.getResponseCode();
-            if (code == 204) return null;
-            if (code != 200) throw new IOException("release news: HTTP " + code);
-            String v;
-            try (InputStream in = h.getInputStream()) {
-                byte[] buf = new byte[4096];
-                int n = 0, r;
-                while (n < buf.length && (r = in.read(buf, n, buf.length - n)) > 0) n += r;
-                v = new JSONObject(new String(buf, 0, n, StandardCharsets.UTF_8)).optString("version", "");
+            int code = h.code();
+            if (code != 200) throw new IOException("update news: HTTP " + code);
+            JSONObject r;
+            try {
+                r = new JSONObject(Hub.read(h.in()));
             } catch (org.json.JSONException e) {
-                throw new IOException("release news: " + e.getMessage());
+                throw new IOException("update news: " + e.getMessage());
             }
-            if (!Quiet.newer(v, have)) return null;
-            // Asked about once: if GitHub doesn't show it yet, its own look (GAP) finds it later.
-            p.edit().putString("news_heard", v).apply();
-            return v;
+            if (!r.optBoolean("changed")) return null;
+            JSONObject o = r.optJSONObject("offer");
+            return o == null ? "?" : o.optString("release", "?");
         } finally {
-            h.disconnect();
+            h.close();
         }
     }
 
@@ -307,11 +360,9 @@ public class Update extends BroadcastReceiver {
     static void news(Context c, String v) {
         long t0 = SystemClock.elapsedRealtime();
         Log.i(TAG, "release " + v + " is out (news)");
-        for (int i = 0; i < 12 && Quiet.newer(v, Ui.prefs(c).getString("gh_tag", "")); i++) {
-            if (i > 0) SystemClock.sleep(5_000);
-            try { check(c, true); } catch (IOException e) { Log.i(TAG, "GitHub: " + why(e)); }
-        }
-        Log.i(TAG, "GitHub names " + Ui.prefs(c).getString("gh_tag", "?") + ", app " + bestCode + " (" + (SystemClock.elapsedRealtime() - t0) + " ms)");
+        // Hub: the PC serves it already (the manifest is written last): one look.
+        try { check(c, true); } catch (IOException e) { Log.i(TAG, "the PC: " + why(e)); }
+        Log.i(TAG, "the PC offers " + Ui.prefs(c).getString("gh_tag", "?") + ", app " + bestCode + " (" + (SystemClock.elapsedRealtime() - t0) + " ms)");
         round(c);
     }
 
@@ -586,16 +637,15 @@ public class Update extends BroadcastReceiver {
             drop(c, null);
             if (!d.isDirectory() && !d.mkdirs()) throw new IOException("can't make " + d);
             long t0 = SystemClock.elapsedRealtime();
-            String base = REPO + "/releases/download/v" + release + "/" + CODE;
-            byte[] sigBytes = get(base + ".minisig", 4096);
-            if (sigBytes == null) throw new IOException("the release has no signature for the app code");
-            HttpURLConnection http = open(base);
+            byte[] sigBytes = get(c, PHONE + CODE + ".minisig", 4096);
+            if (sigBytes == null) throw new IOException("the PC has no signature for the app code");
+            Net.Http http = pcGet(c, PHONE + CODE, 120_000);
             try {
-                int code = http.getResponseCode();
-                if (code != 200) throw new IOException("GitHub has no app code to send (HTTP " + code + ")");
-                long size = http.getContentLengthLong();
-                if (size <= 0) throw new IOException("GitHub sent no size for the app code");
-                try (InputStream in = http.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+                int code = http.code();
+                if (code != 200) throw new IOException("the PC has no app code to send (HTTP " + code + ")");
+                long size = http.length();
+                if (size <= 0) throw new IOException("the PC sent no size for the app code");
+                try (InputStream in = http.in(); FileOutputStream out = new FileOutputStream(part)) {
                     byte[] buf = new byte[1 << 16];
                     long done = 0;
                     while (done < size) {
@@ -617,7 +667,7 @@ public class Update extends BroadcastReceiver {
                 }
                 Log.i(TAG, "app code " + to + " downloaded and staged (" + size + " bytes, " + (SystemClock.elapsedRealtime() - t0) + " ms)");
             } finally {
-                http.disconnect();
+                http.close();
                 part.delete();
             }
         }
@@ -715,9 +765,8 @@ public class Update extends BroadcastReceiver {
             drop(c, null);
             if (!d.isDirectory() && !d.mkdirs()) throw new IOException("can't make " + d);
             long t0 = SystemClock.elapsedRealtime();
-            String base = REPO + "/releases/download/v" + release + "/" + APK;
-            byte[] sigBytes = get(base + ".minisig", 4096);
-            if (sigBytes == null) throw new IOException("the release has no signature for the app");
+            byte[] sigBytes = get(c, PHONE + APK + ".minisig", 4096);
+            if (sigBytes == null) throw new IOException("the PC has no signature for the app");
             Minisign.Sig sig;
             try {
                 sig = Minisign.parse(new String(sigBytes, StandardCharsets.UTF_8));
@@ -725,14 +774,14 @@ public class Update extends BroadcastReceiver {
             } catch (GeneralSecurityException e) {
                 throw new Bad("the app's signature: " + e.getMessage());
             }
-            HttpURLConnection http = open(base);
+            Net.Http http = pcGet(c, PHONE + APK, 300_000);
             try {
-                int code = http.getResponseCode();
-                if (code != 200) throw new IOException("GitHub has no app to send (HTTP " + code + ")");
-                long size = http.getContentLengthLong();
-                if (size <= 0) throw new IOException("GitHub sent no size for the app");
+                int code = http.code();
+                if (code != 200) throw new IOException("the PC has no app to send (HTTP " + code + ")");
+                long size = http.length();
+                if (size <= 0) throw new IOException("the PC sent no size for the app");
                 Minisign.Blake2b hash = new Minisign.Blake2b();
-                try (InputStream in = http.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+                try (InputStream in = http.in(); FileOutputStream out = new FileOutputStream(part)) {
                     byte[] buf = new byte[1 << 16];
                     long done = 0;
                     while (done < size) {
@@ -747,7 +796,7 @@ public class Update extends BroadcastReceiver {
                 }
                 // Nothing is kept (or goes to Android) that Harbor's release key didn't sign.
                 try {
-                    Minisign.verify(Minisign.PUBKEY, hash.digest(), sig);
+                    Minisign.verify(Minisign.HUB_PUBKEY, hash.digest(), sig);
                 } catch (GeneralSecurityException e) {
                     throw new Bad("the downloaded app isn't Hub's (" + e.getMessage() + ")");
                 }
@@ -756,7 +805,7 @@ public class Update extends BroadcastReceiver {
                 Log.i(TAG, "app " + to + " downloaded and checked (" + size + " bytes, " + (SystemClock.elapsedRealtime() - t0) + " ms)");
                 return apk;
             } finally {
-                http.disconnect();
+                http.close();
                 part.delete();
             }
         }

@@ -95,12 +95,12 @@ public class Listen extends Service {
         stopSelf();
     }
 
-    /** Release news (Update.hear: the account service, public, no PC and no sign-in) held for a
+    /** Update news (Update.hear; Hub: the PC's GET /phone/wait, phoneota.ts) held for a
      *  few minutes at a time; between answers the usual round (GitHub's own releases/latest at
      *  most every 5 minutes, the fallback). A release heard is downloaded and installs as soon as
      *  nobody sees Harbor. */
     private void news(int my) {
-        if (Update.OFF) return; // Hub: no release news (Update.OFF)
+        if (Update.OFF) return;
         int fails = 0;
         while (running && my == gen) {
             String v = null;

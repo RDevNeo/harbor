@@ -4,7 +4,10 @@ Hub is Harbor's Android app rebranded on this branch: app name **Hub**, applicat
 `dev.hub.app`, `hub://` links, its own icon. It installs beside Harbor and Person Hub and pairs
 only with Hub on the PC (QR code, `hub://pair?…`; [PROTOCOL.md](PROTOCOL.md#hub-pairing)), never
 with Harbor's account service or PCs. Build: `android/build.sh` → `android/build/hub-android.apk`.
-Harbor's notes below still describe the rest of the app.
+Updates come from the paired Hub PC, not GitHub: it builds the app's code on every push to `hub` that changes
+it, signs it with Hub's code key (shell 6+) and serves it under `/phone/`; the app takes it without an install
+(HUB.md "Updates"). Only a shell change needs the APK, which the app downloads from the PC and offers itself.
+Harbor's notes below still describe the rest of the app (read "the PC" where they say GitHub's releases).
 
 # Harbor for Android
 

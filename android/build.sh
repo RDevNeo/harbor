@@ -57,6 +57,17 @@ CVER=${HARBOR_CODE_VERSION:-$VER}
 case "$CVER" in *[!0-9.]*|"") echo "bad HARBOR_CODE_VERSION" >&2; exit 1 ;; esac
 IFS=. read -r MA MI PA <<< "$CVER"
 CCODE=$((MA * 1000000 + MI * 1000 + PA))
+# Hub's own builds (ts/packages/update/src/phoneota.ts writes android/hub-code.env before the boat build; or
+# HUB_CODE/HUB_CODE_NAME in the environment): one number for the APK's versionCode, the code built into it and the
+# code zip (the commit's time in seconds: it only grows along `hub`), and the desktop's name for it (0.194.0+abc1234).
+if [ -f "$HERE/hub-code.env" ]; then
+  HUB_CODE=${HUB_CODE:-$(sed -n 's/^HUB_CODE=\([0-9]*\)$/\1/p' "$HERE/hub-code.env")}
+  HUB_CODE_NAME=${HUB_CODE_NAME:-$(sed -n 's/^HUB_CODE_NAME=\([0-9a-f.+]*\)$/\1/p' "$HERE/hub-code.env")}
+fi
+if [ -n "${HUB_CODE:-}" ]; then
+  [[ "$HUB_CODE" =~ ^[0-9]{1,10}$ && "${HUB_CODE_NAME:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9a-f]{4,40})?$ ]] || { echo "bad HUB_CODE / HUB_CODE_NAME" >&2; exit 1; }
+  CODE=$HUB_CODE CCODE=$HUB_CODE VER=$HUB_CODE_NAME CVER=$HUB_CODE_NAME
+fi
 
 KEY=${ANDROID_KEYSTORE:-$HOME/.local/share/harbor-android/harbor-android.jks}
 ALIAS=${ANDROID_KEY_ALIAS:-harbor}

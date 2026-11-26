@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { turnscope } from "./packages/agents/src/index.ts";
 import { apps, connect, control, setHarborVersion } from "./packages/mcp/src/index.ts";
@@ -7,6 +7,8 @@ import { type Chat, dataDir, malloc, runDir, single, stallwatch, Store } from ".
 import {
   FollowMain,
   FOLLOW_REMOTE as REMOTE,
+  defaultRunner,
+  phoneOta,
   HANDOVER,
   handoverSay,
   Reloader,
@@ -92,14 +94,34 @@ export async function runApp(o: RunOptions): Promise<number> {
   updater.dropLeftovers();
   const store = Store.open(dataDir());
   const offline = isOffline();
-  // Builds of Harbor's main, seconds after each push (followmain.ts): the public repository's main, or a
-  // local checkout's when it's ahead. Offline (rigs): a checkout only, or HARBOR_FOLLOW_REMOTE's repository.
-  // Hub never follows Harbor's public repository: a checkout only, and only with HUB_FOLLOW_MAIN=1.
-  const remote = process.env.HARBOR_FOLLOW_REMOTE || null;
+  // Hub follows its own branch, `hub` of RDevNeo/harbor (never Harbor's main or releases; HUB.md "Updates"): seconds
+  // after a push from this PC (the checkout's refs are watched), within a minute of one from elsewhere (ls-remote),
+  // each commit that changes the app is built here and swapped in (VERSION → the handover restart below), the runtime
+  // too when packaging/hub-install.sh pins another. The phone's app code is built (on boat) and served to the paired
+  // phones when a commit changes it (phoneota.ts). HUB_FOLLOW_MAIN=0 turns it off; offline rigs follow only a
+  // checkout, or HARBOR_FOLLOW_REMOTE's repository.
+  const remote = process.env.HARBOR_FOLLOW_REMOTE || (offline ? null : REMOTE);
   // Its pushes to main reach the other PCs through the worker at once (followmain.ts `nudge`): the account's token, once the hub is up.
   let bearer: () => string | null = () => null;
-  // Pushes to the public main come built from GitHub (main.yml) when building here would be slow.
-  follow = new FollowMain({ off: process.env.HUB_FOLLOW_MAIN !== "1", cfg, kv: store, dataDir: dataDir(), repos: () => store.repos(), busy: () => updater.busy(), buildEnv: googleBuildEnv, remote, prebuilt: remote === REMOTE, token: () => bearer() });
+  const phoneBuilds = cfg.dir === null || offline ? null : new phoneOta.PhoneBuilds({ installDir: cfg.dir, home: join(dataDir(), "follow-main"), run: defaultRunner, log: cfg.log });
+  follow = new FollowMain({
+    off: process.env.HUB_FOLLOW_MAIN === "0",
+    branch: process.env.HUB_FOLLOW_BRANCH || "hub",
+    hubRuntime: true,
+    runtimeInstall: (src, _commit, _version, log) => hubWholeBuild(src, log),
+    tipSeen: (src, tip) => phoneBuilds?.seen(src, tip),
+    checkoutGuess: () => hubSource(cfg.dir),
+    remotePollMs: 60_000,
+    cfg,
+    kv: store,
+    dataDir: dataDir(),
+    repos: () => store.repos(),
+    busy: () => updater.busy(),
+    buildEnv: googleBuildEnv,
+    remote,
+    prebuilt: false,
+    token: () => bearer(),
+  });
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
   let taking = Promise.resolve();
@@ -241,10 +263,10 @@ export async function runApp(o: RunOptions): Promise<number> {
   // back to do it all again.
   if (cfg.dir !== null && bundle !== undefined && !cfg.preview && !embedded) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
   // Embedded: the app around it ships its copy (no update, no follow-main) and starts it (no start at login).
-  // Hub: no Harbor updates (delivery.ts HUB_UPDATES) and no follow-main; its own builds come from packaging/hub-install.sh.
+  // Hub: no Harbor updates (delivery.ts HUB_UPDATES); its own come from following `hub` (above) or packaging/hub-install.sh.
   if (!offline && !embedded) updater.start();
-  // Runs offline too (rigs): a checkout's main, or HARBOR_FOLLOW_REMOTE's.
-  if (!embedded && process.env.HUB_FOLLOW_MAIN === "1") follow.start();
+  // Runs offline too (rigs): a checkout's `hub`, or HARBOR_FOLLOW_REMOTE's.
+  if (!embedded) follow.start();
   autostartByDefault(store, updater.managed() && !cfg.preview && !offline && !embedded);
   if (!cfg.preview && !embedded) healAutostart();
 
@@ -425,6 +447,30 @@ async function handedOver(file: string, oldPid: number, late: () => void, loop: 
 }
 
 /** The Google clients this build has (baked in, or from the environment), for a build of main to keep. */
+/** The checkout packaging/hub-install.sh built this install from (its SOURCE file), when it's still a checkout. */
+function hubSource(dir: string | null): string | null {
+  if (dir === null) return null;
+  try {
+    const p = readFileSync(join(dir, "SOURCE"), "utf8").trim();
+    return p !== "" && existsSync(join(p, ".git")) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hub, a commit of `hub` that pins another runtime: packaging/hub-install.sh --stage builds it whole in follow-main's
+ * clone (the pinned runtime, its sha256 checked, and the bundle); the staged folder, or null.
+ */
+async function hubWholeBuild(src: string, log: string): Promise<string | null> {
+  const out = join(dataDir(), "follow-main", "whole");
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("HARBOR_") && !k.startsWith("BUN_")) env[k] = v;
+  Object.assign(env, googleBuildEnv());
+  const r = await defaultRunner(["bash", "packaging/hub-install.sh", "--stage", out], { cwd: src, env, timeoutMs: 20 * 60_000, log, nice: true });
+  return r.code === 0 && existsSync(join(out, "hub")) && existsSync(join(out, "harbor-app.js")) ? out : null;
+}
+
 function googleBuildEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   const desk = apps.googleBuiltinFromEnv();
