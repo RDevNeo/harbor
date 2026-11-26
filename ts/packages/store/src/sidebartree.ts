@@ -171,3 +171,14 @@ export function inScope<C extends { home: string; repoId: number | null }, R ext
   for (const c of chats) if (c.repoId !== null && !visible.has(c.repoId)) hidden.add(c.repoId);
   return { chats: shown, repos: repos.filter((r) => !hidden.has(r.id) || here(r)) };
 }
+
+/**
+ * The Projects tab's count: the sidebar's chats that need the user, those whose turn ended (done, failed, or stopped
+ * on a question or a key asked) while nobody had them open, and not opened since (the engine's `unread`, the row's
+ * blue or red dot). Only the sidebar's own chats (leads, not retired): a lead's subagents report to it.
+ */
+export function needsYou(chats: readonly { id: number; role: string; retired?: boolean }[], unread: (id: number) => boolean): number {
+  let n = 0;
+  for (const c of chats) if (c.role === "lead" && c.retired !== true && unread(c.id)) n++;
+  return n;
+}
