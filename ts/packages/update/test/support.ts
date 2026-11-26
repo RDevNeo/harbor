@@ -62,7 +62,7 @@ export const bundleSource = (version: string, body = "return 0;"): string =>
 /** Windows starts only real programs: there the fake runtime is fake-runtime.ts built into an .exe. */
 export const WINDOWS = process.platform === "win32";
 /** The runtime's file in an install (update/src/files.ts RUNTIME_FILE). */
-export const RUNTIME = WINDOWS ? "harbor.exe" : "harbor";
+export const RUNTIME = WINDOWS ? "hub.exe" : "hub";
 /** The release's runtime asset the tests' configs ask for (install.ts runtimeAsset). */
 export const RUNTIME_ASSET = WINDOWS ? "harbor-runtime-x86_64-windows.exe" : "harbor-runtime-x86_64";
 
