@@ -22,7 +22,9 @@ import java.util.List;
  *  it was, without an animation. Persons and Routine read and change their data on the PC (the
  *  same `v1/persons/…`, `v1/routine/…` routes Hub's window uses), the one this phone used last.
  *  Collector's tab carries a count, Persons' unread pill (Ds.pill): its runs that finished since it was last
- *  looked at, here or on the PC (GET /v1/collector/unread, as the PC's tab bar reads it). */
+ *  looked at, here or on the PC (GET /v1/collector/unread, as the PC's tab bar reads it). Projects' tab carries
+ *  the chats that need you: their turn ended unseen and they weren't opened since, here or on the PC (their
+ *  sidebar dots; GET /v1/projects/unread). */
 final class Tabs {
     static final String PROJECTS = "projects", PERSONS = "persons", ROUTINE = "routine", COLLECTOR = "collector";
     // Lucide: folder-kanban, users, dumbbell, funnel
@@ -35,38 +37,65 @@ final class Tabs {
 
     private Tabs() {}
 
-    /** Collector runs finished and not looked at yet, as the PC said last; the pills that show it, on every bar. */
-    private static int collectorUnread;
+    /** Collector runs finished and not looked at yet, and the chats that need you, as the PC said last; the pills
+     *  that show them on every bar (each with its tab). */
+    private static int collectorUnread, projectsUnread;
     private static final List<WeakReference<TextView>> pills = new ArrayList<>();
+    private static final List<String> pillTabs = new ArrayList<>();
     private static volatile boolean asking;
 
     /** Every bar's Collector pill says `n` (hidden at 0). UI thread. */
     static void collectorUnread(int n) {
         collectorUnread = Math.max(0, n);
+        redraw();
+    }
+
+    /** Every bar's Projects pill says `n` (hidden at 0). UI thread. */
+    static void projectsUnread(int n) {
+        projectsUnread = Math.max(0, n);
+        redraw();
+    }
+
+    private static int count(String tab) {
+        return COLLECTOR.equals(tab) ? collectorUnread : PROJECTS.equals(tab) ? projectsUnread : 0;
+    }
+
+    private static void redraw() {
         for (int i = pills.size() - 1; i >= 0; i--) {
             TextView p = pills.get(i).get();
-            if (p == null) { pills.remove(i); continue; }
-            show(p, collectorUnread);
+            if (p == null) { pills.remove(i); pillTabs.remove(i); continue; }
+            show(p, pillTabs.get(i), count(pillTabs.get(i)));
         }
     }
 
-    private static void show(TextView p, int n) {
+    private static void show(TextView p, String tab, int n) {
         p.setText(n > 99 ? "99+" : String.valueOf(n));
-        p.setContentDescription(n == 1 ? "A Collector run is done" : n + " Collector runs done");
+        p.setContentDescription(PROJECTS.equals(tab)
+                ? (n == 1 ? "A chat needs you" : n + " chats need you")
+                : (n == 1 ? "A Collector run is done" : n + " Collector runs done"));
         p.setVisibility(n > 0 ? View.VISIBLE : View.GONE);
     }
 
-    /** Asks the PC for the Collector count (a screen came up, or the PC said its state changed). */
+    /** Asks the PC for the tabs' counts (a screen came up, or the PC said its state changed). */
     static void poke(Hub h) {
         if (h == null || asking) return;
         asking = true;
         Ui.pool.execute(() -> {
             try {
-                JSONObject r = h.get("/v1/collector/unread");
-                int n = r == null ? 0 : r.optInt("unread", 0);
-                Ui.main.post(() -> collectorUnread(n));
-            } catch (Exception ignored) {
-                // an older PC, or it's away: the count stays as it was
+                try {
+                    JSONObject r = h.get("/v1/collector/unread");
+                    int n = r == null ? 0 : r.optInt("unread", 0);
+                    Ui.main.post(() -> collectorUnread(n));
+                } catch (Exception ignored) {
+                    // an older PC, or it's away: the count stays as it was
+                }
+                try {
+                    JSONObject r = h.get("/v1/projects/unread");
+                    int n = r == null ? 0 : r.optInt("unread", 0);
+                    Ui.main.post(() -> projectsUnread(n));
+                } catch (Exception ignored) {
+                    // the same
+                }
             } finally {
                 asking = false;
             }
@@ -97,18 +126,19 @@ final class Tabs {
             TextView icon = Ui.icon(a, t[2], 22, on ? Ui.FG : Ui.G700);
             TextView label = on ? Ui.bold(a, t[1], 12, Ui.FG) : Ui.text(a, t[1], 12, Ui.G700);
             label.setGravity(Gravity.CENTER);
-            if (COLLECTOR.equals(t[0])) {
+            if (COLLECTOR.equals(t[0]) || PROJECTS.equals(t[0])) {
                 // The icon with its count on the corner, as Persons' unread pill.
                 FrameLayout box = new FrameLayout(a);
                 box.setClipChildren(false);
                 item.setClipChildren(false);
                 box.addView(icon, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(26), Gravity.CENTER));
-                TextView pill = Ds.pill(a, Math.max(1, collectorUnread), true);
+                TextView pill = Ds.pill(a, Math.max(1, count(t[0])), true);
                 pill.setTranslationX(Ui.dp(14));
                 pill.setTranslationY(-Ui.dp(3));
                 box.addView(pill, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
-                show(pill, collectorUnread);
+                show(pill, t[0], count(t[0]));
                 pills.add(new WeakReference<>(pill));
+                pillTabs.add(t[0]);
                 item.addView(box, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(26)));
                 item.addView(label, Ui.wrap());
                 item.setBackground(Ui.press(0, 0, 0));

@@ -1033,6 +1033,11 @@ export class PhoneRoutes {
       : { who: this.d.hub.callerWho(call.token), via: "phone", dev: phoneDev(this.d.hub.groupOf(call.token)), account: this.d.hub.callerAccount(call.token), pc: "" };
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global, call.from ? "" : who.account));
     if (m === "GET" && p.length === 2 && p[1] === "chat_link") return ok(this.chatLink(query(call, "url") ?? "", call.global));
+    // The Projects tab's count (the phone's tab bar): chats whose turn ended unseen, not opened since (their dots).
+    if (m === "GET" && p.length === 3 && p[1] === "projects" && p[2] === "unread") {
+      const e = this.d.engine;
+      return ok({ rev: this.d.hub.rev(), unread: e ? sidebartree.needsYou(this.chats(), (id) => e.unread(id)) : 0 });
+    }
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
     const found = this.chatOf(p[2] ?? "");

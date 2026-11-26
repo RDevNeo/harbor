@@ -1219,3 +1219,51 @@ describe("phone: whose context a phone's message runs with when it reaches anoth
     store.close();
   });
 });
+
+describe("phone: the Projects tab's count", () => {
+  test("GET v1/projects/unread counts the sidebar's chats left unread; opening one takes it off", async () => {
+    const store = Store.openAt(join(tmp, "projectsunread.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const unread = new Set<number>();
+    const a = store.createChat(blankChat({ title: "a", role: "lead" }));
+    const b = store.createChat(blankChat({ title: "b", role: "lead" }));
+    const sub = store.createChat(blankChat({ title: "sub", role: "sub", parent: a.id }));
+    const engine = {
+      running: () => false,
+      runningSince: () => 0,
+      transcript: () => ({ items: [] }),
+      send: () => {},
+      stop: () => {},
+      queued: () => [],
+      takeQueue: () => [],
+      queueJson: () => [],
+      steering: () => "now",
+      followDefault: () => "queue",
+      held: () => false,
+      newThread: (repo: number | null) => store.createChat(blankChat({ repoId: repo })),
+      reload: () => {},
+      queuePromote: () => false,
+      queueMove: () => false,
+      queueUpdate: () => false,
+      queueRemove: () => false,
+      queueResume: () => {},
+      recap: () => [null, null] as [null, null],
+      unread: (id: number) => unread.has(id),
+      failed: () => false,
+      opened: (id: number) => unread.delete(id),
+      subsQueued: () => 0,
+      queuedCount: () => 0,
+      mainChat: () => null,
+      forksOf: () => [],
+    } as PhoneEngine;
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
+    const count = async () => ((await routes.route({ method: "GET", path: ["v1", "projects", "unread"], query: [], body: null, token: "", device: "", global: false })).body as { unread: number }).unread;
+    expect(await count()).toBe(0);
+    for (const id of [a.id, b.id, sub.id]) unread.add(id);
+    expect(await count()).toBe(2);
+    unread.delete(a.id);
+    expect(await count()).toBe(1);
+    store.close();
+  });
+});

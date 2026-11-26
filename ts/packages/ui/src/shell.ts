@@ -6,7 +6,7 @@ import { desktop as osDesktop } from "@harbor/os";
 import { basename, isAbsolute, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, patches, providers, recap, waiting, Work } from "@harbor/agents";
-import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, pins, repoDir, secrets } from "@harbor/store";
+import { ByteLru, type Chat, dataDir, githead, hot, type Item, limits, malloc, now, parseAccess, pins, repoDir, secrets, sidebartree } from "@harbor/store";
 import { accountOn, chatOwner, AUTO_DEVICE, isChatLink, isSharedId, kindLabel, RESUME_TEXT, type SharedAccount, sharedTarget, sharedTip, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, spawnLocal, transferStatus } from "@harbor/net";
 import * as cardsModule from "./cards.ts";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, trim } from "./cards.ts";
@@ -1106,9 +1106,10 @@ export class Shell {
   }
 
 
-  /** Chat `id` is on the screen: the open one, or one in a split pane beside it (its turns end read, not unread). */
+  /** Chat `id` is on the screen: the open one, or one in a split pane beside it (its turns end read, not unread). Not
+   *  while another of Hub's tabs (Persons, Routine, Collector) covers the Projects tab. */
   showing(id: number): boolean {
-    return this.view === "chat" && (this.chatId === id || this.split.onScreenChats().includes(id)) && this.win.window.visible;
+    return this.view === "chat" && (this.chatId === id || this.split.onScreenChats().includes(id)) && this.win.window.visible && (this.tabsBus?.current ?? "projects") === "projects";
   }
 
   /** The key of the composer shown: the open chat, or the draft. */
@@ -2311,6 +2312,7 @@ export class Shell {
     w.side_drag = q === "";
     w.side_ws_tip = names.length === 0 ? "Workspace" : `Workspace: ${names.join(", ")}`;
     w.side_empty = list.projects.length > 0 ? "" : q !== "" ? "search" : shown.length > 0 ? (list.loose.length === 0 && list.settled.length === 0 ? "ws" : "") : d.repos.length === 0 ? "projects" : "";
+    this.projectsBadge();
     w.side_empty_desc = w.side_empty === "ws" ? `No chats of ${names.length === 1 ? names[0] : "these workspaces"} reach this PC.` : w.side_empty === "projects" ? "Add a folder or clone a repository to start." : "";
   }
 
@@ -5799,12 +5801,21 @@ export class Shell {
 
   /** Hub's top-level tabs (tabs.slint): TabsBus.select switches; a tab's TabUi mounts the first time it's opened. */
   private readonly tabChanged = new Set<() => void>();
-  /** The tab bar's bus, once mounted (which tab is on screen). */
-  private tabsBus: { current: string } | null = null;
+  /** The tab bar's bus, once mounted (which tab is on screen, the Projects tab's count). */
+  private tabsBus: { current: string; projects_unread: number } | null = null;
+
+  /** The Projects tab's count on the tab row (TabsBus.projects-unread): the sidebar's chats whose turn ended unseen and
+   *  that weren't opened since (their dots), as the phone's tab bar reads it (GET v1/projects/unread). */
+  private projectsBadge(): void {
+    const tabs = this.tabsBus;
+    if (!tabs) return;
+    const n = sidebartree.needsYou(this.data.chats, (id) => this.engine.unread.has(id));
+    if (tabs.projects_unread !== n) tabs.projects_unread = n;
+  }
   /** Switches the top-level tab (as a click on the tab bar). */
   selectTab: (id: string) => void = () => {};
   private mountTabs(): void {
-    type Bus = { current: string; select: (id: string) => void; persons_unread: number; collector_unread: number };
+    type Bus = { current: string; select: (id: string) => void; persons_unread: number; collector_unread: number; projects_unread: number };
     let found: Bus;
     try {
       found = busOf<Bus>(this.win, "TabsBus");
@@ -5865,9 +5876,13 @@ export class Shell {
     };
     void personsUnread();
     void collectorUnread();
+    // The Projects tab's own count is the window engine's (each sidebar refresh sets it); read here too, for a phone's
+    // open or a turn's end that didn't redraw the sidebar.
+    this.projectsBadge();
     const badge = setInterval(() => {
       void personsUnread();
       void collectorUnread();
+      this.projectsBadge();
     }, 3000);
     badge.unref?.();
     const select = (id: string): void => {
@@ -5883,6 +5898,12 @@ export class Shell {
       TAB_UIS.find((t) => t.id === was)?.shown?.(false);
       ui?.shown?.(true);
       if (id === "collector") collectorSeen();
+      // Back on Projects: the chats on screen (the open one, its split panes) are looked at, their dots and count go.
+      if (id === "projects" && this.view === "chat") {
+        let read = false;
+        for (const c of new Set([this.chatId, ...this.split.onScreenChats()])) read = this.engine.opened(c) || read;
+        if (read) this.refreshSidebar();
+      }
     };
     tabs.select = select;
     this.selectTab = select;

@@ -16,6 +16,9 @@ export global TabsBus {
     in-out property <int> persons-unread;
     /** Collector runs that finished since the Collector tab was last looked at (PC or phone): its count, 0 for none. */
     in-out property <int> collector-unread;
+    /** Chats whose turn ended (done, failed, or stopped on a question or a key asked) while nobody had them open, not
+     *  opened since (their sidebar dots): the Projects tab's count, 0 for none. */
+    in-out property <int> projects-unread;
 }
 
 struct TabDef {
@@ -41,7 +44,7 @@ export component AppTabs {
         for t in root.tabs: Rectangle {
             property <bool> on: TabsBus.current == t.id;
             property <bool> named: root.compact ? false : true;
-            property <int> badge: t.id == "persons" ? TabsBus.persons-unread : t.id == "collector" ? TabsBus.collector-unread : 0;
+            property <int> badge: t.id == "persons" ? TabsBus.persons-unread : t.id == "collector" ? TabsBus.collector-unread : t.id == "projects" ? TabsBus.projects-unread : 0;
             width: named ? label.preferred-width + 34px + (badge > 0 ? pill.width + 6px : 0) : 28px;
             border-radius: 6px;
             background: on ? Theme.gray-200 : area.has-hover ? Theme.accent : transparent;
@@ -72,7 +75,7 @@ export component AppTabs {
                 y: named ? (parent.height - self.height) / 2 : -4px;
             }
             area := TipArea {
-                tip: named ? "" : badge <= 0 ? t.label : t.id != "collector" ? "\{t.label} · \{badge} unread" : badge == 1 ? "\{t.label} · a run is done" : "\{t.label} · \{badge} runs done";
+                tip: named ? "" : badge <= 0 ? t.label : t.id == "collector" ? (badge == 1 ? "\{t.label} · a run is done" : "\{t.label} · \{badge} runs done") : t.id == "projects" ? (badge == 1 ? "\{t.label} · a chat needs you" : "\{t.label} · \{badge} chats need you") : "\{t.label} · \{badge} unread";
                 clicked => {
                     TabsBus.select(t.id);
                 }

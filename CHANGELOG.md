@@ -6,6 +6,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
+- Hub **Projects** tab shows a count on its button (PC and phone), as Persons shows its unread messages: the chats that
+  need you, those whose turn ended (done, failed, or stopped on a question or a key asked) while you weren't looking and
+  that you haven't opened since (the sidebar's blue/red dots). Opening a chat takes it off; looking at the tab alone
+  doesn't. A turn that ends while another Hub tab covers Projects now counts as unseen. GET v1/projects/unread.
 - Hub **Collector** says when a run ends (PC and phone): a notification through Hub's own ("Collector: done — 7 new
   leads for “term”"; stopped, an error or none found say so; kind "collector", on by default, in Settings ›
   Notifications on both), and a count on the Collector tab's button, as Persons shows its unread messages, until the tab
