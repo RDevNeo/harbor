@@ -88,22 +88,43 @@ describe("Personal over the API", () => {
     expect(s.data!.people.length).toBe(1);
   });
 
-  it("the same WhatsApp number in its other Brazilian form: found, renamed to the name typed, said so", async () => {
+  it("a number that is already someone else: said in the form, nothing changed; Rename only on confirm", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hub-personal-wa-"));
     dirs.push(dir);
-    // they're kept as WhatsApp answers (8 digits after the area code); the form gets the 9-digit mobile
+    // Fagner is kept as WhatsApp answers (8 digits after the area code); the form gets the 9-digit mobile
     writeFileSync(join(dir, "data.json"), JSON.stringify({ version: 7, updatedAt: T0, readSince: T0, stores: [], lists: [], people: [{ id: "pf", name: "Fagner", discordId: "", whatsapp: "557199616108", storeIds: [], listIds: ["personal"], createdAt: T0, updatedAt: T0 }] }));
     writeFileSync(join(dir, "connections.json"), JSON.stringify({ version: 1, connections: [{ id: "wa1", kind: "whatsapp", section: "stores" }] }));
     const asked: string[] = [];
-    const wa = (c: ConnContext): Connection => ({ ...fake(c, [], true), lookup: async (q: string) => (asked.push(q), { matches: [{ id: "557199616108", username: "+557199616108", globalName: "Fagner", avatar: null, avatarUrl: "" }] }) });
+    const book: Record<string, string> = { "5571999616108": "557199616108", "5571933007100": "5571933007100" };
+    const names: Record<string, string> = { "557199616108": "Fagner", "5571933007100": "Filipe" };
+    const wa = (c: ConnContext): Connection => ({ ...fake(c, [], true), lookup: async (q: string) => (asked.push(q), book[q] ? { matches: [{ id: book[q]!, username: `+${book[q]}`, globalName: names[book[q]!] ?? null, avatar: null, avatarUrl: "" }] } : { matches: [], notFound: true }) });
     const s = new PersonsService({ dir, factories: { whatsapp: wa, instagram: (c) => fake(c, [], false) } });
     services.push(s);
     await s.start();
     const r = new PersonsRoutes(s);
-    const res = (await r.route({ method: "POST", path: ["v1", "persons", "contacts"], query: [], body: { kind: "whatsapp", handle: "55 (71) 9961-6108", name: "Filipe" } }))!.body as Record<string, any>;
+    const add = async (body: Record<string, unknown>) => (await r.route({ method: "POST", path: ["v1", "persons", "contacts"], query: [], body: { kind: "whatsapp", ...body } }))!.body as Record<string, any>;
+    const before = JSON.stringify(s.data!.people);
+
+    const res = await add({ handle: "55 (71) 9961-6108", name: "Filipe" });
     expect(asked).toEqual(["5571999616108"]);
-    expect(res).toMatchObject({ ok: true, existed: true, joined: false, renamed: true, message: "Already in Personal as Fagner, now named Filipe" });
-    expect(s.data!.people.map((p) => [p.id, p.name, p.listIds])).toEqual([["pf", "Filipe", ["personal"]]]);
+    expect(res).toEqual({ ok: false, error: "+557199616108 is already Fagner (in Personal). Check the number, or press Rename to call Fagner “Filipe”.", conflict: { confirm: "Rename", personId: "pf", name: "Fagner" } });
+    expect(JSON.stringify(s.data!.people)).toBe(before);
+
+    // the same name, or none: they're just there
+    expect(await add({ handle: "55 (71) 9961-6108", name: "fagner" })).toMatchObject({ ok: true, existed: true, renamed: false, message: "Already in Personal as Fagner" });
+    expect(await add({ handle: "55 (71) 9961-6108", name: "" })).toMatchObject({ ok: true, existed: true, renamed: false });
+    expect(JSON.stringify(s.data!.people)).toBe(before);
+
+    // Rename pressed
+    expect(await add({ handle: "55 (71) 9961-6108", name: "Filipe", confirm: true })).toMatchObject({ ok: true, existed: true, renamed: true, message: "Already in Personal as Fagner, now named Filipe" });
+    expect(s.person("pf")!.name).toBe("Filipe");
+
+    // a new number WhatsApp names otherwise: asked first, added on confirm; its own name goes straight in
+    expect(await add({ handle: "+55 71 9 3300-7100", name: "Rafael" })).toMatchObject({ ok: false, conflict: { confirm: "Add anyway", personId: null, name: "Filipe" }, error: "+5571933007100 is “Filipe” on your WhatsApp, not Rafael. Check the number, or press Add anyway." });
+    expect(s.data!.people.length).toBe(1);
+    const filipe = await add({ handle: "+55 71 9 3300-7100", name: "Filipe Sales" });
+    expect(filipe).toMatchObject({ ok: true, existed: false });
+    expect(s.person(filipe.person.id)).toMatchObject({ name: "Filipe Sales", whatsapp: "5571933007100", listIds: ["personal"] });
   });
 
   it("can't resolve it: the reason, and nothing is saved", async () => {

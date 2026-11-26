@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { allPeers, chatsFor, KIND_LABEL, peerOf, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
-import { personalShares, resolveContact, type ContactKind } from "./model/personal.ts";
+import { contactConflict, personalShares, resolveContact, type ContactKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
@@ -473,7 +473,7 @@ export class PersonsService {
    * are on that platform through a connection serving Personal, then saved as a person in Personal (someone already in
    * Persons with that id just joins Personal). Throws with the reason when it can't be resolved: nothing is saved then.
    */
-  async addContact(kind: ContactKind, handle: string, name = ""): Promise<AddedContact> {
+  async addContact(kind: ContactKind, handle: string, name = "", confirm = false): Promise<AddedContact> {
     if (!this.data) throw new Error("Persons isn't loaded");
     const views = this.views().filter((v) => v.kind === kind && serves(v, "personal"));
     const conn = views.find((v) => v.connected) ?? views[0];
@@ -483,15 +483,22 @@ export class PersonsService {
     if (!c) throw new Error("That connection is gone");
     const r = await resolveContact(kind, handle, (q) => c.lookup(q));
     const at = new Date().toISOString();
-    // the same human already in Persons (a WhatsApp number in either Brazilian form counts): they join Personal, and a
-    // name typed in the form becomes theirs (Rename), so the row the user expects shows up
+    // the same human already in Persons (a WhatsApp number in either Brazilian form counts): they join Personal. A name
+    // typed that isn't theirs, or a number WhatsApp names otherwise, stops here until the user confirms (ContactConflict):
+    // a mistyped number must never rename or add someone else silently
     const same = (v: string): boolean => (kind === "whatsapp" ? phoneVariants(r.id).includes(v) || phoneVariants(v).includes(r.id) : v === r.id);
     const existing = this.data.people.find((p) => allPeers(p, kind).some(same));
+    const typed = name.trim();
+    const shown = kind === "whatsapp" ? `+${r.id}` : `@${r.username}`;
+    const conflict = confirm
+      ? null
+      : contactConflict({ typed, handle: shown, existing: existing ? { id: existing.id, label: personLabel(existing), inPersonal: existing.listIds.includes("personal") } : null, platformName: kind === "whatsapp" ? r.displayName : undefined });
+    if (conflict) throw conflict;
     if (existing) {
       const was = personLabel(existing);
-      const typed = name.trim();
       const joined = !existing.listIds.includes("personal");
-      const renamed = !!typed && typed !== existing.name;
+      // only a confirmed Rename changes their name
+      const renamed = confirm && !!typed && typed !== existing.name;
       if (joined || renamed) this.updatePerson(existing.id, (x) => ({ ...(renamed ? renamePerson(x, typed) : x), listIds: joined ? [...x.listIds, "personal"] : x.listIds, updatedAt: at }));
       this.log("personal contact existed", kind, existing.id, joined ? "joined" : "", renamed ? "renamed" : "");
       return { person: this.person(existing.id) ?? existing, existed: true, was, joined, renamed };

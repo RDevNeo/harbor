@@ -3,7 +3,7 @@
 import type { AgentDiscord } from "./agent/index.ts";
 import { statSync } from "node:fs";
 import { chatKey, KIND_LABEL, isSection, normWhatsApp, personSections, pickChat, SECTIONS, serves, validPeer, type ChatRef } from "./model/accounts.ts";
-import { isContactKind } from "./model/personal.ts";
+import { ContactConflict, isContactKind } from "./model/personal.ts";
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
@@ -1161,7 +1161,9 @@ export class PersonsRoutes {
   }
 
   /**
-   * `POST contacts {kind, handle, name?}`: Personal › Add contact. `handle` is a WhatsApp number, a Discord username or
+   * `POST contacts {kind, handle, name?, confirm?}`: Personal › Add contact. Someone already in Persons under another name
+   * than the one typed, or a WhatsApp number named otherwise on WhatsApp, answers `{ ok: false, error, conflict: { confirm:
+   * "Rename"|"Add anyway", personId, name } }` and changes nothing; the same call with `confirm: true` goes on. `handle` is a WhatsApp number, a Discord username or
    * an Instagram username, resolved on that platform before anything is saved. `{ ok: true, person, existed }`, or
    * `{ ok: false, error }` with the reason it couldn't be resolved (nothing saved).
    */
@@ -1169,9 +1171,11 @@ export class PersonsRoutes {
     const kind = str(b.kind);
     if (!isContactKind(kind)) return err(400, "kind: discord, whatsapp or instagram");
     try {
-      const r = await this.s.addContact(kind, str(b.handle) ?? "", str(b.name) ?? "");
+      const r = await this.s.addContact(kind, str(b.handle) ?? "", str(b.name) ?? "", b.confirm === true);
       return ok({ ok: true, person: json(r.person), existed: r.existed, was: r.was, joined: r.joined, renamed: r.renamed, message: contactMessage(r) });
     } catch (e) {
+      // needs the user's confirm: the reason for the form, and what its button says then (sent again with confirm: true)
+      if (e instanceof ContactConflict) return ok({ ok: false, error: e.message, conflict: { confirm: e.confirm, personId: e.personId, name: e.current } });
       return ok({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
   }

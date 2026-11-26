@@ -711,16 +711,24 @@ final class PersonsHome {
         android.app.AlertDialog d = Ui.dialog(p.a).setTitle(PersonsUi.kindLabel(kind) + (wa ? " number" : " username")).setView(box)
                 .setPositiveButton("Add", null).setNegativeButton("Cancel", null).show();
         handle.requestFocus();
-        // the dialog stays open on an error (its reason under the fields)
-        d.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+        // the dialog stays open on an error (its reason under the fields); a conflict (the number is someone else's, or
+        // WhatsApp names it otherwise) turns the button into its confirm, sent again with the same fields
+        android.widget.Button ok = d.getButton(android.app.AlertDialog.BUTTON_POSITIVE);
+        String[] pending = {null};
+        ok.setOnClickListener(v -> {
+            String h = handle.getText().toString().trim(), n = name.getText().toString().trim();
             JSONObject body = PersonsUi.put(new JSONObject(), "kind", kind);
-            PersonsUi.put(body, "handle", handle.getText().toString().trim());
-            PersonsUi.put(body, "name", name.getText().toString().trim());
+            PersonsUi.put(body, "handle", h);
+            PersonsUi.put(body, "name", n);
+            if ((h + "\n" + n).equals(pending[0])) PersonsUi.put(body, "confirm", true);
             v.setEnabled(false);
             err.setVisibility(View.GONE);
             Ui.bg(p.a, () -> p.hub.call("POST", "/v1/persons/contacts", body, 60_000), r -> {
                 v.setEnabled(true);
                 if (!r.optBoolean("ok", false)) {
+                    JSONObject conflict = r.optJSONObject("conflict");
+                    pending[0] = conflict != null ? h + "\n" + n : null;
+                    ok.setText(conflict != null ? conflict.optString("confirm", "Add anyway") : "Add");
                     err.setText(r.optString("error", "Not added"));
                     err.setVisibility(View.VISIBLE);
                     return;
