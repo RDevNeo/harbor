@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Hub Persons: **an open chat with nothing in it no longer keeps Hub busy.** Every change reloads the open chat, and the
+  reload asked the platform for an empty chat's history again; the empty answer counted as a change, so it went round
+  several times a second (all of Persons recomputed each time, the window laggy), most often with a just-added Personal
+  contact. A chat's newest page is now read once per run when it first opens, and a page that brings nothing new
+  changes nothing.
+- Hub Persons: **a chat's past shows when it opens**, also when a few live messages came first (it used to load only
+  for an empty chat). WhatsApp's comes from Hub's own WhatsApp store (the agents' app keeps every chat of the account)
+  when it is the same account, newest 50 first, older pages as you scroll up: a contact added later (Personal) has
+  their whole conversation, not only what arrives after.
+
 ### Added
 - Hub Persons: **Personal**, a section for the user's own contacts (PC and Android), after SpokPay. Its + menu (PC) or
   its **Add contact** row (phone) asks for the platform (Discord, WhatsApp, Instagram) and one field: their WhatsApp
