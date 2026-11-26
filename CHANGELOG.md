@@ -6,6 +6,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
+- Hub **Collector** tab (PC and phone): the Lead Collector userscript, native. Creators sweeps YouTube for a term
+  (several search passes, channels with no upload inside Last upload dropped, About stats and profile links) and
+  Copy gives JSONL for SpokPayCRM → Creators → Import; Servers collects Discord invites from Discover (servers with a
+  public widget) or a channel's messages, read-only on Persons' Stores Discord account. Target, Start / Stop, live
+  progress and log, results with pictures, kept across restarts. TikTok, Instagram and the Sidebar walk show as "soon"
+  (COLLECTOR.md says why). The phone app needs the new APK once (shell 5).
 - Hub Persons: **Link with…** (a person's right-click menu, the panel's ⋯ and LINKED section; Android: long press and
   the panel) makes the same human on several channels one person: identifiers combined, notes concatenated, stores,
   lists and socials unioned, read marks kept; their chat is one timeline of every channel (each message marked with
