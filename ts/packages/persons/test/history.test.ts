@@ -72,8 +72,10 @@ async function linked(hub: string): Promise<Connection> {
   });
   closers.push(() => c.stop());
   await c.start();
-  for (let i = 0; i < 5 && !eng; i++) await Bun.sleep(1);
+  // the engine starts in the background: wait for it (slow machines too), then it opens
+  for (let i = 0; i < 400 && !eng; i++) await Bun.sleep(5);
   eng?.onEvent("open", { id: `${ME}:3@s.whatsapp.net`, name: "Igor" });
+  for (let i = 0; i < 400 && c.state().status !== "connected"; i++) await Bun.sleep(5);
   await c.track([ANA]);
   return c;
 }
