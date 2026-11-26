@@ -38,6 +38,9 @@ import java.util.Map;
 public class Collector extends Base {
     private LinearLayout segs, form, runRow, list;
     private EditText query, target, cookie, filter;
+    /** The lists' bar: the filter box, Sort and "Show only — platforms". */
+    private LinearLayout listBar;
+    private TextView sortBtn, platBtn;
     private JSONObject view;
     private boolean loading;
     private String formSig = "", note = "";
@@ -85,7 +88,14 @@ public class Collector extends Base {
         list = Ui.col(this);
         body.addView(form, Ui.fill());
         body.addView(runRow, Ui.fill());
-        body.addView(filter, Ui.margins(Ui.fill(), 0, 4, 0, 10));
+        listBar = Ui.row(this);
+        listBar.setGravity(Gravity.CENTER_VERTICAL);
+        listBar.addView(filter, Ui.weight());
+        sortBtn = listButton(v -> pickSort());
+        platBtn = listButton(v -> pickPlatforms());
+        listBar.addView(sortBtn, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        listBar.addView(platBtn, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        body.addView(listBar, Ui.margins(Ui.fill(), 0, 4, 0, 10));
         body.addView(list, Ui.fill());
         scroll.addView(body);
         col.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -229,7 +239,13 @@ public class Collector extends Base {
         runRow.removeAllViews();
         boolean lists = !"collector".equals(sel);
         form.setVisibility(lists ? View.GONE : View.VISIBLE);
-        filter.setVisibility(lists && view != null ? View.VISIBLE : View.GONE);
+        listBar.setVisibility(lists && view != null ? View.VISIBLE : View.GONE);
+        if (view != null) {
+            sortBtn.setText(sortShort(sortLabel(settings().optString("sort", "followers-desc"))) + "  ▾");
+            List<String> only = platforms();
+            platBtn.setText((only.isEmpty() ? "All" : only.size() == 1 ? platformLabel(only.get(0)) : only.size() + " platforms") + "  ▾");
+            platBtn.setTextColor(only.isEmpty() ? Ui.G700 : Ui.FG);
+        }
         if (hub == null || view == null) {
             form.removeAllViews();
             formSig = "";
@@ -488,13 +504,127 @@ public class Collector extends Base {
             }
             return rows;
         }
+        List<String> only = platforms();
         for (int i = 0; all != null && i < all.length(); i++) {
             JSONObject o = all.optJSONObject(i);
             if (o == null || !which.equals(listOf(o))) continue;
+            if (!only.isEmpty() && !only.contains(o.optString("platformKey"))) continue;
             String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short")).toLowerCase(Locale.ROOT);
             if (f.isEmpty() || hay.contains(f)) rows.add(o);
         }
-        return rows;
+        return sortRows(rows, settings().optString("sort", "followers-desc"));
+    }
+
+    // ---------- the lists' Sort and "Show only — platforms" (the SpokPay CRM's creator column menus) ----------
+
+    static final String[][] LIST_PLATFORMS = {{"youtube", "YouTube"}, {"tiktok", "TikTok"}, {"instagram", "Instagram"}};
+
+    static String platformLabel(String k) {
+        for (String[] p : LIST_PLATFORMS) if (p[0].equals(k)) return p[1];
+        return k;
+    }
+
+    /** The order the PC's window uses (ui.ts sortRows): followers high → low ("followers-desc") or low → high;
+     *  unknown counts last either way, the view's order (newest collected first) breaks ties. */
+    static List<JSONObject> sortRows(List<JSONObject> rows, String mode) {
+        List<JSONObject> out = new ArrayList<>(rows);
+        final Map<JSONObject, Integer> at = new java.util.IdentityHashMap<>();
+        for (int i = 0; i < rows.size(); i++) at.put(rows.get(i), i);
+        final int dir = "followers-asc".equals(mode) ? -1 : 1;
+        out.sort((a, b) -> {
+            Double x = count(a), y = count(b);
+            if (x == null && y == null) return at.get(a) - at.get(b);
+            if (x == null) return 1;
+            if (y == null) return -1;
+            int c = dir * Double.compare(y, x);
+            return c != 0 ? c : at.get(a) - at.get(b);
+        });
+        return out;
+    }
+
+    private static Double count(JSONObject o) { return o.isNull("subs") || !o.has("subs") ? null : o.optDouble("subs"); }
+
+    private List<String> platforms() {
+        List<String> out = new ArrayList<>();
+        JSONArray a = settings().optJSONArray("platforms");
+        for (int i = 0; a != null && i < a.length(); i++) out.add(a.optString(i));
+        return out;
+    }
+
+    private String sortLabel(String mode) {
+        JSONArray a = view == null ? null : view.optJSONArray("sorts");
+        for (int i = 0; a != null && i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o != null && mode.equals(o.optString("value"))) return o.optString("label");
+        }
+        return "Sort";
+    }
+
+    static String sortShort(String label) {
+        return label.replace(" (high → low)", " ↓").replace(" (low → high)", " ↑");
+    }
+
+    private TextView listButton(View.OnClickListener on) {
+        TextView t = Ui.text(this, "", 13, Ui.FG);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setSingleLine(true);
+        t.setPadding(Ui.dp(12), Ui.dp(12), Ui.dp(12), Ui.dp(12));
+        t.setBackground(Ui.press(Ui.CARD, Ui.LINE, 12));
+        t.setOnClickListener(on);
+        return t;
+    }
+
+    /** Sort by: Followers (high → low) or (low → high); remembered on the PC. */
+    private void pickSort() {
+        JSONArray a = view == null ? null : view.optJSONArray("sorts");
+        if (a == null || a.length() == 0) return;
+        String cur = settings().optString("sort", "followers-desc");
+        String[] labels = new String[a.length()];
+        int on = 0;
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            labels[i] = o == null ? "" : o.optString("label");
+            if (o != null && cur.equals(o.optString("value"))) on = i;
+        }
+        Ui.dialog(this).setTitle("Sort by").setSingleChoiceItems(labels, on, (d, w) -> {
+            JSONObject o = a.optJSONObject(w);
+            d.dismiss();
+            if (o == null) return;
+            try { settings().put("sort", o.optString("value")); } catch (Exception ignored) { }
+            draw();
+            post("settings", "sort", o.optString("value"));
+        }).show();
+    }
+
+    /** Show only — platforms (several at once, none = all), with each one's count on this list. */
+    private void pickPlatforms() {
+        final List<String> only = platforms();
+        int[] n = new int[LIST_PLATFORMS.length];
+        JSONArray all = view == null ? null : view.optJSONArray("creators");
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject o = all.optJSONObject(i);
+            if (o == null || !sel.equals(listOf(o))) continue;
+            for (int k = 0; k < LIST_PLATFORMS.length; k++) if (LIST_PLATFORMS[k][0].equals(o.optString("platformKey"))) n[k]++;
+        }
+        String[] labels = new String[LIST_PLATFORMS.length + 1];
+        labels[0] = (only.isEmpty() ? "✓  " : "     ") + "All platforms";
+        for (int k = 0; k < LIST_PLATFORMS.length; k++) labels[k + 1] = (only.contains(LIST_PLATFORMS[k][0]) ? "✓  " : "     ") + LIST_PLATFORMS[k][1] + "  ·  " + n[k];
+        Ui.dialog(this).setTitle("Show only — platforms").setItems(labels, (d, w) -> {
+            List<String> next = new ArrayList<>();
+            if (w > 0) {
+                String k = LIST_PLATFORMS[w - 1][0];
+                for (String[] p : LIST_PLATFORMS) {
+                    boolean has = only.contains(p[0]);
+                    if (p[0].equals(k) ? !has : has) next.add(p[0]);
+                }
+                if (next.size() == LIST_PLATFORMS.length) next.clear();
+            }
+            JSONArray v = new JSONArray();
+            for (String x : next) v.put(x);
+            try { settings().put("platforms", v); } catch (Exception ignored) { }
+            draw();
+            post("settings", "platforms", v);
+        }).show();
     }
 
     /** The ids the view shows now (the review bar's list: it goes through them in this order). */
@@ -570,11 +700,13 @@ public class Collector extends Base {
         } else {
             String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
             rows = rowsFor(sel, f);
-            int total = f.isEmpty() ? rows.size() : rowsFor(sel, "").size();
+            int total = 0;
+            JSONArray every = view.optJSONArray("creators");
+            for (int i = 0; every != null && i < every.length(); i++) if (every.optJSONObject(i) != null && sel.equals(listOf(every.optJSONObject(i)))) total++;
             String none = "restricted".equals(sel) ? "Nobody restricted. Restrict a lead (or Reject it in its detail) to keep it out of Available; it stays remembered, so no run collects it again."
                     : "approved".equals(sel) ? "Nobody approved. Open a lead and tap Approve: approved leads leave Available and stay remembered, so no run collects them again."
                     : "No leads yet. Collect some from the Collector view.";
-            empty = total == 0 ? none : "Nobody matches “" + filter.getText().toString().trim() + "”.";
+            empty = total == 0 ? none : !f.isEmpty() ? "Nobody matches “" + filter.getText().toString().trim() + "”." : "Nobody here on the platforms picked.";
         }
         if (rows.isEmpty()) {
             if (!empty.isEmpty()) list.addView(Ds.empty(this, empty), Ui.margins(Ui.fill(), 0, 12, 0, 0));

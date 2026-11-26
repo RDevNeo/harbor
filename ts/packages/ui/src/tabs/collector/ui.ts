@@ -37,13 +37,17 @@ export interface Row {
   restricted: boolean;
   /** In Approved (not Available). */
   approved?: boolean;
+  /** "youtube", "tiktok", "instagram". */
+  platformKey?: string;
+  /** Followers (YouTube subscribers count as followers; null unknown). */
+  subs?: number | null;
   /** The Reach picked in the detail ("" none) and its value. */
   reach?: string;
   reachValue?: string;
 }
 export interface CollectorView {
   rev: number;
-  settings: { platform: string; query: string; gapDays: number; target: number; lastTemplate: string; approveTo?: string };
+  settings: { platform: string; query: string; gapDays: number; target: number; lastTemplate: string; approveTo?: string; sort?: string; platforms?: string[] };
   sources: Source[];
   sessions: { platform: string; label: string; connected: boolean; account: string | null; savedAt: number; help: string }[];
   canSend: boolean;
@@ -52,6 +56,8 @@ export interface CollectorView {
   counts: { available: number; approved?: number; restricted: number };
   /** The review bar's "Approve to" choices. */
   approveTo?: { value: string; label: string; tip: string }[];
+  /** The lists' Sort menu. */
+  sorts?: { value: string; label: string; group: number }[];
   /** Finished runs not looked at yet: the tab's count (TabsBus.collector-unread). */
   unseen?: number;
   creators: Row[];
@@ -88,6 +94,37 @@ export function approveToOf(v: CollectorView): { value: string; label: string } 
   const all = v.approveTo ?? [{ value: "list", label: "Approved list only", tip: "" }];
   const c = all.find((x) => x.value === v.settings.approveTo) ?? all[0]!;
   return { value: c.value, label: c.label };
+}
+
+export const LIST_PLATFORMS: { key: string; label: string; color: string }[] = [
+  { key: "youtube", label: "YouTube", color: "#ff0000" },
+  { key: "tiktok", label: "TikTok", color: "#fe2c55" },
+  { key: "instagram", label: "Instagram", color: "#e1306c" },
+];
+
+/** The lists' order: followers high → low (the default) or low → high, as the CRM's subscriber sort; unknown counts
+ *  go last either way, the view's order (newest collected first) breaks ties (pure: tested). */
+export function sortRows(rows: Row[], mode: string): Row[] {
+  const at = new Map(rows.map((r, i) => [r.id, i]));
+  const dir = mode === "followers-asc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = a.subs ?? null;
+    const y = b.subs ?? null;
+    if (x === null && y === null) return at.get(a.id)! - at.get(b.id)!;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return dir * (y - x) || at.get(a.id)! - at.get(b.id)!;
+  });
+}
+
+/** The Sort button's compact label ("Followers ↓"). */
+export const sortShort = (label: string): string => label.replace(" (high → low)", " ↓").replace(" (low → high)", " ↑");
+
+/** How many leads of a list each platform has (the platform menu's counts; the text filter aside). */
+export function platformCounts(v: CollectorView, page: Page): Record<string, number> {
+  const n: Record<string, number> = { youtube: 0, tiktok: 0, instagram: 0 };
+  for (const c of v.creators) if (listOfRow(c) === page && c.platformKey) n[c.platformKey] = (n[c.platformKey] ?? 0) + 1;
+  return n;
 }
 
 const listOfRow = (c: Row): Page => (c.restricted ? "restricted" : c.approved ? "approved" : "available");
@@ -151,10 +188,13 @@ export function leadsOf(v: CollectorView, page: Page, filter: string): { rows: R
   }
   const q = filter.trim().toLowerCase();
   const all = v.creators.filter((c) => listOfRow(c) === page);
-  const rows = q ? all.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : all;
+  const only = v.settings.platforms ?? [];
+  const shown = only.length ? all.filter((c) => only.includes(c.platformKey ?? "")) : all;
+  const rows = sortRows(q ? shown.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : shown, v.settings.sort ?? "followers-desc");
   const none: [string, string] = ({ restricted: ["Nobody restricted", "Restrict a lead (or Reject it in its detail) to keep it out of Available. It stays remembered, so no run collects it again."], approved: ["Nobody approved", "Open a lead and press Approve (A or →). Approved leads leave Available and stay remembered, so no run collects them again."], available: ["No leads yet", "Collect some from the Collector page."] } as Record<"available" | "approved" | "restricted", [string, string]>)[page];
   const emptyTitle = all.length === 0 ? none[0] : "No match";
-  const emptyDesc = all.length === 0 ? none[1] : `Nobody matches “${filter.trim()}”.`;
+  const which = LIST_PLATFORMS.filter((p) => only.includes(p.key)).map((p) => p.label).join(" or ");
+  const emptyDesc = all.length === 0 ? none[1] : q ? `Nobody matches “${filter.trim()}”${only.length ? ` on ${which}` : ""}.` : `Nobody here on ${which}.`;
   return { rows, head: "", emptyTitle, emptyDesc };
 }
 
@@ -233,6 +273,8 @@ export function createCollectorUi(): TabUi {
   let noteSaved = "";
   let noteTimer: ReturnType<typeof setTimeout> | null = null;
   let approveMenu = false;
+  /** The lists' Sort or platform menu, open ("" none). */
+  let listMenu = "";
   /** What the detail's lists were last drawn from (a model is only replaced when it changes). */
   const sigs: Record<string, string> = {};
   const rowModel = new slint.ArrayModel<Record<string, unknown>>([]);
@@ -358,6 +400,7 @@ export function createCollectorUi(): TabUi {
     set("email_for", emailFor);
     const l = leadsOf(v, page, b.filter);
     set("rows_head", l.head);
+    renderListMenus(v);
     set("empty_title", l.emptyTitle);
     set("empty_desc", l.emptyDesc);
     sync(
@@ -394,6 +437,28 @@ export function createCollectorUi(): TabUi {
     if (b.rows !== rowModel) b.rows = rowModel;
     renderSend();
     renderDetail();
+  }
+
+  function renderListMenus(v: CollectorView): void {
+    const b = bus;
+    if (!b) return;
+    const sort = v.settings.sort ?? "followers-desc";
+    const only = v.settings.platforms ?? [];
+    const sorts = v.sorts ?? [];
+    set("sort_label", sortShort(sorts.find((x) => x.value === sort)?.label ?? "Sort"));
+    set("sort_tip", `Sort: ${sorts.find((x) => x.value === sort)?.label ?? ""}`);
+    const counts = platformCounts(v, page);
+    set("plat_label", only.length === 0 ? "All platforms" : only.length === 1 ? (LIST_PLATFORMS.find((p) => p.key === only[0])?.label ?? "") : `${only.length} platforms`);
+    set("plat_on", only.length > 0);
+    set("list_menu", listMenu);
+    const sortItems = sorts.map((x, i) => ({ value: x.value, label: x.label, on: x.value === sort, sep: i > 0 && sorts[i - 1]!.group !== x.group }));
+    const plats = LIST_PLATFORMS.map((p) => ({ value: p.key, label: p.label, color: p.color, count: counts[p.key] ?? 0, on: only.includes(p.key) }));
+    const sig = JSON.stringify([sortItems, plats]);
+    if (sigs.list_menus !== sig) {
+      b.sort_items = new slint.ArrayModel(sortItems);
+      b.plat_items = new slint.ArrayModel(plats);
+      sigs.list_menus = sig;
+    }
   }
 
   function renderDetail(): void {
@@ -616,6 +681,7 @@ export function createCollectorUi(): TabUi {
     };
     on("go", (id: string) => {
       page = (PAGES.find((p) => p.id === id)?.id ?? "collector") as Page;
+      listMenu = "";
       emailFor = "";
       render();
     });
@@ -765,6 +831,25 @@ export function createCollectorUi(): TabUi {
       if (view) view.settings.approveTo = value;
       render();
       void post("settings", { approveTo: value });
+    });
+    on("list_menu_show", (which: string) => {
+      listMenu = listMenu === which ? "" : which;
+      render();
+    });
+    on("sort_pick", (value: string) => {
+      listMenu = "";
+      if (view) view.settings.sort = value;
+      render();
+      void post("settings", { sort: value });
+    });
+    // "Show only — platforms" (the CRM's): a multi-select that stays open; "" is All platforms.
+    on("plat_pick", (key: string) => {
+      if (!view) return;
+      const cur = view.settings.platforms ?? [];
+      const next = key === "" ? [] : cur.includes(key) ? cur.filter((x) => x !== key) : [...cur, key];
+      view.settings.platforms = next.length === LIST_PLATFORMS.length ? [] : next;
+      render();
+      void post("settings", { platforms: view.settings.platforms });
     });
     on("approve_set", (id: string, yes: boolean) => {
       const name = view?.creators.find((c) => c.id === id)?.name ?? "Lead";

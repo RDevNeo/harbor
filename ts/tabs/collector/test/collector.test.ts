@@ -445,6 +445,22 @@ describe("collector", () => {
     expect([people.length, sends]).toEqual([2, 0]);
     expect(livePersons(() => null).add(rec({ platform: "youtube", platform_id: "x" }))).toMatchObject({ ok: false });
   });
+  it("remembers the lists' Sort and platforms; bad ones fall back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const c = new Collector(dir, deps({}));
+    const call = caller(c);
+    expect(c.data.settings).toMatchObject({ sort: "followers-desc", platforms: [] });
+    await call("POST", "settings", { sort: "followers-asc", platforms: ["instagram", "youtube", "nope", "youtube"] });
+    expect(c.data.settings).toMatchObject({ sort: "followers-asc", platforms: ["youtube", "instagram"] });
+    await call("POST", "settings", { sort: "name-asc", platforms: ["youtube", "tiktok", "instagram"] });
+    expect(c.data.settings).toMatchObject({ sort: "followers-asc", platforms: [] });
+    await call("POST", "settings", { platforms: ["tiktok"] });
+    await c.flush();
+    expect(new Collector(dir, deps({})).data.settings).toMatchObject({ sort: "followers-asc", platforms: ["tiktok"] });
+    expect(migrate({ settings: { sort: 3, platforms: "x" } }).settings).toMatchObject({ sort: "followers-desc", platforms: [] });
+    const v = (await call("GET", ""))!.body as { sorts: { value: string }[]; creators: unknown[] };
+    expect((v.sorts as { value: string; label: string }[]).map((x) => x.label)).toEqual(["Followers (high → low)", "Followers (low → high)"]);
+  });
   it("Approved and Rejected leads are never collected again", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const yt = fakeYt({ UCa: 1, UCb: 1 });

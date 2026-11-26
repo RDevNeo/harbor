@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { approveToOf, formOf, leadsOf, nextLead, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { approveToOf, formOf, leadsOf, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -60,6 +60,36 @@ describe("collector window", () => {
     expect(leadsOf(v, "approved", "x.com").rows.map((r) => r.id)).toEqual(["c"]);
     expect(leadsOf(v, "restricted", "").rows.map((r) => r.id)).toEqual(["b"]);
     expect(leadsOf(view(), "approved", "").emptyTitle).toBe("Nobody approved");
+  });
+});
+
+describe("collector lists' Sort and platforms", () => {
+  const rows = [
+    row("new", { platformKey: "tiktok", subs: null }),
+    row("big", { name: "Zé", platformKey: "youtube", subs: 900 }),
+    row("small", { name: "Ana", platformKey: "instagram", subs: 10 }),
+    row("mid", { name: "Bia", platformKey: "youtube", subs: 300 }),
+  ];
+  it("sorts by followers, high → low (the default) or low → high; unknown last both ways", () => {
+    const ids = (m: string) => sortRows(rows, m).map((r) => r.id);
+    expect(ids("followers-desc")).toEqual(["big", "mid", "small", "new"]);
+    expect(ids("followers-asc")).toEqual(["small", "mid", "big", "new"]);
+    expect(ids("bogus")).toEqual(ids("followers-desc"));
+    expect(sortShort("Followers (high → low)")).toBe("Followers ↓");
+    expect(sortShort("Followers (low → high)")).toBe("Followers ↑");
+  });
+  it("a list shows only the platforms picked, in the Sort's order (the review bar's order too); counts per platform", () => {
+    const v = view({ creators: [...rows, row("gone", { restricted: true, platformKey: "youtube", subs: 5000 })] });
+    expect(leadsOf(v, "available", "").rows.map((r) => r.id)).toEqual(["big", "mid", "small", "new"]);
+    v.settings.platforms = ["youtube", "tiktok"];
+    expect(leadsOf(v, "available", "").rows.map((r) => r.id)).toEqual(["big", "mid", "new"]);
+    v.settings.sort = "followers-asc";
+    expect(leadsOf(v, "available", "").rows.map((r) => r.id)).toEqual(["mid", "big", "new"]);
+    v.settings.platforms = ["instagram"];
+    expect(leadsOf(v, "available", "zzz")).toMatchObject({ rows: [], emptyDesc: "Nobody matches “zzz” on Instagram." });
+    expect(leadsOf(view({ creators: [row("a", { platformKey: "youtube" })], settings: { ...defaultSettings(), platforms: ["tiktok"] } }), "available", "").emptyDesc).toBe("Nobody here on TikTok.");
+    expect(platformCounts(v, "available")).toEqual({ youtube: 2, tiktok: 1, instagram: 1 });
+    expect(platformCounts(v, "restricted")).toEqual({ youtube: 1, tiktok: 0, instagram: 0 });
   });
 });
 
