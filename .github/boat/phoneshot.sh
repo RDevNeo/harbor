@@ -12,7 +12,7 @@
 # the test caller app android/rigcaller),
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults; CODE=1 runs the app
-# from downloaded app code (the build's harbor-phone-code.zip, one patch version newer than the APK,
+# from downloaded app code (the build's hub-phone-code.zip, one patch version newer than the APK,
 # staged as root where the shell keeps it: android/README.md, "Shell and code").
 #
 # SAVE=1 (scripts/boat/phoneshot --save-snapshot): after the shots, leave this sandbox ready to be
@@ -157,8 +157,8 @@ phase boot $s
 # state.properties naming it staged), owned by the app and labelled as its data.
 if [ -n "${CODE:-}" ]; then
   pkg_name=dev.hub.app d=/data/data/dev.hub.app/harbor-code
-  size=$(stat -c %s "$HOME/out/harbor-phone-code.zip")
-  timeout 60 "$adb" push "$HOME/out/harbor-phone-code.zip" /data/local/tmp/code.zip >/dev/null
+  size=$(stat -c %s "$HOME/out/hub-phone-code.zip")
+  timeout 60 "$adb" push "$HOME/out/hub-phone-code.zip" /data/local/tmp/code.zip >/dev/null
   ad "am force-stop $pkg_name; mkdir -p $d && cp /data/local/tmp/code.zip $d/$ccode.zip && chmod 444 $d/$ccode.zip \
     && printf 'code=$ccode\nversion=$cver\nminShell=0\nsize=$size\n' > $d/$ccode.properties \
     && printf 'staged=$ccode\nstagedAt=1\n' > $d/state.properties \

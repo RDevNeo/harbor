@@ -51,7 +51,7 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
 Options:
   --dark           the phone's dark theme
   --code           run the app from downloaded app code, as a phone on Android 9+ does after an
-                   update (android/README.md, "Shell and code"): the build's harbor-phone-code.zip,
+                   update (android/README.md, "Shell and code"): the build's hub-phone-code.zip,
                    one patch version newer than its APK, is put where the shell keeps staged code
                    before the first screen; the shell's log lines (harbor-shell) are printed after
                    the shots, and Settings says the code's version
