@@ -444,11 +444,27 @@ let clKey = "";
 let clCheckedAt = 0;
 let clScanning: Promise<void> | null = null;
 
+/**
+ * The file a CLI's code is in: a mise shim (`…/mise/shims/claude`) is a link to mise itself (140 MB, no model table in
+ * it), so it is followed to the tool's current install (`…/mise/installs/claude/latest/claude`) instead.
+ */
+export function cliFile(binPath: string): string {
+  const real = realpathSync(binPath);
+  const i = binPath.indexOf("/mise/shims/");
+  if (i < 0) return real;
+  const name = binPath.slice(i + "/mise/shims/".length);
+  try {
+    return realpathSync(join(binPath.slice(0, i), "mise", "installs", name, "latest", name));
+  } catch {
+    return real;
+  }
+}
+
 /** Which CLI is installed now, as a cache key ("" when there is none). */
 function claudeCliKey(binPath: string | null): string {
   if (binPath === null) return "";
   try {
-    const real = realpathSync(binPath);
+    const real = cliFile(binPath);
     const st = statSync(real);
     return `${real}|${st.size}|${Math.floor(st.mtimeMs)}`;
   } catch {
@@ -481,8 +497,9 @@ export function scanClaudeModels(binPath: string | null = which("claude")): Prom
         }
         carry = Buffer.from(buf.subarray(keep));
       }
-      if (found.length === 0) return;
-      clKnown = found;
+      // A file with no table (another tool, a new bundle format) is kept as read too: read again only when it changes,
+      // not every minute (hundreds of MB from the disk each time; the built-in list stands in).
+      clKnown = found.length > 0 ? found : null;
       clKey = key;
       try {
         mkdirSync(dataDir(), { recursive: true });
@@ -576,7 +593,8 @@ export function claudeModels(refresh = process.env.NODE_ENV !== "test"): Model[]
       const c = readJson(claudeCachePath());
       const list = at(c, "models");
       if (str(at(c, "key")) === key && Array.isArray(list)) {
-        clKnown = list.map((x) => ({ id: str(at(x, "id")), family: str(at(x, "family")), label: str(at(x, "label")) })).filter((x) => x.id !== "" && x.label !== "");
+        const known = list.map((x) => ({ id: str(at(x, "id")), family: str(at(x, "family")), label: str(at(x, "label")) })).filter((x) => x.id !== "" && x.label !== "");
+        clKnown = known.length > 0 ? known : null;
         clKey = key;
       } else void scanClaudeModels(bin);
     }

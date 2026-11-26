@@ -366,6 +366,11 @@ export class Store {
         seq INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(chat_id, seq));
       CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT NOT NULL);`);
     migrate(db);
+    // Each chat's saved transcript length and digest (`summary`) across starts, with its last item's hash to check it
+    // against the items; without it, the first cloud round after a start read and hashed every transcript.
+    db.exec(`CREATE TABLE IF NOT EXISTS item_sums(
+      chat_id INTEGER PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+      count INTEGER NOT NULL, digest TEXT NOT NULL, rows INTEGER NOT NULL, last TEXT NOT NULL);`);
     return new Store(db);
   }
 
@@ -816,15 +821,56 @@ export class Store {
     return r ? parseItem(text(r.body)) : null;
   }
 
-  /** A saved transcript's length and digest (item.ts `digest`), read once and kept until it's written again. */
+  /**
+   * A saved transcript's length and digest (item.ts `digest`), kept until it's written again: from memory, else as
+   * the last save left it in `item_sums` (when its length and last item still match the items), else read whole.
+   */
   summary(chatId: number): { count: number; digest: bigint } {
     let v = this.sums.get(chatId);
+    if (v) return v;
+    v = this.storedSum(chatId) ?? undefined;
     if (!v) {
       const items = this.items(chatId);
       v = { count: items.length, digest: digest(items) };
-      this.sums.set(chatId, v);
+      const end = this.itemsEnd(chatId);
+      if (end) this.putSum(chatId, v.count, v.digest, end.rows, end.last);
     }
+    this.sums.set(chatId, v);
     return v;
+  }
+
+  /** How a chat's saved items end: how many rows, and the hash of the last one's text (0: none). Null: unreadable. */
+  private itemsEnd(chatId: number): { rows: number; last: bigint } | null {
+    try {
+      const rows = num((this.db.query("SELECT count(*) AS n FROM items WHERE chat_id=?1").get(chatId) as Row).n);
+      const r = rows === 0 ? null : (this.db.query("SELECT body FROM items WHERE chat_id=?1 ORDER BY seq DESC LIMIT 1").get(chatId) as Row | null);
+      return { rows, last: r ? fnvText(text(r.body)) : 0n };
+    } catch {
+      return null;
+    }
+  }
+
+  /** `item_sums`' row for the chat when the items still end as it says (as many, the same last one), else null. */
+  private storedSum(chatId: number): { count: number; digest: bigint } | null {
+    try {
+      const r = this.db.query("SELECT count, digest, rows, last FROM item_sums WHERE chat_id=?1").get(chatId) as Row | null;
+      if (!r) return null;
+      const end = this.itemsEnd(chatId);
+      if (!end || end.rows !== num(r.rows) || end.last.toString(16) !== text(r.last)) return null;
+      return { count: num(r.count), digest: BigInt(`0x${text(r.digest)}`) };
+    } catch {
+      return null;
+    }
+  }
+
+  private putSum(chatId: number, count: number, sum: bigint, rows: number, last: bigint): void {
+    try {
+      this.db
+        .query("INSERT OR REPLACE INTO item_sums(chat_id, count, digest, rows, last) VALUES(?1, ?2, ?3, ?4, ?5)")
+        .run(chatId, count, sum.toString(16), rows, last.toString(16));
+    } catch {
+      // a chat that's gone (its row can't refer to it): the summary stays in memory
+    }
   }
 
   /** Saves a chat's transcript: only items new or changed since the last save are written, and items past its end are deleted. */
@@ -844,11 +890,13 @@ export class Store {
         if (saved[i] !== hashes[i]) put.run(chatId, i, itemJson(it));
       });
       if (saved.length > items.length) this.db.query("DELETE FROM items WHERE chat_id=?1 AND seq>=?2").run(chatId, items.length);
+      this.putSum(chatId, items.length, sum, items.length, hashes.at(-1) ?? 0n);
     });
+    const sum = digestOf(hashes);
     try {
       write();
       this.saved.set(chatId, hashes);
-      this.sums.set(chatId, { count: items.length, digest: digestOf(hashes) });
+      this.sums.set(chatId, { count: items.length, digest: sum });
     } catch (e) {
       console.error(`harbor: can't save the transcript of chat ${chatId}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -883,11 +931,13 @@ export class Store {
       const q = this.db.query("INSERT OR REPLACE INTO items(chat_id, seq, body) VALUES(?1, ?2, ?3)");
       for (const [seq, it] of put) q.run(chatId, seq, itemJson(it));
       if (was > hashes.length) this.db.query("DELETE FROM items WHERE chat_id=?1 AND seq>=?2").run(chatId, hashes.length);
+      this.putSum(chatId, hashes.length, sum, hashes.length, hashes.at(-1) ?? 0n);
     });
+    const sum = digestOf(hashes);
     try {
       write();
       this.saved.set(chatId, hashes);
-      this.sums.set(chatId, { count: hashes.length, digest: digestOf(hashes) });
+      this.sums.set(chatId, { count: hashes.length, digest: sum });
     } catch (e) {
       console.error(`harbor: can't save the transcript of chat ${chatId}: ${e instanceof Error ? e.message : String(e)}`);
     }

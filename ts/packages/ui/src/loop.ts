@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 import * as slint from "slint-ui";
 // Its source, not its path: a compiled executable or a bundle has no fdwait.ts beside it.
 import * as fdwaitText from "./fdwait.ts" with { type: "text" };
+import { libc } from "@harbor/os";
 import { stallwatch } from "@harbor/store";
 import * as switchTrace from "./switchtrace.ts";
 import native, { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed, setXdgAppId } from "slint-ui/rust-module.cjs";
@@ -74,14 +75,15 @@ function hookAppId(): void {
 }
 hookAppId();
 
-/** The fds an epoll fd watches. */
-function watched(fd: number): string[] {
+/** The fds an epoll fd watches, with what each is ("socket:[…]", "anon_inode:[eventfd]"). */
+function watched(fd: number): { fd: number; target: string }[] {
   try {
     return [...readFileSync(`/proc/self/fdinfo/${fd}`, "utf8").matchAll(/^tfd:\s*(\d+)/gm)].map((m) => {
+      const n = Number(m[1]);
       try {
-        return readlinkSync(`/proc/self/fd/${m[1]}`);
+        return { fd: n, target: readlinkSync(`/proc/self/fd/${n}`) };
       } catch {
-        return "";
+        return { fd: n, target: "" };
       }
     });
   } catch {
@@ -89,10 +91,26 @@ function watched(fd: number): string[] {
   }
 }
 
-/** The new epoll fd that watches a socket (the compositor's); others come with the window too (async-io's). */
+/** A socket path that is the display server's: Wayland's (`…/wayland-1`) or X11's (`/tmp/.X11-unix/X0`). */
+export function isDisplaySocket(path: string | null): boolean {
+  return path !== null && (/(^|\/)wayland-[^/]*$/.test(path) || path.includes(".X11-unix/"));
+}
+
+/**
+ * The epoll fd the window's backend waits on, among the new ones that watch a socket: winit's (calloop) watches the
+ * compositor's socket; others come with the window too (accesskit's D-Bus connection, async-io). Several: the one
+ * whose socket leads to the display. Null (a paced loop) when it can't tell.
+ */
+export function pickBackend(fresh: number[], sockets: (epfd: number) => number[], peer: (fd: number) => string | null): number | null {
+  if (fresh.length === 1) return fresh[0] ?? null;
+  const display = fresh.filter((ep) => sockets(ep).some((s) => isDisplaySocket(peer(s))));
+  return display.length === 1 ? (display[0] ?? null) : null;
+}
+
 function backendFd(): number | null {
-  const fresh = [...epolls()].filter((fd) => !before.has(fd) && watched(fd).some((t) => t.startsWith("socket:")));
-  return fresh.length === 1 ? (fresh[0] ?? null) : null;
+  const sockets = (ep: number) => watched(ep).filter((w) => w.target.startsWith("socket:")).map((w) => w.fd);
+  const fresh = [...epolls()].filter((fd) => !before.has(fd) && sockets(fd).length > 0);
+  return pickBackend(fresh, sockets, (fd) => libc.peerPath(fd));
 }
 
 let touched: (() => void) | null = null;

@@ -120,6 +120,37 @@ test("patch_items_writes_only_what_came_and_keeps_the_digest", () => {
   expect(texts(open(path), a)).toEqual(["one", "TWO"]);
 });
 
+test("a_transcript_summary_outlives_a_restart_and_is_checked_against_the_items", () => {
+  const dir = tmp();
+  const path = join(dir, "harbor.db");
+  const s = open(path);
+  const repo = s.addRepo(dir);
+  const a = s.createChat(blankChat({ repoId: repo, title: "t" })).id;
+  const want = (xs: string[]) => ({ count: xs.length, digest: digest(xs.map(text)) });
+  s.saveItems(a, ["one", "two", "three"].map(text));
+  // A new start takes it as saved, without reading the transcript.
+  let next = open(path);
+  const items = next.items.bind(next);
+  let reads = 0;
+  next.items = (id: number) => {
+    reads++;
+    return items(id);
+  };
+  expect(next.summary(a)).toEqual(want(["one", "two", "three"]));
+  expect(reads).toBe(0);
+  // Items written past it (another writer, an older Hub): it doesn't match their end, so they're read again.
+  s.db.query("INSERT INTO items(chat_id, seq, body) VALUES(?1, 3, ?2)").run(a, itemJson(text("four")));
+  next = open(path);
+  expect(next.summary(a)).toEqual(want(["one", "two", "three", "four"]));
+  s.db.query("UPDATE items SET body=?2 WHERE chat_id=?1 AND seq=3").run(a, itemJson(text("FOUR")));
+  expect(open(path).summary(a)).toEqual(want(["one", "two", "three", "FOUR"]));
+  // Patches keep it too (a store that didn't see those writes); a deleted chat's row goes with it.
+  open(path).patchItems(a, 5, new Map([[4, text("five")]]));
+  expect(open(path).summary(a)).toEqual(want(["one", "two", "three", "FOUR", "five"]));
+  s.deleteChat(a);
+  expect((s.db.query("SELECT count(*) AS n FROM item_sums").get() as { n: number }).n).toBe(0);
+});
+
 test("a_deleted_main_chat_is_forgotten", () => {
   const dir = tmp();
   const path = join(dir, "harbor.db");

@@ -15,6 +15,7 @@ const POSIX = {
   dup: { args: [FFIType.i32], returns: FFIType.i32 },
   dup2: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
   close: { args: [FFIType.i32], returns: FFIType.i32 },
+  getpeername: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 } as const;
 
 type Posix = ReturnType<typeof dlopen<typeof POSIX>>["symbols"];
@@ -80,6 +81,29 @@ export function dup2(from: number, to: number): number | null {
 export function close(fd: number): number | null {
   const l = lib();
   return l === null ? null : l.close(fd);
+}
+
+/**
+ * The path a connected Unix socket's other end is bound to (`/run/user/1000/wayland-1`; an abstract one starts with
+ * "@"), or null: not a Unix socket, not connected to a named one, or no libc.
+ */
+export function peerPath(fd: number): string | null {
+  const l = lib();
+  if (l === null) return null;
+  // sockaddr_un: a 2-byte family, then up to 108 bytes of path.
+  const addr = new Uint8Array(110);
+  const len = new Uint32Array([addr.length]);
+  try {
+    if (l.getpeername(fd, addr, len) !== 0) return null;
+  } catch {
+    return null;
+  }
+  const n = Math.min(len[0] ?? 0, addr.length);
+  if (n <= 2 || (addr[0] ?? 0) + ((addr[1] ?? 0) << 8) !== 1) return null;
+  const raw = Buffer.from(addr.subarray(2, n));
+  if (raw[0] === 0) return `@${raw.subarray(1).toString("latin1").replace(/\0+$/, "")}`;
+  const end = raw.indexOf(0);
+  return raw.subarray(0, end < 0 ? raw.length : end).toString("latin1");
 }
 
 const GLIBC = {
