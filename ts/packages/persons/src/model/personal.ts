@@ -81,3 +81,34 @@ export async function resolveContact(kind: ContactKind, handle: string, lookup: 
   else if (u.avatarUrl) out.photo = u.avatarUrl
   return out
 }
+
+/** Two names for the same person: equal, or one inside the other ("Filipe" / "Filipe Sales"), case and accents aside. */
+export function sameName(a: string, b: string): boolean {
+  const n = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const x = n(a), y = n(b)
+  return !!x && !!y && (x === y || x.includes(y) || y.includes(x))
+}
+
+/** Add contact can't go on without the user's say-so: why (shown in the form) and what the button then says. */
+export class ContactConflict extends Error {
+  constructor(message: string, readonly confirm: string, readonly personId: string | null, readonly current: string) {
+    super(message)
+  }
+}
+
+/**
+ * Whether Add contact needs a confirm first: the number/account is already `existing` (someone in Persons) under another
+ * name than the one typed (Rename only on confirm), or WhatsApp itself names it otherwise (`platformName`: the address
+ * book's or the account's own name), so a mistyped number isn't added as someone else. Null: go on.
+ */
+export function contactConflict(o: { typed: string; handle: string; existing: { id: string; label: string; inPersonal: boolean } | null; platformName?: string | undefined }): ContactConflict | null {
+  const typed = o.typed.trim()
+  if (!typed) return null
+  if (o.existing) {
+    if (sameName(typed, o.existing.label)) return null
+    const where = o.existing.inPersonal ? 'in Personal' : 'in Persons'
+    return new ContactConflict(`${o.handle} is already ${o.existing.label} (${where}). Check the number, or press Rename to call ${o.existing.label} “${typed}”.`, 'Rename', o.existing.id, o.existing.label)
+  }
+  if (o.platformName && !sameName(typed, o.platformName)) return new ContactConflict(`${o.handle} is “${o.platformName}” on your WhatsApp, not ${typed}. Check the number, or press Add anyway.`, 'Add anyway', null, o.platformName)
+  return null
+}

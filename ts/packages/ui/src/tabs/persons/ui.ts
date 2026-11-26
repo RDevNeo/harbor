@@ -1148,6 +1148,8 @@ class PersonsTab {
   // ---------- Personal ----------
 
   private contactKind = "discord";
+  /** A conflict the form showed (the fields it was for): OK with the same fields confirms it. */
+  private contactPending: { kind: string; handle: string; name: string } | null = null;
 
   /** Add contact's platform chips, `kind` picked; the field's label and hint follow it. */
   private renderContactKind(kind: string): void {
@@ -1157,6 +1159,8 @@ class PersonsTab {
     b.f_handle_label = CONTACT_FIELD[this.contactKind]!.label;
     b.f_handle_hint = CONTACT_FIELD[this.contactKind]!.hint;
     b.d_error = "";
+    b.d_ok = "Add";
+    this.contactPending = null;
   }
 
   /**
@@ -1170,7 +1174,19 @@ class PersonsTab {
     b.f_lists = [];
     this.renderContactKind(this.contactKind);
     this.openDialog("contact", "Add contact", "Their WhatsApp number, or their Discord or Instagram username: their conversation shows here.", "Add", async () => {
-      const r = await this.api("POST", "contacts", { kind: this.contactKind, handle: String(b.f_discord ?? "").trim(), name: String(b.f_name ?? "").trim() });
+      const fields = { kind: this.contactKind, handle: String(b.f_discord ?? "").trim(), name: String(b.f_name ?? "").trim() };
+      const p0 = this.contactPending;
+      const confirm = !!p0 && p0.kind === fields.kind && p0.handle === fields.handle && p0.name === fields.name;
+      const r = await this.api("POST", "contacts", { ...fields, ...(confirm ? { confirm: true } : {}) });
+      const conflict = r.body.conflict as { confirm?: string } | undefined;
+      if (r.status === 200 && r.body.ok === false && conflict) {
+        // already someone else, or WhatsApp names the number otherwise: said in the form; the button confirms it
+        this.contactPending = fields;
+        b.d_ok = String(conflict.confirm || "Add anyway");
+        throw new Error(String(r.body.error ?? "Check the number"));
+      }
+      this.contactPending = null;
+      b.d_ok = "Add";
       if (r.status !== 200 || r.body.ok === false) throw new Error(String(r.body.error ?? "Not added"));
       const np = r.body.person as { id?: string; name?: string } | undefined;
       await this.refresh();

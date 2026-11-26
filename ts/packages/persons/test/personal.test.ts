@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { chatsFor, serves, type ConnMeta } from "../src/model/accounts.ts";
 import { normalizeData } from "../src/model/data.ts";
-import { contactHandleError, personalShares, resolveContact } from "../src/model/personal.ts";
+import { contactConflict, contactHandleError, personalShares, resolveContact, sameName } from "../src/model/personal.ts";
 import type { ChannelUser, LookupResult, Person } from "../src/model/types.ts";
 
 const CONNS: ConnMeta[] = [
@@ -112,5 +112,21 @@ describe("Add contact: resolveContact", () => {
     expect(contactHandleError("whatsapp", " ")).toBe("Type their WhatsApp number");
     expect(contactHandleError("instagram", "")).toBe("Type their Instagram username");
     expect(contactHandleError("discord", "@ana.s")).toBeNull();
+  });
+});
+
+describe("Add contact: a name that isn't theirs waits for a confirm", () => {
+  test("same names: equal, one inside the other, case and accents aside", () => {
+    expect(sameName("Filipe", "filipe sales")).toBe(true);
+    expect(sameName("José", "jose")).toBe(true);
+    expect(sameName("Filipe", "Fagner")).toBe(false);
+    expect(sameName("", "Fagner")).toBe(false);
+  });
+  test("someone already there under another name: Rename; WhatsApp's own name differs: Add anyway; nothing typed: go on", () => {
+    expect(contactConflict({ typed: "Filipe", handle: "+557199616108", existing: { id: "pf", label: "Fagner", inPersonal: false } })).toMatchObject({ confirm: "Rename", personId: "pf", message: "+557199616108 is already Fagner (in Persons). Check the number, or press Rename to call Fagner “Filipe”." });
+    expect(contactConflict({ typed: "Fagner", handle: "+557199616108", existing: { id: "pf", label: "Fagner", inPersonal: true } })).toBeNull();
+    expect(contactConflict({ typed: "Rafael", handle: "+5571933007100", existing: null, platformName: "Filipe" })).toMatchObject({ confirm: "Add anyway", personId: null });
+    expect(contactConflict({ typed: "Filipe", handle: "+5571933007100", existing: null, platformName: "Filipe Sales" })).toBeNull();
+    expect(contactConflict({ typed: "", handle: "+5571933007100", existing: { id: "pf", label: "Fagner", inPersonal: true } })).toBeNull();
   });
 });
