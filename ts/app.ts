@@ -65,7 +65,11 @@ const commands: Record<string, Command> = {
     const kv = await store();
     if (at >= 0) kv.set(followMain.CHECKOUT_KEY, (await import("node:path")).resolve(args[at + 1] as string));
     if (verb !== "status") followMain.setEnabled(kv, verb === "on");
-    const checkout = followMain.findCheckout(kv, () => kv.repos());
+    const { readFileSync: rf, existsSync: ex } = await import("node:fs");
+    const { defaultConfig: dc } = await import("./packages/update/src/index.ts");
+    const libDir = dc().dir;
+    const source = libDir !== null && ex(join(libDir, "SOURCE")) ? rf(join(libDir, "SOURCE"), "utf8").trim() : "";
+    const checkout = kv.get(followMain.CHECKOUT_KEY)?.trim() || (source !== "" && ex(join(source, ".git")) ? source : null) || followMain.findCheckout(kv, () => kv.repos());
     const on = followMain.enabled(kv);
     const { readJson } = await import("./packages/update/src/files.ts");
     const st = readJson<import("./packages/update/src/followmain.ts").FollowStatus>(join(dataDir(), followMain.DIR, "status.json"));

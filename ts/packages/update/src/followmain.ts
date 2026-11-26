@@ -163,7 +163,7 @@ export interface FollowDeps {
   runtimeInstall?: (src: string, commit: string, version: string, log: string) => Promise<string | null>;
   /** After a look: the tip followed (the phone's app code is built from it when android/ changed, phoneota.ts). */
   tipSeen?: (src: string, tip: string) => void;
-  /** The checkout when no project is one (Hub: the one packaging/hub-install.sh built from, its SOURCE file). */
+  /** The checkout to follow before any project's (Hub: the one packaging/hub-install.sh built from, its SOURCE file). */
   checkoutGuess?: () => string | null;
   /** How often the remote is asked with `git ls-remote` besides the checkout's refs (REMOTE_POLL_MS). */
   remotePollMs?: number;
@@ -394,7 +394,9 @@ export class FollowMain {
   }
 
   checkout(): string | null {
-    return findCheckout(this.d.kv, this.d.repos) ?? this.d.checkoutGuess?.() ?? null;
+    // A checkout set by hand (kv) first, then the one this install was built from (Hub), then a project's.
+    const set = this.d.kv.get(CHECKOUT_KEY)?.trim();
+    return set || (this.d.checkoutGuess?.() ?? findCheckout(this.d.kv, this.d.repos));
   }
 
   setOn(on: boolean): void {
@@ -1205,7 +1207,7 @@ export function statusLine(s: FollowStatus, on: boolean): string {
   switch (s.state) {
     case "off":
     case "idle":
-      return s.reason !== "" ? `Following main: ${s.reason}.` : `Following main: running ${v}.`;
+      return s.reason !== "" ? `Following: ${s.reason}.` : `Following: running ${v}.`;
     case "building":
       return `Building ${v}…`;
     case "checking":
