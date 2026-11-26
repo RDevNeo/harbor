@@ -191,7 +191,7 @@ const REMOTE_ICON_MS = 10 * 60_000;
 const REMOTE_ICON_RETRY_MS = 30_000;
 
 /** Hub's tabs besides Projects whose sidebar Ctrl+B shows or hides: the bus holding its `side-hidden`. */
-const TAB_SIDEBAR_BUS: Readonly<Record<string, string>> = { persons: "PersonsBus", routine: "RoutineBus" };
+const TAB_SIDEBAR_BUS: Readonly<Record<string, string>> = { persons: "PersonsBus", routine: "RoutineBus", collector: "CollectorBus" };
 
 export class Shell {
   readonly win: AppWindow;

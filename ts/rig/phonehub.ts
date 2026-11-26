@@ -43,6 +43,48 @@ for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(j
 mkdirSync(join(dir, "home", ".opencode", "bin"), { recursive: true });
 writeFileSync(join(dir, "home", ".opencode", "bin", "opencode"), '#!/bin/sh\n[ "$1" = models ] && printf "nvidia/z-ai/glm-5.3-flash\\nopencode/big-pickle\\nopenrouter/qwen/qwen3-coder\\n"\nexit 0\n', { mode: 0o755 });
 
+// Collector: a YouTube sweep under way (made-up creators, no network: HUB_COLLECTOR_OFFLINE keeps its "running"), and
+// a finished Discover run on the Servers tab.
+{
+  const cdir = join(dir, "collector");
+  mkdirSync(cdir, { recursive: true });
+  Object.assign(process.env, { HUB_COLLECTOR_DIR: cdir, HUB_COLLECTOR_OFFLINE: "1" });
+  const now = Date.now();
+  const day = 86_400_000;
+  const vid = (i: number, ageDays: number) => [{ video_id: `v${i}`, title: "Trade of the week", url: `https://www.youtube.com/watch?v=v${i}`, thumbnail_url: null, published_at: new Date(now - ageDays * day).toISOString(), view_count: 1200 * i, is_short: false }];
+  const yt = (i: number, name: string, handle: string, subs: number | null, videos: number, views: number, links: { label: string; url: string }[], age: number) => ({
+    platform: "youtube", platform_id: `UCrig${i}`, name, handle, profile_url: `https://www.youtube.com/${handle}`, avatar_url: null, subscriber_count: subs, video_count: videos, view_count: views,
+    description: null, links, country: "Brazil", discovered_via: "blox fruits brasil", captured_at: new Date(now - 60_000).toISOString(), recent_videos: vid(i, age),
+  });
+  const creators = [
+    yt(1, "Lia Frutas", "@liafrutas", 182_000, 412, 21_400_000, [{ label: "Discord", url: "https://discord.gg/liafrutas" }, { label: "TikTok", url: "https://www.tiktok.com/@liafrutas" }], 1),
+    yt(2, "Caio Trades", "@caiotrades", 54_300, 210, 6_900_000, [{ label: "Instagram", url: "https://instagram.com/caiotrades" }], 3),
+    yt(3, "Mundo Blox", "@mundoblox", 1_240_000, 880, 210_000_000, [{ label: "Discord", url: "https://discord.gg/mundoblox" }], 0),
+    yt(4, "Rafa Raids", "@rafaraids", 9_800, 95, 640_000, [], 6),
+    yt(5, "Bia Joga", "@biajoga", null, 133, 2_100_000, [{ label: "Loja", url: "https://example.com/bia" }], 2),
+    yt(6, "Tio Kitsune", "@tiokitsune", 371_000, 540, 48_000_000, [{ label: "Discord", url: "https://discord.gg/tiokitsune" }], 4),
+  ];
+  const lines = [
+    ["info", 'Sweeping YouTube for "blox fruits brasil" - target 50 creator(s).'],
+    ["info", "Dropping any channel with no upload in the last 14 days."],
+    ["info", "Channels page 1: 20 new channel(s). 20 queued."],
+    ["ok", "OK Mundo Blox - 1240000 subs, 1 link(s), last upload today"],
+    ["drop", "DROP Velho Canal: dead - last upload 212 days ago (limit 14 days)."],
+    ["ok", "OK Lia Frutas - 182000 subs, 2 link(s), last upload 1 day ago"],
+  ];
+  const servers = [
+    { invite: "https://discord.com/invite/rigA1b2", name: "Loja do Teo", guild_id: "1001", members: 12_400, online: 830, icon_url: null, source: "discover: vendo robux", captured_at: new Date(now - day).toISOString() },
+    { invite: "https://discord.com/invite/rigC3d4", name: "Trocas BR", guild_id: "1002", members: 3_100, online: 204, icon_url: null, source: "discover: vendo robux", captured_at: new Date(now - day).toISOString() },
+  ];
+  writeFileSync(join(cdir, "state.json"), JSON.stringify({
+    v: 1,
+    settings: { tab: "creators", platform: "youtube", query: "blox fruits brasil", gapDays: 14, serverMode: "discover", serverQuery: "vendo robux", channel: "", targets: { creators: 50, servers: 25 } },
+    creators, servers,
+    run: { running: true, tab: "creators", label: "YouTube", query: "blox fruits brasil", startedAt: now - 95_000, endedAt: 0, status: "Running…", found: creators.length, target: 50, considered: 9, dropped: 3 },
+    log: lines.map(([tone, text], i) => ({ at: now - (lines.length - i) * 4000, tone, text })),
+  }));
+}
+
 // Imported after the environment is set: the store reads its folders when loaded.
 const { blankChat, dataDir, Store } = await import("../packages/store/src/index.ts");
 type Item = import("../packages/store/src/index.ts").Item;

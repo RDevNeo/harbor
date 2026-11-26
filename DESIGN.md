@@ -1,6 +1,6 @@
 # Hub's design system
 
-One look for Hub's three tabs (Projects, Persons, Routine) on the PC (Slint) and on Android (Java views). Each tab
+One look for Hub's tabs (Projects, Persons, Routine, Collector) on the PC (Slint) and on Android (Java views). Each tab
 stays its own "app" with its own data and screens. They share the frame, the tokens and the components, so a
 sidebar, a row, a header, a card, a button or a dialog reads the same in every tab.
 
@@ -89,6 +89,12 @@ Per tab:
 - **Routine**: sidebar = Today (with its %), History, Sleep, Goals, Coach as glyph rows, then PLAN (the current plan,
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
+- **Collector**: sidebar = Creators and Servers as glyph rows (count, or "running"); page = PageBar ("Collector /
+  Creators  16 creators", Copy JSONL / Clear on the right), then a column of Cards: the form (source Chips, the ones not
+  available yet disabled with "· soon" and their reason, search Input, Target with −/+, Start/Stop, Last upload Chips or
+  the Discord account line), the run (Spinner, clock, a progress bar, the log in a Well), then the results as avatar
+  rows (stats, a blue Discord tag, freshness on the right; click opens, × removes) or `Empty`. Phone: the same in one
+  scrolling column, Creators / Servers as iconChips under the title.
 
 ## Scrolling (every tab)
 

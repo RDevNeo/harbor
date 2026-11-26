@@ -1,4 +1,4 @@
-// Hub's top-level tabs: Projects (the hub's own window: sidebar, chats) | Persons | Routine (more later).
+// Hub's top-level tabs: Projects (the hub's own window: sidebar, chats) | Persons | Routine | Collector.
 // The switcher (AppTabs) sits at the window's top-left in every tab: in Projects' sidebar header (or its top bar while
 // the sidebar is hidden), and in the header of TabFrame, the full-window page every other tab is drawn in.
 // A tab: its own .slint file exporting `<Name>Bus` (a global the TS side drives, src/tabs/<id>/ui.ts) and
@@ -7,7 +7,7 @@ import { Theme } from "theme.slint";
 import { HLine, TipArea } from "widgets.slint";
 
 export global TabsBus {
-    /** "projects", "persons", "routine". */
+    /** "projects", "persons", "routine", "collector". */
     in-out property <string> current: "projects";
     /** A switch asked for (a click, Ctrl+1/2/3): the TS side sets `current`, mounting the tab on its first time. */
     callback select(string);
@@ -23,11 +23,12 @@ struct TabDef {
 export component AppTabs {
     /** Icons only (the sidebar's header): names on hover, the current one highlighted. */
     in property <bool> compact;
-    // Lucide: folder-kanban, users, dumbbell
+    // Lucide: folder-kanban, users, dumbbell, funnel
     property <[TabDef]> tabs: [
         { id: "projects", label: "Projects", icon: "\u{e4c6}" },
         { id: "persons", label: "Persons", icon: "\u{e1a4}" },
         { id: "routine", label: "Routine", icon: "\u{e3a1}" },
+        { id: "collector", label: "Collector", icon: "\u{e460}" },
     ];
     height: 28px;
     HorizontalLayout {

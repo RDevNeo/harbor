@@ -12,17 +12,18 @@ import android.widget.TextView;
 import java.util.List;
 
 /** Hub's top-level tabs, at the bottom of their screens as Android apps have them: Projects (the
- *  start screen, Hubs, and the chats it opens), Persons and Routine, in that order. Each tab is a
+ *  start screen, Hubs, and the chats it opens), Persons, Routine and Collector, in that order. Each tab is a
  *  screen of its own (Hubs/Chats, Persons, Routine); switching brings the tab's screen back where
  *  it was, without an animation. Persons and Routine read and change their data on the PC (the
  *  same `v1/persons/…`, `v1/routine/…` routes Hub's window uses), the one this phone used last. */
 final class Tabs {
-    static final String PROJECTS = "projects", PERSONS = "persons", ROUTINE = "routine";
-    // Lucide: folder-kanban, users, dumbbell
+    static final String PROJECTS = "projects", PERSONS = "persons", ROUTINE = "routine", COLLECTOR = "collector";
+    // Lucide: folder-kanban, users, dumbbell, funnel
     private static final String[][] TABS = {
         {PROJECTS, "Projects", ""},
         {PERSONS, "Persons", ""},
         {ROUTINE, "Routine", ""},
+        {COLLECTOR, "Collector", ""},
     };
 
     private Tabs() {}
@@ -67,7 +68,7 @@ final class Tabs {
 
     /** Opens tab `id`: its screen comes back as it was (or starts). */
     static void go(Activity a, String id) {
-        Class<?> to = PERSONS.equals(id) ? Persons.class : ROUTINE.equals(id) ? Routine.class : Hubs.class;
+        Class<?> to = PERSONS.equals(id) ? Persons.class : ROUTINE.equals(id) ? Routine.class : COLLECTOR.equals(id) ? Collector.class : Hubs.class;
         Intent i = new Intent(a, to).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         a.startActivity(i);
         a.overridePendingTransition(0, 0);

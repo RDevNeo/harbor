@@ -33,8 +33,9 @@ import { TabsBus, AppTabs, TabFrame } from "tabs.slint";
 import { DialogFrame, DialogActions, Toast, PageBar } from "ds-surface.slint";
 import { PersonsBus, PersonsPage } from "persons.slint";
 import { RoutineBus, RoutinePage } from "routine.slint";
+import { CollectorBus, CollectorPage } from "collector.slint";
 
-export { Theme, Icons, Spin, Ui, TextKeys, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, PinRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus, TabsBus, PersonsBus, RoutineBus }
+export { Theme, Icons, Spin, Ui, TextKeys, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, PinRow, ProjectPopRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus, TabsBus, PersonsBus, RoutineBus, CollectorBus }
 
 export struct PopItem {
     kind: string,
@@ -2704,6 +2705,19 @@ export component AppWindow inherits Window {
                 x: 0;
                 y: 0;
                 // Projects' sidebar width (resizable there), so every tab's sidebar header lines up.
+                side-w: root.side-shown;
+                width: parent.width;
+                height: parent.body-h;
+            }
+        }
+        if TabsBus.current == "collector": TabFrame {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            CollectorPage {
+                x: 0;
+                y: 0;
                 side-w: root.side-shown;
                 width: parent.width;
                 height: parent.body-h;

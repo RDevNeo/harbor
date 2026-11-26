@@ -4,7 +4,7 @@
 // `hub app discord` calls); GET answers the card's info; PUT {connection} picks another connection.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isDiscordConnection } from "../conn/discord.ts";
+import { isDiscordConnection, type DiscordLink } from "../conn/discord.ts";
 import type { ConnView, PersonsService } from "../service.ts";
 import { DiscordTools, SIGN_IN_HOW, type ToolAnswer } from "./discord.ts";
 
@@ -35,17 +35,20 @@ export class AgentDiscord {
       // read-only data (a rig): pacing then forgets on restart
     }
     this.tools = new DiscordTools({
-      link: () => {
-        const v = this.view();
-        const c = v ? this.s.conn(v.id) : undefined;
-        return isDiscordConnection(c) ? c.link : null;
-      },
+      link: () => this.link(),
       about: () => {
         const v = this.view();
         return v ? { label: v.label, status: v.state.status, error: v.state.error ?? null } : null;
       },
       paceFile: join(paceDir, "agent-pace.json"),
     });
+  }
+
+  /** The raw side of the connection agents use (Collector's read-only calls go through it too); null: none. */
+  link(): DiscordLink | null {
+    const v = this.view();
+    const c = v ? this.s.conn(v.id) : undefined;
+    return isDiscordConnection(c) ? c.link : null;
   }
 
   /** The connection picked in agents.json, if it's still there. */

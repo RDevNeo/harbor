@@ -86,6 +86,7 @@
         <!-- Hub's other tabs (Tabs.java): Persons, Routine; a GPS ride records in RideService -->
         <activity android:name=".Persons" android:exported="false" />
         <activity android:name=".Routine" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".Collector" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <service android:name=".RideService" android:exported="false" android:foregroundServiceType="location" />
         <!-- A Discord captcha for a person to solve (Settings › Apps › Discord, or its notification);
              turning the phone just lays the frame out again -->

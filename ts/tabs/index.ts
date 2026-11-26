@@ -2,5 +2,6 @@
 import type { TabEngine } from "./api.ts";
 import { personsEngine } from "./persons/engine.ts";
 import { routineEngine } from "./routine/engine.ts";
+import { collectorEngine } from "./collector/engine.ts";
 
-export const TAB_ENGINES: TabEngine[] = [personsEngine, routineEngine];
+export const TAB_ENGINES: TabEngine[] = [personsEngine, routineEngine, collectorEngine];

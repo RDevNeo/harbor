@@ -54,6 +54,7 @@ import dsSurface from "../slint/ds-surface.slint" with { type: "file" };
 import tabs from "../slint/tabs.slint" with { type: "file" };
 import persons from "../slint/persons.slint" with { type: "file" };
 import routine from "../slint/routine.slint" with { type: "file" };
+import collector from "../slint/collector.slint" with { type: "file" };
 
 export const FILES: Readonly<Record<string, string>> = {
   "addproject.slint": addproject,
@@ -61,6 +62,7 @@ export const FILES: Readonly<Record<string, string>> = {
   "tabs.slint": tabs,
   "persons.slint": persons,
   "routine.slint": routine,
+  "collector.slint": collector,
   "chat.slint": chat,
   "composer.slint": composer,
   "gallery.slint": gallery,

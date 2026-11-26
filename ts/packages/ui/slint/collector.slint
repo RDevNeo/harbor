@@ -1,0 +1,579 @@
+// Collector tab (the Lead Collector userscript, moved into Hub): Creators (YouTube search → creator records, JSONL for
+// SpokPayCRM → Creators → Import) and Servers (Discord invites: Discover search, or a channel's messages). The sweeps
+// run in the engine (ts/tabs/collector); CollectorBus is driven by src/tabs/collector/ui.ts, the same data Hub for
+// Android shows. Built on Hub's design system (ds.slint, DESIGN.md): sidebar, page bar, chips, inputs, rows, empty state.
+import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SectionHead, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel } from "ds.slint";
+
+export struct ClChip { value: string, label: string, on: bool, available: bool, tip: string }
+export struct ClLog { text: string, tone: string }
+export struct ClRow {
+    id: string, name: string, sub: string, stats: string, meta: string, url: string,
+    avatar: image, has-avatar: bool, initials: string, color: color, discord: bool, platform: string,
+}
+
+export global CollectorBus {
+    in property <bool> loading: true;
+    in property <string> error;
+    /** "creators" or "servers". */
+    in property <string> tab: "creators";
+    in property <int> n-creators;
+    in property <int> n-servers;
+    /** Creators: the platforms; Servers: the modes. */
+    in property <[ClChip]> sources;
+    in property <[ClChip]> gaps;
+    /** The picked source can't run (its reason), or "". */
+    in property <string> unavailable;
+    in-out property <string> query;
+    in property <string> query-hint;
+    in property <string> query-label;
+    in-out property <string> target;
+    /** Servers: which Discord account the reads go through (or what's missing). */
+    in property <string> account-note;
+    in property <bool> account-ok;
+    // The run (the last one, or the one going)
+    in property <bool> running;
+    in property <bool> has-run;
+    in property <string> run-title;
+    in property <string> run-status;
+    in property <string> run-clock;
+    in property <float> run-frac;
+    in property <string> run-meta;
+    in property <[ClLog]> logs;
+    in property <bool> log-open;
+    in property <[ClRow]> rows;
+    in property <bool> confirm-clear;
+    in property <string> copy-label;
+    in-out property <bool> side-hidden;
+
+    callback pick-tab(string);
+    callback pick-source(string);
+    callback pick-gap(string);
+    callback query-edited(string);
+    callback target-edited(string);
+    callback target-step(int);
+    callback start();
+    callback stop();
+    callback copy();
+    callback clear();
+    callback clear-ask(bool);
+    callback toggle-log();
+    callback clear-log();
+    callback open(string);
+    callback remove(string);
+}
+
+component Sidebar inherits SideSurface {
+    VerticalLayout {
+        padding-top: Ds.side-pad-top;
+        spacing: 2px;
+        SideHead {
+            padding-left: Ds.side-pad;
+            padding-right: Ds.side-pad;
+            hide => {
+                CollectorBus.side-hidden = true;
+            }
+        }
+        VerticalLayout {
+            padding: Ds.side-pad;
+            padding-top: Ds.side-list-top;
+            spacing: 2px;
+            alignment: start;
+            vertical-stretch: 1;
+            ListRow {
+                lead: "glyph";
+                glyph: Icons.users;
+                title: "Creators";
+                active: CollectorBus.tab == "creators";
+                meta: CollectorBus.running && CollectorBus.tab == "creators" ? "running" : CollectorBus.n-creators > 0 ? CollectorBus.n-creators : "";
+                clicked => {
+                    CollectorBus.pick-tab("creators");
+                }
+            }
+            ListRow {
+                lead: "glyph";
+                glyph: Icons.message;
+                title: "Servers";
+                active: CollectorBus.tab == "servers";
+                meta: CollectorBus.running && CollectorBus.tab == "servers" ? "running" : CollectorBus.n-servers > 0 ? CollectorBus.n-servers : "";
+                clicked => {
+                    CollectorBus.pick-tab("servers");
+                }
+            }
+        }
+    }
+}
+
+/** The form: source, search term, target, Start/Stop, the freshness window (creators) or the Discord account (servers). */
+component Controls inherits Card {
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: CollectorBus.tab == "creators" ? "Source" : "Mode";
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for s in CollectorBus.sources: Chip {
+                    sm: true;
+                    text: s.available ? s.label : s.label + " · soon";
+                    on: s.on;
+                    enabled: s.available && (!CollectorBus.running || s.on);
+                    tip: s.tip;
+                    clicked => {
+                        CollectorBus.pick-source(s.value);
+                    }
+                }
+            }
+            if CollectorBus.unavailable != "": Hint {
+                text: CollectorBus.unavailable;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 8px;
+                FieldLabel {
+                    text: CollectorBus.query-label;
+                    horizontal-stretch: 1;
+                }
+                FieldLabel {
+                    width: 132px;
+                    text: "Target";
+                }
+                Rectangle {
+                    width: 92px;
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                q := Input {
+                    horizontal-stretch: 1;
+                    text <=> CollectorBus.query;
+                    hint: CollectorBus.query-hint;
+                    edited(t) => {
+                        CollectorBus.query-edited(t);
+                    }
+                    accepted => {
+                        if !CollectorBus.running {
+                            CollectorBus.start();
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    width: 132px;
+                    spacing: 4px;
+                    Btn {
+                        text: "−";
+                        size: icon;
+                        variant: ghost-muted;
+                        tip: "10 fewer";
+                        enabled: !CollectorBus.running;
+                        clicked => {
+                            CollectorBus.target-step(-10);
+                        }
+                    }
+                    Input {
+                        text <=> CollectorBus.target;
+                        hint: "All";
+                        mono: true;
+                        edited(t) => {
+                            CollectorBus.target-edited(t);
+                        }
+                    }
+                    Btn {
+                        icon: Icons.plus;
+                        size: icon;
+                        variant: ghost-muted;
+                        tip: "10 more";
+                        enabled: !CollectorBus.running;
+                        clicked => {
+                            CollectorBus.target-step(10);
+                        }
+                    }
+                }
+                if !CollectorBus.running: Btn {
+                    width: 92px;
+                    text: "Start";
+                    icon: Icons.play;
+                    variant: primary;
+                    enabled: CollectorBus.unavailable == "" && CollectorBus.query != "" && (CollectorBus.tab == "creators" || CollectorBus.account-ok);
+                    clicked => {
+                        CollectorBus.start();
+                    }
+                }
+                if CollectorBus.running: Btn {
+                    width: 92px;
+                    text: "Stop";
+                    icon: Icons.stop;
+                    variant: outline;
+                    clicked => {
+                        CollectorBus.stop();
+                    }
+                }
+            }
+        }
+        if CollectorBus.tab == "creators": VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: "Last upload";
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for g in CollectorBus.gaps: Chip {
+                    sm: true;
+                    text: g.label;
+                    on: g.on;
+                    enabled: !CollectorBus.running || g.on;
+                    tip: g.tip;
+                    clicked => {
+                        CollectorBus.pick-gap(g.value);
+                    }
+                }
+            }
+        }
+        if CollectorBus.tab == "servers": HorizontalLayout {
+            spacing: 6px;
+            Glyph {
+                icon: CollectorBus.account-ok ? Icons.circle-check : Icons.alert;
+                size: 14px;
+                color: CollectorBus.account-ok ? Theme.green-800 : Theme.amber-800;
+            }
+            Muted {
+                text: CollectorBus.account-note;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+}
+
+/** The run: what's going (or went), the clock, found / target, and the log's tail. */
+component Progress inherits Card {
+    VerticalLayout {
+        padding: 14px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            if CollectorBus.running: VerticalLayout {
+                alignment: center;
+                Spinner { }
+            }
+            if !CollectorBus.running: Glyph {
+                icon: Icons.circle-check;
+                size: 16px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: CollectorBus.run-title;
+                font-size: 14px;
+                font-weight: 600;
+                color: Theme.fg;
+                overflow: elide;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            Text {
+                text: CollectorBus.run-clock;
+                font-family: "Geist Mono";
+                font-size: Ds.t-meta;
+                color: Theme.gray-800;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 6px;
+            border-radius: 3px;
+            background: Theme.gray-200;
+            Rectangle {
+                x: 0;
+                width: parent.width * clamp(CollectorBus.run-frac, 0, 1);
+                border-radius: 3px;
+                background: CollectorBus.running ? Theme.blue-800 : Theme.green-800;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Muted {
+                text: CollectorBus.run-status;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Muted {
+                text: CollectorBus.run-meta;
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Btn {
+                text: CollectorBus.log-open ? "Hide log" : "Show log";
+                icon: CollectorBus.log-open ? Icons.up : Icons.down;
+                size: xs;
+                variant: ghost-muted;
+                clicked => {
+                    CollectorBus.toggle-log();
+                }
+            }
+            if CollectorBus.log-open: Btn {
+                text: "Clear log";
+                size: xs;
+                variant: ghost-muted;
+                clicked => {
+                    CollectorBus.clear-log();
+                }
+            }
+        }
+        if CollectorBus.log-open: Well {
+            VerticalLayout {
+                padding: 10px;
+                spacing: 3px;
+                for l in CollectorBus.logs: Text {
+                    text: l.text;
+                    font-family: "Geist Mono";
+                    font-size: 11.5px;
+                    wrap: word-wrap;
+                    color: l.tone == "ok" ? Theme.green-900 : l.tone == "drop" || l.tone == "skip" ? Theme.gray-800 : l.tone == "error" ? Theme.red-900 : Theme.fg;
+                }
+            }
+        }
+    }
+}
+
+/** One collected creator or server: picture, name and handle, stats, freshness / source; click opens it. */
+component ResultRow inherits Rectangle {
+    in property <ClRow> r;
+    height: 58px;
+    border-radius: Ds.radius-md;
+    background: area.has-hover ? Theme.accent : transparent;
+    area := TipArea {
+        mouse-cursor: pointer;
+        tip: root.r.url;
+        clicked => {
+            CollectorBus.open(root.r.url);
+        }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Avatar {
+                size: 38px;
+                initials: root.r.initials;
+                color: root.r.color;
+                photo: root.r.avatar;
+                has-photo: root.r.has-avatar;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.r.name;
+                    font-size: Ds.t-body;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                }
+                if root.r.sub != "": Text {
+                    text: root.r.sub;
+                    font-size: 12px;
+                    color: Theme.gray-800;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.r.stats;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                    max-width: self.preferred-width;
+                }
+                if root.r.discord && CollectorBus.tab == "creators": Rectangle {
+                    width: dc.preferred-width + 10px;
+                    height: 16px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 4px;
+                    background: Theme.blue-200;
+                    dc := Text {
+                        text: "Discord";
+                        font-size: 10.5px;
+                        font-weight: 600;
+                        color: Theme.blue-900;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+        Text {
+            text: root.r.meta;
+            font-size: Ds.t-meta;
+            color: Theme.gray-800;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            overflow: elide;
+            max-width: 220px;
+        }
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                opacity: area.has-hover || self.hovered ? 1 : 0;
+                icon: Icons.x;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Remove from the list";
+                clicked => {
+                    CollectorBus.remove(root.r.id);
+                }
+            }
+        }
+    }
+}
+
+export component CollectorPage {
+    /** The sidebar's width: Projects' (app.slint side-shown), so the header's buttons sit where they do there. */
+    in property <length> side-w: Ds.side-w;
+    Rectangle {
+        background: Theme.bg100;
+    }
+    if !CollectorBus.side-hidden: Sidebar {
+        x: 0;
+        y: 0;
+        width: root.side-w;
+        height: root.height;
+    }
+    property <length> main-x: CollectorBus.side-hidden ? 0px : root.side-w;
+    property <length> main-w: root.width - main-x;
+    property <length> col-w: min(Ds.page-max-w + 120px, main-w - 2 * Ds.page-pad);
+    property <length> col-x: (main-w - col-w) / 2;
+    property <int> count: CollectorBus.tab == "creators" ? CollectorBus.n-creators : CollectorBus.n-servers;
+    bar := PageBar {
+        x: root.main-x;
+        y: 0;
+        width: root.main-w;
+        side-hidden: CollectorBus.side-hidden;
+        icon: CollectorBus.tab == "creators" ? Icons.users : Icons.message;
+        section: "Collector";
+        title: CollectorBus.tab == "creators" ? "Creators" : "Servers";
+        sub: root.count == 0 ? "" : root.count + (CollectorBus.tab == "creators" ? (root.count == 1 ? " creator" : " creators") : (root.count == 1 ? " invite" : " invites"));
+        show-side => {
+            CollectorBus.side-hidden = false;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Btn {
+                text: CollectorBus.copy-label;
+                icon: Icons.copy;
+                size: sm;
+                variant: outline;
+                enabled: root.count > 0;
+                tip: CollectorBus.tab == "creators" ? "JSONL, one creator per line: paste it in SpokPayCRM → Creators → Import" : "The invite URLs, one per line";
+                clicked => {
+                    CollectorBus.copy();
+                }
+            }
+            if !CollectorBus.confirm-clear: Btn {
+                text: "Clear";
+                icon: Icons.trash;
+                size: sm;
+                variant: ghost-muted;
+                enabled: root.count > 0 && !CollectorBus.running;
+                clicked => {
+                    CollectorBus.clear-ask(true);
+                }
+            }
+            if CollectorBus.confirm-clear: Btn {
+                text: "Clear " + root.count + "?";
+                size: sm;
+                variant: destructive;
+                clicked => {
+                    CollectorBus.clear();
+                }
+            }
+            if CollectorBus.confirm-clear: Btn {
+                text: "Keep";
+                size: sm;
+                variant: ghost-muted;
+                clicked => {
+                    CollectorBus.clear-ask(false);
+                }
+            }
+        }
+    }
+    property <length> top: bar.height;
+    if CollectorBus.loading: Text {
+        x: root.main-x;
+        width: root.main-w;
+        text: CollectorBus.error != "" ? CollectorBus.error : "Loading…";
+        color: Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if !CollectorBus.loading: Rectangle {
+        x: main-x;
+        y: top;
+        width: main-w;
+        height: root.height - top;
+        page := Flickable {
+            width: parent.width;
+            height: parent.height;
+            content-height: screen.preferred-height + 40px;
+            screen := VerticalLayout {
+                x: col-x;
+                y: Ds.sp8;
+                width: col-w;
+                spacing: 14px;
+                Controls { }
+                if CollectorBus.has-run: Progress { }
+                if root.count > 0: HorizontalLayout {
+                    padding-top: 4px;
+                    CapsLabel {
+                        text: CollectorBus.tab == "creators" ? "COLLECTED CREATORS" : "COLLECTED INVITES";
+                    }
+                }
+                if root.count > 0: VerticalLayout {
+                    spacing: 0px;
+                    for r in CollectorBus.rows: ResultRow {
+                        r: r;
+                    }
+                }
+                if root.count == 0 && !CollectorBus.running: Empty {
+                    icon: CollectorBus.tab == "creators" ? Icons.users : Icons.message;
+                    title: CollectorBus.tab == "creators" ? "No creators yet" : "No invites yet";
+                    desc: CollectorBus.tab == "creators" ? "Search a term (e.g. blox fruits brasil) and press Start. Each live channel is saved with its stats and links; Copy gives JSONL for SpokPayCRM → Creators → Import." : "Discover searches Discord's server directory; Reader scans a channel's messages. Invites are saved here; Copy gives one URL per line.";
+                }
+            }
+        }
+        ScrollThumb {
+            x: parent.width - self.width;
+            y: 0;
+            height: parent.height;
+            content-y: page.content-y;
+            content-height: page.content-height;
+            visible-height: page.height;
+            scroll-to(v) => {
+                page.content-y = v;
+            }
+        }
+    }
+}

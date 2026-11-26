@@ -25,7 +25,7 @@ export interface TabCtx {
 }
 
 export interface TabUi {
-  id: "persons" | "routine";
+  id: "persons" | "routine" | "collector";
   mount(ctx: TabCtx): void | Promise<void>;
   /** The tab came on screen (true) or left it. */
   shown?(on: boolean): void;

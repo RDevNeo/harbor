@@ -16,6 +16,20 @@ let socials: Socials | null = null;
 let routes: PersonsRoutes | null = null;
 let audio: AudioService | null = null;
 let voice: VoiceQueue | null = null;
+let agentDiscord: AgentDiscord | null = null;
+
+/**
+ * The Discord account Hub's agents use (the Stores one, Discord account #1, unless agents.json picks another), for the
+ * Collector tab's read-only calls (Discover search, a channel's messages): its API with the login (never the token),
+ * who's signed in, or null while Persons isn't up or has no Discord connection.
+ */
+export function personsDiscord(): { api: <T = unknown>(method: string, path: string) => Promise<T>; info: ReturnType<AgentDiscord["info"]>; connected: boolean } | null {
+  const a = agentDiscord;
+  if (!a) return null;
+  const info = a.info();
+  const link = a.link();
+  return { api: async <T,>(method: string, path: string) => { if (!link) throw new Error("Discord isn't connected in Persons"); return link.api<T>(method, path); }, info, connected: !!link && info.status === "connected" };
+}
 
 export const personsEngine: TabEngine = {
   id: "persons",
@@ -53,6 +67,7 @@ export const personsEngine: TabEngine = {
     // Hub's agents' Discord tools run on a Persons Discord connection (the Stores one unless agents.json picks another):
     // `hub app discord` calls them through v1/persons/agent/discord; the Settings card and the phone read it here.
     const agent = new AgentDiscord(service);
+    agentDiscord = agent;
     agentsDiscord.provide({ info: () => agent.info(), signIn: () => agent.signIn(), cancel: () => agent.cancel(), signOut: () => agent.signOut() });
     // SpokPay (the admin key in <dir>/spokpay.json): the message menu's Open Site Request and the proposals' cards
     const svc = service;
@@ -83,6 +98,7 @@ export const personsEngine: TabEngine = {
   },
   async stop() {
     agentsDiscord.provide(null);
+    agentDiscord = null;
     voice?.stop();
     audio?.close();
     await service?.stop();
