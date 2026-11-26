@@ -543,7 +543,7 @@ class PersonsTab {
       a_voice: !!r.audio?.voice,
       a_transcript: r.audio?.transcript ?? "",
       a_transcribing: !!r.audio && (r.audio.transcribing || this.transcribing.has(r.audio.key)),
-      a_hidden: !!r.audio && this.hiddenTranscripts.has(r.audio.key),
+      a_hidden: !!r.audio && !this.shownTranscripts.has(r.audio.key),
     };
   }
 
@@ -890,14 +890,14 @@ class PersonsTab {
     await this.audioCall("speed", { speed, ...(a ? this.fileBody(a) : {}) });
   }
 
-  /** Transcripts the user folded away (show / hide), for the session. */
-  private hiddenTranscripts = new Set<string>();
+  /** Transcripts the user opened (hidden by default), for the session. */
+  private shownTranscripts = new Set<string>();
 
   /** The bubble's button: show / hide its transcript, or make one (none yet, or the background one failed). */
   private async audioTranscribe(id: string): Promise<void> {
     const a = this.audioOf(id);
     if (a?.transcript) {
-      if (!this.hiddenTranscripts.delete(a.key)) this.hiddenTranscripts.add(a.key);
+      if (!this.shownTranscripts.delete(a.key)) this.shownTranscripts.add(a.key);
       this.render();
       return;
     }
@@ -908,6 +908,7 @@ class PersonsTab {
       const r = await this.api("POST", "audio/transcribe", this.fileBody(a)).catch(() => null);
       if (!r || r.status !== 200) this.setToast(String(r?.body.error ?? "Couldn't transcribe it"));
       else if (!String(r.body.text ?? "").trim()) this.setToast("No speech in it");
+      else this.shownTranscripts.add(a.key);
     } finally {
       this.transcribing.delete(a.key);
     }

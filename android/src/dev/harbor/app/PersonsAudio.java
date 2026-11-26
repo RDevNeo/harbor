@@ -41,8 +41,8 @@ final class PersonsAudio {
     private static final Map<String, File> files = new HashMap<>();
     private static final Set<String> transcribing = new HashSet<>();
     private static final Set<String> playedHere = new HashSet<>();
-    /** Transcripts folded away (Hide transcript), for the app's run. */
-    private static final Set<String> hidden = new HashSet<>();
+    /** Transcripts the user opened (Show transcript; hidden by default), for the app's run. */
+    private static final Set<String> opened = new HashSet<>();
     /** The bubble of the one playing (its bars and time move). */
     private static WeakReference<Bubble> shown = new WeakReference<>(null);
 
@@ -140,13 +140,13 @@ final class PersonsAudio {
                 TextView t = Ui.text(a, tr, 14, Ui.G700);
                 t.setMaxWidth(inner);
                 t.setTextIsSelectable(true);
-                t.setVisibility(hidden.contains(key) ? View.GONE : View.VISIBLE);
+                t.setVisibility(opened.contains(key) ? View.VISIBLE : View.GONE);
                 root.addView(t, Ui.margins(Ui.wrap(), 2, 6, 0, 0));
-                TextView tog = Ui.text(a, hidden.contains(key) ? "Show transcript" : "Hide transcript", 13, Ui.G600);
+                TextView tog = Ui.text(a, opened.contains(key) ? "Hide transcript" : "Show transcript", 13, Ui.G600);
                 tog.setPadding(Ui.dp(2), Ui.dp(4), Ui.dp(8), Ui.dp(2));
                 tog.setOnClickListener(v -> {
-                    boolean hide = !hidden.remove(key);
-                    if (hide) hidden.add(key);
+                    boolean hide = opened.remove(key);
+                    if (!hide) opened.add(key);
                     t.setVisibility(hide ? View.GONE : View.VISIBLE);
                     tog.setText(hide ? "Show transcript" : "Hide transcript");
                 });
