@@ -12,6 +12,7 @@ import type { ChannelUser, ConnState, ConnStatus, Conversation, Message, Message
 import type { ConnContext, Connection } from "./types.ts";
 import * as wa from "./whatsapp-core.ts";
 import { childEngine, type WaEngine, type WaEngineFactory } from "./whatsapp-engine.ts";
+import { AgentWaStore } from "./whatsapp-history.ts";
 
 const KEEP = 200;
 /** A link (QR) left unscanned this long is given up (the engine would keep making new QRs). */
@@ -27,6 +28,8 @@ export interface WhatsappOptions {
   /** The engine (tests: a stand-in). */
   engine?: WaEngineFactory;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+  /** Hub's own WhatsApp store (the agents' app), read for older messages: its folder (default <hub data>/apps/whatsapp), null: none. */
+  agentStore?: string | null;
 }
 
 interface Contact {
@@ -65,6 +68,7 @@ export function createWhatsapp(ctx: ConnContext, opts: WhatsappOptions = {}): Co
   const AVATARS = join(ctx.dir, "avatars");
   const FILES = join(ctx.dir, "files", wa.safeFileName(id, "whatsapp"));
   const makeEngine = opts.engine ?? childEngine;
+  const store = opts.agentStore === null ? null : new AgentWaStore(opts.agentStore ?? join(ctx.dir, "..", "apps", "whatsapp"));
 
   let status: ConnStatus = "starting";
   let me: { id: string; phone: string; name: string } | null = null;
@@ -723,10 +727,31 @@ export function createWhatsapp(ctx: ConnContext, opts: WhatsappOptions = {}): Co
       await subscribe(d);
       return { ok: true };
     },
-    async history(peer) {
+    async history(peer, before) {
       const d = wa.normPhone(peer);
       if (!d) throw new Error("Invalid number");
-      return { channelId: wa.jidOfPhone(d), messages: chats.get(d) ?? [] };
+      const jid = wa.jidOfPhone(d);
+      const have = chats.get(d) ?? [];
+      const anchor = before ? have.find((m) => m.id === before) : undefined;
+      if (before && !anchor) return { channelId: jid, messages: [] };
+      // the page before it (or the newest) from Hub's own WhatsApp store, when it's this account's: a chat added
+      // after this link's history sync has its past there
+      const page = store && me?.phone ? store.page(me.phone, d, anchor ? Math.floor(Date.parse(anchor.timestamp) / 1000) : null) : { raws: [], more: false };
+      if (page.raws.length) {
+        const byId = new Map(have.map((m) => [m.id, m]));
+        for (const raw of page.raws) {
+          const m = wa.slimWa(raw, jid, id);
+          if (!m || byId.has(m.id)) continue;
+          byId.set(m.id, m);
+          if (m.attachments || m.reply) raws.set(m.id, raw);
+        }
+        const list = [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        // older pages stay beyond KEEP while the app runs (the cache file keeps the newest KEEP)
+        chats.set(d, list);
+        if (tracked.has(d)) save();
+      }
+      const all = chats.get(d) ?? [];
+      return { channelId: jid, messages: anchor ? all.filter((m) => m.timestamp < anchor.timestamp) : all };
     },
     async send(peer: string, text: string, files?: OutgoingFile[], replyTo?: string): Promise<SendResult> {
       needConnected();
@@ -778,6 +803,7 @@ export function createWhatsapp(ctx: ConnContext, opts: WhatsappOptions = {}): Co
     photo,
     async stop() {
       stopping = true;
+      store?.close();
       clearTimeout(restartTimer);
       clearTimeout(pairTimer);
       clearTimeout(availTimer);

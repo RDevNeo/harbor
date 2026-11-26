@@ -629,6 +629,8 @@ export class PersonsRoutes {
 
   /** Chats whose oldest page was reached (`before` stops asking them). */
   private exhausted = new Set<string>();
+  /** Chats whose newest page was read this run (on first open). */
+  private historyRead = new Set<string>();
 
   private async chat(personId: string, c: Call): Promise<Reply> {
     const p = this.s.person(decodeURIComponent(personId));
@@ -667,9 +669,17 @@ export class PersonsRoutes {
       const byId = new Map(older.map((x) => [x.m.id, x.m]));
       return ok({ messages: older.map((x) => this.msgJson(x.m, x.chat, byId, choices)), more: older.length > 0 });
     }
+    // each chat's newest page, read once per run when it first opens (connected): its past shows even when a few live
+    // messages came in first; never again on the reloads every change brings (that looped while a chat stayed empty)
     await Promise.all(choices.map(async (ch) => {
       const cur = this.s.view(ch.conn.id) ?? ch.conn;
-      if (!cur.convos[ch.peer]?.messages.length && cur.connected) await this.s.loadHistory(ch.conn.id, ch.peer).catch(() => 0);
+      const k = chatKey(ch);
+      if (!cur.connected || this.historyRead.has(k)) return;
+      this.historyRead.add(k);
+      await this.s.loadHistory(ch.conn.id, ch.peer).catch(() => {
+        this.historyRead.delete(k);
+        return 0;
+      });
     }));
     this.s.watch(conn.id, picked.peer);
     const cur = this.s.view(conn.id) ?? conn;

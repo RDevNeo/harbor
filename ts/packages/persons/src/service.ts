@@ -559,7 +559,14 @@ export class PersonsService {
     const m = this.metas.find((x) => x.id === connId);
     if (!c || !m || !validPeer(m.kind, peer)) return 0;
     const conv = await c.history(peer, before);
-    this.patch(connId, (s) => ({ ...s, convos: { ...s.convos, [peer]: mergeMessages(s.convos[peer], conv.messages, conv.channelId) } }));
+    // only what's new changes the state: an empty or known page must not bump `rev` (the open chat reloads on every
+    // change, and a reload asks for history again)
+    this.patch(connId, (s) => {
+      const cur = s.convos[peer];
+      const known = new Set((cur?.messages ?? []).map((m) => m.id));
+      const fresh = conv.messages.some((m) => !known.has(m.id)) || (!!conv.channelId && conv.channelId !== (cur?.channelId ?? null));
+      return fresh ? { ...s, convos: { ...s.convos, [peer]: mergeMessages(cur, conv.messages, conv.channelId) } } : s;
+    });
     return conv.messages.length;
   }
 
