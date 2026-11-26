@@ -114,7 +114,7 @@ public class Listen extends Service {
             if (!running || my != gen) break;
             if (v != null) Update.news(this, v);
             else Update.round(this);
-            if (fails > 0) SystemClock.sleep(Quiet.backoff(fails));
+            if (fails > 0) SystemClock.sleep(Update.newsBackoff(fails));
         }
     }
 

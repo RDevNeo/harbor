@@ -376,6 +376,13 @@ public class Update extends BroadcastReceiver {
         }
     }
 
+    /** The wait after the PC's news failed `fails` times in a row: the PC restarts into every
+     *  push to `hub` (a few seconds), so 3 s more each time, at most a minute (Quiet.backoff, up
+     *  to 5 minutes, was for GitHub). */
+    static long newsBackoff(int fails) {
+        return fails <= 0 ? 0 : Math.min(3_000L * fails, 60_000L);
+    }
+
     private static volatile String lastNewsError = "";
 
     /** The news couldn't be had: said in the log once per reason (it's retried with a backoff). */
@@ -423,7 +430,7 @@ public class Update extends BroadcastReceiver {
                     if (Base.started <= 0 || Listen.listening()) break;
                     if (v != null) news(c, v);
                     else round(c);
-                    if (fails > 0) SystemClock.sleep(Quiet.backoff(fails));
+                    if (fails > 0) SystemClock.sleep(newsBackoff(fails));
                 }
             } finally {
                 holding.set(false);
