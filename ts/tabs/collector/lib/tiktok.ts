@@ -1,8 +1,12 @@
 // TikTok, as the userscript reads it (lead-collector.user.js, "TikTok creator collection"), from Hub's engine instead of
-// a tiktok.com tab. Anonymous, no signing SDK: the profile page's rehydration blob (`webapp.user-detail`), the embed
-// page's video list (the userscript's pre-check, and its recent videos here) and the search box's suggestions
-// (`/api/search/general/preview/`, the one search endpoint that answers unsigned). TikTok's WAF answers the first page
-// with a proof-of-work challenge (its own `waf-aiso` script): solved here, the cookies kept for the session.
+// a tiktok.com tab. Anonymous: the profile page's rehydration blob (`webapp.user-detail`), the embed page's video list
+// (the 3 newest videos) and, to find creators, the VIDEOS under the term's hashtag (what tiktok.com/tag/<tag> shows:
+// `/api/challenge/detail/` for its id, unsigned; `/api/challenge/item_list/`, 30 a page, signed with X-Bogus, TikTok's
+// public request checksum). TikTok's keyword search (`/api/search/item/full/`, `/general/full/`) answers an empty body
+// unless it also carries X-Gnarly, its page code's newer signature, which Hub doesn't forge: so a term is searched as
+// its hashtag ("dress to impress" → #dresstoimpress), then as the hashtags of the search box's suggestions
+// (`/api/search/general/preview/`, unsigned). TikTok's WAF answers the first page with a proof-of-work challenge (its
+// own `waf-aiso` script): solved here, the cookies kept for the session.
 import { createHash } from "node:crypto";
 import { normalizeUrl } from "./links.ts";
 import type { RecentVideo } from "./types.ts";
@@ -48,6 +52,8 @@ export interface Hit {
   followers?: number | null;
   /** ms; the newest post seen in discovery (a floor). */
   latestAt?: number | null;
+  /** The search result (video or post) that led to them. */
+  videoUrl?: string;
 }
 
 /** What `discover()` needs from its caller. */
@@ -59,6 +65,8 @@ export interface DiscoverOpts {
 }
 
 export const TT_RECENT_LIMIT = 3;
+/** How TikTok searches, for the form. */
+export const TT_NOTE = "Searches the videos under the term's hashtag (dress to impress → #dresstoimpress, as tiktok.com/tag shows them), then opens each video's creator. No login needed.";
 export const TT_ORIGIN = "https://www.tiktok.com";
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
@@ -254,10 +262,117 @@ export function solveWaf(html: string): Record<string, string> | null {
 }
 
 const isChallenge = (body: string): boolean => body.includes("_wafchallengeid");
+const JSON_ACCEPT = "application/json, text/plain, */*";
+
+/** A term as TikTok's hashtag: "dress to impress" → "dresstoimpress", "#Fit Check" → "fitcheck"; "" when nothing's left. */
+export const ttTagOf = (term: string): string =>
+  term
+    .toLowerCase()
+    .replace(/^#+/, "")
+    .replace(/[^\p{L}\p{N}_]/gu, "");
+
+const XB_CHARS = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
+const md5 = (b: Uint8Array | string): Uint8Array => new Uint8Array(createHash("md5").update(b).digest());
+function rc4(key: ArrayLike<number>, data: ArrayLike<number>): number[] {
+  const S = Array.from({ length: 256 }, (_, i) => i);
+  let j = 0;
+  for (let i = 0; i < 256; i++) {
+    j = (j + S[i]! + key[i % key.length]!) & 255;
+    [S[i], S[j]] = [S[j]!, S[i]!];
+  }
+  const out: number[] = [];
+  let i = 0;
+  j = 0;
+  for (let k = 0; k < data.length; k++) {
+    i = (i + 1) & 255;
+    j = (j + S[i]!) & 255;
+    [S[i], S[j]] = [S[j]!, S[i]!];
+    out.push(data[k]! ^ S[(S[i]! + S[j]!) & 255]!);
+  }
+  return out;
+}
+
+/**
+ * X-Bogus, the web app's request checksum (a public algorithm: md5s of the query, body and UA, a timestamp, RC4, a
+ * custom base64), for a query string (no "?", without X-Bogus), the body ("" for a GET) and the exact UA sent.
+ */
+export function xBogus(query: string, ua: string, body = "", now = Math.floor(Date.now() / 1000)): string {
+  const uaArr = md5(Buffer.from(rc4([0, 1, 12], Buffer.from(ua, "latin1"))).toString("base64"));
+  const bodyArr = md5(md5(body));
+  const qArr = md5(md5(query));
+  const ct = 536919696;
+  const a = [64, 0, 1, 12, qArr[14]!, qArr[15]!, bodyArr[14]!, bodyArr[15]!, uaArr[14]!, uaArr[15]!, (now >>> 24) & 255, (now >>> 16) & 255, (now >>> 8) & 255, now & 255, (ct >>> 24) & 255, (ct >>> 16) & 255, (ct >>> 8) & 255, ct & 255];
+  a.push(a.reduce((x, y) => x ^ y));
+  const m = [...a.filter((_, i) => i % 2 === 0), ...a.filter((_, i) => i % 2 === 1)];
+  const y = [m[0], m[10], m[1], m[11], m[2], m[12], m[3], m[13], m[4], m[14], m[5], m[15], m[6], m[16], m[7], m[17], m[8], m[18], m[9]] as number[];
+  const g = [2, 255, ...rc4([255], y)];
+  let s = "";
+  for (let i = 0; i < g.length; i += 3) {
+    const x = (g[i]! << 16) | (g[i + 1]! << 8) | g[i + 2]!;
+    s += XB_CHARS[(x >> 18) & 63]! + XB_CHARS[(x >> 12) & 63]! + XB_CHARS[(x >> 6) & 63]! + XB_CHARS[x & 63]!;
+  }
+  return s;
+}
+
+/** The web app's usual query parameters (a Linux Chrome visitor). */
+export function ttWebParams(deviceId: string, extra: Record<string, string>): Record<string, string> {
+  return {
+    aid: "1988",
+    app_language: "en",
+    app_name: "tiktok_web",
+    browser_language: "en-US",
+    browser_name: "Mozilla",
+    browser_online: "true",
+    browser_platform: "Linux x86_64",
+    browser_version: UA.slice("Mozilla/".length),
+    channel: "tiktok_web",
+    cookie_enabled: "true",
+    device_id: deviceId,
+    device_platform: "web_pc",
+    focus_state: "true",
+    history_len: "2",
+    is_fullscreen: "false",
+    is_page_visible: "true",
+    language: "en",
+    os: "linux",
+    region: "US",
+    screen_height: "1080",
+    screen_width: "1920",
+    tz_name: "America/Sao_Paulo",
+    webcast_language: "en",
+    ...extra,
+  };
+}
+
+/** A hashtag page's videos (`itemList`) as creators, in TikTok's order: one per creator, with the video and its time. */
+export function ttParseItemList(json: unknown): Hit[] {
+  const out: Hit[] = [];
+  for (const it of isObj(json) && Array.isArray(json.itemList) ? json.itemList : []) {
+    if (!isObj(it) || !isObj(it.author)) continue;
+    const a = it.author;
+    const handle = str(a.uniqueId);
+    const vid = str(it.id) ?? (typeof it.id === "number" ? String(it.id) : null);
+    if (!handle || !vid || out.some((h) => h.handle.toLowerCase() === handle.toLowerCase())) continue;
+    const hit: Hit = { handle, avatarUrl: str(a.avatarLarger) ?? str(a.avatarMedium) ?? str(a.avatarThumb), videoUrl: `${TT_ORIGIN}/@${handle}/video/${vid}` };
+    const id = str(a.id);
+    if (id) hit.id = id;
+    const name = str(a.nickname);
+    if (name) hit.name = name;
+    const st = isObj(it.authorStats) ? it.authorStats : {};
+    const f = num(st.followerCount);
+    if (f !== null) hit.followers = f;
+    const t = (num(it.createTime) ?? 0) * 1000 || ttTimeFromId(vid);
+    if (t) hit.latestAt = t;
+    out.push(hit);
+  }
+  return out;
+}
 
 /** TikTok over plain HTTPS: browser UA, English, one cookie jar (WAF + ttwid) for the session. */
 export class TikTok {
   private readonly jar = new Map<string, string>();
+  /** A visitor's device id for this session (19 digits), as the web app sends it. */
+  private readonly deviceId = `73${String(Date.now()).padStart(13, "0")}${String(Math.floor(Math.random() * 1e4)).padStart(4, "0")}`;
   private readonly sleep: (ms: number) => Promise<void>;
   constructor(
     private readonly fetchFn: Fetch = fetch,
@@ -275,10 +390,10 @@ export class TikTok {
     }
   }
 
-  private async once(url: string, accept: string): Promise<{ status: number; body: string }> {
+  private async once(url: string, accept: string, extra: Record<string, string> = {}): Promise<{ status: number; body: string }> {
     let target = url;
     for (let hop = 0; hop < 5; hop++) {
-      const headers: Record<string, string> = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: accept };
+      const headers: Record<string, string> = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: accept, ...extra };
       if (this.jar.size) headers.Cookie = [...this.jar].map(([k, v]) => `${k}=${v}`).join("; ");
       const r = await this.fetchFn(target, { headers, redirect: "manual", signal: AbortSignal.timeout(20_000) });
       this.absorb(r);
@@ -293,14 +408,14 @@ export class TikTok {
   }
 
   /** One GET; a WAF challenge is solved and the request retried once. */
-  private async get(url: string, accept = "text/html,application/xhtml+xml,*/*;q=0.8"): Promise<{ status: number; body: string }> {
-    let res = await this.once(url, accept);
+  private async get(url: string, accept = "text/html,application/xhtml+xml,*/*;q=0.8", extra: Record<string, string> = {}): Promise<{ status: number; body: string }> {
+    let res = await this.once(url, accept, extra);
     if (!isChallenge(res.body)) return res;
     const cookies = solveWaf(res.body);
     if (!cookies) throw new Error("TikTok challenge could not be solved");
     for (const [k, v] of Object.entries(cookies)) this.jar.set(k, v);
     await this.sleep(1500);
-    res = await this.once(url, accept);
+    res = await this.once(url, accept, extra);
     if (isChallenge(res.body)) throw new Error("TikTok challenge not accepted");
     return res;
   }
@@ -352,58 +467,99 @@ export class TikTok {
     return ttParseSuggest(json);
   }
 
+  /** A hashtag's id (`/api/challenge/detail/`, unsigned); null when TikTok has no such tag. */
+  async tagId(tag: string): Promise<string | null> {
+    const r = await this.get(`${TT_ORIGIN}/api/challenge/detail/?aid=1988&challengeName=${encodeURIComponent(tag)}`, JSON_ACCEPT, { Referer: `${TT_ORIGIN}/tag/${encodeURIComponent(tag)}` });
+    if (r.status >= 400) throw new Error(`TikTok hashtag HTTP ${r.status}`);
+    if (!r.body.trim()) throw new Error("TikTok hashtag refused (empty answer)");
+    let j: unknown;
+    try {
+      j = JSON.parse(r.body);
+    } catch {
+      throw new Error("TikTok hashtag: not JSON");
+    }
+    const ch = isObj(j) && isObj(j.challengeInfo) && isObj(j.challengeInfo.challenge) ? j.challengeInfo.challenge : null;
+    return ch ? (str(ch.id) ?? (typeof ch.id === "number" ? String(ch.id) : null)) : null;
+  }
+
+  /** One page (30) of a hashtag's videos, signed with X-Bogus; the next cursor (null at the end). */
+  async tagPage(tag: string, id: string, cursor: string): Promise<{ hits: Hit[]; next: string | null }> {
+    const p = ttWebParams(this.deviceId, { challengeID: id, count: "30", coverFormat: "2", cursor, from_page: "hashtag" });
+    const ms = this.jar.get("msToken");
+    if (ms) p.msToken = ms;
+    const q = new URLSearchParams(p).toString();
+    const r = await this.get(`${TT_ORIGIN}/api/challenge/item_list/?${q}&X-Bogus=${xBogus(q, UA)}`, JSON_ACCEPT, { Referer: `${TT_ORIGIN}/tag/${encodeURIComponent(tag)}` });
+    if (r.status === 429) throw new Error("TikTok asked to slow down (429)");
+    if (r.status >= 400) throw new Error(`TikTok videos HTTP ${r.status}`);
+    if (!r.body.trim()) throw new Error("TikTok videos refused (empty answer)");
+    let j: unknown;
+    try {
+      j = JSON.parse(r.body);
+    } catch {
+      throw new Error("TikTok videos: not JSON");
+    }
+    const code = isObj(j) ? (num(j.statusCode) ?? num(j.status_code)) : null;
+    if (code) throw new Error(`TikTok videos status ${code}`);
+    const o = isObj(j) ? j : {};
+    const next = o.hasMore === true && (str(o.cursor) ?? (typeof o.cursor === "number" ? String(o.cursor) : null));
+    return { hits: ttParseItemList(j), next: next || null };
+  }
+
   /**
-   * Accounts through the suggestions, breadth-first: the query, then the suggested phrases that contain its first word,
-   * then `query a` … `query z`, each query once, up to `maxQueries` (40). Yields each batch of handles not seen before.
+   * Creators through videos: the term's hashtag (#dresstoimpress for "dress to impress"), page by page in TikTok's
+   * order, then the hashtags of the search box's suggestions that contain the term's first word. Yields each page's
+   * creators not seen before (one per creator, with the video that led there). `maxQueries` caps the pages (40).
    */
   async *discover(query: string, o: DiscoverOpts): AsyncGenerator<Hit[]> {
     const q0 = query.trim().replace(/\s+/g, " ");
-    if (!q0) return;
-    const first = q0.split(" ")[0]!.toLowerCase();
+    const first = ttTagOf(q0);
+    if (!first) return;
     const max = o.maxQueries ?? 40;
-    const queue = [q0];
-    const queued = new Set([q0.toLowerCase()]);
     const seen = new Set<string>();
-    const add = (q: string): void => {
-      const k = q.trim().replace(/\s+/g, " ");
-      if (!k || queued.has(k.toLowerCase())) return;
-      queued.add(k.toLowerCase());
-      queue.push(k);
-    };
-    let asked = 0;
+    const tags = [first];
+    let pages = 0;
     let failures = 0;
-    let expanded = false;
-    const expand = (): void => {
-      if (expanded) return;
-      expanded = true;
-      for (const c of "abcdefghijklmnopqrstuvwxyz") add(`${q0} ${c}`);
-    };
-    while (queue.length && asked < max && !o.stopped()) {
-      const q = queue.shift()!;
-      if (asked > 0) {
-        await o.sleep(1800);
-        if (o.stopped()) return;
-      }
-      asked++;
-      let res: { accounts: Hit[]; words: string[] };
+    let suggested = false;
+    for (let t = 0; t < tags.length && pages < max && !o.stopped(); t++) {
+      const tag = tags[t]!;
       try {
-        res = await this.suggest(q);
-        failures = 0;
+        // The tag's page first, as a visitor would: the jar gets its cookies (msToken comes with the API answers).
+        if (!this.jar.has("ttwid")) await this.get(`${TT_ORIGIN}/tag/${encodeURIComponent(tag)}`);
+        const id = await this.tagId(tag);
+        if (!id) o.log(`TikTok has no #${tag}.`);
+        let cursor: string | null = id ? "0" : null;
+        while (cursor !== null && pages < max && !o.stopped()) {
+          await o.sleep(2000);
+          if (o.stopped()) return;
+          pages++;
+          const { hits, next } = await this.tagPage(tag, id!, cursor);
+          failures = 0;
+          const fresh = hits.filter((h) => {
+            const k = h.handle.toLowerCase();
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          });
+          o.log(`TikTok #${tag}, page ${pages}: ${hits.length} creators, ${fresh.length} new.`);
+          if (fresh.length) yield fresh;
+          cursor = next;
+        }
       } catch (e) {
-        o.log(`TikTok suggestions for "${q}": ${(e as Error).message}`);
+        o.log(`TikTok #${tag}: ${(e as Error).message}`);
         if (++failures >= 3) return;
-        expand();
-        continue;
       }
-      const fresh = res.accounts.filter((a) => {
-        const k = a.handle.toLowerCase();
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-      if (fresh.length) yield fresh;
-      for (const w of res.words) if (w.toLowerCase().includes(first)) add(w);
-      expand();
+      if (t === tags.length - 1 && !suggested && !o.stopped()) {
+        suggested = true;
+        try {
+          const word = q0.split(" ")[0]!.toLowerCase();
+          for (const w of (await this.suggest(q0)).words) {
+            const tg = ttTagOf(w);
+            if (tg && w.toLowerCase().includes(word) && !tags.includes(tg) && tags.length < 4) tags.push(tg);
+          }
+        } catch (e) {
+          o.log(`TikTok suggestions: ${(e as Error).message}`);
+        }
+      }
     }
   }
 }

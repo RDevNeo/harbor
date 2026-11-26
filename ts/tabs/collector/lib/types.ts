@@ -1,8 +1,8 @@
 // Collector (the Lead Collector userscript, RDevNeo/spok-lead-collector, moved into Hub): the records it keeps.
-// A creator record is the userscript's, field for field: one JSON object per line is what SpokPayCRM → Creators →
-// Import parses (influencers/src/lib/leadImport.ts: platform + platform_id + name required, deduped on both). Hub adds
-// what it learns afterwards (email and where it came from, the daily update's history, the message sent); Copy JSONL
-// gives the CRM's fields plus the email.
+// A lead is what the user sees: picture, profile link, handle, platform, an email when there is one, the 3 newest
+// videos, and whether it's Restricted (kept out of Available). The record stays the userscript's, field for field (one
+// JSON object per line is what SpokPayCRM → Creators → Import parses: influencers/src/lib/leadImport.ts, platform +
+// platform_id + name required), so Copy JSONL and Send message (Persons › Creators) carry everything along.
 
 export interface RecentVideo {
   video_id: string;
@@ -19,17 +19,6 @@ export interface CreatorLink {
   url: string;
   /** Where it was found ("bio", "linktr.ee/x"); absent for the platform's own link list. */
   source?: string;
-}
-
-export interface Change {
-  field: string;
-  from: string;
-  to: string;
-}
-
-export interface UpdateEntry {
-  at: string;
-  changes: Change[];
 }
 
 export interface Contacted {
@@ -65,17 +54,18 @@ export interface CreatorRecord {
   email?: string | null;
   /** "YouTube About", "Instagram bio", "linktr.ee/x", "site x.com.br/contato", "typed". */
   email_source?: string | null;
-  /** Typed by hand: the daily update never replaces it. */
+  /** Typed by hand: never replaced by one found later. */
   email_manual?: boolean;
   /** A WhatsApp number their bio or links give (digits, country code first). */
   whatsapp?: string | null;
   last_upload_at?: string | null;
-  /** The last daily update (or the capture). */
+  /** When the record was last read (the capture). */
   updated_at?: string | null;
-  update_error?: string | null;
-  /** The daily updates that changed something, newest first (10 kept). */
-  history?: UpdateEntry[];
+  /** The video in the search results that led to them (its URL). */
+  found_video?: string | null;
   contacted?: Contacted | null;
+  /** Restricted by the user: kept (never collected again) but never shown in Available. */
+  restricted?: boolean;
 }
 
 export type CreatorPlatform = "instagram" | "tiktok" | "youtube";
@@ -88,8 +78,6 @@ export interface Settings {
   gapDays: number;
   /** Stop-at count (0 = everything the source gives). */
   target: number;
-  /** The daily update on/off. */
-  daily: boolean;
   /** The Send message menu opens on the template used last. */
   lastTemplate: string;
 }
@@ -109,19 +97,10 @@ export interface RunState {
   dropped: number;
   /** Already collected (or already in Persons): passed over. */
   known: number;
-}
-
-export interface RefreshState {
-  running: boolean;
-  startedAt: number;
-  endedAt: number;
-  done: number;
-  total: number;
-  changed: number;
-  failed: number;
-  status: string;
-  /** When the last complete pass finished (the next starts a day later). */
-  lastFullAt: number;
+  /** The leads this run kept (record ids), in the order found: the Collector page's results. */
+  ids: string[];
+  /** What it's doing now, one line. */
+  line: string;
 }
 
 export interface LogLine {
@@ -138,7 +117,6 @@ export interface CollectorData {
   /** Every identity key ever collected (ids, handles, linked profiles, emails): Clear and Remove keep them. */
   seen: string[];
   run: RunState | null;
-  refresh: RefreshState;
   log: LogLine[];
 }
 
@@ -153,15 +131,11 @@ export const GAP_CHOICES: { value: number; label: string }[] = [
 export const PLATFORM_LABEL: Record<CreatorPlatform, string> = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" };
 
 export function defaultSettings(): Settings {
-  return { platform: "youtube", query: "", gapDays: 14, target: 50, daily: true, lastTemplate: "" };
-}
-
-export function defaultRefresh(): RefreshState {
-  return { running: false, startedAt: 0, endedAt: 0, done: 0, total: 0, changed: 0, failed: 0, status: "", lastFullAt: 0 };
+  return { platform: "youtube", query: "", gapDays: 14, target: 20, lastTemplate: "" };
 }
 
 export function defaultData(): CollectorData {
-  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, refresh: defaultRefresh(), log: [] };
+  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, log: [] };
 }
 
 export function normalizeTarget(v: unknown): number {
@@ -169,7 +143,10 @@ export function normalizeTarget(v: unknown): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 5000) : 0;
 }
 
-/** Whatever the file holds, as data this version understands (v1's Servers dropped, unknown fields dropped, bad ones defaulted). */
+/**
+ * Whatever the file holds, as data this version understands (v1's Servers dropped, unknown fields dropped, bad ones
+ * defaulted). Every creator stays; the daily update's leftovers (its state, each record's history and error) go.
+ */
 export function migrate(raw: unknown): CollectorData {
   const d = defaultData();
   if (!raw || typeof raw !== "object") return d;
@@ -181,7 +158,6 @@ export function migrate(raw: unknown): CollectorData {
     query: typeof s.query === "string" ? s.query : "",
     gapDays: GAP_CHOICES.some((c) => c.value === s.gapDays) ? (s.gapDays as number) : d.settings.gapDays,
     target: t === undefined ? d.settings.target : normalizeTarget(t),
-    daily: s.daily === undefined ? true : s.daily === true,
     lastTemplate: typeof s.lastTemplate === "string" ? s.lastTemplate : "",
   };
   d.creators = Array.isArray(r.creators)
@@ -189,18 +165,21 @@ export function migrate(raw: unknown): CollectorData {
         ...c,
         links: Array.isArray(c.links) ? c.links.filter((l) => l && typeof l.url === "string") : [],
       }))
+        .map((c) => {
+          const { history: _h, update_error: _e, ...rest } = c as CreatorRecord & { history?: unknown; update_error?: unknown };
+          return rest;
+        })
     : [];
   d.seen = Array.isArray(r.seen) ? r.seen.filter((k): k is string => typeof k === "string") : [];
   const run = r.run && typeof r.run === "object" ? (r.run as Record<string, unknown>) : null;
-  d.run = run && run.tab !== "servers" ? ({ known: 0, platform: "youtube", ...run } as unknown as RunState) : null;
-  d.refresh = r.refresh && typeof r.refresh === "object" ? { ...defaultRefresh(), ...(r.refresh as Partial<RefreshState>) } : defaultRefresh();
+  d.run = run && run.tab !== "servers" ? ({ known: 0, platform: "youtube", line: "", ...run, ids: Array.isArray(run.ids) ? run.ids.filter((x) => typeof x === "string") : [] } as unknown as RunState) : null;
   d.log = Array.isArray(r.log) ? (r.log.filter((l) => l && typeof l === "object" && typeof (l as LogLine).text === "string") as LogLine[]) : [];
   return d;
 }
 
 /** The CRM's fields (and the email), as the record it imports. */
 export function exportRecord(c: CreatorRecord): Record<string, unknown> {
-  const { email_manual: _m, whatsapp: _w, updated_at: _u, update_error: _e, history: _h, contacted: _c, last_upload_at: _l, ...rest } = c;
+  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, ...rest } = c;
   const out: Record<string, unknown> = { ...rest, links: c.links.map(({ label, url }) => ({ label, url })) };
   if (!c.email) {
     delete out.email;
@@ -209,7 +188,10 @@ export function exportRecord(c: CreatorRecord): Record<string, unknown> {
   return out;
 }
 
-/** Copy for the CRM: creators as JSONL (one complete record per line). */
+/** Copy for the CRM: the Available leads (Restricted ones left out) as JSONL, one complete record per line. */
 export function exportText(d: CollectorData): string {
-  return d.creators.map((c) => JSON.stringify(exportRecord(c))).join("\n");
+  return d.creators
+    .filter((c) => !c.restricted)
+    .map((c) => JSON.stringify(exportRecord(c)))
+    .join("\n");
 }

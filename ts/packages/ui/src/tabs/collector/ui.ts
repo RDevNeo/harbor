@@ -1,6 +1,7 @@
 // Collector tab, window side: drives CollectorBus (slint/collector.slint) from the engine's view (GET v1/collector, the
-// same routes Hub for Android calls) and sends every change back. Pictures are files the engine cached, decoded here.
-// While a run or the daily update is going it re-reads every second; otherwise on the tabs' change events.
+// same routes Hub for Android calls) and sends every change back. Three views (Collector, Available, Restricted), picked
+// in the sidebar; one filter box on the lists. Pictures and video thumbnails are files the engine cached, decoded here.
+// While a run is going it re-reads every second; otherwise on the tabs' change events.
 // Send message is a real send: it only goes out from the dialog's second step ("Send now").
 import * as slint from "slint-ui";
 import { readFileSync, statSync } from "node:fs";
@@ -21,44 +22,26 @@ interface Source {
 export interface Row {
   id: string;
   name: string;
-  sub: string;
-  stats: string;
-  meta: string;
-  url: string;
-  avatarPath: string | null;
-  discord: boolean;
+  handle: string;
   platform: string;
+  url: string;
+  short: string;
+  avatarPath: string | null;
   email: string;
   emailSource: string;
-  updated: string;
-  changed: string;
-  contacted: string;
+  videos: { url: string; title: string; thumbPath: string | null }[];
+  restricted: boolean;
 }
 export interface CollectorView {
   rev: number;
-  settings: { platform: string; query: string; gapDays: number; target: number; daily: boolean; lastTemplate: string };
+  settings: { platform: string; query: string; gapDays: number; target: number; lastTemplate: string };
   sources: Source[];
   sessions: { platform: string; label: string; connected: boolean; account: string | null; savedAt: number; help: string }[];
   canSend: boolean;
   gaps: { value: number; label: string }[];
-  run: { running: boolean; label: string; platform: string; query: string; status: string; found: number; target: number; considered: number; dropped: number; known: number; elapsed: number } | null;
-  refresh: { running: boolean; done: number; total: number; changed: number; failed: number; status: string; due: number; daily: boolean; last: string; next: string; lastFullAt: number };
-  log: { at: number; text: string; tone: string }[];
-  counts: { creators: number; emails: number; contacted: number; remembered: number };
+  run: { running: boolean; label: string; platform: string; query: string; found: number; target: number; known: number; line: string; status: string; ids: string[]; elapsed: number } | null;
+  counts: { available: number; restricted: number };
   creators: Row[];
-}
-interface Detail extends Row {
-  handle: string;
-  country: string;
-  description: string;
-  stats: never;
-  links: { label: string; url: string; kind: string; kindLabel: string; source: string; short: string }[];
-  emailManual: boolean;
-  whatsapp: string;
-  updateError: string;
-  history: { when: string; changes: string[] }[];
-  recent: { title: string; url: string; when: string; views: string }[];
-  found: string;
 }
 interface Compose {
   id: string;
@@ -74,7 +57,8 @@ interface Compose {
   guard: { sentToday: number; limit: number; already: string | null; justSent: boolean } | null;
 }
 
-type Bus = Record<string, unknown> & { query: string; target: string; session_cookie: string; d_email_edit: string; s_to: string; s_subject: string; s_text: string };
+export type Page = "collector" | "available" | "restricted";
+type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string };
 
 const initials = (name: string): string => {
   const w = name
@@ -89,15 +73,6 @@ const colorOf = (id: string): string => {
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return COLORS[h % COLORS.length]!;
 };
-export const clock = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
-
-export const FILTERS: { id: string; label: string; glyph: string; test: (r: Row) => boolean }[] = [
-  { id: "all", label: "All creators", glyph: "\u{e1a4}", test: () => true },
-  { id: "email", label: "With email", glyph: "\u{e04e}", test: (r) => !!r.email },
-  { id: "noemail", label: "No email yet", glyph: "\u{e367}", test: (r) => !r.email },
-  { id: "changed", label: "Changed today", glyph: "\u{e145}", test: (r) => !!r.changed },
-  { id: "contacted", label: "Contacted", glyph: "\u{e152}", test: (r) => !!r.contacted },
-];
 
 /** What the form shows, from the view (pure: tested). */
 export function formOf(v: CollectorView): { unavailable: string; note: string; session: boolean } {
@@ -105,26 +80,34 @@ export function formOf(v: CollectorView): { unavailable: string; note: string; s
   return { unavailable: src && !src.available ? src.why : "", note: src?.note ?? "", session: v.settings.platform === "instagram" };
 }
 
-/** The run card's lines (pure: tested). */
-export function runOf(v: CollectorView): { title: string; status: string; clock: string; frac: number; meta: string } | null {
+/** The run's one line: what it does while it goes, how it ended after (pure: tested). */
+export function runLine(v: CollectorView): string {
   const r = v.run;
-  if (!r) return null;
-  const frac = r.target > 0 ? r.found / r.target : r.running ? 0 : 1;
-  return {
-    title: `${r.label} · “${r.query.length > 48 ? `${r.query.slice(0, 47)}…` : r.query}”`,
-    status: r.running ? (r.target > 0 ? `${r.found} of ${r.target} new creators` : `${r.found} new creators`) : r.status,
-    clock: clock(r.elapsed),
-    frac,
-    meta: [r.considered ? `${r.considered} checked` : "", r.dropped ? `${r.dropped} dropped` : "", r.known ? `${r.known} already known` : ""].filter(Boolean).join(" · "),
-  };
+  if (!r) return "";
+  if (!r.running) return r.status;
+  const n = r.target > 0 ? `${r.found} of ${r.target}` : `${r.found} found`;
+  return `${n} · ${r.line || "Searching…"}`;
 }
 
-/** The daily update card's lines (pure: tested). */
-export function dailyOf(v: CollectorView): { status: string; meta: string; frac: number } {
-  const r = v.refresh;
-  if (r.running) return { status: r.status, meta: `${r.done} of ${r.total} read · ${r.changed} changed${r.failed ? ` · ${r.failed} couldn't be read` : ""}`, frac: r.total ? r.done / r.total : 0 };
-  const parts = [r.last ? `Last full update ${r.last}` : "", r.daily ? (r.next ? `next ${r.next}` : "first one within minutes") : "Off: turn it on to update everyone once a day", r.due ? `${r.due} due` : ""].filter(Boolean);
-  return { status: r.status || (r.daily ? "Once a day, every creator is read again: stats, last upload, bio, links, email." : "Daily update is off."), meta: parts.join(" · "), frac: 0 };
+/** The leads one view shows, and its heading and empty state (pure: tested). */
+export function leadsOf(v: CollectorView, page: Page, filter: string): { rows: Row[]; head: string; emptyTitle: string; emptyDesc: string } {
+  if (page === "collector") {
+    const r = v.run;
+    const byId = new Map(v.creators.map((c) => [c.id, c]));
+    const rows = (r?.ids ?? [])
+      .map((id) => byId.get(id))
+      .filter((c): c is Row => !!c && !c.restricted)
+      .reverse();
+    if (!r) return { rows, head: "", emptyTitle: "No search yet", emptyDesc: "Type a term and press Collect. Collector searches it for videos, as the platform shows them, and keeps each active creator once: picture, link, email when there is one, and their 3 newest videos." };
+    return { rows, head: rows.length ? `FOUND FOR “${r.query.toUpperCase()}”` : "", emptyTitle: r.running ? "" : "Nothing new this time", emptyDesc: r.running ? "" : "Everyone it found was collected before, or hasn't posted inside Last upload. Try another term." };
+  }
+  const want = page === "restricted";
+  const q = filter.trim().toLowerCase();
+  const all = v.creators.filter((c) => c.restricted === want);
+  const rows = q ? all.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : all;
+  const emptyTitle = all.length === 0 ? (want ? "Nobody restricted" : "No leads yet") : "No match";
+  const emptyDesc = all.length === 0 ? (want ? "Restrict a lead to keep it out of Available. It stays remembered, so no run collects it again." : "Collect some from the Collector page.") : `Nobody matches “${filter.trim()}”.`;
+  return { rows, head: "", emptyTitle, emptyDesc };
 }
 
 class Pictures {
@@ -159,24 +142,24 @@ class Pictures {
 }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+const PAGES: { id: Page; label: string }[] = [
+  { id: "collector", label: "Collector" },
+  { id: "available", label: "Available" },
+  { id: "restricted", label: "Restricted" },
+];
 
 export function createCollectorUi(): TabUi {
   let ctx: TabCtx | null = null;
   let bus: Bus | null = null;
   let view: CollectorView | null = null;
-  let logOpen = process.env.HUB_COLLECTOR_LOG === "1";
-  let confirmClear = false;
   let copied = 0;
   let fast: ReturnType<typeof setInterval> | null = null;
   let editing = 0;
-  let filter = "all";
-  let page: "list" | "creator" = "list";
-  let detail: Detail | null = null;
-  let detailId = "";
-  let emailEditFor = "";
-  let refreshing = false;
+  let page: Page = (["collector", "available", "restricted"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
+  let emailFor = "";
   let sessionBusy = false;
   // Send message
+  let sendId = "";
   let compose: Compose | null = null;
   let sendOpen = false;
   let sendConfirm = false;
@@ -204,7 +187,7 @@ export function createCollectorUi(): TabUi {
     view = v;
     set("loading", false);
     render();
-    const going = !!v.run?.running || v.refresh.running;
+    const going = !!v.run?.running;
     if (going && !fast) fast = setInterval(() => void load(), 1000);
     if (!going && fast) {
       clearInterval(fast);
@@ -212,39 +195,19 @@ export function createCollectorUi(): TabUi {
     }
   };
 
-  const loadDetail = async (): Promise<void> => {
-    if (!detailId) return;
-    try {
-      detail = (await call("GET", `v1/collector/creator?id=${encodeURIComponent(detailId)}`)) as Detail;
-      render();
-    } catch {
-      // removed meanwhile: back to the list
-      page = "list";
-      detail = null;
-      render();
-    }
-  };
-
-  // The screenshot rig opens a creator (and the Send menu) or a filter straight away, once the first view is in.
-  let shot = !!(process.env.HUB_COLLECTOR_SHOT_CREATOR || process.env.HUB_COLLECTOR_SHOT_FILTER);
-  const shotOpen = async (): Promise<void> => {
-    shot = false;
-    if (process.env.HUB_COLLECTOR_SHOT_FILTER) filter = process.env.HUB_COLLECTOR_SHOT_FILTER;
-    const want = process.env.HUB_COLLECTOR_SHOT_CREATOR;
-    const id = want === "first" ? (view?.creators[0]?.id ?? "") : (want ?? "");
-    if (id) {
-      detailId = id;
-      page = "creator";
-      if (process.env.HUB_COLLECTOR_SHOT_SEND === "1") await openCompose(view?.settings.lastTemplate ?? "", "");
-    }
-    render();
-  };
-
+  // The screenshot rig opens the Send dialog for the first lead straight away, once the first view is in.
+  let shot = process.env.HUB_COLLECTOR_SHOT_SEND === "1";
   const load = async (): Promise<void> => {
     try {
       take((await call("GET", "v1/collector")) as CollectorView);
-      if (shot) await shotOpen();
-      if (page === "creator") await loadDetail();
+      if (shot) {
+        shot = false;
+        const first = view?.creators.find((c) => !c.restricted);
+        if (first) {
+          sendId = first.id;
+          await openCompose(view?.settings.lastTemplate ?? "", "");
+        }
+      }
     } catch (e) {
       set("error", errText(e));
     }
@@ -281,50 +244,17 @@ export function createCollectorUi(): TabUi {
     set("s_saved", saved);
   }
 
-  function renderDetail(): void {
-    const d = detail;
-    if (!d || !bus) return;
-    set("d_id", d.id);
-    set("d_name", d.name);
-    set("d_sub", [d.handle, d.country, d.found].filter(Boolean).join(" · "));
-    set("d_platform", d.platform);
-    const px = pics.get(d.avatarPath);
-    set("d_avatar", px ?? NO_PX);
-    set("d_has_avatar", !!px);
-    set("d_initials", initials(d.name));
-    set("d_color", colorOf(d.id));
-    set("d_url", d.url);
-    set("d_stats", new slint.ArrayModel((d.stats as unknown as { label: string; value: string }[]).map((s) => ({ label: s.label, value: s.value }))));
-    set("d_desc", d.description);
-    set("d_email", d.email);
-    set("d_email_source", d.emailSource);
-    set("d_email_manual", d.emailManual);
-    if (emailEditFor !== d.id) {
-      emailEditFor = d.id;
-      bus.d_email_edit = d.email;
-    }
-    set("d_whatsapp", d.whatsapp);
-    set("d_links", new slint.ArrayModel(d.links.map((l) => ({ label: l.label, url: l.url, kind: l.kind, source: l.source, short: l.short }))));
-    set("d_updated", d.updated || "Not updated yet.");
-    set("d_update_error", d.updateError ? `Last update failed: ${d.updateError}` : "");
-    set("d_history", new slint.ArrayModel(d.history.map((h) => ({ when: h.when, changes: h.changes.join("\n") }))));
-    set("d_recent", new slint.ArrayModel(d.recent.map((v) => ({ title: v.title, url: v.url, when: v.when, views: v.views }))));
-    set("d_contacted", d.contacted);
-    set("d_found", d.found);
-    set("d_refreshing", refreshing);
-    set("d_discord", d.discord);
-  }
-
   function render(): void {
     const b = bus;
     const v = view;
     if (!b || !v) return;
     const s = v.settings;
-    set("view", page);
-    set("n_creators", v.counts.creators);
-    set("filters", new slint.ArrayModel(FILTERS.map((f) => ({ id: f.id, label: f.label, glyph: f.glyph, on: f.id === filter, count: f.id === "all" ? v.counts.creators : v.creators.filter(f.test).length }))));
+    set("page", page);
+    set("nav", new slint.ArrayModel(PAGES.map((p) => ({ id: p.id, label: p.label, on: p.id === page, count: p.id === "available" ? v.counts.available : p.id === "restricted" ? v.counts.restricted : 0 }))));
+    set("n_available", v.counts.available);
+    set("n_restricted", v.counts.restricted);
     set("sources", new slint.ArrayModel(v.sources.map((x) => ({ value: x.value, label: x.label, on: x.value === s.platform, available: x.available, tip: x.available ? x.note : x.why }))));
-    set("gaps", new slint.ArrayModel(v.gaps.map((g) => ({ value: String(g.value), label: g.label, on: g.value === s.gapDays, available: true, tip: g.value ? `Drop creators with no upload or post in the last ${g.value} days` : "Keep creators whenever they last posted" }))));
+    set("gaps", new slint.ArrayModel(v.gaps.map((g) => ({ value: String(g.value), label: g.label, on: g.value === s.gapDays, available: true, tip: g.value ? `Only creators who posted in the last ${g.value} days` : "Keep creators whenever they last posted" }))));
     const f = formOf(v);
     set("unavailable", f.unavailable);
     set("source_note", f.note);
@@ -341,78 +271,60 @@ export function createCollectorUi(): TabUi {
       if (b.target !== ts) b.target = ts;
     }
     set("running", !!v.run?.running);
-    const r = runOf(v);
-    set("has_run", r !== null);
-    if (r) {
-      set("run_title", r.title);
-      set("run_status", r.status);
-      set("run_clock", r.clock);
-      set("run_frac", r.frac);
-      set("run_meta", r.meta);
-    }
-    set("log_open", logOpen);
-    if (logOpen) set("logs", new slint.ArrayModel(v.log.slice(-40).map((l) => ({ text: l.text, tone: l.tone }))));
-    const dl = dailyOf(v);
-    set("daily_on", v.refresh.daily);
-    set("daily_running", v.refresh.running);
-    set("daily_status", dl.status);
-    set("daily_meta", dl.meta);
-    set("daily_frac", dl.frac);
-    set("confirm_clear", confirmClear);
+    set("run_line", runLine(v));
     set("copy_label", Date.now() - copied < 2500 ? "Copied" : "Copy JSONL");
-    const test = FILTERS.find((x) => x.id === filter)?.test ?? (() => true);
-    const rows = v.creators.filter(test).map((x) => {
-      const px = pics.get(x.avatarPath);
-      return {
-        id: x.id,
-        name: x.name,
-        sub: x.sub,
-        stats: x.stats,
-        meta: x.meta,
-        url: x.url,
-        avatar: px ?? NO_PX,
-        has_avatar: !!px,
-        initials: initials(x.name),
-        color: colorOf(x.id),
-        discord: x.discord,
-        platform: x.platform,
-        email: x.email,
-        email_source: x.emailSource,
-        updated: x.updated,
-        changed: x.changed,
-        contacted: x.contacted,
-      };
-    });
-    set(
-      "list_empty",
-      v.counts.creators === 0
-        ? "Pick a source, search a term (e.g. blox fruits brasil) and press Start. Each live creator is kept with their stats, every link and an email when one can be found; nobody is ever collected twice."
-        : "No creator matches this filter.",
+    set("email_for", emailFor);
+    const l = leadsOf(v, page, b.filter);
+    set("rows_head", l.head);
+    set("empty_title", l.emptyTitle);
+    set("empty_desc", l.emptyDesc);
+    sync(
+      l.rows.map((x) => {
+        const px = pics.get(x.avatarPath);
+        return {
+          id: x.id,
+          name: x.name,
+          handle: x.handle,
+          platform: x.platform,
+          url: x.url,
+          short: x.short,
+          avatar: px ?? NO_PX,
+          has_avatar: !!px,
+          initials: initials(x.name),
+          color: colorOf(x.id),
+          email: x.email,
+          email_source: x.emailSource,
+          restricted: x.restricted,
+          videos: new slint.ArrayModel(
+            x.videos.map((vd) => {
+              const t = pics.get(vd.thumbPath);
+              return { url: vd.url, title: vd.title, thumb: t ?? NO_PX, has_thumb: !!t };
+            }),
+          ),
+          sig: `${x.id}|${x.email}|${x.emailSource}|${x.restricted}|${!!px}|${x.videos.map((vd) => `${vd.url}${pics.get(vd.thumbPath) ? 1 : 0}`).join(",")}`,
+        };
+      }),
     );
-    sync(rows);
     if (b.rows !== rowModel) b.rows = rowModel;
-    renderDetail();
     renderSend();
   }
 
   /** The rows in place (a run adds one at a time: no full redraw of the list). */
   function sync(rows: Record<string, unknown>[]): void {
-    const keys = ["avatar", "id", "stats", "meta", "name", "sub", "email", "email_source", "updated", "changed", "contacted"];
-    const same = (x: Record<string, unknown>, y: Record<string, unknown>): boolean => keys.every((k) => x[k] === y[k]);
     const n = rowModel.rowCount();
     if (n > rows.length) rowModel.remove(rows.length, n - rows.length);
     for (let i = 0; i < rows.length; i++) {
       if (i < rowModel.rowCount()) {
-        if (!same(rowModel.rowData(i) as Record<string, unknown>, rows[i]!)) rowModel.setRowData(i, rows[i]!);
+        if ((rowModel.rowData(i) as Record<string, unknown>).sig !== rows[i]!.sig) rowModel.setRowData(i, rows[i]!);
       } else rowModel.push(rows[i]!);
     }
   }
 
   const openCompose = async (template = "", channel = ""): Promise<void> => {
-    if (!detailId || !bus) return;
+    if (!sendId || !bus) return;
     try {
-      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(detailId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}`)) as Compose;
-      const keepTo = compose && compose.channel === c.channel ? bus.s_to : null;
+      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}`)) as Compose;
+      const keepTo = compose && compose.id === c.id && compose.channel === c.channel ? bus.s_to : null;
       compose = c;
       bus.s_to = keepTo ?? c.to;
       bus.s_subject = c.subject;
@@ -430,10 +342,9 @@ export function createCollectorUi(): TabUi {
     const on = (name: string, f: (...a: never[]) => void): void => {
       b[name] = f;
     };
-    on("pick_filter", (id: string) => {
-      filter = id;
-      page = "list";
-      confirmClear = false;
+    on("go", (id: string) => {
+      page = (PAGES.find((p) => p.id === id)?.id ?? "collector") as Page;
+      emailFor = "";
       render();
     });
     on("pick_source", (v: string) => (view?.run?.running ? undefined : void post("settings", { platform: v })));
@@ -455,6 +366,7 @@ export function createCollectorUi(): TabUi {
     });
     on("start", () => {
       editing = 0;
+      page = "collector";
       void post("start", { query: b.query.trim(), target: b.target });
     });
     on("stop", () => void post("stop"));
@@ -465,29 +377,39 @@ export function createCollectorUi(): TabUi {
           await clipboard.copyText(text);
           copied = Date.now();
           render();
-          ctx?.toast(`Copied ${count} creator(s). Paste into SpokPayCRM → Creators → Import.`);
+          ctx?.toast(`Copied ${count} lead(s). Paste into SpokPayCRM → Creators → Import.`);
           setTimeout(render, 2600);
         })
         .catch((e: unknown) => ctx?.toast(errText(e)));
     });
-    on("clear_ask", (yes: boolean) => {
-      confirmClear = yes;
-      render();
-    });
-    on("clear", () => {
-      confirmClear = false;
-      void post("clear");
-      ctx?.toast("Cleared. They stay remembered: no run collects them again.");
-    });
-    on("toggle_log", () => {
-      logOpen = !logOpen;
-      render();
-    });
-    on("clear_log", () => void post("clear-log"));
     on("open", (url: string) => {
       if (url) ctx?.openExternal(url);
     });
-    on("remove", (id: string) => void post("remove", { id }));
+    on("restrict", (id: string, yes: boolean) => {
+      const name = view?.creators.find((c) => c.id === id)?.name ?? "Lead";
+      void post("restrict", { id, restricted: yes }).then(() => ctx?.toast(yes ? `${name} moved to Restricted.` : `${name} is back in Available.`));
+    });
+    on("filter_edited", () => render());
+    on("email_edit", (id: string) => {
+      emailFor = id;
+      b.email_text = view?.creators.find((c) => c.id === id)?.email ?? "";
+      render();
+    });
+    on("email_cancel", () => {
+      emailFor = "";
+      render();
+    });
+    on("email_save", () => {
+      const id = emailFor;
+      const email = b.email_text.trim();
+      void call("POST", "v1/collector/email", { id, email })
+        .then(() => {
+          emailFor = "";
+          ctx?.toast(email ? "Email saved." : "Email cleared.");
+          void load();
+        })
+        .catch((e: unknown) => ctx?.toast(errText(e)));
+    });
     on("session_save", () => {
       const cookie = b.session_cookie.trim();
       if (!cookie || sessionBusy) return;
@@ -506,51 +428,8 @@ export function createCollectorUi(): TabUi {
         });
     });
     on("session_remove", () => void post("session-clear", { platform: "instagram" }));
-    on("daily_toggle", (v: boolean) => void post("settings", { daily: v }));
-    on("daily_now", () => void post("refresh", {}));
-    on("daily_stop", () => void post("refresh", { stop: true }));
-    on("open_creator", (id: string) => {
-      detailId = id;
-      emailEditFor = "";
-      page = "creator";
-      detail = null;
-      confirmClear = false;
-      void loadDetail();
-    });
-    on("back", () => {
-      page = "list";
-      sendOpen = false;
-      render();
-    });
-    on("email_save", () => {
-      const id = detailId;
-      void call("POST", "v1/collector/email", { id, email: b.d_email_edit })
-        .then((d) => {
-          detail = d as Detail;
-          emailEditFor = "";
-          render();
-          ctx?.toast(b.d_email_edit.trim() ? "Email saved." : "Email cleared: the daily update looks for one again.");
-          void load();
-        })
-        .catch((e: unknown) => ctx?.toast(errText(e)));
-    });
-    on("refresh_one", () => {
-      if (refreshing) return;
-      refreshing = true;
-      render();
-      void call("POST", "v1/collector/refresh", { id: detailId })
-        .then((d) => {
-          detail = d as Detail;
-          emailEditFor = "";
-          ctx?.toast("Updated.");
-        })
-        .catch((e: unknown) => ctx?.toast(errText(e)))
-        .finally(() => {
-          refreshing = false;
-          void load();
-        });
-    });
-    on("send_show", () => {
+    on("send_show", (id: string) => {
+      sendId = id;
       sendConfirm = false;
       compose = null;
       void openCompose(view?.settings.lastTemplate ?? "", "");

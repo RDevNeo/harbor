@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Hub **Collector**, simpler (PC and phone): three views, Collector (the search form, one line while a run goes, the
+  leads it found), Available and Restricted (one filter box), switched from the sidebar (the phone: chips under the
+  title). The sidebar's entries used to be filters of a list below the form, run and daily-update cards, so a click
+  changed nothing in view; each is now its own page. A lead is a card: picture, name, platform, handle and link, email
+  (found, or typed: "Add email"), its 3 newest videos (thumbnails, cached), Restrict / Unrestrict and Send message. The
+  daily update, the change history, stats, the log and Clear are gone; saved leads stay (state.json migrates). Searches
+  now go through VIDEOS, as the platforms show them, then each video's creator: YouTube's search page (then the Videos
+  filter, this month, newest), TikTok's hashtag videos for the term (#dresstoimpress; signed with X-Bogus; its keyword
+  search needs X-Gnarly, which Hub doesn't forge), Instagram's search page for the term as typed, reels' authors first
+  (account search dropped; a 429 waits a minute once). Copy JSONL leaves Restricted leads out.
+
 ### Added
 - Hub **Collector** tab (PC and phone): the Lead Collector userscript, native (no browser). Collects creators from
   YouTube (search passes), TikTok (its search suggestions; no login) and Instagram (hashtags and account search, on the

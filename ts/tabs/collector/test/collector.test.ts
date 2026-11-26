@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytChannelsFromSearch, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
+import { handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
 import { discoveryAppetite, sweepYouTube, type SweepCtx } from "../lib/sweep.ts";
 import { exportText, migrate, defaultData, type CreatorRecord } from "../lib/types.ts";
 import { Collector, collectorRoute, type CollectorDeps } from "../engine.ts";
@@ -11,7 +11,6 @@ import { extractUrls, normalizeUrl, profileKeyOf, kindOf, whatsappOf } from "../
 import { bestEmail, extractEmails } from "../lib/email.ts";
 import { enrich, linktreeLinks } from "../lib/enrich.ts";
 import { allKeys } from "../lib/identity.ts";
-import { applyFresh, type Fresh } from "../lib/refresh.ts";
 import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.ts";
 import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
 import { fakePersons, type SendInput } from "../persons-bridge.ts";
@@ -39,11 +38,22 @@ describe("youtube parsing", () => {
   it("unwraps redirects", () => {
     expect(ytUnwrapRedirect("https://www.youtube.com/redirect?event=x&q=https%3A%2F%2Fdiscord.gg%2Fkk")).toBe("https://discord.gg/kk");
   });
-  it("reads channel results with the swapped field names", () => {
-    const data = { a: [{ channelRenderer: { channelId: "UC1", title: { simpleText: "Kauã" }, subscriberCountText: { simpleText: "@kaua" }, videoCountText: { simpleText: "154K subscribers" }, navigationEndpoint: { browseEndpoint: { canonicalBaseUrl: "/@kaua" } }, thumbnail: { thumbnails: [{ url: "//yt3/a.jpg" }] } } }] };
-    expect(ytChannelsFromSearch(data)).toEqual([{ channelId: "UC1", name: "Kauã", handle: "@kaua", profileUrl: "https://www.youtube.com/@kaua", avatarUrl: "https://yt3/a.jpg", subscribers: 154_000, description: "" }]);
-    const vids = { x: [{ videoRenderer: { ownerText: { runs: [{ text: "K4", navigationEndpoint: { browseEndpoint: { browseId: "UC2", canonicalBaseUrl: "/@k4" } } }] } } }, { shortsLockupViewModel: { o: { browseId: "UC3" } } }] };
-    expect(ytUploadersFromSearch(vids).map((c) => [c.channelId, c.handle])).toEqual([["UC2", "@k4"], ["UC3", null]]);
+  it("goes from search results' videos to their channels, in the page's order, channel results left out", () => {
+    const owner = (id: string, handle: string) => ({ runs: [{ text: id, navigationEndpoint: { browseEndpoint: { browseId: id, canonicalBaseUrl: `/${handle}` } } }] });
+    const page = {
+      x: [
+        { videoRenderer: { videoId: "v1", ownerText: owner("UC2", "@k4") } },
+        { channelRenderer: { channelId: "UC9", title: { simpleText: "Only a channel" } } },
+        { reelShelfRenderer: { items: [{ shortsLockupViewModel: { onTap: { reelWatchEndpoint: { videoId: "s1" } }, o: { browseId: "UC3" } } }] } },
+        { videoRenderer: { videoId: "v2", ownerText: owner("UC2", "@k4") } },
+        { videoRenderer: { videoId: "v3", longBylineText: owner("UC4", "@k5") } },
+      ],
+    };
+    expect(ytUploadersFromSearch(page).map((c) => [c.channelId, c.handle, c.videoUrl])).toEqual([
+      ["UC2", "@k4", "https://www.youtube.com/watch?v=v1"],
+      ["UC3", null, "https://www.youtube.com/shorts/s1"],
+      ["UC4", "@k5", "https://www.youtube.com/watch?v=v3"],
+    ]);
   });
   it("reads About links from the tap command", () => {
     const data = { aboutChannelViewModel: { canonicalChannelUrl: "http://www.youtube.com/@g", subscriberCountText: "3.11M subscribers", country: "Brazil", links: [{ channelExternalLinkViewModel: { title: { content: "Discord" }, link: { content: "discord.gg/g", commandRuns: [{ onTap: { innertubeCommand: { urlEndpoint: { url: "https://www.youtube.com/redirect?q=https%3A%2F%2Fdiscord.gg%2Fg" } } } }] } } }] }, microformatDataRenderer: { title: "Gelado" } };
@@ -61,14 +71,18 @@ describe("youtube parsing", () => {
   });
 });
 
-/** A fake YouTube: N channels per search page, one continuation page, feed ages by id. */
+/** A fake YouTube: 3 videos (one per channel) per search page, continuation pages, feed ages by id. Only the first
+ * pass (the plain search) has results. */
 function fakeYt(ages: Record<string, number | null>) {
   const ids = Object.keys(ages);
-  const page = (from: number) => ({ contents: ids.slice(from, from + 3).map((id) => ({ channelRenderer: { channelId: id, title: { simpleText: id } } })), ...(from + 3 < ids.length ? { c: { continuationCommand: { token: String(from + 3) } } } : {}) });
+  const page = (from: number) => ({
+    contents: ids.slice(from, from + 3).map((id) => ({ videoRenderer: { videoId: `v-${id}`, ownerText: { runs: [{ text: id, navigationEndpoint: { browseEndpoint: { browseId: id } } }] } } })),
+    ...(from + 3 < ids.length ? { c: { continuationCommand: { token: String(from + 3) } } } : {}),
+  });
   const calls: string[] = [];
   return {
     calls,
-    search: async (_q: string, sp: { type?: number }) => (calls.push("search"), sp.type === 2 ? page(0) : {}),
+    search: async (_q: string, sp: { type?: number }) => (calls.push("search"), sp.type === undefined ? page(0) : {}),
     continuation: async (t: string) => (calls.push("cont"), page(Number(t))),
     feed: async (id: string) => {
       calls.push(`feed:${id}`);
@@ -93,15 +107,13 @@ describe("youtube sweep", () => {
     expect(yt.calls).not.toContain("about:UCb");
     expect(yt.calls).not.toContain("about:UCc");
     expect(out[0]!.recent_videos?.length).toBe(1);
-    expect(out[0]!.discovered_via).toBe("q");
+    expect([out[0]!.discovered_via, out[0]!.found_video]).toEqual(["q", "https://www.youtube.com/watch?v=v-UCa"]);
   });
-  it("on Any time reads no feed and leaves recent_videos out", async () => {
-    const yt = fakeYt({ UCa: 400 });
+  it("on Any time keeps old channels, still with their newest videos; a feed that fails drops nobody", async () => {
+    const yt = fakeYt({ UCa: 400, UCz: undefined as unknown as null });
     const out: CreatorRecord[] = [];
     await sweepYouTube(sweepCtx(yt, 0, 0, out));
-    expect(out.length).toBe(1);
-    expect(yt.calls.some((c) => c.startsWith("feed"))).toBe(false);
-    expect("recent_videos" in out[0]!).toBe(false);
+    expect(out.map((r) => [r.platform_id, r.recent_videos?.length ?? 0])).toEqual([["UCa", 1], ["UCz", 0]]);
   });
   it("sizes discovery from the keep rate", () => {
     expect(discoveryAppetite(10, 0, { considered: 0, kept: 0, dropped: 0, discovered: 0, known: 0 })).toBe(Math.ceil(10 / 0.6) + 5);
@@ -173,20 +185,6 @@ const rec = (o: Partial<CreatorRecord> & { platform: string; platform_id: string
   ...o,
 });
 
-describe("daily update", () => {
-  it("writes down what changed and keeps a typed email", () => {
-    const r = rec({ platform: "youtube", platform_id: "UC1", subscriber_count: 12_000, email: "me@x.com", email_manual: true, email_source: "typed", last_upload_at: "2026-11-01T00:00:00Z", links: [{ label: "X", url: "https://x.com/a" }] });
-    const f: Fresh = { name: "UC1", handle: null, profile_url: null, avatar_url: null, subscriber_count: 13_000, video_count: 1, view_count: null, description: null, links: [], country: null, last_upload_at: "2026-11-24T00:00:00Z" };
-    const { rec: n, changes } = applyFresh(r, f, { links: [{ label: "Site", url: "https://site.com" }], email: { email: "other@x.com", source: "bio" } }, "2026-11-25T00:00:00Z");
-    expect(changes.map((c) => `${c.field}:${c.from}>${c.to}`)).toEqual(["Subscribers:12K>13K", "Last upload:2026-11-01>2026-11-24", "Links added:>site.com", "Links removed:x.com/a>"]);
-    expect([n.email, n.email_source, n.updated_at]).toEqual(["me@x.com", "typed", "2026-11-25T00:00:00Z"]);
-    expect(n.history?.[0]?.changes.length).toBe(4);
-    const same = applyFresh(n, { ...f, links: [] }, { links: n.links, email: null }, "2026-11-26T00:00:00Z");
-    expect(same.changes).toEqual([]);
-    expect(same.rec.history?.length).toBe(1);
-  });
-});
-
 describe("templates", () => {
   it("fills the name, or drops it cleanly", () => {
     expect(fillTemplate("Olá {name}, tudo bem? @{handle}", { name: "Kauã", handle: "kaua" })).toBe("Olá Kauã, tudo bem? @kaua");
@@ -218,7 +216,7 @@ function fakeSocial(platform: "tiktok" | "instagram", accounts: Record<string, P
 }
 
 function deps(over: Partial<CollectorDeps> = {}): CollectorDeps {
-  return { offline: false, changed: () => {}, log: () => {}, persons: fakePersons(), sleep: async () => {}, fetch: async () => new Response("", { status: 404 }), daily: false, ...over };
+  return { offline: false, changed: () => {}, log: () => {}, persons: fakePersons(), sleep: async () => {}, fetch: async () => new Response("", { status: 404 }), ...over };
 }
 
 const caller = (c: Collector) => (method: string, path: string, body: unknown = null, query: [string, string][] = []) =>
@@ -227,12 +225,19 @@ const caller = (c: Collector) => (method: string, path: string, body: unknown = 
 describe("collector", () => {
   it("exports JSONL, one record per line, with the email and without Hub's own fields", () => {
     const d = defaultData();
-    d.creators = [rec({ platform: "youtube", platform_id: "UC1", email: "a@b.com", email_source: "bio", history: [], email_manual: false }), rec({ platform: "youtube", platform_id: "UC2" })];
+    d.creators = [rec({ platform: "youtube", platform_id: "UC1", email: "a@b.com", email_source: "bio", email_manual: false, found_video: "https://y/v" }), rec({ platform: "youtube", platform_id: "UC2" }), rec({ platform: "youtube", platform_id: "UC3", restricted: true })];
     const lines = exportText(d).split("\n").map((l) => JSON.parse(l));
     expect(lines.map((l) => l.platform_id)).toEqual(["UC1", "UC2"]);
-    expect([lines[0].email, "history" in lines[0], "email" in lines[1]]).toEqual(["a@b.com", false, false]);
+    expect([lines[0].email, "found_video" in lines[0], "restricted" in lines[0], "email" in lines[1]]).toEqual(["a@b.com", false, false, false]);
     expect(migrate({ settings: { gapDays: 3, targets: { creators: "120", servers: 5 }, tab: "servers" }, servers: [{ invite: "x" }] }).settings).toMatchObject({ gapDays: 14, target: 120 });
     expect(compact(3_110_000)).toBe("3.1M");
+  });
+  it("migrates the old state: every creator kept, the daily update's leftovers dropped", () => {
+    const old = { v: 2, settings: { platform: "tiktok", query: "q", gapDays: 7, target: 30, daily: true }, creators: [{ ...rec({ platform: "youtube", platform_id: "UC1" }), history: [{ at: "x", changes: [] }], update_error: "boom" }], seen: ["youtube:UC1"], refresh: { running: true }, run: { running: false, label: "YouTube", query: "q", found: 1 } };
+    const d = migrate(old);
+    expect(d.creators.map((c) => c.platform_id)).toEqual(["UC1"]);
+    expect(["history" in d.creators[0]!, "update_error" in d.creators[0]!, "refresh" in d, "daily" in d.settings]).toEqual([false, false, false, false]);
+    expect([d.settings.platform, d.settings.target, d.run?.ids, d.seen]).toEqual(["tiktok", 30, [], ["youtube:UC1"]]);
   });
   it("runs a YouTube sweep from the routes and persists it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
@@ -244,13 +249,14 @@ describe("collector", () => {
     await call("POST", "settings", { platform: "youtube", query: "blox", target: 0, gapDays: 7 });
     expect((await call("POST", "start"))!.status).toBe(200);
     await c.settled();
-    const v = (await call("GET", ""))!.body as { counts: { creators: number }; run: { running: boolean; found: number } };
-    expect([v.counts.creators, v.run.running, v.run.found]).toEqual([2, false, 2]);
+    const v = (await call("GET", ""))!.body as { counts: { available: number }; run: { running: boolean; found: number; ids: string[] }; creators: { id: string; videos: unknown[] }[] };
+    expect([v.counts.available, v.run.running, v.run.found, v.run.ids]).toEqual([2, false, 2, ["youtube:UCa", "youtube:UCb"]]);
+    expect(v.creators.map((x) => [x.id, x.videos.length])).toEqual([["youtube:UCb", 1], ["youtube:UCa", 1]]);
     expect(((await call("GET", "export"))!.body as { count: number }).count).toBe(2);
     await c.flush();
     expect(JSON.parse(readFileSync(join(dir, "state.json"), "utf8")).creators.length).toBe(2);
   });
-  it("never collects anyone twice: not after Clear, not on another platform, not when they're in Persons", async () => {
+  it("never collects anyone twice: not once restricted or removed, not on another platform, not when they're in Persons", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const yt = fakeYt({ UCa: 1, UCb: 1 });
     // UCb's About links TikTok @tb; @pp is in Persons › Creators already.
@@ -260,13 +266,15 @@ describe("collector", () => {
     const call = caller(c);
     await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
     await c.settled();
-    await call("POST", "clear");
+    expect((await call("POST", "restrict", { id: "youtube:UCa", restricted: true }))!.status).toBe(200);
+    await call("POST", "remove", { id: "youtube:UCb" });
     await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
     await c.settled();
-    expect(c.data.creators.length).toBe(0);
+    expect(c.data.creators.map((x) => [x.platform_id, x.restricted])).toEqual([["UCa", true]]);
+    expect(c.data.run?.ids).toEqual([]);
     await call("POST", "start", { platform: "tiktok", query: "q", target: 0, gapDays: 14 });
     await c.settled();
-    expect(c.data.creators.map((x) => x.handle)).toEqual(["@fresh"]);
+    expect(c.data.creators.filter((x) => !x.restricted).map((x) => x.handle)).toEqual(["@fresh"]);
     expect(tt.reads).toEqual(["fresh"]);
     expect(c.data.run?.known).toBe(2);
   });
@@ -303,18 +311,17 @@ describe("collector", () => {
     expect(c.data.creators[0]!.contacted?.via).toBe("gmail");
     expect(c.data.settings.lastTemplate).toBe("padrao");
   });
-  it("the daily update reads each creator again and writes the changes", async () => {
+  it("Restrict keeps a lead out of Available and the export; Unrestrict brings it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
-    const yt = fakeYt({ UC1: 1 });
-    yt.about = async (id: string) => ({ name: "Kauã", handle: "@kaua", profileUrl: `https://www.youtube.com/@kaua`, avatarUrl: null, subscribers: 25_000, videos: 3, views: 3, description: "parcerias@kaua.com", country: null, links: [] });
-    const c = new Collector(dir, deps({ youtube: yt as never }));
-    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Kauã", subscriber_count: 20_000, captured_at: new Date(Date.now() - 2 * DAY).toISOString() }));
-    expect(c.refreshAll(false)).toBeNull();
-    expect(c.refreshAll(false)).toBe("The update is already going.");
-    while (c.data.refresh.running) await Bun.sleep(5);
-    const x = c.data.creators[0]!;
-    expect([x.subscriber_count, x.email, x.email_source]).toEqual([25_000, "parcerias@kaua.com", "YouTube About"]);
-    expect(x.history?.[0]?.changes.map((ch) => ch.field)).toContain("Subscribers");
-    expect(c.data.refresh.status).toContain("1 changed");
+    const c = new Collector(dir, deps({}));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "A" }), rec({ platform: "tiktok", platform_id: "7", name: "B" }));
+    const call = caller(c);
+    expect((await call("POST", "restrict", { id: "nope", restricted: true }))!.status).toBe(404);
+    const v = (await call("POST", "restrict", { id: "youtube:UC1", restricted: true }))!.body as { counts: { available: number; restricted: number }; creators: { id: string; restricted: boolean }[] };
+    expect(v.counts).toEqual({ available: 1, restricted: 1 });
+    expect(v.creators.find((x) => x.id === "youtube:UC1")?.restricted).toBe(true);
+    expect(((await call("GET", "export"))!.body as { count: number }).count).toBe(1);
+    await call("POST", "restrict", { id: "youtube:UC1", restricted: false });
+    expect(c.data.creators.every((x) => !x.restricted)).toBe(true);
   });
 });

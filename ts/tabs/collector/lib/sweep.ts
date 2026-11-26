@@ -1,7 +1,9 @@
-// The YouTube creator sweep (the userscript's collectCreators / harvestChannels / ytPageThrough): discovery walks a list
-// of search surfaces, harvesting after each and stopping the moment the target is met; every channel goes through the
-// freshness gate (its Atom feed) before its About data is read; drops never count toward the target.
-import { YT_SORT, YT_TYPE, YT_UPLOADED, ytChannelsFromSearch, ytFind, ytUploadersFromSearch, type ChannelHit, type SearchFilter, type YouTube } from "./youtube.ts";
+// The YouTube creator sweep (the userscript's collectCreators / harvestChannels / ytPageThrough): the term is searched
+// for VIDEOS, first exactly as youtube.com/results shows it (no filter), then a few video-only orderings for more, and
+// each video leads to its channel, in the order YouTube ranked them; harvesting after each pass and stopping the moment
+// the target is met. Every channel goes through the freshness gate (its Atom feed, which also gives the 3 newest
+// videos) before its About data is read; drops never count toward the target.
+import { YT_SORT, YT_TYPE, YT_UPLOADED, ytFind, ytUploadersFromSearch, type ChannelHit, type SearchFilter, type YouTube } from "./youtube.ts";
 import { handleKey } from "./identity.ts";
 import type { CreatorRecord, RecentVideo } from "./types.ts";
 
@@ -11,17 +13,16 @@ export interface Pass {
   extract: (data: unknown) => ChannelHit[];
 }
 
-/** Each ranks differently, so each returns a materially different set (measured in the userscript). */
+/**
+ * Video searches only, the site's own first: the search page as the user sees it (videos and Shorts, YouTube's
+ * ranking), then the Videos filter, then this month's and the newest uploads (more active creators) for when the first
+ * run dry. Channels come only through their videos.
+ */
 export const YT_DISCOVERY_PASSES: Pass[] = [
-  { label: "Channels", sp: { type: YT_TYPE.CHANNEL }, extract: ytChannelsFromSearch },
-  { label: "Channels by views", sp: { sort: YT_SORT.VIEWS, type: YT_TYPE.CHANNEL }, extract: ytChannelsFromSearch },
-  { label: "Videos today", sp: { uploaded: YT_UPLOADED.TODAY, type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
-  { label: "Videos this week", sp: { uploaded: YT_UPLOADED.WEEK, type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
+  { label: "Search", sp: {}, extract: ytUploadersFromSearch },
   { label: "Videos", sp: { type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
   { label: "Videos this month", sp: { uploaded: YT_UPLOADED.MONTH, type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
-  { label: "Videos by views", sp: { sort: YT_SORT.VIEWS, type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
-  { label: "Videos by upload date", sp: { sort: YT_SORT.DATE, type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
-  { label: "Channels by rating", sp: { sort: YT_SORT.RATING, type: YT_TYPE.CHANNEL }, extract: ytChannelsFromSearch },
+  { label: "Newest videos", sp: { sort: YT_SORT.DATE, type: YT_TYPE.VIDEO }, extract: ytUploadersFromSearch },
 ];
 
 // The userscript's pacing (gentle: one request at a time, a breather between each).
@@ -98,12 +99,12 @@ async function pageThrough(c: SweepCtx, label: string, first: unknown, extract: 
     if (batch.length === 0) {
       // YouTube pads these lists with Shorts and resumes handing out channels pages later.
       if (++dry >= YT_DRY_PAGE_LIMIT) {
-        c.log(`${label}: no new channels for ${dry} pages - source exhausted.`);
+        c.log(`${label}: no new creators for ${dry} pages - source exhausted.`);
         break;
       }
     } else {
       dry = 0;
-      c.log(`${label} page ${page}: ${batch.length} new channel(s). ${found.length} queued.`);
+      c.log(`${label} page ${page}: ${batch.length} new creator(s) from the videos. ${found.length} queued.`);
     }
     if (wanted > 0 && found.length >= wanted) {
       c.log(`${label}: enough channels for the target.`);
@@ -142,9 +143,17 @@ async function harvest(c: SweepCtx, entries: ChannelHit[], capturedAt: string, s
     }
     const label = entry.name || entry.channelId;
     stats.considered++;
+    c.log(`Checking ${label}…`);
     let age: number | null = null;
     let recent: RecentVideo[] = [];
-    if (c.gapDays > 0) {
+    if (c.gapDays <= 0) {
+      // No gate, but the card still shows the newest videos.
+      try {
+        recent = (await c.yt.feed(entry.channelId)).videos;
+      } catch {
+        // the lead stands without them
+      }
+    } else {
       let newest: number | null;
       try {
         const f = await c.yt.feed(entry.channelId);
@@ -193,6 +202,7 @@ async function harvest(c: SweepCtx, entries: ChannelHit[], capturedAt: string, s
         ...(recent.length ? { recent_videos: recent } : {}),
         last_upload_at: recent[0]?.published_at ?? null,
         updated_at: capturedAt,
+        ...(entry.videoUrl ? { found_video: entry.videoUrl } : {}),
       };
       rec = await c.enrich(rec, "YouTube About");
       const why = c.add(rec);
@@ -218,7 +228,7 @@ export async function sweepYouTube(c: SweepCtx): Promise<Stats> {
   const capturedAt = new Date((c.now ?? Date.now)()).toISOString();
   const stats: Stats = { considered: 0, kept: 0, dropped: 0, discovered: 0, known: 0 };
   const seenNow = new Set<string>();
-  c.log(c.target > 0 ? `Sweeping YouTube for "${c.query}" - target ${c.target} creator(s).` : `Sweeping YouTube for "${c.query}" - no target, collecting everything.`);
+  c.log(c.target > 0 ? `Searching YouTube videos for "${c.query}" - target ${c.target} lead(s).` : `Searching YouTube videos for "${c.query}" - no target, collecting everything.`);
   c.log(c.gapDays > 0 ? `Dropping any channel with no upload in the last ${c.gapDays} days.` : "No freshness filter - collecting channels whenever they last uploaded.");
   for (const pass of YT_DISCOVERY_PASSES) {
     if (c.stopped() || reached(c)) break;
