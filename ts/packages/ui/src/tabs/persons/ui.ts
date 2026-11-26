@@ -1174,7 +1174,8 @@ class PersonsTab {
       if (r.status !== 200 || r.body.ok === false) throw new Error(String(r.body.error ?? "Not added"));
       const np = r.body.person as { id?: string; name?: string } | undefined;
       await this.refresh();
-      if (r.body.existed) this.setToast(`${this.person(String(np?.id ?? ""))?.name ?? "They"} were already in Persons: now in Personal too`);
+      // already in Persons (the same number or account): said, with the name they have now; their chat opens
+      if (r.body.existed) this.setToast(String(r.body.message || "Already in Persons"));
       if (np?.id) void this.openPerson(np.id, "personal", "");
     });
   }

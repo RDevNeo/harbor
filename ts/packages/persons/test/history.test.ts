@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 /** Hub's data folder with the agents' WhatsApp store: `n` text messages with Ana, one a minute, for account `account`. */
-function hubWithStore(n: number, account = ME): string {
+function hubWithStore(n: number, account = ME, phone = ANA): string {
   const hub = mkdtempSync(join(tmpdir(), "hub-history-"));
   dirs.push(hub);
   mkdirSync(join(hub, "persons"));
@@ -34,12 +34,13 @@ function hubWithStore(n: number, account = ME): string {
   const db = new Database(join(wdir, "wa.db"));
   db.run("CREATE TABLE messages (chat TEXT NOT NULL, id TEXT NOT NULL, from_me INTEGER NOT NULL, sender TEXT NOT NULL, sender_name TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', media TEXT, quoted_id TEXT, quoted_text TEXT, deleted INTEGER NOT NULL DEFAULT 0, edited INTEGER NOT NULL DEFAULT 0, reactions TEXT, raw TEXT NOT NULL, seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chat, id))");
   db.run("CREATE TABLE lids (lid TEXT PRIMARY KEY, pn TEXT NOT NULL)");
-  db.run("INSERT INTO lids VALUES ('999@lid', ?)", [`${ANA}@s.whatsapp.net`]);
+  db.run("CREATE TABLE chats (jid TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', unread INTEGER NOT NULL DEFAULT 0, last_ts INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0)");
+  db.run("INSERT INTO lids VALUES ('999@lid', ?)", [`${phone}@s.whatsapp.net`]);
   const base = Date.parse(T0) / 1000;
   for (let i = 0; i < n; i++) {
     // the oldest few under her lid, as the store may keep them
-    const chat = i < 3 ? "999@lid" : `${ANA}@s.whatsapp.net`;
-    const raw = { key: { remoteJid: chat, remoteJidAlt: `${ANA}@s.whatsapp.net`, fromMe: i % 2 === 1, id: `H${i}` }, messageTimestamp: base + i * 60, message: { conversation: `m${i}` } };
+    const chat = i < 3 ? "999@lid" : `${phone}@s.whatsapp.net`;
+    const raw = { key: { remoteJid: chat, remoteJidAlt: `${phone}@s.whatsapp.net`, fromMe: i % 2 === 1, id: `H${i}` }, messageTimestamp: base + i * 60, message: { conversation: `m${i}` } };
     db.run("INSERT INTO messages (chat, id, from_me, sender, ts, kind, text, raw) VALUES (?, ?, ?, ?, ?, 'text', ?, ?)", [chat, `H${i}`, i % 2, chat, base + i * 60, `m${i}`, JSON.stringify(raw)]);
   }
   db.close();
@@ -71,8 +72,10 @@ async function linked(hub: string): Promise<Connection> {
   });
   closers.push(() => c.stop());
   await c.start();
-  for (let i = 0; i < 5 && !eng; i++) await Bun.sleep(1);
+  // the engine starts in the background: wait for it (slow machines too), then it opens
+  for (let i = 0; i < 400 && !eng; i++) await Bun.sleep(5);
   eng?.onEvent("open", { id: `${ME}:3@s.whatsapp.net`, name: "Igor" });
+  for (let i = 0; i < 400 && c.state().status !== "connected"; i++) await Bun.sleep(5);
   await c.track([ANA]);
   return c;
 }
@@ -88,6 +91,15 @@ describe("WhatsApp history from Hub's own WhatsApp store", () => {
     const older = await c.history(ANA, "H10");
     expect(older.messages.map((m) => m.content)).toEqual(["m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"]);
     expect(await c.history(ANA, "H0")).toEqual({ channelId: `${ANA}@s.whatsapp.net`, messages: [] });
+  });
+
+  it("a chat the store keeps under the number's other Brazilian form is the same chat; Add contact's check finds it too", async () => {
+    // the store has him as WhatsApp answered (no 9th digit: 55 71 9961-6108); Persons asks with the 9-digit mobile
+    const c = await linked(hubWithStore(5, ME, "557199616108"));
+    expect((await c.history("5571999616108")).messages.map((m) => m.content)).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+    // WhatsApp's on_whatsapp answered nothing (the stand-in engine): the store's form counts
+    expect((await c.lookup("55 (71) 9961-6108")).matches.map((u) => u.id)).toEqual(["557199616108"]);
+    expect((await c.lookup("+55 71 98888-7777")).notFound).toBe(true);
   });
 
   it("another account's store is never read", async () => {

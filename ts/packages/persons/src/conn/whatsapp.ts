@@ -657,8 +657,10 @@ export function createWhatsapp(ctx: ConnContext, opts: WhatsappOptions = {}): Co
       const hit = arr(found.found)
         .map(obj)
         .find((x) => x.exists && wa.isPhone(wa.normJid(String(x.jid ?? ""))));
-      if (!hit) return { matches: [], notFound: true };
-      const jid = wa.normJid(String(hit.jid));
+      // WhatsApp said no (or nothing): a number this account already talks to (Hub's own WhatsApp store) still counts
+      const storeForm = hit ? null : store && me?.phone ? store.known(me.phone, wa.phoneVariants(typed)) : null;
+      if (!hit && !storeForm) return { matches: [], notFound: true };
+      const jid = hit ? wa.normJid(String(hit.jid)) : wa.jidOfPhone(storeForm!);
       const digits = wa.digitsOf(jid);
       const pic = await call("profile_picture", { jid }).catch(() => ({ url: "" }) as Json);
       const c = contacts.get(digits) ?? {};
@@ -736,7 +738,7 @@ export function createWhatsapp(ctx: ConnContext, opts: WhatsappOptions = {}): Co
       if (before && !anchor) return { channelId: jid, messages: [] };
       // the page before it (or the newest) from Hub's own WhatsApp store, when it's this account's: a chat added
       // after this link's history sync has its past there
-      const page = store && me?.phone ? store.page(me.phone, d, anchor ? Math.floor(Date.parse(anchor.timestamp) / 1000) : null) : { raws: [], more: false };
+      const page = store && me?.phone ? store.page(me.phone, wa.phoneVariants(d), anchor ? Math.floor(Date.parse(anchor.timestamp) / 1000) : null) : { raws: [], more: false };
       if (page.raws.length) {
         const byId = new Map(have.map((m) => [m.id, m]));
         for (const raw of page.raws) {

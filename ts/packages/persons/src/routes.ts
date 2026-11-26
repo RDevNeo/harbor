@@ -78,6 +78,14 @@ export const colorOf = (id: string): string => {
   return COLORS[h % COLORS.length]!;
 };
 const TONE: Record<string, string> = { online: "green", idle: "yellow", dnd: "red", muted: "muted" };
+/** What Add contact says when they were already in Persons (shown on the PC and the phone); "" for someone new. */
+export function contactMessage(r: { person: Person; existed: boolean; was: string; joined: boolean; renamed: boolean }): string {
+  if (!r.existed) return "";
+  const now = personLabel(r.person);
+  const as = r.renamed ? `${r.was}, now named ${now}` : r.was;
+  return r.joined ? `Already in Persons as ${as}: added to Personal` : `Already in Personal as ${as}`;
+}
+
 const sectionOf = (s: string | null | undefined): SectionId | null => (s && isSection(s) ? s : null);
 
 export class PersonsRoutes {
@@ -1162,7 +1170,7 @@ export class PersonsRoutes {
     if (!isContactKind(kind)) return err(400, "kind: discord, whatsapp or instagram");
     try {
       const r = await this.s.addContact(kind, str(b.handle) ?? "", str(b.name) ?? "");
-      return ok({ ok: true, person: json(r.person), existed: r.existed });
+      return ok({ ok: true, person: json(r.person), existed: r.existed, was: r.was, joined: r.joined, renamed: r.renamed, message: contactMessage(r) });
     } catch (e) {
       return ok({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }

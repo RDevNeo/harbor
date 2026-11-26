@@ -5,7 +5,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allPeers, chatsFor, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
+import { allPeers, chatsFor, KIND_LABEL, peerOf, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
 import { personalShares, resolveContact, type ContactKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
@@ -43,6 +43,18 @@ export interface Slice {
 export interface ConnView extends ConnMeta, Slice {
   label: string;
   connected: boolean;
+}
+
+/** Add contact's outcome: the person, and when they were already in Persons, as whom and what changed. */
+export interface AddedContact {
+  person: Person;
+  existed: boolean;
+  /** Their name before (existed). */
+  was: string;
+  /** They weren't in Personal before. */
+  joined: boolean;
+  /** The name typed became theirs. */
+  renamed: boolean;
 }
 
 export interface RowInfo {
@@ -461,7 +473,7 @@ export class PersonsService {
    * are on that platform through a connection serving Personal, then saved as a person in Personal (someone already in
    * Persons with that id just joins Personal). Throws with the reason when it can't be resolved: nothing is saved then.
    */
-  async addContact(kind: ContactKind, handle: string, name = ""): Promise<{ person: Person; existed: boolean }> {
+  async addContact(kind: ContactKind, handle: string, name = ""): Promise<AddedContact> {
     if (!this.data) throw new Error("Persons isn't loaded");
     const views = this.views().filter((v) => v.kind === kind && serves(v, "personal"));
     const conn = views.find((v) => v.connected) ?? views[0];
@@ -471,10 +483,18 @@ export class PersonsService {
     if (!c) throw new Error("That connection is gone");
     const r = await resolveContact(kind, handle, (q) => c.lookup(q));
     const at = new Date().toISOString();
-    const existing = this.data.people.find((p) => allPeers(p, kind).includes(r.id));
+    // the same human already in Persons (a WhatsApp number in either Brazilian form counts): they join Personal, and a
+    // name typed in the form becomes theirs (Rename), so the row the user expects shows up
+    const same = (v: string): boolean => (kind === "whatsapp" ? phoneVariants(r.id).includes(v) || phoneVariants(v).includes(r.id) : v === r.id);
+    const existing = this.data.people.find((p) => allPeers(p, kind).some(same));
     if (existing) {
-      if (!existing.listIds.includes("personal")) this.updatePerson(existing.id, (x) => ({ ...x, listIds: [...x.listIds, "personal"], updatedAt: at }));
-      return { person: this.person(existing.id) ?? existing, existed: true };
+      const was = personLabel(existing);
+      const typed = name.trim();
+      const joined = !existing.listIds.includes("personal");
+      const renamed = !!typed && typed !== existing.name;
+      if (joined || renamed) this.updatePerson(existing.id, (x) => ({ ...(renamed ? renamePerson(x, typed) : x), listIds: joined ? [...x.listIds, "personal"] : x.listIds, updatedAt: at }));
+      this.log("personal contact existed", kind, existing.id, joined ? "joined" : "", renamed ? "renamed" : "");
+      return { person: this.person(existing.id) ?? existing, existed: true, was, joined, renamed };
     }
     const p: Person = { id: this.newId(), name: name.trim(), discordId: "", storeIds: [], listIds: ["personal"], createdAt: at, updatedAt: at };
     if (kind === "discord") {
@@ -497,7 +517,7 @@ export class PersonsService {
     }
     this.log("personal contact added", kind, p.id);
     this.update((d) => ({ ...d, people: [...d.people, p] }));
-    return { person: p, existed: false };
+    return { person: p, existed: false, was: "", joined: true, renamed: false };
   }
 
   async removeConnection(id: string): Promise<void> {
