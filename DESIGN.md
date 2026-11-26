@@ -90,7 +90,8 @@ Per tab:
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
 - **Collector**: sidebar = the four views as glyph rows (Collector with "running" while a run goes, Available,
-  Approved and Restricted with their counts); page = PageBar ("Collector / Collect leads", "Collector / Available  6 leads" with
+  Approved and Restricted with their counts; the lists' bar: the filter SearchField full width, then 34px framed Sort
+  and platform menu buttons, MenuItems and PlatRows with the tick on the left, brand mark, count); page = PageBar ("Collector / Collect leads", "Collector / Available  6 leads" with
   Copy JSONL on the right), then a column: on Collector the form Card (platform Chips, Instagram's "· needs sign-in"
   and, when picked, the session Well; search Input, Leads with −/+, Collect/Stop, Last upload Chips), one line under
   it while a run goes (Spinner + "3 of 20 · Checking @x…", or how it ended), then the run's leads; on Available and

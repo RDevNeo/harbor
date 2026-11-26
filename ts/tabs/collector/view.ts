@@ -4,7 +4,7 @@
 import { avatarKey } from "./avatar-key.ts";
 import { compactCount, dayAgo } from "./lib/format.ts";
 import { brandOf, linkTitle, linksText, REACH_META, reachDrafts, reachHref, reachStart } from "./lib/reach.ts";
-import { GAP_CHOICES, PLATFORM_LABEL, type ApproveTo, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
+import { GAP_CHOICES, PLATFORM_LABEL, type ApproveTo, type SortMode, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
 
 export { compactCount as compact } from "./lib/format.ts";
 
@@ -55,12 +55,22 @@ export interface RowView {
   restricted: boolean;
   /** Approved in the review bar: in Approved, not Available. */
   approved: boolean;
+  /** "youtube", "tiktok", "instagram": the lists' platform filter. */
+  platformKey: string;
+  /** Followers (YouTube subscribers count as followers): the lists' Sort (null: hidden or unknown). */
+  subs: number | null;
   /** The Reach kind picked in the detail ("email", "discord", "whatsapp", "instagram"), "" when none: its icon on the card. */
   reach: string;
   reachValue: string;
 }
 
 const ROWS_MAX = 2000;
+
+/** The lists' Sort menu: followers (YouTube subscribers count as followers), the default first. */
+export const SORT_CHOICES: { value: SortMode; label: string; group: number }[] = [
+  { value: "followers-desc", label: "Followers (high → low)", group: 0 },
+  { value: "followers-asc", label: "Followers (low → high)", group: 0 },
+];
 
 /** The review bar's "Approve to" choices (the CRM's "Approve to [column]"). */
 export const APPROVE_CHOICES: { value: ApproveTo; label: string; tip: string }[] = [
@@ -90,6 +100,8 @@ export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string
     })),
     restricted: !!c.restricted,
     approved: !c.restricted && !!c.approved,
+    platformKey: c.platform,
+    subs: c.subscriber_count ?? null,
     reach: c.reach?.kind ?? "",
     reachValue: c.reach?.value ?? "",
   };
@@ -118,8 +130,6 @@ export interface DetailLink {
 
 /** A lead's detail (the CRM's creator profile dialog): everything Collector gathered, plus Reach and Edit. */
 export interface DetailView extends RowView {
-  /** "youtube", "tiktok", "instagram". */
-  platformKey: string;
   hasContact: boolean;
   /** Only the tiles with data: YouTube subscribers, videos, views; TikTok followers, videos, likes; Instagram followers, posts. */
   stats: StatView[];
@@ -240,6 +250,7 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
       : null,
     counts: { available: rows.length - restricted - approved, approved, restricted },
     approveTo: APPROVE_CHOICES,
+    sorts: SORT_CHOICES,
     unseen: d.unseen,
     creators: rows,
   };

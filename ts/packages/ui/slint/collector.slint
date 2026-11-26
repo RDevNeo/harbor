@@ -6,7 +6,7 @@
 // message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
 // driven by src/tabs/collector/ui.ts, the same data Hub for Android shows. Built on Hub's design system (ds.slint,
 // DESIGN.md): sidebar, page bar, cards, chips, inputs, a dialog.
-import { Scroll, PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, DialogFrame, DialogActions, TextBox, SearchField, PopoverFrame, MenuItem } from "ds.slint";
+import { Scroll, PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, DialogFrame, DialogActions, TextBox, SearchField, PopoverFrame, MenuItem, MenuLabel, MenuSeparator } from "ds.slint";
 
 export struct ClChip { value: string, label: string, on: bool, available: bool, tip: string }
 export struct ClVid { url: string, title: string, thumb: image, has-thumb: bool }
@@ -25,6 +25,9 @@ export struct ClReach { kind: string, label: string, color: color, on: bool }
 export struct ClNav { id: string, label: string, count: int, on: bool }
 export struct ClTpl { id: string, name: string, description: string, on: bool }
 export struct ClApprove { value: string, label: string, tip: string, on: bool }
+/** The lists' Sort menu ("sep": a separator above it) and platform menu (brand colour, count on the list). */
+export struct ClSort { value: string, label: string, on: bool, sep: bool }
+export struct ClPlat { value: string, label: string, color: color, count: int, on: bool }
 
 export global CollectorBus {
     in property <bool> loading: true;
@@ -123,6 +126,15 @@ export global CollectorBus {
     in property <bool> approve-open;
     in property <[ClApprove]> approve-choices;
     in property <bool> review-busy;
+    // The lists' Sort and "Show only — platforms" (beside the filter box)
+    in property <string> sort-label;
+    in property <string> sort-tip;
+    in property <[ClSort]> sort-items;
+    in property <string> plat-label;
+    in property <bool> plat-on;
+    in property <[ClPlat]> plat-items;
+    /** "sort", "plat" or "": the menu open. */
+    in property <string> list-menu;
     // Edit (name, handle, bio, links typed by hand)
     in property <bool> edit-open;
     in-out property <string> e-name;
@@ -176,6 +188,10 @@ export global CollectorBus {
     callback approve-pick(string);
     /** A card's Unapprove (false). */
     callback approve-set(string, bool);
+    callback list-menu-show(string);
+    callback sort-pick(string);
+    /** A platform ticked or unticked; "" is All platforms. */
+    callback plat-pick(string);
 }
 
 /** Collector, Available, Restricted: the three views. A click shows that view. */
@@ -757,26 +773,196 @@ component Leads inherits VerticalLayout {
     }
 }
 
-/** Available and Restricted: the one filter box, then the leads. */
+/** Available, Approved and Restricted: the leads (the filter box and menus stay above, ListBar). */
 component ListScreen inherits VerticalLayout {
-    spacing: 14px;
-    Rectangle {
-        height: 34px;
-        border-radius: Ds.radius-md;
-        border-width: 1px;
-        border-color: search.focused ? Theme.gray-1000 : Theme.border;
-        search := SearchField {
-            x: 8px;
-            width: parent.width - 16px;
-            y: 1px;
-            hint: "Filter by name, handle, email or platform";
-            text <=> CollectorBus.filter;
-            edited(t) => {
-                CollectorBus.filter-edited(t);
+    Leads { }
+}
+
+/** A compact menu button beside the filter box: icon, label, chevron; framed like the box. */
+component ListMenuBtn inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> tip;
+    in property <bool> open;
+    in property <bool> active;
+    callback clicked;
+    height: 34px;
+    width: lbl.preferred-width + 54px;
+    border-radius: Ds.radius-md;
+    border-width: 1px;
+    border-color: root.open ? Theme.gray-1000 : Theme.border;
+    background: area.has-hover || root.open ? Theme.accent : transparent;
+    Glyph {
+        x: 11px;
+        width: 15px;
+        icon: root.icon;
+        size: 15px;
+        color: root.active ? Theme.blue-900 : Theme.subtle;
+    }
+    lbl := Text {
+        x: 33px;
+        text: root.label;
+        font-size: 13px;
+        color: root.active || area.has-hover || root.open ? Theme.fg : Theme.gray-1000;
+        vertical-alignment: center;
+    }
+    Glyph {
+        x: parent.width - 20px;
+        width: 13px;
+        icon: Icons.down;
+        size: 13px;
+        color: Theme.subtle;
+    }
+    area := TipArea {
+        mouse-cursor: pointer;
+        tip: root.tip;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+/** One "Show only — platforms" row (the CRM's checkbox item): the tick on the left, the brand's mark in its colour,
+ *  the name, the list's count on the right. The menu stays open. */
+component PlatRow inherits Rectangle {
+    in property <string> kind;
+    in property <string> label;
+    in property <color> ink;
+    in property <string> count;
+    in property <bool> on;
+    callback clicked;
+    height: 32px;
+    border-radius: 4px;
+    background: area.has-hover ? Theme.accent : transparent;
+    if root.on: Glyph {
+        x: 8px;
+        width: 16px;
+        icon: Icons.check;
+        size: 15px;
+        color: Theme.fg;
+    }
+    if root.kind != "": BrandGlyph {
+        x: 32px;
+        y: (parent.height - self.height) / 2;
+        kind: root.kind;
+        size: 15px;
+        ink: root.ink;
+    }
+    Text {
+        x: root.kind != "" ? 56px : 32px;
+        text: root.label;
+        font-size: 14px;
+        color: Theme.fg;
+        vertical-alignment: center;
+    }
+    Text {
+        x: parent.width - self.width - 10px;
+        text: root.count;
+        font-size: 12px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+/** The lists' bar: the filter box (full width), then Sort and "Show only — platforms" (the SpokPay CRM's creator
+ *  column menus), their menus dropping under them over the leads. */
+component ListBar inherits Rectangle {
+    height: 34px;
+    HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: Ds.radius-md;
+            border-width: 1px;
+            border-color: search.focused ? Theme.gray-1000 : Theme.border;
+            search := SearchField {
+                x: 8px;
+                width: parent.width - 16px;
+                y: 1px;
+                hint: "Filter by name, handle, email or platform";
+                text <=> CollectorBus.filter;
+                edited(t) => {
+                    CollectorBus.filter-edited(t);
+                }
+            }
+        }
+        sort-btn := ListMenuBtn {
+            icon: Icons.arrow-down-up;
+            label: CollectorBus.sort-label;
+            tip: CollectorBus.sort-tip;
+            open: CollectorBus.list-menu == "sort";
+            clicked => {
+                CollectorBus.list-menu-show("sort");
+            }
+        }
+        plat-btn := ListMenuBtn {
+            icon: Icons.filter;
+            label: CollectorBus.plat-label;
+            tip: "Show only — platforms";
+            open: CollectorBus.list-menu == "plat";
+            active: CollectorBus.plat-on;
+            clicked => {
+                CollectorBus.list-menu-show("plat");
             }
         }
     }
-    Leads { }
+    if CollectorBus.list-menu == "sort": PopoverFrame {
+        x: sort-btn.x + sort-btn.width - self.width;
+        y: root.height + 6px;
+        width: 248px;
+        height: sm.preferred-height;
+        sm := VerticalLayout {
+            padding: 4px;
+            MenuLabel {
+                text: "Sort by";
+            }
+            for o in CollectorBus.sort-items: VerticalLayout {
+                if o.sep: MenuSeparator { }
+                MenuItem {
+                    label: o.label;
+                    checked: o.on;
+                    clicked => {
+                        CollectorBus.sort-pick(o.value);
+                    }
+                }
+            }
+        }
+    }
+    if CollectorBus.list-menu == "plat": PopoverFrame {
+        x: plat-btn.x + plat-btn.width - self.width;
+        y: root.height + 6px;
+        width: 232px;
+        height: pm.preferred-height;
+        pm := VerticalLayout {
+            padding: 4px;
+            MenuLabel {
+                text: "Show only — platforms";
+            }
+            PlatRow {
+                label: "All platforms";
+                on: !CollectorBus.plat-on;
+                clicked => {
+                    CollectorBus.plat-pick("");
+                }
+            }
+            for p in CollectorBus.plat-items: PlatRow {
+                kind: p.value;
+                label: p.label;
+                ink: p.color;
+                count: p.count;
+                on: p.on;
+                clicked => {
+                    CollectorBus.plat-pick(p.value);
+                }
+            }
+        }
+    }
 }
 
 /** Collector: the form, the run's one line, the leads it found. */
@@ -2013,6 +2199,8 @@ export component CollectorPage {
         }
     }
     property <length> top: bar.height;
+    /** The lists scroll under their bar (filter box, Sort, platforms), which stays put. */
+    property <length> list-top: root.top + Ds.sp8 + 34px - 6px;
     if CollectorBus.loading: Text {
         x: root.main-x;
         width: root.main-w;
@@ -2032,30 +2220,40 @@ export component CollectorPage {
     }
     if !CollectorBus.loading && CollectorBus.page == "available": Column {
         x: root.main-x;
-        y: root.top;
+        y: root.list-top;
         width: root.main-w;
-        height: root.height - root.top;
+        height: root.height - root.list-top;
         col-w: root.col-w;
         col-x: root.col-x;
         ListScreen { }
     }
     if !CollectorBus.loading && CollectorBus.page == "approved": Column {
         x: root.main-x;
-        y: root.top;
+        y: root.list-top;
         width: root.main-w;
-        height: root.height - root.top;
+        height: root.height - root.list-top;
         col-w: root.col-w;
         col-x: root.col-x;
         ListScreen { }
     }
     if !CollectorBus.loading && CollectorBus.page == "restricted": Column {
         x: root.main-x;
-        y: root.top;
+        y: root.list-top;
         width: root.main-w;
-        height: root.height - root.top;
+        height: root.height - root.list-top;
         col-w: root.col-w;
         col-x: root.col-x;
         ListScreen { }
+    }
+    if !CollectorBus.loading && CollectorBus.page != "collector" && CollectorBus.list-menu != "": TouchArea {
+        clicked => {
+            CollectorBus.list-menu-show("");
+        }
+    }
+    if !CollectorBus.loading && CollectorBus.page != "collector": ListBar {
+        x: root.main-x + root.col-x;
+        y: root.top + Ds.sp8;
+        width: root.col-w;
     }
     if CollectorBus.detail-open: DetailDialog {
         width: root.width;

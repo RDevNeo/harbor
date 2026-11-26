@@ -19,6 +19,14 @@ Four views, picked in the sidebar (the phone: chips under the title):
 - **Restricted**: leads the user keeps out of Available (Restrict, or Reject in the review bar). They stay
   remembered, so no run collects them again.
 
+The three lists share one bar over them (it stays put while they scroll): the filter box, then **Sort** and **Show
+only — platforms**, the SpokPay CRM's creator column menus (`creator-status-column.tsx`, `sortCreatorsForStatus`).
+Sort: Followers (high → low), the default, or Followers (low → high) (YouTube subscribers count as followers);
+unknown counts go last either way, the newest collected first among equals. Platforms: All platforms, or any of YouTube / TikTok / Instagram (brand mark in its colour, the
+list's count on the right; several at once, the menu stays open). Both are remembered (`settings.sort`,
+`settings.platforms`, the phone's too) and give the review bar's next-lead order. Phone: two compact buttons beside
+the filter, each a simple menu.
+
 A lead is one card: picture, name, platform, handle and profile link, the Reach icon when one is set, the email (and
 where it was found) or "Add email", the 3 newest videos (thumbnails; a click opens the video), **Restrict / Unrestrict**,
 and **Send message**. Copy JSONL (Available's and Approved's page bar) gives that view's leads for SpokPayCRM → Creators → Import.

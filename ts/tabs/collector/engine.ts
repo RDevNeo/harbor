@@ -16,7 +16,7 @@
 //   POST v1/collector/import-crm      {status?: "Has Contact"}: the SpokPay CRM's creators in that status (read-only, lib/crm.ts)
 //                                     into Available, once each (idempotent), then their missing data read one at a time
 //   POST v1/collector/edit            {id, name?, handle?, description?, links? (text, a link a line)}: typed by hand
-//   POST v1/collector/settings        {platform?, query?, gapDays?, target?}
+//   POST v1/collector/settings        {platform?, query?, gapDays?, target?, approveTo?, sort?, platforms?}
 //   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
 //   POST v1/collector/restrict        {id, restricted}: out of Available (or back)
 //   POST v1/collector/approve         {id, approved, to?: "list" | "persons"}: the review bar's Approve (out of
@@ -57,7 +57,7 @@ import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
 import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
-import { APPROVE_TO, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
+import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
 import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
@@ -387,6 +387,8 @@ export class Collector {
     if (typeof b.gapDays === "number" && GAP_CHOICES.some((c) => c.value === b.gapDays)) s.gapDays = b.gapDays;
     if (b.target !== undefined) s.target = normalizeTarget(b.target);
     if (typeof b.approveTo === "string" && APPROVE_TO.includes(b.approveTo as ApproveTo)) s.approveTo = b.approveTo as ApproveTo;
+    if (typeof b.sort === "string" && SORT_MODES.includes(b.sort as SortMode)) s.sort = b.sort as SortMode;
+    if (b.platforms !== undefined) s.platforms = normalizePlatforms(b.platforms);
     this.touch();
   }
 

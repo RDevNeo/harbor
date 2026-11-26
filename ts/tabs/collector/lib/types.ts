@@ -114,7 +114,15 @@ export interface Settings {
   lastTemplate: string;
   /** The review bar's "Approve to", the last one picked. */
   approveTo: ApproveTo;
+  /** The lists' Sort: followers high → low (the default) or low → high. */
+  sort: SortMode;
+  /** The lists' "Show only — platforms" ([] = every platform). */
+  platforms: CreatorPlatform[];
 }
+
+/** Followers (YouTube subscribers count as followers), high → low or low → high. */
+export type SortMode = "followers-desc" | "followers-asc";
+export const SORT_MODES: readonly SortMode[] = ["followers-desc", "followers-asc"];
 
 export interface RunState {
   running: boolean;
@@ -167,11 +175,18 @@ export const GAP_CHOICES: { value: number; label: string }[] = [
 export const PLATFORM_LABEL: Record<CreatorPlatform, string> = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" };
 
 export function defaultSettings(): Settings {
-  return { platform: "youtube", query: "", gapDays: 14, target: 20, lastTemplate: "", approveTo: "list" };
+  return { platform: "youtube", query: "", gapDays: 14, target: 20, lastTemplate: "", approveTo: "list", sort: "followers-desc", platforms: [] };
 }
 
 export function defaultData(): CollectorData {
   return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, log: [], unseen: 0 };
+}
+
+/** A "Show only — platforms" choice: known platforms, once each, in the usual order; anything else is "all" ([]). */
+export function normalizePlatforms(v: unknown): CreatorPlatform[] {
+  const got = Array.isArray(v) ? v.filter((x): x is CreatorPlatform => PLATFORMS.includes(x as CreatorPlatform)) : [];
+  const out = (["youtube", "tiktok", "instagram"] as const).filter((p) => got.includes(p));
+  return out.length === 3 ? [] : out;
 }
 
 export function normalizeTarget(v: unknown): number {
@@ -196,6 +211,8 @@ export function migrate(raw: unknown): CollectorData {
     target: t === undefined ? d.settings.target : normalizeTarget(t),
     lastTemplate: typeof s.lastTemplate === "string" ? s.lastTemplate : "",
     approveTo: APPROVE_TO.includes(s.approveTo as ApproveTo) ? (s.approveTo as ApproveTo) : "list",
+    sort: SORT_MODES.includes(s.sort as SortMode) ? (s.sort as SortMode) : "followers-desc",
+    platforms: normalizePlatforms(s.platforms),
   };
   d.creators = Array.isArray(r.creators)
     ? (r.creators.filter((c) => c && typeof c === "object" && typeof (c as CreatorRecord).platform_id === "string" && typeof (c as CreatorRecord).platform === "string") as CreatorRecord[]).map((c) => ({
