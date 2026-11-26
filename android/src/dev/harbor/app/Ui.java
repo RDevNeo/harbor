@@ -119,11 +119,12 @@ final class Ui {
         dark = "dark".equals(m) || ("system".equals(m)
                 && (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES);
         if (dark) {
-            BG = 0xff262624; BG2 = 0xff1f1e1d; CARD = 0xff30302e; LINE = 0xff3d3c39;
-            G100 = 0xff353432; G200 = 0xff3b3a37; G300 = 0xff43423e; G400 = 0xff4f4e49; G500 = 0xff64625c;
-            G600 = 0xff8a8880; G700 = 0xffa6a39a; G900 = 0xffc8c5bb; FG = 0xfffaf9f5;
-            INK = 0xfffaf9f5; ON_INK = 0xff1f1e1d;
-            BLUE = 0xff5fa8f5; RED = 0xffff7b72; RED_BG = 0xff3a2422; GREEN = 0xff6cc07a; AMBER = 0xfff2b440;
+            // Black, the PC's dark theme (ts/packages/ui/src/theme.ts DARK): bg100 page, bg200 surfaces, its grays.
+            BG = 0xff0a0a0a; BG2 = 0xff111111; CARD = 0xff111111; LINE = 0xff2e2e2e;
+            G100 = 0xff1a1a1a; G200 = 0xff1f1f1f; G300 = 0xff292929; G400 = 0xff2e2e2e; G500 = 0xff454545;
+            G600 = 0xff7d7d7d; G700 = 0xff8f8f8f; G900 = 0xffa0a0a0; FG = 0xffededed;
+            INK = 0xffededed; ON_INK = 0xff0a0a0a;
+            BLUE = 0xff52a8ff; RED = 0xffff6166; RED_BG = 0xff2a1314; GREEN = 0xff5fc26a; AMBER = 0xfff2a20d;
         } else {
             BG = 0xfffaf9f5; BG2 = 0xfff4f3ee; CARD = 0xffffffff; LINE = 0xffe6e4dc;
             G100 = 0xfff0eee6; G200 = 0xffe9e7df; G300 = 0xffe1dfd6; G400 = 0xffd3d0c6; G500 = 0xffb5b2a8;
