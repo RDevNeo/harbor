@@ -35,10 +35,17 @@ public class Hubs extends Base {
     private String error;
     /** A chat link is being looked up (openPending). */
     private boolean resolving;
+    /** Shown on purpose (the drawer's "Workspaces & PCs"): it stays. Otherwise this page never shows while a
+     *  workspace or PC is known: the Projects tab opens straight in it (openLast), in every state (signed in
+     *  with no paired PC, paired only, after a live update, a notification's tap, a workspace gone). */
+    private boolean browse;
+    /** When openLast last opened a workspace from here (a guard against a loop should it close at once). */
+    private static long autoOpenedAt;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        browse = getIntent().getBooleanExtra("browse", false);
         // The Projects tab opens straight in the workspace (Chats); this page is the drawer's "Workspaces & PCs":
         // the same top bar as every page, Back to the workspace.
         frame("Workspaces & PCs", Ds.backButton(this, v -> back()), false);
@@ -51,7 +58,7 @@ public class Hubs extends Base {
         // Hub's tabs (Tabs.java): this screen and the chats it opens are Projects.
         setContentView(Tabs.around(this, page, Tabs.PROJECTS));
 
-        if (b == null && !handleLink(getIntent(), true) && !Account.needsSignIn(this)) {
+        if (b == null && !browse && !handleLink(getIntent(), true) && !Account.needsSignIn(this)) {
             // Right after a live update (Swap): the same screens as before, at once.
             if (Swap.restore(this)) return;
             // Right after an update: back to the chat the user had.
@@ -60,26 +67,42 @@ public class Hubs extends Base {
         }
     }
 
-    /** A cold start goes straight back to the workspace used last. */
+    /** Straight on to the workspace used last (a cold start, or this page coming up while one is known). */
     private void openLast() {
-        String last = lastHub();
+        String last = lastHub(this);
         if (last == null) return;
+        // A workspace is reached with the account's sign-in: while it has run out, this page asks for it again
+        // (its screens would only send the phone back here).
+        if (!last.startsWith(Pair.ID) && Account.wantsSignIn(this)) return;
+        autoOpenedAt = android.os.SystemClock.elapsedRealtime();
         // It goes on to the workspace at once: nothing drawn here meanwhile (no flash of this page).
         restoring = true;
         open(last);
     }
 
-    /** The workspace (or PC) the Projects tab opens in: the one used last, else the only one; null when none. */
-    private String lastHub() {
-        String last = Hub.last(this);
-        List<Hub> all = Hub.all(this);
-        if (last == null && all.size() == 1) last = all.get(0).id;
-        return last != null && Hub.get(this, last) != null ? last : null;
+    /** This page came up without being asked for (not the drawer's Workspaces & PCs): on to the workspace, unless
+     *  something here needs the user (a sign-in under way, a chat link, invitations to answer) or it just did. */
+    private void leaveIfNotAsked() {
+        if (browse || restoring || busy || resolving || isFinishing() || pending(this)) return;
+        if (Account.invites(this).length() > 0) return;
+        if (android.os.SystemClock.elapsedRealtime() - autoOpenedAt < 2_000) return;
+        openLast();
+    }
+
+    /** The workspace (or PC) the Projects tab opens in: the one used last, else the first of the account's
+     *  workspaces, else the first paired PC; null when the phone knows none. */
+    static String lastHub(Context c) {
+        String last = Hub.last(c);
+        if (last != null && Hub.get(c, last) != null) return last;
+        List<Hub> all = Hub.all(c);
+        for (Hub h : all) if (!h.id.startsWith(Pair.ID)) return h.id;
+        return all.isEmpty() ? null : all.get(0).id;
     }
 
     /** The top bar's back: to the workspace's page, or out of the app when there is none yet. */
     private void back() {
-        if (lastHub() != null) Tabs.go(this, Tabs.PROJECTS);
+        browse = false;
+        if (lastHub(this) != null) Tabs.go(this, Tabs.PROJECTS);
         else moveTaskToBack(true);
     }
 
@@ -89,6 +112,7 @@ public class Hubs extends Base {
     @Override
     protected void onNewIntent(Intent i) {
         super.onNewIntent(i);
+        browse = i != null && i.getBooleanExtra("browse", false);
         handleLink(i, false);
     }
 
@@ -97,11 +121,12 @@ public class Hubs extends Base {
         super.onResume();
         render();
         openPending();
+        leaveIfNotAsked();
         if (!Account.needsSignIn(this) && !busy) {
             // A newer directory (PCs added, invitations) and token, when due.
             Ui.pool.execute(() -> {
                 try { Account.renew(this, false); } catch (Exception ignored) { }
-                Ui.main.post(() -> { if (!isFinishing() && !busy) { render(); openPending(); } });
+                Ui.main.post(() -> { if (!isFinishing() && !busy) { render(); openPending(); if (front) leaveIfNotAsked(); } });
             });
         }
     }
@@ -116,6 +141,7 @@ public class Hubs extends Base {
         if (Pair.ON && Pair.SCHEME.equalsIgnoreCase(scheme) && "pair".equalsIgnoreCase(i.getData().getHost())) {
             String link = i.getDataString();
             setIntent(new Intent(this, Hubs.class));
+            browse = true; // the pairing's question stays on this page
             askPair(link);
             return true;
         }
@@ -125,6 +151,7 @@ public class Hubs extends Base {
             if (link != null && link.approve != null) {
                 LocalGate.Sources src = launcher(i, fresh);
                 setIntent(new Intent(this, Hubs.class));
+                browse = true; // the approval's question stays on this page
                 LocalApi.ask(this, link.gid, link.approve, src);
                 return true;
             }
@@ -151,7 +178,7 @@ public class Hubs extends Base {
                     render();
                     List<Hub> all = Hub.all(this);
                     if (fe == null && pending(this)) openPending();
-                    else if (fe == null && all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
+                    else if (fe == null && !all.isEmpty() && Account.invites(this).length() == 0) open(lastHub(this));
                 });
             });
             return true;
@@ -164,6 +191,7 @@ public class Hubs extends Base {
     }
 
     private void open(String id) {
+        browse = false;
         Hub.setLast(this, id);
         // Picked here: this workspace is the phone's own now, not a stand-in for another (Away).
         Away.forget(this, id);
@@ -279,7 +307,7 @@ public class Hubs extends Base {
             if (err == null) {
                 List<Hub> all = Hub.all(this);
                 if (pending(this)) openPending();
-                else if (all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
+                else if (!all.isEmpty() && Account.invites(this).length() == 0) open(lastHub(this));
             }
         });
     }
@@ -511,7 +539,7 @@ public class Hubs extends Base {
             list.addView(Ui.text(this, busy && !Account.on() ? "Pairing…" : "Pair the phone with Hub on your PC: run `hub pair` there (or open Settings › Phones) and scan its QR code with the phone's camera.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
         } else list.addView(rows(paired), Ui.fill());
         if (!busy) list.addView(Ui.button(this, paired.isEmpty() ? "Paste a pairing link" : "Pair another PC", paired.isEmpty() && !Account.wantsSignIn(this) && ws.isEmpty(), v -> pastePair()), Ui.margins(Ui.fill(), 0, 14, 0, 0));
-        TextView how = Ui.text(this, "Hub connects only to Hub on your PCs, never to Harbor. Each connection is encrypted and pinned to the PC's own key; long-press a PC for its settings (Forget this PC).", 13, Ui.G700);
+        TextView how = Ui.text(this, "Each connection is encrypted and pinned to the PC's own key; long-press a PC for its settings (Forget this PC).", 13, Ui.G700);
         list.addView(how, Ui.margins(Ui.fill(), 4, 24, 4, 0));
     }
 

@@ -241,7 +241,9 @@ final class Swap {
         // Kept until a screen stayed up: new code that crashes before that (and is rolled back)
         // comes back to the same place.
         Ui.main.postDelayed(() -> { if (Base.resumed > 0) Ui.prefs(app).edit().remove(KEY).apply(); }, 8_000);
-        if (is.isEmpty()) return true;
+        // It was on Hub's start screen (or its screens are gone): the start goes on as a cold one, straight to the
+        // workspace (Hubs.openLast), never left on that page.
+        if (is.isEmpty()) return false;
         h.restoring = true;
         h.startActivities(is.toArray(new Intent[0]));
         h.overridePendingTransition(0, 0);
