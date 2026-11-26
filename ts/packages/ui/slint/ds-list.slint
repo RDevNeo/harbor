@@ -60,7 +60,11 @@ export component SectionHead {
     in property <bool> draggable;
     /** The caller's children on the right keep the row hovered. */
     in property <bool> keep-hover;
-    out property <bool> hovered: head.has-hover || chev.has-hover || root.plus-hovered || root.keep-hover;
+    // Read straight from every target over the row: a button above `head` takes the pointer from it (it gets
+    // MouseExit), so the hover must count the button itself in the same binding. Through a `changed` callback (late)
+    // the + read unhovered for a moment, went away under the pointer, `head` was hovered again, the + came back, and
+    // so on: the + and the caller's Snooze flickered and couldn't be clicked.
+    out property <bool> hovered: head.has-hover || chev.has-hover || plus.hovered || root.keep-hover;
     callback toggled();
     callback clicked();
     callback plus(length, length);
@@ -69,13 +73,14 @@ export component SectionHead {
     callback dropped(length, length);
     height: (first ? 2px : 10px) + 22px + 2px;
     property <length> line-y: first ? 2px : 10px;
-    property <bool> plus-hovered;
     property <bool> far;
     property <bool> left-held;
     property <bool> target: root.fold != "" || root.opens;
     property <bool> show-plus: root.plus-tip != "" && (!root.plus-on-hover || root.hovered);
     // The +'s room on the right (22px and the 6px before it), outside the fold's target.
     property <length> plus-w: root.plus-tip != "" && !root.plus-on-hover ? 28px : 0px;
+    // Where the +, when shown, pushes the right side's marks: the same 28px.
+    property <length> plus-room: root.show-plus ? 28px : 0px;
     property <bool> lit: root.hovered || root.active;
     if root.target || root.active: Rectangle {
         x: 0;
@@ -181,7 +186,7 @@ export component SectionHead {
         }
     }
     right := HorizontalLayout {
-        x: root.width - self.preferred-width;
+        x: root.width - root.plus-room - self.preferred-width;
         y: root.line-y;
         height: 22px;
         width: self.preferred-width;
@@ -213,19 +218,21 @@ export component SectionHead {
             }
         }
         @children
-        if root.show-plus: Btn {
-            width: 22px;
-            height: 22px;
-            icon: Icons.plus;
-            size: icon-xs;
-            variant: ghost-muted;
-            tip: root.plus-tip;
-            changed hovered => {
-                root.plus-hovered = self.hovered;
-            }
-            clicked => {
-                root.plus(self.absolute-position.x, self.absolute-position.y + self.height);
-            }
+    }
+    // The + at the row's right end: always there (never created and destroyed with the hover), shown with it, so its
+    // own hover is read directly in `hovered`.
+    plus := Btn {
+        x: root.width - 22px;
+        y: root.line-y;
+        width: 22px;
+        height: 22px;
+        visible: root.show-plus;
+        icon: Icons.plus;
+        size: icon-xs;
+        variant: ghost-muted;
+        tip: root.plus-tip;
+        clicked => {
+            root.plus(self.absolute-position.x, self.absolute-position.y + self.height);
         }
     }
 }

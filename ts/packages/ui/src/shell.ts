@@ -448,7 +448,6 @@ export class Shell {
   private readonly hub: ShellHub;
   private readonly meshChat: MeshChat;
   private viewing: { id: number; focused: boolean } | null = null;
-  private shownProjects: number[] = [];
   private selection: { seq: number; text: string } | null = null;
   private selButton: SelectionButton | null = null;
   private selTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2307,8 +2306,9 @@ export class Shell {
     const q = this.query.trim();
     w.side_ws = ws.all.length > 0;
     w.side_ws_on = shown.length > 0;
-    w.side_drag = d.store.get("order_by_activity") !== "1" && q === "" && shown.length === 0;
-    this.shownProjects = list.projects.map((p) => p.repo.id);
+    // Projects drag to reorder unless a search is typed: under a workspace filter the hidden ones keep their places,
+    // and in Last activity order a drag switches to Manual from the order on screen (`reorder`).
+    w.side_drag = q === "";
     w.side_ws_tip = names.length === 0 ? "Workspace" : `Workspace: ${names.join(", ")}`;
     w.side_empty = list.projects.length > 0 ? "" : q !== "" ? "search" : shown.length > 0 ? (list.loose.length === 0 && list.settled.length === 0 ? "ws" : "") : d.repos.length === 0 ? "projects" : "";
     w.side_empty_desc = w.side_empty === "ws" ? `No chats of ${names.length === 1 ? names[0] : "these workspaces"} reach this PC.` : w.side_empty === "projects" ? "Add a folder or clone a repository to start." : "";
@@ -5243,7 +5243,7 @@ export class Shell {
       this.data.store.set("order_by_activity", on ? "1" : "0");
       this.refreshSidebar();
     };
-    this.popup("filter", x, y, [{ ...this.label("Order projects"), kind: "caption" }, this.item("Manual", order(false), { icon: ICONS.GRIP, desc: "Drag projects to reorder", checked: !byActivity }), this.item("Last activity", order(true), { icon: ICONS.ACTIVITY, desc: "Most recent first", checked: byActivity })], 260);
+    this.popup("filter", x, y, [{ ...this.label("Order projects"), kind: "caption" }, this.item("Manual", order(false), { icon: ICONS.GRIP, desc: "Drag projects to reorder", checked: !byActivity }), this.item("Last activity", order(true), { icon: ICONS.ACTIVITY, desc: "Most recent first; a drag switches to Manual", checked: byActivity })], 260);
   }
 
 
@@ -5264,8 +5264,16 @@ export class Shell {
     this.popup("workspace", x, y, items, 260);
   }
 
+  /**
+   * A project dropped above or below another: every project's order saved (those a workspace filter hides keep their
+   * places). In Last activity order the drag starts Manual from the order on screen, so the project lands where it
+   * was dropped and stays there.
+   */
   private reorder(dragged: number, target: number, above: boolean): void {
-    reordered(this.shownProjects, dragged, target, above).forEach((id, sort) => this.data.store.saveRepoMeta({ id, sort }));
+    const d = this.data;
+    const byActivity = d.store.get("order_by_activity") === "1";
+    reordered(sidebarOrder(d.repos, byActivity, d.chats), dragged, target, above).forEach((id, sort) => d.store.saveRepoMeta({ id, sort }));
+    if (byActivity) d.store.set("order_by_activity", "0");
     this.engine.reload();
     this.refreshSidebar();
   }

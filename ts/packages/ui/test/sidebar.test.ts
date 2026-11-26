@@ -548,6 +548,9 @@ test("a dragged project lands above or below the row it's dropped on", () => {
   expect(reordered([1, 2, 3, 4], 4, 1, true)).toEqual([4, 1, 2, 3]);
   expect(reordered([1, 2, 3, 4], 4, 2, false)).toEqual([1, 2, 4, 3]);
   expect(reordered([1, 2, 3], 2, 9, true)).toEqual([1, 2, 3]);
+  // On every project's order (a workspace filter showing only 1, 3 and 5): the hidden 2 and 4 keep their places.
+  expect(reordered([1, 2, 3, 4, 5], 5, 3, true)).toEqual([1, 2, 5, 3, 4]);
+  expect(reordered([1, 2, 3, 4, 5], 1, 5, false)).toEqual([2, 3, 4, 5, 1]);
 });
 
 test("a_project_row_drags_as_its_main_chat_and_without_one_not_at_all", () => {
