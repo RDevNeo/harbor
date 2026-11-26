@@ -5,7 +5,7 @@
 # both while a hub with made-up data starts (ts/rig/phonehub.ts); then plays the steps given and
 # leaves the PNGs in ~/out/shots, packed as ~/out/shots.tgz.
 #
-# Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|collector|persons|routine|home>,
+# Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|collector|collector-creator|collector-send|persons|routine|home>,
 # tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>,
 # broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>, front:now (prints the
 # activity in front), cold:now (Harbor's process restarted by its service Listen alone, the test caller in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
@@ -226,6 +226,8 @@ open() {
     new) a+=("$pkg/$cls.NewChat" --es hub ws:org_sam) ;;
     palette) a+=("$pkg/$cls.Palette" --es hub ws:org_sam) ;;
     collector) a+=("$pkg/$cls.Collector") ;;
+    collector-creator) a+=("$pkg/$cls.Collector" --es creator youtube:UCrig0001lia) ;;
+    collector-send) a+=("$pkg/$cls.Collector" --es creator youtube:UCrig0001lia --es name "'Lia Frutas'" --ez send true) ;;
     persons) a+=("$pkg/$cls.Persons") ;;
     routine) a+=("$pkg/$cls.Routine") ;;
     *) echo "unknown screen: $what"; return 2 ;;

@@ -1,0 +1,9 @@
+{
+  "sections": [ { "layout_type": "media_grid", "layout_content": { "medias": [
+    { "media": { "pk": "4", "taken_at": 1795100000, "user": { "pk_id": "333", "username": "carla_plays", "full_name": "Carla", "follower_count": 1200 } } },
+    { "media": { "pk": "5", "taken_at": 1795200000, "user": { "pk": "222", "username": "beto.games" } } }
+  ] } } ],
+  "more_available": false,
+  "next_max_id": "QVFE2",
+  "status": "ok"
+}

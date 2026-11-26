@@ -1,0 +1,33 @@
+{
+  "data": {
+    "user": {
+      "id": "1234567890",
+      "username": "criadora.teste",
+      "full_name": "Criadora Teste",
+      "biography": "Gameplays de Roblox todo dia 🎮\ncontato: parcerias@exemplo.com.br",
+      "bio_links": [
+        { "title": "Meu Linktree", "url": "https://linktr.ee/criadorateste", "lynx_url": "https://l.instagram.com/?u=https%3A%2F%2Flinktr.ee%2Fcriadorateste&e=AT0" },
+        { "title": "", "url": "https://l.instagram.com/?u=https%3A%2F%2Fyoutube.com%2F%40criadorateste%3Ffbclid%3Dabc&e=AT1" }
+      ],
+      "external_url": "https://linktr.ee/criadorateste",
+      "is_private": false,
+      "business_email": "",
+      "public_email": "parcerias@exemplo.com.br",
+      "profile_pic_url": "https://scontent.cdninstagram.com/v/small.jpg",
+      "profile_pic_url_hd": "https://scontent.cdninstagram.com/v/hd.jpg",
+      "edge_followed_by": { "count": 48213 },
+      "edge_follow": { "count": 310 },
+      "edge_owner_to_timeline_media": {
+        "count": 412,
+        "edges": [
+          { "node": { "shortcode": "PHOTO1abcde", "is_video": false, "taken_at_timestamp": 1795600000, "thumbnail_src": "https://scontent.cdninstagram.com/v/p1.jpg", "edge_media_to_caption": { "edges": [{ "node": { "text": "foto nova" } }] } } },
+          { "node": { "shortcode": "REEL1abcdef", "is_video": true, "taken_at_timestamp": 1795500000, "thumbnail_src": "https://scontent.cdninstagram.com/v/r1.jpg", "video_view_count": 15400, "edge_media_to_caption": { "edges": [{ "node": { "text": "reel um" } }] } } },
+          { "node": { "shortcode": "REEL3abcdef", "is_video": true, "taken_at_timestamp": 1795300000, "thumbnail_src": "https://scontent.cdninstagram.com/v/r3.jpg", "video_view_count": 900, "edge_media_to_caption": { "edges": [] } } },
+          { "node": { "shortcode": "REEL2abcdef", "is_video": true, "taken_at_timestamp": 1795400000, "thumbnail_src": "https://scontent.cdninstagram.com/v/r2.jpg", "video_view_count": 2100, "edge_media_to_caption": { "edges": [{ "node": { "text": "reel dois" } }] } } },
+          { "node": { "shortcode": "REEL4abcdef", "is_video": true, "taken_at_timestamp": 1795200000, "thumbnail_src": "https://scontent.cdninstagram.com/v/r4.jpg", "video_view_count": 50 } }
+        ]
+      }
+    }
+  },
+  "status": "ok"
+}

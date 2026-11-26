@@ -1,60 +1,108 @@
 // Collector (the Lead Collector userscript, RDevNeo/spok-lead-collector, moved into Hub), engine side. Sweeps run here,
-// in the engine, against the platforms' own public data (no browser): YouTube creators (lib/sweep.ts) and Discord server
-// invites (lib/discord.ts, on Persons' Discord login). Data in <data dir>/collector/state.json; pictures cached in
-// <data dir>/collector/avatars. The PC window (packages/ui/src/tabs/collector) and Hub for Android call the same routes:
-//   GET  v1/collector                 the view (view.ts): settings, sources, run, log, rows
-//   POST v1/collector/settings        {tab?, platform?, query?, gapDays?, serverMode?, serverQuery?, channel?, target?}
-//   POST v1/collector/start           runs the current tab's source with the settings; answers like GET
-//   POST v1/collector/stop            ends the run (what's collected stays)
-//   POST v1/collector/clear           {tab}: empties that tab's results
-//   POST v1/collector/clear-log
-//   POST v1/collector/remove          {tab, id}: one record out
-//   GET  v1/collector/export?tab=     {text, count}: JSONL for creators (SpokPayCRM → Creators → Import), URLs for servers
+// in the engine, against the platforms' own public data (no browser): YouTube (lib/sweep.ts), TikTok and Instagram
+// (lib/social.ts). Every creator kept is enriched (lib/enrich.ts: every link of their bio and link-in-bio pages, an email
+// and where it came from), remembered for good (never collected twice, on any platform, nor anyone already in Persons ›
+// Creators), and updated once a day (lib/refresh.ts). Send message (persons-bridge.ts) writes to a creator through
+// Persons › Creators' Gmail or WhatsApp, with the Send menu's templates (lib/templates.ts).
+// Data in <data dir>/collector/: state.json, templates.json, sessions.json (0600: the Instagram session, never shown or
+// logged), avatars/<key>.img. The PC window (packages/ui/src/tabs/collector) and Hub for Android call the same routes:
+//   GET  v1/collector                 the view (view.ts)
+//   GET  v1/collector/creator?id=     one creator's details
+//   POST v1/collector/settings        {platform?, query?, gapDays?, target?, daily?}
+//   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
+//   POST v1/collector/clear | clear-log | remove {id}
+//   POST v1/collector/email           {id, email}: typed by hand ("" gives it back to the daily update)
+//   POST v1/collector/refresh         {id?}: that creator now, or every one now
+//   GET  v1/collector/export          {text, count}: JSONL for SpokPayCRM → Creators → Import
 //   GET  v1/collector/avatar?id=      a cached picture (the phone's rows)
-// HUB_COLLECTOR_DIR points it at another folder; HARBOR_OFFLINE=1 (the screenshot rig) never fetches anything and keeps a
-// saved run's "running" as it was (so a shot can show one).
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+//   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
+//                                     POST template-delete {id} (a built-in one is reset)
+//   GET  v1/collector/compose?id=&template=&channel=   the message for that creator: channels, to, subject, text, guard
+//   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
+//   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
+// HUB_COLLECTOR_DIR points it at another folder; HARBOR_OFFLINE=1 / HUB_COLLECTOR_OFFLINE=1 (the screenshot rig) never
+// fetches anything and keeps a saved run's "running" as it was; HUB_COLLECTOR_SEND=fake sends nothing (records it).
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { err, ok, type Call, type Reply } from "../../packages/net/src/index.ts";
-import type { TabEngine, TabEngineCtx } from "../api.ts";
-import { personsDiscord } from "../persons/engine.ts";
 import { sniff } from "../../packages/persons/src/avatars.ts";
-import { sweepDiscover, sweepReader } from "./lib/discord.ts";
-import { sweepYouTube } from "./lib/sweep.ts";
-import { CREATOR_SOURCES, defaultData, exportText, GAP_CHOICES, migrate, normalizeTarget, SERVER_MODES, type CollectorData, type CollectTab, type LogLine } from "./lib/types.ts";
-import { YouTube } from "./lib/youtube.ts";
+import type { TabEngine, TabEngineCtx } from "../api.ts";
+import { personsService } from "../persons/engine.ts";
 import { avatarKey } from "./avatar-key.ts";
-import { buildView, type DiscordInfo } from "./view.ts";
+import { enrich } from "./lib/enrich.ts";
+import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
+import { Instagram } from "./lib/instagram.ts";
+import { kindOf, mergeLinks, normalizeUrl, whatsappOf } from "./lib/links.ts";
+import { applyFresh, isDue, REFRESH_DELAY_MS, type Fresh } from "./lib/refresh.ts";
+import { BLOCKED_LIMIT, sweepSocial, type Profile, type SocialClient } from "./lib/social.ts";
+import { sweepYouTube, type Stats } from "./lib/sweep.ts";
+import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
+import { TikTok } from "./lib/tiktok.ts";
+import { defaultData, exportText, GAP_CHOICES, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine } from "./lib/types.ts";
+import { YouTube } from "./lib/youtube.ts";
+import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
+import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
 
 const LOG_KEEP = 400;
 const AVATAR_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+const DAY_MS = 86_400_000;
+/** The daily update looks whether it's due this often (and a couple of minutes after Hub starts). */
+const DAILY_TICK_MS = 10 * 60_000;
+const DAILY_FIRST_MS = 2 * 60_000;
 
+type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+type InstagramClient = SocialClient & { whoami(): Promise<{ username: string } | null> };
+
+interface Sessions {
+  instagram?: { cookie: string; savedAt: number; account: string | null };
+}
+
+export interface CollectorDeps {
+  offline: boolean;
+  changed: () => void;
+  log: (line: string) => void;
+  persons: PersonsBridge;
+  youtube?: Pick<YouTube, "search" | "continuation" | "feed" | "about">;
+  tiktok?: SocialClient;
+  instagram?: (session: { cookie: string } | null) => InstagramClient;
+  fetch?: Fetch;
+  sleep?: (ms: number) => Promise<void>;
+  /** The daily update's timer (off in tests). */
+  daily?: boolean;
+}
+
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export class Collector {
   data: CollectorData = defaultData();
   rev = 1;
+  templates: Template[] = loadTemplates([]);
+  private sessions: Sessions = {};
   private stopFlag = false;
+  private refreshStop = false;
   private running: Promise<void> | null = null;
+  private refreshing: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private timers: ReturnType<typeof setTimeout>[] = [];
   private readonly file: string;
   readonly avatars: string;
   private readonly picQueue: string[] = [];
   private picBusy = false;
   /** Pictures known to be on disk (the view is built every second during a run: no stat per row). */
   private readonly have = new Set<string>();
+  /** Every key ever collected (data.seen, plus the current records' own). */
+  private seen = new Set<string>();
+  /** People in Persons › Creators, as keys (read when a run starts). */
+  private personsKeys = new Set<string>();
+  private yt: CollectorDeps["youtube"] | null = null;
+  private tt: SocialClient | null = null;
+  /** How many creators the list had when the run started (the target counts new ones). */
+  private runBefore = 0;
 
   constructor(
     readonly dir: string,
-    private readonly o: {
-      offline: boolean;
-      changed: () => void;
-      log: (line: string) => void;
-      discord: () => DiscordInfo & { api?: <T = unknown>(method: string, path: string) => Promise<T> };
-      youtube?: YouTube;
-      fetch?: (url: string, init?: RequestInit) => Promise<Response>;
-      sleep?: (ms: number) => Promise<void>;
-    },
+    private readonly o: CollectorDeps,
   ) {
     this.file = join(dir, "state.json");
     this.avatars = join(dir, "avatars");
@@ -68,12 +116,34 @@ export class Collector {
     } catch {
       // first run
     }
+    try {
+      this.templates = loadTemplates(JSON.parse(readFileSync(join(dir, "templates.json"), "utf8")));
+    } catch {
+      // the built-ins
+    }
+    try {
+      this.sessions = JSON.parse(readFileSync(join(dir, "sessions.json"), "utf8")) as Sessions;
+    } catch {
+      // none
+    }
+    this.seen = new Set(this.data.seen);
+    for (const c of this.data.creators) for (const k of allKeys(c)) this.seen.add(k);
     // A run can't outlive the engine: one saved as running was cut by a restart (the rig keeps it, to show one).
     if (this.data.run?.running && !o.offline) {
       this.data.run = { ...this.data.run, running: false, endedAt: Date.now(), status: "Interrupted: Hub restarted." };
       this.save();
     }
+    if (this.data.refresh.running && !o.offline) {
+      this.data.refresh = { ...this.data.refresh, running: false, endedAt: Date.now(), status: "Interrupted: Hub restarted. It goes on with the next daily update." };
+      this.save();
+    }
+    if (o.daily ?? !o.offline) {
+      this.timers.push(setTimeout(() => void this.maybeDaily(), DAILY_FIRST_MS));
+      this.timers.push(setInterval(() => void this.maybeDaily(), DAILY_TICK_MS));
+    }
   }
+
+  // ---------- storage ----------
 
   private touch(): void {
     this.rev++;
@@ -94,12 +164,24 @@ export class Collector {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
+    this.data.seen = [...this.seen];
     const tmp = `${this.file}.${process.pid}.tmp`;
     try {
       await writeFile(tmp, JSON.stringify(this.data), { mode: 0o600 });
       await rename(tmp, this.file);
     } catch (e) {
-      this.o.log(`collector: couldn't save: ${e instanceof Error ? e.message : String(e)}`);
+      this.o.log(`collector: couldn't save: ${errText(e)}`);
+    }
+  }
+
+  private writeSide(name: string, value: unknown): void {
+    const f = join(this.dir, name);
+    try {
+      writeFileSync(`${f}.tmp`, JSON.stringify(value, null, 1), { mode: 0o600 });
+      renameSync(`${f}.tmp`, f);
+      chmodSync(f, 0o600);
+    } catch (e) {
+      this.o.log(`collector: couldn't save ${name}: ${errText(e)}`);
     }
   }
 
@@ -110,8 +192,57 @@ export class Collector {
     this.touch();
   }
 
+  // ---------- view ----------
+
+  sources(): SourceInfo[] {
+    const ig = !!this.sessions.instagram;
+    return PLATFORMS.map((p): SourceInfo => {
+      if (p === "instagram")
+        return {
+          value: p,
+          label: "Instagram",
+          available: ig,
+          why: ig ? "" : "Instagram's search only answers a signed-in account. Add your Instagram session below (it stays on this PC).",
+          note: "Hashtag posts and account search, on your Instagram session, gently (a read every 1.5 s, stops if Instagram pushes back).",
+        };
+      if (p === "tiktok")
+        return {
+          value: p,
+          label: "TikTok",
+          available: true,
+          why: "",
+          note: "Accounts from TikTok's search suggestions for your term (TikTok's full search only answers its own page code). No login needed.",
+        };
+      return { value: p, label: "YouTube", available: true, why: "", note: "Channels and uploaders from YouTube's search. No login needed." };
+    });
+  }
+
+  sessionInfo(): SessionInfo[] {
+    const s = this.sessions.instagram;
+    return [
+      {
+        platform: "instagram",
+        label: "Instagram",
+        connected: !!s,
+        account: s?.account ?? null,
+        savedAt: s?.savedAt ?? 0,
+        help: "In a browser signed in to Instagram: DevTools (F12) › Application › Cookies › instagram.com, copy sessionid (and csrftoken), paste them here as sessionid=…; csrftoken=…. Kept only on this PC, never shown again.",
+      },
+    ];
+  }
+
   view(): unknown {
-    return buildView(this.data, this.rev, this.o.discord(), (url) => this.avatarPath(url));
+    const canSend = this.o.persons.channels().some((c) => c.connected);
+    return buildView(this.data, this.rev, { sources: this.sources(), sessions: this.sessionInfo(), canSend }, (url) => this.avatarPath(url));
+  }
+
+  detail(id: string): unknown | null {
+    const c = this.find(id);
+    return c ? creatorDetail(c, (url) => this.avatarPath(url)) : null;
+  }
+
+  private find(id: string): CreatorRecord | undefined {
+    return this.data.creators.find((c) => recordId(c) === id);
   }
 
   /** The cached file of a picture, null until it's fetched (a fetch is queued). */
@@ -160,18 +291,15 @@ export class Collector {
     }
   }
 
+  // ---------- settings ----------
+
   setSettings(b: Record<string, unknown>): void {
     const s = this.data.settings;
-    if (b.tab === "creators" || b.tab === "servers") s.tab = b.tab;
-    if (typeof b.platform === "string" && CREATOR_SOURCES.some((x) => x.value === b.platform)) s.platform = b.platform as typeof s.platform;
+    if (typeof b.platform === "string" && PLATFORMS.includes(b.platform as CreatorPlatform)) s.platform = b.platform as CreatorPlatform;
     if (typeof b.query === "string") s.query = b.query.slice(0, 200);
     if (typeof b.gapDays === "number" && GAP_CHOICES.some((c) => c.value === b.gapDays)) s.gapDays = b.gapDays;
-    if (typeof b.serverMode === "string" && SERVER_MODES.some((x) => x.value === b.serverMode)) s.serverMode = b.serverMode as typeof s.serverMode;
-    if (typeof b.serverQuery === "string") s.serverQuery = b.serverQuery.slice(0, 200);
-    if (typeof b.channel === "string") s.channel = b.channel.slice(0, 300);
-    if (b.target !== undefined) s.targets[s.tab] = normalizeTarget(b.target);
-    if (b.creatorsTarget !== undefined) s.targets.creators = normalizeTarget(b.creatorsTarget);
-    if (b.serversTarget !== undefined) s.targets.servers = normalizeTarget(b.serversTarget);
+    if (b.target !== undefined) s.target = normalizeTarget(b.target);
+    if (typeof b.daily === "boolean") s.daily = b.daily;
     this.touch();
   }
 
@@ -179,97 +307,122 @@ export class Collector {
     return this.running !== null;
   }
 
-  /** Starts the current tab's source; a reason (and nothing runs) when it can't. */
+  // ---------- never twice ----------
+
+  /** Collected before (any platform), or in Persons › Creators. */
+  isKnown(keys: string[]): boolean {
+    return keys.some((k) => this.seen.has(k) || this.personsKeys.has(k));
+  }
+
+  /** Keeps a creator; or why not (the same person is there already: then it's linked to them instead). */
+  add(rec: CreatorRecord): string | null {
+    const keys = [...ownKeys(rec), ...linkedKeys(rec), ...(rec.email ? [`email:${rec.email.toLowerCase()}`] : [])];
+    const hit = keys.find((k) => this.seen.has(k) || this.personsKeys.has(k));
+    if (hit) {
+      const other = this.data.creators.find((c) => allKeys(c).includes(hit));
+      if (other) {
+        if (rec.profile_url && !other.links.some((l) => normalizeUrl(l.url) === normalizeUrl(rec.profile_url!))) {
+          other.links = mergeLinks(other.links, [{ url: rec.profile_url, label: PLATFORM_LABEL[rec.platform as CreatorPlatform], source: "same person" }]);
+        }
+        for (const k of ownKeys(rec)) this.seen.add(k);
+        this.touch();
+        return `same person as ${other.name} (${PLATFORM_LABEL[other.platform as CreatorPlatform] ?? other.platform}) - linked there.`;
+      }
+      for (const k of ownKeys(rec)) this.seen.add(k);
+      return this.personsKeys.has(hit) ? "already in Persons › Creators." : "collected before.";
+    }
+    this.data.creators.push(rec);
+    for (const k of allKeys(rec)) this.seen.add(k);
+    this.avatarPath(rec.avatar_url);
+    this.progress({ found: this.data.creators.length });
+    return null;
+  }
+
+  /** Links (bio, link-in-bio pages), the email and its source, a WhatsApp number. A typed email stays. */
+  private async enrichRec(rec: CreatorRecord, bioSource: string, stopped: () => boolean): Promise<CreatorRecord> {
+    if (this.o.offline) return rec;
+    const sleep = async (ms: number): Promise<void> => {
+      for (let left = ms; left > 0 && !stopped(); left -= 200) await (this.o.sleep ?? Bun.sleep)(Math.min(200, left));
+    };
+    const platformEmail = rec.email && !rec.email_manual ? { email: rec.email, source: rec.email_source ?? `${bioSource}` } : null;
+    const e = await enrich({ fetch: this.o.fetch ?? fetch, sleep, stopped }, { links: rec.links, bio: rec.description, bioSource });
+    const out: CreatorRecord = { ...rec, links: e.links, whatsapp: whatsappOf(e.links.map((l) => l.url), rec.description ?? "") ?? rec.whatsapp ?? null };
+    if (!rec.email_manual) {
+      const found = platformEmail ?? e.email;
+      out.email = found?.email ?? rec.email ?? null;
+      out.email_source = found?.source ?? rec.email_source ?? null;
+    }
+    return out;
+  }
+
+  // ---------- runs ----------
+
+  private youtube(): NonNullable<CollectorDeps["youtube"]> {
+    return (this.yt ??= this.o.youtube ?? new YouTube(this.o.fetch));
+  }
+
+  private tiktok(): SocialClient {
+    return (this.tt ??= this.o.tiktok ?? new TikTok(this.o.fetch));
+  }
+
+  private instagram(): InstagramClient {
+    const s = this.sessions.instagram ? { cookie: this.sessions.instagram.cookie } : null;
+    return this.o.instagram ? this.o.instagram(s) : (new Instagram(this.o.fetch, s) as unknown as InstagramClient);
+  }
+
+  /** Starts a run; a reason (and nothing runs) when it can't. */
   start(): string | null {
     if (this.running) return "A run is already going.";
     if (this.o.offline) return "Collector is offline here.";
     const s = this.data.settings;
-    const tab = s.tab;
-    const tone = (t?: string): string => t ?? "info";
+    const src = this.sources().find((x) => x.value === s.platform);
+    if (!src?.available) return src?.why ?? "That source isn't available.";
+    const query = s.query.trim();
+    if (!query) return "Type a search term first.";
+    const target = s.target;
     const stopped = (): boolean => this.stopFlag;
     const sleep = async (ms: number): Promise<void> => {
-      const end = Date.now() + ms;
-      while (!this.stopFlag && Date.now() < end) await (this.o.sleep ?? Bun.sleep)(Math.min(200, end - Date.now()));
+      for (let left = ms; left > 0 && !this.stopFlag; left -= 200) await (this.o.sleep ?? Bun.sleep)(Math.min(200, left));
     };
-    const target = s.targets[tab];
-    let job: () => Promise<void>;
-    let label: string;
-    let query: string;
-    if (tab === "creators") {
-      const src = CREATOR_SOURCES.find((x) => x.value === s.platform);
-      if (!src?.available) return src?.why ?? "That source isn't available.";
-      query = s.query.trim();
-      if (!query) return "Type a search term first.";
-      label = src.label;
-      const known = new Set(this.data.creators.map((c) => `${c.platform}:${c.platform_id}`));
-      const ytKnown = new Set(this.data.creators.filter((c) => c.platform === "youtube").map((c) => c.platform_id));
-      job = async () => {
-        await sweepYouTube({
-          yt: this.o.youtube ?? new YouTube(this.o.fetch),
-          query,
-          target,
-          gapDays: s.gapDays,
-          known: ytKnown,
-          count: () => this.data.creators.length,
-          add: (rec) => {
-            const k = `${rec.platform}:${rec.platform_id}`;
-            if (known.has(k)) return;
-            known.add(k);
-            this.data.creators.push(rec);
-            this.avatarPath(rec.avatar_url);
-            this.progress({ found: this.data.creators.length });
-          },
-          stopped,
-          log: (t, k) => this.logLine(t, tone(k)),
-          progress: (st) => this.progress({ considered: st.considered, dropped: st.dropped }),
-          sleep,
-        });
-      };
-    } else {
-      const mode = SERVER_MODES.find((x) => x.value === s.serverMode);
-      if (!mode?.available) return mode?.why ?? "That mode isn't available.";
-      const d = this.o.discord();
-      if (!d.connected || !d.api) return "Servers needs Discord: sign in to the Stores Discord account in Persons first.";
-      query = s.serverMode === "discover" ? s.serverQuery.trim() : s.channel.trim();
-      if (!query) return s.serverMode === "discover" ? "Type a search term first." : "Paste a channel link first.";
-      label = mode.label;
-      const ctx = {
-        api: d.api,
-        fetch: this.o.fetch ?? fetch,
-        target,
-        knownCodes: new Set(this.data.servers.map((x) => x.invite.split("/").pop()!.toLowerCase())),
-        knownGuilds: new Set(this.data.servers.flatMap((x) => (x.guild_id ? [x.guild_id] : []))),
-        count: () => this.data.servers.length,
-        add: (rec: CollectorData["servers"][number]) => {
-          this.data.servers.push(rec);
-          this.avatarPath(rec.icon_url);
-          this.progress({ found: this.data.servers.length });
-        },
-        stopped,
-        log: (t: string, k?: string) => this.logLine(t, tone(k)),
-        progress: (p: { considered: number; dropped: number }) => this.progress(p),
-        sleep,
-      };
-      job = () => (s.serverMode === "discover" ? sweepDiscover(ctx, query) : sweepReader(ctx, query));
-    }
+    this.personsKeys = new Set(this.o.persons.creatorKeys());
+    const before = this.data.creators.length;
+    this.runBefore = before;
+    const common = {
+      query,
+      target,
+      gapDays: s.gapDays,
+      isKnown: (keys: string[]) => this.isKnown(keys),
+      enrich: (rec: CreatorRecord, bio: string) => this.enrichRec(rec, bio, stopped),
+      add: (rec: CreatorRecord) => this.add(rec),
+      count: () => this.data.creators.length - before,
+      stopped,
+      log: (t: string, k?: string) => this.logLine(t, k ?? "info"),
+      progress: (st: Stats) => this.progress({ considered: st.considered, dropped: st.dropped, known: st.known }),
+      sleep,
+    };
+    const platform = s.platform;
+    const job =
+      platform === "youtube"
+        ? () => sweepYouTube({ ...common, yt: this.youtube() })
+        : () => sweepSocial({ ...common, platform, client: platform === "tiktok" ? this.tiktok() : this.instagram() });
     this.stopFlag = false;
     const now = Date.now();
-    this.data.run = { running: true, tab, label, query, startedAt: now, endedAt: 0, status: "Running…", found: tab === "creators" ? this.data.creators.length : this.data.servers.length, target, considered: 0, dropped: 0 };
-    const before = this.data.run.found;
+    this.data.run = { running: true, label: src.label, platform, query, startedAt: now, endedAt: 0, status: "Running…", found: 0, target, considered: 0, dropped: 0, known: 0 };
     this.touch();
     this.running = (async () => {
       try {
         await job();
       } catch (e) {
-        this.logLine(`Stopped on an error: ${e instanceof Error ? e.message : String(e)}`, "error");
+        this.logLine(`Stopped on an error: ${errText(e)}`, "error");
       } finally {
         const r = this.data.run;
         if (r) {
-          const n = (tab === "creators" ? this.data.creators.length : this.data.servers.length) - before;
-          const what = tab === "creators" ? "creator(s)" : "invite(s)";
+          const n = this.data.creators.length - before;
+          r.found = n;
           r.running = false;
           r.endedAt = Date.now();
-          r.status = this.stopFlag ? `Stopped. ${n} new ${what}.` : target > 0 && r.found >= target ? `Target reached: ${n} new ${what}.` : `Done. ${n} new ${what}.`;
+          const known = r.known ? ` ${r.known} already collected or in Persons, passed over.` : "";
+          r.status = (this.stopFlag ? `Stopped. ${n} new creator(s).` : target > 0 && n >= target ? `Target reached: ${n} new creator(s).` : `Done. ${n} new creator(s).`) + known;
         }
         this.running = null;
         this.touch();
@@ -279,12 +432,13 @@ export class Collector {
     return null;
   }
 
-  private progress(p: { found?: number; considered?: number; dropped?: number }): void {
+  private progress(p: { found?: number; considered?: number; dropped?: number; known?: number }): void {
     const r = this.data.run;
-    if (!r) return;
-    if (p.found !== undefined) r.found = p.found;
+    if (!r || !r.running) return;
+    if (p.found !== undefined) r.found = p.found - this.runBefore;
     if (p.considered !== undefined) r.considered = p.considered;
     if (p.dropped !== undefined) r.dropped = p.dropped;
+    if (p.known !== undefined) r.known = p.known;
     this.touch();
   }
 
@@ -298,22 +452,323 @@ export class Collector {
     await this.running;
   }
 
-  clear(tab: CollectTab): void {
-    if (tab === "creators") this.data.creators = [];
-    else this.data.servers = [];
-    if (this.data.run && !this.data.run.running && this.data.run.tab === tab) this.data.run = null;
+  clear(): void {
+    this.data.creators = [];
+    if (this.data.run && !this.data.run.running) this.data.run = null;
     this.touch();
   }
 
-  remove(tab: CollectTab, id: string): void {
-    if (tab === "creators") this.data.creators = this.data.creators.filter((c) => `${c.platform}:${c.platform_id}` !== id);
-    else this.data.servers = this.data.servers.filter((s) => s.invite !== id);
+  remove(id: string): void {
+    this.data.creators = this.data.creators.filter((c) => recordId(c) !== id);
     this.touch();
   }
 
   clearLog(): void {
     this.data.log = [];
     this.touch();
+  }
+
+  // ---------- email ----------
+
+  setEmail(id: string, email: string): string | null {
+    const c = this.find(id);
+    if (!c) return "No such creator.";
+    const e = email.trim().toLowerCase();
+    if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return "That isn't an email address.";
+    if (e) {
+      c.email = e;
+      c.email_source = "typed";
+      c.email_manual = true;
+      this.seen.add(`email:${e}`);
+    } else {
+      c.email = null;
+      c.email_source = null;
+      c.email_manual = false;
+    }
+    this.touch();
+    return null;
+  }
+
+  // ---------- the daily update ----------
+
+  private async fresh(c: CreatorRecord): Promise<Fresh> {
+    if (c.platform === "youtube") {
+      const yt = this.youtube();
+      const a = await yt.about(c.platform_id);
+      let feed: { newest: number | null; videos: NonNullable<CreatorRecord["recent_videos"]> } | null = null;
+      try {
+        feed = await yt.feed(c.platform_id);
+      } catch {
+        // the stats still count
+      }
+      return {
+        name: a.name,
+        handle: a.handle,
+        profile_url: a.profileUrl,
+        avatar_url: a.avatarUrl,
+        subscriber_count: a.subscribers,
+        video_count: a.videos,
+        view_count: a.views,
+        description: a.description,
+        links: a.links,
+        country: a.country,
+        last_upload_at: feed?.newest ? new Date(feed.newest).toISOString() : null,
+        ...(feed?.videos.length ? { recent_videos: feed.videos } : {}),
+      };
+    }
+    const client = c.platform === "tiktok" ? this.tiktok() : this.instagram();
+    const handle = (c.handle ?? "").replace(/^@/, "");
+    if (!handle) throw new Error("no handle to read");
+    const p: Profile = await client.profile(handle);
+    return {
+      name: p.name,
+      handle: p.handle,
+      profile_url: p.profile_url,
+      avatar_url: p.avatar_url,
+      subscriber_count: p.followers,
+      video_count: p.posts,
+      view_count: p.platform === "tiktok" ? p.likes : null,
+      description: p.bio,
+      links: p.links,
+      country: p.country,
+      last_upload_at: p.last_post_at,
+      ...(p.recent.length ? { recent_videos: p.recent } : {}),
+    };
+  }
+
+  /** One creator read again; the changes, or why it couldn't. */
+  async refreshOne(id: string, stopped: () => boolean = () => this.refreshStop): Promise<{ changed: number } | { error: string }> {
+    const c = this.find(id);
+    if (!c) return { error: "No such creator." };
+    if (this.o.offline) return { error: "Collector is offline here." };
+    const at = new Date().toISOString();
+    let f: Fresh;
+    try {
+      f = await this.fresh(c);
+    } catch (e) {
+      const cur = this.find(id);
+      if (cur) cur.update_error = errText(e);
+      this.touch();
+      return { error: errText(e) };
+    }
+    // The bio or the links changed, or there's still no email: open their link pages again.
+    const bioChanged = (f.description ?? "") !== (c.description ?? "") || f.links.some((l) => !c.links.some((x) => normalizeUrl(x.url) === normalizeUrl(l.url)));
+    let found: { links: CreatorRecord["links"]; email: { email: string; source: string } | null };
+    if (bioChanged || !c.email) {
+      const e = await this.enrichRec({ ...c, links: f.links.map((l) => ({ label: l.label, url: l.url })), description: f.description, email: c.email_manual ? (c.email ?? null) : null }, c.platform === "youtube" ? "YouTube About" : `${PLATFORM_LABEL[c.platform as CreatorPlatform]} bio`, stopped);
+      // links found by hand-made merges (same person) stay
+      const keep = c.links.filter((l) => l.source === "same person");
+      found = { links: mergeLinks(e.links, keep), email: e.email && !c.email_manual ? { email: e.email, source: e.email_source ?? "" } : null };
+      if (e.whatsapp) c.whatsapp = e.whatsapp;
+    } else {
+      found = { links: mergeLinks(f.links.map((l) => ({ label: l.label, url: l.url })), c.links.filter((l) => l.source)), email: null };
+    }
+    const cur = this.find(id);
+    if (!cur) return { error: "Removed meanwhile." };
+    const { rec, changes } = applyFresh(cur, f, found, at);
+    const i = this.data.creators.indexOf(cur);
+    this.data.creators[i] = rec;
+    for (const k of allKeys(rec)) this.seen.add(k);
+    if (rec.avatar_url) this.avatarPath(rec.avatar_url);
+    if (changes.length) this.logLine(`UPDATED ${rec.name}: ${changes.map((x) => (x.from && x.to ? `${x.field} ${x.from} → ${x.to}` : `${x.field} ${x.to || x.from}`)).join(", ")}`, "ok");
+    this.touch();
+    return { changed: changes.length };
+  }
+
+  private async maybeDaily(): Promise<void> {
+    const r = this.data.refresh;
+    if (!this.data.settings.daily || this.refreshing || this.o.offline) return;
+    if (r.lastFullAt && Date.now() - r.lastFullAt < DAY_MS) return;
+    if (!this.data.creators.some((c) => isDue(c, Date.now()))) {
+      r.lastFullAt = Date.now();
+      this.touch();
+      return;
+    }
+    this.refreshAll(false);
+  }
+
+  /** Every creator due (or every one, `all`) read again, one at a time, gently; a run going first waits. */
+  refreshAll(all: boolean): string | null {
+    if (this.refreshing) return "The update is already going.";
+    if (this.o.offline) return "Collector is offline here.";
+    const now = Date.now();
+    const ids = this.data.creators
+      .filter((c) => all || isDue(c, now))
+      .sort((a, b) => Date.parse(a.updated_at ?? a.captured_at) - Date.parse(b.updated_at ?? b.captured_at))
+      .map(recordId);
+    this.refreshStop = false;
+    this.data.refresh = { ...this.data.refresh, running: true, startedAt: now, endedAt: 0, done: 0, total: ids.length, changed: 0, failed: 0, status: ids.length ? `Updating ${ids.length} creator(s)…` : "Everyone is up to date." };
+    this.touch();
+    const sleep = async (ms: number): Promise<void> => {
+      for (let left = ms; left > 0 && !this.refreshStop; left -= 250) await (this.o.sleep ?? Bun.sleep)(Math.min(250, left));
+    };
+    this.refreshing = (async () => {
+      const blocked: Record<string, number> = {};
+      try {
+        for (const id of ids) {
+          if (this.refreshStop) break;
+          while (this.running && !this.refreshStop) await sleep(2000);
+          const c = this.find(id);
+          const r = this.data.refresh;
+          if (!c) {
+            r.done++;
+            continue;
+          }
+          if ((blocked[c.platform] ?? 0) >= BLOCKED_LIMIT) {
+            c.update_error = `${PLATFORM_LABEL[c.platform as CreatorPlatform]} refused reads; tried again tomorrow.`;
+            r.done++;
+            r.failed++;
+            continue;
+          }
+          r.status = `Updating ${c.name}…`;
+          this.touch();
+          const out = await this.refreshOne(id, () => this.refreshStop);
+          if ("error" in out) {
+            r.failed++;
+            blocked[c.platform] = (blocked[c.platform] ?? 0) + 1;
+          } else {
+            blocked[c.platform] = 0;
+            if (out.changed) r.changed++;
+          }
+          r.done++;
+          this.touch();
+          await sleep(REFRESH_DELAY_MS);
+        }
+      } finally {
+        const r = this.data.refresh;
+        r.running = false;
+        r.endedAt = Date.now();
+        if (!this.refreshStop) r.lastFullAt = r.endedAt;
+        r.status = this.refreshStop
+          ? `Stopped after ${r.done} of ${r.total}.`
+          : r.total === 0
+            ? "Everyone is up to date."
+            : `Updated ${r.done - r.failed} creator(s): ${r.changed} changed${r.failed ? `, ${r.failed} couldn't be read` : ""}.`;
+        this.refreshing = null;
+        this.touch();
+        void this.flush();
+      }
+    })();
+    return null;
+  }
+
+  async stopRefresh(): Promise<void> {
+    this.refreshStop = true;
+    await this.refreshing;
+  }
+
+  // ---------- templates and Send message ----------
+
+  saveTemplate(b: Record<string, unknown>): Template {
+    const id = typeof b.id === "string" && b.id ? b.id : `t_${Date.now().toString(36)}`;
+    const t: Template = { id, name: String(b.name ?? "").trim() || "Untitled", description: String(b.description ?? ""), subject: String(b.subject ?? ""), body: String(b.body ?? "") };
+    const i = this.templates.findIndex((x) => x.id === id);
+    if (i >= 0) this.templates[i] = { ...this.templates[i]!, ...t };
+    else this.templates.splice(Math.max(0, this.templates.length - 1), 0, t);
+    this.templates = loadTemplates(templatesToSave(this.templates));
+    this.writeSide("templates.json", templatesToSave(this.templates));
+    this.touch();
+    return this.templates.find((x) => x.id === id)!;
+  }
+
+  deleteTemplate(id: string): void {
+    this.templates = loadTemplates(templatesToSave(this.templates.filter((t) => t.id !== id)));
+    this.writeSide("templates.json", templatesToSave(this.templates));
+    this.touch();
+  }
+
+  /** The message for a creator: the channels it can go on (and to whom), the template filled, the CRM's guards. */
+  compose(id: string, templateId: string, channelId: string): unknown | null {
+    const c = this.find(id);
+    if (!c) return null;
+    const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? defaultTemplate(this.templates)!;
+    const chans = this.o.persons.channels().map((ch) => {
+      const to = ch.kind === "gmail" ? (c.email ?? "") : (c.whatsapp ?? "");
+      return { ...ch, to, why: !ch.connected ? `The Creators ${ch.kind === "gmail" ? "Gmail" : "WhatsApp"} isn't signed in (Persons › Creators).` : !to ? (ch.kind === "gmail" ? "No email yet: type one." : "No WhatsApp number in their bio: type one.") : "" };
+    });
+    const pick = chans.find((x) => x.id === channelId) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
+    const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
+    return {
+      id,
+      name: c.name,
+      templates: this.templates.map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: !!x.builtin })),
+      template: t.id,
+      channels: chans,
+      channel: pick?.id ?? "",
+      kind: pick?.kind ?? "gmail",
+      to: pick?.to ?? "",
+      subject: pick?.kind === "whatsapp" ? "" : fillTemplate(t.subject, who),
+      text: fillTemplate(t.body, who),
+      guard: pick ? this.o.persons.guard(pick.id, pick.to) : null,
+      contacted: c.contacted ?? null,
+    };
+  }
+
+  /** A real send, on the user's click: through Persons (the creator becomes a person in Creators, the message is in their chat). */
+  async send(b: Record<string, unknown>): Promise<{ ok: boolean; error?: string; person?: string }> {
+    const c = this.find(String(b.id ?? ""));
+    if (!c) return { ok: false, error: "No such creator." };
+    const channel = String(b.channel ?? "");
+    const ch = this.o.persons.channels().find((x) => x.id === channel);
+    if (!ch) return { ok: false, error: "Pick a channel." };
+    const to = String(b.to ?? "").trim();
+    const text = String(b.text ?? "").trim();
+    const subject = String(b.subject ?? "").trim();
+    if (!to) return { ok: false, error: ch.kind === "gmail" ? "Type their email address." : "Type their WhatsApp number." };
+    if (ch.kind === "gmail" && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(to)) return { ok: false, error: "That isn't an email address." };
+    if (!text) return { ok: false, error: "The message is empty." };
+    if (ch.kind === "gmail" && !subject) return { ok: false, error: "Add a subject." };
+    const g = this.o.persons.guard(ch.id, to);
+    if (g.justSent) return { ok: false, error: "Just sent to them: wait a couple of minutes before another." };
+    if (g.limit && g.sentToday >= g.limit) return { ok: false, error: `${g.limit} new emails in the last 24 h already (Gmail flags bursts of cold mail). Try again later.` };
+    const r = await this.o.persons.send({ rec: c, channel: ch.id, to, subject, text });
+    if (!r.ok) return { ok: false, error: r.error ?? "Not sent." };
+    const cur = this.find(String(b.id));
+    if (cur) {
+      cur.contacted = { at: new Date().toISOString(), via: ch.kind, to, person: r.person ?? null };
+      if (ch.kind === "gmail" && !cur.email) {
+        cur.email = to.toLowerCase();
+        cur.email_source = "typed";
+        cur.email_manual = true;
+      }
+    }
+    if (typeof b.template === "string") this.data.settings.lastTemplate = b.template;
+    this.logLine(`SENT ${ch.kind === "gmail" ? "email" : "WhatsApp"} to ${c.name} (${to}); they're in Persons › Creators.`, "ok");
+    return { ok: true, ...(r.person ? { person: r.person } : {}) };
+  }
+
+  // ---------- sessions ----------
+
+  async setSession(platform: string, cookie: string): Promise<string | null> {
+    if (platform !== "instagram") return "Only Instagram takes a session.";
+    const c = cookie.trim().replace(/^cookie:\s*/i, "");
+    const parts = c.includes("=") ? c : `sessionid=${c}`;
+    if (!/(^|;\s*)sessionid=[^;]{10,}/.test(parts)) return "That has no sessionid: paste sessionid=…; csrftoken=… from instagram.com's cookies.";
+    let account: string | null = null;
+    if (!this.o.offline) {
+      try {
+        const ig = this.o.instagram ? this.o.instagram({ cookie: parts }) : (new Instagram(this.o.fetch, { cookie: parts }) as unknown as InstagramClient);
+        account = (await ig.whoami())?.username ?? null;
+      } catch {
+        account = null;
+      }
+      if (!account) return "Instagram didn't accept that session (signed out or expired). Copy fresh cookies and try again.";
+    }
+    this.sessions.instagram = { cookie: parts, savedAt: Date.now(), account };
+    this.writeSide("sessions.json", this.sessions);
+    this.logLine(`Instagram session saved${account ? ` (@${account})` : ""}.`, "ok");
+    return null;
+  }
+
+  clearSession(platform: string): void {
+    if (platform === "instagram") delete this.sessions.instagram;
+    this.writeSide("sessions.json", this.sessions);
+    this.touch();
+  }
+
+  dispose(): void {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers = [];
   }
 }
 
@@ -322,18 +777,15 @@ let collector: Collector | null = null;
 const bodyOf = (call: Call): Record<string, unknown> => (typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {});
 const queryOf = (call: Call, k: string): string => call.query.find(([key]) => key === k)?.[1] ?? "";
 
-/** Persons' Discord account, as Collector shows it. */
-function discordInfo(): DiscordInfo & { api?: <T = unknown>(method: string, path: string) => Promise<T> } {
-  const d = personsDiscord();
-  if (!d) return { connected: false, account: null };
-  return { connected: d.connected, account: d.info.account ? (d.info.account.name || d.info.account.username) : null, api: d.api };
-}
-
 export async function collectorRoute(c: Collector, call: Call): Promise<Reply | null> {
   const at = `${call.method} ${call.path.slice(2).join("/")}`;
   switch (at) {
     case "GET ":
       return ok(c.view() as never);
+    case "GET creator": {
+      const d = c.detail(queryOf(call, "id"));
+      return d ? ok(d as never) : err(404, "No such creator");
+    }
     case "POST settings":
       c.setSettings(bodyOf(call));
       return ok(c.view() as never);
@@ -348,21 +800,37 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       await c.stop();
       return ok(c.view() as never);
     case "POST clear":
-      c.clear(bodyOf(call).tab === "servers" ? "servers" : "creators");
+      c.clear();
       return ok(c.view() as never);
     case "POST clear-log":
       c.clearLog();
       return ok(c.view() as never);
-    case "POST remove": {
+    case "POST remove":
+      c.remove(String(bodyOf(call).id ?? ""));
+      return ok(c.view() as never);
+    case "POST email": {
       const b = bodyOf(call);
-      c.remove(b.tab === "servers" ? "servers" : "creators", String(b.id ?? ""));
+      const why = c.setEmail(String(b.id ?? ""), String(b.email ?? ""));
+      if (why) return err(400, why);
+      return ok((c.detail(String(b.id)) ?? {}) as never);
+    }
+    case "POST refresh": {
+      const id = String(bodyOf(call).id ?? "");
+      if (id) {
+        const r = await c.refreshOne(id);
+        if ("error" in r) return err(409, r.error);
+        return ok((c.detail(id) ?? {}) as never);
+      }
+      if (bodyOf(call).stop === true) {
+        await c.stopRefresh();
+        return ok(c.view() as never);
+      }
+      const why = c.refreshAll(true);
+      if (why) return err(409, why);
       return ok(c.view() as never);
     }
-    case "GET export": {
-      const tab = queryOf(call, "tab") === "servers" ? "servers" : "creators";
-      const text = exportText(c.data, tab);
-      return ok({ text, count: tab === "creators" ? c.data.creators.length : c.data.servers.length });
-    }
+    case "GET export":
+      return ok({ text: exportText(c.data), count: c.data.creators.length });
     case "GET avatar": {
       const id = queryOf(call, "id");
       if (!/^[0-9a-f]{20}$/.test(id)) return err(400, "bad id");
@@ -373,6 +841,31 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
         return err(404, "no picture");
       }
     }
+    case "GET templates":
+      return ok({ templates: c.templates, last: c.data.settings.lastTemplate } as never);
+    case "POST template":
+      return ok({ template: c.saveTemplate(bodyOf(call)), templates: c.templates } as never);
+    case "POST template-delete":
+      c.deleteTemplate(String(bodyOf(call).id ?? ""));
+      return ok({ templates: c.templates } as never);
+    case "GET compose": {
+      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"));
+      return d ? ok(d as never) : err(404, "No such creator");
+    }
+    case "POST send": {
+      const r = await c.send(bodyOf(call));
+      if (!r.ok) return err(409, r.error ?? "Not sent");
+      return ok(r as never);
+    }
+    case "POST session": {
+      const b = bodyOf(call);
+      const why = await c.setSession(String(b.platform ?? ""), String(b.cookie ?? ""));
+      if (why) return err(400, why);
+      return ok(c.view() as never);
+    }
+    case "POST session-clear":
+      c.clearSession(String(bodyOf(call).platform ?? ""));
+      return ok(c.view() as never);
   }
   return err(404, "No such Collector route");
 }
@@ -382,7 +875,8 @@ export const collectorEngine: TabEngine = {
   start(ctx: TabEngineCtx) {
     const offline = ctx.env.HARBOR_OFFLINE === "1" || ctx.env.HUB_COLLECTOR_OFFLINE === "1";
     const dir = ctx.env.HUB_COLLECTOR_DIR || ctx.dir;
-    collector = new Collector(dir, { offline, changed: () => ctx.changed(), log: (l) => ctx.log(l), discord: discordInfo });
+    const persons = ctx.env.HUB_COLLECTOR_SEND === "fake" ? fakePersons() : livePersons(personsService);
+    collector = new Collector(dir, { offline, changed: () => ctx.changed(), log: (l) => ctx.log(l), persons });
   },
   async route(call: Call): Promise<Reply | null> {
     if (call.path[0] !== "v1" || call.path[1] !== "collector") return null;
@@ -390,6 +884,8 @@ export const collectorEngine: TabEngine = {
     return collectorRoute(collector, call);
   },
   async stop() {
+    collector?.dispose();
+    await collector?.stopRefresh();
     await collector?.stop();
     await collector?.flush();
   },

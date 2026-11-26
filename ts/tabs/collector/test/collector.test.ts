@@ -2,30 +2,22 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractInviteUrls, normalizeInvite, parseChannel } from "../lib/invites.ts";
 import { handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytChannelsFromSearch, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
 import { discoveryAppetite, sweepYouTube, type SweepCtx } from "../lib/sweep.ts";
-import { sweepDiscover, sweepReader, type ServerSweepCtx } from "../lib/discord.ts";
-import { exportText, migrate, defaultData, type CreatorRecord, type ServerRecord } from "../lib/types.ts";
-import { Collector, collectorRoute } from "../engine.ts";
+import { exportText, migrate, defaultData, type CreatorRecord } from "../lib/types.ts";
+import { Collector, collectorRoute, type CollectorDeps } from "../engine.ts";
 import { compact } from "../view.ts";
+import { extractUrls, normalizeUrl, profileKeyOf, kindOf, whatsappOf } from "../lib/links.ts";
+import { bestEmail, extractEmails } from "../lib/email.ts";
+import { enrich, linktreeLinks } from "../lib/enrich.ts";
+import { allKeys } from "../lib/identity.ts";
+import { applyFresh, type Fresh } from "../lib/refresh.ts";
+import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.ts";
+import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
+import { fakePersons, type SendInput } from "../persons-bridge.ts";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-11-25T12:00:00Z");
-
-describe("invites", () => {
-  it("normalizes and dedupes like the userscript", () => {
-    expect(normalizeInvite("discord.gg/abc123).")).toBe("https://discord.gg/abc123");
-    expect(normalizeInvite("https://www.discord.com/invite/XyZ/")).toBe("https://discord.com/invite/XyZ");
-    expect(normalizeInvite("https://example.com/x")).toBeNull();
-    expect(extractInviteUrls("join https://discord.gg/aa and discord.gg/aa, or discord.com/invite/bb!")).toEqual(["https://discord.gg/aa", "https://discord.com/invite/bb"]);
-  });
-  it("reads a channel link or id", () => {
-    expect(parseChannel("https://discord.com/channels/111111111111111111/222222222222222222")).toEqual({ guild: "111111111111111111", channel: "222222222222222222" });
-    expect(parseChannel("222222222222222222")).toEqual({ guild: null, channel: "222222222222222222" });
-    expect(parseChannel("nope")).toBeNull();
-  });
-});
 
 describe("youtube parsing", () => {
   it("builds the sp filter", () => {
@@ -89,7 +81,7 @@ function fakeYt(ages: Record<string, number | null>) {
 }
 
 function sweepCtx(yt: ReturnType<typeof fakeYt>, target: number, gapDays: number, out: CreatorRecord[]): SweepCtx {
-  return { yt, query: "q", target, gapDays, known: new Set(), count: () => out.length, add: (r) => out.push(r), stopped: () => false, log: () => {}, progress: () => {}, sleep: async () => {}, now: () => NOW };
+  return { yt, query: "q", target, gapDays, isKnown: () => false, enrich: async (r) => r, count: () => out.length, add: (r) => (out.push(r), null), stopped: () => false, log: () => {}, progress: () => {}, sleep: async () => {}, now: () => NOW };
 }
 
 describe("youtube sweep", () => {
@@ -112,75 +104,217 @@ describe("youtube sweep", () => {
     expect("recent_videos" in out[0]!).toBe(false);
   });
   it("sizes discovery from the keep rate", () => {
-    expect(discoveryAppetite(10, 0, { considered: 0, kept: 0, dropped: 0, discovered: 0 })).toBe(Math.ceil(10 / 0.6) + 5);
-    expect(discoveryAppetite(10, 10, { considered: 20, kept: 10, dropped: 10, discovered: 20 })).toBe(0);
+    expect(discoveryAppetite(10, 0, { considered: 0, kept: 0, dropped: 0, discovered: 0, known: 0 })).toBe(Math.ceil(10 / 0.6) + 5);
+    expect(discoveryAppetite(10, 10, { considered: 20, kept: 10, dropped: 10, discovered: 20, known: 0 })).toBe(0);
   });
 });
 
-function serverCtx(api: ServerSweepCtx["api"], widgets: Record<string, string | null>, out: ServerRecord[], target = 0): ServerSweepCtx {
+describe("links and emails", () => {
+  it("finds every link in a bio, bare domains too, normalized", () => {
+    const bio = "Parcerias 📩 contato [arroba] kauablox [ponto] com\nInsta: instagram.com/Kaua.Blox | tiktok.com/@kaua?lang=pt\nhttps://linktr.ee/kaua). wa.me/5511999998888 https://www.youtube.com/redirect?q=https%3A%2F%2Fdiscord.gg%2Fkk&v=1";
+    expect(extractUrls(bio)).toEqual([
+      "https://instagram.com/Kaua.Blox",
+      "https://tiktok.com/@kaua?lang=pt",
+      "https://linktr.ee/kaua",
+      "https://wa.me/5511999998888",
+      "https://discord.gg/kk",
+    ]);
+    expect(normalizeUrl("HTTPS://WWW.Site.com.br/?utm_source=x")).toBe("https://site.com.br");
+    expect(normalizeUrl("https://l.instagram.com/?u=https%3A%2F%2Fbeacons.ai%2Fx%3Ffbclid%3D1&e=2")).toBe("https://beacons.ai/x");
+    expect(kindOf("https://linktr.ee/kaua")).toBe("linkinbio");
+    expect(profileKeyOf("https://instagram.com/Kaua.Blox")).toBe("instagram:@kaua.blox");
+    expect(profileKeyOf("https://www.instagram.com/p/abc/")).toBeNull();
+    expect(profileKeyOf("https://tiktok.com/@kaua?lang=pt")).toBe("tiktok:@kaua");
+    expect(profileKeyOf("https://youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa")).toBe("youtube:UCaaaaaaaaaaaaaaaaaaaaaa");
+    expect(whatsappOf(["https://wa.me/5511999998888"])).toBe("5511999998888");
+    expect(whatsappOf([], "Whats: (11) 99999-8888")).toBe("5511999998888");
+  });
+  it("finds emails, disguised ones too, and leaves junk out", () => {
+    expect(extractEmails("📩 Parcerias: parcerias@kauablox.com.br")).toEqual(["parcerias@kauablox.com.br"]);
+    expect(extractEmails("contato [arroba] kauablox [ponto] com")).toEqual(["contato@kauablox.com"]);
+    expect(extractEmails("biz (at) gmail (dot) com · logo@2x.png · noreply@site.com · a@example.com")).toEqual(["biz@gmail.com"]);
+    expect(extractEmails('<a href="mailto:Oi@Canal.com?subject=x">')).toEqual(["oi@canal.com"]);
+    expect(bestEmail(["fan@gmail.com", "contato@canal.com"])).toBe("contato@canal.com");
+  });
+  it("opens link-in-bio pages for links and an email, then their site", async () => {
+    const next = { props: { pageProps: { links: [{ title: "Minha loja", url: "https://lojadokaua.com.br" }, { title: "GROUP", url: "" }], socialLinks: [{ type: "TIKTOK", url: "https://www.tiktok.com/@kaua" }, { type: "EMAIL_ADDRESS", url: "mailto:kaua@gmail.com" }] } } };
+    expect(linktreeLinks(`<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(next)}</script>`).map((l) => l.url)).toEqual(["https://lojadokaua.com.br", "https://www.tiktok.com/@kaua", "mailto:kaua@gmail.com"]);
+    const pages: Record<string, string> = {
+      "https://linktr.ee/kaua": `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { links: [{ title: "Loja", url: "https://lojadokaua.com.br" }] } } })}</script>`,
+      "https://lojadokaua.com.br": `<a href="/contato">Contato</a>`,
+      "https://lojadokaua.com.br/contato": `Fale com a gente: suporte@lojadokaua.com.br`,
+    };
+    const seen: string[] = [];
+    const f = (async (url: string) => (seen.push(url), pages[url] ? new Response(pages[url], { headers: { "content-type": "text/html" } }) : new Response("", { status: 404 }))) as never;
+    const e = await enrich({ fetch: f, sleep: async () => {} }, { links: [{ label: "Linktree", url: "https://linktr.ee/kaua" }], bio: "insta: instagram.com/kaua", bioSource: "YouTube About" });
+    expect(e.links.map((l) => [l.url, l.source ?? ""])).toEqual([
+      ["https://linktr.ee/kaua", ""],
+      ["https://instagram.com/kaua", "YouTube About"],
+      ["https://lojadokaua.com.br", "linktr.ee/kaua"],
+    ]);
+    expect(e.email).toEqual({ email: "suporte@lojadokaua.com.br", source: "site lojadokaua.com.br/contato" });
+    expect(seen).toEqual(["https://linktr.ee/kaua", "https://lojadokaua.com.br", "https://lojadokaua.com.br/contato"]);
+  });
+});
+
+const rec = (o: Partial<CreatorRecord> & { platform: string; platform_id: string }): CreatorRecord => ({
+  name: o.platform_id,
+  handle: null,
+  profile_url: null,
+  avatar_url: null,
+  subscriber_count: 10,
+  video_count: 1,
+  view_count: null,
+  description: null,
+  links: [],
+  country: null,
+  discovered_via: "q",
+  captured_at: new Date(NOW).toISOString(),
+  ...o,
+});
+
+describe("daily update", () => {
+  it("writes down what changed and keeps a typed email", () => {
+    const r = rec({ platform: "youtube", platform_id: "UC1", subscriber_count: 12_000, email: "me@x.com", email_manual: true, email_source: "typed", last_upload_at: "2026-11-01T00:00:00Z", links: [{ label: "X", url: "https://x.com/a" }] });
+    const f: Fresh = { name: "UC1", handle: null, profile_url: null, avatar_url: null, subscriber_count: 13_000, video_count: 1, view_count: null, description: null, links: [], country: null, last_upload_at: "2026-11-24T00:00:00Z" };
+    const { rec: n, changes } = applyFresh(r, f, { links: [{ label: "Site", url: "https://site.com" }], email: { email: "other@x.com", source: "bio" } }, "2026-11-25T00:00:00Z");
+    expect(changes.map((c) => `${c.field}:${c.from}>${c.to}`)).toEqual(["Subscribers:12K>13K", "Last upload:2026-11-01>2026-11-24", "Links added:>site.com", "Links removed:x.com/a>"]);
+    expect([n.email, n.email_source, n.updated_at]).toEqual(["me@x.com", "typed", "2026-11-25T00:00:00Z"]);
+    expect(n.history?.[0]?.changes.length).toBe(4);
+    const same = applyFresh(n, { ...f, links: [] }, { links: n.links, email: null }, "2026-11-26T00:00:00Z");
+    expect(same.changes).toEqual([]);
+    expect(same.rec.history?.length).toBe(1);
+  });
+});
+
+describe("templates", () => {
+  it("fills the name, or drops it cleanly", () => {
+    expect(fillTemplate("Olá {name}, tudo bem? @{handle}", { name: "Kauã", handle: "kaua" })).toBe("Olá Kauã, tudo bem? @kaua");
+    expect(fillTemplate("Olá {name}, tudo bem?", { name: "" })).toBe("Olá, tudo bem?");
+  });
+  it("keeps edits of built-ins and the user's own, nothing else", () => {
+    const list = loadTemplates([{ id: "padrao", name: "Padrão", description: "d", subject: "Novo assunto", body: "b" }, { id: "t_1", name: "Meu", description: "", subject: "s", body: "oi {name}" }]);
+    expect(list.map((t) => t.id)).toEqual(["padrao", "loja-parceira", "site-da-loja", "t_1", "blank"]);
+    expect(list[0]!.subject).toBe("Novo assunto");
+    expect(templatesToSave(list).map((t) => t.id)).toEqual(["padrao", "t_1"]);
+  });
+});
+
+/** A fake social platform: accounts by handle, discovery in one batch. */
+function fakeSocial(platform: "tiktok" | "instagram", accounts: Record<string, Partial<Profile>>): SocialClient & { reads: string[] } {
+  const reads: string[] = [];
   return {
-    api,
-    fetch: async (url: string) => {
-      const id = url.match(/guilds\/(\d+)\/widget/)?.[1];
-      if (id) return new Response(JSON.stringify(widgets[id] === null ? { message: "Widget Disabled" } : { instant_invite: widgets[id] }), { status: widgets[id] === null ? 403 : 200 });
-      const code = url.match(/invites\/([^?]+)/)?.[1];
-      if (code === "dead") return new Response("{}", { status: 404 });
-      return new Response(JSON.stringify({ guild: { id: `g-${code}`, name: `S ${code}`, icon: null }, approximate_member_count: 50 }));
+    reads,
+    async profile(h) {
+      reads.push(h);
+      const a = accounts[h];
+      if (!a) throw new Error("not found");
+      return { platform, platform_id: `id-${h}`, name: h, handle: `@${h}`, profile_url: `https://www.${platform}.com/@${h}`, avatar_url: null, followers: 100, posts: 5, likes: 9, bio: null, links: [], email: null, country: null, last_post_at: new Date(NOW - DAY).toISOString(), recent: [], private: false, precision: "exact", ...a };
     },
-    target,
-    knownCodes: new Set(),
-    knownGuilds: new Set(),
-    count: () => out.length,
-    add: (r) => out.push(r),
-    stopped: () => false,
-    log: () => {},
-    progress: () => {},
-    sleep: async () => {},
+    async *discover() {
+      yield Object.keys(accounts).map((handle) => ({ handle }));
+    },
   };
 }
 
-describe("discord servers", () => {
-  it("Discover keeps servers whose widget gives an invite", async () => {
-    const out: ServerRecord[] = [];
-    const api = (async (_m: string, p: string) => (p.includes("offset=0") ? { total_count: 3, guilds: [{ id: "1", name: "A", icon: "h", approximate_member_count: 10 }, { id: "2", name: "B", icon: null }, { id: "3", name: "C", icon: null }] } : { guilds: [] })) as ServerSweepCtx["api"];
-    await sweepDiscover(serverCtx(api, { "1": "https://discord.com/invite/aa", "2": null, "3": "https://discord.com/invite/cc" }, out), "robux");
-    expect(out.map((s) => [s.invite, s.name, s.members])).toEqual([["https://discord.com/invite/aa", "A", 10], ["https://discord.com/invite/cc", "C", null]]);
-    expect(out[0]!.icon_url).toBe("https://cdn.discordapp.com/icons/1/h.png?size=64");
-  });
-  it("Reader scans messages and looks invites up", async () => {
-    const out: ServerRecord[] = [];
-    const api = (async (_m: string, p: string) => (p.startsWith("/channels/222222222222222222/messages") ? (p.includes("before") ? [] : [{ id: "9", content: "discord.gg/xx and https://discord.gg/dead" }, { id: "8", content: "", embeds: [{ url: "https://discord.gg/xx" }] }]) : { name: "promo" })) as ServerSweepCtx["api"];
-    await sweepReader(serverCtx(api, {}, out), "https://discord.com/channels/111111111111111111/222222222222222222");
-    expect(out.map((s) => [s.invite, s.name, s.members, s.source])).toEqual([["https://discord.gg/xx", "S xx", 50, "reader: #promo"]]);
-  });
-});
+function deps(over: Partial<CollectorDeps> = {}): CollectorDeps {
+  return { offline: false, changed: () => {}, log: () => {}, persons: fakePersons(), sleep: async () => {}, fetch: async () => new Response("", { status: 404 }), daily: false, ...over };
+}
 
-describe("data and routes", () => {
-  it("exports JSONL, one record per line", () => {
+const caller = (c: Collector) => (method: string, path: string, body: unknown = null, query: [string, string][] = []) =>
+  collectorRoute(c, { method, path: ["v1", "collector", ...path.split("/").filter(Boolean)], query, body, token: "", device: "", global: false } as never);
+
+describe("collector", () => {
+  it("exports JSONL, one record per line, with the email and without Hub's own fields", () => {
     const d = defaultData();
-    d.creators = [{ platform: "youtube", platform_id: "UC1", name: "A" } as CreatorRecord, { platform: "youtube", platform_id: "UC2", name: "B" } as CreatorRecord];
-    expect(exportText(d, "creators").split("\n").map((l) => JSON.parse(l).platform_id)).toEqual(["UC1", "UC2"]);
-    expect(migrate({ settings: { gapDays: 3, targets: { creators: "120" } } }).settings).toMatchObject({ gapDays: 14, targets: { creators: 120, servers: 50 } });
+    d.creators = [rec({ platform: "youtube", platform_id: "UC1", email: "a@b.com", email_source: "bio", history: [], email_manual: false }), rec({ platform: "youtube", platform_id: "UC2" })];
+    const lines = exportText(d).split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((l) => l.platform_id)).toEqual(["UC1", "UC2"]);
+    expect([lines[0].email, "history" in lines[0], "email" in lines[1]]).toEqual(["a@b.com", false, false]);
+    expect(migrate({ settings: { gapDays: 3, targets: { creators: "120", servers: 5 }, tab: "servers" }, servers: [{ invite: "x" }] }).settings).toMatchObject({ gapDays: 14, target: 120 });
     expect(compact(3_110_000)).toBe("3.1M");
-    expect(compact(154_000)).toBe("154K");
   });
-  it("runs a sweep from the routes and persists it", async () => {
+  it("runs a YouTube sweep from the routes and persists it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const yt = fakeYt({ UCa: 1, UCb: 2 });
-    const c = new Collector(dir, { offline: false, changed: () => {}, log: () => {}, discord: () => ({ connected: false, account: null }), youtube: yt as never, sleep: async () => {}, fetch: async () => new Response("", { status: 404 }) });
-    const call = (method: string, path: string, body: unknown = null, query: [string, string][] = []) => collectorRoute(c, { method, path: ["v1", "collector", ...path.split("/").filter(Boolean)], query, body, token: "", device: "", global: false } as never);
-    expect((await call("POST", "start", { tab: "creators", query: "" }))!.status).toBe(409);
-    expect(((await call("POST", "start", { platform: "tiktok", query: "x" }))!.body as { error: string }).error).toContain("Not available yet");
+    const c = new Collector(dir, deps({ youtube: yt as never }));
+    const call = caller(c);
+    expect((await call("POST", "start", { query: "" }))!.status).toBe(409);
+    expect(((await call("POST", "start", { platform: "instagram", query: "x" }))!.body as { error: string }).error).toContain("signed-in");
     await call("POST", "settings", { platform: "youtube", query: "blox", target: 0, gapDays: 7 });
     expect((await call("POST", "start"))!.status).toBe(200);
     await c.settled();
-    const v = (await call("GET", ""))!.body as { counts: { creators: number }; run: { running: boolean } };
-    expect(v.counts.creators).toBe(2);
-    expect(v.run.running).toBe(false);
-    const ex = (await call("GET", "export", null, [["tab", "creators"]]))!.body as { text: string; count: number };
-    expect(ex.count).toBe(2);
-    expect((await call("POST", "start", { tab: "servers", serverQuery: "x" }))!.status).toBe(409);
+    const v = (await call("GET", ""))!.body as { counts: { creators: number }; run: { running: boolean; found: number } };
+    expect([v.counts.creators, v.run.running, v.run.found]).toEqual([2, false, 2]);
+    expect(((await call("GET", "export"))!.body as { count: number }).count).toBe(2);
     await c.flush();
     expect(JSON.parse(readFileSync(join(dir, "state.json"), "utf8")).creators.length).toBe(2);
+  });
+  it("never collects anyone twice: not after Clear, not on another platform, not when they're in Persons", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const yt = fakeYt({ UCa: 1, UCb: 1 });
+    // UCb's About links TikTok @tb; @pp is in Persons › Creators already.
+    yt.about = async (id: string) => ({ name: `N ${id}`, handle: `@${id}`, profileUrl: `https://www.youtube.com/@${id}`, avatarUrl: null, subscribers: 10, videos: 2, views: 3, description: null, country: null, links: id === "UCb" ? [{ label: "TikTok", url: "https://www.tiktok.com/@tb" }] : [] });
+    const tt = fakeSocial("tiktok", { tb: {}, pp: {}, fresh: {} });
+    const c = new Collector(dir, deps({ youtube: yt as never, tiktok: tt, persons: fakePersons({ keys: ["tiktok:@pp"] }) }));
+    const call = caller(c);
+    await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
+    await c.settled();
+    await call("POST", "clear");
+    await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
+    await c.settled();
+    expect(c.data.creators.length).toBe(0);
+    await call("POST", "start", { platform: "tiktok", query: "q", target: 0, gapDays: 14 });
+    await c.settled();
+    expect(c.data.creators.map((x) => x.handle)).toEqual(["@fresh"]);
+    expect(tt.reads).toEqual(["fresh"]);
+    expect(c.data.run?.known).toBe(2);
+  });
+  it("links a creator found on a second platform to the first instead of keeping both", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const tt = fakeSocial("tiktok", { kaua: { links: [{ label: null, url: "https://youtube.com/@UCa" }] } });
+    const yt = fakeYt({ UCa: 1 });
+    const c = new Collector(dir, deps({ youtube: yt as never, tiktok: tt }));
+    const call = caller(c);
+    await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
+    await c.settled();
+    expect(allKeys(c.data.creators[0]!)).toContain("youtube:@uca");
+    await call("POST", "start", { platform: "tiktok", query: "q", target: 0, gapDays: 0 });
+    await c.settled();
+    expect(c.data.creators.length).toBe(1);
+    expect(c.data.creators[0]!.links.map((l) => [l.url, l.source])).toEqual([["https://tiktok.com/@kaua", "same person"]]);
+  });
+  it("a typed email sticks; Send goes through Persons and marks the creator", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const sent: SendInput[] = [];
+    const c = new Collector(dir, deps({ persons: fakePersons({ sent }) }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Kauã", handle: "@kaua" }));
+    const call = caller(c);
+    expect((await call("POST", "email", { id: "youtube:UC1", email: "nope" }))!.status).toBe(400);
+    await call("POST", "email", { id: "youtube:UC1", email: "Kaua@Canal.com" });
+    expect([c.data.creators[0]!.email, c.data.creators[0]!.email_source, c.data.creators[0]!.email_manual]).toEqual(["kaua@canal.com", "typed", true]);
+    const m = (await call("GET", "compose", null, [["id", "youtube:UC1"], ["template", "padrao"]]))!.body as { to: string; subject: string; text: string; channel: string };
+    expect([m.to, m.subject, m.channel]).toEqual(["kaua@canal.com", "Sua loja profissional.", "creators-gmail"]);
+    expect(m.text.startsWith("Olá Kauã, tudo bem?")).toBe(true);
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: m.to, subject: "", text: m.text }))!.status).toBe(409);
+    const r = await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: m.to, subject: m.subject, text: m.text, template: "padrao" });
+    expect(r!.status).toBe(200);
+    expect(sent.map((s) => [s.to, s.subject, s.rec.name])).toEqual([["kaua@canal.com", "Sua loja profissional.", "Kauã"]]);
+    expect(c.data.creators[0]!.contacted?.via).toBe("gmail");
+    expect(c.data.settings.lastTemplate).toBe("padrao");
+  });
+  it("the daily update reads each creator again and writes the changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const yt = fakeYt({ UC1: 1 });
+    yt.about = async (id: string) => ({ name: "Kauã", handle: "@kaua", profileUrl: `https://www.youtube.com/@kaua`, avatarUrl: null, subscribers: 25_000, videos: 3, views: 3, description: "parcerias@kaua.com", country: null, links: [] });
+    const c = new Collector(dir, deps({ youtube: yt as never }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Kauã", subscriber_count: 20_000, captured_at: new Date(Date.now() - 2 * DAY).toISOString() }));
+    expect(c.refreshAll(false)).toBeNull();
+    expect(c.refreshAll(false)).toBe("The update is already going.");
+    while (c.data.refresh.running) await Bun.sleep(5);
+    const x = c.data.creators[0]!;
+    expect([x.subscriber_count, x.email, x.email_source]).toEqual([25_000, "parcerias@kaua.com", "YouTube About"]);
+    expect(x.history?.[0]?.changes.map((ch) => ch.field)).toContain("Subscribers");
+    expect(c.data.refresh.status).toContain("1 changed");
   });
 });

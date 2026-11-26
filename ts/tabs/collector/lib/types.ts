@@ -1,6 +1,8 @@
 // Collector (the Lead Collector userscript, RDevNeo/spok-lead-collector, moved into Hub): the records it keeps.
 // A creator record is the userscript's, field for field: one JSON object per line is what SpokPayCRM → Creators →
-// Import parses (influencers/src/lib/leadImport.ts: platform + platform_id + name required, deduped on both).
+// Import parses (influencers/src/lib/leadImport.ts: platform + platform_id + name required, deduped on both). Hub adds
+// what it learns afterwards (email and where it came from, the daily update's history, the message sent); Copy JSONL
+// gives the CRM's fields plus the email.
 
 export interface RecentVideo {
   video_id: string;
@@ -15,6 +17,28 @@ export interface RecentVideo {
 export interface CreatorLink {
   label: string | null;
   url: string;
+  /** Where it was found ("bio", "linktr.ee/x"); absent for the platform's own link list. */
+  source?: string;
+}
+
+export interface Change {
+  field: string;
+  from: string;
+  to: string;
+}
+
+export interface UpdateEntry {
+  at: string;
+  changes: Change[];
+}
+
+export interface Contacted {
+  at: string;
+  /** "gmail", "whatsapp". */
+  via: string;
+  to: string;
+  /** The person it made in Persons › Creators. */
+  person: string | null;
 }
 
 export interface CreatorRecord {
@@ -24,9 +48,11 @@ export interface CreatorRecord {
   handle: string | null;
   profile_url: string | null;
   avatar_url: string | null;
-  /** null when the channel hides it: never 0 for "hidden". */
+  /** null when the channel hides it: never 0 for "hidden". Followers on Instagram/TikTok. */
   subscriber_count: number | null;
+  /** Videos (YouTube, TikTok) or posts (Instagram). */
   video_count: number | null;
+  /** Views (YouTube) or likes (TikTok). */
   view_count: number | null;
   description: string | null;
   links: CreatorLink[];
@@ -35,44 +61,44 @@ export interface CreatorRecord {
   captured_at: string;
   /** Omitted (not empty) when the sweep never read the feed: the CRM reads [] as "no uploads". */
   recent_videos?: RecentVideo[];
+  // Hub's own, past the userscript's record:
+  email?: string | null;
+  /** "YouTube About", "Instagram bio", "linktr.ee/x", "site x.com.br/contato", "typed". */
+  email_source?: string | null;
+  /** Typed by hand: the daily update never replaces it. */
+  email_manual?: boolean;
+  /** A WhatsApp number their bio or links give (digits, country code first). */
+  whatsapp?: string | null;
+  last_upload_at?: string | null;
+  /** The last daily update (or the capture). */
+  updated_at?: string | null;
+  update_error?: string | null;
+  /** The daily updates that changed something, newest first (10 kept). */
+  history?: UpdateEntry[];
+  contacted?: Contacted | null;
 }
 
-/** One Discord server invite, as the Servers tab collects it (Copy gives the URLs, one per line). */
-export interface ServerRecord {
-  invite: string;
-  name: string | null;
-  guild_id: string | null;
-  members: number | null;
-  online: number | null;
-  icon_url: string | null;
-  /** "discover: <term>" or "reader: #channel". */
-  source: string;
-  captured_at: string;
-}
-
-export type CollectTab = "creators" | "servers";
 export type CreatorPlatform = "instagram" | "tiktok" | "youtube";
-export type ServerMode = "discover" | "reader" | "sidebar";
+export const PLATFORMS: readonly CreatorPlatform[] = ["instagram", "tiktok", "youtube"];
 
 export interface Settings {
-  tab: CollectTab;
   platform: CreatorPlatform;
   query: string;
-  /** Days without an upload before a channel is dropped; 0 = any time. */
+  /** Days without an upload/post before a creator is dropped; 0 = any time. */
   gapDays: number;
-  serverMode: ServerMode;
-  serverQuery: string;
-  /** Reader: a channel link (discord.com/channels/<guild>/<channel>) or id. */
-  channel: string;
-  /** Stop-at counts, per tab (0 = everything the source gives). */
-  targets: { creators: number; servers: number };
+  /** Stop-at count (0 = everything the source gives). */
+  target: number;
+  /** The daily update on/off. */
+  daily: boolean;
+  /** The Send message menu opens on the template used last. */
+  lastTemplate: string;
 }
 
 export interface RunState {
   running: boolean;
-  tab: CollectTab;
-  /** What runs: "YouTube", "Discover". */
+  /** What runs: "YouTube", "Instagram", "TikTok". */
   label: string;
+  platform: CreatorPlatform;
   query: string;
   startedAt: number;
   endedAt: number;
@@ -81,6 +107,21 @@ export interface RunState {
   target: number;
   considered: number;
   dropped: number;
+  /** Already collected (or already in Persons): passed over. */
+  known: number;
+}
+
+export interface RefreshState {
+  running: boolean;
+  startedAt: number;
+  endedAt: number;
+  done: number;
+  total: number;
+  changed: number;
+  failed: number;
+  status: string;
+  /** When the last complete pass finished (the next starts a day later). */
+  lastFullAt: number;
 }
 
 export interface LogLine {
@@ -91,11 +132,13 @@ export interface LogLine {
 }
 
 export interface CollectorData {
-  v: 1;
+  v: 2;
   settings: Settings;
   creators: CreatorRecord[];
-  servers: ServerRecord[];
+  /** Every identity key ever collected (ids, handles, linked profiles, emails): Clear and Remove keep them. */
+  seen: string[];
   run: RunState | null;
+  refresh: RefreshState;
   log: LogLine[];
 }
 
@@ -107,48 +150,18 @@ export const GAP_CHOICES: { value: number; label: string }[] = [
   { value: 0, label: "Any time" },
 ];
 
-export interface SourceInfo {
-  value: string;
-  label: string;
-  available: boolean;
-  /** Why not, when it isn't. */
-  why: string;
-}
-
-/** The userscript's order (prospecting priority, not what's built): Instagram, TikTok, YouTube. */
-export const CREATOR_SOURCES: SourceInfo[] = [
-  {
-    value: "instagram",
-    label: "Instagram",
-    available: false,
-    why: "Not available yet: Instagram's search needs a signed-in Instagram session and its profiles only render in a browser. Hub has no Instagram login.",
-  },
-  {
-    value: "tiktok",
-    label: "TikTok",
-    available: false,
-    why: "Not available yet: TikTok's search answers only requests signed by its own page code (X-Bogus/msToken), which Hub can't run without a browser.",
-  },
-  { value: "youtube", label: "YouTube", available: true, why: "" },
-];
-
-export const SERVER_MODES: SourceInfo[] = [
-  { value: "discover", label: "Discover", available: true, why: "" },
-  { value: "reader", label: "Reader", available: true, why: "" },
-  {
-    value: "sidebar",
-    label: "Sidebar",
-    available: false,
-    why: "Not available yet: walking every member profile of every server is the kind of traffic that gets a Discord account flagged.",
-  },
-];
+export const PLATFORM_LABEL: Record<CreatorPlatform, string> = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" };
 
 export function defaultSettings(): Settings {
-  return { tab: "creators", platform: "youtube", query: "", gapDays: 14, serverMode: "discover", serverQuery: "", channel: "", targets: { creators: 50, servers: 50 } };
+  return { platform: "youtube", query: "", gapDays: 14, target: 50, daily: true, lastTemplate: "" };
+}
+
+export function defaultRefresh(): RefreshState {
+  return { running: false, startedAt: 0, endedAt: 0, done: 0, total: 0, changed: 0, failed: 0, status: "", lastFullAt: 0 };
 }
 
 export function defaultData(): CollectorData {
-  return { v: 1, settings: defaultSettings(), creators: [], servers: [], run: null, log: [] };
+  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, refresh: defaultRefresh(), log: [] };
 }
 
 export function normalizeTarget(v: unknown): number {
@@ -156,32 +169,47 @@ export function normalizeTarget(v: unknown): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 5000) : 0;
 }
 
-/** Whatever the file holds, as data this version understands (unknown fields dropped, bad ones defaulted). */
+/** Whatever the file holds, as data this version understands (v1's Servers dropped, unknown fields dropped, bad ones defaulted). */
 export function migrate(raw: unknown): CollectorData {
   const d = defaultData();
   if (!raw || typeof raw !== "object") return d;
   const r = raw as Record<string, unknown>;
   const s = (r.settings ?? {}) as Record<string, unknown>;
-  const t = (s.targets ?? {}) as Record<string, unknown>;
-  const pick = <T extends string>(v: unknown, ok: readonly T[], dflt: T): T => (ok.includes(v as T) ? (v as T) : dflt);
+  const t = s.targets && typeof s.targets === "object" ? (s.targets as Record<string, unknown>).creators : s.target;
   d.settings = {
-    tab: pick(s.tab, ["creators", "servers"] as const, d.settings.tab),
-    platform: pick(s.platform, ["instagram", "tiktok", "youtube"] as const, d.settings.platform),
+    platform: PLATFORMS.includes(s.platform as CreatorPlatform) ? (s.platform as CreatorPlatform) : d.settings.platform,
     query: typeof s.query === "string" ? s.query : "",
     gapDays: GAP_CHOICES.some((c) => c.value === s.gapDays) ? (s.gapDays as number) : d.settings.gapDays,
-    serverMode: pick(s.serverMode, ["discover", "reader", "sidebar"] as const, d.settings.serverMode),
-    serverQuery: typeof s.serverQuery === "string" ? s.serverQuery : "",
-    channel: typeof s.channel === "string" ? s.channel : "",
-    targets: { creators: t.creators === undefined ? d.settings.targets.creators : normalizeTarget(t.creators), servers: t.servers === undefined ? d.settings.targets.servers : normalizeTarget(t.servers) },
+    target: t === undefined ? d.settings.target : normalizeTarget(t),
+    daily: s.daily === undefined ? true : s.daily === true,
+    lastTemplate: typeof s.lastTemplate === "string" ? s.lastTemplate : "",
   };
-  d.creators = Array.isArray(r.creators) ? (r.creators.filter((c) => c && typeof c === "object" && typeof (c as CreatorRecord).platform_id === "string") as CreatorRecord[]) : [];
-  d.servers = Array.isArray(r.servers) ? (r.servers.filter((c) => c && typeof c === "object" && typeof (c as ServerRecord).invite === "string") as ServerRecord[]) : [];
-  d.run = r.run && typeof r.run === "object" ? (r.run as RunState) : null;
+  d.creators = Array.isArray(r.creators)
+    ? (r.creators.filter((c) => c && typeof c === "object" && typeof (c as CreatorRecord).platform_id === "string" && typeof (c as CreatorRecord).platform === "string") as CreatorRecord[]).map((c) => ({
+        ...c,
+        links: Array.isArray(c.links) ? c.links.filter((l) => l && typeof l.url === "string") : [],
+      }))
+    : [];
+  d.seen = Array.isArray(r.seen) ? r.seen.filter((k): k is string => typeof k === "string") : [];
+  const run = r.run && typeof r.run === "object" ? (r.run as Record<string, unknown>) : null;
+  d.run = run && run.tab !== "servers" ? ({ known: 0, platform: "youtube", ...run } as unknown as RunState) : null;
+  d.refresh = r.refresh && typeof r.refresh === "object" ? { ...defaultRefresh(), ...(r.refresh as Partial<RefreshState>) } : defaultRefresh();
   d.log = Array.isArray(r.log) ? (r.log.filter((l) => l && typeof l === "object" && typeof (l as LogLine).text === "string") as LogLine[]) : [];
   return d;
 }
 
-/** Copy for the CRM: creators as JSONL (one complete record per line), servers as one invite URL per line. */
-export function exportText(d: CollectorData, tab: CollectTab): string {
-  return tab === "creators" ? d.creators.map((c) => JSON.stringify(c)).join("\n") : d.servers.map((s) => s.invite).join("\n");
+/** The CRM's fields (and the email), as the record it imports. */
+export function exportRecord(c: CreatorRecord): Record<string, unknown> {
+  const { email_manual: _m, whatsapp: _w, updated_at: _u, update_error: _e, history: _h, contacted: _c, last_upload_at: _l, ...rest } = c;
+  const out: Record<string, unknown> = { ...rest, links: c.links.map(({ label, url }) => ({ label, url })) };
+  if (!c.email) {
+    delete out.email;
+    delete out.email_source;
+  }
+  return out;
+}
+
+/** Copy for the CRM: creators as JSONL (one complete record per line). */
+export function exportText(d: CollectorData): string {
+  return d.creators.map((c) => JSON.stringify(exportRecord(c))).join("\n");
 }

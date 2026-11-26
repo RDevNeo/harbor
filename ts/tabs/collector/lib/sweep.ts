@@ -2,6 +2,7 @@
 // of search surfaces, harvesting after each and stopping the moment the target is met; every channel goes through the
 // freshness gate (its Atom feed) before its About data is read; drops never count toward the target.
 import { YT_SORT, YT_TYPE, YT_UPLOADED, ytChannelsFromSearch, ytFind, ytUploadersFromSearch, type ChannelHit, type SearchFilter, type YouTube } from "./youtube.ts";
+import { handleKey } from "./identity.ts";
 import type { CreatorRecord, RecentVideo } from "./types.ts";
 
 export interface Pass {
@@ -38,6 +39,8 @@ export interface Stats {
   kept: number;
   dropped: number;
   discovered: number;
+  /** Passed over: collected before, or in Persons already. */
+  known: number;
 }
 
 export interface SweepCtx {
@@ -47,11 +50,14 @@ export interface SweepCtx {
   target: number;
   /** 0: any time (no feed read). */
   gapDays: number;
-  /** platform_ids already collected (never collected twice). */
-  known: Set<string>;
+  /** Already collected, on any platform, or already in Persons (identity keys: lib/identity.ts). */
+  isKnown(keys: string[]): boolean;
+  /** Links and email filled in (link-in-bio pages, their site), before it's kept. */
+  enrich(rec: CreatorRecord, bioSource: string): Promise<CreatorRecord>;
   /** How many creators are collected now (the target is measured against it). */
   count(): number;
-  add(rec: CreatorRecord): void;
+  /** Keeps it; or why not (the same person is already collected, by a link of theirs). */
+  add(rec: CreatorRecord): string | null;
   stopped(): boolean;
   log(text: string, tone?: "ok" | "drop" | "skip" | "info" | "error"): void;
   progress(stats: Stats): void;
@@ -78,14 +84,16 @@ export function discoveryAppetite(target: number, have: number, stats: Stats): n
   return Math.ceil(shortfall / rate) + 5;
 }
 
-async function pageThrough(c: SweepCtx, label: string, first: unknown, extract: Pass["extract"], wanted: number): Promise<ChannelHit[]> {
+async function pageThrough(c: SweepCtx, label: string, first: unknown, extract: Pass["extract"], wanted: number, stats: Stats, seenNow: Set<string>): Promise<ChannelHit[]> {
   const found: ChannelHit[] = [];
   let data = first;
   let dry = 0;
   for (let page = 1; page <= YT_MAX_PAGES; page++) {
     if (c.stopped()) break;
-    const batch = extract(data).filter((e) => !c.known.has(e.channelId));
-    for (const e of batch) c.known.add(e.channelId);
+    const hits = extract(data).filter((e) => !seenNow.has(e.channelId));
+    for (const e of hits) seenNow.add(e.channelId);
+    const batch = hits.filter((e) => !c.isKnown([`youtube:${e.channelId}`, ...(e.handle ? [handleKey("youtube", e.handle)!] : [])]));
+    stats.known += hits.length - batch.length;
     found.push(...batch);
     if (batch.length === 0) {
       // YouTube pads these lists with Shorts and resumes handing out channels pages later.
@@ -167,7 +175,7 @@ async function harvest(c: SweepCtx, entries: ChannelHit[], capturedAt: string, s
     }
     try {
       const d = await c.yt.about(entry.channelId);
-      const rec: CreatorRecord = {
+      let rec: CreatorRecord = {
         platform: "youtube",
         platform_id: entry.channelId,
         name: d.name || entry.name || entry.channelId,
@@ -183,11 +191,20 @@ async function harvest(c: SweepCtx, entries: ChannelHit[], capturedAt: string, s
         discovered_via: c.query,
         captured_at: capturedAt,
         ...(recent.length ? { recent_videos: recent } : {}),
+        last_upload_at: recent[0]?.published_at ?? null,
+        updated_at: capturedAt,
       };
-      c.add(rec);
+      rec = await c.enrich(rec, "YouTube About");
+      const why = c.add(rec);
+      if (why) {
+        stats.known++;
+        c.log(`SKIP ${rec.name}: ${why}`, "skip");
+        c.progress(stats);
+        continue;
+      }
       stats.kept++;
       const subs = rec.subscriber_count === null ? "hidden" : rec.subscriber_count;
-      c.log(`OK ${rec.name} - ${subs} subs, ${rec.links.length} link(s)${age === null ? "" : `, last upload ${formatUploadAge(age)}`}`, "ok");
+      c.log(`OK ${rec.name} - ${subs} subs, ${rec.links.length} link(s)${rec.email ? `, email (${rec.email_source})` : ""}${age === null ? "" : `, last upload ${formatUploadAge(age)}`}`, "ok");
     } catch (e) {
       c.log(`SKIP ${label}: ${errText(e)}`, "skip");
     }
@@ -199,7 +216,8 @@ async function harvest(c: SweepCtx, entries: ChannelHit[], capturedAt: string, s
 /** One sweep, to the end: the target met, every surface exhausted, or stopped. Says which. */
 export async function sweepYouTube(c: SweepCtx): Promise<Stats> {
   const capturedAt = new Date((c.now ?? Date.now)()).toISOString();
-  const stats: Stats = { considered: 0, kept: 0, dropped: 0, discovered: 0 };
+  const stats: Stats = { considered: 0, kept: 0, dropped: 0, discovered: 0, known: 0 };
+  const seenNow = new Set<string>();
   c.log(c.target > 0 ? `Sweeping YouTube for "${c.query}" - target ${c.target} creator(s).` : `Sweeping YouTube for "${c.query}" - no target, collecting everything.`);
   c.log(c.gapDays > 0 ? `Dropping any channel with no upload in the last ${c.gapDays} days.` : "No freshness filter - collecting channels whenever they last uploaded.");
   for (const pass of YT_DISCOVERY_PASSES) {
@@ -211,7 +229,7 @@ export async function sweepYouTube(c: SweepCtx): Promise<Stats> {
       c.log(`${pass.label} search failed: ${errText(e)}`, "error");
       continue;
     }
-    const found = await pageThrough(c, pass.label, page, pass.extract, discoveryAppetite(c.target, c.count(), stats));
+    const found = await pageThrough(c, pass.label, page, pass.extract, discoveryAppetite(c.target, c.count(), stats), stats, seenNow);
     stats.discovered += found.length;
     c.progress(stats);
     if (found.length === 0) {

@@ -6,12 +6,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
-- Hub **Collector** tab (PC and phone): the Lead Collector userscript, native. Creators sweeps YouTube for a term
-  (several search passes, channels with no upload inside Last upload dropped, About stats and profile links) and
-  Copy gives JSONL for SpokPayCRM → Creators → Import; Servers collects Discord invites from Discover (servers with a
-  public widget) or a channel's messages, read-only on Persons' Stores Discord account. Target, Start / Stop, live
-  progress and log, results with pictures, kept across restarts. TikTok, Instagram and the Sidebar walk show as "soon"
-  (COLLECTOR.md says why). The phone app needs the new APK once (shell 5).
+- Hub **Collector** tab (PC and phone): the Lead Collector userscript, native (no browser). Collects creators from
+  YouTube (search passes), TikTok (its search suggestions; no login) and Instagram (hashtags and account search, on the
+  user's own session pasted once, kept only on this PC). Nobody is collected twice: not across runs or platforms (a
+  creator whose links point at one already collected is linked to them), not after Clear, not when already in Persons ›
+  Creators. Every creator gets every link of their bio and link-in-bio pages (Linktree…) and an email with where it was
+  found (bio, link pages, their website; typed by hand too). A daily update reads everyone again and keeps what changed.
+  Send message writes to a creator through Persons › Creators' Gmail (or WhatsApp) with the CRM's templates; they become
+  a person there and the message is in their chat. Copy JSONL for SpokPayCRM → Creators → Import. COLLECTOR.md has the
+  details. The phone app needs the new APK once (shell 5).
 - Hub Persons: **Link with…** (a person's right-click menu, the panel's ⋯ and LINKED section; Android: long press and
   the panel) makes the same human on several channels one person: identifiers combined, notes concatenated, stores,
   lists and socials unioned, read marks kept; their chat is one timeline of every channel (each message marked with

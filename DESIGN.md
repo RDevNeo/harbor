@@ -89,12 +89,18 @@ Per tab:
 - **Routine**: sidebar = Today (with its %), History, Sleep, Goals, Coach as glyph rows, then PLAN (the current plan,
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
-- **Collector**: sidebar = Creators and Servers as glyph rows (count, or "running"); page = PageBar ("Collector /
-  Creators  16 creators", Copy JSONL / Clear on the right), then a column of Cards: the form (source Chips, the ones not
-  available yet disabled with "· soon" and their reason, search Input, Target with −/+, Start/Stop, Last upload Chips or
-  the Discord account line), the run (Spinner, clock, a progress bar, the log in a Well), then the results as avatar
-  rows (stats, a blue Discord tag, freshness on the right; click opens, × removes) or `Empty`. Phone: the same in one
-  scrolling column, Creators / Servers as iconChips under the title.
+- **Collector**: sidebar = filters as glyph rows (All creators with its count or "running", With email, No email yet,
+  Changed today, Contacted); page = PageBar ("Collector / Creators  8 creators", Copy JSONL / Clear on the right), then
+  a column of Cards: the form (source Chips, Instagram's "· needs sign-in" with its reason and, when picked, the session
+  Well with a password Input; search Input, New creators with −/+, Start/Stop, Last upload Chips), the run (Spinner,
+  clock, a progress bar, the log in a Well), the Daily update (status, Update all now / Stop, a Toggle, a progress bar
+  while it goes), then the creators as avatar rows (platform / Contacted / Discord tags, stats, the email with its source
+  or "No email yet", an amber "↻ what changed" line, freshness and "Updated … ago" on the right; click opens, × removes)
+  or `Empty`. A creator's page: back button, a header Card (avatar, name, tags, Open / Update now / Send message), stat
+  Wells, the bio; EMAIL (the address, a "found in …" or "typed" tag, an Input to type it), LINKS (label, short URL,
+  "from linktr.ee/…"), UPDATES (each day's changes), LATEST UPLOADS. Send message is a DialogFrame (760): templates on
+  the left, channel Chips, To, Subject, a TextBox, the CRM's guard lines; Send… turns it into a 448 confirm ("Send it?")
+  with Back / Send now. Phone: the same in one scrolling column, a creator screen and a Send screen.
 
 ## Scrolling (every tab)
 

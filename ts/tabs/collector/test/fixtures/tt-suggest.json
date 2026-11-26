@@ -1,0 +1,61 @@
+{
+ "sug_list": [
+  {
+   "content": "roblox",
+   "sug_type": "",
+   "extra_info": {
+    "lang": "un"
+   }
+  },
+  {
+   "content": "roblox games",
+   "sug_type": "account",
+   "extra_info": {
+    "is_verified": false,
+    "nickname": "Roblox games",
+    "rich_sug_nickname": "Roblox games",
+    "rich_sug_avatar_uri": "https://p19-common-sign.tiktokcdn.com/tos-maliva-avt-0068/772aa95137d6760badd4c9085ca61f85~tplv-tiktokx-cropcenter:300:300.webp",
+    "sug_uniq_id": "robloxuser59268",
+    "sug_user_id": "7626463405842662433",
+    "unique_id": "robloxuser59268"
+   }
+  },
+  {
+   "content": "roblox 🎁",
+   "sug_type": "",
+   "extra_info": {
+    "lang": "en"
+   }
+  },
+  {
+   "content": "roblox the great build",
+   "sug_type": "",
+   "extra_info": {
+    "lang": "ru"
+   }
+  },
+  {
+   "content": "roblox live",
+   "sug_type": "account",
+   "extra_info": {
+    "is_verified": false,
+    "nickname": "Roblox Live",
+    "rich_sug_nickname": "Roblox Live",
+    "rich_sug_avatar_uri": "https://p16-common-sign.tiktokcdn.com/tos-alisg-avt-0068/13dc79060945a0611251be645a043a5c~tplv-tiktokx-cropcenter:300:300.webp",
+    "sug_uniq_id": "robloxlive412",
+    "sug_user_id": "7440320861692150792",
+    "unique_id": "robloxlive412"
+   }
+  },
+  {
+   "content": "Roblox GTA 6 Game",
+   "sug_type": "",
+   "extra_info": {
+    "lang": "en"
+   }
+  }
+ ],
+ "status_code": 0,
+ "status_msg": "",
+ "user_input_query": "roblox"
+}
