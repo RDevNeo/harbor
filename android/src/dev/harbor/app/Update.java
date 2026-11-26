@@ -371,7 +371,19 @@ public class Update extends BroadcastReceiver {
         try {
             String v = hear(c, 0);
             if (v != null) news(c, v);
-        } catch (Exception ignored) { } // offline: Listen's thread or the next job
+        } catch (Exception e) { // offline: Listen's thread or the next job
+            failedNews(e);
+        }
+    }
+
+    private static volatile String lastNewsError = "";
+
+    /** The news couldn't be had: said in the log once per reason (it's retried with a backoff). */
+    static void failedNews(Exception e) {
+        String w = why(e);
+        if (w.equals(lastNewsError)) return;
+        lastNewsError = w;
+        Log.i(TAG, "update news from the PC: " + w);
     }
 
     private static final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -406,6 +418,7 @@ public class Update extends BroadcastReceiver {
                         fails = 0;
                     } catch (Exception e) {
                         fails++;
+                        failedNews(e);
                     }
                     if (Base.started <= 0 || Listen.listening()) break;
                     if (v != null) news(c, v);

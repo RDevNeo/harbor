@@ -109,6 +109,7 @@ public class Listen extends Service {
                 fails = 0;
             } catch (Exception e) {
                 fails++;
+                Update.failedNews(e);
             }
             if (!running || my != gen) break;
             if (v != null) Update.news(this, v);
