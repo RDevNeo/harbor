@@ -13,7 +13,7 @@ import { enrich, linktreeLinks } from "../lib/enrich.ts";
 import { allKeys } from "../lib/identity.ts";
 import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.ts";
 import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
-import { fakePersons, type SendInput } from "../persons-bridge.ts";
+import { fakePersons, livePersons, type SendInput } from "../persons-bridge.ts";
 import { brandOf, linkTitle, normalizeReach, parseLinks, reachError, reachHref } from "../lib/reach.ts";
 import { crmRecord } from "../lib/crm.ts";
 import type { DetailView } from "../view.ts";
@@ -365,11 +365,99 @@ describe("collector", () => {
     const call = caller(c);
     expect((await call("POST", "restrict", { id: "nope", restricted: true }))!.status).toBe(404);
     const v = (await call("POST", "restrict", { id: "youtube:UC1", restricted: true }))!.body as { counts: { available: number; restricted: number }; creators: { id: string; restricted: boolean }[] };
-    expect(v.counts).toEqual({ available: 1, restricted: 1 });
+    expect(v.counts).toEqual({ available: 1, approved: 0, restricted: 1 });
     expect(v.creators.find((x) => x.id === "youtube:UC1")?.restricted).toBe(true);
     expect(((await call("GET", "export"))!.body as { count: number }).count).toBe(1);
     await call("POST", "restrict", { id: "youtube:UC1", restricted: false });
     expect(c.data.creators.every((x) => !x.restricted)).toBe(true);
+  });
+  it("Approve takes a lead out of Available into Approved (its own export); Unapprove brings it back; Reject after Approve restricts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const added: CreatorRecord[] = [];
+    const sent: SendInput[] = [];
+    const c = new Collector(dir, deps({ persons: fakePersons({ added, sent }) }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "A" }), rec({ platform: "tiktok", platform_id: "7", name: "B" }), rec({ platform: "instagram", platform_id: "9", name: "C" }));
+    const call = caller(c);
+    type V = { counts: { available: number; approved: number; restricted: number }; creators: { id: string; approved: boolean; restricted: boolean }[]; settings: { approveTo: string } };
+    expect((await call("POST", "approve", { id: "nope", approved: true }))!.status).toBe(404);
+    // Default: the Approved list only; nothing goes to Persons.
+    let v = (await call("POST", "approve", { id: "youtube:UC1", approved: true }))!.body as V;
+    expect(v.counts).toEqual({ available: 2, approved: 1, restricted: 0 });
+    expect(v.creators.find((x) => x.id === "youtube:UC1")?.approved).toBe(true);
+    expect(c.data.creators[0]!.approved).toMatchObject({ to: "list", person: null });
+    expect(added).toEqual([]);
+    const exp = async (which: string) => (await call("GET", "export", null, which ? [["which", which]] : []))!.body as { text: string; count: number };
+    expect((await exp("")).count).toBe(2);
+    expect((await exp("approved")).count).toBe(1);
+    expect(JSON.parse((await exp("approved")).text)).not.toHaveProperty("approved");
+    // To Persons › Creators: added the way Send makes them, nothing sent; the choice is remembered.
+    v = (await call("POST", "approve", { id: "tiktok:7", approved: true, to: "persons" }))!.body as V;
+    expect(added.map((r) => r.name)).toEqual(["B"]);
+    expect(sent).toEqual([]);
+    expect(c.data.creators[1]!.approved).toMatchObject({ to: "persons", person: "p_added1" });
+    expect(v.settings.approveTo).toBe("persons");
+    // Reject (Restrict) an approved lead: out of Approved, into Restricted.
+    v = (await call("POST", "restrict", { id: "tiktok:7", restricted: true }))!.body as V;
+    expect(v.counts).toEqual({ available: 1, approved: 1, restricted: 1 });
+    expect(c.data.creators[1]!.approved).toBeUndefined();
+    // Approve a restricted lead: it leaves Restricted.
+    v = (await call("POST", "approve", { id: "tiktok:7", approved: true, to: "list" }))!.body as V;
+    expect(v.counts).toEqual({ available: 1, approved: 2, restricted: 0 });
+    // Unapprove: back in Available.
+    v = (await call("POST", "approve", { id: "youtube:UC1", approved: false }))!.body as V;
+    expect(v.counts).toEqual({ available: 2, approved: 1, restricted: 0 });
+    // The last choice, the approval and a note survive a restart; a note is never exported.
+    expect((await call("POST", "note", { id: "instagram:9", note: "  talked on IG  " }))!.status).toBe(200);
+    expect((await call("POST", "note", { id: "nope", note: "x" }))!.status).toBe(404);
+    expect((await call("POST", "settings", { approveTo: "bogus" }))!.status).toBe(200);
+    await c.flush();
+    const again = new Collector(dir, deps({}));
+    expect(again.data.settings.approveTo).toBe("list");
+    expect(again.data.creators.find((x) => x.platform_id === "7")?.approved?.to).toBe("list");
+    expect(again.data.creators.find((x) => x.platform_id === "9")?.note).toBe("  talked on IG  ");
+    expect(((await caller(again)("GET", "creator", null, [["id", "instagram:9"]]))!.body as DetailView).note).toBe("  talked on IG  ");
+    expect(exportText(again.data)).not.toContain("talked");
+    await caller(again)("POST", "note", { id: "instagram:9", note: "   " });
+    expect(again.data.creators.find((x) => x.platform_id === "9")?.note).toBeUndefined();
+  });
+  it("Approve to Persons › Creators makes the person Send would (email, number, profiles), or joins the one there; sends nothing", () => {
+    type P = { id: string; name: string; email?: string; whatsapp?: string; listIds: string[]; storeIds: string[]; socials?: string[]; notes?: string };
+    let people: P[] = [{ id: "p1", name: "Old", email: "old@x.com", listIds: [], storeIds: [] }];
+    let n = 0;
+    let sends = 0;
+    const svc = {
+      get data() {
+        return { people };
+      },
+      newId: () => `p_new${++n}`,
+      update: (f: (d: { people: P[] }) => { people: P[] }) => void (people = f({ people }).people),
+      updatePerson: (id: string, f: (p: P) => P) => void (people = people.map((p) => (p.id === id ? f(p) : p))),
+      send: async () => void sends++,
+    };
+    const bridge = livePersons(() => svc as never);
+    const fresh = bridge.add(rec({ platform: "youtube", platform_id: "UC1", name: "Ana", email: "Ana@Canal.com", whatsapp: "5521975709440", profile_url: "https://www.youtube.com/@ana" }));
+    expect(fresh).toMatchObject({ ok: true, person: "p_new1", created: true });
+    expect(people[1]).toMatchObject({ name: "Ana", email: "ana@canal.com", whatsapp: "5521975709440", listIds: ["creators"] });
+    expect(people[1]!.socials?.length).toBe(1);
+    const joined = bridge.add(rec({ platform: "tiktok", platform_id: "7", name: "Old one", email: "old@x.com" }));
+    expect(joined).toMatchObject({ ok: true, person: "p1", created: false });
+    expect(people[0]!.listIds).toEqual(["creators"]);
+    expect([people.length, sends]).toEqual([2, 0]);
+    expect(livePersons(() => null).add(rec({ platform: "youtube", platform_id: "x" }))).toMatchObject({ ok: false });
+  });
+  it("Approved and Rejected leads are never collected again", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const yt = fakeYt({ UCa: 1, UCb: 1 });
+    const c = new Collector(dir, deps({ youtube: yt as never }));
+    const call = caller(c);
+    await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
+    await c.settled();
+    await call("POST", "approve", { id: "youtube:UCa", approved: true });
+    await call("POST", "restrict", { id: "youtube:UCb", restricted: true });
+    await call("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
+    await c.settled();
+    expect(c.data.creators.length).toBe(2);
+    expect(c.data.run?.ids).toEqual([]);
   });
 });
 

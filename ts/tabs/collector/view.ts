@@ -4,7 +4,7 @@
 import { avatarKey } from "./avatar-key.ts";
 import { compactCount, dayAgo } from "./lib/format.ts";
 import { brandOf, linkTitle, linksText, REACH_META, reachDrafts, reachHref, reachStart } from "./lib/reach.ts";
-import { GAP_CHOICES, PLATFORM_LABEL, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
+import { GAP_CHOICES, PLATFORM_LABEL, type ApproveTo, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
 
 export { compactCount as compact } from "./lib/format.ts";
 
@@ -53,12 +53,20 @@ export interface RowView {
   emailSource: string;
   videos: VideoView[];
   restricted: boolean;
+  /** Approved in the review bar: in Approved, not Available. */
+  approved: boolean;
   /** The Reach kind picked in the detail ("email", "discord", "whatsapp", "instagram"), "" when none: its icon on the card. */
   reach: string;
   reachValue: string;
 }
 
 const ROWS_MAX = 2000;
+
+/** The review bar's "Approve to" choices (the CRM's "Approve to [column]"). */
+export const APPROVE_CHOICES: { value: ApproveTo; label: string; tip: string }[] = [
+  { value: "list", label: "Approved list only", tip: "Out of Available, into Approved" },
+  { value: "persons", label: "Persons › Creators", tip: "Also adds them there; sends nothing" },
+];
 
 export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string | null): RowView {
   const handle = c.handle ? (c.handle.startsWith("@") ? c.handle : `@${c.handle}`) : "";
@@ -81,6 +89,7 @@ export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string
       thumbId: v.thumbnail_url ? avatarKey(v.thumbnail_url) : null,
     })),
     restricted: !!c.restricted,
+    approved: !c.restricted && !!c.approved,
     reach: c.reach?.kind ?? "",
     reachValue: c.reach?.value ?? "",
   };
@@ -135,6 +144,10 @@ export interface DetailView extends RowView {
   contacted: string;
   /** Edit's fields as they are. */
   edit: { name: string; handle: string; bio: string; links: string };
+  /** The Quick note (private). */
+  note: string;
+  /** "Approved on 3 Nov 2026" / "… and added to Persons › Creators", "" when not approved. */
+  approvedNote: string;
 }
 
 const STAT_LABELS: Record<string, [string, string, string, string]> = {
@@ -183,6 +196,8 @@ export function creatorDetail(c: CreatorRecord, pic: (url: string | null) => str
     openLabel: c.platform === "youtube" ? "Open channel" : "Open profile",
     contacted: ct ? `Sent ${ct.via === "gmail" ? "an email" : "a WhatsApp message"} on ${new Date(ct.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} to ${ct.to}` : "",
     edit: { name: c.name, handle: c.handle ?? "", bio: c.description ?? "", links: linksText(c.links) },
+    note: c.note ?? "",
+    approvedNote: row.approved && c.approved ? `Approved on ${new Date(c.approved.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${c.approved.to === "persons" ? " and added to Persons › Creators" : ""}` : "",
   };
 }
 
@@ -200,6 +215,7 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
     .reverse()
     .map((c) => creatorRow(c, pic));
   const restricted = rows.filter((r) => r.restricted).length;
+  const approved = rows.filter((r) => r.approved).length;
   return {
     rev,
     settings: d.settings,
@@ -222,7 +238,8 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
           elapsed: Math.max(0, Math.round(((run.running ? now : run.endedAt || now) - run.startedAt) / 1000)),
         }
       : null,
-    counts: { available: rows.length - restricted, restricted },
+    counts: { available: rows.length - restricted - approved, approved, restricted },
+    approveTo: APPROVE_CHOICES,
     unseen: d.unseen,
     creators: rows,
   };

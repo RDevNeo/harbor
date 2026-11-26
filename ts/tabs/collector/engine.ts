@@ -19,9 +19,14 @@
 //   POST v1/collector/settings        {platform?, query?, gapDays?, target?}
 //   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
 //   POST v1/collector/restrict        {id, restricted}: out of Available (or back)
+//   POST v1/collector/approve         {id, approved, to?: "list" | "persons"}: the review bar's Approve (out of
+//                                     Available into Approved; "persons" also adds them to Persons › Creators, no
+//                                     message sent; the last "to" is remembered as settings.approveTo), or Unapprove
+//   POST v1/collector/note {id, note} the detail's Quick note (private: never exported)
 //   POST v1/collector/remove {id}     forget the row (still never collected again)
 //   POST v1/collector/email           {id, email}: typed by hand ("" lets a found one take its place again)
-//   GET  v1/collector/export          {text, count}: the Available leads as JSONL for SpokPayCRM → Creators → Import
+//   GET  v1/collector/export?which=   {text, count}: the Available (or "approved") leads as JSONL for SpokPayCRM →
+//                                     Creators → Import
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
 //   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
 //                                     POST template-delete {id} (a built-in one is reset)
@@ -52,7 +57,7 @@ import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
 import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
-import { defaultData, exportText, GAP_CHOICES, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
+import { APPROVE_TO, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
 import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
@@ -381,6 +386,7 @@ export class Collector {
     if (typeof b.query === "string") s.query = b.query.slice(0, 200);
     if (typeof b.gapDays === "number" && GAP_CHOICES.some((c) => c.value === b.gapDays)) s.gapDays = b.gapDays;
     if (b.target !== undefined) s.target = normalizeTarget(b.target);
+    if (typeof b.approveTo === "string" && APPROVE_TO.includes(b.approveTo as ApproveTo)) s.approveTo = b.approveTo as ApproveTo;
     this.touch();
   }
 
@@ -557,12 +563,53 @@ export class Collector {
     return true;
   }
 
-  /** Out of Available (or back in). A restricted lead stays remembered: no run collects it again. */
+  /** Out of Available (or back in). A restricted lead stays remembered: no run collects it again. Restricting an
+   *  approved lead takes it out of Approved. */
   restrict(id: string, on: boolean): string | null {
     const c = this.find(id);
     if (!c) return "No such lead.";
-    if (on) c.restricted = true;
-    else delete c.restricted;
+    if (on) {
+      c.restricted = true;
+      delete c.approved;
+    } else delete c.restricted;
+    this.touch();
+    return null;
+  }
+
+  /** The review bar's Approve (or Unapprove: back to Available). "list" keeps it in Approved; "persons" also adds them
+   *  to Persons › Creators the way Send message does, without sending anything. Still never collected again. */
+  approve(id: string, on: boolean, to?: string): { error?: string; person?: string } {
+    const c = this.find(id);
+    if (!c) return { error: "No such lead." };
+    if (!on) {
+      delete c.approved;
+      this.touch();
+      return {};
+    }
+    const where: ApproveTo = APPROVE_TO.includes(to as ApproveTo) ? (to as ApproveTo) : this.data.settings.approveTo;
+    let person: string | null = null;
+    if (where === "persons") {
+      const r = this.o.persons.add(c);
+      if (!r.ok) return { error: r.error ?? "Couldn't add them to Persons › Creators." };
+      person = r.person ?? null;
+    }
+    const cur = this.find(id);
+    if (!cur) return { error: "No such lead." };
+    delete cur.restricted;
+    cur.approved = { at: new Date().toISOString(), to: where, person };
+    this.data.settings.approveTo = where;
+    this.logLine(`APPROVED ${cur.name}${where === "persons" ? "; they're in Persons › Creators" : ""}.`, "ok");
+    this.touch();
+    return person ? { person } : {};
+  }
+
+  /** The detail's Quick note: private (never exported), "" clears it. */
+  setNote(id: string, note: string): string | null {
+    const c = this.find(id);
+    if (!c) return "No such lead.";
+    const n = note.replace(/\r\n?/g, "\n").slice(0, 2000);
+    if (n.trim()) c.note = n;
+    else delete c.note;
     this.touch();
     return null;
   }
@@ -925,6 +972,18 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       if (why) return err(404, why);
       return ok(c.view() as never);
     }
+    case "POST approve": {
+      const b = bodyOf(call);
+      const r = c.approve(String(b.id ?? ""), b.approved !== false, typeof b.to === "string" ? b.to : undefined);
+      if (r.error) return err(r.error === "No such lead." ? 404 : 409, r.error);
+      return ok(c.view() as never);
+    }
+    case "POST note": {
+      const b = bodyOf(call);
+      const why = c.setNote(String(b.id ?? ""), String(b.note ?? ""));
+      if (why) return err(404, why);
+      return ok({ ok: true });
+    }
     case "POST remove":
       c.remove(String(bodyOf(call).id ?? ""));
       return ok(c.view() as never);
@@ -960,8 +1019,10 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       if (why) return err(400, why);
       return ok((c.detail(String(b.id)) ?? {}) as never);
     }
-    case "GET export":
-      return ok({ text: exportText(c.data), count: c.data.creators.filter((x) => !x.restricted).length });
+    case "GET export": {
+      const which = queryOf(call, "which") === "approved" ? "approved" : "available";
+      return ok({ text: exportText(c.data, which), count: c.data.creators.filter((x) => listOf(x) === which).length });
+    }
     case "GET avatar": {
       const id = queryOf(call, "id");
       if (!/^[0-9a-f]{20}$/.test(id)) return err(400, "bad id");

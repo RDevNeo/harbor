@@ -55,6 +55,9 @@ export interface PersonsBridge {
   channels(): Channel[];
   guard(channel: string, to: string, now?: number): Guard;
   send(i: SendInput): Promise<SendOutcome>;
+  /** The review bar's Approve to Persons › Creators: the creator becomes (or joins) a person there, as Send makes them,
+   *  with no message sent. */
+  add(rec: CreatorRecord): SendOutcome;
 }
 
 const DAY_MS = 86_400_000;
@@ -80,16 +83,50 @@ export function notesOf(rec: CreatorRecord): string {
   return lines.join("\n");
 }
 
+/** The person in Persons for this creator (by their email or number, else their profiles), joined to Creators with
+ *  what Collector knows filled in; or a new one in Creators. Send's way, used by Approve too. */
+function ensure(s: PersonsService, rec: CreatorRecord, kind: "gmail" | "whatsapp" | null, to: string): { person: Person; created: boolean } {
+  const people = s.data?.people ?? [];
+  const socials = socialsOf(rec);
+  const set = new Set(socials);
+  const found = (kind && to ? people.find((p) => allPeers(p, kind).includes(to)) : undefined) ?? people.find((p) => (p.socials ?? []).some((u) => set.has(u)));
+  const now = new Date().toISOString();
+  // A send to WhatsApp made them with the number alone, as before; Approve (no channel) with both when known.
+  const email = kind === "gmail" ? to : kind === null ? (rec.email ?? "").trim().toLowerCase() : "";
+  const wa = kind === "whatsapp" ? to : rec.whatsapp ? normWhatsApp(rec.whatsapp) : "";
+  if (!found) {
+    const fresh: Person = {
+      id: s.newId("p"),
+      name: rec.name,
+      discordId: "",
+      ...(email ? { email } : {}),
+      ...(wa ? { whatsapp: wa } : {}),
+      storeIds: [],
+      listIds: ["creators"],
+      socials,
+      notes: notesOf(rec),
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (rec.avatar_url?.startsWith("https://")) Object.assign(fresh, { socialPhoto: rec.avatar_url, socialPhotoAt: now, socialPhotoOf: socialPhotoKey(fresh) });
+    s.update((d) => ({ ...d, people: [...d.people, fresh] }));
+    return { person: fresh, created: true };
+  }
+  s.updatePerson(found.id, (x) => {
+    let n = joinScope(x, { kind: "list", id: "creators" }, now);
+    if (kind === "gmail" && to && !n.email) n = { ...n, email: to, updatedAt: now };
+    if (kind === "whatsapp" && to && !n.whatsapp) n = { ...n, whatsapp: to, updatedAt: now };
+    const merged = normalizeSocials([...(n.socials ?? []), ...socials]).slice(0, 12);
+    if (merged.length !== (n.socials ?? []).length) n = { ...n, socials: merged, updatedAt: now };
+    if (!n.notes) n = { ...n, notes: notesOf(rec), updatedAt: now };
+    return n;
+  });
+  return { person: found, created: false };
+}
+
 export function livePersons(svc: () => PersonsService | null): PersonsBridge {
   const people = (): Person[] => svc()?.data?.people ?? [];
   const creators = (): Person[] => people().filter((p) => p.listIds.includes("creators"));
-  const find = (rec: CreatorRecord, kind: "gmail" | "whatsapp", to: string): Person | undefined => {
-    const socials = new Set(socialsOf(rec));
-    return (
-      people().find((p) => allPeers(p, kind).includes(to)) ??
-      people().find((p) => (p.socials ?? []).some((u) => socials.has(u)))
-    );
-  };
   return {
     up: () => !!svc(),
     creatorKeys: () =>
@@ -129,40 +166,7 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       const kind = v.kind as "gmail" | "whatsapp";
       const to = kind === "gmail" ? i.to.trim().toLowerCase() : normWhatsApp(i.to);
       if (!to) return { ok: false, error: kind === "gmail" ? "No email address." : "No WhatsApp number." };
-      const now = new Date().toISOString();
-      const socials = socialsOf(i.rec);
-      let p = find(i.rec, kind, to);
-      let created = false;
-      if (!p) {
-        const fresh: Person = {
-          id: s.newId("p"),
-          name: i.rec.name,
-          discordId: "",
-          ...(kind === "gmail" ? { email: to } : { whatsapp: to }),
-          storeIds: [],
-          listIds: ["creators"],
-          socials,
-          notes: notesOf(i.rec),
-          createdAt: now,
-          updatedAt: now,
-        };
-        if (i.rec.avatar_url?.startsWith("https://")) Object.assign(fresh, { socialPhoto: i.rec.avatar_url, socialPhotoAt: now, socialPhotoOf: socialPhotoKey(fresh) });
-        if (kind === "gmail" && i.rec.whatsapp) fresh.whatsapp = i.rec.whatsapp;
-        s.update((d) => ({ ...d, people: [...d.people, fresh] }));
-        p = fresh;
-        created = true;
-      } else {
-        const id = p.id;
-        s.updatePerson(id, (x) => {
-          let n = joinScope(x, { kind: "list", id: "creators" }, now);
-          if (kind === "gmail" && !n.email) n = { ...n, email: to, updatedAt: now };
-          if (kind === "whatsapp" && !n.whatsapp) n = { ...n, whatsapp: to, updatedAt: now };
-          const merged = normalizeSocials([...(n.socials ?? []), ...socials]).slice(0, 12);
-          if (merged.length !== (n.socials ?? []).length) n = { ...n, socials: merged, updatedAt: now };
-          if (!n.notes) n = { ...n, notes: notesOf(i.rec), updatedAt: now };
-          return n;
-        });
-      }
+      const { person: p, created } = ensure(s, i.rec, kind, to);
       const r = await s.send(p.id, v.id, i.text, { ...(kind === "gmail" && i.subject ? { subject: i.subject } : {}), peer: to });
       if (!r.ok) {
         // Persons Hub's rule: a person is only made by a send that went out.
@@ -171,12 +175,22 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       }
       return { ok: true, person: p.id, created };
     },
+    add: (rec) => {
+      const s = svc();
+      if (!s) return { ok: false, error: "Persons isn't up." };
+      const email = (rec.email ?? "").trim().toLowerCase();
+      const wa = rec.whatsapp ? normWhatsApp(rec.whatsapp) : "";
+      const kind = email ? "gmail" : wa ? "whatsapp" : null;
+      const { person, created } = ensure(s, rec, kind, kind === "gmail" ? email : wa);
+      return { ok: true, person: person.id, created };
+    },
   };
 }
 
 /** For tests and the screenshot rig: records what would have been sent, sends nothing. */
-export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: SendInput[] } = {}): PersonsBridge {
+export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: SendInput[]; added?: CreatorRecord[] } = {}): PersonsBridge {
   const sent = o.sent ?? [];
+  const added = o.added ?? [];
   return {
     up: () => true,
     creatorKeys: () => o.keys ?? [],
@@ -185,6 +199,10 @@ export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: S
     send: async (i) => {
       sent.push(i);
       return { ok: true, person: `p_fake${sent.length}`, created: true };
+    },
+    add: (rec) => {
+      added.push(rec);
+      return { ok: true, person: `p_added${added.length}`, created: true };
     },
   };
 }

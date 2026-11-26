@@ -1,6 +1,7 @@
 // Collector tab, window side: drives CollectorBus (slint/collector.slint) from the engine's view (GET v1/collector, the
-// same routes Hub for Android calls) and sends every change back. Three views (Collector, Available, Restricted), picked
-// in the sidebar; one filter box on the lists. Pictures and video thumbnails are files the engine cached, decoded here.
+// same routes Hub for Android calls) and sends every change back. Four views (Collector, Available, Approved, Restricted),
+// picked in the sidebar; one filter box on the lists. A lead's detail has the review bar (Reject / Skip / Approve, R S A
+// or ← ↓ →, a Quick note, Approve to): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
 // While a run is going it re-reads every second; otherwise on the tabs' change events.
 // Send message is a real send: it only goes out from the dialog's second step ("Send now").
 import * as slint from "slint-ui";
@@ -34,19 +35,23 @@ export interface Row {
   emailSource: string;
   videos: { url: string; title: string; thumbPath: string | null }[];
   restricted: boolean;
+  /** In Approved (not Available). */
+  approved?: boolean;
   /** The Reach picked in the detail ("" none) and its value. */
   reach?: string;
   reachValue?: string;
 }
 export interface CollectorView {
   rev: number;
-  settings: { platform: string; query: string; gapDays: number; target: number; lastTemplate: string };
+  settings: { platform: string; query: string; gapDays: number; target: number; lastTemplate: string; approveTo?: string };
   sources: Source[];
   sessions: { platform: string; label: string; connected: boolean; account: string | null; savedAt: number; help: string }[];
   canSend: boolean;
   gaps: { value: number; label: string }[];
   run: { running: boolean; label: string; platform: string; query: string; found: number; target: number; known: number; line: string; status: string; ids: string[]; elapsed: number } | null;
-  counts: { available: number; restricted: number };
+  counts: { available: number; approved?: number; restricted: number };
+  /** The review bar's "Approve to" choices. */
+  approveTo?: { value: string; label: string; tip: string }[];
   /** Finished runs not looked at yet: the tab's count (TabsBus.collector-unread). */
   unseen?: number;
   creators: Row[];
@@ -65,8 +70,27 @@ interface Compose {
   guard: { sentToday: number; limit: number; already: string | null; justSent: boolean } | null;
 }
 
-export type Page = "collector" | "available" | "restricted";
-type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
+export type Page = "collector" | "available" | "approved" | "restricted";
+type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string; d_note: string };
+
+/** The lead the review bar goes on to: the first one after `current` in the list the detail was opened from that is
+ *  still in that list now (pure: tested). Null at the end. */
+export function nextLead(queue: string[], current: string, live: Iterable<string>): string | null {
+  const now = new Set(live);
+  const at = queue.indexOf(current);
+  if (at < 0) return null;
+  for (let i = at + 1; i < queue.length; i++) if (queue[i] !== current && now.has(queue[i]!)) return queue[i]!;
+  return null;
+}
+
+/** "Approve to: …": the picked choice's label, the first one when none (pure: tested). */
+export function approveToOf(v: CollectorView): { value: string; label: string } {
+  const all = v.approveTo ?? [{ value: "list", label: "Approved list only", tip: "" }];
+  const c = all.find((x) => x.value === v.settings.approveTo) ?? all[0]!;
+  return { value: c.value, label: c.label };
+}
+
+const listOfRow = (c: Row): Page => (c.restricted ? "restricted" : c.approved ? "approved" : "available");
 
 /** The podium's render order (the CRM's 2-1-3): the newest in the middle, featured; a missing one leaves its place
  *  empty (pure: tested). */
@@ -120,17 +144,17 @@ export function leadsOf(v: CollectorView, page: Page, filter: string): { rows: R
     const byId = new Map(v.creators.map((c) => [c.id, c]));
     const rows = (r?.ids ?? [])
       .map((id) => byId.get(id))
-      .filter((c): c is Row => !!c && !c.restricted)
+      .filter((c): c is Row => !!c && !c.restricted && !c.approved)
       .reverse();
     if (!r) return { rows, head: "", emptyTitle: "No search yet", emptyDesc: "Type a term and press Collect. Collector searches it for videos, as the platform shows them, and keeps each active creator once: picture, link, email when there is one, and their 3 newest videos." };
     return { rows, head: rows.length ? `FOUND FOR “${r.query.toUpperCase()}”` : "", emptyTitle: r.running ? "" : "Nothing new this time", emptyDesc: r.running ? "" : "Everyone it found was collected before, or hasn't posted inside Last upload. Try another term." };
   }
-  const want = page === "restricted";
   const q = filter.trim().toLowerCase();
-  const all = v.creators.filter((c) => c.restricted === want);
+  const all = v.creators.filter((c) => listOfRow(c) === page);
   const rows = q ? all.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : all;
-  const emptyTitle = all.length === 0 ? (want ? "Nobody restricted" : "No leads yet") : "No match";
-  const emptyDesc = all.length === 0 ? (want ? "Restrict a lead to keep it out of Available. It stays remembered, so no run collects it again." : "Collect some from the Collector page.") : `Nobody matches “${filter.trim()}”.`;
+  const none: [string, string] = ({ restricted: ["Nobody restricted", "Restrict a lead (or Reject it in its detail) to keep it out of Available. It stays remembered, so no run collects it again."], approved: ["Nobody approved", "Open a lead and press Approve (A or →). Approved leads leave Available and stay remembered, so no run collects them again."], available: ["No leads yet", "Collect some from the Collector page."] } as Record<"available" | "approved" | "restricted", [string, string]>)[page];
+  const emptyTitle = all.length === 0 ? none[0] : "No match";
+  const emptyDesc = all.length === 0 ? none[1] : `Nobody matches “${filter.trim()}”.`;
   return { rows, head: "", emptyTitle, emptyDesc };
 }
 
@@ -169,6 +193,7 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : String
 const PAGES: { id: Page; label: string }[] = [
   { id: "collector", label: "Collector" },
   { id: "available", label: "Available" },
+  { id: "approved", label: "Approved" },
   { id: "restricted", label: "Restricted" },
 ];
 
@@ -179,7 +204,7 @@ export function createCollectorUi(): TabUi {
   let copied = 0;
   let fast: ReturnType<typeof setInterval> | null = null;
   let editing = 0;
-  let page: Page = (["collector", "available", "restricted"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
+  let page: Page = (["collector", "available", "approved", "restricted"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
   let emailFor = "";
   let sessionBusy = false;
   // Send message
@@ -200,6 +225,14 @@ export function createCollectorUi(): TabUi {
   let reachErr = "";
   let editOpen = false;
   let editErr = "";
+  // The review bar: the list the detail was opened from (its ids in its filter and order), the Quick note's lead and
+  // what was saved last, the Approve to menu.
+  let queue: string[] = [];
+  let reviewBusy = false;
+  let noteFor = "";
+  let noteSaved = "";
+  let noteTimer: ReturnType<typeof setTimeout> | null = null;
+  let approveMenu = false;
   /** What the detail's lists were last drawn from (a model is only replaced when it changes). */
   const sigs: Record<string, string> = {};
   const rowModel = new slint.ArrayModel<Record<string, unknown>>([]);
@@ -298,8 +331,9 @@ export function createCollectorUi(): TabUi {
     if (!b || !v) return;
     const s = v.settings;
     set("page", page);
-    set("nav", new slint.ArrayModel(PAGES.map((p) => ({ id: p.id, label: p.label, on: p.id === page, count: p.id === "available" ? v.counts.available : p.id === "restricted" ? v.counts.restricted : 0 }))));
+    set("nav", new slint.ArrayModel(PAGES.map((p) => ({ id: p.id, label: p.label, on: p.id === page, count: p.id === "available" ? v.counts.available : p.id === "approved" ? (v.counts.approved ?? 0) : p.id === "restricted" ? v.counts.restricted : 0 }))));
     set("n_available", v.counts.available);
+    set("n_approved", v.counts.approved ?? 0);
     set("n_restricted", v.counts.restricted);
     set("sources", new slint.ArrayModel(v.sources.map((x) => ({ value: x.value, label: x.label, on: x.value === s.platform, available: x.available, tip: x.available ? x.note : x.why }))));
     set("gaps", new slint.ArrayModel(v.gaps.map((g) => ({ value: String(g.value), label: g.label, on: g.value === s.gapDays, available: true, tip: g.value ? `Only creators who posted in the last ${g.value} days` : "Keep creators whenever they last posted" }))));
@@ -343,6 +377,7 @@ export function createCollectorUi(): TabUi {
           email: x.email,
           email_source: x.emailSource,
           restricted: x.restricted,
+          approved: !!x.approved,
           reach: x.reach ?? "",
           reach_value: x.reachValue ?? "",
           reach_color: x.reach && (REACH_KINDS as readonly string[]).includes(x.reach) ? REACH_META[x.reach as ReachKind].color : "#9aa4b2",
@@ -352,7 +387,7 @@ export function createCollectorUi(): TabUi {
               return { url: vd.url, title: vd.title, thumb: t ?? NO_PX, has_thumb: !!t };
             }),
           ),
-          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.emailSource}|${x.restricted}|${x.reach ?? ""}${x.reachValue ?? ""}|${!!px}|${x.videos.map((vd) => `${vd.url}${pics.get(vd.thumbPath) ? 1 : 0}`).join(",")}`,
+          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.emailSource}|${x.restricted}|${!!x.approved}|${x.reach ?? ""}${x.reachValue ?? ""}|${!!px}|${x.videos.map((vd) => `${vd.url}${pics.get(vd.thumbPath) ? 1 : 0}`).join(",")}`,
         };
       }),
     );
@@ -417,12 +452,34 @@ export function createCollectorUi(): TabUi {
     set("d_open_label", d.openLabel);
     set("d_filling", filling);
     set("e_error", editErr);
+    set("d_approved_note", d.approvedNote ?? "");
+    set("d_restricted", d.restricted);
+    set("d_approved", !!d.approved);
+    const at = approveToOf(v0());
+    set("approve_to_label", at.label);
+    set("approve_open", approveMenu);
+    const choices = (view?.approveTo ?? []).map((c) => ({ value: c.value, label: c.label, tip: c.tip, on: c.value === at.value }));
+    const chSig = JSON.stringify(choices);
+    if (sigs.approve_choices !== chSig) {
+      b.approve_choices = new slint.ArrayModel(choices);
+      sigs.approve_choices = chSig;
+    }
+    const pos = queue.indexOf(d.id);
+    set("d_position", pos >= 0 && queue.length > 1 ? `${pos + 1} of ${queue.length}` : "");
+    set("review_busy", reviewBusy);
   }
+  const v0 = (): CollectorView => view ?? ({ settings: { approveTo: "list" } } as CollectorView);
 
   /** Takes a fresh detail; the Reach field keeps what the user typed unless it was the old value. */
   const takeDetail = (d: DetailView, resetReach: boolean): void => {
     const prev = detail;
     detail = d;
+    // The Quick note follows the lead shown; a fresh copy of the same lead keeps what's being typed.
+    if (bus && noteFor !== d.id) {
+      noteFor = d.id;
+      noteSaved = d.note ?? "";
+      bus.d_note = noteSaved;
+    }
     if (resetReach || !prev || prev.id !== d.id) {
       reachKind = d.reachKind;
       drafts = { ...d.drafts };
@@ -435,8 +492,64 @@ export function createCollectorUi(): TabUi {
     render();
   };
 
-  const showDetail = async (id: string): Promise<void> => {
+  /** The Quick note saved now if it changed (before moving on, closing, or after a pause in typing). */
+  const flushNote = async (): Promise<void> => {
+    if (noteTimer) {
+      clearTimeout(noteTimer);
+      noteTimer = null;
+    }
+    const id = noteFor;
+    const text = bus?.d_note ?? "";
+    if (!id || text === noteSaved) return;
+    noteSaved = text;
+    await call("POST", "v1/collector/note", { id, note: text }).catch((e: unknown) => ctx?.toast(errText(e)));
+  };
+
+  const closeDetail = (): void => {
+    void flushNote();
+    detailOpen = false;
+    editOpen = false;
+    approveMenu = false;
+    noteFor = "";
+    queue = [];
+    render();
+  };
+
+  /** The review bar: Reject (to Restricted), Skip (as it is), Approve (per Approve to); then the next lead of the list
+   *  the detail was opened from, or "All reviewed" at its end. */
+  const review = async (what: "reject" | "skip" | "approve"): Promise<void> => {
+    const d = detail;
+    if (!d || !detailOpen || reviewBusy || editOpen || sendOpen) return;
+    reviewBusy = true;
+    approveMenu = false;
+    render();
     try {
+      await flushNote();
+      if (what === "reject") take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: true })) as CollectorView);
+      if (what === "approve") {
+        const to = approveToOf(v0()).value;
+        take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to })) as CollectorView);
+        ctx?.toast(to === "persons" ? `${d.name} approved and added to Persons › Creators.` : `${d.name} approved.`);
+      }
+      const v = view;
+      const next = v ? nextLead(queue, d.id, leadsOf(v, page, bus?.filter ?? "").rows.map((r) => r.id)) : null;
+      if (next) await showDetail(next, false);
+      else {
+        closeDetail();
+        ctx?.toast("All reviewed.");
+      }
+    } catch (e) {
+      ctx?.toast(errText(e));
+    } finally {
+      reviewBusy = false;
+      render();
+    }
+  };
+
+  const showDetail = async (id: string, fromList = true): Promise<void> => {
+    try {
+      // Opened from a card: the review bar goes through that list, in its filter and order.
+      if (fromList && view && bus) queue = leadsOf(view, page, bus.filter).rows.map((r) => r.id);
       const d = (await call("GET", `v1/collector/creator?id=${encodeURIComponent(id)}`)) as DetailView;
       detailOpen = true;
       editOpen = false;
@@ -530,7 +643,7 @@ export function createCollectorUi(): TabUi {
     });
     on("stop", () => void post("stop"));
     on("copy", () => {
-      void call("GET", "v1/collector/export")
+      void call("GET", `v1/collector/export?which=${page === "approved" ? "approved" : "available"}`)
         .then(async (r) => {
           const { text, count } = r as { text: string; count: number };
           await clipboard.copyText(text);
@@ -634,10 +747,28 @@ export function createCollectorUi(): TabUi {
         });
     });
     on("detail_show", (id: string) => void showDetail(id));
-    on("detail_close", () => {
-      detailOpen = false;
-      editOpen = false;
+    on("detail_close", () => closeDetail());
+    on("review", (what: string) => {
+      if (what === "reject" || what === "skip" || what === "approve") void review(what);
+    });
+    on("note_edited", () => {
+      if (noteTimer) clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => void flushNote(), 800);
+    });
+    on("note_done", () => void flushNote());
+    on("approve_menu", (open: boolean) => {
+      approveMenu = open;
       render();
+    });
+    on("approve_pick", (value: string) => {
+      approveMenu = false;
+      if (view) view.settings.approveTo = value;
+      render();
+      void post("settings", { approveTo: value });
+    });
+    on("approve_set", (id: string, yes: boolean) => {
+      const name = view?.creators.find((c) => c.id === id)?.name ?? "Lead";
+      void post("approve", { id, approved: yes }).then(() => ctx?.toast(yes ? `${name} approved.` : `${name} is back in Available.`));
     });
     on("reach_pick", (k: string) => {
       if (!(REACH_KINDS as readonly string[]).includes(k) || k === reachKind) return;

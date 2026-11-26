@@ -41,7 +41,7 @@ public class Collector extends Base {
     private JSONObject view;
     private boolean loading;
     private String formSig = "", note = "";
-    /** The view on screen: "collector", "available" or "restricted". */
+    /** The view on screen: "collector", "available", "approved" or "restricted". */
     private String sel = "collector";
     private long typed;
     /** The screens open over the tab (Send message), the top one last. */
@@ -61,7 +61,7 @@ public class Collector extends Base {
         super.onCreate(b);
         hub = Tabs.hub(this);
         String p = getIntent().getStringExtra("page");
-        if ("available".equals(p) || "restricted".equals(p)) sel = p;
+        if ("available".equals(p) || "approved".equals(p) || "restricted".equals(p)) sel = p;
         LinearLayout col = Ui.col(this);
         LinearLayout top = Ui.col(this);
         top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(2));
@@ -122,6 +122,14 @@ public class Collector extends Base {
     void push(Screen s) {
         hideKeyboard();
         stack.add(s);
+        setContentView(s.view());
+    }
+
+    /** The top screen swapped for another (the review bar's next lead). */
+    void replace(Screen s) {
+        hideKeyboard();
+        if (stack.isEmpty()) { push(s); return; }
+        stack.set(stack.size() - 1, s);
         setContentView(s.view());
     }
 
@@ -231,9 +239,10 @@ public class Collector extends Base {
             return;
         }
         JSONObject c = view.optJSONObject("counts");
-        int avail = c == null ? 0 : c.optInt("available"), restr = c == null ? 0 : c.optInt("restricted");
+        int avail = c == null ? 0 : c.optInt("available"), appr = c == null ? 0 : c.optInt("approved"), restr = c == null ? 0 : c.optInt("restricted");
         seg("collector", running() ? "Collector · running" : "Collector");
         seg("available", "Available" + (avail > 0 ? " " + avail : ""));
+        seg("approved", "Approved" + (appr > 0 ? " " + appr : ""));
         seg("restricted", "Restricted" + (restr > 0 ? " " + restr : ""));
         if (!lists) {
             drawForm();
@@ -244,7 +253,7 @@ public class Collector extends Base {
         if (running()) Ui.main.postDelayed(poll, 1500);
     }
 
-    /** One of the three views; a tap shows it. */
+    /** One of the four views; a tap shows it. */
     private void seg(String id, String label) {
         LinearLayout.LayoutParams lp = Ui.wrap();
         lp.rightMargin = Ui.dp(6);
@@ -455,14 +464,17 @@ public class Collector extends Base {
         runRow.addView(t, Ui.weight());
     }
 
-    /** The leads of the view: the run's on Collector, Available's or Restricted's (filtered) on the others. */
-    private void drawList() {
-        list.removeAllViews();
-        if (view == null) return;
-        JSONArray all = view.optJSONArray("creators");
+    /** Which list a lead is in: Restricted, Approved, else Available. */
+    static String listOf(JSONObject o) {
+        return o.optBoolean("restricted") ? "restricted" : o.optBoolean("approved") ? "approved" : "available";
+    }
+
+    /** The leads a view shows, in its order: the run's (still pending) on Collector, the others' list filtered by `f`. */
+    private List<JSONObject> rowsFor(String which, String f) {
         List<JSONObject> rows = new ArrayList<>();
-        String empty;
-        if ("collector".equals(sel)) {
+        if (view == null) return rows;
+        JSONArray all = view.optJSONArray("creators");
+        if ("collector".equals(which)) {
             JSONObject r = view.optJSONObject("run");
             Map<String, JSONObject> byId = new HashMap<>();
             for (int i = 0; all != null && i < all.length(); i++) {
@@ -472,8 +484,81 @@ public class Collector extends Base {
             JSONArray ids = r == null ? null : r.optJSONArray("ids");
             for (int i = ids == null ? -1 : ids.length() - 1; ids != null && i >= 0; i--) {
                 JSONObject o = byId.get(ids.optString(i));
-                if (o != null && !o.optBoolean("restricted")) rows.add(o);
+                if (o != null && "available".equals(listOf(o))) rows.add(o);
             }
+            return rows;
+        }
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject o = all.optJSONObject(i);
+            if (o == null || !which.equals(listOf(o))) continue;
+            String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short")).toLowerCase(Locale.ROOT);
+            if (f.isEmpty() || hay.contains(f)) rows.add(o);
+        }
+        return rows;
+    }
+
+    /** The ids the view shows now (the review bar's list: it goes through them in this order). */
+    List<String> rowIds() {
+        List<String> ids = new ArrayList<>();
+        for (JSONObject o : rowsFor(sel, filter.getText().toString().trim().toLowerCase(Locale.ROOT))) ids.add(o.optString("id"));
+        return ids;
+    }
+
+    /** A lead's name from the view ("" when it's gone). */
+    String nameOf(String id) {
+        JSONArray all = view == null ? null : view.optJSONArray("creators");
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject o = all.optJSONObject(i);
+            if (o != null && id.equals(o.optString("id"))) return o.optString("name");
+        }
+        return "";
+    }
+
+    /** The lead after `current` in `queue` that is still in `live` (the review bar's next); null at the end. */
+    static String nextLead(List<String> queue, String current, List<String> live) {
+        int at = queue.indexOf(current);
+        if (at < 0) return null;
+        for (int i = at + 1; i < queue.size(); i++) if (!queue.get(i).equals(current) && live.contains(queue.get(i))) return queue.get(i);
+        return null;
+    }
+
+    /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to `to`: "list" or "persons"); then the
+     *  next lead of the list the detail was opened from, or back to the list with "All reviewed". */
+    void review(String id, String name, String what, String to, List<String> queue) {
+        Runnable next = () -> {
+            String n = nextLead(queue, id, rowIds());
+            if (n == null) {
+                pop();
+                Ui.toast(this, "All reviewed");
+            } else replace(new CollectorCreator.Detail(this, n, nameOf(n), queue));
+        };
+        if ("reject".equals(what)) post("restrict", next, "id", id, "restricted", true);
+        else if ("approve".equals(what)) post("approve", () -> {
+            Ui.toast(this, "persons".equals(to) ? name + " approved and added to Persons › Creators" : name + " approved");
+            next.run();
+        }, "id", id, "approved", true, "to", to);
+        else next.run();
+    }
+
+    /** The review bar's Approve to, remembered on the PC. */
+    String approveTo() { return settings().optString("approveTo", "list"); }
+
+    JSONArray approveChoices() { return view == null ? null : view.optJSONArray("approveTo"); }
+
+    void setApproveTo(String v) {
+        try { settings().put("approveTo", v); } catch (Exception ignored) { }
+        post("settings", "approveTo", v);
+    }
+
+    /** The leads of the view: the run's on Collector, Available's, Approved's or Restricted's (filtered) on the others. */
+    private void drawList() {
+        list.removeAllViews();
+        if (view == null) return;
+        List<JSONObject> rows;
+        String empty;
+        if ("collector".equals(sel)) {
+            JSONObject r = view.optJSONObject("run");
+            rows = rowsFor("collector", "");
             if (r == null) empty = "Type a term and press Collect. Collector searches it for videos, as the platform shows them, and keeps each active creator once: picture, link, email when there is one, and their 3 newest videos.";
             else if (r.optBoolean("running")) empty = "";
             else empty = "Nothing new this time: everyone it found was collected before, or hasn't posted inside Last upload.";
@@ -483,17 +568,13 @@ public class Collector extends Base {
                 list.addView(head, Ui.fill());
             }
         } else {
-            boolean want = "restricted".equals(sel);
             String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
-            int total = 0;
-            for (int i = 0; all != null && i < all.length(); i++) {
-                JSONObject o = all.optJSONObject(i);
-                if (o == null || o.optBoolean("restricted") != want) continue;
-                total++;
-                String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short")).toLowerCase(Locale.ROOT);
-                if (f.isEmpty() || hay.contains(f)) rows.add(o);
-            }
-            empty = total == 0 ? (want ? "Nobody restricted. Restrict a lead to keep it out of Available; it stays remembered, so no run collects it again." : "No leads yet. Collect some from the Collector view.") : "Nobody matches “" + filter.getText().toString().trim() + "”.";
+            rows = rowsFor(sel, f);
+            int total = f.isEmpty() ? rows.size() : rowsFor(sel, "").size();
+            String none = "restricted".equals(sel) ? "Nobody restricted. Restrict a lead (or Reject it in its detail) to keep it out of Available; it stays remembered, so no run collects it again."
+                    : "approved".equals(sel) ? "Nobody approved. Open a lead and tap Approve: approved leads leave Available and stay remembered, so no run collects them again."
+                    : "No leads yet. Collect some from the Collector view.";
+            empty = total == 0 ? none : "Nobody matches “" + filter.getText().toString().trim() + "”.";
         }
         if (rows.isEmpty()) {
             if (!empty.isEmpty()) list.addView(Ds.empty(this, empty), Ui.margins(Ui.fill(), 0, 12, 0, 0));
@@ -506,7 +587,7 @@ public class Collector extends Base {
     private View card(JSONObject r) {
         LinearLayout card = Ds.card(this);
         final String name = r.optString("name"), rid = r.optString("id"), url = r.optString("url"), email = r.optString("email");
-        final boolean restricted = r.optBoolean("restricted");
+        final boolean restricted = r.optBoolean("restricted"), approved = !restricted && r.optBoolean("approved");
         LinearLayout top = Ui.row(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.addView(avatar(this, hub, r, 44));
@@ -564,11 +645,13 @@ public class Collector extends Base {
         acts.addView(Ui.rowButton(this, "Send message", false, v -> push(new CollectorCreator.Compose(this, rid, name))));
         LinearLayout.LayoutParams lp = Ui.wrap();
         lp.leftMargin = Ui.dp(6);
-        acts.addView(Ui.rowButton(this, restricted ? "Unrestrict" : "Restrict", false, v ->
+        if (approved) acts.addView(Ui.rowButton(this, "Unapprove", false, v ->
+                post("approve", () -> Ui.toast(this, name + " is back in Available"), "id", rid, "approved", false)), lp);
+        else acts.addView(Ui.rowButton(this, restricted ? "Unrestrict" : "Restrict", false, v ->
                 post("restrict", () -> Ui.toast(this, restricted ? name + " is back in Available" : name + " moved to Restricted"), "id", rid, "restricted", !restricted)), lp);
         card.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
         // A tap anywhere else on the card opens the lead's detail.
-        card.setOnClickListener(v -> push(new CollectorCreator.Detail(this, rid, name)));
+        card.setOnClickListener(v -> push(new CollectorCreator.Detail(this, rid, name, rowIds())));
         return card;
     }
 

@@ -1,18 +1,19 @@
-// Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Three views, picked in the sidebar:
+// Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Four views, picked in the sidebar:
 // Collector (the search form, one line while a run goes, and the leads it found), Available (every lead not
-// Restricted) and Restricted (leads the user keeps out of Available). A lead is a card: picture, name and handle,
+// Approved or Restricted), Approved (approved in a lead's review bar) and Restricted (leads the user keeps out of
+// Available). A lead is a card: picture, name and handle,
 // platform, profile link, email (found, or typed by hand), the 3 newest videos, and Restrict / Unrestrict and Send
 // message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
 // driven by src/tabs/collector/ui.ts, the same data Hub for Android shows. Built on Hub's design system (ds.slint,
 // DESIGN.md): sidebar, page bar, cards, chips, inputs, a dialog.
-import { Scroll, PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, DialogFrame, DialogActions, TextBox, SearchField } from "ds.slint";
+import { Scroll, PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, DialogFrame, DialogActions, TextBox, SearchField, PopoverFrame, MenuItem } from "ds.slint";
 
 export struct ClChip { value: string, label: string, on: bool, available: bool, tip: string }
 export struct ClVid { url: string, title: string, thumb: image, has-thumb: bool }
 export struct ClRow {
     id: string, name: string, handle: string, platform: string, url: string, short: string,
     avatar: image, has-avatar: bool, initials: string, color: color,
-    email: string, email-source: string, restricted: bool, videos: [ClVid],
+    email: string, email-source: string, restricted: bool, approved: bool, videos: [ClVid],
     /** The Reach picked in the detail ("email", "discord", "whatsapp", "instagram" or ""), its value and brand colour. */
     reach: string, reach-value: string, reach-color: color,
 }
@@ -23,6 +24,7 @@ export struct ClLink { title: string, url: string, brand: string, color: color }
 export struct ClReach { kind: string, label: string, color: color, on: bool }
 export struct ClNav { id: string, label: string, count: int, on: bool }
 export struct ClTpl { id: string, name: string, description: string, on: bool }
+export struct ClApprove { value: string, label: string, tip: string, on: bool }
 
 export global CollectorBus {
     in property <bool> loading: true;
@@ -56,6 +58,7 @@ export global CollectorBus {
     in-out property <string> filter;
     in property <int> n-available;
     in property <int> n-restricted;
+    in property <int> n-approved;
     in property <string> copy-label;
     in-out property <bool> side-hidden;
     // A typed email: the card being edited and the text
@@ -109,6 +112,17 @@ export global CollectorBus {
     in property <string> d-url;
     in property <string> d-open-label;
     in property <bool> d-filling;
+    // The review bar (Reject / Skip / Approve) and the row above it (Quick note, Approve to)
+    in-out property <string> d-note;
+    in property <string> d-approved-note;
+    in property <bool> d-restricted;
+    in property <bool> d-approved;
+    /** "3 of 12": where this lead is in the list the detail was opened from ("" alone). */
+    in property <string> d-position;
+    in property <string> approve-to-label;
+    in property <bool> approve-open;
+    in property <[ClApprove]> approve-choices;
+    in property <bool> review-busy;
     // Edit (name, handle, bio, links typed by hand)
     in property <bool> edit-open;
     in-out property <string> e-name;
@@ -154,6 +168,14 @@ export global CollectorBus {
     callback edit-show();
     callback edit-save();
     callback edit-close();
+    /** "reject", "skip" or "approve": then the next lead of the list. */
+    callback review(string);
+    callback note-edited(string);
+    callback note-done();
+    callback approve-menu(bool);
+    callback approve-pick(string);
+    /** A card's Unapprove (false). */
+    callback approve-set(string, bool);
 }
 
 /** Collector, Available, Restricted: the three views. A click shows that view. */
@@ -176,7 +198,7 @@ component Sidebar inherits SideSurface {
             vertical-stretch: 1;
             for n in CollectorBus.nav: ListRow {
                 lead: "glyph";
-                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : Icons.circle-slash;
+                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : n.id == "approved" ? Icons.circle-check : Icons.circle-slash;
                 title: n.label;
                 active: n.on;
                 meta: n.id == "collector" ? (CollectorBus.running ? "running" : "") : n.count > 0 ? n.count : "";
@@ -682,7 +704,17 @@ component LeadCard inherits Rectangle {
         VerticalLayout {
             alignment: center;
             spacing: 4px;
-            Btn {
+            if root.r.approved: Btn {
+                text: "Unapprove";
+                icon: Icons.rotate-cw;
+                size: sm;
+                variant: ghost-muted;
+                tip: "Back to Available";
+                clicked => {
+                    CollectorBus.approve-set(root.r.id, false);
+                }
+            }
+            if !root.r.approved: Btn {
                 text: root.r.restricted ? "Unrestrict" : "Restrict";
                 icon: root.r.restricted ? Icons.rotate-cw : Icons.circle-slash;
                 size: sm;
@@ -719,7 +751,7 @@ component Leads inherits VerticalLayout {
         r: r;
     }
     if CollectorBus.rows.length == 0 && CollectorBus.empty-title != "": Empty {
-        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : Icons.users;
+        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : CollectorBus.page == "approved" ? Icons.circle-check : Icons.users;
         title: CollectorBus.empty-title;
         desc: CollectorBus.empty-desc;
     }
@@ -1107,9 +1139,121 @@ component Podium inherits Rectangle {
     }
 }
 
+/** Lucide's arrow-down (the font subset has no glyph for it), stroked like the font's icons. */
+component ArrowDown inherits Path {
+    in property <color> ink;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M12 5v14M19 12l-7 7-7-7";
+    stroke: root.ink;
+    stroke-width: root.width / 12;
+    fill: transparent;
+}
+
+/** A review key's cap: a small outlined square with the letter or the arrow. */
+component ReviewCap inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> down;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.fg.with-alpha(0.16);
+    background: Theme.fg.with-alpha(0.04);
+    if root.text != "": Text {
+        text: root.text;
+        font-family: "Geist Mono";
+        font-size: 10px;
+        color: Theme.fg.with-alpha(0.55);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.icon != "": Glyph {
+        icon: root.icon;
+        size: 10px;
+        color: Theme.fg.with-alpha(0.55);
+    }
+    if root.down: ArrowDown {
+        width: 10px;
+        height: 10px;
+        ink: Theme.fg.with-alpha(0.55);
+    }
+}
+
+/** One third of the review bar: its icon, label and key caps, centred; the cell tints on hover. */
+component ReviewCell inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> down;
+    in property <color> ink;
+    in property <string> cap;
+    in property <string> cap-icon;
+    in property <bool> cap-down;
+    in property <string> tip;
+    in property <bool> enabled: true;
+    callback clicked;
+    horizontal-stretch: 1;
+    background: area.has-hover && root.enabled ? root.ink.with-alpha(0.08) : transparent;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Glyph {
+                icon: root.icon;
+                size: 16px;
+                color: root.ink;
+            }
+        }
+        if root.down: VerticalLayout {
+            alignment: center;
+            ArrowDown {
+                width: 16px;
+                height: 16px;
+                ink: root.ink;
+            }
+        }
+        Text {
+            text: root.label;
+            font-size: 15px;
+            font-weight: 500;
+            color: root.ink;
+            vertical-alignment: center;
+        }
+        HorizontalLayout {
+            padding-left: 2px;
+            spacing: 3px;
+            alignment: center;
+            VerticalLayout {
+                alignment: center;
+                ReviewCap {
+                    text: root.cap;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                ReviewCap {
+                    icon: root.cap-icon;
+                    down: root.cap-down;
+                }
+            }
+        }
+    }
+    area := TipArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        tip: root.tip;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 /** A lead's detail: the SpokPay CRM's creator profile dialog (creator-profile-dialog.tsx), class for class. Header
  *  (picture, name, PLATFORM @handle, Has Contact), the stat tiles, MOST RECENT, Bio, How we found them, Reach, Social
- *  media; footer Open channel / Edit. */
+ *  media; footer: the Quick note, Approve to, Open channel / Edit, then the review queue's bar (Reject / Skip / Approve,
+ *  R S A or ← ↓ →; N focuses the note). The keys act only while no text field has the focus. */
 component DetailDialog inherits Rectangle {
     background: Theme.scrim;
     TouchArea {
@@ -1118,7 +1262,59 @@ component DetailDialog inherits Rectangle {
         }
     }
     property <length> box-w: min(720px, root.width - 32px);
-    property <length> foot-h: 64px;
+    property <length> row-h: 56px;
+    property <length> bar-h: 56px;
+    property <length> foot-h: root.row-h + 1px + root.bar-h;
+    // Edit or Send message closed over the detail: the keys come back to the review bar.
+    property <bool> covered: CollectorBus.edit-open || CollectorBus.send-open;
+    changed covered => {
+        if !self.covered {
+            keys.focus();
+        }
+    }
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        init => {
+            self.focus();
+        }
+        key-pressed(e) => {
+            if e.text == Key.Escape {
+                if CollectorBus.approve-open {
+                    CollectorBus.approve-menu(false);
+                } else if !self.has-focus {
+                    CollectorBus.note-done();
+                    self.focus();
+                } else {
+                    CollectorBus.detail-close();
+                }
+                return accept;
+            }
+            // Only while no text field has the focus (the scope itself has it), and never with a modifier.
+            if !self.has-focus || e.modifiers.control || e.modifiers.alt || e.modifiers.meta {
+                return reject;
+            }
+            if e.text == "r" || e.text == "R" || e.text == Key.LeftArrow {
+                CollectorBus.review("reject");
+                return accept;
+            }
+            if e.text == "s" || e.text == "S" || e.text == Key.DownArrow {
+                CollectorBus.review("skip");
+                return accept;
+            }
+            if e.text == "a" || e.text == "A" || e.text == Key.RightArrow {
+                CollectorBus.review("approve");
+                return accept;
+            }
+            if e.text == "n" || e.text == "N" {
+                note.focus-field();
+                return accept;
+            }
+            reject
+        }
+    }
     box := Rectangle {
         width: root.box-w;
         height: min(root.height - 48px, inner.preferred-height + 48px + root.foot-h);
@@ -1130,7 +1326,11 @@ component DetailDialog inherits Rectangle {
         drop-shadow-offset-y: 12px;
         drop-shadow-blur: 28px;
         drop-shadow-color: black.with-alpha(Theme.dark ? 56 / 255 : 20 / 255);
-        TouchArea { }
+        TouchArea {
+            clicked => {
+                keys.focus();
+            }
+        }
         sc := Scroll {
             x: 0;
             y: 0;
@@ -1144,7 +1344,7 @@ component DetailDialog inherits Rectangle {
                 // Header: picture, name, PLATFORM @handle, Has Contact.
                 HorizontalLayout {
                     spacing: 12px;
-                    padding-right: 28px;
+                    padding-right: CollectorBus.d-position != "" ? 84px : 28px;
                     Rectangle {
                         width: 56px;
                         height: 56px;
@@ -1201,6 +1401,17 @@ component DetailDialog inherits Rectangle {
                                     text: "Has Contact";
                                     font-size: 10.5px;
                                     color: Theme.fg.with-alpha(0.55);
+                                }
+                            }
+                            if CollectorBus.d-approved || CollectorBus.d-restricted: Rectangle {
+                                width: st.preferred-width + 14px;
+                                height: 19px;
+                                border-radius: 9.5px;
+                                background: (CollectorBus.d-approved ? Theme.green-900 : Theme.red-900).with-alpha(0.12);
+                                st := Text {
+                                    text: CollectorBus.d-approved ? "Approved" : "Restricted";
+                                    font-size: 10.5px;
+                                    color: CollectorBus.d-approved ? Theme.green-900 : Theme.red-900;
                                 }
                             }
                         }
@@ -1383,6 +1594,12 @@ component DetailDialog inherits Rectangle {
                         color: Theme.fg.with-alpha(0.4);
                         wrap: word-wrap;
                     }
+                    if CollectorBus.d-approved-note != "": Text {
+                        text: CollectorBus.d-approved-note + ".";
+                        font-size: 11.5px;
+                        color: Theme.fg.with-alpha(0.4);
+                        wrap: word-wrap;
+                    }
                 }
                 DSection {
                     icon: Icons.link;
@@ -1448,7 +1665,7 @@ component DetailDialog inherits Rectangle {
                 }
             }
         }
-        // Footer: Open channel on the left, Edit on the right.
+        // Footer: the Quick note and Approve to, Open channel / Edit on the right; under it the review bar.
         Rectangle {
             y: parent.height - root.foot-h;
             height: root.foot-h;
@@ -1459,10 +1676,72 @@ component DetailDialog inherits Rectangle {
                 background: Theme.border;
             }
             HorizontalLayout {
+                y: 0;
+                height: root.row-h;
                 padding-left: 24px;
                 padding-right: 24px;
-                padding-top: 16px;
-                padding-bottom: 16px;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                spacing: 8px;
+                // Escape in the note gives the keys back to the review bar.
+                FocusScope {
+                    width: min(200px, root.box-w / 4);
+                    height: 32px;
+                    focus-on-click: false;
+                    key-pressed(e) => {
+                        if e.text == Key.Escape {
+                            CollectorBus.note-done();
+                            keys.focus();
+                            return accept;
+                        }
+                        reject
+                    }
+                    note := Input {
+                        width: parent.width;
+                        height: parent.height;
+                        hint: "Quick note (private) · N";
+                        text <=> CollectorBus.d-note;
+                        edited(t) => {
+                            CollectorBus.note-edited(t);
+                        }
+                        accepted => {
+                            CollectorBus.note-done();
+                            keys.focus();
+                        }
+                    }
+                }
+                approve-to := Rectangle {
+                    width: at-text.preferred-width + 38px;
+                    height: 32px;
+                    border-radius: Ds.radius-md;
+                    border-width: 1px;
+                    border-color: CollectorBus.approve-open ? Theme.gray-1000 : Theme.border;
+                    background: at-area.has-hover ? Theme.accent : Theme.bg100;
+                    at-text := Text {
+                        x: 12px;
+                        text: "Approve to: " + CollectorBus.approve-to-label;
+                        font-size: 13px;
+                        color: Theme.fg;
+                        vertical-alignment: center;
+                    }
+                    Glyph {
+                        x: parent.width - 22px;
+                        width: 14px;
+                        icon: Icons.down;
+                        size: 13px;
+                        color: Theme.subtle;
+                    }
+                    at-area := TipArea {
+                        mouse-cursor: pointer;
+                        tip: "Where Approve (A or →) sends a lead";
+                        clicked => {
+                            CollectorBus.approve-menu(!CollectorBus.approve-open);
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
                 if CollectorBus.d-url != "": Btn {
                     text: CollectorBus.d-open-label;
                     icon: Icons.external;
@@ -1471,9 +1750,6 @@ component DetailDialog inherits Rectangle {
                     clicked => {
                         CollectorBus.open(CollectorBus.d-url);
                     }
-                }
-                Rectangle {
-                    horizontal-stretch: 1;
                 }
                 Btn {
                     text: "Edit";
@@ -1485,6 +1761,95 @@ component DetailDialog inherits Rectangle {
                     }
                 }
             }
+            Rectangle {
+                y: root.row-h;
+                height: 1px;
+                background: Theme.border;
+            }
+            HorizontalLayout {
+                y: root.row-h + 1px;
+                height: root.bar-h;
+                ReviewCell {
+                    width: (root.box-w - 2px) / 3;
+                    label: "Reject";
+                    icon: Icons.x;
+                    ink: Theme.red-900;
+                    cap: "R";
+                    cap-icon: Icons.arrow-left;
+                    tip: "To Restricted (never collected again), then the next lead";
+                    enabled: !CollectorBus.review-busy;
+                    clicked => {
+                        CollectorBus.review("reject");
+                    }
+                }
+                Rectangle {
+                    width: 1px;
+                    background: Theme.border;
+                }
+                ReviewCell {
+                    width: (root.box-w - 2px) / 3;
+                    label: "Skip";
+                    down: true;
+                    ink: Theme.fg.with-alpha(0.6);
+                    cap: "S";
+                    cap-down: true;
+                    tip: "Leave it as it is: the next lead";
+                    enabled: !CollectorBus.review-busy;
+                    clicked => {
+                        CollectorBus.review("skip");
+                    }
+                }
+                Rectangle {
+                    width: 1px;
+                    background: Theme.border;
+                }
+                ReviewCell {
+                    width: (root.box-w - 2px) / 3;
+                    label: "Approve";
+                    icon: Icons.check;
+                    ink: Theme.green-900;
+                    cap: "A";
+                    cap-icon: Icons.arrow-right;
+                    tip: "Approve to: " + CollectorBus.approve-to-label + ", then the next lead";
+                    enabled: !CollectorBus.review-busy;
+                    clicked => {
+                        CollectorBus.review("approve");
+                    }
+                }
+            }
+        }
+        // Approve to's menu, over the footer, above its button.
+        if CollectorBus.approve-open: TouchArea {
+            clicked => {
+                CollectorBus.approve-menu(false);
+            }
+        }
+        if CollectorBus.approve-open: PopoverFrame {
+            x: approve-to.x;
+            y: parent.height - root.foot-h + 8px - self.height;
+            width: 300px;
+            height: menu.preferred-height;
+            menu := VerticalLayout {
+                padding: 4px;
+                for c in CollectorBus.approve-choices: MenuItem {
+                    label: c.label;
+                    desc: c.tip;
+                    checked: c.on;
+                    clicked => {
+                        CollectorBus.approve-pick(c.value);
+                        keys.focus();
+                    }
+                }
+            }
+        }
+        if CollectorBus.d-position != "": Text {
+            x: parent.width - 45px - self.width;
+            y: 17px;
+            height: 28px;
+            text: CollectorBus.d-position;
+            font-size: 12.5px;
+            color: Theme.gray-800;
+            vertical-alignment: center;
         }
         TouchArea {
             x: parent.width - 37px;
@@ -1628,20 +1993,20 @@ export component CollectorPage {
         y: 0;
         width: root.main-w;
         side-hidden: CollectorBus.side-hidden;
-        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : Icons.circle-slash;
+        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : CollectorBus.page == "approved" ? Icons.circle-check : Icons.circle-slash;
         section: "Collector";
-        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : "Restricted";
-        sub: CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
+        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : CollectorBus.page == "approved" ? "Approved" : "Restricted";
+        sub: CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "approved" ? CollectorBus.n-approved + (CollectorBus.n-approved == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
         show-side => {
             CollectorBus.side-hidden = false;
         }
-        if CollectorBus.page == "available": Btn {
+        if CollectorBus.page == "available" || CollectorBus.page == "approved": Btn {
             text: CollectorBus.copy-label;
             icon: Icons.copy;
             size: sm;
             variant: outline;
-            enabled: CollectorBus.n-available > 0;
-            tip: "The Available leads as JSONL, one per line (with the email): paste it in SpokPayCRM → Creators → Import";
+            enabled: CollectorBus.page == "approved" ? CollectorBus.n-approved > 0 : CollectorBus.n-available > 0;
+            tip: "The " + (CollectorBus.page == "approved" ? "Approved" : "Available") + " leads as JSONL, one per line (with the email): paste it in SpokPayCRM → Creators → Import";
             clicked => {
                 CollectorBus.copy();
             }
@@ -1666,6 +2031,15 @@ export component CollectorPage {
         CollectScreen { }
     }
     if !CollectorBus.loading && CollectorBus.page == "available": Column {
+        x: root.main-x;
+        y: root.top;
+        width: root.main-w;
+        height: root.height - root.top;
+        col-w: root.col-w;
+        col-x: root.col-x;
+        ListScreen { }
+    }
+    if !CollectorBus.loading && CollectorBus.page == "approved": Column {
         x: root.main-x;
         y: root.top;
         width: root.main-w;
