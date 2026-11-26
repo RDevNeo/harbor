@@ -3,7 +3,8 @@
 // i.instagram.com the way the Android app does: the session as an `IGT:2` bearer token, the app's UA and app id.
 // (The web app's JSON on www.instagram.com answers a non-browser client as if signed out: 302 / 404 / 429, even
 // with every cookie, so it isn't used.) Profile = usernameinfo + the user's feed; discovery = the search page's
-// TopSerpQuery (GraphQL, posts for `#tag` or a keyword, paged) and topsearch_flat (accounts). Without a session
+// TopSerpQuery (GraphQL: the reels and posts Instagram's search shows for the term as typed, paged), whose authors are
+// the creators (reels first: a page's posts only when it has no reel). Without a session
 // every JSON endpoint answers 404, so a profile is read the way link previews are: the page served to Facebook's
 // crawler UA (og:title / og:description: rounded counts, a bio excerpt, the avatar and the profile id; no posts).
 // Reads only; every call goes through one throttle (a gap between any two calls).
@@ -23,6 +24,8 @@ export const IG_TOP_SERP_DOC = "418531681916451609839969517761";
 export const IG_RECENT_LIMIT = 3;
 /** Least time between two calls to Instagram from this PC (all clients share it). */
 export const IG_GAP_MS = 2500;
+/** After a 429: how long the search waits before asking once more. */
+export const IG_BACKOFF_MS = 60_000;
 const CRAWLER_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
 
 type Obj = Record<string, unknown>;
@@ -191,8 +194,14 @@ const hitOfUser = (user: Obj, latestAt: number | null): Hit | null => {
   return hit;
 };
 
-/** Every media's author in any layout (`medias`, `fill_items`, clips): objects with `taken_at` and `user.username`; one Hit per author, newest post kept. */
-export function igCollectMedia(json: unknown): Hit[] {
+const isVideo = (o: Obj): boolean => o.media_type === 2 || o.product_type === "clips" || Array.isArray(o.video_versions);
+
+/**
+ * Every media's author in any layout (`medias`, `fill_items`, clips): objects with `taken_at` and `user.username`; one
+ * Hit per author in the order they first show (the search's ranking), newest post kept, with the media that led to
+ * them. `videos`: reels and videos only.
+ */
+export function igCollectMedia(json: unknown, videos = false): Hit[] {
   const out = new Map<string, Hit>();
   const walk = (n: unknown, depth: number): void => {
     if (!n || typeof n !== "object" || depth > 40) return;
@@ -202,29 +211,21 @@ export function igCollectMedia(json: unknown): Hit[] {
     }
     const o = n as Obj;
     const t = num(o.taken_at);
-    if (t !== null && isObj(o.user) && str(o.user.username)) {
+    if (t !== null && isObj(o.user) && str(o.user.username) && (!videos || isVideo(o))) {
       const hit = hitOfUser(o.user, t * 1000);
+      const code = str(o.code);
+      if (hit && code) hit.videoUrl = `${IG_ORIGIN}/${isVideo(o) ? "reel" : "p"}/${code}/`;
       if (hit) {
         const k = hit.handle.toLowerCase();
         const had = out.get(k);
-        if (!had || (had.latestAt ?? 0) < (hit.latestAt ?? 0)) out.set(k, had ? { ...had, ...hit } : hit);
+        if (!had) out.set(k, hit);
+        else if ((had.latestAt ?? 0) < (hit.latestAt ?? 0)) out.set(k, { ...had, latestAt: hit.latestAt ?? null });
       }
     }
     for (const v of Object.values(o)) walk(v, depth + 1);
   };
   walk(json, 0);
   return [...out.values()];
-}
-
-/** topsearch's `users[].user` / topsearch_flat's `list[].user` (hashtag and place rows skipped). */
-export function igUsersFromSearch(json: unknown): Hit[] {
-  const out: Hit[] = [];
-  const rows = isObj(json) ? (Array.isArray(json.users) ? json.users : Array.isArray(json.list) ? json.list : []) : [];
-  for (const e of rows) {
-    const hit = isObj(e) && isObj(e.user) ? hitOfUser(e.user, null) : null;
-    if (hit && !out.some((h) => h.handle.toLowerCase() === hit.handle.toLowerCase())) out.push(hit);
-  }
-  return out;
 }
 
 /** The userscript's tag rule: no '#', no spaces, lowercase, letters/digits/underscore only. */
@@ -507,9 +508,10 @@ export class Instagram {
   }
 
   /**
-   * Accounts for a query: the authors of the search page's posts for `#tag` (or the keyword when it isn't one tag),
-   * paged (`maxQueries` pages, 40 by default, at most 50), then the account search. Each batch holds only handles not
-   * yielded before. A refusal (401/403/429, HTML, `fail`) ends that pass.
+   * Creators for a query: the authors of the reels Instagram's search shows for the term exactly as typed (a `#tag`
+   * when the user typed one, else the keywords), paged (`maxQueries` pages, 40 by default, at most 50); a page with no
+   * reel gives its posts' authors. Each batch holds only handles not yielded before. A refusal (401/403/429, HTML,
+   * `fail`) ends the search.
    */
   async *discover(query: string, o: DiscoverOpts): AsyncGenerator<Hit[]> {
     if (!this.session || !this.auth()) throw new Error("Instagram search needs a signed-in session");
@@ -527,10 +529,10 @@ export class Instagram {
       if (o.stopped()) return null;
       return this.api(path, form, extra);
     };
-    const words = query.trim().replace(/^#+/, "").trim();
-    const tag = igHashtagFromQuery(query);
-    const q = tag ? `#${tag}` : words;
-    const label = tag ? `#${tag}` : `"${words}"`;
+    const words = query.trim().replace(/\s+/g, " ");
+    const tag = words.startsWith("#") ? igHashtagFromQuery(words) : null;
+    const q = tag ? `#${tag}` : words.replace(/^#+/, "").trim();
+    const label = tag ? `#${tag}` : `"${q}"`;
     const maxPages = Math.min(MAX_SERP_PAGES, o.maxQueries ?? 40);
     if (q) {
       try {
@@ -539,17 +541,30 @@ export class Instagram {
         let dry = 0;
         for (let page = 0; page < maxPages && dry < 3 && !o.stopped(); page++) {
           const variables = { ...TOP_SERP_VARS, query: q, ...ids, is_pagination_request: after !== null, ...(after ? { after } : {}) };
-          const r = await call(
+          let r = await call(
             "/graphql/query",
             { method: "post", format: "json", locale: "user", server_timestamps: "true", fb_api_req_friendly_name: "TopSerpQuery", client_doc_id: IG_TOP_SERP_DOC, variables: JSON.stringify(variables) },
             { "X-FB-Friendly-Name": "TopSerpQuery", "X-Root-Field-Name": "xdt_fbsearch__top_serp_graphql" },
           );
           if (!r) break;
+          if (r.status === 429 && !o.stopped()) {
+            // Instagram's "slow down": one long pause, then the same page once more.
+            o.log(`Instagram asked to slow down: waiting ${Math.round(IG_BACKOFF_MS / 1000)} s.`);
+            await o.sleep(IG_BACKOFF_MS);
+            if (o.stopped()) break;
+            r = await call(
+              "/graphql/query",
+              { method: "post", format: "json", locale: "user", server_timestamps: "true", fb_api_req_friendly_name: "TopSerpQuery", client_doc_id: IG_TOP_SERP_DOC, variables: JSON.stringify(variables) },
+              { "X-FB-Friendly-Name": "TopSerpQuery", "X-Root-Field-Name": "xdt_fbsearch__top_serp_graphql" },
+            );
+            if (!r) break;
+          }
           if (r.refused) {
             o.log(`Instagram ${label} posts: refused (HTTP ${r.status}), posts pass stopped`);
             break;
           }
-          const hits = fresh(igCollectMedia(r.docs));
+          const reels = igCollectMedia(r.docs, true);
+          const hits = fresh(reels.length ? reels : igCollectMedia(r.docs));
           dry = hits.length ? 0 : dry + 1;
           if (hits.length) yield hits;
           const next = igTopSerpCursor(r.docs);
@@ -559,18 +574,6 @@ export class Instagram {
       } catch (e) {
         o.log(`Instagram ${label} posts: ${(e as Error).message}`);
       }
-    }
-    if (o.stopped() || !words) return;
-    try {
-      const tz = String(-new Date().getTimezoneOffset() * 60);
-      const r = await call(`/api/v1/fbsearch/topsearch_flat/?search_surface=top_search_page&context=blended&timezone_offset=${tz}&count=30&query=${encodeURIComponent(words)}`);
-      if (r && r.refused) o.log(`Instagram account search: refused (HTTP ${r.status})`);
-      else if (r) {
-        const hits = fresh(igUsersFromSearch(r.json));
-        if (hits.length) yield hits;
-      }
-    } catch (e) {
-      o.log(`Instagram account search: ${(e as Error).message}`);
     }
   }
 }

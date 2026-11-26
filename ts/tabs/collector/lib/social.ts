@@ -1,7 +1,8 @@
 // TikTok and Instagram sweeps (the userscript's ttCollectCreators / igCollectCreators, from the engine): discovery
-// hands batches of accounts (TikTok: its search suggestions, which answer without a login; Instagram: hashtag and
-// account search on the user's own session), each new one is read (profile, newest posts), dropped when it hasn't
-// posted within the window, enriched (links, email) and kept. Same rules as YouTube: never twice, drops don't count.
+// searches the term for videos (TikTok's video search; Instagram's search page, reels first, on the user's session) and
+// hands their creators in the order the platform ranked the videos; each new one is read (profile, 3 newest videos),
+// dropped when it hasn't posted within the window, enriched (links, email) and kept. Same rules as YouTube: never twice,
+// drops don't count.
 import { handleKey } from "./identity.ts";
 import { daysSince, formatUploadAge, type Stats } from "./sweep.ts";
 import type { CreatorLink, CreatorRecord, RecentVideo } from "./types.ts";
@@ -33,6 +34,8 @@ export interface Hit {
   avatarUrl?: string | null;
   followers?: number | null;
   latestAt?: number | null;
+  /** The search result (video or post) that led to them. */
+  videoUrl?: string;
 }
 
 export interface DiscoverOpts {
@@ -72,7 +75,7 @@ const LABEL = { tiktok: "TikTok", instagram: "Instagram" } as const;
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** A profile as Collector's record (the userscript's fields: followers in subscriber_count, likes in view_count). */
-export function profileRecord(p: Profile, query: string, at: string): CreatorRecord {
+export function profileRecord(p: Profile, query: string, at: string, foundVideo?: string): CreatorRecord {
   const links: CreatorLink[] = p.links.map((l) => ({ label: l.label, url: l.url }));
   return {
     platform: p.platform,
@@ -93,6 +96,7 @@ export function profileRecord(p: Profile, query: string, at: string): CreatorRec
     last_upload_at: p.last_post_at,
     updated_at: at,
     ...(p.email ? { email: p.email, email_source: `${LABEL[p.platform]} contact` } : {}),
+    ...(foundVideo ? { found_video: foundVideo } : {}),
   };
 }
 
@@ -104,7 +108,7 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
   const reached = (): boolean => c.target > 0 && c.count() >= c.target;
   const seenNow = new Set<string>();
   let blocked = 0;
-  c.log(c.target > 0 ? `Sweeping ${label} for "${c.query}" - target ${c.target} creator(s).` : `Sweeping ${label} for "${c.query}" - no target, collecting everything.`);
+  c.log(c.target > 0 ? `Searching ${label} videos for "${c.query}" - target ${c.target} lead(s).` : `Searching ${label} videos for "${c.query}" - no target, collecting everything.`);
   c.log(c.gapDays > 0 ? `Dropping any account with no post in the last ${c.gapDays} days.` : "No freshness filter - collecting accounts whenever they last posted.");
   try {
     for await (const batch of c.client.discover(c.query, { stopped: () => c.stopped() || reached(), sleep: c.sleep, log: (t) => c.log(t), maxQueries: c.target > 0 ? Math.min(200, 30 + c.target * 4) : 200 })) {
@@ -123,6 +127,7 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
         if (c.stopped() || reached()) break;
         const who = `@${h.handle.replace(/^@/, "")}`;
         stats.considered++;
+        c.log(`Checking ${who}…`);
         // A post seen in discovery inside the window is enough; else the profile's newest post decides.
         let p: Profile;
         try {
@@ -164,7 +169,7 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
             continue;
           }
         }
-        let rec = profileRecord(p, c.query, at);
+        let rec = profileRecord(p, c.query, at, h.videoUrl);
         if (!rec.last_upload_at && newest) rec.last_upload_at = new Date(newest).toISOString();
         if (!rec.avatar_url && h.avatarUrl) rec.avatar_url = h.avatarUrl;
         rec = await c.enrich(rec, `${label} bio`);

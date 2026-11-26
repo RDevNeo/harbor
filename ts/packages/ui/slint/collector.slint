@@ -1,32 +1,28 @@
-// Collector tab (the Lead Collector userscript, moved into Hub): creators from YouTube, TikTok and Instagram, each kept
-// once (never collected twice, on any platform, nor anyone already in Persons › Creators), with every link of their
-// bio and link-in-bio pages, an email and where it was found, updated once a day; Send message writes to one through
-// Persons › Creators (templates, Gmail or WhatsApp). The sweeps run in the engine (ts/tabs/collector); CollectorBus is
+// Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Three views, picked in the sidebar:
+// Collector (the search form, one line while a run goes, and the leads it found), Available (every lead not
+// Restricted) and Restricted (leads the user keeps out of Available). A lead is a card: picture, name and handle,
+// platform, profile link, email (found, or typed by hand), the 3 newest videos, and Restrict / Unrestrict and Send
+// message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
 // driven by src/tabs/collector/ui.ts, the same data Hub for Android shows. Built on Hub's design system (ds.slint,
-// DESIGN.md): sidebar, page bar, cards, chips, inputs, rows, a dialog.
-import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, Toggle, DialogFrame, DialogActions, TextBox, Badge, Tone } from "ds.slint";
+// DESIGN.md): sidebar, page bar, cards, chips, inputs, a dialog.
+import { PageBar, Theme, Icons, Ds, Btn, Variant, BtnSize, Input, TipArea, Card, Well, Glyph, Empty, ListRow, SideSurface, SideHead, FieldLabel, Chip, Muted, Hint, Avatar, Spinner, ScrollThumb, CapsLabel, DialogFrame, DialogActions, TextBox, SearchField } from "ds.slint";
 
 export struct ClChip { value: string, label: string, on: bool, available: bool, tip: string }
-export struct ClLog { text: string, tone: string }
+export struct ClVid { url: string, title: string, thumb: image, has-thumb: bool }
 export struct ClRow {
-    id: string, name: string, sub: string, stats: string, meta: string, url: string,
-    avatar: image, has-avatar: bool, initials: string, color: color, discord: bool, platform: string,
-    email: string, email-source: string, updated: string, changed: string, contacted: string,
+    id: string, name: string, handle: string, platform: string, url: string, short: string,
+    avatar: image, has-avatar: bool, initials: string, color: color,
+    email: string, email-source: string, restricted: bool, videos: [ClVid],
 }
-export struct ClFilter { id: string, label: string, count: int, on: bool, glyph: string }
-export struct ClStat { label: string, value: string }
-export struct ClLink { label: string, url: string, kind: string, source: string, short: string }
-export struct ClHist { when: string, changes: string }
-export struct ClVid { title: string, url: string, when: string, views: string }
+export struct ClNav { id: string, label: string, count: int, on: bool }
 export struct ClTpl { id: string, name: string, description: string, on: bool }
 
 export global CollectorBus {
     in property <bool> loading: true;
     in property <string> error;
-    in property <int> n-creators;
-    in property <[ClFilter]> filters;
-    /** "list" or "creator". */
-    in property <string> view: "list";
+    /** "collector", "available" or "restricted". */
+    in property <string> page: "collector";
+    in property <[ClNav]> nav;
     // The form
     in property <[ClChip]> sources;
     in property <[ClChip]> gaps;
@@ -42,54 +38,22 @@ export global CollectorBus {
     in property <string> session-help;
     in-out property <string> session-cookie;
     in property <bool> session-busy;
-    // The run (the last one, or the one going)
+    // The run: one line while it goes, its outcome after
     in property <bool> running;
-    in property <bool> has-run;
-    in property <string> run-title;
-    in property <string> run-status;
-    in property <string> run-clock;
-    in property <float> run-frac;
-    in property <string> run-meta;
-    in property <[ClLog]> logs;
-    in property <bool> log-open;
-    // The daily update
-    in property <bool> daily-on;
-    in property <bool> daily-running;
-    in property <string> daily-status;
-    in property <string> daily-meta;
-    in property <float> daily-frac;
-    // The list
+    in property <string> run-line;
+    // The leads on the page (the run's on Collector; Available's or Restricted's, filtered)
     in property <[ClRow]> rows;
-    in property <string> list-empty;
-    in property <bool> confirm-clear;
+    in property <string> rows-head;
+    in property <string> empty-title;
+    in property <string> empty-desc;
+    in-out property <string> filter;
+    in property <int> n-available;
+    in property <int> n-restricted;
     in property <string> copy-label;
     in-out property <bool> side-hidden;
-    // One creator
-    in property <string> d-id;
-    in property <string> d-name;
-    in property <string> d-sub;
-    in property <string> d-platform;
-    in property <image> d-avatar;
-    in property <bool> d-has-avatar;
-    in property <string> d-initials;
-    in property <color> d-color;
-    in property <string> d-url;
-    in property <[ClStat]> d-stats;
-    in property <string> d-desc;
-    in property <string> d-email;
-    in property <string> d-email-source;
-    in property <bool> d-email-manual;
-    in-out property <string> d-email-edit;
-    in property <string> d-whatsapp;
-    in property <[ClLink]> d-links;
-    in property <string> d-updated;
-    in property <string> d-update-error;
-    in property <[ClHist]> d-history;
-    in property <[ClVid]> d-recent;
-    in property <string> d-contacted;
-    in property <string> d-found;
-    in property <bool> d-refreshing;
-    in property <bool> d-discord;
+    // A typed email: the card being edited and the text
+    in property <string> email-for;
+    in-out property <string> email-text;
     // Send message
     in property <bool> send-open;
     in property <string> s-title;
@@ -109,7 +73,7 @@ export global CollectorBus {
     in property <bool> s-can-send;
     in property <string> s-saved;
 
-    callback pick-filter(string);
+    callback go(string);
     callback pick-source(string);
     callback pick-gap(string);
     callback query-edited(string);
@@ -118,22 +82,15 @@ export global CollectorBus {
     callback start();
     callback stop();
     callback copy();
-    callback clear();
-    callback clear-ask(bool);
-    callback toggle-log();
-    callback clear-log();
     callback open(string);
-    callback remove(string);
+    callback restrict(string, bool);
+    callback filter-edited(string);
+    callback email-edit(string);
+    callback email-save();
+    callback email-cancel();
     callback session-save();
     callback session-remove();
-    callback daily-toggle(bool);
-    callback daily-now();
-    callback daily-stop();
-    callback open-creator(string);
-    callback back();
-    callback email-save();
-    callback refresh-one();
-    callback send-show();
+    callback send-show(string);
     callback send-close();
     callback pick-template(string);
     callback pick-channel(string);
@@ -143,6 +100,7 @@ export global CollectorBus {
     callback save-template();
 }
 
+/** Collector, Available, Restricted: the three views. A click shows that view. */
 component Sidebar inherits SideSurface {
     VerticalLayout {
         padding-top: Ds.side-pad-top;
@@ -160,21 +118,21 @@ component Sidebar inherits SideSurface {
             spacing: 2px;
             alignment: start;
             vertical-stretch: 1;
-            for f in CollectorBus.filters: ListRow {
+            for n in CollectorBus.nav: ListRow {
                 lead: "glyph";
-                glyph: f.glyph;
-                title: f.label;
-                active: f.on && CollectorBus.view == "list";
-                meta: f.id == "all" && CollectorBus.running ? "running" : f.count > 0 ? f.count : "";
+                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : Icons.circle-slash;
+                title: n.label;
+                active: n.on;
+                meta: n.id == "collector" ? (CollectorBus.running ? "running" : "") : n.count > 0 ? n.count : "";
                 clicked => {
-                    CollectorBus.pick-filter(f.id);
+                    CollectorBus.go(n.id);
                 }
             }
         }
     }
 }
 
-/** The form: source, search term, target, Start/Stop, the freshness window, Instagram's session. */
+/** The form: platform, search term, how many leads, Collect/Stop, the last-upload window, Instagram's session. */
 component Controls inherits Card {
     VerticalLayout {
         padding: 16px;
@@ -182,7 +140,7 @@ component Controls inherits Card {
         VerticalLayout {
             spacing: 6px;
             FieldLabel {
-                text: "Source";
+                text: "Platform";
             }
             HorizontalLayout {
                 spacing: 6px;
@@ -217,10 +175,10 @@ component Controls inherits Card {
                 }
                 FieldLabel {
                     width: 132px;
-                    text: "New creators";
+                    text: "Leads";
                 }
                 Rectangle {
-                    width: 92px;
+                    width: 104px;
                 }
             }
             HorizontalLayout {
@@ -228,7 +186,7 @@ component Controls inherits Card {
                 Input {
                     horizontal-stretch: 1;
                     text <=> CollectorBus.query;
-                    hint: "e.g. blox fruits brasil";
+                    hint: "e.g. dress to impress";
                     edited(t) => {
                         CollectorBus.query-edited(t);
                     }
@@ -245,10 +203,10 @@ component Controls inherits Card {
                         text: "−";
                         size: icon;
                         variant: ghost-muted;
-                        tip: "10 fewer";
+                        tip: "5 fewer";
                         enabled: !CollectorBus.running;
                         clicked => {
-                            CollectorBus.target-step(-10);
+                            CollectorBus.target-step(-5);
                         }
                     }
                     Input {
@@ -263,17 +221,17 @@ component Controls inherits Card {
                         icon: Icons.plus;
                         size: icon;
                         variant: ghost-muted;
-                        tip: "10 more";
+                        tip: "5 more";
                         enabled: !CollectorBus.running;
                         clicked => {
-                            CollectorBus.target-step(10);
+                            CollectorBus.target-step(5);
                         }
                     }
                 }
                 if !CollectorBus.running: Btn {
-                    width: 92px;
-                    text: "Start";
-                    icon: Icons.play;
+                    width: 104px;
+                    text: "Collect";
+                    icon: Icons.search;
                     variant: primary;
                     enabled: CollectorBus.unavailable == "" && CollectorBus.query != "";
                     clicked => {
@@ -281,7 +239,7 @@ component Controls inherits Card {
                     }
                 }
                 if CollectorBus.running: Btn {
-                    width: 92px;
+                    width: 104px;
                     text: "Stop";
                     icon: Icons.stop;
                     variant: outline;
@@ -370,229 +328,81 @@ component Controls inherits Card {
     }
 }
 
-/** The run: what's going (or went), the clock, found / target, and the log's tail. */
-component Progress inherits Card {
-    VerticalLayout {
-        padding: 14px;
-        padding-left: 16px;
-        padding-right: 16px;
-        spacing: 10px;
-        HorizontalLayout {
-            spacing: 8px;
-            if CollectorBus.running: VerticalLayout {
-                alignment: center;
-                Spinner { }
-            }
-            if !CollectorBus.running: Glyph {
-                icon: Icons.circle-check;
-                size: 16px;
-                color: Theme.subtle;
-            }
-            Text {
-                text: CollectorBus.run-title;
-                font-size: 14px;
-                font-weight: 600;
-                color: Theme.fg;
-                overflow: elide;
-                horizontal-stretch: 1;
-                vertical-alignment: center;
-            }
-            Text {
-                text: CollectorBus.run-clock;
-                font-family: "Geist Mono";
-                font-size: Ds.t-meta;
-                color: Theme.gray-800;
-                vertical-alignment: center;
-            }
-        }
-        Rectangle {
-            height: 6px;
-            border-radius: 3px;
-            background: Theme.gray-200;
-            Rectangle {
-                x: 0;
-                width: parent.width * clamp(CollectorBus.run-frac, 0, 1);
-                border-radius: 3px;
-                background: CollectorBus.running ? Theme.blue-800 : Theme.green-800;
-            }
-        }
-        HorizontalLayout {
-            spacing: 8px;
-            Muted {
-                text: CollectorBus.run-status;
-                horizontal-stretch: 1;
-                overflow: elide;
-            }
-            Muted {
-                text: CollectorBus.run-meta;
-            }
-        }
-        HorizontalLayout {
-            spacing: 6px;
-            alignment: start;
-            Btn {
-                text: CollectorBus.log-open ? "Hide log" : "Show log";
-                icon: CollectorBus.log-open ? Icons.up : Icons.down;
-                size: xs;
-                variant: ghost-muted;
-                clicked => {
-                    CollectorBus.toggle-log();
-                }
-            }
-            if CollectorBus.log-open: Btn {
-                text: "Clear log";
-                size: xs;
-                variant: ghost-muted;
-                clicked => {
-                    CollectorBus.clear-log();
-                }
-            }
-        }
-        if CollectorBus.log-open: Well {
-            VerticalLayout {
-                padding: 10px;
-                spacing: 3px;
-                for l in CollectorBus.logs: Text {
-                    text: l.text;
-                    font-family: "Geist Mono";
-                    font-size: 11.5px;
-                    wrap: word-wrap;
-                    color: l.tone == "ok" ? Theme.green-900 : l.tone == "drop" || l.tone == "skip" ? Theme.gray-800 : l.tone == "error" ? Theme.red-900 : Theme.fg;
-                }
-            }
-        }
-    }
-}
-
-/** The daily update: every creator read again once a day (stats, last upload, bio, links, email), what changed kept. */
-component Daily inherits Card {
-    VerticalLayout {
-        padding: 14px;
-        padding-left: 16px;
-        padding-right: 16px;
-        spacing: 10px;
-        HorizontalLayout {
-            spacing: 8px;
-            if CollectorBus.daily-running: VerticalLayout {
-                alignment: center;
-                Spinner { }
-            }
-            if !CollectorBus.daily-running: Glyph {
-                icon: Icons.rotate-cw;
-                size: 15px;
-                color: Theme.subtle;
-            }
-            VerticalLayout {
-                horizontal-stretch: 1;
-                spacing: 2px;
-                alignment: center;
-                Text {
-                    text: "Daily update";
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: Theme.fg;
-                }
-                Muted {
-                    text: CollectorBus.daily-status;
-                    overflow: elide;
-                }
-            }
-            if !CollectorBus.daily-running: Btn {
-                text: "Update all now";
-                icon: Icons.refresh;
-                size: sm;
-                variant: outline;
-                enabled: CollectorBus.n-creators > 0;
-                tip: "Read every creator again now (gently, one at a time)";
-                clicked => {
-                    CollectorBus.daily-now();
-                }
-            }
-            if CollectorBus.daily-running: Btn {
-                text: "Stop";
-                icon: Icons.stop;
-                size: sm;
-                variant: outline;
-                clicked => {
-                    CollectorBus.daily-stop();
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                Toggle {
-                    on: CollectorBus.daily-on;
-                    toggled(v) => {
-                        CollectorBus.daily-toggle(v);
-                    }
-                }
-            }
-        }
-        if CollectorBus.daily-running: Rectangle {
-            height: 6px;
-            border-radius: 3px;
-            background: Theme.gray-200;
-            Rectangle {
-                x: 0;
-                width: parent.width * clamp(CollectorBus.daily-frac, 0, 1);
-                border-radius: 3px;
-                background: Theme.blue-800;
-            }
-        }
-        if CollectorBus.daily-meta != "": Muted {
-            text: CollectorBus.daily-meta;
-            wrap: word-wrap;
-        }
-    }
-}
-
+/** A tag (the platform). */
 component Tag inherits Rectangle {
     in property <string> text;
-    in property <color> bg: Theme.gray-200;
-    in property <color> fg: Theme.gray-1000;
     width: t.preferred-width + 10px;
     height: 16px;
     border-radius: 4px;
-    background: root.bg;
+    background: Theme.gray-200;
     t := Text {
         text: root.text;
         font-size: 10.5px;
         font-weight: 600;
-        color: root.fg;
+        color: Theme.gray-1000;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
 }
 
-/** One collected creator: picture, name and handle, stats, email and where it came from, the last update; click opens it. */
-component ResultRow inherits Rectangle {
-    in property <ClRow> r;
-    height: root.r.changed != "" ? 84px : 68px;
+/** One of the 3 newest videos: its thumbnail; a click opens it, the title is its tip. */
+component Thumb inherits Rectangle {
+    in property <ClVid> v;
+    width: 64px;
+    height: 48px;
     border-radius: Ds.radius-md;
-    background: area.has-hover ? Theme.accent : transparent;
-    area := TipArea {
+    background: Theme.gray-200;
+    clip: true;
+    if root.v.has-thumb: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.v.thumb;
+        image-fit: cover;
+    }
+    if !root.v.has-thumb: Glyph {
+        icon: Icons.play;
+        size: 14px;
+        color: Theme.gray-700;
+    }
+    Rectangle {
+        border-radius: Ds.radius-md;
+        border-width: 1px;
+        border-color: ta.has-hover ? Theme.gray-1000 : Theme.border;
+    }
+    ta := TipArea {
         mouse-cursor: pointer;
-        tip: root.r.url;
+        tip: root.v.title != "" ? root.v.title : root.v.url;
         clicked => {
-            CollectorBus.open-creator(root.r.id);
+            CollectorBus.open(root.v.url);
         }
     }
+}
+
+/** A lead: picture, name, platform, handle, profile link, email (or Add email), the 3 newest videos, Send and Restrict. */
+component LeadCard inherits Rectangle {
+    in property <ClRow> r;
+    property <bool> editing: CollectorBus.email-for == root.r.id;
+    height: max(76px, body.preferred-height + 24px);
+    border-radius: Ds.radius-lg;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg100;
     HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
+        padding: 12px;
         spacing: 12px;
         VerticalLayout {
             alignment: center;
             Avatar {
-                size: 40px;
+                size: 44px;
                 initials: root.r.initials;
                 color: root.r.color;
                 photo: root.r.avatar;
                 has-photo: root.r.has-avatar;
             }
         }
-        VerticalLayout {
+        body := VerticalLayout {
             alignment: center;
-            spacing: 3px;
+            spacing: 4px;
             horizontal-stretch: 1;
             HorizontalLayout {
                 spacing: 6px;
@@ -611,25 +421,9 @@ component ResultRow inherits Rectangle {
                         text: root.r.platform;
                     }
                 }
-                if root.r.contacted != "": VerticalLayout {
-                    alignment: center;
-                    Tag {
-                        text: root.r.contacted;
-                        bg: Theme.green-200;
-                        fg: Theme.green-900;
-                    }
-                }
-                if root.r.discord: VerticalLayout {
-                    alignment: center;
-                    Tag {
-                        text: "Discord";
-                        bg: Theme.blue-200;
-                        fg: Theme.blue-900;
-                    }
-                }
-                if root.r.sub != "": Text {
-                    text: root.r.sub;
-                    font-size: 12px;
+                if root.r.handle != "" && root.r.handle != "@" + root.r.name: Text {
+                    text: root.r.handle;
+                    font-size: 12.5px;
                     color: Theme.gray-800;
                     overflow: elide;
                     vertical-alignment: center;
@@ -638,13 +432,33 @@ component ResultRow inherits Rectangle {
                     horizontal-stretch: 1;
                 }
             }
-            Text {
-                text: root.r.stats;
-                font-size: 12px;
-                color: Theme.subtle;
-                overflow: elide;
-            }
             HorizontalLayout {
+                spacing: 5px;
+                Glyph {
+                    icon: Icons.link;
+                    size: 12px;
+                    color: Theme.gray-800;
+                }
+                link := Text {
+                    text: root.r.short;
+                    font-size: 12.5px;
+                    color: la.has-hover ? Theme.fg : Theme.gray-900;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                    max-width: self.preferred-width;
+                    la := TipArea {
+                        mouse-cursor: pointer;
+                        tip: "Open " + root.r.url;
+                        clicked => {
+                            CollectorBus.open(root.r.url);
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+            }
+            if !root.editing: HorizontalLayout {
                 spacing: 5px;
                 Glyph {
                     icon: Icons.at-sign;
@@ -652,12 +466,19 @@ component ResultRow inherits Rectangle {
                     color: root.r.email != "" ? Theme.fg : Theme.gray-700;
                 }
                 Text {
-                    text: root.r.email != "" ? root.r.email : "No email yet";
-                    font-size: 12px;
-                    color: root.r.email != "" ? Theme.fg : Theme.gray-700;
+                    text: root.r.email != "" ? root.r.email : "Add email";
+                    font-size: 12.5px;
+                    color: root.r.email != "" ? Theme.fg : ea.has-hover ? Theme.fg : Theme.gray-700;
                     overflow: elide;
                     horizontal-stretch: 0;
                     max-width: self.preferred-width;
+                    ea := TipArea {
+                        mouse-cursor: pointer;
+                        tip: root.r.email != "" ? "Type another email (a typed one is never replaced)" : "Type their email";
+                        clicked => {
+                            CollectorBus.email-edit(root.r.id);
+                        }
+                    }
                 }
                 if root.r.email-source != "": Text {
                     text: "· " + root.r.email-source;
@@ -669,228 +490,15 @@ component ResultRow inherits Rectangle {
                     horizontal-stretch: 1;
                 }
             }
-            if root.r.changed != "": Text {
-                text: "↻ " + root.r.changed;
-                font-size: 12px;
-                color: Theme.amber-900;
-                overflow: elide;
-            }
-        }
-        VerticalLayout {
-            alignment: center;
-            spacing: 3px;
-            Text {
-                text: root.r.meta;
-                font-size: Ds.t-meta;
-                color: Theme.gray-800;
-                horizontal-alignment: right;
-                overflow: elide;
-                max-width: 220px;
-            }
-            Text {
-                text: root.r.updated;
-                font-size: Ds.t-meta;
-                color: Theme.gray-700;
-                horizontal-alignment: right;
-                overflow: elide;
-                max-width: 220px;
-            }
-        }
-        VerticalLayout {
-            alignment: center;
-            Btn {
-                opacity: area.has-hover || self.hovered ? 1 : 0;
-                icon: Icons.x;
-                size: icon-xs;
-                variant: ghost-muted;
-                tip: "Remove from the list (they stay remembered: no run collects them again)";
-                clicked => {
-                    CollectorBus.remove(root.r.id);
-                }
-            }
-        }
-    }
-}
-
-component SectionTitle inherits HorizontalLayout {
-    in property <string> text;
-    padding-top: 2px;
-    CapsLabel {
-        text: root.text;
-    }
-}
-
-/** One creator: who, stats, email (found where, or typed), every link, the daily updates, Send message. */
-component Detail inherits VerticalLayout {
-    spacing: 14px;
-    HorizontalLayout {
-        alignment: start;
-        Btn {
-            text: "All creators";
-            icon: Icons.arrow-left;
-            size: sm;
-            variant: ghost-muted;
-            clicked => {
-                CollectorBus.back();
-            }
-        }
-    }
-    Card {
-        VerticalLayout {
-            padding: 16px;
-            spacing: 14px;
-            HorizontalLayout {
-                spacing: 14px;
-                VerticalLayout {
-                    alignment: center;
-                    Avatar {
-                        size: 56px;
-                        initials: CollectorBus.d-initials;
-                        color: CollectorBus.d-color;
-                        photo: CollectorBus.d-avatar;
-                        has-photo: CollectorBus.d-has-avatar;
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 4px;
-                    horizontal-stretch: 1;
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text {
-                            text: CollectorBus.d-name;
-                            font-size: 18px;
-                            font-weight: 600;
-                            color: Theme.fg;
-                            overflow: elide;
-                            horizontal-stretch: 0;
-                            max-width: self.preferred-width;
-                        }
-                        VerticalLayout {
-                            alignment: center;
-                            Tag {
-                                text: CollectorBus.d-platform;
-                            }
-                        }
-                        if CollectorBus.d-contacted != "": VerticalLayout {
-                            alignment: center;
-                            Tag {
-                                text: CollectorBus.d-contacted;
-                                bg: Theme.green-200;
-                                fg: Theme.green-900;
-                            }
-                        }
-                        Rectangle {
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    Muted {
-                        text: CollectorBus.d-sub;
-                        overflow: elide;
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    HorizontalLayout {
-                        spacing: 6px;
-                        Btn {
-                            icon: Icons.external;
-                            size: icon;
-                            variant: ghost-muted;
-                            tip: "Open their profile";
-                            clicked => {
-                                CollectorBus.open(CollectorBus.d-url);
-                            }
-                        }
-                        Btn {
-                            text: CollectorBus.d-refreshing ? "Updating…" : "Update now";
-                            icon: Icons.refresh;
-                            size: sm;
-                            variant: outline;
-                            enabled: !CollectorBus.d-refreshing;
-                            clicked => {
-                                CollectorBus.refresh-one();
-                            }
-                        }
-                        Btn {
-                            text: "Send message";
-                            icon: Icons.send;
-                            size: sm;
-                            variant: primary;
-                            clicked => {
-                                CollectorBus.send-show();
-                            }
-                        }
-                    }
-                }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                for s in CollectorBus.d-stats: Well {
-                    horizontal-stretch: 1;
-                    VerticalLayout {
-                        padding: 10px;
-                        spacing: 2px;
-                        Text {
-                            text: s.value;
-                            font-size: 16px;
-                            font-weight: 600;
-                            color: Theme.fg;
-                        }
-                        Muted {
-                            text: s.label;
-                        }
-                    }
-                }
-            }
-            if CollectorBus.d-desc != "": Text {
-                text: CollectorBus.d-desc;
-                font-size: Ds.t-sm;
-                color: Theme.gray-1000;
-                wrap: word-wrap;
-            }
-        }
-    }
-    SectionTitle {
-        text: "EMAIL";
-    }
-    Card {
-        VerticalLayout {
-            padding: 14px;
-            spacing: 8px;
-            HorizontalLayout {
-                spacing: 8px;
-                Glyph {
-                    icon: Icons.at-sign;
-                    size: 14px;
-                    color: CollectorBus.d-email != "" ? Theme.fg : Theme.gray-700;
-                }
-                Text {
-                    text: CollectorBus.d-email != "" ? CollectorBus.d-email : "No email found yet";
-                    font-size: Ds.t-body;
-                    font-weight: CollectorBus.d-email != "" ? 500 : 400;
-                    color: CollectorBus.d-email != "" ? Theme.fg : Theme.gray-800;
-                    horizontal-stretch: 0;
-                    max-width: self.preferred-width;
-                }
-                if CollectorBus.d-email-source != "": VerticalLayout {
-                    alignment: center;
-                    Tag {
-                        text: CollectorBus.d-email-manual ? "typed" : "found in " + CollectorBus.d-email-source;
-                        bg: CollectorBus.d-email-manual ? Theme.gray-200 : Theme.blue-200;
-                        fg: CollectorBus.d-email-manual ? Theme.gray-1000 : Theme.blue-900;
-                    }
-                }
-                Rectangle {
-                    horizontal-stretch: 1;
-                }
-            }
-            HorizontalLayout {
-                spacing: 8px;
+            if root.editing: HorizontalLayout {
+                spacing: 6px;
                 Input {
                     horizontal-stretch: 1;
-                    text <=> CollectorBus.d-email-edit;
-                    hint: "Type or correct their email";
+                    text <=> CollectorBus.email-text;
+                    hint: "name@example.com";
+                    init => {
+                        self.focus-end();
+                    }
                     accepted => {
                         CollectorBus.email-save();
                     }
@@ -899,180 +507,121 @@ component Detail inherits VerticalLayout {
                     text: "Save";
                     size: sm;
                     variant: outline;
-                    enabled: CollectorBus.d-email-edit != CollectorBus.d-email;
                     clicked => {
                         CollectorBus.email-save();
                     }
                 }
-            }
-            Muted {
-                text: CollectorBus.d-email-manual ? "Typed by hand: the daily update won't replace it. Clear it to let Collector look again." : "Found in their bio, link-in-bio pages or website. YouTube's own business email sits behind a sign-in and a captcha, so it isn't read.";
-                wrap: word-wrap;
-            }
-            if CollectorBus.d-whatsapp != "": HorizontalLayout {
-                spacing: 8px;
-                alignment: start;
-                Glyph {
-                    icon: Icons.message;
-                    size: 14px;
-                    color: Theme.fg;
-                }
-                Text {
-                    text: "WhatsApp +" + CollectorBus.d-whatsapp;
-                    font-size: Ds.t-sm;
-                    color: Theme.fg;
-                }
-            }
-        }
-    }
-    SectionTitle {
-        text: "LINKS · " + CollectorBus.d-links.length;
-    }
-    Card {
-        VerticalLayout {
-            padding: 6px;
-            spacing: 0px;
-            if CollectorBus.d-links.length == 0: Muted {
-                text: "No links in their bio.";
-            }
-            for l in CollectorBus.d-links: Rectangle {
-                height: 36px;
-                border-radius: Ds.radius-md;
-                background: la.has-hover ? Theme.accent : transparent;
-                la := TipArea {
-                    mouse-cursor: pointer;
-                    tip: l.url;
+                Btn {
+                    text: "Cancel";
+                    size: sm;
+                    variant: ghost-muted;
                     clicked => {
-                        CollectorBus.open(l.url);
-                    }
-                }
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    spacing: 10px;
-                    Glyph {
-                        icon: l.kind == "website" ? Icons.globe : Icons.link;
-                        size: 13px;
-                        color: Theme.subtle;
-                    }
-                    Text {
-                        width: 110px;
-                        text: l.label;
-                        font-size: Ds.t-sm;
-                        font-weight: 500;
-                        color: Theme.fg;
-                        overflow: elide;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: l.short;
-                        font-size: Ds.t-sm;
-                        color: Theme.gray-900;
-                        overflow: elide;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    if l.source != "": Text {
-                        text: "from " + l.source;
-                        font-size: Ds.t-meta;
-                        color: Theme.gray-800;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        max-width: 200px;
+                        CollectorBus.email-cancel();
                     }
                 }
             }
         }
-    }
-    SectionTitle {
-        text: "UPDATES";
-    }
-    Card {
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: end;
+            for v in root.r.videos: VerticalLayout {
+                alignment: center;
+                Thumb {
+                    v: v;
+                }
+            }
+        }
         VerticalLayout {
-            padding: 14px;
-            spacing: 10px;
-            HorizontalLayout {
-                spacing: 8px;
-                Glyph {
-                    icon: CollectorBus.d-update-error != "" ? Icons.alert : Icons.clock;
-                    size: 14px;
-                    color: CollectorBus.d-update-error != "" ? Theme.amber-800 : Theme.subtle;
-                }
-                Text {
-                    text: CollectorBus.d-update-error != "" ? CollectorBus.d-update-error : CollectorBus.d-updated;
-                    font-size: Ds.t-sm;
-                    color: Theme.fg;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+            Btn {
+                text: root.r.restricted ? "Unrestrict" : "Restrict";
+                icon: root.r.restricted ? Icons.rotate-cw : Icons.circle-slash;
+                size: sm;
+                variant: ghost-muted;
+                tip: root.r.restricted ? "Back to Available" : "Keep out of Available (still never collected again)";
+                clicked => {
+                    CollectorBus.restrict(root.r.id, !root.r.restricted);
                 }
             }
-            if CollectorBus.d-history.length == 0: Muted {
-                text: "No changes since they were collected. Each daily update writes down what changed (subscribers, videos, last upload, bio, links, email).";
-                wrap: word-wrap;
-            }
-            for h in CollectorBus.d-history: HorizontalLayout {
-                spacing: 12px;
-                Text {
-                    width: 150px;
-                    text: h.when;
-                    font-size: Ds.t-meta;
-                    color: Theme.gray-800;
-                }
-                Text {
-                    text: h.changes;
-                    font-size: Ds.t-sm;
-                    color: Theme.fg;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
+            Btn {
+                text: "Send";
+                icon: Icons.send;
+                size: sm;
+                variant: ghost-muted;
+                tip: "Send message… (Gmail or WhatsApp; adds them to Persons › Creators)";
+                clicked => {
+                    CollectorBus.send-show(root.r.id);
                 }
             }
         }
-    }
-    if CollectorBus.d-recent.length > 0: SectionTitle {
-        text: "LATEST UPLOADS";
-    }
-    if CollectorBus.d-recent.length > 0: Card {
-        VerticalLayout {
-            padding: 6px;
-            for v in CollectorBus.d-recent: Rectangle {
-                height: 34px;
-                border-radius: Ds.radius-md;
-                background: va.has-hover ? Theme.accent : transparent;
-                va := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
-                        CollectorBus.open(v.url);
-                    }
-                }
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    spacing: 10px;
-                    Text {
-                        text: v.title != "" ? v.title : v.url;
-                        font-size: Ds.t-sm;
-                        color: Theme.fg;
-                        overflow: elide;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: v.views != "" ? v.when + " · " + v.views : v.when;
-                        font-size: Ds.t-meta;
-                        color: Theme.gray-800;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-    }
-    Muted {
-        text: CollectorBus.d-found;
     }
 }
 
-/** Send message: a template (the CRM's outreach emails), the channel (Persons › Creators' Gmail or WhatsApp), the
- * message to edit, and Send, which asks once more: it's a real message. */
+/** The leads of a view, or its empty state. */
+component Leads inherits VerticalLayout {
+    spacing: 8px;
+    if CollectorBus.rows-head != "": HorizontalLayout {
+        padding-top: 2px;
+        CapsLabel {
+            text: CollectorBus.rows-head;
+        }
+    }
+    for r in CollectorBus.rows: LeadCard {
+        r: r;
+    }
+    if CollectorBus.rows.length == 0 && CollectorBus.empty-title != "": Empty {
+        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : Icons.users;
+        title: CollectorBus.empty-title;
+        desc: CollectorBus.empty-desc;
+    }
+}
+
+/** Available and Restricted: the one filter box, then the leads. */
+component ListScreen inherits VerticalLayout {
+    spacing: 14px;
+    Rectangle {
+        height: 34px;
+        border-radius: Ds.radius-md;
+        border-width: 1px;
+        border-color: search.focused ? Theme.gray-1000 : Theme.border;
+        search := SearchField {
+            x: 8px;
+            width: parent.width - 16px;
+            y: 1px;
+            hint: "Filter by name, handle, email or platform";
+            text <=> CollectorBus.filter;
+            edited(t) => {
+                CollectorBus.filter-edited(t);
+            }
+        }
+    }
+    Leads { }
+}
+
+/** Collector: the form, the run's one line, the leads it found. */
+component CollectScreen inherits VerticalLayout {
+    spacing: 14px;
+    Controls { }
+    if CollectorBus.run-line != "": HorizontalLayout {
+        spacing: 8px;
+        padding-left: 4px;
+        if CollectorBus.running: VerticalLayout {
+            alignment: center;
+            Spinner { }
+        }
+        Text {
+            text: CollectorBus.run-line;
+            font-size: 13px;
+            color: CollectorBus.running ? Theme.fg : Theme.subtle;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    Leads { }
+}
+
 component SendDialog inherits DialogFrame {
     title: CollectorBus.s-confirm ? "Send it?" : CollectorBus.s-title;
     text: CollectorBus.s-confirm ? CollectorBus.s-confirm-text : "";
@@ -1246,6 +795,35 @@ component SendDialog inherits DialogFrame {
     }
 }
 
+
+/** One scrolling column (a fresh one per view: switching views starts at the top). */
+component Column inherits Rectangle {
+    in property <length> col-w;
+    in property <length> col-x;
+    f := Flickable {
+        width: parent.width;
+        height: parent.height;
+        content-height: inner.preferred-height + 40px;
+        inner := VerticalLayout {
+            x: root.col-x;
+            y: Ds.sp8;
+            width: root.col-w;
+            @children
+        }
+    }
+    ScrollThumb {
+        x: parent.width - self.width;
+        y: 0;
+        height: parent.height;
+        content-y: f.content-y;
+        content-height: f.content-height;
+        visible-height: f.height;
+        scroll-to(v) => {
+            f.content-y = v;
+        }
+    }
+}
+
 export component CollectorPage {
     /** The sidebar's width: Projects' (app.slint side-shown), so the header's buttons sit where they do there. */
     in property <length> side-w: Ds.side-w;
@@ -1260,60 +838,29 @@ export component CollectorPage {
     }
     property <length> main-x: CollectorBus.side-hidden ? 0px : root.side-w;
     property <length> main-w: root.width - main-x;
-    property <length> col-w: min(Ds.page-max-w + 120px, main-w - 2 * Ds.page-pad);
+    property <length> col-w: min(Ds.page-max-w + 160px, main-w - 2 * Ds.page-pad);
     property <length> col-x: (main-w - col-w) / 2;
-    property <int> count: CollectorBus.n-creators;
     bar := PageBar {
         x: root.main-x;
         y: 0;
         width: root.main-w;
         side-hidden: CollectorBus.side-hidden;
-        icon: Icons.users;
+        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : Icons.circle-slash;
         section: "Collector";
-        title: CollectorBus.view == "creator" ? CollectorBus.d-name : "Creators";
-        sub: CollectorBus.view == "creator" ? CollectorBus.d-platform : root.count == 0 ? "" : root.count + (root.count == 1 ? " creator" : " creators");
+        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : "Restricted";
+        sub: CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
         show-side => {
             CollectorBus.side-hidden = false;
         }
-        HorizontalLayout {
-            spacing: 6px;
-            Btn {
-                text: CollectorBus.copy-label;
-                icon: Icons.copy;
-                size: sm;
-                variant: outline;
-                enabled: root.count > 0;
-                tip: "JSONL, one creator per line (with the email): paste it in SpokPayCRM → Creators → Import";
-                clicked => {
-                    CollectorBus.copy();
-                }
-            }
-            if !CollectorBus.confirm-clear: Btn {
-                text: "Clear";
-                icon: Icons.trash;
-                size: sm;
-                variant: ghost-muted;
-                enabled: root.count > 0 && !CollectorBus.running;
-                tip: "Empty the list. They stay remembered, so later runs won't collect them again.";
-                clicked => {
-                    CollectorBus.clear-ask(true);
-                }
-            }
-            if CollectorBus.confirm-clear: Btn {
-                text: "Clear " + root.count + "?";
-                size: sm;
-                variant: destructive;
-                clicked => {
-                    CollectorBus.clear();
-                }
-            }
-            if CollectorBus.confirm-clear: Btn {
-                text: "Keep";
-                size: sm;
-                variant: ghost-muted;
-                clicked => {
-                    CollectorBus.clear-ask(false);
-                }
+        if CollectorBus.page == "available": Btn {
+            text: CollectorBus.copy-label;
+            icon: Icons.copy;
+            size: sm;
+            variant: outline;
+            enabled: CollectorBus.n-available > 0;
+            tip: "The Available leads as JSONL, one per line (with the email): paste it in SpokPayCRM → Creators → Import";
+            clicked => {
+                CollectorBus.copy();
             }
         }
     }
@@ -1326,77 +873,32 @@ export component CollectorPage {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    if !CollectorBus.loading && CollectorBus.view == "list": Rectangle {
-        x: main-x;
-        y: top;
-        width: main-w;
-        height: root.height - top;
-        page := Flickable {
-            width: parent.width;
-            height: parent.height;
-            content-height: screen.preferred-height + 40px;
-            screen := VerticalLayout {
-                x: col-x;
-                y: Ds.sp8;
-                width: col-w;
-                spacing: 14px;
-                Controls { }
-                if CollectorBus.has-run: Progress { }
-                if root.count > 0: Daily { }
-                if CollectorBus.rows.length > 0: SectionTitle {
-                    text: "COLLECTED CREATORS";
-                }
-                if CollectorBus.rows.length > 0: VerticalLayout {
-                    spacing: 0px;
-                    for r in CollectorBus.rows: ResultRow {
-                        r: r;
-                    }
-                }
-                if CollectorBus.rows.length == 0 && !CollectorBus.running: Empty {
-                    icon: Icons.users;
-                    title: root.count == 0 ? "No creators yet" : "Nobody here";
-                    desc: CollectorBus.list-empty;
-                }
-            }
-        }
-        ScrollThumb {
-            x: parent.width - self.width;
-            y: 0;
-            height: parent.height;
-            content-y: page.content-y;
-            content-height: page.content-height;
-            visible-height: page.height;
-            scroll-to(v) => {
-                page.content-y = v;
-            }
-        }
+    if !CollectorBus.loading && CollectorBus.page == "collector": Column {
+        x: root.main-x;
+        y: root.top;
+        width: root.main-w;
+        height: root.height - root.top;
+        col-w: root.col-w;
+        col-x: root.col-x;
+        CollectScreen { }
     }
-    if !CollectorBus.loading && CollectorBus.view == "creator": Rectangle {
-        x: main-x;
-        y: top;
-        width: main-w;
-        height: root.height - top;
-        dpage := Flickable {
-            width: parent.width;
-            height: parent.height;
-            content-height: dscreen.preferred-height + 40px;
-            dscreen := Detail {
-                x: col-x;
-                y: Ds.sp8;
-                width: col-w;
-            }
-        }
-        ScrollThumb {
-            x: parent.width - self.width;
-            y: 0;
-            height: parent.height;
-            content-y: dpage.content-y;
-            content-height: dpage.content-height;
-            visible-height: dpage.height;
-            scroll-to(v) => {
-                dpage.content-y = v;
-            }
-        }
+    if !CollectorBus.loading && CollectorBus.page == "available": Column {
+        x: root.main-x;
+        y: root.top;
+        width: root.main-w;
+        height: root.height - root.top;
+        col-w: root.col-w;
+        col-x: root.col-x;
+        ListScreen { }
+    }
+    if !CollectorBus.loading && CollectorBus.page == "restricted": Column {
+        x: root.main-x;
+        y: root.top;
+        width: root.main-w;
+        height: root.height - root.top;
+        col-w: root.col-w;
+        col-x: root.col-x;
+        ListScreen { }
     }
     if CollectorBus.send-open: SendDialog {
         width: root.width;

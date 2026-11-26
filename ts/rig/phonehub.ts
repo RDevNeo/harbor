@@ -67,12 +67,12 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
 mkdirSync(join(dir, "home", ".opencode", "bin"), { recursive: true });
 writeFileSync(join(dir, "home", ".opencode", "bin", "opencode"), '#!/bin/sh\n[ "$1" = models ] && printf "nvidia/z-ai/glm-5.3-flash\\nopencode/big-pickle\\nopenrouter/qwen/qwen3-coder\\n"\nexit 0\n', { mode: 0o755 });
 
-// Collector: made-up creators from YouTube, TikTok and Instagram (emails, links, a daily update's changes), a run under
+// Collector: made-up leads from YouTube, TikTok and Instagram (emails, video thumbnails, two Restricted), a run under
 // way (HUB_COLLECTOR_OFFLINE keeps its "running"); HUB_COLLECTOR_SEND=fake: Send message records, never sends.
 {
   const cdir = join(dir, "collector");
   Object.assign(process.env, { HUB_COLLECTOR_DIR: cdir, HUB_COLLECTOR_OFFLINE: "1", HUB_COLLECTOR_SEND: "fake" });
-  await writeCollectorFixture(cdir, { running: process.env.HUB_RIG_COLLECTOR !== "idle", refreshing: process.env.HUB_RIG_COLLECTOR !== "idle" });
+  await writeCollectorFixture(cdir, { running: process.env.HUB_RIG_COLLECTOR !== "idle" });
 }
 
 // Imported after the environment is set: the store reads its folders when loaded.

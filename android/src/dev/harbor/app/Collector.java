@@ -4,7 +4,6 @@ import android.content.Context;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
-import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
@@ -12,9 +11,10 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -22,26 +22,31 @@ import org.json.JSONObject;
 
 import java.net.URLEncoder;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
-/** Hub's Collector tab (the Lead Collector userscript, moved into Hub): finds creators on YouTube, TikTok and
- *  Instagram, remembers everyone it ever kept (never collected twice), updates them once a day, and writes to them
- *  through Persons › Creators. The sweeps run on the PC (Hub's engine, ts/tabs/collector): this screen draws
- *  GET /v1/collector, as the PC's window does, and sends each change there; Copy puts the same JSONL on the phone's
- *  clipboard. A creator's screen and Send message (CollectorCreator) open over it, without the tab bar; Back closes
- *  them. */
+/** Hub's Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Three views under the title,
+ *  picked with chips: Collector (the search form, one line while a run goes, the leads it found), Available (every
+ *  lead not Restricted, with one filter box) and Restricted. A lead is a card: picture, name, platform, handle and
+ *  profile link, email (tap to type one), the 3 newest videos (tap opens), Send message (adds them to Persons ›
+ *  Creators) and Restrict / Unrestrict. The runs happen on the PC (Hub's engine, ts/tabs/collector): this screen
+ *  draws GET /v1/collector, as the PC's window does, and sends each change there. Send message
+ *  (CollectorCreator.Compose) opens over the tab, without the tab bar; Back closes it. */
 public class Collector extends Base {
-    private LinearLayout counts, form, run, daily, actions, list;
-    private EditText query, target, cookie;
+    private LinearLayout segs, form, runRow, list;
+    private EditText query, target, cookie, filter;
     private JSONObject view;
-    private boolean loading, logOpen, confirmClear;
+    private boolean loading;
     private String formSig = "", note = "";
+    /** The view on screen: "collector", "available" or "restricted". */
+    private String sel = "collector";
     private long typed;
-    /** The screens open over the tab (a creator, Send message), the top one last. */
+    /** The screens open over the tab (Send message), the top one last. */
     private final List<Screen> stack = new ArrayList<>();
     private final Runnable poll = new Runnable() {
-        @Override public void run() { if (front && busy()) load(); }
+        @Override public void run() { if (front && running()) load(); }
     };
 
     /** A screen over the tab: its view, and what it does when it shows again. */
@@ -54,37 +59,41 @@ public class Collector extends Base {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         hub = Tabs.hub(this);
+        String p = getIntent().getStringExtra("page");
+        if ("available".equals(p) || "restricted".equals(p)) sel = p;
         LinearLayout col = Ui.col(this);
         LinearLayout top = Ui.col(this);
         top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(2));
         top.addView(Ds.pageTitle(this, "Collector"), Ui.fill());
-        counts = Ui.row(this);
-        top.addView(counts, Ui.fill());
+        segs = Ui.row(this);
+        segs.setPadding(0, Ui.dp(8), 0, Ui.dp(6));
+        top.addView(segs, Ui.fill());
         col.addView(top, Ui.fill());
         ScrollView scroll = new ScrollView(this);
         LinearLayout body = Ui.col(this);
         body.setPadding(Ui.dp(16), Ui.dp(6), Ui.dp(16), Ui.dp(24));
         form = Ui.col(this);
-        run = Ui.col(this);
-        daily = Ui.col(this);
-        actions = Ui.row(this);
+        runRow = Ui.row(this);
+        filter = Ui.input(this, "Filter by name, handle, email or platform", false);
+        filter.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        filter.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable e) { if (filter.hasFocus()) drawList(); }
+        });
         list = Ui.col(this);
         body.addView(form, Ui.fill());
-        body.addView(run, Ui.fill());
-        body.addView(daily, Ui.fill());
-        body.addView(actions, Ui.fill());
+        body.addView(runRow, Ui.fill());
+        body.addView(filter, Ui.margins(Ui.fill(), 0, 4, 0, 10));
         body.addView(list, Ui.fill());
         scroll.addView(body);
         col.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         page = Tabs.around(this, col, Tabs.COLLECTOR);
         setContentView(page);
         draw();
-        // A creator (and its Send message) opened straight away: the phone screenshot rig (screen:collector-creator).
+        // Send message opened straight away: the phone screenshot rig (screen:collector-send).
         String c = getIntent().getStringExtra("creator");
-        if (c != null && !c.isEmpty()) {
-            if (getIntent().getBooleanExtra("send", false)) push(new CollectorCreator.Compose(this, c, getIntent().getStringExtra("name")));
-            else openCreator(c);
-        }
+        if (c != null && !c.isEmpty() && getIntent().getBooleanExtra("send", false)) push(new CollectorCreator.Compose(this, c, getIntent().getStringExtra("name")));
     }
 
     @Override
@@ -143,14 +152,6 @@ public class Collector extends Base {
         return r != null && r.optBoolean("running");
     }
 
-    private boolean refreshing() {
-        JSONObject r = view == null ? null : view.optJSONObject("refresh");
-        return r != null && r.optBoolean("running");
-    }
-
-    /** Something moves on the PC (a run, the daily update): the screen asks again every 1.5 s. */
-    private boolean busy() { return running() || refreshing(); }
-
     void load() {
         if (hub == null) { draw(); return; }
         if (loading) return;
@@ -208,37 +209,43 @@ public class Collector extends Base {
     // ---------- the screen ----------
 
     private void draw() {
-        counts.removeAllViews();
-        run.removeAllViews();
-        daily.removeAllViews();
-        actions.removeAllViews();
-        list.removeAllViews();
+        segs.removeAllViews();
+        runRow.removeAllViews();
+        boolean lists = !"collector".equals(sel);
+        form.setVisibility(lists ? View.GONE : View.VISIBLE);
+        filter.setVisibility(lists && view != null ? View.VISIBLE : View.GONE);
         if (hub == null || view == null) {
             form.removeAllViews();
             formSig = "";
             cookie = null;
+            list.removeAllViews();
             list.addView(Ds.empty(this, hub == null ? "Pair this phone with a PC to use Collector." : note.isEmpty() ? "Loading…" : note), Ui.fill());
             return;
         }
         JSONObject c = view.optJSONObject("counts");
-        int n = c == null ? 0 : c.optInt("creators");
-        if (c != null) {
-            List<String> parts = new ArrayList<>();
-            parts.add(n + (n == 1 ? " creator" : " creators"));
-            if (c.optInt("emails") > 0) parts.add(c.optInt("emails") + " with email");
-            if (c.optInt("contacted") > 0) parts.add(c.optInt("contacted") + " contacted");
-            if (c.optInt("remembered") > 0) parts.add(c.optInt("remembered") + " remembered");
-            TextView t = Ui.text(this, TextUtils.join(" · ", parts), 13, Ui.G700);
-            t.setPadding(0, Ui.dp(2), 0, Ui.dp(4));
-            counts.addView(t, Ui.weight());
+        int avail = c == null ? 0 : c.optInt("available"), restr = c == null ? 0 : c.optInt("restricted");
+        seg("collector", running() ? "Collector · running" : "Collector");
+        seg("available", "Available" + (avail > 0 ? " " + avail : ""));
+        seg("restricted", "Restricted" + (restr > 0 ? " " + restr : ""));
+        if (!lists) {
+            drawForm();
+            drawRun();
         }
-        drawForm();
-        drawRun();
-        drawDaily(n);
-        drawActions(n);
-        drawRows();
+        drawList();
         Ui.main.removeCallbacks(poll);
-        if (busy()) Ui.main.postDelayed(poll, 1500);
+        if (running()) Ui.main.postDelayed(poll, 1500);
+    }
+
+    /** One of the three views; a tap shows it. */
+    private void seg(String id, String label) {
+        LinearLayout.LayoutParams lp = Ui.wrap();
+        lp.rightMargin = Ui.dp(6);
+        segs.addView(Ds.chip(this, label, id.equals(sel), v -> {
+            if (id.equals(sel)) return;
+            sel = id;
+            hideKeyboard();
+            draw();
+        }), lp);
     }
 
     /** The form: rebuilt only when what it shows changes (so typing keeps its field). */
@@ -296,7 +303,7 @@ public class Collector extends Base {
         if (!pickedNote.isEmpty()) card.addView(pad(Ui.text(this, pickedNote, 12.5f, Ui.G600), 6), Ui.fill());
         if ("instagram".equals(picked) && ig != null) card.addView(sessionCard(ig, going), Ui.margins(Ui.fill(), 0, 8, 0, 2));
         card.addView(pad(Ui.text(this, "Search term", 13, Ui.G700), 12), Ui.fill());
-        query = Ui.input(this, "e.g. blox fruits brasil", false);
+        query = Ui.input(this, "e.g. dress to impress", false);
         query.setText(qv);
         query.setEnabled(!going);
         query.setImeOptions(EditorInfo.IME_ACTION_GO);
@@ -307,10 +314,10 @@ public class Collector extends Base {
         tr.setGravity(Gravity.CENTER_VERTICAL);
         tr.setPadding(0, Ui.dp(10), 0, 0);
         LinearLayout tl = Ui.col(this);
-        tl.addView(Ui.text(this, "Target", 14, Ui.G700), Ui.wrap());
-        tl.addView(Ui.text(this, "New creators to find; empty = all", 12, Ui.G600), Ui.wrap());
+        tl.addView(Ui.text(this, "Leads", 14, Ui.G700), Ui.wrap());
+        tl.addView(Ui.text(this, "New leads to find; empty = all", 12, Ui.G600), Ui.wrap());
         tr.addView(tl, Ui.weight());
-        tr.addView(Ui.rowButton(this, "−", false, going ? null : v -> step(-10)));
+        tr.addView(Ui.rowButton(this, "−", false, going ? null : v -> step(-5)));
         target = Ui.input(this, "All", false);
         target.setInputType(InputType.TYPE_CLASS_NUMBER);
         target.setGravity(Gravity.CENTER);
@@ -321,7 +328,7 @@ public class Collector extends Base {
         tlp.leftMargin = Ui.dp(6);
         tlp.rightMargin = Ui.dp(6);
         tr.addView(target, tlp);
-        tr.addView(Ui.rowButton(this, "+", false, going ? null : v -> step(10)));
+        tr.addView(Ui.rowButton(this, "+", false, going ? null : v -> step(5)));
         card.addView(tr, Ui.fill());
         card.addView(pad(Ui.text(this, "Last upload", 13, Ui.G700), 12), Ui.fill());
         HorizontalScrollView gs = new HorizontalScrollView(this);
@@ -338,7 +345,7 @@ public class Collector extends Base {
         }
         gs.addView(gaps);
         card.addView(gs, Ui.fill());
-        TextView go = going ? stopButton(this, "Stop", v -> post("stop")) : Ui.button(this, "Start", true, v -> start());
+        TextView go = going ? stopButton(this, "Stop", v -> post("stop")) : Ui.button(this, "Collect", true, v -> start());
         LinearLayout.LayoutParams gl = Ui.fill();
         gl.topMargin = Ui.dp(14);
         card.addView(go, gl);
@@ -421,234 +428,154 @@ public class Collector extends Base {
         post("settings", "target", next);
     }
 
-    /** The run: what's going (or went), its clock, found / target, passed over, the log's tail. */
+    /** The run's one line: found so far and what it does while it goes; how it ended after. */
     private void drawRun() {
         JSONObject r = view.optJSONObject("run");
         if (r == null) return;
         boolean going = r.optBoolean("running");
-        LinearLayout card = Ds.card(this);
-        LinearLayout head = Ui.row(this);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = Ui.bold(this, r.optString("label") + " · “" + r.optString("query") + "”", 15, Ui.FG);
-        Ui.subtitle(title);
-        head.addView(title, Ui.weight());
-        head.addView(Ui.text(this, clock(r.optInt("elapsed")), 13, Ui.G700));
-        card.addView(head, Ui.fill());
-        int found = r.optInt("found"), tgt = r.optInt("target");
-        float frac = tgt > 0 ? Math.min(1f, found / (float) tgt) : going ? 0f : 1f;
-        card.addView(bar(this, frac, going), barLp());
-        String status = tgt > 0 ? found + " of " + tgt + " creators" : found + (found == 1 ? " creator" : " creators");
-        card.addView(Ui.text(this, status, 13.5f, Ui.FG), Ui.fill());
-        List<String> meta = new ArrayList<>();
-        if (r.optInt("considered") > 0) meta.add(r.optInt("considered") + " checked");
-        if (r.optInt("dropped") > 0) meta.add(r.optInt("dropped") + " dropped");
-        if (r.optInt("known") > 0) meta.add(r.optInt("known") + " passed over (seen before)");
-        if (!meta.isEmpty()) card.addView(Ui.text(this, TextUtils.join(" · ", meta), 12.5f, Ui.G700), Ui.fill());
-        String st = r.optString("status");
-        if (!st.isEmpty()) card.addView(pad(Ui.text(this, st, 12.5f, Ui.G600), 2), Ui.fill());
-        LinearLayout tg = Ui.row(this);
-        TextView toggle = Ui.text(this, logOpen ? "Hide log" : "Show log", 13, Ui.FG);
-        toggle.setPadding(0, Ui.dp(10), Ui.dp(16), Ui.dp(4));
-        toggle.setOnClickListener(v -> { logOpen = !logOpen; draw(); });
-        tg.addView(toggle, Ui.wrap());
-        if (logOpen && !going) {
-            TextView cl = Ui.text(this, "Clear log", 13, Ui.G700);
-            cl.setPadding(0, Ui.dp(10), 0, Ui.dp(4));
-            cl.setOnClickListener(v -> post("clear-log"));
-            tg.addView(cl, Ui.wrap());
-        }
-        card.addView(tg, Ui.fill());
-        if (logOpen) {
-            JSONArray log = view.optJSONArray("log");
-            int from = log == null ? 0 : Math.max(0, log.length() - 40);
-            for (int i = from; log != null && i < log.length(); i++) {
-                JSONObject l = log.optJSONObject(i);
-                if (l == null) continue;
-                String tone = l.optString("tone");
-                TextView t = Ui.text(this, l.optString("text"), 11.5f, "ok".equals(tone) ? Ui.GREEN : "error".equals(tone) ? Ui.RED : "info".equals(tone) ? Ui.FG : Ui.G600);
-                t.setTypeface(android.graphics.Typeface.MONOSPACE);
-                card.addView(t, Ui.fill());
-            }
-        }
-        LinearLayout.LayoutParams cl = Ui.fill();
-        cl.topMargin = Ui.dp(12);
-        run.addView(card, cl);
-    }
-
-    /** The daily update: on/off, how far it is, when it ran and runs next, Update all now / Stop. */
-    private void drawDaily(int n) {
-        JSONObject r = view.optJSONObject("refresh");
-        if (r == null) return;
-        boolean going = r.optBoolean("running");
-        LinearLayout card = Ds.card(this);
-        LinearLayout head = Ui.row(this);
-        LinearLayout ht = Ui.col(this);
-        ht.addView(Ui.bold(this, "Daily update", 15, Ui.FG), Ui.wrap());
-        ht.addView(Ui.text(this, "Stats, links and emails of everyone collected, once a day", 12.5f, Ui.G600), Ui.wrap());
-        head.addView(ht, Ui.weight());
-        Switch sw = new Switch(this);
-        sw.setChecked(r.optBoolean("daily"));
-        sw.setOnCheckedChangeListener((b, on) -> post("settings", "daily", on));
-        sw.setContentDescription("Daily update");
-        head.addView(sw);
-        card.addView(head, Ui.fill());
+        runRow.setGravity(Gravity.CENTER_VERTICAL);
+        runRow.setPadding(Ui.dp(4), Ui.dp(12), Ui.dp(4), Ui.dp(4));
         if (going) {
-            int done = r.optInt("done"), total = r.optInt("total");
-            card.addView(bar(this, total > 0 ? Math.min(1f, done / (float) total) : 0f, true), barLp());
-            List<String> p = new ArrayList<>();
-            p.add(done + " of " + total + " updated");
-            if (r.optInt("changed") > 0) p.add(r.optInt("changed") + " changed");
-            if (r.optInt("failed") > 0) p.add(r.optInt("failed") + " failed");
-            card.addView(Ui.text(this, TextUtils.join(" · ", p), 13.5f, Ui.FG), Ui.fill());
+            ProgressBar pb = new ProgressBar(this);
+            pb.setIndeterminate(true);
+            runRow.addView(pb, new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
         }
-        String st = r.optString("status");
-        if (!st.isEmpty()) card.addView(pad(Ui.text(this, st, 13, Ui.G700), 8), Ui.fill());
-        List<String> when = new ArrayList<>();
-        if (!r.optString("last").isEmpty()) when.add("Last full update " + r.optString("last"));
-        if (r.optBoolean("daily") && !r.optString("next").isEmpty()) when.add("next " + r.optString("next"));
-        if (r.optInt("due") > 0) when.add(r.optInt("due") + " due");
-        if (!r.optBoolean("daily")) when.add("Off: nobody is updated by itself");
-        if (!when.isEmpty()) card.addView(pad(Ui.text(this, TextUtils.join(" · ", when), 12.5f, Ui.G600), 4), Ui.fill());
-        TextView b = going ? stopButton(this, "Stop", v -> post("refresh", "stop", true))
-                : Ui.button(this, "Update all now", false, n == 0 ? null : v -> post("refresh"));
-        if (!going && n == 0) b.setAlpha(0.5f);
-        card.addView(b, Ui.margins(Ui.fill(), 0, 10, 0, 0));
-        LinearLayout.LayoutParams cl = Ui.fill();
-        cl.topMargin = Ui.dp(12);
-        daily.addView(card, cl);
+        int found = r.optInt("found"), tgt = r.optInt("target");
+        String line = going ? (tgt > 0 ? found + " of " + tgt : found + " found") + " · " + (r.optString("line").isEmpty() ? "Searching…" : r.optString("line")) : r.optString("status");
+        TextView t = Ui.subtitle(Ui.text(this, line, 13, going ? Ui.FG : Ui.G600));
+        t.setPadding(going ? Ui.dp(8) : 0, 0, 0, 0);
+        runRow.addView(t, Ui.weight());
     }
 
-    private void drawActions(int n) {
-        if (n == 0) return;
-        actions.setPadding(0, Ui.dp(16), 0, Ui.dp(4));
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        TextView head = Ds.caps(this, n + (n == 1 ? " CREATOR" : " CREATORS"), false);
-        head.setPadding(Ui.dp(4), 0, 0, 0);
-        actions.addView(head, Ui.weight());
-        actions.addView(Ui.rowButton(this, "Copy JSONL", true, v -> copy()));
-        LinearLayout.LayoutParams lp = Ui.wrap();
-        lp.leftMargin = Ui.dp(6);
-        TextView clear = Ui.rowButton(this, confirmClear ? "Clear " + n + "?" : "Clear", false, running() ? null : v -> {
-            if (!confirmClear) {
-                confirmClear = true;
-                draw();
-                Ui.main.postDelayed(() -> { if (confirmClear) { confirmClear = false; draw(); } }, 5000);
-                return;
+    /** The leads of the view: the run's on Collector, Available's or Restricted's (filtered) on the others. */
+    private void drawList() {
+        list.removeAllViews();
+        if (view == null) return;
+        JSONArray all = view.optJSONArray("creators");
+        List<JSONObject> rows = new ArrayList<>();
+        String empty;
+        if ("collector".equals(sel)) {
+            JSONObject r = view.optJSONObject("run");
+            Map<String, JSONObject> byId = new HashMap<>();
+            for (int i = 0; all != null && i < all.length(); i++) {
+                JSONObject o = all.optJSONObject(i);
+                if (o != null) byId.put(o.optString("id"), o);
             }
-            confirmClear = false;
-            post("clear", () -> Ui.toast(this, "Cleared. They stay remembered, so later runs won't collect them again."));
-        });
-        if (confirmClear) Ui.danger(clear);
-        actions.addView(clear, lp);
-    }
-
-    private void copy() {
-        if (hub == null) return;
-        final Hub h = hub;
-        Ui.pool.execute(() -> {
-            try {
-                JSONObject r = h.get("/v1/collector/export");
-                Ui.main.post(() -> {
-                    Ui.copy(this, r.optString("text"));
-                    Ui.toast(this, "Copied " + r.optInt("count") + " creator(s). Paste into SpokPayCRM → Creators → Import.");
-                });
-            } catch (Exception e) {
-                Ui.main.post(() -> Ui.toast(this, h.whyDown(e)));
+            JSONArray ids = r == null ? null : r.optJSONArray("ids");
+            for (int i = ids == null ? -1 : ids.length() - 1; ids != null && i >= 0; i--) {
+                JSONObject o = byId.get(ids.optString(i));
+                if (o != null && !o.optBoolean("restricted")) rows.add(o);
             }
-        });
-    }
-
-    private void drawRows() {
-        JSONArray rows = view.optJSONArray("creators");
-        if (rows == null || rows.length() == 0) {
-            if (!running()) list.addView(Ds.empty(this, "No creators yet. Pick a platform, search a term and press Start."), Ui.fill());
+            if (r == null) empty = "Type a term and press Collect. Collector searches it for videos, as the platform shows them, and keeps each active creator once: picture, link, email when there is one, and their 3 newest videos.";
+            else if (r.optBoolean("running")) empty = "";
+            else empty = "Nothing new this time: everyone it found was collected before, or hasn't posted inside Last upload.";
+            if (!rows.isEmpty() && r != null) {
+                TextView head = Ds.caps(this, "FOUND FOR “" + r.optString("query").toUpperCase(Locale.ROOT) + "”", false);
+                head.setPadding(Ui.dp(4), Ui.dp(14), 0, Ui.dp(6));
+                list.addView(head, Ui.fill());
+            }
+        } else {
+            boolean want = "restricted".equals(sel);
+            String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
+            int total = 0;
+            for (int i = 0; all != null && i < all.length(); i++) {
+                JSONObject o = all.optJSONObject(i);
+                if (o == null || o.optBoolean("restricted") != want) continue;
+                total++;
+                String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short")).toLowerCase(Locale.ROOT);
+                if (f.isEmpty() || hay.contains(f)) rows.add(o);
+            }
+            empty = total == 0 ? (want ? "Nobody restricted. Restrict a lead to keep it out of Available; it stays remembered, so no run collects it again." : "No leads yet. Collect some from the Collector view.") : "Nobody matches “" + filter.getText().toString().trim() + "”.";
+        }
+        if (rows.isEmpty()) {
+            if (!empty.isEmpty()) list.addView(Ds.empty(this, empty), Ui.margins(Ui.fill(), 0, 12, 0, 0));
             return;
         }
-        for (int i = 0; i < rows.length(); i++) {
-            JSONObject r = rows.optJSONObject(i);
-            if (r != null) list.addView(row(r), Ui.fill());
-        }
+        for (JSONObject o : rows) list.addView(card(o), Ui.margins(Ui.fill(), 0, 0, 0, 10));
     }
 
-    /** One creator: avatar, name and platform, handle, stats, the email (or that there's none yet), what the daily
-     *  update changed, whether they were written to. A tap opens them; a long press has the quick actions. */
-    private View row(JSONObject r) {
-        LinearLayout row = Ui.row(this);
-        row.setGravity(Gravity.TOP);
-        row.setPadding(Ui.dp(4), Ui.dp(10), Ui.dp(4), Ui.dp(10));
-        row.setBackground(Ui.press(0, 0, 12));
+    /** One lead: picture, name and platform, handle and profile link, email, the 3 newest videos, Send and Restrict. */
+    private View card(JSONObject r) {
+        LinearLayout card = Ds.card(this);
         final String name = r.optString("name"), rid = r.optString("id"), url = r.optString("url"), email = r.optString("email");
-        row.addView(avatar(this, hub, r, 44));
+        final boolean restricted = r.optBoolean("restricted");
+        LinearLayout top = Ui.row(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.addView(avatar(this, hub, r, 44));
         LinearLayout text = Ui.col(this);
-        text.setPadding(Ui.dp(12), 0, Ui.dp(4), 0);
+        text.setPadding(Ui.dp(12), 0, 0, 0);
         LinearLayout l1 = Ui.row(this);
+        l1.setGravity(Gravity.CENTER_VERTICAL);
         l1.addView(Ui.subtitle(Ui.bold(this, name, 15, Ui.FG)), new LinearLayout.LayoutParams(0, -2, 1));
-        if (!r.optString("platform").isEmpty()) l1.addView(badge(this, r.optString("platform"), Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        l1.addView(badge(this, r.optString("platform"), Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         text.addView(l1, Ui.fill());
-        String sub = r.optString("sub");
-        if (!sub.isEmpty()) text.addView(Ui.subtitle(Ui.text(this, sub, 12.5f, Ui.G700)), Ui.fill());
-        LinearLayout l3 = Ui.row(this);
-        String stats = r.optString("stats");
-        if (!stats.trim().isEmpty()) l3.addView(Ui.subtitle(Ui.text(this, stats, 12.5f, Ui.G600)), new LinearLayout.LayoutParams(0, -2, 1));
-        else l3.addView(new View(this), new LinearLayout.LayoutParams(0, 0, 1));
-        if (r.optBoolean("discord")) l3.addView(badge(this, "Discord", Ui.BLUE), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
-        text.addView(l3, Ui.fill());
-        TextView em = email.isEmpty() ? Ui.text(this, "No email yet", 12.5f, Ui.G600)
-                : Ui.text(this, email + (r.optString("emailSource").isEmpty() ? "" : "  · " + r.optString("emailSource")), 12.5f, Ui.FG);
-        Ui.subtitle(em);
+        String handle = r.optString("handle");
+        TextView link = Ui.subtitle(Ui.text(this, (handle.isEmpty() ? "" : handle + " · ") + r.optString("short"), 12.5f, Ui.G700));
+        link.setOnClickListener(v -> { if (!url.isEmpty()) Ui.openUrl(this, url); });
+        text.addView(link, Ui.fill());
+        String src = r.optString("emailSource");
+        TextView em = Ui.subtitle(email.isEmpty() ? Ui.text(this, "Add email", 12.5f, Ui.G600) : Ui.text(this, email + (src.isEmpty() ? "" : "  · " + src), 12.5f, Ui.FG));
+        em.setPadding(0, Ui.dp(2), 0, 0);
+        em.setOnClickListener(v -> editEmail(rid, email));
         text.addView(em, Ui.fill());
-        String changed = r.optString("changed");
-        if (!changed.isEmpty()) {
-            TextView ch = Ui.text(this, changed, 12.5f, Ui.AMBER);
-            ch.setMaxLines(2);
-            ch.setEllipsize(TextUtils.TruncateAt.END);
-            text.addView(ch, Ui.fill());
+        top.addView(text, Ui.weight());
+        card.addView(top, Ui.fill());
+        JSONArray vids = r.optJSONArray("videos");
+        if (vids != null && vids.length() > 0) {
+            LinearLayout th = Ui.row(this);
+            for (int i = 0; i < 3; i++) {
+                JSONObject v = i < vids.length() ? vids.optJSONObject(i) : null;
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(84), 1);
+                if (i > 0) lp.leftMargin = Ui.dp(6);
+                if (v == null) { th.addView(new View(this), lp); continue; }
+                ImageView iv = new ImageView(this);
+                iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                iv.setBackground(Ui.round(Ui.G200, 0, 8));
+                iv.setClipToOutline(true);
+                final String vu = v.optString("url");
+                iv.setContentDescription(v.optString("title"));
+                iv.setOnClickListener(x -> { if (!vu.isEmpty()) Ui.openUrl(this, vu); });
+                String tid = v.optString("thumbId", "");
+                if (!tid.isEmpty() && !"null".equals(tid) && hub != null) PersonsUi.image(this, hub, "/v1/collector/avatar?id=" + tid, iv, Ui.dp(160), null);
+                th.addView(iv, lp);
+            }
+            card.addView(th, Ui.margins(Ui.fill(), 0, 10, 0, 0));
         }
-        String upd = r.optString("updated");
-        if (upd.startsWith("Update failed")) text.addView(Ui.subtitle(Ui.text(this, upd, 12, Ui.RED)), Ui.fill());
-        LinearLayout l5 = Ui.row(this);
-        String meta = r.optString("meta");
-        l5.addView(Ui.subtitle(Ui.text(this, meta, 12, Ui.G600)), new LinearLayout.LayoutParams(0, -2, 1));
-        if (!r.optString("contacted").isEmpty()) l5.addView(badge(this, r.optString("contacted"), Ui.GREEN), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
-        if (!meta.isEmpty() || l5.getChildCount() > 1) text.addView(l5, Ui.margins(Ui.fill(), 0, 2, 0, 0));
-        row.addView(text, Ui.weight());
-        row.setOnClickListener(v -> openCreator(rid));
-        row.setOnLongClickListener(v -> {
-            List<Ds.Item> items = new ArrayList<>(Arrays.asList(
-                    Ds.item(Ui.I_SEND, "Send message", () -> push(new CollectorCreator.Compose(this, rid, name))),
-                    Ds.item(Ui.I_EXTERNAL, "Open profile", () -> { if (!url.isEmpty()) Ui.openUrl(this, url); }),
-                    Ds.item(Ui.I_COPY, "Copy link", () -> Ui.copy(this, url))));
-            if (!email.isEmpty()) items.add(Ds.item(Ui.I_COPY, "Copy email", () -> Ui.copy(this, email)));
-            items.add(Ds.item(Ui.I_REFRESH, "Update now", () -> updateOne(rid)));
-            items.add(Ds.sep());
-            items.add(Ds.danger(Ui.I_TRASH, "Remove from the list", () -> post("remove", () -> Ui.toast(this, name + " removed. They stay remembered."), "id", rid)));
-            Ds.menu(this, items);
-            return true;
-        });
-        return row;
+        LinearLayout acts = Ui.row(this);
+        acts.setGravity(Gravity.END);
+        acts.addView(Ui.rowButton(this, "Send message", false, v -> push(new CollectorCreator.Compose(this, rid, name))));
+        LinearLayout.LayoutParams lp = Ui.wrap();
+        lp.leftMargin = Ui.dp(6);
+        acts.addView(Ui.rowButton(this, restricted ? "Unrestrict" : "Restrict", false, v ->
+                post("restrict", () -> Ui.toast(this, restricted ? name + " is back in Available" : name + " moved to Restricted"), "id", rid, "restricted", !restricted)), lp);
+        card.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+        return card;
     }
 
-    void openCreator(String id) { push(new CollectorCreator(this, id)); }
-
-    /** POST refresh {id}: one creator now (from the row's menu). */
-    private void updateOne(String id) {
-        if (hub == null) return;
-        final Hub h = hub;
-        Ui.toast(this, "Updating…");
-        JSONObject b = new JSONObject();
-        try { b.put("id", id); } catch (Exception ignored) { }
-        Ui.pool.execute(() -> {
-            try {
-                JSONObject d = h.call("POST", "/v1/collector/refresh", b, 120_000);
-                Ui.main.post(() -> {
-                    String u = d == null ? "" : d.optString("updated");
-                    Ui.toast(this, u.isEmpty() ? "Updated" : u);
-                    load();
-                });
-            } catch (Exception e) {
-                Ui.main.post(() -> Ui.toast(this, h.whyDown(e)));
-            }
-        });
+    /** Type (or correct) a lead's email; a typed one is never replaced by one found later. Empty clears it. */
+    private void editEmail(String id, String current) {
+        final EditText f = Ui.input(this, "name@example.com", false);
+        f.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        f.setText(current);
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        box.addView(f, Ui.fill());
+        Ui.dialog(this).setTitle("Email").setView(box)
+                .setPositiveButton("Save", (d, w) -> {
+                    if (hub == null) return;
+                    final Hub h = hub;
+                    JSONObject b = new JSONObject();
+                    try { b.put("id", id).put("email", f.getText().toString().trim()); } catch (Exception ignored) { }
+                    Ui.pool.execute(() -> {
+                        try {
+                            h.call("POST", "/v1/collector/email", b);
+                            Ui.main.post(() -> { Ui.toast(this, "Email saved"); load(); });
+                        } catch (Exception e) {
+                            Ui.main.post(() -> Ui.toast(this, h.whyDown(e)));
+                        }
+                    });
+                })
+                .setNegativeButton("Cancel", null).show();
     }
 
     // ---------- shared with the creator's screens ----------
@@ -658,7 +585,7 @@ public class Collector extends Base {
         return t;
     }
 
-    /** A small tag (a platform, "Emailed 25 Nov", Discord): its colour on a quiet fill. */
+    /** A small tag (the platform): its colour on a quiet fill. */
     static TextView badge(Context c, String s, int color) {
         TextView t = Ui.bold(c, s, 11, color);
         t.setSingleLine(true);
@@ -674,27 +601,6 @@ public class Collector extends Base {
         t.setTextColor(Ui.ON_STOP);
         t.setBackground(Ui.press(Ui.STOP, 0, 24));
         return t;
-    }
-
-    static LinearLayout bar(Context c, float frac, boolean going) {
-        LinearLayout bar = Ui.row(c);
-        bar.setBackground(Ui.round(Ui.G200, 0, 3));
-        View fill = new View(c);
-        fill.setBackground(Ui.round(going ? Ui.BLUE : Ui.GREEN, 0, 3));
-        bar.addView(fill, new LinearLayout.LayoutParams(0, Ui.dp(6), frac));
-        bar.addView(new View(c), new LinearLayout.LayoutParams(0, Ui.dp(6), 1 - frac));
-        return bar;
-    }
-
-    private static LinearLayout.LayoutParams barLp() {
-        LinearLayout.LayoutParams bl = Ui.fill();
-        bl.topMargin = Ui.dp(10);
-        bl.bottomMargin = Ui.dp(8);
-        return bl;
-    }
-
-    static String clock(int secs) {
-        return (secs / 60) + ":" + String.format(java.util.Locale.ROOT, "%02d", secs % 60);
     }
 
     /** A creator's picture (the PC's cached copy), their initials on their colour until it's there. */
@@ -728,7 +634,7 @@ public class Collector extends Base {
         @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
         @Override public void afterTextChanged(Editable e) {
             View f = getCurrentFocus();
-            if (f != query && f != target) return; // set by the screen, not typed
+            if (f != query && f != target && f != filter) return; // set by the screen, not typed
             typed = System.currentTimeMillis();
             Ui.main.removeCallbacks(later);
             Ui.main.postDelayed(later, 600);

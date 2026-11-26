@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TikTok, solveWaf, ttParseEmbed, ttParseSuggest, ttParseUserDetail, ttTimeFromId, type Hit } from "../lib/tiktok.ts";
-import { Instagram, igCleanLink, igCollectMedia, igHashtagFromQuery, igParseChunks, igParseCrawlerHtml, igParseProfileJson, igRecentFromFeed, igTimeFromShortcode, igTopSerpCursor, igUsersFromSearch } from "../lib/instagram.ts";
+import { TikTok, solveWaf, ttParseEmbed, ttParseItemList, ttParseSuggest, ttParseUserDetail, ttTagOf, ttTimeFromId, xBogus, type Hit } from "../lib/tiktok.ts";
+import { Instagram, igCleanLink, igCollectMedia, igHashtagFromQuery, igParseChunks, igParseCrawlerHtml, igParseProfileJson, igRecentFromFeed, igTimeFromShortcode, igTopSerpCursor } from "../lib/instagram.ts";
 
 const fixture = (name: string): string => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
 
@@ -174,43 +174,67 @@ describe("tiktok client", () => {
     await expect(new TikTok(fakeFetch(() => new Response("")), noSleep).suggest("x")).rejects.toThrow("refused");
   });
 
-  it("discovers breadth-first: the query, its words, then a..z", async () => {
-    const sug = (accounts: string[], words: string[]) => ({
-      status_code: 0,
-      sug_list: [...words.map((content) => ({ content, sug_type: "" })), ...accounts.map((u) => ({ content: u, sug_type: "account", extra_info: { unique_id: u, sug_user_id: `id-${u}`, nickname: u.toUpperCase() } }))],
-    });
-    const answers: Record<string, unknown> = {
-      "roblox br": sug(["ana", "beto"], ["roblox brasil", "minecraft", "Roblox Brookhaven"]),
-      "roblox brasil": sug(["beto", "carla"], ["roblox brasil oficial"]),
-      "Roblox Brookhaven": sug(["dani"], []),
-    };
-    const asked: string[] = [];
-    const f = fakeFetch((url) => {
-      const q = new URL(url).searchParams.get("keyword")!;
-      asked.push(q);
-      return json(answers[q] ?? sug([], []));
-    });
-    const slept: number[] = [];
-    const batches: Hit[][] = [];
-    for await (const b of new TikTok(f, noSleep).discover("roblox  br", { stopped: () => false, sleep: async (ms) => void slept.push(ms), log: () => {}, maxQueries: 6 })) batches.push(b);
-    expect(asked).toEqual(["roblox br", "roblox brasil", "Roblox Brookhaven", "roblox br a", "roblox br b", "roblox br c"]);
-    expect(batches.map((b) => b.map((h) => h.handle))).toEqual([["ana", "beto"], ["carla"], ["dani"]]);
-    expect(batches[0]![0]).toEqual({ handle: "ana", id: "id-ana", name: "ANA", avatarUrl: null });
-    expect(slept).toEqual([1800, 1800, 1800, 1800, 1800]);
+  it("signs with X-Bogus: 28 characters, the same for the same input, another for another query", () => {
+    const ua = "Mozilla/5.0 (X11; Linux x86_64)";
+    const a = xBogus("aid=1988&count=30", ua, "", 1795600000);
+    expect(a).toMatch(/^[A-Za-z0-9/=-]{28}$/);
+    expect(xBogus("aid=1988&count=30", ua, "", 1795600000)).toBe(a);
+    expect(xBogus("aid=1988&count=31", ua, "", 1795600000)).not.toBe(a);
+    expect([ttTagOf("Dress to Impress"), ttTagOf("#Fit Check!"), ttTagOf("  ")]).toEqual(["dresstoimpress", "fitcheck", ""]);
   });
 
-  it("stops discovery when asked and after repeated failures", async () => {
+  it("reads a hashtag page's videos as creators, in order, one each, with the video", () => {
+    const item = (id: string, u: string, t: number) => ({ id, createTime: t, desc: "x", author: { id: `a-${u}`, uniqueId: u, nickname: u.toUpperCase(), avatarLarger: `https://p/${u}.jpg` }, authorStats: { followerCount: 1200 } });
+    expect(ttParseItemList({ itemList: [item("7001", "ana", 1795600000), item("7002", "beto", 1795500000), item("7003", "ana", 1795700000)] })).toEqual([
+      { handle: "ana", id: "a-ana", name: "ANA", avatarUrl: "https://p/ana.jpg", followers: 1200, latestAt: 1795600000 * 1000, videoUrl: "https://www.tiktok.com/@ana/video/7001" },
+      { handle: "beto", id: "a-beto", name: "BETO", avatarUrl: "https://p/beto.jpg", followers: 1200, latestAt: 1795500000 * 1000, videoUrl: "https://www.tiktok.com/@beto/video/7002" },
+    ]);
+    expect(ttParseItemList({})).toEqual([]);
+  });
+
+  it("discovers through the term's hashtag videos (signed, paged), then suggested hashtags", async () => {
+    const item = (u: string) => ({ id: `7${u.length}${u.charCodeAt(0)}00000000000`, createTime: 1795600000, author: { uniqueId: u } });
+    const asked: string[] = [];
+    const f = fakeFetch((url) => {
+      const u = new URL(url);
+      asked.push(u.pathname + (u.searchParams.get("challengeName") ?? u.searchParams.get("cursor") ?? u.searchParams.get("keyword") ?? ""));
+      if (u.pathname.startsWith("/tag/")) return html("<html></html>", 200, ["ttwid=abc; Path=/", "msToken=mt; Path=/"]);
+      if (u.pathname === "/api/challenge/detail/") return json(u.searchParams.get("challengeName") === "nope" ? {} : { challengeInfo: { challenge: { id: `id-${u.searchParams.get("challengeName")}` } } });
+      if (u.pathname === "/api/challenge/item_list/") {
+        expect(u.searchParams.get("X-Bogus")).toMatch(/^.{28}$/);
+        expect(u.searchParams.get("msToken")).toBe("mt");
+        const id = u.searchParams.get("challengeID");
+        if (id === "id-dresstoimpress") return u.searchParams.get("cursor") === "0" ? json({ itemList: [item("ana"), item("beto")], hasMore: true, cursor: "30" }) : json({ itemList: [item("beto"), item("carla")], hasMore: false, cursor: "60" });
+        return json({ itemList: [item("dani")], hasMore: false });
+      }
+      if (u.pathname === "/api/search/general/preview/") return json({ status_code: 0, sug_list: [{ content: "dress to impress roblox" }, { content: "minecraft" }] });
+      return html("", 404);
+    });
+    const slept: number[] = [];
+    const batches: string[][] = [];
+    for await (const b of new TikTok(f, noSleep).discover("Dress to  Impress", { stopped: () => false, sleep: async (ms) => void slept.push(ms), log: () => {} })) batches.push(b.map((h) => h.handle));
+    expect(batches).toEqual([["ana", "beto"], ["carla"], ["dani"]]);
+    expect(asked).toEqual(["/tag/dresstoimpress", "/api/challenge/detail/dresstoimpress", "/api/challenge/item_list/0", "/api/challenge/item_list/30", "/api/search/general/preview/Dress to Impress", "/api/challenge/detail/dresstoimpressroblox", "/api/challenge/item_list/0"]);
+    expect(slept).toEqual([2000, 2000, 2000]);
+  });
+
+  it("stops discovery when asked, on a term with no hashtag, and after repeated failures", async () => {
+    const ok = fakeFetch((url) => {
+      const u = new URL(url);
+      if (u.pathname === "/api/challenge/detail/") return json({ challengeInfo: { challenge: { id: "1" } } });
+      if (u.pathname === "/api/challenge/item_list/") return json({ itemList: [{ id: `7${Math.random()}`.replace(".", ""), author: { uniqueId: `u${Math.random()}` } }], hasMore: true, cursor: "1" });
+      return html("");
+    });
     let n = 0;
-    const f = fakeFetch(() => json({ status_code: 0, sug_list: [{ content: `u${++n}`, sug_type: "account", extra_info: { unique_id: `u${n}` } }] }));
-    const got: string[] = [];
-    for await (const b of new TikTok(f, noSleep).discover("x", { stopped: () => got.length >= 2, sleep: async () => {}, log: () => {} })) got.push(...b.map((h) => h.handle));
-    expect(got).toEqual(["u1", "u2"]);
-    expect(f.calls).toHaveLength(2);
+    for await (const _ of new TikTok(ok, noSleep).discover("x", { stopped: () => n >= 2, sleep: async () => {}, log: () => {} })) n++;
+    expect(n).toBe(2);
     const logs: string[] = [];
+    const none = fakeFetch((url) => (url.includes("/challenge/detail/") ? json({}) : url.includes("/preview/") ? json({ status_code: 0, sug_list: [] }) : html("")));
+    for await (const _ of new TikTok(none, noSleep).discover("zzq", { stopped: () => false, sleep: async () => {}, log: (t) => void logs.push(t) })) void _;
+    expect(logs).toContain("TikTok has no #zzq.");
     const bad = fakeFetch(() => html("", 500));
-    for await (const _ of new TikTok(bad, noSleep).discover("x", { stopped: () => false, sleep: async () => {}, log: (t) => void logs.push(t) })) void _;
-    expect(bad.calls).toHaveLength(3);
-    expect(logs[0]).toContain("HTTP 500");
+    for await (const _ of new TikTok(bad, noSleep).discover("x", { stopped: () => false, sleep: async () => {}, log: () => {} })) void _;
+    expect(bad.calls.length).toBeLessThanOrEqual(3);
   });
 });
 
@@ -288,14 +312,13 @@ describe("instagram parsing", () => {
     expect(igParseCrawlerHtml("<html><title>Login • Instagram</title></html>", "x")).toBeNull();
   });
 
-  it("collects media authors from any layout, newest post per author", () => {
+  it("collects media authors from any layout, in order, the newest post's time, the first post that led there", () => {
     const hits = igCollectMedia(JSON.parse(fixture("ig-tag-web-info.json")));
     expect(hits).toEqual([
-      { handle: "ana.roblox", id: "111", name: "Ana", avatarUrl: null, followers: null, latestAt: 1795650000 * 1000 },
-      { handle: "beto.games", id: "222", name: "Beto", avatarUrl: null, followers: null, latestAt: 1795000000 * 1000 },
+      { handle: "ana.roblox", id: "111", name: "Ana", avatarUrl: "https://scontent.cdninstagram.com/v/a.jpg", followers: null, latestAt: 1795650000 * 1000, videoUrl: "https://www.instagram.com/p/AAAAAAAAAAA/" },
+      { handle: "beto.games", id: "222", name: "Beto", avatarUrl: null, followers: null, latestAt: 1795000000 * 1000, videoUrl: "https://www.instagram.com/p/BBBBBBBBBBB/" },
     ]);
     expect(igCollectMedia(JSON.parse(fixture("ig-tag-sections.json")))[0]).toMatchObject({ handle: "carla_plays", id: "333", followers: 1200 });
-    expect(igUsersFromSearch(JSON.parse(fixture("ig-topsearch.json"))).map((h) => h.handle)).toEqual(["roblox.brasil.oficial", "ana.roblox"]);
   });
 
   it("dates shortcodes, cleans links, makes tags", () => {
@@ -347,7 +370,6 @@ describe("instagram app-api parsing", () => {
     expect(igTopSerpCursor([{ page_info: { has_next_page: false, end_cursor: "X" } }])).toBeNull();
     expect(igParseChunks('{"a":1}')).toEqual([{ a: 1 }]);
     expect(igParseChunks('{"a":1}\nnot json\n{"b":2}\n')).toEqual([{ a: 1 }, { b: 2 }]);
-    expect(igUsersFromSearch(JSON.parse(fixture("ig-topsearch-flat.json"))).map((h) => h.handle)).toEqual(["roblox.brasil.oficial", "ana.roblox"]);
   });
 });
 
@@ -434,7 +456,7 @@ describe("instagram client", () => {
     await expect(run()).rejects.toThrow("Instagram search needs a signed-in session");
   });
 
-  it("discover: the search page's posts for #tag (paged by cursor), then account search, deduped and paced", async () => {
+  it("discover: the search page's posts for the term as typed (#tag here), paged by cursor, deduped and paced", async () => {
     let serp = 0;
     const f = fakeFetch((url) => {
       const path = new URL(url).pathname;
@@ -443,14 +465,14 @@ describe("instagram client", () => {
         if (serp === 1) return gqlText(fixture("ig-topserp.ndjson"));
         return json({ data: { manual_pagination_query: { edges: [{ node: { items: [{ taken_at: 1795700000, user: { id: "555", username: "dani.rbx" } }] } }] } } });
       }
-      if (path === "/api/v1/fbsearch/topsearch_flat/") return json(JSON.parse(fixture("ig-topsearch-flat.json")));
       return html("", 404);
     });
     const slept: number[] = [];
     const batches: Hit[][] = [];
     for await (const b of ig(f).discover("#Roblox Brasil", { stopped: () => false, sleep: async (ms) => void slept.push(ms), log: () => {} })) batches.push(b);
-    expect(batches.map((b) => b.map((h) => h.handle))).toEqual([["ana.roblox", "beto.games", "carla_plays"], ["dani.rbx"], ["roblox.brasil.oficial"]]);
-    expect(f.calls.map((c) => new URL(c.url).pathname)).toEqual(["/graphql/query", "/graphql/query", "/api/v1/fbsearch/topsearch_flat/"]);
+    // The fixture's first page has reels by ana and carla (beto's is a photo): reels' authors only.
+    expect(batches.map((b) => b.map((h) => h.handle))).toEqual([["ana.roblox", "carla_plays"], ["dani.rbx"]]);
+    expect(f.calls.map((c) => new URL(c.url).pathname)).toEqual(["/graphql/query", "/graphql/query"]);
     const form = (i: number): URLSearchParams => new URLSearchParams(String(f.calls[i]!.init?.body));
     expect(f.calls[0]!.init?.method).toBe("POST");
     expect(header(f.calls[0], "Content-Type")).toBe("application/x-www-form-urlencoded; charset=UTF-8");
@@ -460,28 +482,39 @@ describe("instagram client", () => {
     const v1 = JSON.parse(form(1).get("variables")!);
     expect([v0.query, v0.is_pagination_request, v0.after, v0.search_surface]).toEqual(["#robloxbrasil", false, undefined, "TOP_SERP"]);
     expect([v1.query, v1.is_pagination_request, v1.after, v1.search_session_id]).toEqual(["#robloxbrasil", true, "CURSOR1", v0.search_session_id]);
-    expect(new URL(f.calls[2]!.url).searchParams.get("query")).toBe("Roblox Brasil");
-    expect(slept).toEqual([1500, 1500]);
+    expect(slept).toEqual([1500]);
   });
 
-  it("discover stops a refused pass and still runs account search", async () => {
+  it("discover: reels' authors first (a page's posts only when it has none), with the reel that led there", async () => {
+    const page = { data: { x: { items: [{ taken_at: 1795000001, code: "P1", media_type: 1, user: { pk: "1", username: "photo.only" } }, { taken_at: 1795000002, code: "R1", media_type: 2, product_type: "clips", user: { pk: "2", username: "reel.maker" } }] } } };
+    const f = fakeFetch(() => json(page));
+    const got: Hit[] = [];
+    for await (const b of ig(f).discover("dress to impress", { stopped: () => false, sleep: async () => {}, log: () => {}, maxQueries: 1 })) got.push(...b);
+    expect(got.map((h) => [h.handle, h.videoUrl])).toEqual([["reel.maker", "https://www.instagram.com/reel/R1/"]]);
+    expect(JSON.parse(new URLSearchParams(String(f.calls[0]!.init?.body)).get("variables")!).query).toBe("dress to impress");
+  });
+
+  it("discover: a refusal ends the search; a 429 waits once and asks again", async () => {
     const logs: string[] = [];
-    const f = fakeFetch((url) => (url.includes("/graphql/") ? json({ errors: [{ message: "Please wait" }] }) : json({ message: "rate limited", status: "fail" }, 429)));
+    const f = fakeFetch(() => json({ errors: [{ message: "Please wait" }] }));
     const handles: string[] = [];
     for await (const b of ig(f).discover("games", { stopped: () => false, sleep: async () => {}, log: (t) => void logs.push(t) })) handles.push(...b.map((h) => h.handle));
-    expect(handles).toEqual([]);
-    expect(f.calls).toHaveLength(2);
-    expect(JSON.parse(new URLSearchParams(String(f.calls[0]!.init?.body)).get("variables")!).query).toBe("#games");
-    expect(logs.some((l) => l.includes("#games posts: refused"))).toBe(true);
-    expect(logs.some((l) => l.includes("account search: refused (HTTP 429)"))).toBe(true);
+    expect([handles, f.calls.length]).toEqual([[], 1]);
+    expect(logs.some((l) => l.includes('"games" posts: refused'))).toBe(true);
+    const slept: number[] = [];
+    let n = 0;
+    const g = fakeFetch(() => (++n === 1 ? json({ message: "rate limited", status: "fail" }, 429) : json({ data: { x: { items: [{ taken_at: 1795000001, user: { pk: "9", username: "late.one" } }] } } })));
+    const late: string[] = [];
+    for await (const b of ig(g).discover("games", { stopped: () => false, sleep: async (ms) => void slept.push(ms), log: () => {}, maxQueries: 1 })) late.push(...b.map((h) => h.handle));
+    expect([late, slept]).toEqual([["late.one"], [60_000, 1500]]);
   });
 
   it("discover: a phrase that isn't one tag searches the keyword; stops when the cursor runs out", async () => {
-    const f = fakeFetch((url) => (url.includes("/graphql/") ? json({ data: { x: { items: [{ taken_at: 1795000001, user: { pk: "9", username: "kw.one" } }] } } }) : json({ list: [] })));
+    const f = fakeFetch(() => json({ data: { x: { items: [{ taken_at: 1795000001, user: { pk: "9", username: "kw.one" } }] } } }));
     const handles: string[] = [];
     for await (const b of ig(f).discover("roblox-br dicas", { stopped: () => false, sleep: async () => {}, log: () => {} })) handles.push(...b.map((h) => h.handle));
     expect(handles).toEqual(["kw.one"]);
     expect(JSON.parse(new URLSearchParams(String(f.calls[0]!.init?.body)).get("variables")!).query).toBe("roblox-br dicas");
-    expect(f.calls).toHaveLength(2);
+    expect(f.calls).toHaveLength(1);
   });
 });

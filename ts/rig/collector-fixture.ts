@@ -1,16 +1,14 @@
 // Collector's made-up data for the screenshot rigs (scripts/shot on the PC, ts/rig/phonehub.ts for the phone): creators
-// from YouTube, TikTok and Instagram with emails found in different places, links from link-in-bio pages, a daily update's
-// changes, one contacted creator, and (optionally) a run or the daily update under way. No network, nobody real.
+// from YouTube, TikTok and Instagram (emails found in different places, made-up video thumbnails), two Restricted, and the
+// last run (or one under way). No network, nobody real.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { avatarKey } from "../tabs/collector/avatar-key.ts";
 
 export interface FixtureOpts {
-  /** A YouTube run going. */
+  /** A run going. */
   running?: boolean;
-  /** The daily update going. */
-  refreshing?: boolean;
   now?: number;
 }
 
@@ -31,100 +29,86 @@ async function avatar(dir: string, url: string, i: number, letter: string): Prom
   await sharp(Buffer.from(svg)).png().toFile(join(dir, `${avatarKey(url)}.img`));
 }
 
+/** A made-up video thumbnail: a gradient "scene" (landscape for YouTube, portrait for TikTok and Instagram). */
+async function thumb(dir: string, url: string, i: number, portrait: boolean): Promise<void> {
+  const [a, b] = PALETTE[(i * 3 + 1) % PALETTE.length]!;
+  const [w, h] = portrait ? [144, 256] : [256, 144];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${w * 0.5}" cy="${h * 0.42}" r="${Math.min(w, h) * 0.18}" fill="#ffffff" fill-opacity="0.7"/><rect x="${w * 0.3}" y="${h * 0.62}" width="${w * 0.4}" height="${h * 0.38}" rx="${w * 0.12}" fill="#ffffff" fill-opacity="0.55"/></svg>`;
+  await sharp(Buffer.from(svg)).png().toFile(join(dir, `${avatarKey(url)}.img`));
+}
+
 export async function writeCollectorFixture(cdir: string, o: FixtureOpts = {}): Promise<void> {
   const now = o.now ?? Date.now();
   const day = 86_400_000;
-  const h = 3_600_000;
   const iso = (t: number): string => new Date(t).toISOString();
   mkdirSync(join(cdir, "avatars"), { recursive: true });
-  const vids = (id: string, ages: number[], title: string) =>
-    ages.map((a, i) => ({ video_id: `${id}v${i}`, title: `${title} #${ages.length - i}`, url: `https://www.youtube.com/watch?v=${id}v${i}`, thumbnail_url: null, published_at: iso(now - a * day), view_count: 18_000 + i * 7_400, is_short: false }));
+  const vids = (p: string, id: string, ages: number[], title: string) =>
+    ages.map((a, i) => ({
+      video_id: `${id}v${i}`,
+      title: `${title} #${ages.length - i}`,
+      url: p === "youtube" ? `https://www.youtube.com/watch?v=${id}v${i}` : p === "tiktok" ? `https://www.tiktok.com/@${id}/video/7${i}` : `https://www.instagram.com/reel/${id}${i}/`,
+      thumbnail_url: `https://rig.invalid/collector/thumb/${id}/${i}.png`,
+      published_at: iso(now - a * day),
+      view_count: 18_000 + i * 7_400,
+      is_short: p !== "youtube",
+    }));
   type L = { label: string; url: string; source?: string };
-  const base = (p: string, id: string, name: string, handle: string, subs: number | null, videos: number, views: number | null, links: L[], age: number, extra: Record<string, unknown> = {}) => ({
+  const base = (p: string, id: string, name: string, handle: string, links: L[], ages: number[], title: string, extra: Record<string, unknown> = {}) => ({
     platform: p,
     platform_id: id,
     name,
     handle,
     profile_url: p === "youtube" ? `https://www.youtube.com/${handle}` : p === "tiktok" ? `https://www.tiktok.com/${handle}` : `https://www.instagram.com/${handle.slice(1)}/`,
     avatar_url: `https://rig.invalid/collector/${id}.png`,
-    subscriber_count: subs,
-    video_count: videos,
-    view_count: views,
+    subscriber_count: 12_000,
+    video_count: 120,
+    view_count: null,
     description: null as string | null,
     links,
     country: "Brazil",
-    discovered_via: "blox fruits brasil",
+    discovered_via: "dress to impress",
     captured_at: iso(now - 3 * day),
-    last_upload_at: iso(now - age * day),
-    updated_at: iso(now - 5 * h),
+    last_upload_at: iso(now - ages[0]! * day),
+    updated_at: iso(now - 3 * day),
+    recent_videos: vids(p, id, ages, title),
     ...extra,
   });
   const creators = [
-    base("youtube", "UCrig0001lia", "Lia Frutas", "@liafrutas", 182_000, 412, 21_400_000, [
-      { label: "Linktree", url: "https://linktr.ee/liafrutas" },
-      { label: "Discord", url: "https://discord.gg/liafrutas" },
-      { label: "TikTok", url: "https://tiktok.com/@liafrutas", source: "linktr.ee/liafrutas" },
-      { label: "Instagram", url: "https://instagram.com/lia.frutas", source: "linktr.ee/liafrutas" },
-      { label: "Loja da Lia", url: "https://lojadalia.com.br", source: "linktr.ee/liafrutas" },
-      { label: "WhatsApp", url: "https://wa.me/5511987654321", source: "YouTube About" },
-    ], 1, {
-      description: "Blox Fruits todo dia! 🍉 Trades, raids e dicas pra subir rápido.\n📩 Parcerias: contato@liafrutas.com.br\nLoja oficial e redes no Linktree 👇",
-      email: "contato@liafrutas.com.br",
-      email_source: "YouTube About",
-      whatsapp: "5511987654321",
-      recent_videos: vids("lia", [1, 3, 6], "Trade de frutas míticas"),
-      history: [
-        { at: iso(now - 5 * h), changes: [{ field: "Subscribers", from: "176K", to: "182K" }, { field: "Last upload", from: iso(now - 3 * day).slice(0, 10), to: iso(now - day).slice(0, 10) }, { field: "Links added", from: "", to: "lojadalia.com.br" }] },
-        { at: iso(now - 29 * h), changes: [{ field: "Subscribers", from: "171K", to: "176K" }, { field: "Videos", from: "409", to: "411" }] },
-      ],
-    }),
-    base("tiktok", "68110022334455", "Caio Trades", "@caiotrades", 54_300, 210, 1_900_000, [
-      { label: "Beacons", url: "https://beacons.ai/caiotrades" },
-      { label: "YouTube", url: "https://youtube.com/@caiotrades", source: "same person" },
-    ], 2, { description: "trades de blox fruits 🔥 parcerias: caio.trades [arroba] gmail [ponto] com", email: "caio.trades@gmail.com", email_source: "TikTok bio", history: [{ at: iso(now - 5 * h), changes: [{ field: "Followers", from: "51.2K", to: "54.3K" }] }] }),
-    base("youtube", "UCrig0003mun", "Mundo Blox", "@mundoblox", 1_240_000, 880, 210_000_000, [
-      { label: "Discord", url: "https://discord.gg/mundoblox" },
-      { label: "Site", url: "https://mundoblox.com.br" },
-    ], 0, { email: "comercial@mundoblox.com.br", email_source: "site mundoblox.com.br/contato", contacted: { at: iso(now - 2 * day), via: "gmail", to: "comercial@mundoblox.com.br", person: "p_rig" } }),
-    base("instagram", "4455667788", "Bia Joga", "@biajoga", 98_000, 640, null, [{ label: "Link in bio", url: "https://linktr.ee/biajoga" }], 4, { description: "Roblox girl 🎮 Brookhaven e Blox Fruits", email: null, email_source: null }),
-    base("youtube", "UCrig0005raf", "Rafa Raids", "@rafaraids", 9_800, 95, 640_000, [], 6, { email: "rafa.raids@outlook.com", email_source: "typed", email_manual: true }),
-    base("tiktok", "68110099887766", "Tio Kitsune", "@tiokitsune", 371_000, 540, 9_400_000, [{ label: "Instagram", url: "https://instagram.com/tiokitsune" }], 3, { email: null, email_source: null, updated_at: iso(now - 26 * h), update_error: null }),
-    base("youtube", "UCrig0007duda", "Duda Robux", "@dudarobux", 23_500, 160, 3_100_000, [{ label: "Linktree", url: "https://linktr.ee/dudarobux" }, { label: "Kwai", url: "https://kwai.com/@dudarobux", source: "linktr.ee/dudarobux" }], 2, { email: "dudarobux.parcerias@gmail.com", email_source: "linktr.ee/dudarobux" }),
-    base("instagram", "9988776655", "Gui Brookhaven", "@guibrookhaven", 41_000, 320, null, [{ label: "YouTube", url: "https://youtube.com/@guibrookhaven" }], 5, { email: null, email_source: null }),
+    base("youtube", "UCrig0001lia", "Lia Looks", "@lialooks", [{ label: "Linktree", url: "https://linktr.ee/lialooks" }], [1, 3, 6], "Dress to Impress: tema Gala", { email: "contato@lialooks.com.br", email_source: "YouTube About" }),
+    base("tiktok", "68110022334455", "Caio Runway", "@caiorunway", [{ label: "Beacons", url: "https://beacons.ai/caiorunway" }], [0, 2, 4], "DTI speedrun", { email: "caio.runway@gmail.com", email_source: "TikTok bio" }),
+    base("instagram", "4455667788", "Bia Joga", "@biajoga", [{ label: "Link in bio", url: "https://linktr.ee/biajoga" }], [2, 5, 8], "Look do dia no DTI", { email: null }),
+    base("youtube", "UCrig0005raf", "Rafa Styles", "@rafastyles", [], [4, 9, 12], "Ranking every DTI theme", { email: "rafa.styles@outlook.com", email_source: "typed", email_manual: true }),
+    base("tiktok", "68110099887766", "Tia Kitsune", "@tiakitsune", [{ label: "Instagram", url: "https://instagram.com/tiakitsune" }], [1, 1, 3], "POV: tema Y2K", { email: null }),
+    base("youtube", "UCrig0007duda", "Duda Robux", "@dudarobux", [{ label: "Linktree", url: "https://linktr.ee/dudarobux" }], [2, 6, 9], "Vestindo inscritos", { email: "dudarobux.parcerias@gmail.com", email_source: "linktr.ee/dudarobux" }),
+    base("instagram", "9988776655", "Gui Brookhaven", "@guibrookhaven", [], [5, 7, 11], "Brookhaven fits", { email: null, restricted: true }),
+    base("tiktok", "68110055443322", "Nina Fits", "@ninafits", [], [3, 4, 9], "Fit check", { email: "nina@ninafits.com", email_source: "TikTok bio", restricted: true }),
   ];
-  for (let i = 0; i < creators.length; i++) await avatar(join(cdir, "avatars"), creators[i]!.avatar_url, i, creators[i]!.name[0]!);
-  const lines: [string, string][] = [
-    ["info", 'Sweeping YouTube for "blox fruits brasil" - target 50 creator(s).'],
-    ["info", "Dropping any channel with no upload in the last 14 days."],
-    ["info", "Channels page 1: 20 new channel(s). 20 queued."],
-    ["skip", "SKIP Caio Trades: same person as Caio Trades (TikTok) - linked there."],
-    ["ok", "OK Mundo Blox - 1240000 subs, 2 link(s), email (site mundoblox.com.br/contato), last upload today"],
-    ["drop", "DROP Velho Canal: dead - last upload 212 days ago (limit 14 days)."],
-    ["ok", "OK Lia Frutas - 182000 subs, 6 link(s), email (YouTube About), last upload 1 day ago"],
-  ];
+  for (let i = 0; i < creators.length; i++) {
+    const c = creators[i]!;
+    await avatar(join(cdir, "avatars"), c.avatar_url, i, c.name[0]!);
+    for (const [j, v] of c.recent_videos.entries()) await thumb(join(cdir, "avatars"), v.thumbnail_url, i + j, c.platform !== "youtube");
+  }
   const seen = creators.flatMap((c) => [`${c.platform}:${c.platform_id}`, `${c.platform}:${c.handle.toLowerCase()}`]);
+  // The last run found the first five (newest last in the file: the lists show Lia, Caio… first).
+  const ids = creators.slice(0, 5).map((c) => `${c.platform}:${c.platform_id}`).reverse();
   writeFileSync(
     join(cdir, "state.json"),
     JSON.stringify({
       v: 2,
-      settings: { platform: "youtube", query: "blox fruits brasil", gapDays: 14, target: 50, daily: true, lastTemplate: "padrao" },
-      // newest last: the list shows Lia, Caio and Mundo Blox first
+      settings: { platform: "youtube", query: "dress to impress", gapDays: 14, target: 20, lastTemplate: "padrao" },
       creators: creators.slice().reverse(),
       seen: [...seen, "youtube:UCrigold1", "youtube:UCrigold2", "tiktok:@oldone"],
       run: o.running
-        ? { running: true, label: "YouTube", platform: "youtube", query: "blox fruits brasil", startedAt: now - 95_000, endedAt: 0, status: "Running…", found: 6, target: 50, considered: 11, dropped: 3, known: 2 }
-        : { running: false, label: "YouTube", platform: "youtube", query: "blox fruits brasil", startedAt: now - 3 * day, endedAt: now - 3 * day + 410_000, status: "Done. 8 new creator(s). 2 already collected or in Persons, passed over.", found: 8, target: 50, considered: 19, dropped: 9, known: 2 },
-      refresh: o.refreshing
-        ? { running: true, startedAt: now - 70_000, endedAt: 0, done: 3, total: 8, changed: 2, failed: 0, status: "Updating Mundo Blox…", lastFullAt: now - 29 * h }
-        : { running: false, startedAt: now - 5 * h - 600_000, endedAt: now - 5 * h, done: 8, total: 8, changed: 3, failed: 0, status: "Updated 8 creator(s): 3 changed.", lastFullAt: now - 5 * h },
-      log: lines.map(([tone, text], i) => ({ at: now - (lines.length - i) * 4000, tone, text })),
+        ? { running: true, label: "YouTube", platform: "youtube", query: "dress to impress", startedAt: now - 95_000, endedAt: 0, status: "Running…", found: 5, target: 20, considered: 11, dropped: 3, known: 2, ids, line: "Checking Duda Robux…" }
+        : { running: false, label: "YouTube", platform: "youtube", query: "dress to impress", startedAt: now - 3 * day, endedAt: now - 3 * day + 410_000, status: "Done: 5 new leads (no more for this term) · 2 already collected, passed over", found: 5, target: 20, considered: 19, dropped: 9, known: 2, ids, line: "" },
+      log: [],
     }),
   );
 }
 
 if (import.meta.main) {
   const [dir, mode] = process.argv.slice(2);
-  if (!dir) throw new Error("usage: bun ts/rig/collector-fixture.ts <dir> [running|refreshing]");
-  await writeCollectorFixture(dir, { running: mode === "running", refreshing: mode === "refreshing" });
+  if (!dir) throw new Error("usage: bun ts/rig/collector-fixture.ts <dir> [running]");
+  await writeCollectorFixture(dir, { running: mode === "running" });
   console.log(`collector fixture in ${dir}`);
 }

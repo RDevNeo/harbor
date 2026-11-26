@@ -154,6 +154,8 @@ export interface ChannelHit {
   avatarUrl: string | null;
   subscribers: number | null;
   description: string;
+  /** The search result's video that led to this channel. */
+  videoUrl?: string;
 }
 
 /** A channel's @handle out of a URL or path; handles may carry accents (percent-encoded in canonical URLs). */
@@ -174,38 +176,15 @@ const lastThumb = (n: Node): string | null => {
 };
 
 /**
- * Channel results. The field names lie (checked against live HTML): `subscriberCountText` holds the @handle and
- * `videoCountText` the subscriber count.
+ * The creators of a search page's videos (videos and Shorts), in the order YouTube ranked the videos, each with the
+ * video that led to them. Channel results on the page are left out: only videos lead to a creator.
  */
-export function ytChannelsFromSearch(data: Node): ChannelHit[] {
-  const out: ChannelHit[] = [];
-  for (const r of ytCollect(data, "channelRenderer")) {
-    if (!isObj(r) || typeof r.channelId !== "string") continue;
-    const nav = isObj(r.navigationEndpoint) && isObj(r.navigationEndpoint.browseEndpoint) ? r.navigationEndpoint.browseEndpoint : null;
-    const canonical = nav && typeof nav.canonicalBaseUrl === "string" ? nav.canonicalBaseUrl : "";
-    const handleText = ytText(r.subscriberCountText).trim();
-    const vct = isObj(r.videoCountText) ? r.videoCountText : null;
-    const acc = vct && isObj(vct.accessibility) && isObj(vct.accessibility.accessibilityData) ? vct.accessibility.accessibilityData.label : null;
-    out.push({
-      channelId: r.channelId,
-      name: ytText(r.title),
-      handle: handleOf(canonical) ?? (handleText.startsWith("@") ? handleText : null),
-      profileUrl: canonical ? `https://www.youtube.com${canonical}` : `https://www.youtube.com/channel/${r.channelId}`,
-      avatarUrl: httpsOf(lastThumb(r.thumbnail)),
-      subscribers: ytParseCount(r.videoCountText) ?? ytParseCount(acc),
-      description: ytText(r.descriptionSnippet),
-    });
-  }
-  return out;
-}
-
-/** Channels through video results' uploaders (videos and Shorts): a different, larger set than the channel filter. */
 export function ytUploadersFromSearch(data: Node): ChannelHit[] {
   const out: ChannelHit[] = [];
-  const push = (channelId: unknown, name: string, canonical: string | null): void => {
+  const push = (channelId: unknown, name: string, canonical: string | null, videoUrl: string | null): void => {
     if (typeof channelId !== "string" || !channelId.startsWith("UC")) return;
     if (out.some((e) => e.channelId === channelId)) return;
-    out.push({
+    const hit: ChannelHit = {
       channelId,
       name,
       handle: canonical ? handleOf(canonical) : null,
@@ -213,16 +192,35 @@ export function ytUploadersFromSearch(data: Node): ChannelHit[] {
       avatarUrl: null,
       subscribers: null,
       description: "",
-    });
+    };
+    if (videoUrl) hit.videoUrl = videoUrl;
+    out.push(hit);
   };
-  for (const v of ytCollect(data, "videoRenderer")) {
-    if (!isObj(v)) continue;
-    const runsOf = (t: unknown): unknown => (isObj(t) && Array.isArray(t.runs) ? t.runs[0] : null);
-    const run = runsOf(v.ownerText) ?? runsOf(v.longBylineText);
-    const browse = isObj(run) && isObj(run.navigationEndpoint) && isObj(run.navigationEndpoint.browseEndpoint) ? run.navigationEndpoint.browseEndpoint : null;
-    push(browse?.browseId, isObj(run) && typeof run.text === "string" ? run.text : "", browse && typeof browse.canonicalBaseUrl === "string" ? browse.canonicalBaseUrl : null);
-  }
-  for (const s of ytCollect(data, "shortsLockupViewModel")) push(ytFind(s, "browseId"), "", null);
+  // Videos and Shorts interleave on the page: walk both in document order.
+  const walk = (n: Node, depth: number): void => {
+    if (!isObj(n) || depth > 45) return;
+    if (Array.isArray(n)) {
+      for (const v of n) walk(v, depth + 1);
+      return;
+    }
+    const v = n.videoRenderer;
+    if (isObj(v)) {
+      const runsOf = (t: unknown): unknown => (isObj(t) && Array.isArray(t.runs) ? t.runs[0] : null);
+      const run = runsOf(v.ownerText) ?? runsOf(v.longBylineText);
+      const browse = isObj(run) && isObj(run.navigationEndpoint) && isObj(run.navigationEndpoint.browseEndpoint) ? run.navigationEndpoint.browseEndpoint : null;
+      const id = typeof v.videoId === "string" ? v.videoId : null;
+      push(browse?.browseId, isObj(run) && typeof run.text === "string" ? run.text : "", browse && typeof browse.canonicalBaseUrl === "string" ? browse.canonicalBaseUrl : null, id ? `https://www.youtube.com/watch?v=${id}` : null);
+      return;
+    }
+    const s = n.shortsLockupViewModel;
+    if (isObj(s)) {
+      const id = ytFind(s, "videoId");
+      push(ytFind(s, "browseId"), "", null, typeof id === "string" ? `https://www.youtube.com/shorts/${id}` : null);
+      return;
+    }
+    for (const x of Object.values(n)) walk(x, depth + 1);
+  };
+  walk(data, 0);
   return out;
 }
 

@@ -1,23 +1,25 @@
-// Collector (the Lead Collector userscript, RDevNeo/spok-lead-collector, moved into Hub), engine side. Sweeps run here,
-// in the engine, against the platforms' own public data (no browser): YouTube (lib/sweep.ts), TikTok and Instagram
-// (lib/social.ts). Every creator kept is enriched (lib/enrich.ts: every link of their bio and link-in-bio pages, an email
-// and where it came from), remembered for good (never collected twice, on any platform, nor anyone already in Persons ›
-// Creators), and updated once a day (lib/refresh.ts). Send message (persons-bridge.ts) writes to a creator through
-// Persons › Creators' Gmail or WhatsApp, with the Send menu's templates (lib/templates.ts).
+// Collector (the Lead Collector userscript, RDevNeo/spok-lead-collector, moved into Hub), engine side. A run searches the
+// term for VIDEOS on the platform (what the user sees searching there), goes from each video to its creator, keeps the
+// active ones (an upload inside the window), and stores each lead once: picture, profile link, handle, an email when
+// one can be found (bio, link-in-bio pages, their site; a typed one is never replaced), the 3 newest videos. YouTube:
+// lib/sweep.ts; TikTok and Instagram: lib/social.ts. Never collected twice (any platform, nor anyone already in Persons ›
+// Creators). The user can Restrict a lead (kept out of Available, still never collected again). Send message
+// (persons-bridge.ts) writes to one through Persons › Creators' Gmail or WhatsApp and adds them there.
 // Data in <data dir>/collector/: state.json, templates.json, sessions.json (0600: the Instagram session, never shown or
-// logged), avatars/<key>.img. The PC window (packages/ui/src/tabs/collector) and Hub for Android call the same routes:
+// logged), avatars/<key>.img (pictures and video thumbnails). The PC window (packages/ui/src/tabs/collector) and Hub for
+// Android call the same routes:
 //   GET  v1/collector                 the view (view.ts)
-//   GET  v1/collector/creator?id=     one creator's details
-//   POST v1/collector/settings        {platform?, query?, gapDays?, target?, daily?}
+//   GET  v1/collector/creator?id=     one lead (its row)
+//   POST v1/collector/settings        {platform?, query?, gapDays?, target?}
 //   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
-//   POST v1/collector/clear | clear-log | remove {id}
-//   POST v1/collector/email           {id, email}: typed by hand ("" gives it back to the daily update)
-//   POST v1/collector/refresh         {id?}: that creator now, or every one now
-//   GET  v1/collector/export          {text, count}: JSONL for SpokPayCRM → Creators → Import
-//   GET  v1/collector/avatar?id=      a cached picture (the phone's rows)
+//   POST v1/collector/restrict        {id, restricted}: out of Available (or back)
+//   POST v1/collector/remove {id}     forget the row (still never collected again)
+//   POST v1/collector/email           {id, email}: typed by hand ("" lets a found one take its place again)
+//   GET  v1/collector/export          {text, count}: the Available leads as JSONL for SpokPayCRM → Creators → Import
+//   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
 //   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
 //                                     POST template-delete {id} (a built-in one is reset)
-//   GET  v1/collector/compose?id=&template=&channel=   the message for that creator: channels, to, subject, text, guard
+//   GET  v1/collector/compose?id=&template=&channel=   the message for that lead: channels, to, subject, text, guard
 //   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
 // HUB_COLLECTOR_DIR points it at another folder; HARBOR_OFFLINE=1 / HUB_COLLECTOR_OFFLINE=1 (the screenshot rig) never
@@ -34,22 +36,17 @@ import { enrich } from "./lib/enrich.ts";
 import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
 import { Instagram } from "./lib/instagram.ts";
 import { kindOf, mergeLinks, normalizeUrl, whatsappOf } from "./lib/links.ts";
-import { applyFresh, isDue, REFRESH_DELAY_MS, type Fresh } from "./lib/refresh.ts";
-import { BLOCKED_LIMIT, sweepSocial, type Profile, type SocialClient } from "./lib/social.ts";
+import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
 import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
-import { TikTok } from "./lib/tiktok.ts";
+import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
 import { defaultData, exportText, GAP_CHOICES, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
-import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
+import { buildView, creatorRow, type SessionInfo, type SourceInfo } from "./view.ts";
 
 const LOG_KEEP = 400;
 const AVATAR_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
-const DAY_MS = 86_400_000;
-/** The daily update looks whether it's due this often (and a couple of minutes after Hub starts). */
-const DAILY_TICK_MS = 10 * 60_000;
-const DAILY_FIRST_MS = 2 * 60_000;
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 type InstagramClient = SocialClient & { whoami(): Promise<{ username: string } | null> };
@@ -68,8 +65,6 @@ export interface CollectorDeps {
   instagram?: (session: { cookie: string } | null) => InstagramClient;
   fetch?: Fetch;
   sleep?: (ms: number) => Promise<void>;
-  /** The daily update's timer (off in tests). */
-  daily?: boolean;
 }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -80,11 +75,8 @@ export class Collector {
   templates: Template[] = loadTemplates([]);
   private sessions: Sessions = {};
   private stopFlag = false;
-  private refreshStop = false;
   private running: Promise<void> | null = null;
-  private refreshing: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
-  private timers: ReturnType<typeof setTimeout>[] = [];
   private readonly file: string;
   readonly avatars: string;
   private readonly picQueue: string[] = [];
@@ -130,16 +122,8 @@ export class Collector {
     for (const c of this.data.creators) for (const k of allKeys(c)) this.seen.add(k);
     // A run can't outlive the engine: one saved as running was cut by a restart (the rig keeps it, to show one).
     if (this.data.run?.running && !o.offline) {
-      this.data.run = { ...this.data.run, running: false, endedAt: Date.now(), status: "Interrupted: Hub restarted." };
+      this.data.run = { ...this.data.run, running: false, endedAt: Date.now(), line: "", status: "Interrupted: Hub restarted." };
       this.save();
-    }
-    if (this.data.refresh.running && !o.offline) {
-      this.data.refresh = { ...this.data.refresh, running: false, endedAt: Date.now(), status: "Interrupted: Hub restarted. It goes on with the next daily update." };
-      this.save();
-    }
-    if (o.daily ?? !o.offline) {
-      this.timers.push(setTimeout(() => void this.maybeDaily(), DAILY_FIRST_MS));
-      this.timers.push(setInterval(() => void this.maybeDaily(), DAILY_TICK_MS));
     }
   }
 
@@ -189,6 +173,7 @@ export class Collector {
     const l: LogLine = { at: Date.now(), text, tone };
     this.data.log.push(l);
     if (this.data.log.length > LOG_KEEP) this.data.log.splice(0, this.data.log.length - LOG_KEEP);
+    if (this.data.run?.running) this.data.run.line = text;
     this.touch();
   }
 
@@ -203,7 +188,7 @@ export class Collector {
           label: "Instagram",
           available: ig,
           why: ig ? "" : "Instagram's search only answers a signed-in account. Add your Instagram session below (it stays on this PC).",
-          note: "Authors of the posts Instagram's search shows for the hashtag (or keyword), then its account search, on your Instagram session, gently (a read every 2.5 s, stops if Instagram pushes back).",
+          note: "Searches the term for reels and posts, as Instagram's own search shows them, then opens each one's creator. On your Instagram session, gently (a read every 2.5 s).",
         };
       if (p === "tiktok")
         return {
@@ -211,9 +196,9 @@ export class Collector {
           label: "TikTok",
           available: true,
           why: "",
-          note: "Accounts from TikTok's search suggestions for your term (TikTok's full search only answers its own page code). No login needed.",
+          note: TT_NOTE,
         };
-      return { value: p, label: "YouTube", available: true, why: "", note: "Channels and uploaders from YouTube's search. No login needed." };
+      return { value: p, label: "YouTube", available: true, why: "", note: "Searches the term for videos, as YouTube's own search shows them, then opens each video's channel. No login needed." };
     });
   }
 
@@ -238,7 +223,7 @@ export class Collector {
 
   detail(id: string): unknown | null {
     const c = this.find(id);
-    return c ? creatorDetail(c, (url) => this.avatarPath(url)) : null;
+    return c ? creatorRow(c, (url) => this.avatarPath(url)) : null;
   }
 
   private find(id: string): CreatorRecord | undefined {
@@ -299,7 +284,6 @@ export class Collector {
     if (typeof b.query === "string") s.query = b.query.slice(0, 200);
     if (typeof b.gapDays === "number" && GAP_CHOICES.some((c) => c.value === b.gapDays)) s.gapDays = b.gapDays;
     if (b.target !== undefined) s.target = normalizeTarget(b.target);
-    if (typeof b.daily === "boolean") s.daily = b.daily;
     this.touch();
   }
 
@@ -334,6 +318,8 @@ export class Collector {
     this.data.creators.push(rec);
     for (const k of allKeys(rec)) this.seen.add(k);
     this.avatarPath(rec.avatar_url);
+    for (const v of rec.recent_videos ?? []) this.avatarPath(v.thumbnail_url);
+    if (this.data.run?.running) this.data.run.ids.push(recordId(rec));
     this.progress({ found: this.data.creators.length });
     return null;
   }
@@ -407,7 +393,7 @@ export class Collector {
         : () => sweepSocial({ ...common, platform, client: platform === "tiktok" ? this.tiktok() : this.instagram() });
     this.stopFlag = false;
     const now = Date.now();
-    this.data.run = { running: true, label: src.label, platform, query, startedAt: now, endedAt: 0, status: "Running…", found: 0, target, considered: 0, dropped: 0, known: 0 };
+    this.data.run = { running: true, label: src.label, platform, query, startedAt: now, endedAt: 0, status: "Running…", found: 0, target, considered: 0, dropped: 0, known: 0, ids: [], line: `Searching ${src.label} for videos of “${query}”…` };
     this.touch();
     this.running = (async () => {
       try {
@@ -421,8 +407,10 @@ export class Collector {
           r.found = n;
           r.running = false;
           r.endedAt = Date.now();
-          const known = r.known ? ` ${r.known} already collected or in Persons, passed over.` : "";
-          r.status = (this.stopFlag ? `Stopped. ${n} new creator(s).` : target > 0 && n >= target ? `Target reached: ${n} new creator(s).` : `Done. ${n} new creator(s).`) + known;
+          r.line = "";
+          const leads = `${n} new lead${n === 1 ? "" : "s"}`;
+          const known = r.known ? ` · ${r.known} already collected, passed over` : "";
+          r.status = (this.stopFlag ? `Stopped: ${leads}` : target > 0 && n >= target ? `Done: ${leads}` : n === 0 ? `No new leads for “${query}”. Try another term or a wider Last upload.` : `Done: ${leads} (no more for this term)`) + (n === 0 && !this.stopFlag ? "" : known);
         }
         this.running = null;
         this.touch();
@@ -452,19 +440,18 @@ export class Collector {
     await this.running;
   }
 
-  clear(): void {
-    this.data.creators = [];
-    if (this.data.run && !this.data.run.running) this.data.run = null;
+  /** Out of Available (or back in). A restricted lead stays remembered: no run collects it again. */
+  restrict(id: string, on: boolean): string | null {
+    const c = this.find(id);
+    if (!c) return "No such lead.";
+    if (on) c.restricted = true;
+    else delete c.restricted;
     this.touch();
+    return null;
   }
 
   remove(id: string): void {
     this.data.creators = this.data.creators.filter((c) => recordId(c) !== id);
-    this.touch();
-  }
-
-  clearLog(): void {
-    this.data.log = [];
     this.touch();
   }
 
@@ -487,174 +474,6 @@ export class Collector {
     }
     this.touch();
     return null;
-  }
-
-  // ---------- the daily update ----------
-
-  private async fresh(c: CreatorRecord): Promise<Fresh> {
-    if (c.platform === "youtube") {
-      const yt = this.youtube();
-      const a = await yt.about(c.platform_id);
-      let feed: { newest: number | null; videos: NonNullable<CreatorRecord["recent_videos"]> } | null = null;
-      try {
-        feed = await yt.feed(c.platform_id);
-      } catch {
-        // the stats still count
-      }
-      return {
-        name: a.name,
-        handle: a.handle,
-        profile_url: a.profileUrl,
-        avatar_url: a.avatarUrl,
-        subscriber_count: a.subscribers,
-        video_count: a.videos,
-        view_count: a.views,
-        description: a.description,
-        links: a.links,
-        country: a.country,
-        last_upload_at: feed?.newest ? new Date(feed.newest).toISOString() : null,
-        ...(feed?.videos.length ? { recent_videos: feed.videos } : {}),
-      };
-    }
-    const client = c.platform === "tiktok" ? this.tiktok() : this.instagram();
-    const handle = (c.handle ?? "").replace(/^@/, "");
-    if (!handle) throw new Error("no handle to read");
-    const p: Profile = await client.profile(handle);
-    return {
-      name: p.name,
-      handle: p.handle,
-      profile_url: p.profile_url,
-      avatar_url: p.avatar_url,
-      subscriber_count: p.followers,
-      video_count: p.posts,
-      view_count: p.platform === "tiktok" ? p.likes : null,
-      description: p.bio,
-      links: p.links,
-      country: p.country,
-      last_upload_at: p.last_post_at,
-      ...(p.recent.length ? { recent_videos: p.recent } : {}),
-    };
-  }
-
-  /** One creator read again; the changes, or why it couldn't. */
-  async refreshOne(id: string, stopped: () => boolean = () => this.refreshStop): Promise<{ changed: number } | { error: string }> {
-    const c = this.find(id);
-    if (!c) return { error: "No such creator." };
-    if (this.o.offline) return { error: "Collector is offline here." };
-    const at = new Date().toISOString();
-    let f: Fresh;
-    try {
-      f = await this.fresh(c);
-    } catch (e) {
-      const cur = this.find(id);
-      if (cur) cur.update_error = errText(e);
-      this.touch();
-      return { error: errText(e) };
-    }
-    // The bio or the links changed, or there's still no email: open their link pages again.
-    const bioChanged = (f.description ?? "") !== (c.description ?? "") || f.links.some((l) => !c.links.some((x) => normalizeUrl(x.url) === normalizeUrl(l.url)));
-    let found: { links: CreatorRecord["links"]; email: { email: string; source: string } | null };
-    if (bioChanged || !c.email) {
-      const e = await this.enrichRec({ ...c, links: f.links.map((l) => ({ label: l.label, url: l.url })), description: f.description, email: c.email_manual ? (c.email ?? null) : null }, c.platform === "youtube" ? "YouTube About" : `${PLATFORM_LABEL[c.platform as CreatorPlatform]} bio`, stopped);
-      // links found by hand-made merges (same person) stay
-      const keep = c.links.filter((l) => l.source === "same person");
-      found = { links: mergeLinks(e.links, keep), email: e.email && !c.email_manual ? { email: e.email, source: e.email_source ?? "" } : null };
-      if (e.whatsapp) c.whatsapp = e.whatsapp;
-    } else {
-      found = { links: mergeLinks(f.links.map((l) => ({ label: l.label, url: l.url })), c.links.filter((l) => l.source)), email: null };
-    }
-    const cur = this.find(id);
-    if (!cur) return { error: "Removed meanwhile." };
-    const { rec, changes } = applyFresh(cur, f, found, at);
-    const i = this.data.creators.indexOf(cur);
-    this.data.creators[i] = rec;
-    for (const k of allKeys(rec)) this.seen.add(k);
-    if (rec.avatar_url) this.avatarPath(rec.avatar_url);
-    if (changes.length) this.logLine(`UPDATED ${rec.name}: ${changes.map((x) => (x.from && x.to ? `${x.field} ${x.from} → ${x.to}` : `${x.field} ${x.to || x.from}`)).join(", ")}`, "ok");
-    this.touch();
-    return { changed: changes.length };
-  }
-
-  private async maybeDaily(): Promise<void> {
-    const r = this.data.refresh;
-    if (!this.data.settings.daily || this.refreshing || this.o.offline) return;
-    if (r.lastFullAt && Date.now() - r.lastFullAt < DAY_MS) return;
-    if (!this.data.creators.some((c) => isDue(c, Date.now()))) {
-      r.lastFullAt = Date.now();
-      this.touch();
-      return;
-    }
-    this.refreshAll(false);
-  }
-
-  /** Every creator due (or every one, `all`) read again, one at a time, gently; a run going first waits. */
-  refreshAll(all: boolean): string | null {
-    if (this.refreshing) return "The update is already going.";
-    if (this.o.offline) return "Collector is offline here.";
-    const now = Date.now();
-    const ids = this.data.creators
-      .filter((c) => all || isDue(c, now))
-      .sort((a, b) => Date.parse(a.updated_at ?? a.captured_at) - Date.parse(b.updated_at ?? b.captured_at))
-      .map(recordId);
-    this.refreshStop = false;
-    this.data.refresh = { ...this.data.refresh, running: true, startedAt: now, endedAt: 0, done: 0, total: ids.length, changed: 0, failed: 0, status: ids.length ? `Updating ${ids.length} creator(s)…` : "Everyone is up to date." };
-    this.touch();
-    const sleep = async (ms: number): Promise<void> => {
-      for (let left = ms; left > 0 && !this.refreshStop; left -= 250) await (this.o.sleep ?? Bun.sleep)(Math.min(250, left));
-    };
-    this.refreshing = (async () => {
-      const blocked: Record<string, number> = {};
-      try {
-        for (const id of ids) {
-          if (this.refreshStop) break;
-          while (this.running && !this.refreshStop) await sleep(2000);
-          const c = this.find(id);
-          const r = this.data.refresh;
-          if (!c) {
-            r.done++;
-            continue;
-          }
-          if ((blocked[c.platform] ?? 0) >= BLOCKED_LIMIT) {
-            c.update_error = `${PLATFORM_LABEL[c.platform as CreatorPlatform]} refused reads; tried again tomorrow.`;
-            r.done++;
-            r.failed++;
-            continue;
-          }
-          r.status = `Updating ${c.name}…`;
-          this.touch();
-          const out = await this.refreshOne(id, () => this.refreshStop);
-          if ("error" in out) {
-            r.failed++;
-            blocked[c.platform] = (blocked[c.platform] ?? 0) + 1;
-          } else {
-            blocked[c.platform] = 0;
-            if (out.changed) r.changed++;
-          }
-          r.done++;
-          this.touch();
-          await sleep(REFRESH_DELAY_MS);
-        }
-      } finally {
-        const r = this.data.refresh;
-        r.running = false;
-        r.endedAt = Date.now();
-        if (!this.refreshStop) r.lastFullAt = r.endedAt;
-        r.status = this.refreshStop
-          ? `Stopped after ${r.done} of ${r.total}.`
-          : r.total === 0
-            ? "Everyone is up to date."
-            : `Updated ${r.done - r.failed} creator(s): ${r.changed} changed${r.failed ? `, ${r.failed} couldn't be read` : ""}.`;
-        this.refreshing = null;
-        this.touch();
-        void this.flush();
-      }
-    })();
-    return null;
-  }
-
-  async stopRefresh(): Promise<void> {
-    this.refreshStop = true;
-    await this.refreshing;
   }
 
   // ---------- templates and Send message ----------
@@ -767,8 +586,7 @@ export class Collector {
   }
 
   dispose(): void {
-    for (const t of this.timers) clearTimeout(t);
-    this.timers = [];
+    this.stopFlag = true;
   }
 }
 
@@ -799,12 +617,12 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
     case "POST stop":
       await c.stop();
       return ok(c.view() as never);
-    case "POST clear":
-      c.clear();
+    case "POST restrict": {
+      const b = bodyOf(call);
+      const why = c.restrict(String(b.id ?? ""), b.restricted !== false);
+      if (why) return err(404, why);
       return ok(c.view() as never);
-    case "POST clear-log":
-      c.clearLog();
-      return ok(c.view() as never);
+    }
     case "POST remove":
       c.remove(String(bodyOf(call).id ?? ""));
       return ok(c.view() as never);
@@ -814,23 +632,8 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       if (why) return err(400, why);
       return ok((c.detail(String(b.id)) ?? {}) as never);
     }
-    case "POST refresh": {
-      const id = String(bodyOf(call).id ?? "");
-      if (id) {
-        const r = await c.refreshOne(id);
-        if ("error" in r) return err(409, r.error);
-        return ok((c.detail(id) ?? {}) as never);
-      }
-      if (bodyOf(call).stop === true) {
-        await c.stopRefresh();
-        return ok(c.view() as never);
-      }
-      const why = c.refreshAll(true);
-      if (why) return err(409, why);
-      return ok(c.view() as never);
-    }
     case "GET export":
-      return ok({ text: exportText(c.data), count: c.data.creators.length });
+      return ok({ text: exportText(c.data), count: c.data.creators.filter((x) => !x.restricted).length });
     case "GET avatar": {
       const id = queryOf(call, "id");
       if (!/^[0-9a-f]{20}$/.test(id)) return err(400, "bad id");
@@ -885,7 +688,6 @@ export const collectorEngine: TabEngine = {
   },
   async stop() {
     collector?.dispose();
-    await collector?.stopRefresh();
     await collector?.stop();
     await collector?.flush();
   },
