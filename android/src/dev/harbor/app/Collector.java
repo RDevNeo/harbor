@@ -33,7 +33,8 @@ import java.util.Map;
  *  profile link, email (tap to type one), the 3 newest videos (tap opens), Send message (adds them to Persons ›
  *  Creators) and Restrict / Unrestrict. The runs happen on the PC (Hub's engine, ts/tabs/collector): this screen
  *  draws GET /v1/collector, as the PC's window does, and sends each change there. Send message
- *  (CollectorCreator.Compose) opens over the tab, without the tab bar; Back closes it. */
+ *  (CollectorCreator.Compose) and a lead's detail (CollectorCreator.Detail, a tap on its card) open over the tab,
+ *  without the tab bar; Back closes them. */
 public class Collector extends Base {
     private LinearLayout segs, form, runRow, list;
     private EditText query, target, cookie, filter;
@@ -91,9 +92,10 @@ public class Collector extends Base {
         page = Tabs.around(this, col, Tabs.COLLECTOR);
         setContentView(page);
         draw();
-        // Send message opened straight away: the phone screenshot rig (screen:collector-send).
+        // Send message or a lead's detail opened straight away: the phone screenshot rig (screen:collector-send, collector-detail).
         String c = getIntent().getStringExtra("creator");
         if (c != null && !c.isEmpty() && getIntent().getBooleanExtra("send", false)) push(new CollectorCreator.Compose(this, c, getIntent().getStringExtra("name")));
+        else if (c != null && !c.isEmpty() && getIntent().getBooleanExtra("detail", false)) push(new CollectorCreator.Detail(this, c, getIntent().getStringExtra("name")));
     }
 
     @Override
@@ -514,6 +516,16 @@ public class Collector extends Base {
         l1.setGravity(Gravity.CENTER_VERTICAL);
         l1.addView(Ui.subtitle(Ui.bold(this, name, 15, Ui.FG)), new LinearLayout.LayoutParams(0, -2, 1));
         l1.addView(badge(this, r.optString("platform"), Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        final String reach = r.optString("reach", "");
+        if (!reach.isEmpty() && !"null".equals(reach)) {
+            View m = CollectorCreator.reachMark(this, reach);
+            final String rv = r.optString("reachValue", "");
+            m.setOnClickListener(v -> {
+                if ("email".equals(reach) || "whatsapp".equals(reach)) push(new CollectorCreator.Compose(this, rid, name, reach));
+                else push(new CollectorCreator.Detail(this, rid, name));
+            });
+            l1.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)), 6, 0, 0, 0));
+        }
         text.addView(l1, Ui.fill());
         String handle = r.optString("handle");
         TextView link = Ui.subtitle(Ui.text(this, (handle.isEmpty() ? "" : handle + " · ") + r.optString("short"), 12.5f, Ui.G700));
@@ -555,6 +567,8 @@ public class Collector extends Base {
         acts.addView(Ui.rowButton(this, restricted ? "Unrestrict" : "Restrict", false, v ->
                 post("restrict", () -> Ui.toast(this, restricted ? name + " is back in Available" : name + " moved to Restricted"), "id", rid, "restricted", !restricted)), lp);
         card.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+        // A tap anywhere else on the card opens the lead's detail.
+        card.setOnClickListener(v -> push(new CollectorCreator.Detail(this, rid, name)));
         return card;
     }
 

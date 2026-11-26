@@ -14,6 +14,8 @@ import { allKeys } from "../lib/identity.ts";
 import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.ts";
 import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
 import { fakePersons, type SendInput } from "../persons-bridge.ts";
+import { brandOf, linkTitle, normalizeReach, parseLinks, reachError, reachHref } from "../lib/reach.ts";
+import type { DetailView } from "../view.ts";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-11-25T12:00:00Z");
@@ -367,5 +369,79 @@ describe("collector", () => {
     expect(((await call("GET", "export"))!.body as { count: number }).count).toBe(1);
     await call("POST", "restrict", { id: "youtube:UC1", restricted: false });
     expect(c.data.creators.every((x) => !x.restricted)).toBe(true);
+  });
+});
+
+describe("lead detail", () => {
+  it("Reach follows the CRM's checks; links get their brand and title; Edit's links box parses back", () => {
+    expect([reachError("email", "a@b"), reachError("email", "a@b.co"), reachError("discord", "123"), reachError("discord", "123456789012345678"), reachError("instagram", "bad handle!"), reachError("whatsapp", "21 97570-9440")]).toEqual(["That isn't an email address.", null, expect.any(String), null, expect.any(String), null]);
+    expect([normalizeReach("whatsapp", "(21) 9 7570-9440"), normalizeReach("whatsapp", "+1 415 555 0100"), normalizeReach("instagram", "https://instagram.com/ana.x/"), normalizeReach("email", " A@B.Co ")]).toEqual(["+5521975709440", "+14155550100", "@ana.x", "a@b.co"]);
+    expect(reachHref({ kind: "whatsapp", value: "+5521975709440" })).toBe("https://wa.me/5521975709440");
+    expect(reachHref({ kind: "instagram", value: "@ana" })).toBe("https://www.instagram.com/ana/");
+    expect(["https://discord.gg/x", "https://www.youtube.com/@a", "https://linktr.ee/a", "mailto:a@b.co"].map((url) => brandOf({ label: null, url }).key)).toEqual(["discord", "youtube", "link", "email"]);
+    expect([linkTitle({ label: "LOJA", url: "https://x.com.br" }), linkTitle({ label: null, url: "https://www.rreze.com.br/a" })]).toEqual(["LOJA", "rreze.com.br"]);
+    expect(parseLinks("ROBUX GRATIS https://rocute.com.br/Rreze\nrreze.com.br\n\nsiga | https://linktr.ee/r")).toEqual([
+      { label: "ROBUX GRATIS", url: "https://rocute.com.br/Rreze" },
+      { label: null, url: "https://rreze.com.br" },
+      { label: "siga", url: "https://linktr.ee/r" },
+    ]);
+  });
+  it("shows everything gathered: stats with data only, the newest videos with their age and views, bio, how found, links", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const c = new Collector(dir, deps({}));
+    const at = new Date(Date.now() - DAY - 3_600_000).toISOString();
+    c.data.creators.push(
+      rec({ platform: "youtube", platform_id: "UC1", name: "rreze", handle: "@rreze", subscriber_count: 570_000, video_count: 1000, view_count: 69_000_000, description: "todo dia tem video", email: "r@p.com.br", recent_videos: [{ video_id: "v1", title: "EU LEVEI UM GOLPE", url: "https://y/v1", thumbnail_url: null, published_at: at, view_count: 22_000, is_short: false }], links: [{ label: "LOJA RREZE", url: "https://rreze.com.br" }] }),
+      rec({ platform: "instagram", platform_id: "9", name: "ig", subscriber_count: 1200, video_count: 30, view_count: null }),
+    );
+    const call = caller(c);
+    const d = (await call("GET", "creator", null, [["id", "youtube:UC1"]]))!.body as DetailView;
+    expect(d.stats).toEqual([{ icon: "users", value: "570K", label: "Subscribers" }, { icon: "video", value: "1K", label: "Videos" }, { icon: "eye", value: "69M", label: "Views" }]);
+    expect(d.recent.map((v) => [v.title, v.meta])).toEqual([["EU LEVEI UM GOLPE", "yesterday · 22K views"]]);
+    expect([d.bio, d.foundVia, d.hasContact, d.reachKind, d.drafts.email, d.openLabel, d.reach]).toEqual(["todo dia tem video", "q", true, "email", "r@p.com.br", "Open channel", ""]);
+    expect(d.links).toEqual([{ title: "LOJA RREZE", url: "https://rreze.com.br", brand: "link", color: "#9aa4b2" }]);
+    const ig = (await call("GET", "creator", null, [["id", "instagram:9"]]))!.body as DetailView;
+    expect(ig.stats.map((x) => x.label)).toEqual(["Followers", "Posts"]);
+    expect([ig.hasContact, ig.openLabel]).toEqual([false, "Open profile"]);
+  });
+  it("Reach is typed only: saved, shown on the card, written to Send message, cleared; Edit's fields stay typed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const c = new Collector(dir, deps({}));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "A", email: "found@a.com", email_source: "bio" }));
+    const call = caller(c);
+    expect((await call("POST", "reach", { id: "youtube:UC1", kind: "fax", value: "1" }))!.status).toBe(400);
+    expect((await call("POST", "reach", { id: "youtube:UC1", kind: "discord", value: "nope" }))!.status).toBe(400);
+    const d = (await call("POST", "reach", { id: "youtube:UC1", kind: "whatsapp", value: "(21) 9 7570-9440" }))!.body as DetailView;
+    expect([d.reach, d.reachValue, d.reachSend, d.reachHref, d.drafts.whatsapp]).toEqual(["whatsapp", "+5521975709440", "Send WhatsApp", "https://wa.me/5521975709440", "+5521975709440"]);
+    expect([c.data.creators[0]!.whatsapp, c.data.creators[0]!.whatsapp_manual]).toEqual(["5521975709440", true]);
+    const v = (await call("GET", ""))!.body as { creators: { reach: string }[] };
+    expect(v.creators[0]!.reach).toBe("whatsapp");
+    await call("POST", "reach", { id: "youtube:UC1", kind: "email", value: "Deal@A.com" });
+    expect([c.data.creators[0]!.email, c.data.creators[0]!.email_manual, c.data.creators[0]!.reach]).toEqual(["deal@a.com", true, { kind: "email", value: "deal@a.com" }]);
+    const m = (await call("GET", "compose", null, [["id", "youtube:UC1"], ["kind", "email"]]))!.body as { to: string; kind: string };
+    expect([m.to, m.kind]).toEqual(["deal@a.com", "gmail"]);
+    await call("POST", "reach", { id: "youtube:UC1", kind: "email", value: "" });
+    expect([c.data.creators[0]!.reach, c.data.creators[0]!.email]).toEqual([undefined, "deal@a.com"]);
+    expect((await call("POST", "edit", { id: "youtube:UC1", name: "  " }))!.status).toBe(400);
+    const e = (await call("POST", "edit", { id: "youtube:UC1", name: "Ana B", handle: "anab", description: "bio typed", links: "Shop https://shop.com" }))!.body as DetailView;
+    expect([e.name, e.handle, e.bio, e.links.map((l) => [l.title, l.url])]).toEqual(["Ana B", "@anab", "bio typed", [["Shop", "https://shop.com"]]]);
+    expect(c.data.creators[0]!.edited?.sort()).toEqual(["description", "handle", "links", "name"]);
+    const line = JSON.parse(exportText(c.data));
+    expect(["edited" in line, "reach" in line, line.name]).toEqual([false, false, "Ana B"]);
+  });
+  it("fills what an older lead misses once on opening, keeping what was typed; once a day at most", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const yt = fakeYt({ UC1: 2 });
+    yt.about = async (id: string) => ({ name: "Fresh", handle: `@${id}`, profileUrl: "", avatarUrl: "https://img/a.jpg", subscribers: 999, videos: 7, views: 50, description: "fresh bio", country: null, links: [{ label: "Site", url: "https://site.com" }] });
+    const c = new Collector(dir, deps({ youtube: yt as never }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Typed name", edited: ["name"], email: "me@x.com", email_manual: true, subscriber_count: null, video_count: null }));
+    const call = caller(c);
+    const d = (await call("POST", "fill", { id: "youtube:UC1" }))!.body as DetailView;
+    expect([d.name, d.bio, d.stats.map((s) => s.value), d.recent.length, d.links.map((l) => l.url), d.email]).toEqual(["Typed name", "fresh bio", ["999", "7", "50"], 1, ["https://site.com"], "me@x.com"]);
+    expect(Collector.missing(c.data.creators[0]!)).toBe(false);
+    c.data.creators[0]!.description = null;
+    yt.calls.length = 0;
+    await call("POST", "fill", { id: "youtube:UC1" });
+    expect(yt.calls).toEqual([]);
   });
 });

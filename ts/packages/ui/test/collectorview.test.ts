@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { formOf, leadsOf, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { formOf, leadsOf, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
 const row = (id: string, over: Partial<Row> = {}): Row => ({ id, name: id, handle: `@${id}`, platform: "YouTube", url: `https://y/@${id}`, short: `y/@${id}`, avatarPath: null, email: "", emailSource: "", videos: [], restricted: false, ...over });
@@ -49,5 +50,21 @@ describe("collector window", () => {
     expect(leadsOf(view(), "restricted", "").emptyTitle).toBe("Nobody restricted");
     expect(leadsOf(view(), "collector", "").emptyTitle).toBe("No search yet");
     expect(leadsOf(view({ run: run({ running: true }) }), "collector", "").emptyTitle).toBe("");
+  });
+});
+
+describe("collector lead detail", () => {
+  it("lays the newest videos out as the CRM's podium: #2, #1 (featured), #3; missing ones leave their place", () => {
+    expect(podium(["a", "b", "c"])).toEqual([{ v: "b", featured: false }, { v: "a", featured: true }, { v: "c", featured: false }]);
+    expect(podium(["a"])).toEqual([{ v: null, featured: false }, { v: "a", featured: true }, { v: null, featured: false }]);
+    expect(podium([])).toEqual([]);
+  });
+  it("Reach: Save only for a valid, changed value; WhatsApp and Discord say what to type", () => {
+    const d = { reach: "email", reachValue: "a@b.co" } as DetailView;
+    expect(reachState(d, "email", "a@b.co")).toMatchObject({ error: "", canSave: false });
+    expect(reachState(d, "email", "x@y.com").canSave).toBe(true);
+    expect(reachState(d, "email", "nope")).toMatchObject({ error: "That isn't an email address.", canSave: false });
+    expect(reachState(d, "whatsapp", "").help).toContain("Country code first");
+    expect(reachState(d, "discord", "").hint).toBe("Discord user ID (17-20 digits)");
   });
 });

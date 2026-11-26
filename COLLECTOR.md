@@ -15,9 +15,31 @@ Three views, picked in the sidebar (the phone: chips under the title):
 - **Available**: every lead not Restricted, newest first, with one filter box (name, handle, email, platform, link).
 - **Restricted**: leads the user keeps out of Available. They stay remembered, so no run collects them again.
 
-A lead is one card: picture, name, platform, handle and profile link, the email (and where it was found) or "Add email",
-the 3 newest videos (thumbnails; a click opens the video), **Restrict / Unrestrict**, and **Send message**. Copy JSONL
-(Available's page bar) gives the Available leads for SpokPayCRM → Creators → Import.
+A lead is one card: picture, name, platform, handle and profile link, the Reach icon when one is set, the email (and
+where it was found) or "Add email", the 3 newest videos (thumbnails; a click opens the video), **Restrict / Unrestrict**,
+and **Send message**. Copy JSONL (Available's page bar) gives the Available leads for SpokPayCRM → Creators → Import.
+
+A click anywhere else on a card (Collector, Available or Restricted) opens the lead's **detail**, the SpokPay CRM's
+creator profile dialog (`src/components/creators/creator-profile-dialog.tsx`, `creator-recent-videos.tsx`,
+`creator-reach.tsx`, `lib/social-brands.tsx`) class for class; on the phone the same content as a full-screen sheet:
+
+- Header: the picture (rounded square), the name, PLATFORM @handle, "Has Contact" when there's an email, a WhatsApp or a
+  Reach; × closes.
+- Stat tiles, only those with data: YouTube Subscribers / Videos / Views, TikTok Followers / Videos / Likes, Instagram
+  Followers / Posts (570K, 1K, 69M).
+- MOST RECENT: the 3 newest videos as the CRM's podium (#2, #1 wider and raised, #3): thumbnail, two lines of title,
+  "yesterday · 22K views"; a click opens the video.
+- Bio; How we found them (Search: "term" on Platform); Reach; Social media (each link with its brand mark, title and URL;
+  a click opens it).
+- **Reach**: one way to contact them (Email, Discord user ID, WhatsApp, Instagram handle; the CRM's checks), Save /
+  Clear. Only ever typed: an email or WhatsApp Reach is also the address Send message uses, typed (never replaced by one
+  found later). The saved Reach's button: Send email / Send WhatsApp (Send message on that channel), Open in Discord /
+  Open Instagram. Its icon shows on the card (a click does the same). Exported as the CRM's `reach_kind` / `reach_value`.
+- Footer: Open channel (Open profile), Edit (name, handle, bio, links typed by hand; a later read never replaces them).
+
+Older leads fill in what they miss (bio, counts, links, the newest videos' views and dates) when their detail opens: one
+read of the profile, at most once a day per lead, never during a run on that platform (Instagram only with its session).
+There is still no update loop.
 
 When a run ends (done, stopped, an error, or no new leads) Hub notifies, as for its other events: "Collector: done — 7
 new leads for “dress to impress”" (this PC's popup while the window isn't in front, and the phones; Settings ›
@@ -60,7 +82,7 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   instead of sending.
 
 Records are the userscript's field for field (`lib/types.ts` `CreatorRecord`) plus Hub's own (`email_source`,
-`email_manual`, `found_video`, `restricted`, `contacted`). Older state.json files load as they are; the old daily
+`email_manual`, `found_video`, `restricted`, `contacted`, `reach`, `whatsapp_manual`, `edited`, `filled_at`). Older state.json files load as they are; the old daily
 update's state and each record's history are dropped.
 
 Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last run with its leads' ids, a log),
@@ -70,5 +92,6 @@ Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last r
 
 Checks: `bun test tabs/collector packages/ui/test/collectorview.test.ts`; `bun ts/rig/collector-fixture.ts <dir>` then
 `scripts/shot --empty --view tab:collector --env HUB_COLLECTOR_DIR=<dir> --env HUB_COLLECTOR_OFFLINE=1`
-(`HUB_COLLECTOR_SHOT_PAGE=available|restricted` opens that view, `HUB_COLLECTOR_SHOT_SEND=1` the Send dialog);
-`scripts/boat/phoneshot --screen collector` (also `collector-available`, `collector-restricted`, `collector-send`).
+(`HUB_COLLECTOR_SHOT_PAGE=available|restricted` opens that view, `HUB_COLLECTOR_SHOT_SEND=1` the Send dialog,
+`HUB_COLLECTOR_SHOT_DETAIL=1` the first lead's detail); `scripts/boat/phoneshot --screen collector` (also
+`collector-available`, `collector-restricted`, `collector-send`, `collector-detail`).

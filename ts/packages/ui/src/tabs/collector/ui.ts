@@ -7,6 +7,9 @@ import * as slint from "slint-ui";
 import { readFileSync, statSync } from "node:fs";
 import { clipboard, images } from "@harbor/media";
 import type { TabCtx, TabUi } from "../api.ts";
+import { REACH_META, reachError, reachHref } from "../../../../../tabs/collector/lib/reach.ts";
+import { REACH_KINDS, type ReachKind } from "../../../../../tabs/collector/lib/types.ts";
+import type { DetailView } from "../../../../../tabs/collector/view.ts";
 
 type Pixels = { width: number; height: number; data: Uint8ClampedArray };
 const NO_PX: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
@@ -31,6 +34,9 @@ export interface Row {
   emailSource: string;
   videos: { url: string; title: string; thumbPath: string | null }[];
   restricted: boolean;
+  /** The Reach picked in the detail ("" none) and its value. */
+  reach?: string;
+  reachValue?: string;
 }
 export interface CollectorView {
   rev: number;
@@ -60,7 +66,23 @@ interface Compose {
 }
 
 export type Page = "collector" | "available" | "restricted";
-type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string };
+type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
+
+/** The podium's render order (the CRM's 2-1-3): the newest in the middle, featured; a missing one leaves its place
+ *  empty (pure: tested). */
+export function podium<T>(videos: T[]): { v: T | null; featured: boolean }[] {
+  if (!videos.length) return [];
+  return [1, 0, 2].map((i) => ({ v: videos[i] ?? null, featured: i === 0 }));
+}
+
+/** What the Reach row shows for the kind picked and the text typed (pure: tested). */
+export function reachState(d: DetailView, kind: ReachKind, text: string): { error: string; canSave: boolean; help: string; hint: string } {
+  const t = text.trim();
+  const error = t ? (reachError(kind, t) ?? "") : "";
+  const help = kind === "whatsapp" ? "Country code first, like +55 21 97570-9440 (a Brazilian number without it gets +55)." : kind === "discord" ? "Enable Developer Mode, right-click a user › Copy User ID." : "";
+  const same = !!d.reach && d.reach === kind && d.reachValue === t;
+  return { error, canSave: !!t && !error && !same, help, hint: REACH_META[kind].placeholder };
+}
 
 const initials = (name: string): string => {
   const w = name
@@ -168,6 +190,18 @@ export function createCollectorUi(): TabUi {
   let sendBusy = false;
   let sendError = "";
   let saved = "";
+  // A lead's detail
+  let detail: DetailView | null = null;
+  let detailOpen = false;
+  let filling = false;
+  let reachKind: ReachKind = "email";
+  let drafts: Record<ReachKind, string> = { email: "", discord: "", whatsapp: "", instagram: "" };
+  let reachBusy = false;
+  let reachErr = "";
+  let editOpen = false;
+  let editErr = "";
+  /** What the detail's lists were last drawn from (a model is only replaced when it changes). */
+  const sigs: Record<string, string> = {};
   const rowModel = new slint.ArrayModel<Record<string, unknown>>([]);
   const pics = new Pictures(() => render());
 
@@ -205,6 +239,7 @@ export function createCollectorUi(): TabUi {
 
   // The screenshot rig opens the Send dialog for the first lead straight away, once the first view is in.
   let shot = process.env.HUB_COLLECTOR_SHOT_SEND === "1";
+  let shotDetail = process.env.HUB_COLLECTOR_SHOT_DETAIL === "1";
   const load = async (): Promise<void> => {
     try {
       take((await call("GET", "v1/collector")) as CollectorView);
@@ -215,6 +250,11 @@ export function createCollectorUi(): TabUi {
           sendId = first.id;
           await openCompose(view?.settings.lastTemplate ?? "", "");
         }
+      }
+      if (shotDetail) {
+        shotDetail = false;
+        const first = view?.creators.find((c) => !c.restricted);
+        if (first) await showDetail(first.id);
       }
     } catch (e) {
       set("error", errText(e));
@@ -303,19 +343,130 @@ export function createCollectorUi(): TabUi {
           email: x.email,
           email_source: x.emailSource,
           restricted: x.restricted,
+          reach: x.reach ?? "",
+          reach_value: x.reachValue ?? "",
+          reach_color: x.reach && (REACH_KINDS as readonly string[]).includes(x.reach) ? REACH_META[x.reach as ReachKind].color : "#9aa4b2",
           videos: new slint.ArrayModel(
             x.videos.map((vd) => {
               const t = pics.get(vd.thumbPath);
               return { url: vd.url, title: vd.title, thumb: t ?? NO_PX, has_thumb: !!t };
             }),
           ),
-          sig: `${x.id}|${x.email}|${x.emailSource}|${x.restricted}|${!!px}|${x.videos.map((vd) => `${vd.url}${pics.get(vd.thumbPath) ? 1 : 0}`).join(",")}`,
+          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.emailSource}|${x.restricted}|${x.reach ?? ""}${x.reachValue ?? ""}|${!!px}|${x.videos.map((vd) => `${vd.url}${pics.get(vd.thumbPath) ? 1 : 0}`).join(",")}`,
         };
       }),
     );
     if (b.rows !== rowModel) b.rows = rowModel;
     renderSend();
+    renderDetail();
   }
+
+  function renderDetail(): void {
+    const b = bus;
+    const d = detail;
+    set("detail_open", detailOpen && !!d);
+    set("edit_open", editOpen && !!d);
+    if (!b || !d) return;
+    const px = pics.get(d.avatarPath);
+    set("d_name", d.name);
+    set("d_platform", d.platform.toUpperCase());
+    set("d_handle", d.handle);
+    set("d_avatar", px ?? NO_PX);
+    set("d_has_avatar", !!px);
+    set("d_initials", initials(d.name));
+    set("d_color", colorOf(d.id));
+    set("d_has_contact", d.hasContact);
+    const statSig = JSON.stringify(d.stats);
+    if (sigs.d_stats !== statSig) {
+      b.d_stats = new slint.ArrayModel(d.stats.map((x) => ({ ...x, label: x.label.toUpperCase() })));
+      sigs.d_stats = statSig;
+    }
+    const vids = podium(d.recent).map(({ v, featured }) => {
+      const t = v ? pics.get(v.thumbPath) : null;
+      return { url: v?.url ?? "", title: v?.title ?? "", meta: v?.meta ?? "", thumb: t ?? NO_PX, has_thumb: !!t, short: !!v?.short, featured, empty: !v };
+    });
+    const vidSig = vids.map((x) => `${x.url}|${x.title}|${x.meta}|${x.has_thumb}`).join(",");
+    if (sigs.d_videos !== vidSig) {
+      b.d_videos = new slint.ArrayModel(vids);
+      sigs.d_videos = vidSig;
+    }
+    set("d_bio", d.bio);
+    set("d_found", d.foundVia);
+    set("d_found_platform", d.foundVia ? d.platform : "");
+    set("d_contacted", d.contacted);
+    const reachSig = `${reachKind}`;
+    if (sigs.d_reaches !== reachSig) {
+      b.d_reaches = new slint.ArrayModel(REACH_KINDS.map((k) => ({ kind: k, label: REACH_META[k].label, color: REACH_META[k].color, on: k === reachKind })));
+      sigs.d_reaches = reachSig;
+    }
+    const st = reachState(d, reachKind, b.d_reach_text);
+    set("d_reach_hint", st.hint);
+    set("d_reach_help", st.help);
+    set("d_reach_error", reachErr || st.error);
+    set("d_reach_can_save", st.canSave);
+    set("d_reach_saved", !!d.reach);
+    set("d_reach_busy", reachBusy);
+    set("d_reach_send", d.reachSend);
+    set("d_reach_send_kind", d.reach);
+    const linkSig = JSON.stringify(d.links);
+    if (sigs.d_links !== linkSig) {
+      b.d_links = new slint.ArrayModel(d.links.map((l) => ({ title: l.title, url: l.url, brand: l.brand, color: l.color })));
+      sigs.d_links = linkSig;
+    }
+    set("d_url", d.url);
+    set("d_open_label", d.openLabel);
+    set("d_filling", filling);
+    set("e_error", editErr);
+  }
+
+  /** Takes a fresh detail; the Reach field keeps what the user typed unless it was the old value. */
+  const takeDetail = (d: DetailView, resetReach: boolean): void => {
+    const prev = detail;
+    detail = d;
+    if (resetReach || !prev || prev.id !== d.id) {
+      reachKind = d.reachKind;
+      drafts = { ...d.drafts };
+      if (bus) bus.d_reach_text = drafts[reachKind];
+      reachErr = "";
+    } else {
+      for (const k of REACH_KINDS) if (k !== reachKind && drafts[k] === prev.drafts[k]) drafts[k] = d.drafts[k];
+      if (bus && bus.d_reach_text === prev.drafts[reachKind]) bus.d_reach_text = d.drafts[reachKind];
+    }
+    render();
+  };
+
+  const showDetail = async (id: string): Promise<void> => {
+    try {
+      const d = (await call("GET", `v1/collector/creator?id=${encodeURIComponent(id)}`)) as DetailView;
+      detailOpen = true;
+      editOpen = false;
+      takeDetail(d, true);
+      // An older lead misses some of this: one read of its profile fills it (the engine decides if it's due).
+      filling = true;
+      render();
+      const f = (await call("POST", "v1/collector/fill", { id }).catch(() => null)) as DetailView | null;
+      filling = false;
+      if (f && detail?.id === id) takeDetail(f, false);
+      else render();
+    } catch (e) {
+      filling = false;
+      ctx?.toast(errText(e));
+    }
+  };
+
+  /** A saved Reach's action: Send message for email and WhatsApp, their profile for Discord and Instagram. */
+  const reachGo = (id: string, kind: string, value: string): void => {
+    if (kind === "email" || kind === "whatsapp") {
+      sendId = id;
+      sendConfirm = false;
+      compose = null;
+      void openCompose(view?.settings.lastTemplate ?? "", "", kind);
+      return;
+    }
+    const href = (REACH_KINDS as readonly string[]).includes(kind) ? reachHref({ kind: kind as ReachKind, value }) : null;
+    if (href) ctx?.openExternal(href);
+    else ctx?.toast("Nothing to open for that Reach.");
+  };
 
   /** The rows in place (a run adds one at a time: no full redraw of the list). */
   function sync(rows: Record<string, unknown>[]): void {
@@ -328,10 +479,10 @@ export function createCollectorUi(): TabUi {
     }
   }
 
-  const openCompose = async (template = "", channel = ""): Promise<void> => {
+  const openCompose = async (template = "", channel = "", kind = ""): Promise<void> => {
     if (!sendId || !bus) return;
     try {
-      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}`)) as Compose;
+      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}`)) as Compose;
       const keepTo = compose && compose.id === c.id && compose.channel === c.channel ? bus.s_to : null;
       compose = c;
       bus.s_to = keepTo ?? c.to;
@@ -471,6 +622,7 @@ export function createCollectorUi(): TabUi {
           sendConfirm = false;
           ctx?.toast(`Sent to ${c.name}. They're in Persons › Creators.`);
           void load();
+          if (detailOpen && detail?.id === c.id) void call("GET", `v1/collector/creator?id=${encodeURIComponent(c.id)}`).then((d) => takeDetail(d as DetailView, false), () => {});
         })
         .catch((e: unknown) => {
           sendError = errText(e);
@@ -478,6 +630,89 @@ export function createCollectorUi(): TabUi {
         })
         .finally(() => {
           sendBusy = false;
+          render();
+        });
+    });
+    on("detail_show", (id: string) => void showDetail(id));
+    on("detail_close", () => {
+      detailOpen = false;
+      editOpen = false;
+      render();
+    });
+    on("reach_pick", (k: string) => {
+      if (!(REACH_KINDS as readonly string[]).includes(k) || k === reachKind) return;
+      drafts[reachKind] = b.d_reach_text;
+      reachKind = k as ReachKind;
+      b.d_reach_text = drafts[reachKind];
+      reachErr = "";
+      render();
+    });
+    on("reach_edited", () => {
+      reachErr = "";
+      render();
+    });
+    const saveReach = (value: string): void => {
+      const d = detail;
+      if (!d || reachBusy) return;
+      reachBusy = true;
+      reachErr = "";
+      render();
+      void call("POST", "v1/collector/reach", { id: d.id, kind: reachKind, value })
+        .then((r) => {
+          takeDetail(r as DetailView, true);
+          ctx?.toast(value ? `Reach saved: ${REACH_META[reachKind].label}.` : "Reach cleared.");
+          void load();
+        })
+        .catch((e: unknown) => {
+          reachErr = errText(e);
+        })
+        .finally(() => {
+          reachBusy = false;
+          render();
+        });
+    };
+    on("reach_save", () => {
+      const t = b.d_reach_text.trim();
+      if (!t || !detail || !reachState(detail, reachKind, t).canSave) return;
+      saveReach(t);
+    });
+    on("reach_clear", () => saveReach(""));
+    on("reach_send", () => {
+      const d = detail;
+      if (d?.reach) reachGo(d.id, d.reach, d.reachValue);
+    });
+    on("reach_go", (id: string) => {
+      const r = view?.creators.find((c) => c.id === id);
+      if (r?.reach) reachGo(id, r.reach, r.reachValue ?? "");
+    });
+    on("edit_show", () => {
+      const d = detail;
+      if (!d) return;
+      b.e_name = d.edit.name;
+      b.e_handle = d.edit.handle;
+      b.e_bio = d.edit.bio;
+      b.e_links = d.edit.links;
+      editErr = "";
+      editOpen = true;
+      render();
+    });
+    on("edit_close", () => {
+      editOpen = false;
+      render();
+    });
+    on("edit_save", () => {
+      const d = detail;
+      if (!d) return;
+      void call("POST", "v1/collector/edit", { id: d.id, name: b.e_name, handle: b.e_handle, description: b.e_bio, links: b.e_links })
+        .then((r) => {
+          editOpen = false;
+          editErr = "";
+          takeDetail(r as DetailView, false);
+          ctx?.toast("Saved.");
+          void load();
+        })
+        .catch((e: unknown) => {
+          editErr = errText(e);
           render();
         });
     });

@@ -66,6 +66,22 @@ export interface CreatorRecord {
   contacted?: Contacted | null;
   /** Restricted by the user: kept (never collected again) but never shown in Available. */
   restricted?: boolean;
+  /** The one way to contact them the user picked in the lead's detail (its icon shows on the card). Only ever typed. */
+  reach?: Reach | null;
+  /** The WhatsApp number was typed (Reach): never replaced by one found later. */
+  whatsapp_manual?: boolean;
+  /** Fields typed in the detail's Edit ("name", "handle", "description", "links"): a later read never replaces them. */
+  edited?: string[];
+  /** When opening the detail last filled missing data (bio, counts, videos' views and dates) from the platform. */
+  filled_at?: string | null;
+}
+
+/** The CRM's Reach (creator-contacts.ts): one operator-owned way to contact a creator. */
+export type ReachKind = "email" | "discord" | "whatsapp" | "instagram";
+export const REACH_KINDS: readonly ReachKind[] = ["email", "discord", "whatsapp", "instagram"];
+export interface Reach {
+  kind: ReachKind;
+  value: string;
 }
 
 export type CreatorPlatform = "instagram" | "tiktok" | "youtube";
@@ -168,6 +184,13 @@ export function migrate(raw: unknown): CollectorData {
         links: Array.isArray(c.links) ? c.links.filter((l) => l && typeof l.url === "string") : [],
       }))
         .map((c) => {
+          // Reach and Edit came later: absent on older records, a bad one dropped.
+          const { reach, edited, ...rest } = c;
+          const okReach = reach && typeof reach === "object" && REACH_KINDS.includes(reach.kind) && typeof reach.value === "string" && reach.value.trim();
+          const okEdited = Array.isArray(edited) ? edited.filter((f): f is string => typeof f === "string") : [];
+          return { ...rest, ...(okReach ? { reach: { kind: reach.kind, value: reach.value.trim() } } : {}), ...(okEdited.length ? { edited: okEdited } : {}) };
+        })
+        .map((c) => {
           const { history: _h, update_error: _e, ...rest } = c as CreatorRecord & { history?: unknown; update_error?: unknown };
           return rest;
         })
@@ -182,8 +205,13 @@ export function migrate(raw: unknown): CollectorData {
 
 /** The CRM's fields (and the email), as the record it imports. */
 export function exportRecord(c: CreatorRecord): Record<string, unknown> {
-  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, ...rest } = c;
+  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, ...rest } = c;
   const out: Record<string, unknown> = { ...rest, links: c.links.map(({ label, url }) => ({ label, url })) };
+  // The CRM's own Reach columns (creators.reach_kind / reach_value).
+  if (reach) {
+    out.reach_kind = reach.kind;
+    out.reach_value = reach.value;
+  }
   if (!c.email) {
     delete out.email;
     delete out.email_source;
