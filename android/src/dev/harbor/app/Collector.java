@@ -234,7 +234,10 @@ public class Collector extends Base {
             card.addView(pad(Ui.text(this, ok ? "Reads through " + (acc.isEmpty() ? "the Stores Discord account" : acc) + " (Persons). Read-only: nothing is joined or sent."
                 : "Servers needs Discord: sign in to the Stores Discord account in Persons first.", 13, ok ? Ui.G700 : Ui.AMBER), 10), Ui.fill());
         }
-        TextView go = Ui.button(this, going ? "Stop" : "Start", !going, v -> { if (running()) post("stop"); else start(); });
+        JSONObject rn = view.optJSONObject("run");
+        boolean here = going && rn != null && tab().equals(rn.optString("tab"));
+        TextView go = Ui.button(this, here ? "Stop" : going ? "A run is going on " + ("creators".equals(rn.optString("tab")) ? "Creators" : "Servers") : "Start", !going, here ? v -> post("stop") : going ? null : v -> start());
+        if (going && !here) go.setAlpha(0.5f);
         LinearLayout.LayoutParams gl = Ui.fill();
         gl.topMargin = Ui.dp(14);
         card.addView(go, gl);

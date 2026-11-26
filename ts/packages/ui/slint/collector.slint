@@ -32,6 +32,9 @@ export global CollectorBus {
     in property <bool> account-ok;
     // The run (the last one, or the one going)
     in property <bool> running;
+    /** The run going is this tab's (one run at a time: the other tab can't start meanwhile). */
+    in property <bool> run-here;
+    in property <string> run-tab;
     in property <bool> has-run;
     in property <string> run-title;
     in property <string> run-status;
@@ -84,7 +87,7 @@ component Sidebar inherits SideSurface {
                 glyph: Icons.users;
                 title: "Creators";
                 active: CollectorBus.tab == "creators";
-                meta: CollectorBus.running && CollectorBus.tab == "creators" ? "running" : CollectorBus.n-creators > 0 ? CollectorBus.n-creators : "";
+                meta: CollectorBus.running && CollectorBus.run-tab == "creators" ? "running" : CollectorBus.n-creators > 0 ? CollectorBus.n-creators : "";
                 clicked => {
                     CollectorBus.pick-tab("creators");
                 }
@@ -94,7 +97,7 @@ component Sidebar inherits SideSurface {
                 glyph: Icons.message;
                 title: "Servers";
                 active: CollectorBus.tab == "servers";
-                meta: CollectorBus.running && CollectorBus.tab == "servers" ? "running" : CollectorBus.n-servers > 0 ? CollectorBus.n-servers : "";
+                meta: CollectorBus.running && CollectorBus.run-tab == "servers" ? "running" : CollectorBus.n-servers > 0 ? CollectorBus.n-servers : "";
                 clicked => {
                     CollectorBus.pick-tab("servers");
                 }
@@ -195,17 +198,18 @@ component Controls inherits Card {
                         }
                     }
                 }
-                if !CollectorBus.running: Btn {
+                if !CollectorBus.run-here: Btn {
                     width: 92px;
                     text: "Start";
                     icon: Icons.play;
                     variant: primary;
-                    enabled: CollectorBus.unavailable == "" && CollectorBus.query != "" && (CollectorBus.tab == "creators" || CollectorBus.account-ok);
+                    tip: CollectorBus.running ? "A run is going on the other tab" : "";
+                    enabled: !CollectorBus.running && CollectorBus.unavailable == "" && CollectorBus.query != "" && (CollectorBus.tab == "creators" || CollectorBus.account-ok);
                     clicked => {
                         CollectorBus.start();
                     }
                 }
-                if CollectorBus.running: Btn {
+                if CollectorBus.run-here: Btn {
                     width: 92px;
                     text: "Stop";
                     icon: Icons.stop;

@@ -205,6 +205,8 @@ export function createCollectorUi(): TabUi {
     }
     const running = !!v.run?.running;
     set("running", running);
+    set("run_here", running && v.run?.tab === tab);
+    set("run_tab", v.run?.tab ?? "");
     const r = runOf(v);
     set("has_run", r !== null);
     if (r) {
