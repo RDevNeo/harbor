@@ -81,8 +81,16 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   30 new emails a rolling 24 h, no second send to the same person within 2 minutes. `HUB_COLLECTOR_SEND=fake` records
   instead of sending.
 
+**SpokPay CRM import** (`POST v1/collector/import-crm {status?}`, default "Has Contact"; `lib/crm.ts`): the CRM's
+creators in that status, read-only through its board's public Convex queries (`creators:listCreatorStatuses`,
+`creators:listCreators` on combative-wildcat-45), become Available leads with the detail's fields (bio, counts, links, the
+search term, the Reach; an email Reach is their email, kept as typed). Idempotent: a lead already here by its id is only
+completed (nothing typed replaced, Restricted stays Restricted); one whose id or handle another lead has is left out.
+Every key goes into the never-twice ledger. Their newest videos (the CRM keeps those behind a sign-in) and anything else
+missing are then read one lead at a time through the usual fill (1.2 s apart; Instagram 2.5 s).
+
 Records are the userscript's field for field (`lib/types.ts` `CreatorRecord`) plus Hub's own (`email_source`,
-`email_manual`, `found_video`, `restricted`, `contacted`, `reach`, `whatsapp_manual`, `edited`, `filled_at`). Older state.json files load as they are; the old daily
+`email_manual`, `found_video`, `restricted`, `contacted`, `reach`, `whatsapp_manual`, `edited`, `filled_at`, `imported_from`). Older state.json files load as they are; the old daily
 update's state and each record's history are dropped.
 
 Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last run with its leads' ids, a log),
