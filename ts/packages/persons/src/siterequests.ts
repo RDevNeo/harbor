@@ -100,7 +100,8 @@ export class SiteRequests {
           .slice(-20)
           .map((x) => ({ from: fromOf(x), text: x.content || (x.attachments?.length ? `(${x.attachments.length} attachment(s))` : ""), at: stamp(x.timestamp) })),
       });
-      const r = await this.call("POST", "v1/chats", {}, { text, project_id: project.id, title: `Site request · ${label}` });
+      // the project's id as the state gave it: a number here (a string is read as the project's folder: "no such project")
+      const r = await this.call("POST", "v1/chats", {}, { text, project_id: /^\d+$/.test(project.id) ? Number(project.id) : project.id, title: `Site request · ${label}` });
       const chat = (r.body as { id?: string | number | null } | null)?.id;
       if (r.status >= 400 || chat == null) throw new Error(String((r.body as { error?: string } | null)?.error ?? "Hub didn't start the SpokPay agent"));
       item.chat = String(chat);
