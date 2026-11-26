@@ -5,7 +5,7 @@
 # both while a hub with made-up data starts (ts/rig/phonehub.ts); then plays the steps given and
 # leaves the PNGs in ~/out/shots, packed as ~/out/shots.tgz.
 #
-# Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|collector|collector-available|collector-restricted|collector-send|persons|routine|home>,
+# Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|collector|collector-available|collector-restricted|collector-send|collector-detail|persons|routine|home>,
 # tap:<x>,<y>, press:<x>,<y> (long), swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>,
 # broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>, front:now (prints the
 # activity in front), cold:now (Harbor's process restarted by its service Listen alone, the test caller in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
@@ -229,6 +229,7 @@ open() {
     collector-available) a+=("$pkg/$cls.Collector" --es page available) ;;
     collector-restricted) a+=("$pkg/$cls.Collector" --es page restricted) ;;
     collector-send) a+=("$pkg/$cls.Collector" --es creator youtube:UCrig0001lia --es name "'Lia Looks'" --ez send true) ;;
+    collector-detail) a+=("$pkg/$cls.Collector" --es creator youtube:UCrig0001lia --es name "'Lia Looks'" --ez detail true) ;;
     persons) a+=("$pkg/$cls.Persons") ;;
     routine) a+=("$pkg/$cls.Routine") ;;
     *) echo "unknown screen: $what"; return 2 ;;

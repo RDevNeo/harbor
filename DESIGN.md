@@ -97,7 +97,10 @@ Per tab:
   Restricted one framed SearchField, then the leads. A lead is a bordered card (radius 8): 44px Avatar, name, platform
   Tag, handle, the short profile link, the email with its source (or "Add email", which turns into an Input with Save /
   Cancel), the 3 newest videos as 64×48 thumbnails (a click opens one, the title is its tip), Restrict / Unrestrict and
-  Send (ghost-muted sm Btns). Send message is a DialogFrame (760): templates on the left, channel Chips, To, Subject, a
+  Send (ghost-muted sm Btns); a lead with a Reach shows its icon after the handle (24px, the brand's mark on its tint).
+  A click elsewhere on a card opens the lead's detail: the SpokPay CRM's creator profile dialog on Hub's tokens (720
+  wide, radius 12, a scrolling body, a fixed footer with Open channel / Edit; tiles and rows on `fg` at 3.5%, caps heads
+  at 35%), Edit a DialogFrame (512); on the phone a full-screen sheet. Send message is a DialogFrame (760): templates on the left, channel Chips, To, Subject, a
   TextBox, the CRM's guard lines; Send… turns it into a 448 confirm ("Send it?") with Back / Send now. Phone: the title,
   three Chips (Collector, Available n, Restricted n), the same cards in one scrolling column (an email dialog), Send
   message as a screen over the tab.

@@ -9,7 +9,11 @@
 // logged), avatars/<key>.img (pictures and video thumbnails). The PC window (packages/ui/src/tabs/collector) and Hub for
 // Android call the same routes:
 //   GET  v1/collector                 the view (view.ts)
-//   GET  v1/collector/creator?id=     one lead (its row)
+//   GET  v1/collector/creator?id=     one lead's detail (view.ts creatorDetail: stats, newest videos, bio, Reach, links)
+//   POST v1/collector/fill {id}       the detail after filling what an older lead misses (bio, counts, the videos'
+//                                     views and dates) from the platform: only on opening it, at most once a day
+//   POST v1/collector/reach           {id, kind, value}: the one way to contact them ("" clears it); never auto-found
+//   POST v1/collector/edit            {id, name?, handle?, description?, links? (text, a link a line)}: typed by hand
 //   POST v1/collector/settings        {platform?, query?, gapDays?, target?}
 //   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
 //   POST v1/collector/restrict        {id, restricted}: out of Available (or back)
@@ -19,7 +23,7 @@
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
 //   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
 //                                     POST template-delete {id} (a built-in one is reset)
-//   GET  v1/collector/compose?id=&template=&channel=   the message for that lead: channels, to, subject, text, guard
+//   GET  v1/collector/compose?id=&template=&channel=&kind=   the message for that lead: channels, to, subject, text, guard
 //   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
 //   GET  v1/collector/unread          {rev, unread}: finished runs not looked at yet (the tab's count, as Persons'
@@ -40,14 +44,15 @@ import { enrich } from "./lib/enrich.ts";
 import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
 import { Instagram } from "./lib/instagram.ts";
 import { kindOf, mergeLinks, normalizeUrl, whatsappOf } from "./lib/links.ts";
+import { isReachKind, normalizeReach, parseLinks, reachError } from "./lib/reach.ts";
 import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
 import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
-import { defaultData, exportText, GAP_CHOICES, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine } from "./lib/types.ts";
+import { defaultData, exportText, GAP_CHOICES, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
-import { buildView, creatorRow, type SessionInfo, type SourceInfo } from "./view.ts";
+import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
 
 const LOG_KEEP = 400;
 const AVATAR_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
@@ -231,7 +236,88 @@ export class Collector {
 
   detail(id: string): unknown | null {
     const c = this.find(id);
-    return c ? creatorRow(c, (url) => this.avatarPath(url)) : null;
+    return c ? creatorDetail(c, (url) => this.avatarPath(url)) : null;
+  }
+
+  /** What an older lead misses that a read of their profile gives (the detail shows it). */
+  static missing(c: CreatorRecord): boolean {
+    const v = c.recent_videos;
+    return !c.description || (c.subscriber_count === null && c.video_count === null) || !v?.length || v.some((x) => !x.published_at || x.view_count === null || x.view_count === undefined || !x.title);
+  }
+
+  private filling = new Set<string>();
+
+  /**
+   * Fills what a lead misses (bio, counts, links, the newest videos with their views and dates) with one read of its
+   * profile: only when the detail opens, at most once a day per lead, never during a run on that platform (Instagram's
+   * pace). Typed things stay: the email, the Reach, a typed WhatsApp, and every field changed in Edit. True when it read.
+   */
+  async fill(id: string): Promise<boolean> {
+    const c = this.find(id);
+    if (!c || this.o.offline || !Collector.missing(c) || this.filling.has(id)) return false;
+    if (c.filled_at && Date.now() - Date.parse(c.filled_at) < 86_400_000) return false;
+    if (this.running && this.data.run?.platform === c.platform) return false;
+    if (c.platform === "instagram" && !this.sessions.instagram) return false;
+    this.filling.add(id);
+    try {
+      let fresh: Partial<CreatorRecord> & { recent_videos?: RecentVideo[] };
+      if (c.platform === "youtube") {
+        const yt = this.youtube();
+        const f = await yt.feed(c.platform_id).catch(() => null);
+        const d = await yt.about(c.platform_id);
+        fresh = {
+          name: d.name || c.name,
+          handle: d.handle || c.handle,
+          avatar_url: d.avatarUrl || c.avatar_url,
+          subscriber_count: d.subscribers ?? null,
+          video_count: d.videos,
+          view_count: d.views,
+          description: d.description || null,
+          links: d.links,
+          ...(f?.videos.length ? { recent_videos: f.videos } : {}),
+        };
+      } else if (c.platform === "tiktok" || c.platform === "instagram") {
+        const client = c.platform === "tiktok" ? this.tiktok() : this.instagram();
+        const p = await client.profile((c.handle ?? "").replace(/^@/, "") || c.platform_id);
+        fresh = {
+          name: p.name || c.name,
+          handle: p.handle || c.handle,
+          avatar_url: p.avatar_url || c.avatar_url,
+          subscriber_count: p.followers,
+          video_count: p.posts,
+          view_count: p.platform === "tiktok" ? p.likes : null,
+          description: p.bio,
+          links: p.links.map((l) => ({ label: l.label, url: l.url })),
+          ...(p.recent.length ? { recent_videos: p.recent } : {}),
+        };
+      } else return false;
+      const cur = this.find(id);
+      if (!cur) return false;
+      const typed = new Set(cur.edited ?? []);
+      if (!typed.has("name") && !cur.name && fresh.name) cur.name = fresh.name;
+      if (!typed.has("handle") && !cur.handle && fresh.handle) cur.handle = fresh.handle;
+      if (!typed.has("description") && !cur.description && fresh.description) cur.description = fresh.description;
+      if (!typed.has("links") && fresh.links?.length) cur.links = mergeLinks(cur.links, fresh.links);
+      if (!cur.avatar_url && fresh.avatar_url) cur.avatar_url = fresh.avatar_url;
+      for (const k of ["subscriber_count", "video_count", "view_count"] as const) if (fresh[k] !== null && fresh[k] !== undefined) cur[k] = fresh[k];
+      if (fresh.recent_videos?.length) {
+        cur.recent_videos = fresh.recent_videos;
+        cur.last_upload_at = fresh.recent_videos[0]?.published_at ?? cur.last_upload_at ?? null;
+        for (const v of fresh.recent_videos) this.avatarPath(v.thumbnail_url);
+      }
+      this.avatarPath(cur.avatar_url);
+      cur.filled_at = new Date().toISOString();
+      this.touch();
+      return true;
+    } catch (e) {
+      const cur = this.find(id);
+      if (cur) cur.filled_at = new Date().toISOString();
+      this.o.log(`collector: couldn't fill ${id}: ${errText(e)}`);
+      this.save();
+      return false;
+    } finally {
+      this.filling.delete(id);
+    }
   }
 
   private find(id: string): CreatorRecord | undefined {
@@ -340,7 +426,7 @@ export class Collector {
     };
     const platformEmail = rec.email && !rec.email_manual ? { email: rec.email, source: rec.email_source ?? `${bioSource}` } : null;
     const e = await enrich({ fetch: this.o.fetch ?? fetch, sleep, stopped }, { links: rec.links, bio: rec.description, bioSource });
-    const out: CreatorRecord = { ...rec, links: e.links, whatsapp: whatsappOf(e.links.map((l) => l.url), rec.description ?? "") ?? rec.whatsapp ?? null };
+    const out: CreatorRecord = { ...rec, links: e.links, whatsapp: rec.whatsapp_manual ? (rec.whatsapp ?? null) : (whatsappOf(e.links.map((l) => l.url), rec.description ?? "") ?? rec.whatsapp ?? null) };
     if (!rec.email_manual) {
       const found = platformEmail ?? e.email;
       out.email = found?.email ?? rec.email ?? null;
@@ -495,11 +581,85 @@ export class Collector {
       c.email_source = "typed";
       c.email_manual = true;
       this.seen.add(`email:${e}`);
+      if (c.reach?.kind === "email") c.reach = { kind: "email", value: e };
     } else {
       c.email = null;
       c.email_source = null;
       c.email_manual = false;
+      if (c.reach?.kind === "email") delete c.reach;
     }
+    this.touch();
+    return null;
+  }
+
+  // ---------- Reach and Edit (the lead's detail) ----------
+
+  /** The one way to contact them (the CRM's Reach). An email or WhatsApp Reach is also what Send message writes to,
+   *  typed: never replaced by one found later. "" clears the Reach (the email and number stay). */
+  setReach(id: string, kind: string, value: string): string | null {
+    const c = this.find(id);
+    if (!c) return "No such lead.";
+    if (!isReachKind(kind)) return "Pick Email, Discord, WhatsApp or Instagram.";
+    if (!value.trim()) {
+      delete c.reach;
+      this.touch();
+      return null;
+    }
+    const why = reachError(kind, value);
+    if (why) return why;
+    const v = normalizeReach(kind, value);
+    c.reach = { kind, value: v };
+    if (kind === "email") {
+      c.email = v;
+      c.email_source = "typed";
+      c.email_manual = true;
+      this.seen.add(`email:${v}`);
+    }
+    if (kind === "whatsapp") {
+      c.whatsapp = v.replace(/\D/g, "");
+      c.whatsapp_manual = true;
+    }
+    this.touch();
+    return null;
+  }
+
+  /** Edit: name, handle, bio and links typed by hand (kept over anything read later). */
+  editLead(id: string, b: Record<string, unknown>): string | null {
+    const c = this.find(id);
+    if (!c) return "No such lead.";
+    const typed = new Set(c.edited ?? []);
+    if (typeof b.name === "string") {
+      const n = b.name.trim();
+      if (!n) return "The name can't be empty.";
+      if (n !== c.name) {
+        c.name = n.slice(0, 200);
+        typed.add("name");
+      }
+    }
+    if (typeof b.handle === "string") {
+      const h = b.handle.trim().replace(/^@+/, "");
+      const next = h ? `@${h}`.slice(0, 100) : null;
+      if ((next ?? "").replace(/^@/, "") !== (c.handle ?? "").replace(/^@/, "")) {
+        c.handle = next;
+        typed.add("handle");
+      }
+    }
+    if (typeof b.description === "string") {
+      const d = b.description.trim() || null;
+      if (d !== (c.description ?? null)) {
+        c.description = d ? d.slice(0, 5000) : null;
+        typed.add("description");
+      }
+    }
+    if (typeof b.links === "string") {
+      const ls = parseLinks(b.links);
+      const same = ls.length === c.links.length && ls.every((l, i) => l.url === c.links[i]!.url && (l.label ?? null) === (c.links[i]!.label ?? null));
+      if (!same) {
+        c.links = ls.slice(0, 50);
+        typed.add("links");
+      }
+    }
+    if (typed.size) c.edited = [...typed];
     this.touch();
     return null;
   }
@@ -525,7 +685,7 @@ export class Collector {
   }
 
   /** The message for a creator: the channels it can go on (and to whom), the template filled, the CRM's guards. */
-  compose(id: string, templateId: string, channelId: string): unknown | null {
+  compose(id: string, templateId: string, channelId: string, kind = ""): unknown | null {
     const c = this.find(id);
     if (!c) return null;
     const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? defaultTemplate(this.templates)!;
@@ -533,7 +693,8 @@ export class Collector {
       const to = ch.kind === "gmail" ? (c.email ?? "") : (c.whatsapp ?? "");
       return { ...ch, to, why: !ch.connected ? `The Creators ${ch.kind === "gmail" ? "Gmail" : "WhatsApp"} isn't signed in (Persons › Creators).` : !to ? (ch.kind === "gmail" ? "No email yet: type one." : "No WhatsApp number in their bio: type one.") : "" };
     });
-    const pick = chans.find((x) => x.id === channelId) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
+    const want = kind === "whatsapp" ? "whatsapp" : kind === "email" || kind === "gmail" ? "gmail" : "";
+    const pick = chans.find((x) => x.id === channelId) ?? (want ? (chans.find((x) => x.kind === want && x.connected) ?? chans.find((x) => x.kind === want)) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
     const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
     return {
       id,
@@ -685,6 +846,24 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       if (why) return err(400, why);
       return ok((c.detail(String(b.id)) ?? {}) as never);
     }
+    case "POST fill": {
+      const id = String(bodyOf(call).id ?? "");
+      await c.fill(id);
+      const d = c.detail(id);
+      return d ? ok(d as never) : err(404, "No such creator");
+    }
+    case "POST reach": {
+      const b = bodyOf(call);
+      const why = c.setReach(String(b.id ?? ""), String(b.kind ?? ""), String(b.value ?? ""));
+      if (why) return err(400, why);
+      return ok((c.detail(String(b.id)) ?? {}) as never);
+    }
+    case "POST edit": {
+      const b = bodyOf(call);
+      const why = c.editLead(String(b.id ?? ""), b);
+      if (why) return err(400, why);
+      return ok((c.detail(String(b.id)) ?? {}) as never);
+    }
     case "GET export":
       return ok({ text: exportText(c.data), count: c.data.creators.filter((x) => !x.restricted).length });
     case "GET avatar": {
@@ -705,7 +884,7 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       c.deleteTemplate(String(bodyOf(call).id ?? ""));
       return ok({ templates: c.templates } as never);
     case "GET compose": {
-      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"));
+      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"));
       return d ? ok(d as never) : err(404, "No such creator");
     }
     case "POST send": {
