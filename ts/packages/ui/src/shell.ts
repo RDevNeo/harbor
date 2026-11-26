@@ -5804,7 +5804,7 @@ export class Shell {
   /** Switches the top-level tab (as a click on the tab bar). */
   selectTab: (id: string) => void = () => {};
   private mountTabs(): void {
-    type Bus = { current: string; select: (id: string) => void };
+    type Bus = { current: string; select: (id: string) => void; persons_unread: number };
     let found: Bus;
     try {
       found = busOf<Bus>(this.win, "TabsBus");
@@ -5839,6 +5839,18 @@ export class Shell {
       if (tabs.current !== "projects") this.tabsChanged();
     }, 3000);
     tick.unref?.();
+    // The Persons tab's unread count (manually unread chats too), on whichever tab is shown: read every 3 s (the engine
+    // counts it once per change); the Persons tab sets it at once from each state it reads.
+    const personsUnread = async (): Promise<void> => {
+      const call = this.hub.call;
+      if (!call) return;
+      const r = await call("GET", "v1/persons/unread").catch(() => null);
+      const n = r?.status === 200 ? Number((r.body as { unread?: unknown } | null)?.unread) : NaN;
+      if (Number.isInteger(n) && n >= 0 && tabs.persons_unread !== n) tabs.persons_unread = n;
+    };
+    void personsUnread();
+    const badge = setInterval(() => void personsUnread(), 3000);
+    badge.unref?.();
     const select = (id: string): void => {
       const was = tabs.current;
       if (id === was) return;

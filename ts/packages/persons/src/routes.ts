@@ -93,6 +93,7 @@ export class PersonsRoutes {
     const rest = p.slice(2);
     try {
       if (m === "GET" && rest[0] === "state" && rest.length === 1) return await this.state(c);
+      if (m === "GET" && rest[0] === "unread" && rest.length === 1) return ok({ rev: this.s.rev, unread: this.unreadTotal() });
       if (rest[0] === "chat" && rest[1]) {
         if (m === "GET" && rest.length === 2) return await this.chat(rest[1], c);
         if (m === "POST" && rest[2] === "send") return await this.send(rest[1], obj(c.body));
@@ -245,6 +246,14 @@ export class PersonsRoutes {
   }
 
   // ---------- state ----------
+
+  private unreadAt = { rev: -1, n: 0 };
+  /** Everyone's unread messages (stateJson's `unread`): the window's Persons tab badge reads it every few seconds, so
+   *  it's counted once per change of the data. */
+  private unreadTotal(): number {
+    if (this.unreadAt.rev !== this.s.rev) this.unreadAt = { rev: this.s.rev, n: this.s.totalUnread() };
+    return this.unreadAt.n;
+  }
 
   private rowJson(i: RowInfo): Json {
     return {

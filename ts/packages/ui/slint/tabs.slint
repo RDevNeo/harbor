@@ -5,12 +5,15 @@
 // `<Name>Page`; app.slint draws `if TabsBus.current == "<id>": TabFrame { <Name>Page { … } }`.
 import { Theme } from "theme.slint";
 import { HLine, TipArea } from "widgets.slint";
+import { CountPill } from "ds-list.slint";
 
 export global TabsBus {
     /** "projects", "persons", "routine", "collector". */
     in-out property <string> current: "projects";
     /** A switch asked for (a click, Ctrl+1/2/3): the TS side sets `current`, mounting the tab on its first time. */
     callback select(string);
+    /** Everyone's unread messages in Persons (manually unread chats too): the Persons tab's count, 0 for none. */
+    in-out property <int> persons-unread;
 }
 
 struct TabDef {
@@ -36,7 +39,8 @@ export component AppTabs {
         for t in root.tabs: Rectangle {
             property <bool> on: TabsBus.current == t.id;
             property <bool> named: root.compact ? false : true;
-            width: named ? label.preferred-width + 34px : 28px;
+            property <int> badge: t.id == "persons" ? TabsBus.persons-unread : 0;
+            width: named ? label.preferred-width + 34px + (badge > 0 ? pill.width + 6px : 0) : 28px;
             border-radius: 6px;
             background: on ? Theme.gray-200 : area.has-hover ? Theme.accent : transparent;
             Text {
@@ -58,8 +62,15 @@ export component AppTabs {
                 color: on ? Theme.fg : Theme.subtle;
                 vertical-alignment: center;
             }
+            // the unread count: after the name, or on the icon's corner when only icons show
+            pill := CountPill {
+                visible: badge > 0;
+                n: badge;
+                x: named ? 27px + label.preferred-width + 6px : parent.width - self.width / 2 - 4px;
+                y: named ? (parent.height - self.height) / 2 : -4px;
+            }
             area := TipArea {
-                tip: named ? "" : t.label;
+                tip: named ? "" : badge > 0 ? "\{t.label} · \{badge} unread" : t.label;
                 clicked => {
                     TabsBus.select(t.id);
                 }

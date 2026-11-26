@@ -114,6 +114,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
 
 ### Fixed
+- Hub Persons: the **Persons tab shows its unread count** in the tab row (after its name, or on its icon's corner when
+  only icons show), from any tab: everyone's unread messages, a chat marked unread included, the same total as the
+  phone's Persons badge (`GET v1/persons/unread`, counted once per change; the window reads it every 3 s and the
+  Persons tab sets it from each state at once). A chat marked unread counts on its person's row from the marked
+  message on, as their new messages do. The phone already showed both.
 - Hub Persons: **Mark as unread** stays (PC and phone). The open chat's reload, which follows its person's row, saw
   the row turn unread and marked the chat seen again at once (and acked it on Discord again), so the unread mark
   flicked back within a second, in every section. As in Person Hub, a chat marked unread is not marked seen again until

@@ -414,6 +414,9 @@ class PersonsTab {
     }
     syncRows(this.sideModel, sideRows(s, this.ui).map((r) => this.rowJs(r)), sameRow);
     b.unread_total = s.unread;
+    // the Persons tab's count in the tab row, at once (the window also reads it every 3 s from any tab)
+    const tabsBus = Reflect.get(this.ctx.win, "TabsBus") as { persons_unread: number } | undefined;
+    if (tabsBus && typeof s.unread === "number" && tabsBus.persons_unread !== s.unread) tabsBus.persons_unread = s.unread;
     const off = s.connections.filter((c) => c.status === "signed-out");
     b.note = off.length ? `${off.map((c) => `${SECTION_LABEL[c.section]} ${KIND_LABEL[c.kind]}`).join(", ")} signed out` : "";
     if (this.sr && this.ui.srOpen === this.sr.ref) {
