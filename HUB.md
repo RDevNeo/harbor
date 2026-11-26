@@ -21,7 +21,7 @@ never talks to Harbor's PCs, phones, account service or releases.
 | Phones | Google sign-in, Harbor's directory | Google sign-in with Hub's service, or pairing: `hub pair` (QR / `hub://pair?…`), android/PROTOCOL.md "Hub pairing" |
 | Account service, workspace cloud, settings sync | Harbor's (`harbor-accounts`) | Hub's own: `hub-accounts.rdevneo.workers.dev` (`worker/`, own D1, signing key `k1:HDOd…`, vault secret; Harbor's Clerk). Harbor's is never called |
 | Mesh, relay, network discovery | with Harbor PCs of the workspace | with Hub PCs of the workspace only (Hub's directory; discovery on UDP 47950) |
-| UPnP port mapping for phones | on | off (`HUB_PORTMAP=1`) |
+| Phones away from home | UPnP/NAT-PMP/PCP port mapping, a port forward set by hand | a port forward set by hand (kv `net_forward`, `hub net forward PORT`): its public address goes to phones (directory, pairing links) and Hub also listens on that port when it isn't 47950 (a router that forwarded Harbor's 47930 keeps working); router mapping only with `HUB_PORTMAP=1`. ufw must let 47950/tcp (and a forward's port) in: `hub net` says what's missing |
 | Updates, follow-main, previews from peers | Harbor's releases and main | none: running `packaging/hub-install.sh` again is the update (a running Hub restarts into it) |
 
 Internal identifiers (`HARBOR_*` variables, `@harbor/*` packages, `X-Harbor-*` headers, `harbor-app.js`) keep their

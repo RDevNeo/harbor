@@ -197,6 +197,8 @@ export class Api {
   private publicConns = new Slots(24);
   private hosts = new Map<string, number>();
   private servers: Server[] = [];
+  /** listenAlso's: the port and its server (null: none). */
+  private also: { port: number; server: Server } | null = null;
 
   constructor(readonly d: ApiDeps) {}
 
@@ -268,9 +270,31 @@ export class Api {
     return typeof a === "object" && a !== null ? a.port : this.d.hub.port;
   }
 
+  /** Also listens on `port` (every interface, the same API): the port a port forward set by hand on the router reaches
+   *  this PC on (kv `net_forward`), when it isn't the hub's own. Hub's PC keeps the forward Harbor had (47930), so the
+   *  phones' public address works without touching the router. null: none. Answers null, or why it couldn't (the port
+   *  taken: Harbor running on this PC). */
+  async listenAlso(port: number | null): Promise<string | null> {
+    if (port === this.d.hub.port) port = null;
+    if (this.also !== null && this.also.port === port) return null;
+    this.also?.server.close();
+    this.also = null;
+    if (port === null) return null;
+    const s = createServer({ pauseOnConnect: true }, (sock) => this.onSocket(sock));
+    const r = await new Promise<string | null>((resolve) => {
+      s.once("error", (e) => resolve(e.message));
+      s.listen({ host: "::", port, ipv6Only: false }, () => resolve(null));
+    });
+    if (r !== null) return `[::]:${port}: ${r}`;
+    this.also = { port, server: s };
+    return null;
+  }
+
   close(): void {
     for (const s of this.servers) s.close();
     this.servers = [];
+    this.also?.server.close();
+    this.also = null;
   }
 
   private onSocket(sock: import("node:net").Socket): void {

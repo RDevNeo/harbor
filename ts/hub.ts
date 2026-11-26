@@ -381,6 +381,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const catalog = catalogOf(providers, () => accounts.map(catalogAccount), store);
   const portmap = new Portmap({ kv: store, net: lanPortmapNet() });
   const addrs = () => phoneAddrs(port, lanAddrs(env), portmap.publicAddr());
+  // Pairing links and answers: the network's addresses, then the router's public one (a phone away from home).
+  const pairAddrsHere = (): string[] => {
+    const pub = portmap.publicAddr();
+    return [...pairAddrs(lanAddrs(env), port), ...(pub === null ? [] : [pub])];
+  };
   const meshAddrs = () => addrs().map((a) => (parseIp(a) ? hostPort(a, port) : a));
   // The account vault: the integrations' sign-ins, the saved keys and the single-host sessions follow the account (accountvault.ts).
   let single: SingleHost | null = null;
@@ -1502,7 +1507,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         return ok({ removed: pairing.revoke(typeof b.fp === "string" ? b.fp : "") });
       }
       const c = pairing.start();
-      const info = { name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, id: hub.mesh.me.id, fp: id.fp, addrs: pairAddrs(lanAddrs(env), port), code: c.code };
+      const info = { name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, id: hub.mesh.me.id, fp: id.fp, addrs: pairAddrsHere(), code: c.code };
       return ok(asJson({ ...info, port, expires_ms: c.expires_ms, link: pairLink(info) }));
     }
     if (at === "POST v1/voice/cleanup") {
@@ -1561,7 +1566,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const r = pairing.pair(code, fp, name);
       if (!r.ok) return r;
       hub.touch(null, true);
-      return { ok: true, token: r.token, pc: asJson({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrs(lanAddrs(env), port) }) };
+      return { ok: true, token: r.token, pc: asJson({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name, fp: id.fp, port, addrs: pairAddrsHere() }) };
     },
     pairedKey: (fp) => pairing.byKey(fp),
     unpair: (fp) => {
@@ -1608,8 +1613,29 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
   const disc = offline || STANDALONE || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
-  // Hub maps no router port for phones (they come over the network or Tailscale).
-  const stopMap = env.HARBOR_LISTEN === undefined && !offline && env.HUB_PORTMAP === "1" ? portmap.start(port, () => true) : () => {};
+  // Phones away from home come through a port forward set by hand on the router (kv `net_forward`, `hub net forward`):
+  // its public address is looked up and given to phones (the directory, pairing links), and Hub also listens on the
+  // forward's port when it isn't its own (this PC's router forwards Harbor's 47930). Hub asks the router for a mapping
+  // (UPnP, NAT-PMP, PCP) only with HUB_PORTMAP=1.
+  const reachable = env.HARBOR_LISTEN === undefined && !offline;
+  const stopMap = reachable ? portmap.start(port, () => env.HUB_PORTMAP === "1") : () => {};
+  let alsoPort: number | null = null;
+  let alsoFailed = "";
+  const listenForward = (): void => {
+    if (!reachable) return;
+    const n = Number(store.get("net_forward")?.trim() ?? "");
+    const want = Number.isInteger(n) && n > 0 && n < 65536 && n !== port ? n : null;
+    if (want === alsoPort) return;
+    alsoPort = want;
+    void (api?.listenAlso(want) ?? Promise.resolve(null)).then((e) => {
+      if (e === null) return;
+      // Taken (Harbor runs here): tried again on the next tick, said once.
+      if (alsoPort === want) alsoPort = null;
+      if (e !== alsoFailed) process.stderr.write(`hub: the port forward's port: ${e}\n`);
+      alsoFailed = e;
+    });
+  };
+  listenForward();
   // The speech model comes by itself, so the first dictation (here, or from a phone or PC that picks this one) needn't wait.
   const stopSpeech = env.HARBOR_LISTEN === undefined && !offline ? voice.keepParakeet() : () => {};
   // The voice keys this PC's own (cleanup, Transcribe on) are read again now and then: a change written
@@ -1633,6 +1659,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const tick = setInterval(() => {
     hub.enabled = true;
     if (!offline) providerUpdater.tick();
+    listenForward();
     const a = addrs();
     if (JSON.stringify(a) !== JSON.stringify(hub.net.addrs)) {
       hub.net = { ...hub.net, addrs: a };

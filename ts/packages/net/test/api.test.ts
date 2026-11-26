@@ -173,6 +173,30 @@ describe("HTTP (api.rs)", () => {
 });
 
 describe("hub (api.rs)", () => {
+  test("a port forward's port answers like the hub's own; a taken one says why", async () => {
+    const hub = new Hub([], 0);
+    const port = await serve(hub, async () => ok({ here: 1 }));
+    const api = apis.at(-1)!;
+    const free = await new Promise<number>((resolve) => {
+      const s = (require("node:net") as typeof import("node:net")).createServer();
+      s.listen(0, "127.0.0.1", () => {
+        const a = s.address();
+        s.close(() => resolve(typeof a === "object" && a !== null ? a.port : 0));
+      });
+    });
+    expect(await api.listenAlso(free)).toBeNull();
+    const [a] = await call(port, "GET /v1/x HTTP/1.1\r\n\r\n");
+    const [b] = await call(free, "GET /v1/x HTTP/1.1\r\n\r\n");
+    expect(b).toBe(a);
+    // Same port again: nothing to do. null: closed.
+    expect(await api.listenAlso(free)).toBeNull();
+    expect(await api.listenAlso(null)).toBeNull();
+    expect((await call(free, "GET /v1/x HTTP/1.1\r\n\r\n").catch(() => [-1]))[0]).toBe(-1);
+    const other = new Hub([], 0);
+    await serve(other);
+    expect(await apis.at(-1)!.listenAlso(port)).toContain(String(port));
+  });
+
   test("auth", async () => {
     const hub = new Hub([tok("s3cret")], 0);
     const known = (t: string) => {

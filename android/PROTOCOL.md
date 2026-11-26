@@ -67,7 +67,8 @@ calls, mutual TLS pinned to each side's key) is unchanged. Phone code: `Pair.jav
   The phone's local API for other apps is on `127.0.0.1:47998` (Harbor's app keeps 47999).
 - **The link.** Hub › Settings › Phones › Pair a phone shows a QR code of
   `hub://pair?fp=<64 hex: SHA-256 of the PC's certificate SPKI>&addrs=<host:port>,<host:port>…&name=<PC name>&id=<mesh id>&code=<one-time code>`
-  (URL-encoded values; `addrs` every address a phone may reach, LAN and Tailscale; `code` random,
+  (URL-encoded values; `addrs` every address a phone may reach, LAN and Tailscale, then the router's public
+  `ip:port` when a port forward is set (`hub net forward PORT`; Hub listens on that port too); `code` random,
   ≤ 128 characters, good for about 10 minutes and one phone). The phone's camera opens it in Hub
   (the manifest's `hub://pair` filter), or it's pasted on Hub's start screen. Hub asks the user
   before pairing.

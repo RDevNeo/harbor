@@ -481,22 +481,22 @@ describe("portmap", () => {
       expect(kv.get("net_forward")).toBe("");
       expect(await pm.cli(["forward", "0"], a.io)).toBe(2);
       expect(await pm.cli(["forward", "70000"], a.io)).toBe(2);
-      expect(a.err).toEqual(["usage: harbor net forward <external port|off>", "usage: harbor net forward <external port|off>"]);
+      expect(a.err).toEqual(["usage: hub net forward <external port|off>", "usage: hub net forward <external port|off>"]);
       expect(await pm.cli(["name", "home.example.org"], a.io)).toBe(0);
       expect(kv.get("net_name")).toBe("home.example.org");
       expect(a.out.at(-1)).toBe("public name: home.example.org");
       expect(await pm.cli(["name", "off"], a.io)).toBe(0);
       expect(kv.get("net_name")).toBe("");
       expect(await pm.cli(["name", "nodots"], a.io)).toBe(2);
-      expect(a.err.at(-1)).toBe("usage: harbor net name <dns name|off>");
+      expect(a.err.at(-1)).toBe("usage: hub net name <dns name|off>");
       expect(await pm.cli(["forward"], a.io)).toBe(2);
       expect(await pm.cli(["wat"], a.io)).toBe(2);
-      expect(a.err.at(-1)).toBe("usage: harbor net [forward <port|off> | name <name|off>]");
+      expect(a.err.at(-1)).toBe("usage: hub net [forward <port|off> | name <name|off>]");
     });
 
     test("without arguments it asks the router and prints what was found", async () => {
       const nat = await fakeNat({ pcp: "silent", pmp: "ok" });
-      const kv = new MemKv({ api_port: "41000", net_name: "home.example.org" });
+      const kv = new MemKv({ hub_api_port: "41000", net_name: "home.example.org" });
       const pm = portmapOf(loopNet({ natPort: nat.port, ssdp: { addr: LOOP, port: await freeUdpPort() } }), kv);
       const a = io();
       const fw = { ...a.io, firewallBlocksInternet: (p: number) => p === 41000 };
