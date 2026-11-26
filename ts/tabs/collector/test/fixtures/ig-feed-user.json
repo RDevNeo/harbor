@@ -1,0 +1,11 @@
+{
+  "items": [
+    { "pk": "1", "code": "PINNEDold01", "taken_at": 1790000000, "media_type": 2, "product_type": "clips", "play_count": 999, "caption": { "text": "fixado" }, "image_versions2": { "candidates": [{ "url": "https://scontent.cdninstagram.com/v/pin.jpg" }] } },
+    { "pk": "2", "code": "PHOTO1abcde", "taken_at": 1795600000, "media_type": 1, "product_type": "feed", "caption": { "text": "foto nova" } },
+    { "pk": "3", "code": "REEL1abcdef", "taken_at": 1795500000, "media_type": 2, "product_type": "clips", "play_count": 15400, "caption": { "text": "reel um" }, "image_versions2": { "candidates": [{ "url": "https://scontent.cdninstagram.com/v/r1.jpg" }] } },
+    { "pk": "4", "code": "CAROUSEL1ab", "taken_at": 1795400000, "media_type": 8, "product_type": "carousel_container", "caption": null },
+    { "pk": "5", "code": "REEL2abcdef", "taken_at": 1795300000, "media_type": 2, "product_type": "clips", "ig_play_count": 800, "caption": null, "image_versions2": { "candidates": [] } }
+  ],
+  "more_available": true,
+  "status": "ok"
+}

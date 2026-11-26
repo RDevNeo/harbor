@@ -1,0 +1,13 @@
+{
+  "user": {
+    "pk": 1234567890, "pk_id": "1234567890", "id": "1234567890", "username": "criadora.teste", "full_name": "Criadora Teste",
+    "biography": "Gameplays de Roblox todo dia\ncontato: parcerias@exemplo.com.br",
+    "bio_links": [{ "title": "Meu Linktree", "url": "https://linktr.ee/criadorateste", "link_type": "external" }],
+    "external_url": "https://linktr.ee/criadorateste",
+    "is_private": false, "is_business": true, "public_email": "parcerias@exemplo.com.br",
+    "follower_count": 48213, "following_count": 310, "media_count": 412,
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/small.jpg",
+    "hd_profile_pic_url_info": { "url": "https://scontent.cdninstagram.com/v/hd.jpg", "width": 1080, "height": 1080 }
+  },
+  "status": "ok"
+}

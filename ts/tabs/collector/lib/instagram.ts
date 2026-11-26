@@ -1,8 +1,12 @@
 // Instagram, as the userscript reads it (lead-collector.user.js, "Instagram creator collection"), from Hub's engine.
-// With a signed-in session (its Cookie header): the web app's JSON (`web_profile_info`, tag sections, topsearch), with
-// the headers the web app sends. Without one, every JSON endpoint answers 404 to a logged-out client, so a profile is
-// read the way link previews are: the page served to Facebook's crawler UA (og:title / og:description: rounded counts,
-// a bio excerpt, the avatar and the profile id; no posts). Discovery needs the session.
+// With a signed-in session (sessionid + ds_user_id from the browser's cookies) it talks to Instagram's app API on
+// i.instagram.com the way the Android app does: the session as an `IGT:2` bearer token, the app's UA and app id.
+// (The web app's JSON on www.instagram.com answers a non-browser client as if signed out: 302 / 404 / 429, even
+// with every cookie, so it isn't used.) Profile = usernameinfo + the user's feed; discovery = the search page's
+// TopSerpQuery (GraphQL, posts for `#tag` or a keyword, paged) and topsearch_flat (accounts). Without a session
+// every JSON endpoint answers 404, so a profile is read the way link previews are: the page served to Facebook's
+// crawler UA (og:title / og:description: rounded counts, a bio excerpt, the avatar and the profile id; no posts).
+// Reads only; every call goes through one throttle (a gap between any two calls).
 import { decodeXmlText, ytParseCount, type Fetch } from "./youtube.ts";
 import type { RecentVideo } from "./types.ts";
 import type { DiscoverOpts, Hit, Profile } from "./tiktok.ts";
@@ -10,9 +14,15 @@ import type { DiscoverOpts, Hit, Profile } from "./tiktok.ts";
 export type { DiscoverOpts, Hit, Profile } from "./tiktok.ts";
 
 export const IG_ORIGIN = "https://www.instagram.com";
-export const IG_APP_ID = "936619743392459";
+export const IG_API = "https://i.instagram.com";
+/** The Android app's app id and UA. */
+export const IG_ANDROID_APP_ID = "567067343352427";
+const IG_ANDROID_UA = "Instagram 361.0.0.46.88 Android (34/14; 420dpi; 1080x2340; samsung; SM-S918B; dm3q; qcom; en_US; 674675155)";
+/** The search page's GraphQL query (Android app), as instagrapi sends it. */
+export const IG_TOP_SERP_DOC = "418531681916451609839969517761";
 export const IG_RECENT_LIMIT = 3;
-const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+/** Least time between two calls to Instagram from this PC (all clients share it). */
+export const IG_GAP_MS = 2500;
 const CRAWLER_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
 
 type Obj = Record<string, unknown>;
@@ -109,7 +119,7 @@ export function igParseProfileJson(json: unknown): Profile | null {
     name: str(user.full_name) ?? username,
     handle: `@${username}`,
     profile_url: `${IG_ORIGIN}/${username}/`,
-    avatar_url: str(user.profile_pic_url_hd) ?? str(user.profile_pic_url),
+    avatar_url: str(user.profile_pic_url_hd) ?? (isObj(user.hd_profile_pic_url_info) ? str(user.hd_profile_pic_url_info.url) : null) ?? str(user.profile_pic_url),
     followers,
     posts: num(media.count) ?? num(user.media_count),
     likes: null,
@@ -206,10 +216,11 @@ export function igCollectMedia(json: unknown): Hit[] {
   return [...out.values()];
 }
 
-/** topsearch's `users[].user`. */
+/** topsearch's `users[].user` / topsearch_flat's `list[].user` (hashtag and place rows skipped). */
 export function igUsersFromSearch(json: unknown): Hit[] {
   const out: Hit[] = [];
-  for (const e of isObj(json) && Array.isArray(json.users) ? json.users : []) {
+  const rows = isObj(json) ? (Array.isArray(json.users) ? json.users : Array.isArray(json.list) ? json.list : []) : [];
+  for (const e of rows) {
     const hit = isObj(e) && isObj(e.user) ? hitOfUser(e.user, null) : null;
     if (hit && !out.some((h) => h.handle.toLowerCase() === hit.handle.toLowerCase())) out.push(hit);
   }
@@ -222,56 +233,206 @@ export function igHashtagFromQuery(q: string): string | null {
   return t && /^[\p{L}\p{N}_]+$/u.test(t) ? t : null;
 }
 
-type Api = { status: number; json: unknown; refused: boolean };
+/** The newest posts from the app's `feed/user/<id>/` (`items`): the reels podium and the newest post's time (pinned ones too). */
+export function igRecentFromFeed(json: unknown): { recent: RecentVideo[]; lastPostAt: string | null } {
+  let newest = 0;
+  const videos: (RecentVideo & { t: number })[] = [];
+  for (const m of isObj(json) && Array.isArray(json.items) ? json.items : []) {
+    if (!isObj(m)) continue;
+    const code = str(m.code);
+    const t = (num(m.taken_at) ?? 0) * 1000 || (code ? igTimeFromShortcode(code) ?? 0 : 0);
+    if (t > newest) newest = t;
+    if (!code || (m.media_type !== 2 && m.product_type !== "clips")) continue;
+    const cands = isObj(m.image_versions2) && Array.isArray(m.image_versions2.candidates) ? m.image_versions2.candidates : [];
+    videos.push({
+      t,
+      video_id: code,
+      title: isObj(m.caption) ? str(m.caption.text) : null,
+      url: `${IG_ORIGIN}/reel/${code}/`,
+      thumbnail_url: isObj(cands[0]) ? str(cands[0].url) : null,
+      published_at: t ? new Date(t).toISOString() : null,
+      view_count: num(m.play_count) ?? num(m.ig_play_count) ?? num(m.view_count),
+      is_short: true,
+    });
+  }
+  videos.sort((a, b) => b.t - a.t);
+  return { recent: videos.slice(0, IG_RECENT_LIMIT).map(({ t: _t, ...v }) => v), lastPostAt: newest ? new Date(newest).toISOString() : null };
+}
+
+/** A GraphQL answer delivered in chunks (one JSON document per line); one document when it's plain JSON. Bad lines skipped. */
+export function igParseChunks(text: string): unknown[] {
+  try {
+    return [JSON.parse(text)];
+  } catch {
+    const out: unknown[] = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        out.push(JSON.parse(line));
+      } catch {
+        // skip
+      }
+    }
+    return out;
+  }
+}
+
+/** TopSerpQuery's next-page cursor (`page_info` arrives in its own chunk); null when there's no next page. */
+export function igTopSerpCursor(docs: unknown[]): string | null {
+  let found: string | null = null;
+  const walk = (n: unknown, depth: number): void => {
+    if (found || !n || typeof n !== "object" || depth > 12) return;
+    if (Array.isArray(n)) {
+      for (const v of n) walk(v, depth + 1);
+      return;
+    }
+    const o = n as Obj;
+    if (isObj(o.page_info) && o.page_info.has_next_page === true && str(o.page_info.end_cursor)) {
+      found = o.page_info.end_cursor as string;
+      return;
+    }
+    for (const v of Object.values(o)) walk(v, depth + 1);
+  };
+  walk(docs, 0);
+  return found;
+}
+
+/** TopSerpQuery's fixed variables (the app's search page, "Top" tab), as instagrapi sends them. */
+const TOP_SERP_VARS = {
+  turn_id: 0,
+  skip_over_fetched_user_fields: false,
+  should_include_media_overlay_info_in_lightweight: true,
+  in_serp_interacted_media_ids: [],
+  should_fetch_timeline_in_skw: false,
+  serp_origination_context: { serp_origination: "keyboard", session_state: "typeahead", keyword_context: "null", cdd_ranking_token: null },
+  is_incremental_delivery_enabled: false,
+  enable_clips_metadata_in_light_media: false,
+  include_profile_update_info: true,
+  search_type: "SEARCH",
+  remove_view_count_from_lightweight: true,
+  remove_unused_video_subtitles_status: true,
+  include_journey_header: false,
+  is_page_info_fetched_in_separate_chunk: true,
+  remove_unused_deprecated_owner_counts: true,
+  exclude_main_user_field: false,
+  enable_pando_connection: false,
+  num_media_to_fetch: 10,
+  remove_unused_video_subtitles_confidence: true,
+  lightweight_carousel_type: "DELAYED_METADATA",
+  delay_clips_viewer_fragment: true,
+  search_surface: "TOP_SERP",
+  enable_tentpole_story_previews: true,
+  exclude_pinned_posts: true,
+  is_discovery_grid_enabled: true,
+  exclude_caption_user_field: false,
+  hcm_entrypoint: "IG_SEARCH_TYPEAHEAD_KEYBOARD_SEND",
+  lightweight_carousel_count: 1,
+  include_clips_viewer_fragment: true,
+  remove_unused_carousel_pending_post_count: true,
+  remove_paid_partnership_and_subtitles_from_lightweight: true,
+  enable_thumbnails_in_light_media: false,
+  include_search_engine_attributes: false,
+  remove_unused_views_on_grid_status: false,
+  include_search_social_context: false,
+  enable_serp_clips_viewer_deduplication: true,
+};
+
+/** Most search pages one discovery reads (10 posts a page). */
+const MAX_SERP_PAGES = 50;
+
+type Api = { status: number; json: unknown; docs: unknown[]; refused: boolean; html: boolean };
+
+export interface InstagramOptions {
+  /** Least ms between two calls (IG_GAP_MS); 0 in tests. */
+  gapMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** When the next call may go, across every client in this process. */
+let nextCallAt = 0;
 
 export class Instagram {
+  private readonly gapMs: number;
+  private readonly pause: (ms: number) => Promise<void>;
+
   constructor(
     private readonly fetchFn: Fetch = fetch,
     private readonly session: { cookie: string } | null = null,
-  ) {}
+    opts: InstagramOptions = {},
+  ) {
+    this.gapMs = opts.gapMs ?? IG_GAP_MS;
+    this.pause = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
 
   private cookie(name: string): string | null {
     const m = this.session?.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-    return m ? m[1]!.trim() : null;
+    return m ? m[1]!.trim() || null : null;
   }
 
-  private headers(form = false): Record<string, string> {
+  /** The session as the app sends it: `Bearer IGT:2:` + base64 of {ds_user_id, sessionid}. Null without both. */
+  private auth(): { bearer: string; userId: string } | null {
+    const raw = this.cookie("sessionid");
+    if (!raw) return null;
+    let sessionid = raw;
+    try {
+      sessionid = decodeURIComponent(raw);
+    } catch {
+      // keep it as given
+    }
+    const userId = this.cookie("ds_user_id") ?? sessionid.match(/^(\d+):/)?.[1] ?? null;
+    if (!userId || !/^\d+$/.test(userId)) return null;
+    return { bearer: `Bearer IGT:2:${btoa(JSON.stringify({ ds_user_id: userId, sessionid }))}`, userId };
+  }
+
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    const a = this.auth();
     const h: Record<string, string> = {
-      "User-Agent": UA,
-      "Accept-Language": "en-US,en;q=0.9",
+      "User-Agent": IG_ANDROID_UA,
       Accept: "*/*",
-      "X-IG-App-ID": IG_APP_ID,
-      "X-Requested-With": "XMLHttpRequest",
-      Referer: `${IG_ORIGIN}/`,
-      Origin: IG_ORIGIN,
+      "Accept-Language": "en-US",
+      "X-IG-App-ID": IG_ANDROID_APP_ID,
+      "X-IG-App-Locale": "en_US",
+      "X-IG-Device-Locale": "en_US",
+      "X-IG-Capabilities": "3brTv10=",
+      "X-IG-Connection-Type": "WIFI",
+      "X-FB-HTTP-Engine": "Liger",
     };
-    if (this.session) h.Cookie = this.session.cookie;
-    const csrf = this.cookie("csrftoken");
-    if (csrf) h["X-CSRFToken"] = csrf;
-    if (form) h["Content-Type"] = "application/x-www-form-urlencoded";
-    return h;
+    if (a) {
+      h.Authorization = a.bearer;
+      h["IG-U-DS-USER-ID"] = a.userId;
+    }
+    const mid = this.cookie("mid");
+    if (mid) h["X-MID"] = mid;
+    return { ...h, ...extra };
   }
 
-  /** One JSON call; `refused` = 401/403/429 or an HTML answer (the login wall, "Page Not Found"). */
-  private async api(path: string, body?: string): Promise<Api> {
-    const r = await this.fetchFn(IG_ORIGIN + path, {
-      method: body === undefined ? "GET" : "POST",
-      headers: this.headers(body !== undefined),
-      ...(body === undefined ? {} : { body }),
+  private async throttle(): Promise<void> {
+    const now = Date.now();
+    const at = Math.max(now, nextCallAt);
+    nextCallAt = at + this.gapMs;
+    if (at > now) await this.pause(at - now);
+  }
+
+  /**
+   * One app-API call. `refused` = 400/401/403/429, a redirect, HTML (the login wall, "Page Not Found"), no JSON,
+   * `status: "fail"` (login_required, challenge_required, "please wait") or GraphQL `errors`.
+   */
+  private async api(path: string, form?: Record<string, string>, extra: Record<string, string> = {}): Promise<Api> {
+    await this.throttle();
+    const r = await this.fetchFn(IG_API + path, {
+      method: form ? "POST" : "GET",
+      headers: this.headers(form ? { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", ...extra } : extra),
+      ...(form ? { body: new URLSearchParams(form).toString() } : {}),
       redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(20_000),
     });
     const text = await r.text();
-    const html = /^\s*</.test(text) || (r.headers.get("content-type") ?? "").includes("text/html");
-    let json: unknown = null;
-    if (!html) {
-      try {
-        json = JSON.parse(text);
-      } catch {
-        json = null;
-      }
-    }
-    return { status: r.status, json, refused: [401, 403, 429].includes(r.status) || (r.status >= 300 && r.status < 400) || html || json === null };
+    // GraphQL answers JSON labelled text/html: the body decides.
+    const html = /^\s*</.test(text) || ((r.headers.get("content-type") ?? "").includes("text/html") && !/^\s*[{[]/.test(text));
+    const docs = html ? [] : igParseChunks(text);
+    const json = docs[0] ?? null;
+    const failed = isObj(json) && (json.status === "fail" || (Array.isArray(json.errors) && json.errors.length > 0));
+    return { status: r.status, json, docs, html, refused: [400, 401, 403, 429].includes(r.status) || (r.status >= 300 && r.status < 400) || html || json === null || failed };
   }
 
   /** The crawler page (no session needed). */
@@ -288,16 +449,29 @@ export class Instagram {
     return p;
   }
 
+  /** With a session: usernameinfo (exact counts, bio, links, email) + the newest posts from the user's feed. Else, or refused: the crawler page. */
   async profile(username: string): Promise<Profile> {
     const u = bare(username);
     if (!u) throw new Error("not found");
-    if (this.session) {
+    if (this.auth()) {
       try {
-        const r = await this.api(`/api/v1/users/web_profile_info/?username=${encodeURIComponent(u)}`);
-        if (!r.refused && r.status < 300) {
-          const p = igParseProfileJson(r.json);
-          if (p) return p;
-          if (isObj(r.json) && isObj(r.json.data) && r.json.data.user === null) throw new Error("not found");
+        const r = await this.api(`/api/v1/users/${encodeURIComponent(u)}/usernameinfo/`);
+        if (r.status === 404 && !r.html && isObj(r.json)) throw new Error("not found");
+        const p = r.refused ? null : igParseProfileJson(r.json);
+        if (p) {
+          if (!p.private && p.posts !== 0 && p.platform_id) {
+            try {
+              const f = await this.api(`/api/v1/feed/user/${encodeURIComponent(p.platform_id)}/?count=12`);
+              if (!f.refused) {
+                const { recent, lastPostAt } = igRecentFromFeed(f.json);
+                p.recent = recent;
+                p.last_post_at = lastPostAt;
+              }
+            } catch {
+              // the profile without its posts
+            }
+          }
+          return p;
         }
       } catch (e) {
         if ((e as Error).message === "not found") throw e;
@@ -309,7 +483,8 @@ export class Instagram {
 
   /** Whose session this is; null without one or when Instagram won't say. */
   async whoami(): Promise<{ username: string } | null> {
-    if (!this.session) return null;
+    const a = this.auth();
+    if (!this.session || !a) return null;
     const read = (j: unknown): string | null => {
       if (!isObj(j)) return null;
       const user = isObj(j.user) ? j.user : isObj(j.data) && isObj(j.data.user) ? j.data.user : null;
@@ -322,10 +497,8 @@ export class Instagram {
     } catch {
       // next
     }
-    const id = this.cookie("ds_user_id");
-    if (!id) return null;
     try {
-      const r = await this.api(`/api/v1/users/${encodeURIComponent(id)}/info/`);
+      const r = await this.api(`/api/v1/users/${encodeURIComponent(a.userId)}/info/`);
       const name = r.refused ? null : read(r.json);
       return name ? { username: name } : null;
     } catch {
@@ -334,11 +507,12 @@ export class Instagram {
   }
 
   /**
-   * Accounts for a query: the hashtag's recent posts (paged, `maxQueries` pages, 40 by default) and then the blended
-   * account search. Each batch holds only handles not yielded before. A refusal (401/403/429, HTML) ends that pass.
+   * Accounts for a query: the authors of the search page's posts for `#tag` (or the keyword when it isn't one tag),
+   * paged (`maxQueries` pages, 40 by default, at most 50), then the account search. Each batch holds only handles not
+   * yielded before. A refusal (401/403/429, HTML, `fail`) ends that pass.
    */
   async *discover(query: string, o: DiscoverOpts): AsyncGenerator<Hit[]> {
-    if (!this.session) throw new Error("Instagram search needs a signed-in session");
+    if (!this.session || !this.auth()) throw new Error("Instagram search needs a signed-in session");
     const seen = new Set<string>();
     const fresh = (hits: Hit[]): Hit[] =>
       hits.filter((h) => {
@@ -348,46 +522,48 @@ export class Instagram {
         return true;
       });
     let calls = 0;
-    const call = async (path: string, body?: string): Promise<Api | null> => {
+    const call = async (path: string, form?: Record<string, string>, extra?: Record<string, string>): Promise<Api | null> => {
       if (calls++ > 0) await o.sleep(1500);
       if (o.stopped()) return null;
-      return this.api(path, body);
+      return this.api(path, form, extra);
     };
-    const maxPages = o.maxQueries ?? 40;
+    const words = query.trim().replace(/^#+/, "").trim();
     const tag = igHashtagFromQuery(query);
-    if (tag) {
+    const q = tag ? `#${tag}` : words;
+    const label = tag ? `#${tag}` : `"${words}"`;
+    const maxPages = Math.min(MAX_SERP_PAGES, o.maxQueries ?? 40);
+    if (q) {
       try {
-        let r = await call(`/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`);
-        if (r && r.refused) o.log(`Instagram #${tag}: refused (HTTP ${r.status})`);
-        else if (r) {
-          const first = fresh(igCollectMedia(r.json));
-          if (first.length) yield first;
-          let cursor: string | null = "";
-          let dry = 0;
-          for (let page = 1; page < maxPages && cursor !== null && dry < 3 && !o.stopped(); page++) {
-            const form = new URLSearchParams({ tab: "recent", page: "0" });
-            if (cursor) form.set("max_id", cursor);
-            r = await call(`/api/v1/tags/${encodeURIComponent(tag)}/sections/`, form.toString());
-            if (!r) break;
-            if (r.refused) {
-              o.log(`Instagram #${tag}: refused (HTTP ${r.status}), hashtag pass stopped`);
-              break;
-            }
-            const hits = fresh(igCollectMedia(r.json));
-            dry = hits.length ? 0 : dry + 1;
-            if (hits.length) yield hits;
-            const j = isObj(r.json) ? r.json : {};
-            const next = idOf(j.next_max_id);
-            cursor = j.more_available === true && next && next !== cursor ? next : null;
+        const ids = { search_session_id: crypto.randomUUID(), serp_session_id: crypto.randomUUID(), journey_session_id: crypto.randomUUID() };
+        let after: string | null = null;
+        let dry = 0;
+        for (let page = 0; page < maxPages && dry < 3 && !o.stopped(); page++) {
+          const variables = { ...TOP_SERP_VARS, query: q, ...ids, is_pagination_request: after !== null, ...(after ? { after } : {}) };
+          const r = await call(
+            "/graphql/query",
+            { method: "post", format: "json", locale: "user", server_timestamps: "true", fb_api_req_friendly_name: "TopSerpQuery", client_doc_id: IG_TOP_SERP_DOC, variables: JSON.stringify(variables) },
+            { "X-FB-Friendly-Name": "TopSerpQuery", "X-Root-Field-Name": "xdt_fbsearch__top_serp_graphql" },
+          );
+          if (!r) break;
+          if (r.refused) {
+            o.log(`Instagram ${label} posts: refused (HTTP ${r.status}), posts pass stopped`);
+            break;
           }
+          const hits = fresh(igCollectMedia(r.docs));
+          dry = hits.length ? 0 : dry + 1;
+          if (hits.length) yield hits;
+          const next = igTopSerpCursor(r.docs);
+          if (!next || next === after) break;
+          after = next;
         }
       } catch (e) {
-        o.log(`Instagram #${tag}: ${(e as Error).message}`);
+        o.log(`Instagram ${label} posts: ${(e as Error).message}`);
       }
     }
-    if (o.stopped()) return;
+    if (o.stopped() || !words) return;
     try {
-      const r = await call(`/api/v1/web/search/topsearch/?context=blended&query=${encodeURIComponent(query.trim())}&include_reel=true`);
+      const tz = String(-new Date().getTimezoneOffset() * 60);
+      const r = await call(`/api/v1/fbsearch/topsearch_flat/?search_surface=top_search_page&context=blended&timezone_offset=${tz}&count=30&query=${encodeURIComponent(words)}`);
       if (r && r.refused) o.log(`Instagram account search: refused (HTTP ${r.status})`);
       else if (r) {
         const hits = fresh(igUsersFromSearch(r.json));

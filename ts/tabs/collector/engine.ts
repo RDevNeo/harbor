@@ -203,7 +203,7 @@ export class Collector {
           label: "Instagram",
           available: ig,
           why: ig ? "" : "Instagram's search only answers a signed-in account. Add your Instagram session below (it stays on this PC).",
-          note: "Hashtag posts and account search, on your Instagram session, gently (a read every 1.5 s, stops if Instagram pushes back).",
+          note: "Authors of the posts Instagram's search shows for the hashtag (or keyword), then its account search, on your Instagram session, gently (a read every 2.5 s, stops if Instagram pushes back).",
         };
       if (p === "tiktok")
         return {
@@ -226,7 +226,7 @@ export class Collector {
         connected: !!s,
         account: s?.account ?? null,
         savedAt: s?.savedAt ?? 0,
-        help: "In a browser signed in to Instagram: DevTools (F12) › Application › Cookies › instagram.com, copy sessionid (and csrftoken), paste them here as sessionid=…; csrftoken=…. Kept only on this PC, never shown again.",
+        help: "In a browser signed in to Instagram: DevTools (F12) › Application › Cookies › instagram.com, copy sessionid and ds_user_id (mid too, if there), paste them here as sessionid=…; ds_user_id=…. Kept only on this PC, never shown again.",
       },
     ];
   }
@@ -743,7 +743,7 @@ export class Collector {
     if (platform !== "instagram") return "Only Instagram takes a session.";
     const c = cookie.trim().replace(/^cookie:\s*/i, "");
     const parts = c.includes("=") ? c : `sessionid=${c}`;
-    if (!/(^|;\s*)sessionid=[^;]{10,}/.test(parts)) return "That has no sessionid: paste sessionid=…; csrftoken=… from instagram.com's cookies.";
+    if (!/(^|;\s*)sessionid=[^;]{10,}/.test(parts)) return "That has no sessionid: paste sessionid=…; ds_user_id=… from instagram.com's cookies.";
     let account: string | null = null;
     if (!this.o.offline) {
       try {
