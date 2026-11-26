@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { type Rows, syncRows } from "../src/modelsync.ts";
+import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
 
 /** An ArrayModel that notes what it was told. */
 function model(rows: string[]): Rows<string> & { rows: string[]; log: string[] } {
@@ -70,4 +70,17 @@ test("the same rows by the given likeness are left alone", () => {
   syncRows(m, ["a", "b"], (x, y) => x.toLowerCase() === y.toLowerCase());
   expect(m.log).toEqual([]);
   expect(m.rows).toEqual(["A", "b"]);
+});
+
+test("sameRow: plain values field by field, pixel buffers by identity only (never serialised)", () => {
+  const data = new Uint8ClampedArray(4 * 1024 * 1024);
+  const px = { width: 1024, height: 1024, data };
+  expect(sameRow({ a: 1, images: [{ image: px, x: 0 }] }, { a: 1, images: [{ image: { ...px }, x: 0 }] })).toBe(true);
+  expect(sameRow({ images: [{ image: px }] }, { images: [{ image: { ...px, data: new Uint8ClampedArray(4 * 1024 * 1024) } }] })).toBe(false);
+  expect(sameRow({ a: 1, b: [1, 2] }, { a: 1, b: [1, 2] })).toBe(true);
+  expect(sameRow({ a: 1, b: [1, 2] }, { a: 1, b: [2, 1] })).toBe(false);
+  expect(sameRow({ a: 1 }, { a: 1, b: undefined })).toBe(false);
+  expect(sameRow({ a: Number.NaN }, { a: Number.NaN })).toBe(true);
+  expect(sameRow([], {})).toBe(false);
+  expect(sameRow(null, {})).toBe(false);
 });

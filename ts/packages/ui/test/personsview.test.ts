@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
 import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
@@ -150,6 +151,49 @@ describe("Persons chat rows", () => {
     // one keeps its ratio; none: no box
     expect(imageTiles([{ url: "u", width: 1080, height: 2340 }])).toEqual({ tiles: [{ url: "u", x: 0, y: 0, w: 148, h: 320 }], w: 148, h: 320 });
     expect(imageTiles([])).toEqual({ tiles: [], w: 0, h: 0 });
+  });
+
+  test("a chat full of pictures (Must's: screenshots two by two, replies to them) redraws in no time: pixels never serialised", () => {
+    // Must's chat froze the window: the rows' comparator JSON.stringified each decoded picture (≈8 MB, ≈0.4 s each),
+    // on every redraw (each picture decoded, each download, each presence change)
+    const pic = (id: string, name: string, w: number, h: number) => ({ name, url: `/v1/persons/file?account=spokpay&url=${id}&name=${name}`, raw: id, type: "image/jpeg", size: 600000, width: w, height: h, kind: "image", image: true, duration: null });
+    const messages = [
+      msg("p1", "2026-11-10T19:54:55Z", false, { text: "", files: [pic("1", "image.png", 1317, 829)] }),
+      msg("p2", "2026-11-10T21:18:44Z", true, { text: "", files: [pic("2", "image.png", 1109, 966)] }),
+      msg("p3", "2026-11-10T21:33:09Z", true, { text: "", files: [pic("3", "image.png", 1166, 968)] }),
+      msg("r1", "2026-11-10T23:31:19Z", false, { text: "agr simmm", reply: { id: "p3", fromMe: true, text: "" } }),
+      msg("p4", "2026-11-11T01:26:20Z", true, { text: "Dá uma olhada là", files: [pic("4", "Screenshot_222458_Chrome.jpg", 1080, 2340), pic("5", "Screenshot_222446_Chrome.jpg", 1080, 2340)] }),
+      msg("r2", "2026-11-11T02:20:40Z", false, { text: "agr sim", reply: { id: "p4", fromMe: true, text: "Dá uma olhada là" } }),
+    ];
+    const rows = chatRows(chat({ messages }));
+    expect(rows.find((r) => r.id === "p4")!.images.map((t) => [t.w, t.h])).toEqual([[137, 180], [137, 180]]);
+    // the window's rows (PersonsTab.msgJs): each picture as its decoded pixels, shared by every redraw
+    const decoded = new Map<string, { width: number; height: number; data: Uint8ClampedArray }>();
+    const px = (url: string) => decoded.get(url) ?? decoded.set(url, { width: 296, height: 640, data: new Uint8ClampedArray(296 * 640 * 4) }).get(url)!;
+    const js = () => rows.map((r) => ({ ...r, images: r.images.map((t) => ({ image: px(t.url), x: t.x, y: t.y, w: t.w, h: t.h })) }));
+    const held: Record<string, unknown>[] = [];
+    const sets: number[] = [];
+    const model: Rows<Record<string, unknown>> = {
+      get length() {
+        return held.length;
+      },
+      rowData: (i) => held[i],
+      setRowData: (i, v) => {
+        held[i] = v;
+        sets.push(i);
+      },
+      remove: (i, n) => void held.splice(i, n),
+      splice: (i, del, ...add) => void held.splice(i, del, ...add),
+    };
+    syncRows(model, js(), sameRow);
+    const t0 = performance.now();
+    for (let k = 0; k < 50; k++) syncRows(model, js(), sameRow);
+    expect(performance.now() - t0).toBeLessThan(250);
+    expect(sets).toEqual([]);
+    // a picture decoded later (new pixels) is a change: that row alone is set again
+    decoded.set(rows.find((r) => r.id === "p4")!.images[1]!.url, { width: 296, height: 640, data: new Uint8ClampedArray(296 * 640 * 4) });
+    syncRows(model, js(), sameRow);
+    expect(sets).toEqual([rows.findIndex((r) => r.id === "p4")]);
   });
 
   test("shortAgo", () => {

@@ -6,7 +6,7 @@ import { clipboard, images, picker } from "@harbor/media";
 import { GLYPHS, type GlyphName } from "@harbor/net";
 import { basename } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
-import { syncRows } from "../../modelsync.ts";
+import { sameRow, syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
@@ -322,7 +322,13 @@ class PersonsTab {
     this.renderQueued = true;
     queueMicrotask(() => {
       this.renderQueued = false;
-      this.draw();
+      // one person's odd data must never end the window: a throw here would be an uncaught exception
+      try {
+        this.draw();
+      } catch (e) {
+        console.error(`hub: persons: drawing the page failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+        this.bus.note = `Couldn't draw this page: ${e instanceof Error ? e.message : String(e)}`;
+      }
     });
   }
 
@@ -361,15 +367,14 @@ class PersonsTab {
       b.view = "loading";
       return;
     }
-    const same = (x: Record<string, unknown>, y: Record<string, unknown>): boolean => x.avatar === y.avatar && JSON.stringify({ ...x, avatar: 0 }) === JSON.stringify({ ...y, avatar: 0 });
-    syncRows(this.sideModel, sideRows(s, this.ui).map((r) => this.rowJs(r)), same);
+    syncRows(this.sideModel, sideRows(s, this.ui).map((r) => this.rowJs(r)), sameRow);
     b.unread_total = s.unread;
     const off = s.connections.filter((c) => c.status === "signed-out");
     b.note = off.length ? `${off.map((c) => `${SECTION_LABEL[c.section]} ${KIND_LABEL[c.kind]}`).join(", ")} signed out` : "";
     if (!this.ui.open || !this.chat) {
       b.view = this.ui.open ? "chat" : "list";
       const rows = listRows(s, this.query, this.ui.open);
-      syncRows(this.listModel, rows.map((r) => this.rowJs(r)), same);
+      syncRows(this.listModel, rows.map((r) => this.rowJs(r)), sameRow);
       b.list_title = "All people";
       b.list_sub = this.query ? `${rows.length} of ${s.people.length} match “${this.query}”` : `${s.people.length} ${s.people.length === 1 ? "person" : "people"}`;
       if (!this.ui.open) return;
@@ -428,7 +433,8 @@ class PersonsTab {
     this.foldedNow = new Set(rows.filter((r) => r.folded).map((r) => r.id));
     this.keepParts(rows);
     const js = rows.map((r) => this.msgJs(r));
-    syncRows(this.msgModel, js, (x, y) => x.image === y.image && JSON.stringify({ ...x, image: 0 }) === JSON.stringify({ ...y, image: 0 }));
+    // pictures (`images[].image`) compare by identity: never serialised (see sameRow)
+    syncRows(this.msgModel, js, sameRow);
   }
 
   private attachPaths = new Map<string, string | null>();

@@ -31,3 +31,29 @@ export function syncRows<T>(model: Rows<T>, next: readonly T[], same: (a: T, b: 
   if (from > to) model.remove(pre + both, from - to);
   else if (to > from) model.splice(pre + both, 0, ...next.slice(pre + both, pre + to));
 }
+
+/**
+ * Two model rows hold the same values: plain data compared field by field, and pixel buffers (a decoded picture's
+ * `data`, any typed array or ArrayBuffer) by identity only. Never serialises a row: a `JSON.stringify` of a row
+ * that holds a decoded picture writes every byte of it as text (≈8 MB and half a second for one 296×640
+ * screenshot), so a chat with a few pictures froze the window for good, each redraw taking seconds.
+ */
+export function sameRow(a: unknown, b: unknown, depth = 0): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b) || a instanceof ArrayBuffer || b instanceof ArrayBuffer) return false;
+  if (depth > 32) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const y = b as unknown[];
+    if (a.length !== y.length) return false;
+    for (let i = 0; i < a.length; i++) if (!sameRow(a[i], y[i], depth + 1)) return false;
+    return true;
+  }
+  const x = a as Record<string, unknown>;
+  const y = b as Record<string, unknown>;
+  const keys = Object.keys(x);
+  if (keys.length !== Object.keys(y).length) return false;
+  for (const k of keys) if (!Object.hasOwn(y, k) || !sameRow(x[k], y[k], depth + 1)) return false;
+  return true;
+}
