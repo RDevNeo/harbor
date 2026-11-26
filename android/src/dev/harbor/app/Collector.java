@@ -100,6 +100,8 @@ public class Collector extends Base {
     protected void onResume() {
         super.onResume();
         hub = Tabs.hub(this);
+        // On screen: its finished runs are seen (no count on the tab, here or on the PC).
+        Tabs.collectorSeen(hub);
         load();
         if (!stack.isEmpty()) stack.get(stack.size() - 1).shown();
     }
@@ -160,7 +162,11 @@ public class Collector extends Base {
         Ui.pool.execute(() -> {
             try {
                 JSONObject v = h.get("/v1/collector");
-                Ui.main.post(() -> { loading = false; view = v; note = ""; draw(); });
+                Ui.main.post(() -> {
+                    loading = false; view = v; note = ""; draw();
+                    // A run that ended while this screen is up is seen at once.
+                    if (front && v != null && v.optInt("unseen", 0) > 0) Tabs.collectorSeen(h);
+                });
             } catch (Exception e) {
                 Ui.main.post(() -> { loading = false; note = h.whyDown(e); draw(); });
             }

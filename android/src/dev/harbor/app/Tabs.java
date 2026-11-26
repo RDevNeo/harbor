@@ -6,16 +6,23 @@ import android.content.Intent;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.json.JSONObject;
+
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.List;
 
 /** Hub's top-level tabs, at the bottom of their screens as Android apps have them: Projects (the
  *  start screen, Hubs, and the chats it opens), Persons, Routine and Collector, in that order. Each tab is a
  *  screen of its own (Hubs/Chats, Persons, Routine); switching brings the tab's screen back where
  *  it was, without an animation. Persons and Routine read and change their data on the PC (the
- *  same `v1/persons/…`, `v1/routine/…` routes Hub's window uses), the one this phone used last. */
+ *  same `v1/persons/…`, `v1/routine/…` routes Hub's window uses), the one this phone used last.
+ *  Collector's tab carries a count, Persons' unread pill (Ds.pill): its runs that finished since it was last
+ *  looked at, here or on the PC (GET /v1/collector/unread, as the PC's tab bar reads it). */
 final class Tabs {
     static final String PROJECTS = "projects", PERSONS = "persons", ROUTINE = "routine", COLLECTOR = "collector";
     // Lucide: folder-kanban, users, dumbbell, funnel
@@ -27,6 +34,53 @@ final class Tabs {
     };
 
     private Tabs() {}
+
+    /** Collector runs finished and not looked at yet, as the PC said last; the pills that show it, on every bar. */
+    private static int collectorUnread;
+    private static final List<WeakReference<TextView>> pills = new ArrayList<>();
+    private static volatile boolean asking;
+
+    /** Every bar's Collector pill says `n` (hidden at 0). UI thread. */
+    static void collectorUnread(int n) {
+        collectorUnread = Math.max(0, n);
+        for (int i = pills.size() - 1; i >= 0; i--) {
+            TextView p = pills.get(i).get();
+            if (p == null) { pills.remove(i); continue; }
+            show(p, collectorUnread);
+        }
+    }
+
+    private static void show(TextView p, int n) {
+        p.setText(n > 99 ? "99+" : String.valueOf(n));
+        p.setContentDescription(n == 1 ? "A Collector run is done" : n + " Collector runs done");
+        p.setVisibility(n > 0 ? View.VISIBLE : View.GONE);
+    }
+
+    /** Asks the PC for the Collector count (a screen came up, or the PC said its state changed). */
+    static void poke(Hub h) {
+        if (h == null || asking) return;
+        asking = true;
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject r = h.get("/v1/collector/unread");
+                int n = r == null ? 0 : r.optInt("unread", 0);
+                Ui.main.post(() -> collectorUnread(n));
+            } catch (Exception ignored) {
+                // an older PC, or it's away: the count stays as it was
+            } finally {
+                asking = false;
+            }
+        });
+    }
+
+    /** The Collector tab is on screen: its runs are seen (the PC forgets the count, for its own tab bar too). */
+    static void collectorSeen(Hub h) {
+        collectorUnread(0);
+        if (h == null) return;
+        Ui.pool.execute(() -> {
+            try { h.call("POST", "/v1/collector/seen", new JSONObject()); } catch (Exception ignored) { }
+        });
+    }
 
     /** The bar, `current` lit. */
     static LinearLayout bar(Activity a, String current) {
@@ -43,6 +97,27 @@ final class Tabs {
             TextView icon = Ui.icon(a, t[2], 22, on ? Ui.FG : Ui.G700);
             TextView label = on ? Ui.bold(a, t[1], 12, Ui.FG) : Ui.text(a, t[1], 12, Ui.G700);
             label.setGravity(Gravity.CENTER);
+            if (COLLECTOR.equals(t[0])) {
+                // The icon with its count on the corner, as Persons' unread pill.
+                FrameLayout box = new FrameLayout(a);
+                box.setClipChildren(false);
+                item.setClipChildren(false);
+                box.addView(icon, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(26), Gravity.CENTER));
+                TextView pill = Ds.pill(a, Math.max(1, collectorUnread), true);
+                pill.setTranslationX(Ui.dp(14));
+                pill.setTranslationY(-Ui.dp(3));
+                box.addView(pill, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+                show(pill, collectorUnread);
+                pills.add(new WeakReference<>(pill));
+                item.addView(box, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(26)));
+                item.addView(label, Ui.wrap());
+                item.setBackground(Ui.press(0, 0, 0));
+                item.setContentDescription(t[1]);
+                final String cid = t[0];
+                item.setOnClickListener(v -> { if (!cid.equals(current)) go(a, cid); });
+                bar.addView(item, Ui.weight());
+                continue;
+            }
             item.addView(icon, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(26)));
             item.addView(label, Ui.wrap());
             item.setBackground(Ui.press(0, 0, 0));

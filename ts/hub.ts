@@ -1524,7 +1524,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const dir = join(dataDir(env), t.id);
     try {
       mkdirSync(dir, { recursive: true });
-      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere });
+      // A tab's notification goes the way the engine's own do: the window's (popup and phones) when there's one.
+      const notify = (key: string, title: string, body: string): void => {
+        const post = engine?.host.notify ?? own.notify;
+        post?.(t.id, `${t.id}:${key}`, title, body);
+      };
+      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, notify });
     } catch (e) {
       console.error(`hub: the ${t.id} tab didn't start: ${e instanceof Error ? e.message : String(e)}`);
     }

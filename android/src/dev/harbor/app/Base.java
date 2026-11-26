@@ -450,6 +450,8 @@ abstract class Base extends Activity {
         Ui.main.postDelayed(() -> { if (front && !isFinishing()) Ui.pool.execute(dev.harbor.shell.Shell::ok); }, 5_000);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
+        // The tab bar's Collector count, fresh for this screen.
+        Tabs.poke(Tabs.hub(this));
     }
 
     @Override
@@ -568,6 +570,8 @@ abstract class Base extends Activity {
                     // unless it missed something while paused (rev moved on).
                     boolean news = !changed.isEmpty() || sc || reconnect;
                     if (wasFirst) news = old >= 0 && nrev != old;
+                    // The PC's state moved (a Collector run may have ended): the tab bar's count again.
+                    if (sc || reconnect) Tabs.poke(h);
                     if (news) {
                         boolean all = reconnect || (wasFirst && old >= 0);
                         Ui.main.post(() -> { if (my == gen) onEvents(changed, sc || all, all); });

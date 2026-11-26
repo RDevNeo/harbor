@@ -22,6 +22,10 @@
 //   GET  v1/collector/compose?id=&template=&channel=   the message for that lead: channels, to, subject, text, guard
 //   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
+//   GET  v1/collector/unread          {rev, unread}: finished runs not looked at yet (the tab's count, as Persons'
+//                                     v1/persons/unread); POST v1/collector/seen clears it (the tab was opened)
+// A run that ends (done, stopped, an error, none found) counts one and notifies through Hub's notifications (kind
+// "collector": this PC's popup when the window isn't in front, the phones' note), as other Hub events do.
 // HUB_COLLECTOR_DIR points it at another folder; HARBOR_OFFLINE=1 / HUB_COLLECTOR_OFFLINE=1 (the screenshot rig) never
 // fetches anything and keeps a saved run's "running" as it was; HUB_COLLECTOR_SEND=fake sends nothing (records it).
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -59,6 +63,8 @@ export interface CollectorDeps {
   offline: boolean;
   changed: () => void;
   log: (line: string) => void;
+  /** Hub's notification (this PC's popup, the phones' note), as a Persons event would get: a run that ended. */
+  notify?: (key: string, title: string, body: string) => void;
   persons: PersonsBridge;
   youtube?: Pick<YouTube, "search" | "continuation" | "feed" | "about">;
   tiktok?: SocialClient;
@@ -75,6 +81,8 @@ export class Collector {
   templates: Template[] = loadTemplates([]);
   private sessions: Sessions = {};
   private stopFlag = false;
+  /** Hub is closing: the run it cuts is no news (no notification, no count). */
+  private disposing = false;
   private running: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly file: string;
@@ -395,11 +403,13 @@ export class Collector {
     const now = Date.now();
     this.data.run = { running: true, label: src.label, platform, query, startedAt: now, endedAt: 0, status: "Running…", found: 0, target, considered: 0, dropped: 0, known: 0, ids: [], line: `Searching ${src.label} for videos of “${query}”…` };
     this.touch();
+    let failed = "";
     this.running = (async () => {
       try {
         await job();
       } catch (e) {
-        this.logLine(`Stopped on an error: ${errText(e)}`, "error");
+        failed = errText(e);
+        this.logLine(`Stopped on an error: ${failed}`, "error");
       } finally {
         const r = this.data.run;
         if (r) {
@@ -411,6 +421,16 @@ export class Collector {
           const leads = `${n} new lead${n === 1 ? "" : "s"}`;
           const known = r.known ? ` · ${r.known} already collected, passed over` : "";
           r.status = (this.stopFlag ? `Stopped: ${leads}` : target > 0 && n >= target ? `Done: ${leads}` : n === 0 ? `No new leads for “${query}”. Try another term or a wider Last upload.` : `Done: ${leads} (no more for this term)`) + (n === 0 && !this.stopFlag ? "" : known);
+          if (!this.disposing) {
+            // The Collector tab's count (until the user opens it) and Hub's notification, as a Persons message gets.
+            this.data.unseen++;
+            const note = runNote({ n, query, label: src.label, stopped: this.stopFlag, failed, target, known: r.known });
+            try {
+              this.o.notify?.("run", note.title, note.body);
+            } catch (e) {
+              this.o.log(`collector: couldn't notify: ${errText(e)}`);
+            }
+          }
         }
         this.running = null;
         this.touch();
@@ -438,6 +458,14 @@ export class Collector {
   async stop(): Promise<void> {
     this.stopFlag = true;
     await this.running;
+  }
+
+  /** The user looked at the Collector tab (PC or phone): the finished runs' count goes. True when there was one. */
+  markSeen(): boolean {
+    if (this.data.unseen === 0) return false;
+    this.data.unseen = 0;
+    this.touch();
+    return true;
   }
 
   /** Out of Available (or back in). A restricted lead stays remembered: no run collects it again. */
@@ -586,11 +614,30 @@ export class Collector {
   }
 
   dispose(): void {
+    this.disposing = true;
     this.stopFlag = true;
   }
 }
 
 let collector: Collector | null = null;
+
+/** What a finished run's notification says: "Collector: done — 7 new leads for “term”", then how it ended. */
+export function runNote(r: { n: number; query: string; label: string; stopped: boolean; failed: string; target: number; known: number }): { title: string; body: string } {
+  const leads = r.n === 0 ? "no new leads" : `${r.n} new lead${r.n === 1 ? "" : "s"}`;
+  const how = r.failed ? "stopped on an error" : r.stopped ? "stopped" : "done";
+  const title = `Collector: ${how} — ${leads} for “${r.query}”`;
+  const known = r.known ? ` ${r.known} already collected, passed over.` : "";
+  const body = r.failed
+    ? `${r.label}: ${r.failed}`
+    : r.stopped
+      ? `${r.label}: stopped before the target (${r.target}).${known}`
+      : r.n === 0
+        ? `${r.label}: try another term or a wider Last upload.${known}`
+        : r.target > 0 && r.n >= r.target
+          ? `${r.label}: the target (${r.target}) is in.${known}`
+          : `${r.label}: no more for this term.${known}`;
+  return { title, body };
+}
 
 const bodyOf = (call: Call): Record<string, unknown> => (typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {});
 const queryOf = (call: Call, k: string): string => call.query.find(([key]) => key === k)?.[1] ?? "";
@@ -600,6 +647,12 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
   switch (at) {
     case "GET ":
       return ok(c.view() as never);
+    case "GET unread":
+      // The tab's count (finished runs not looked at yet), read every few seconds by the window: no view built.
+      return ok({ rev: c.rev, unread: c.data.unseen });
+    case "POST seen":
+      c.markSeen();
+      return ok({ rev: c.rev, unread: 0 });
     case "GET creator": {
       const d = c.detail(queryOf(call, "id"));
       return d ? ok(d as never) : err(404, "No such creator");
@@ -679,7 +732,7 @@ export const collectorEngine: TabEngine = {
     const offline = ctx.env.HARBOR_OFFLINE === "1" || ctx.env.HUB_COLLECTOR_OFFLINE === "1";
     const dir = ctx.env.HUB_COLLECTOR_DIR || ctx.dir;
     const persons = ctx.env.HUB_COLLECTOR_SEND === "fake" ? fakePersons() : livePersons(personsService);
-    collector = new Collector(dir, { offline, changed: () => ctx.changed(), log: (l) => ctx.log(l), persons });
+    collector = new Collector(dir, { offline, changed: () => ctx.changed(), log: (l) => ctx.log(l), notify: (key, title, body) => ctx.notify?.(key, title, body), persons });
   },
   async route(call: Call): Promise<Reply | null> {
     if (call.path[0] !== "v1" || call.path[1] !== "collector") return null;

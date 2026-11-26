@@ -19,6 +19,12 @@ A lead is one card: picture, name, platform, handle and profile link, the email 
 the 3 newest videos (thumbnails; a click opens the video), **Restrict / Unrestrict**, and **Send message**. Copy JSONL
 (Available's page bar) gives the Available leads for SpokPayCRM → Creators → Import.
 
+When a run ends (done, stopped, an error, or no new leads) Hub notifies, as for its other events: "Collector: done — 7
+new leads for “dress to impress”" (this PC's popup while the window isn't in front, and the phones; Settings ›
+Notifications › "Collector: a run finished" turns it off). The Collector tab's button then carries a count, as Persons'
+carries its unread messages (the window's tab row: TabsBus.collector-unread; the phone's tab bar: Ds.pill), until the
+tab is opened on the PC or the phone (`GET v1/collector/unread`, `POST v1/collector/seen`).
+
 ## How each platform searches
 
 Every run searches the term for **videos**, as the platform's own search shows them, then goes from each video to its

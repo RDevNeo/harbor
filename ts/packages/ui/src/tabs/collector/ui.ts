@@ -41,6 +41,8 @@ export interface CollectorView {
   gaps: { value: number; label: string }[];
   run: { running: boolean; label: string; platform: string; query: string; found: number; target: number; known: number; line: string; status: string; ids: string[]; elapsed: number } | null;
   counts: { available: number; restricted: number };
+  /** Finished runs not looked at yet: the tab's count (TabsBus.collector-unread). */
+  unseen?: number;
   creators: Row[];
 }
 interface Compose {
@@ -185,6 +187,12 @@ export function createCollectorUi(): TabUi {
 
   const take = (v: CollectorView): void => {
     view = v;
+    // A run that ended while this tab is on screen is seen: no count on the tab, here or on the phone.
+    if ((v.unseen ?? 0) > 0 && ctx?.shown()) {
+      const tabs = Reflect.get(ctx.win, "TabsBus") as { collector_unread: number } | undefined;
+      if (tabs && tabs.collector_unread !== 0) tabs.collector_unread = 0;
+      void call("POST", "v1/collector/seen").catch(() => null);
+    }
     set("loading", false);
     render();
     const going = !!v.run?.running;

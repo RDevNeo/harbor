@@ -26,6 +26,7 @@ export const NOTE_KINDS: readonly (readonly [string, string])[] = [
   ["pc", "Another PC went offline"],
   ["discord", "Discord: a captcha, a sign-out, a repair"],
   ["whatsapp", "WhatsApp: the link ended"],
+  ["collector", "Collector: a run finished"],
 ];
 
 export interface Note {

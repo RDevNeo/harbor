@@ -118,6 +118,8 @@ export interface CollectorData {
   seen: string[];
   run: RunState | null;
   log: LogLine[];
+  /** Runs that finished since the user last looked at the Collector tab (PC or phone): the tab's count. */
+  unseen: number;
 }
 
 export const GAP_CHOICES: { value: number; label: string }[] = [
@@ -135,7 +137,7 @@ export function defaultSettings(): Settings {
 }
 
 export function defaultData(): CollectorData {
-  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, log: [] };
+  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, log: [], unseen: 0 };
 }
 
 export function normalizeTarget(v: unknown): number {
@@ -174,6 +176,7 @@ export function migrate(raw: unknown): CollectorData {
   const run = r.run && typeof r.run === "object" ? (r.run as Record<string, unknown>) : null;
   d.run = run && run.tab !== "servers" ? ({ known: 0, platform: "youtube", line: "", ...run, ids: Array.isArray(run.ids) ? run.ids.filter((x) => typeof x === "string") : [] } as unknown as RunState) : null;
   d.log = Array.isArray(r.log) ? (r.log.filter((l) => l && typeof l === "object" && typeof (l as LogLine).text === "string") as LogLine[]) : [];
+  d.unseen = typeof r.unseen === "number" && Number.isInteger(r.unseen) && r.unseen > 0 ? r.unseen : 0;
   return d;
 }
 

@@ -31,6 +31,7 @@ const DESC: Record<string, string> = {
   limit: "An account hits its usage limit or your cap, or comes back.",
   discord: "The Discord app needs you: a captcha to solve, a session Discord ended, tools a repair couldn't fix.",
   whatsapp: "This PC's WhatsApp link ended (unlinked from the phone, or by WhatsApp).",
+  collector: "A Collector run ends (done, stopped or none found), with how many new leads it found.",
 };
 const DESC_PC = "Another PC of your mesh stops answering, or answers again.";
 

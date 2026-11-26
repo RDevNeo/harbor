@@ -256,6 +256,50 @@ describe("collector", () => {
     await c.flush();
     expect(JSON.parse(readFileSync(join(dir, "state.json"), "utf8")).creators.length).toBe(2);
   });
+  it("a finished run notifies and counts on the tab until it's seen (GET unread, POST seen), kept across a restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const notes: { key: string; title: string; body: string }[] = [];
+    const notify = (key: string, title: string, body: string): void => void notes.push({ key, title, body });
+    const c = new Collector(dir, deps({ youtube: fakeYt({ UCa: 1, UCb: 2 }) as never, notify }));
+    const call = caller(c);
+    const unread = async (): Promise<number> => ((await call("GET", "unread"))!.body as { unread: number }).unread;
+    expect(await unread()).toBe(0);
+    await call("POST", "start", { platform: "youtube", query: "dress to impress", target: 0, gapDays: 0 });
+    await c.settled();
+    expect(notes).toEqual([{ key: "run", title: "Collector: done — 2 new leads for “dress to impress”", body: "YouTube: no more for this term." }]);
+    expect(await unread()).toBe(1);
+    expect(((await call("GET", ""))!.body as { unseen: number }).unseen).toBe(1);
+    // A second run that finds nobody new still notifies, saying so; the count grows.
+    await call("POST", "start", { platform: "youtube", query: "dress to impress", target: 0, gapDays: 0 });
+    await c.settled();
+    expect(notes[1]!.title).toBe("Collector: done — no new leads for “dress to impress”");
+    expect(await unread()).toBe(2);
+    await c.flush();
+    // Hub restarted: the count is still there, until the tab is opened.
+    const again = new Collector(dir, deps({}));
+    const call2 = caller(again);
+    expect(((await call2("GET", "unread"))!.body as { unread: number }).unread).toBe(2);
+    expect((await call2("POST", "seen"))!.status).toBe(200);
+    expect(((await call2("GET", "unread"))!.body as { unread: number }).unread).toBe(0);
+  });
+  it("a run cut by Hub closing neither notifies nor counts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const notes: string[] = [];
+    const yt = fakeYt({ UCa: 1 });
+    const c = new Collector(dir, deps({ youtube: yt as never, notify: (_k, t) => void notes.push(t) }));
+    await caller(c)("POST", "start", { platform: "youtube", query: "q", target: 0, gapDays: 0 });
+    c.dispose();
+    await c.stop();
+    expect([notes, c.data.unseen]).toEqual([[], 0]);
+  });
+  it("says how a run ended: target reached, stopped early, an error", async () => {
+    const { runNote } = await import("../engine.ts");
+    const base = { query: "q", label: "TikTok", known: 0, failed: "", stopped: false, target: 1 };
+    expect(runNote({ ...base, n: 1 })).toEqual({ title: "Collector: done — 1 new lead for “q”", body: "TikTok: the target (1) is in." });
+    expect(runNote({ ...base, n: 0, stopped: true, known: 3 }).title).toBe("Collector: stopped — no new leads for “q”");
+    expect(runNote({ ...base, n: 0, stopped: true, known: 3 }).body).toBe("TikTok: stopped before the target (1). 3 already collected, passed over.");
+    expect(runNote({ ...base, n: 2, failed: "429" })).toEqual({ title: "Collector: stopped on an error — 2 new leads for “q”", body: "TikTok: 429" });
+  });
   it("never collects anyone twice: not once restricted or removed, not on another platform, not when they're in Persons", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const yt = fakeYt({ UCa: 1, UCb: 1 });

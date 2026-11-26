@@ -116,6 +116,7 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
         }
       : null,
     counts: { available: rows.length - restricted, restricted },
+    unseen: d.unseen,
     creators: rows,
   };
 }
