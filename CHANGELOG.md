@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Hub **Collector** says when a run ends (PC and phone): a notification through Hub's own ("Collector: done — 7 new
+  leads for “term”"; stopped, an error or none found say so; kind "collector", on by default, in Settings ›
+  Notifications on both), and a count on the Collector tab's button, as Persons shows its unread messages, until the tab
+  is opened on either (GET v1/collector/unread, POST v1/collector/seen). A run Hub's closing cuts doesn't count.
+
 ### Changed
 - Hub **Collector**, simpler (PC and phone): three views, Collector (the search form, one line while a run goes, the
   leads it found), Available and Restricted (one filter box), switched from the sidebar (the phone: chips under the

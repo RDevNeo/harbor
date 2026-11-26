@@ -27,12 +27,14 @@ final class Notes {
     private Notes() { }
 
     /** The kinds, their labels and their Android channels' importance. */
-    static final String[] KINDS = { "input", "done", "agent", "ci", "limit", "pc", "discord", "whatsapp" };
+    static final String[] KINDS = { "input", "done", "agent", "ci", "limit", "pc", "discord", "whatsapp", "collector" };
     static final String[] LABELS = { "An agent needs you", "A lead chat finished", "A sub-agent finished",
-            "CI or PR checks failed", "Usage limit hit or back", "Another PC went offline", "Discord", "WhatsApp" };
+            "CI or PR checks failed", "Usage limit hit or back", "Another PC went offline", "Discord", "WhatsApp",
+            "Collector: a run finished" };
     private static final int[] IMPORTANCE = { NotificationManager.IMPORTANCE_HIGH, NotificationManager.IMPORTANCE_DEFAULT,
             NotificationManager.IMPORTANCE_LOW, NotificationManager.IMPORTANCE_DEFAULT, NotificationManager.IMPORTANCE_DEFAULT,
-            NotificationManager.IMPORTANCE_LOW, NotificationManager.IMPORTANCE_DEFAULT, NotificationManager.IMPORTANCE_DEFAULT };
+            NotificationManager.IMPORTANCE_LOW, NotificationManager.IMPORTANCE_DEFAULT, NotificationManager.IMPORTANCE_DEFAULT,
+            NotificationManager.IMPORTANCE_DEFAULT };
 
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("notify", Context.MODE_PRIVATE); }
 
@@ -115,6 +117,8 @@ final class Notes {
         else if ("discord".equals(kind) && "discord-captcha".equals(key)) open = new Intent(c, DiscordCaptcha.class).putExtra("hub", h.id).putExtra("pc", pcOf(h, v, from));
         else if ("discord".equals(kind)) open = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("discord", true);
         else if ("whatsapp".equals(kind)) open = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("whatsapp", true);
+        // A Collector run ended: its tab, the run's leads.
+        else if ("collector".equals(kind)) open = new Intent(c, Collector.class);
         else open = new Intent(c, Hubs.class);
         open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pi = PendingIntent.getActivity(c, code, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);

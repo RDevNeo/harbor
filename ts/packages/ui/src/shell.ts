@@ -5804,7 +5804,7 @@ export class Shell {
   /** Switches the top-level tab (as a click on the tab bar). */
   selectTab: (id: string) => void = () => {};
   private mountTabs(): void {
-    type Bus = { current: string; select: (id: string) => void; persons_unread: number };
+    type Bus = { current: string; select: (id: string) => void; persons_unread: number; collector_unread: number };
     let found: Bus;
     try {
       found = busOf<Bus>(this.win, "TabsBus");
@@ -5848,8 +5848,27 @@ export class Shell {
       const n = r?.status === 200 ? Number((r.body as { unread?: unknown } | null)?.unread) : NaN;
       if (Number.isInteger(n) && n >= 0 && tabs.persons_unread !== n) tabs.persons_unread = n;
     };
+    // The Collector tab's count the same way: finished runs not looked at yet (v1/collector/unread). Shown on its tab,
+    // it's seen: the count goes (v1/collector/seen), for the phone too.
+    const collectorSeen = (): void => {
+      if (tabs.collector_unread !== 0) tabs.collector_unread = 0;
+      void this.hub.call?.("POST", "v1/collector/seen").catch(() => null);
+    };
+    const collectorUnread = async (): Promise<void> => {
+      const call = this.hub.call;
+      if (!call) return;
+      const r = await call("GET", "v1/collector/unread").catch(() => null);
+      const n = r?.status === 200 ? Number((r.body as { unread?: unknown } | null)?.unread) : NaN;
+      if (!Number.isInteger(n) || n < 0) return;
+      if (n > 0 && tabs.current === "collector") collectorSeen();
+      else if (tabs.collector_unread !== n) tabs.collector_unread = n;
+    };
     void personsUnread();
-    const badge = setInterval(() => void personsUnread(), 3000);
+    void collectorUnread();
+    const badge = setInterval(() => {
+      void personsUnread();
+      void collectorUnread();
+    }, 3000);
     badge.unref?.();
     const select = (id: string): void => {
       const was = tabs.current;
@@ -5863,6 +5882,7 @@ export class Shell {
       }
       TAB_UIS.find((t) => t.id === was)?.shown?.(false);
       ui?.shown?.(true);
+      if (id === "collector") collectorSeen();
     };
     tabs.select = select;
     this.selectTab = select;

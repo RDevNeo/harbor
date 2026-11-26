@@ -15,6 +15,9 @@ export interface TabEngineCtx {
   log(line: string): void;
   /** One of the hub's own routes (`v1/chats`, `v1/chats/<id>/send` …), as a call from this PC. */
   call(method: string, path: string, query?: Record<string, string>, body?: unknown): Promise<Reply>;
+  /** Hub's notification for something of this tab (kind = the tab's id, coalesced by `key`): this PC's popup when the
+   *  window isn't in front, and the phones' note (Settings › Notifications turns the kind off). */
+  notify?(key: string, title: string, body: string): void;
 }
 
 export interface TabEngine {
