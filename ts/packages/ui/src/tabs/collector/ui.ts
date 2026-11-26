@@ -1,7 +1,7 @@
 // Collector tab, window side: drives CollectorBus (slint/collector.slint) from the engine's view (GET v1/collector, the
 // same routes Hub for Android calls) and sends every change back. Four views (Collector, Available, Approved, Restricted),
 // picked in the sidebar; one filter box on the lists. A lead's detail has the review bar (Reject / Skip / Approve, R S A
-// or ← ↓ →, a Quick note, Approve to): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
+// or ← ↓ →; Approve puts them in the Approved list): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
 // While a run is going it re-reads every second; otherwise on the tabs' change events.
 // Send message is a real send: it only goes out from the dialog's second step ("Send now").
 import * as slint from "slint-ui";
@@ -77,7 +77,7 @@ interface Compose {
 }
 
 export type Page = "collector" | "available" | "approved" | "restricted";
-type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string; d_note: string };
+type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
 
 /** The lead the review bar goes on to: the first one after `current` in the list the detail was opened from that is
  *  still in that list now (pure: tested). Null at the end. */
@@ -87,13 +87,6 @@ export function nextLead(queue: string[], current: string, live: Iterable<string
   if (at < 0) return null;
   for (let i = at + 1; i < queue.length; i++) if (queue[i] !== current && now.has(queue[i]!)) return queue[i]!;
   return null;
-}
-
-/** "Approve to: …": the picked choice's label, the first one when none (pure: tested). */
-export function approveToOf(v: CollectorView): { value: string; label: string } {
-  const all = v.approveTo ?? [{ value: "list", label: "Approved list only", tip: "" }];
-  const c = all.find((x) => x.value === v.settings.approveTo) ?? all[0]!;
-  return { value: c.value, label: c.label };
 }
 
 export const LIST_PLATFORMS: { key: string; label: string; color: string }[] = [
@@ -265,14 +258,11 @@ export function createCollectorUi(): TabUi {
   let reachErr = "";
   let editOpen = false;
   let editErr = "";
-  // The review bar: the list the detail was opened from (its ids in its filter and order), the Quick note's lead and
-  // what was saved last, the Approve to menu.
+  // The review bar: the list the detail was opened from (its ids in its filter and order).
   let queue: string[] = [];
   let reviewBusy = false;
-  let noteFor = "";
-  let noteSaved = "";
-  let noteTimer: ReturnType<typeof setTimeout> | null = null;
-  let approveMenu = false;
+  /** The open detail is being read again (its pictures came in). */
+  let redetail = false;
   /** The lists' Sort or platform menu, open ("" none). */
   let listMenu = "";
   /** What the detail's lists were last drawn from (a model is only replaced when it changes). */
@@ -304,6 +294,17 @@ export function createCollectorUi(): TabUi {
     }
     set("loading", false);
     render();
+    // The open detail was read before its pictures were cached (they're fetched in the background): read it again
+    // once the engine has more of them.
+    const d = detail;
+    if (detailOpen && d && !redetail && (d.recent.some((x) => x && x.thumbId && !x.thumbPath) || (d.avatarId && !d.avatarPath))) {
+      redetail = true;
+      void call("GET", `v1/collector/creator?id=${encodeURIComponent(d.id)}`)
+        .then((f) => {
+          if (detailOpen && detail?.id === d.id) takeDetail(f as DetailView, false);
+        }, () => {})
+        .finally(() => (redetail = false));
+    }
     const going = !!v.run?.running;
     if (going && !fast) fast = setInterval(() => void load(), 1000);
     if (!going && fast) {
@@ -491,8 +492,6 @@ export function createCollectorUi(): TabUi {
       sigs.d_videos = vidSig;
     }
     set("d_bio", d.bio);
-    set("d_found", d.foundVia);
-    set("d_found_platform", d.foundVia ? d.platform : "");
     set("d_contacted", d.contacted);
     const reachSig = `${reachKind}`;
     if (sigs.d_reaches !== reachSig) {
@@ -508,11 +507,6 @@ export function createCollectorUi(): TabUi {
     set("d_reach_busy", reachBusy);
     set("d_reach_send", d.reachSend);
     set("d_reach_send_kind", d.reach);
-    const linkSig = JSON.stringify(d.links);
-    if (sigs.d_links !== linkSig) {
-      b.d_links = new slint.ArrayModel(d.links.map((l) => ({ title: l.title, url: l.url, brand: l.brand, color: l.color })));
-      sigs.d_links = linkSig;
-    }
     set("d_url", d.url);
     set("d_open_label", d.openLabel);
     set("d_filling", filling);
@@ -520,31 +514,15 @@ export function createCollectorUi(): TabUi {
     set("d_approved_note", d.approvedNote ?? "");
     set("d_restricted", d.restricted);
     set("d_approved", !!d.approved);
-    const at = approveToOf(v0());
-    set("approve_to_label", at.label);
-    set("approve_open", approveMenu);
-    const choices = (view?.approveTo ?? []).map((c) => ({ value: c.value, label: c.label, tip: c.tip, on: c.value === at.value }));
-    const chSig = JSON.stringify(choices);
-    if (sigs.approve_choices !== chSig) {
-      b.approve_choices = new slint.ArrayModel(choices);
-      sigs.approve_choices = chSig;
-    }
     const pos = queue.indexOf(d.id);
     set("d_position", pos >= 0 && queue.length > 1 ? `${pos + 1} of ${queue.length}` : "");
     set("review_busy", reviewBusy);
   }
-  const v0 = (): CollectorView => view ?? ({ settings: { approveTo: "list" } } as CollectorView);
 
   /** Takes a fresh detail; the Reach field keeps what the user typed unless it was the old value. */
   const takeDetail = (d: DetailView, resetReach: boolean): void => {
     const prev = detail;
     detail = d;
-    // The Quick note follows the lead shown; a fresh copy of the same lead keeps what's being typed.
-    if (bus && noteFor !== d.id) {
-      noteFor = d.id;
-      noteSaved = d.note ?? "";
-      bus.d_note = noteSaved;
-    }
     if (resetReach || !prev || prev.id !== d.id) {
       reachKind = d.reachKind;
       drafts = { ...d.drafts };
@@ -557,44 +535,25 @@ export function createCollectorUi(): TabUi {
     render();
   };
 
-  /** The Quick note saved now if it changed (before moving on, closing, or after a pause in typing). */
-  const flushNote = async (): Promise<void> => {
-    if (noteTimer) {
-      clearTimeout(noteTimer);
-      noteTimer = null;
-    }
-    const id = noteFor;
-    const text = bus?.d_note ?? "";
-    if (!id || text === noteSaved) return;
-    noteSaved = text;
-    await call("POST", "v1/collector/note", { id, note: text }).catch((e: unknown) => ctx?.toast(errText(e)));
-  };
-
   const closeDetail = (): void => {
-    void flushNote();
     detailOpen = false;
     editOpen = false;
-    approveMenu = false;
-    noteFor = "";
     queue = [];
     render();
   };
 
-  /** The review bar: Reject (to Restricted), Skip (as it is), Approve (per Approve to); then the next lead of the list
+  /** The review bar: Reject (to Restricted), Skip (as it is), Approve (to the Approved list); then the next lead of the list
    *  the detail was opened from, or "All reviewed" at its end. */
   const review = async (what: "reject" | "skip" | "approve"): Promise<void> => {
     const d = detail;
     if (!d || !detailOpen || reviewBusy || editOpen || sendOpen) return;
     reviewBusy = true;
-    approveMenu = false;
     render();
     try {
-      await flushNote();
       if (what === "reject") take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: true })) as CollectorView);
       if (what === "approve") {
-        const to = approveToOf(v0()).value;
-        take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to })) as CollectorView);
-        ctx?.toast(to === "persons" ? `${d.name} approved and added to Persons › Creators.` : `${d.name} approved.`);
+        take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to: "list" })) as CollectorView);
+        ctx?.toast(`${d.name} approved.`);
       }
       const v = view;
       const next = v ? nextLead(queue, d.id, leadsOf(v, page, bus?.filter ?? "").rows.map((r) => r.id)) : null;
@@ -816,21 +775,6 @@ export function createCollectorUi(): TabUi {
     on("detail_close", () => closeDetail());
     on("review", (what: string) => {
       if (what === "reject" || what === "skip" || what === "approve") void review(what);
-    });
-    on("note_edited", () => {
-      if (noteTimer) clearTimeout(noteTimer);
-      noteTimer = setTimeout(() => void flushNote(), 800);
-    });
-    on("note_done", () => void flushNote());
-    on("approve_menu", (open: boolean) => {
-      approveMenu = open;
-      render();
-    });
-    on("approve_pick", (value: string) => {
-      approveMenu = false;
-      if (view) view.settings.approveTo = value;
-      render();
-      void post("settings", { approveTo: value });
     });
     on("list_menu_show", (which: string) => {
       listMenu = listMenu === which ? "" : which;

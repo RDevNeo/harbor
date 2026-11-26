@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { approveToOf, formOf, leadsOf, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { formOf, leadsOf, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -106,18 +106,6 @@ describe("collector review bar", () => {
     expect(nextLead(q, "c", ["a", "b", "c"])).toBeNull();
     expect(nextLead(q, "zz", q)).toBeNull();
     expect(nextLead([], "a", ["a"])).toBeNull();
-  });
-  it("Approve to: the picked choice, else the first", () => {
-    const choices = [
-      { value: "list", label: "Approved list only", tip: "" },
-      { value: "persons", label: "Persons › Creators", tip: "" },
-    ];
-    const v = view({ approveTo: choices });
-    expect(approveToOf(v)).toEqual({ value: "list", label: "Approved list only" });
-    v.settings.approveTo = "persons";
-    expect(approveToOf(v)).toEqual({ value: "persons", label: "Persons › Creators" });
-    v.settings.approveTo = "bogus";
-    expect(approveToOf(v).value).toBe("list");
   });
 });
 

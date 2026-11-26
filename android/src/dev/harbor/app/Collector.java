@@ -652,9 +652,9 @@ public class Collector extends Base {
         return null;
     }
 
-    /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to `to`: "list" or "persons"); then the
-     *  next lead of the list the detail was opened from, or back to the list with "All reviewed". */
-    void review(String id, String name, String what, String to, List<String> queue) {
+    /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to the Approved list); then the next
+     *  lead of the list the detail was opened from, or back to the list with "All reviewed". */
+    void review(String id, String name, String what, List<String> queue) {
         Runnable next = () -> {
             String n = nextLead(queue, id, rowIds());
             if (n == null) {
@@ -664,20 +664,10 @@ public class Collector extends Base {
         };
         if ("reject".equals(what)) post("restrict", next, "id", id, "restricted", true);
         else if ("approve".equals(what)) post("approve", () -> {
-            Ui.toast(this, "persons".equals(to) ? name + " approved and added to Persons › Creators" : name + " approved");
+            Ui.toast(this, name + " approved");
             next.run();
-        }, "id", id, "approved", true, "to", to);
+        }, "id", id, "approved", true, "to", "list");
         else next.run();
-    }
-
-    /** The review bar's Approve to, remembered on the PC. */
-    String approveTo() { return settings().optString("approveTo", "list"); }
-
-    JSONArray approveChoices() { return view == null ? null : view.optJSONArray("approveTo"); }
-
-    void setApproveTo(String v) {
-        try { settings().put("approveTo", v); } catch (Exception ignored) { }
-        post("settings", "approveTo", v);
     }
 
     /** The leads of the view: the run's on Collector, Available's, Approved's or Restricted's (filtered) on the others. */

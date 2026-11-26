@@ -348,6 +348,24 @@ export class Collector {
     return null;
   }
 
+  /** One picture into the cache; true when it was stored. */
+  private async fetchPic(url: string): Promise<boolean> {
+    try {
+      const r = await (this.o.fetch ?? fetch)(url, { headers: { "User-Agent": AVATAR_UA }, signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) return false;
+      const b = new Uint8Array(await r.arrayBuffer());
+      if (b.length === 0 || b.length >= 4_000_000) return false;
+      const f = join(this.avatars, `${avatarKey(url)}.img`);
+      const tmp = `${f}.${Math.random().toString(36).slice(2)}.tmp`;
+      writeFileSync(tmp, b);
+      renameSync(tmp, f);
+      this.have.add(f);
+      return true;
+    } catch {
+      return false; // shown with initials / an empty tile
+    }
+  }
+
   private async pump(): Promise<void> {
     if (this.picBusy) return;
     this.picBusy = true;
@@ -355,20 +373,7 @@ export class Collector {
     try {
       while (this.picQueue.length) {
         const url = this.picQueue.shift()!;
-        try {
-          const r = await (this.o.fetch ?? fetch)(url, { headers: { "User-Agent": AVATAR_UA }, signal: AbortSignal.timeout(15_000) });
-          if (r.ok) {
-            const b = new Uint8Array(await r.arrayBuffer());
-            if (b.length > 0 && b.length < 4_000_000) {
-              const f = join(this.avatars, `${avatarKey(url)}.img`);
-              writeFileSync(`${f}.tmp`, b);
-              renameSync(`${f}.tmp`, f);
-              got++;
-            }
-          }
-        } catch {
-          // shown with initials
-        }
+        if (await this.fetchPic(url)) got++;
         if (got % 8 === 0 && got > 0) this.touch();
         await (this.o.sleep ?? Bun.sleep)(120);
       }
@@ -376,6 +381,30 @@ export class Collector {
       this.picBusy = false;
       if (got) this.touch();
     }
+  }
+
+  /**
+   * A lead's picture and newest thumbnails, fetched now (ahead of the queue) so the detail that's opening shows them:
+   * a CRM import or a fill queues hundreds behind them, and the detail is only drawn from what's cached when it's read.
+   * At most `ms`; whatever isn't there by then stays queued.
+   */
+  async picsNow(id: string, ms = 8_000): Promise<void> {
+    const c = this.find(id);
+    if (!c || this.o.offline) return;
+    const urls = [c.avatar_url, ...(c.recent_videos ?? []).slice(0, 3).map((v) => v.thumbnail_url)].filter(
+      (u): u is string => !!u && !existsSync(join(this.avatars, `${avatarKey(u)}.img`)),
+    );
+    if (!urls.length) return;
+    for (const u of urls) {
+      const i = this.picQueue.indexOf(u);
+      if (i >= 0) this.picQueue.splice(i, 1);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const all = Promise.all(urls.map((u) => this.fetchPic(u)));
+    await Promise.race([all, new Promise((res) => (timer = setTimeout(res, ms)))]);
+    clearTimeout(timer);
+    // Still missing (failed or slow): back in the queue.
+    for (const u of urls) this.avatarPath(u);
   }
 
   // ---------- settings ----------
@@ -998,6 +1027,7 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
     case "POST fill": {
       const id = String(bodyOf(call).id ?? "");
       await c.fill(id);
+      await c.picsNow(id);
       const d = c.detail(id);
       return d ? ok(d as never) : err(404, "No such creator");
     }

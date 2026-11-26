@@ -450,11 +450,11 @@ final class CollectorCreator {
         return f;
     }
 
-    /** A lead's detail, full screen (the PC's dialog, the SpokPay CRM's creator profile): picture, name, PLATFORM
-     *  @handle, Has Contact; the stat tiles with data; MOST RECENT as the podium (#2, #1, #3); Bio; How we found them;
-     *  Reach (Email, Discord, WhatsApp, Instagram: one value, Save / Clear, Send); Social media; Open channel and Edit.
-     *  At the bottom the review bar (the PC's): a Quick note (private) and Approve to, then Reject / Skip / Approve,
-     *  each going on to the next lead of the list the detail was opened from.
+    /** A lead's detail, full screen (the PC's dialog, the SpokPay CRM's creator profile): under the bar Open channel,
+     *  Edit and "3 of 12"; picture, name, PLATFORM @handle, Has Contact; the stat tiles with data; MOST RECENT as the
+     *  podium (#2, #1, #3); Bio (a few lines); Reach (Email, Discord, WhatsApp, Instagram: one value, Save / Clear,
+     *  Send). At the bottom the review bar (the PC's): Reject / Skip / Approve (to the Approved list), each going on to
+     *  the next lead of the list the detail was opened from.
      *  GET /v1/collector/creator, then POST fill (an older lead's missing data, read once). */
     static final class Detail implements Collector.Screen {
         private final Collector a;
@@ -462,11 +462,7 @@ final class CollectorCreator {
         private final String id, title;
         private final LinearLayout root, body, foot, acts;
         private final java.util.List<String> queue;
-        private final EditText note;
-        private final TextView approveTo;
-        private String noteSaved = null;
         private boolean busy;
-        private final Runnable noteLater = this::saveNote;
         private JSONObject d;
         private String kind = "email";
         private final java.util.Map<String, String> drafts = new java.util.HashMap<>();
@@ -484,6 +480,11 @@ final class CollectorCreator {
             root = Ui.col(a);
             root.setBackgroundColor(Ui.BG);
             root.addView(topBar(a, name, a::pop), Ui.fill());
+            // Open channel, Edit, where this lead is in the list (drawn with the detail).
+            acts = Ui.row(a);
+            acts.setGravity(Gravity.CENTER_VERTICAL);
+            acts.setPadding(Ui.dp(16), 0, Ui.dp(16), Ui.dp(8));
+            root.addView(acts, Ui.fill());
             ScrollView sv = new ScrollView(a);
             body = Ui.col(a);
             body.setPadding(Ui.dp(16), Ui.dp(4), Ui.dp(16), Ui.dp(24));
@@ -494,43 +495,7 @@ final class CollectorCreator {
             View top = new View(a);
             top.setBackgroundColor(Ui.LINE);
             foot.addView(top, new LinearLayout.LayoutParams(-1, 1));
-            // The Quick note and Approve to.
-            LinearLayout nr = Ui.row(a);
-            nr.setGravity(Gravity.CENTER_VERTICAL);
-            nr.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), 0);
-            note = Ui.input(a, "Quick note (private)", false);
-            note.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-            note.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(8));
-            note.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
-            note.addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence x, int b, int c, int d) { }
-                @Override public void onTextChanged(CharSequence x, int b, int c, int d) { }
-                @Override public void afterTextChanged(android.text.Editable e) {
-                    Ui.main.removeCallbacks(noteLater);
-                    if (noteSaved != null) Ui.main.postDelayed(noteLater, 800);
-                }
-            });
-            note.setOnFocusChangeListener((v, has) -> { if (!has) saveNote(); });
-            nr.addView(note, Ui.weight());
-            approveTo = Ui.text(a, "", 13, Ui.FG);
-            approveTo.setGravity(Gravity.CENTER_VERTICAL);
-            approveTo.setPadding(Ui.dp(12), Ui.dp(9), Ui.dp(12), Ui.dp(9));
-            approveTo.setBackground(Ui.press(Ui.CARD, Ui.LINE, 12));
-            approveTo.setSingleLine(true);
-            approveTo.setEllipsize(TextUtils.TruncateAt.END);
-            approveTo.setMaxWidth(Ui.dp(190));
-            approveTo.setOnClickListener(v -> pickApproveTo());
-            nr.addView(approveTo, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-            foot.addView(nr, Ui.fill());
-            // Open channel, Edit (drawn with the detail).
-            acts = Ui.row(a);
-            acts.setGravity(Gravity.CENTER_VERTICAL);
-            acts.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), Ui.dp(10));
-            foot.addView(acts, Ui.fill());
             // The review bar: three equal cells, hairlines between.
-            View line = new View(a);
-            line.setBackgroundColor(Ui.LINE);
-            foot.addView(line, new LinearLayout.LayoutParams(-1, 1));
             LinearLayout bar = Ui.row(a);
             bar.addView(cell(Ui.I_X, false, "Reject", Ui.RED, "reject"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
             bar.addView(rule(), new LinearLayout.LayoutParams(1, -1));
@@ -575,55 +540,9 @@ final class CollectorCreator {
         private void review(String what) {
             if (busy || d == null) return;
             busy = true;
-            saveNote();
-            a.review(id, d.optString("name", title), what, a.approveTo(), queue);
+            a.review(id, d.optString("name", title), what, queue);
             // The next detail replaces this one; a refusal leaves it here, usable again.
             Ui.main.postDelayed(() -> busy = false, 1500);
-        }
-
-        /** Saves the Quick note if it changed (private: never exported). */
-        private void saveNote() {
-            Ui.main.removeCallbacks(noteLater);
-            if (h == null || noteSaved == null) return;
-            final String text = note.getText().toString();
-            if (text.equals(noteSaved)) return;
-            noteSaved = text;
-            JSONObject b = new JSONObject();
-            try { b.put("id", id).put("note", text); } catch (Exception ignored) { }
-            Ui.pool.execute(() -> {
-                try { h.call("POST", "/v1/collector/note", b); } catch (Exception e) { Ui.main.post(() -> Ui.toast(a, h.whyDown(e))); }
-            });
-        }
-
-        private String approveLabel() {
-            JSONArray all = a.approveChoices();
-            String v = a.approveTo();
-            for (int i = 0; all != null && i < all.length(); i++) {
-                JSONObject o = all.optJSONObject(i);
-                if (o != null && v.equals(o.optString("value"))) return o.optString("label");
-            }
-            return "Approved list only";
-        }
-
-        /** Approve to: where Approve sends a lead (the last choice is remembered on the PC). */
-        private void pickApproveTo() {
-            JSONArray all = a.approveChoices();
-            if (all == null || all.length() == 0) return;
-            String[] labels = new String[all.length()];
-            int on = 0;
-            for (int i = 0; i < all.length(); i++) {
-                JSONObject o = all.optJSONObject(i);
-                labels[i] = o == null ? "" : o.optString("label");
-                if (o != null && o.optString("value").equals(a.approveTo())) on = i;
-            }
-            Ui.dialog(a).setTitle("Approve to").setSingleChoiceItems(labels, on, (dlg, w) -> {
-                JSONObject o = all.optJSONObject(w);
-                if (o != null) {
-                    a.setApproveTo(o.optString("value"));
-                    approveTo.setText("Approve to: " + o.optString("label") + "  ▾");
-                }
-                dlg.dismiss();
-            }).show();
         }
 
         private void load(boolean fill) {
@@ -691,13 +610,14 @@ final class CollectorCreator {
             body.removeAllViews();
             acts.removeAllViews();
             field = null;
-            approveTo.setText("Approve to: " + approveLabel() + "  ▾");
             if (d == null) return;
-            // The Quick note: the saved one when the detail first comes (a later copy keeps what's being typed).
-            if (noteSaved == null) {
-                noteSaved = d.optString("note", "");
-                note.setText(noteSaved);
-            }
+            // Open channel, Edit, where this lead is in the list.
+            final String url = d.optString("url");
+            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.wrap());
+            acts.addView(Ui.button(a, "Edit", true, v -> edit()), Ui.margins(Ui.wrap(), url.isEmpty() ? 0 : 8, 0, 0, 0));
+            acts.addView(new View(a), Ui.weight());
+            int pos = queue.indexOf(id);
+            if (pos >= 0 && queue.size() > 1) acts.addView(Ui.text(a, (pos + 1) + " of " + queue.size(), 12.5f, Ui.G600), Ui.wrap());
             final String name = d.optString("name");
             // Header: picture (a rounded square), name, PLATFORM @handle, Has Contact.
             LinearLayout head = Ui.row(a);
@@ -803,59 +723,15 @@ final class CollectorCreator {
             section(I_NOTE, "BIO");
             String bio = d.optString("bio");
             if (bio.isEmpty()) quiet(filling ? "Reading their profile…" : "No bio on the profile.");
-            else { TextView t = Ui.text(a, bio, 13.5f, Ui.G900); t.setTextIsSelectable(true); body.addView(t, Ui.fill()); }
-            // How we found them
-            section(Ui.I_SEARCH, "HOW WE FOUND THEM");
-            String fv = d.optString("foundVia");
-            if (fv.isEmpty()) quiet("Not recorded.");
             else {
-                TextView t = Ui.text(a, "", 13, Ui.G900);
-                android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
-                sb.append("Search: ");
-                sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.G600), 0, sb.length(), 0);
-                sb.append("“").append(fv).append("”");
-                int s0 = sb.length();
-                sb.append(" on ").append(d.optString("platform"));
-                sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.G600), s0, sb.length(), 0);
-                t.setText(sb);
-                t.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(10), Ui.dp(8));
-                t.setBackground(Ui.round(Ui.G100, 0, 8));
+                // A few lines at most (a tap shows it all).
+                TextView t = Ui.text(a, bio, 13.5f, Ui.G900);
+                t.setMaxLines(4);
+                t.setEllipsize(TextUtils.TruncateAt.END);
+                t.setOnClickListener(v -> { t.setMaxLines(Integer.MAX_VALUE); t.setEllipsize(null); });
                 body.addView(t, Ui.fill());
             }
             drawReach();
-            // Social media
-            section(Ui.I_LINK, "SOCIAL MEDIA");
-            JSONArray links = d.optJSONArray("links");
-            if (links == null || links.length() == 0) quiet("No links on the profile.");
-            for (int i = 0; links != null && i < links.length(); i++) {
-                JSONObject l = links.optJSONObject(i);
-                if (l == null) continue;
-                final String url = l.optString("url");
-                String b = l.optString("brand");
-                LinearLayout r = Ui.row(a);
-                r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
-                r.setBackground(Ui.press(Ui.G100, 0, 8));
-                android.widget.FrameLayout m = new android.widget.FrameLayout(a);
-                m.setBackground(Ui.round(tint(brandColor(b)), 0, 5));
-                m.addView(brand(a, b, 13, brandColor(b)), new android.widget.FrameLayout.LayoutParams(Ui.dp(13), Ui.dp(13), Gravity.CENTER));
-                r.addView(m, new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
-                LinearLayout txt = Ui.col(a);
-                txt.setPadding(Ui.dp(10), 0, Ui.dp(8), 0);
-                txt.addView(Ui.subtitle(Ui.bold(a, l.optString("title"), 13.5f, Ui.FG)), Ui.fill());
-                txt.addView(Ui.subtitle(Ui.text(a, url, 12, Ui.G600)), Ui.fill());
-                r.addView(txt, Ui.weight());
-                r.addView(Ui.icon(a, Ui.I_EXTERNAL, 13, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
-                r.setOnClickListener(v -> Ui.openUrl(a, url));
-                body.addView(r, Ui.margins(Ui.fill(), 0, 0, 0, 6));
-            }
-            // Footer: Open channel, where this lead is in the list, Edit.
-            final String url = d.optString("url");
-            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.wrap());
-            acts.addView(new View(a), Ui.weight());
-            int pos = queue.indexOf(id);
-            if (pos >= 0 && queue.size() > 1) acts.addView(Ui.text(a, (pos + 1) + " of " + queue.size(), 12.5f, Ui.G600), Ui.margins(Ui.wrap(), 0, 0, 10, 0));
-            acts.addView(Ui.button(a, "Edit", true, v -> edit()), Ui.wrap());
         }
 
         /** One of the podium's videos: 16:9 thumbnail, two lines of title, "yesterday · 22K views"; a tap opens it. */

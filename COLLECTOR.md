@@ -33,31 +33,29 @@ and **Send message**. Copy JSONL (Available's and Approved's page bar) gives tha
 
 A click anywhere else on a card (Collector, Available or Restricted) opens the lead's **detail**, the SpokPay CRM's
 creator profile dialog (`src/components/creators/creator-profile-dialog.tsx`, `creator-recent-videos.tsx`,
-`creator-reach.tsx`, `lib/social-brands.tsx`) class for class; on the phone the same content as a full-screen sheet:
+`creator-reach.tsx`), trimmed to one screen that never scrolls (the podium gets smaller in a short window); on the phone
+the same content as a full-screen sheet:
 
 - Header: the picture (rounded square), the name, PLATFORM @handle, "Has Contact" when there's an email, a WhatsApp or a
-  Reach; × closes.
+  Reach; on the right Open channel (Open profile), Edit (name, handle, bio, links typed by hand; a later read never
+  replaces them), "3 of 12" and × (the phone: Open channel, Edit and "3 of 12" under its bar).
 - Stat tiles, only those with data: YouTube Subscribers / Videos / Views, TikTok Followers / Videos / Likes, Instagram
   Followers / Posts (570K, 1K, 69M).
 - MOST RECENT: the 3 newest videos as the CRM's podium (#2, #1 wider and raised, #3): thumbnail, two lines of title,
   "yesterday · 22K views"; a click opens the video.
-- Bio; How we found them (Search: "term" on Platform); Reach; Social media (each link with its brand mark, title and URL;
-  a click opens it).
+- Bio (three lines at most; the phone four, a tap shows it all); Reach. The search term and the links stay in the record
+  (and the export), not on screen.
 - **Reach**: one way to contact them (Email, Discord user ID, WhatsApp, Instagram handle; the CRM's checks), Save /
   Clear. Only ever typed: an email or WhatsApp Reach is also the address Send message uses, typed (never replaced by one
   found later). The saved Reach's button: Send email / Send WhatsApp (Send message on that channel), Open in Discord /
   Open Instagram. Its icon shows on the card (a click does the same). Exported as the CRM's `reach_kind` / `reach_value`.
-- Footer: the **Quick note** (private: saved on the lead, never exported; N focuses it, Enter or Esc gives the keys
-  back), **Approve to** (Approved list only, or Persons › Creators; the last choice is remembered), Open channel (Open
-  profile), Edit (name, handle, bio, links typed by hand; a later read never replaces them). "3 of 12" by the ×.
 - The **review bar** at the bottom (a review queue's: three equal cells, the keys' caps after each label):
   **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
-  it approved (out of Available, into Approved), and with "Persons › Creators" also adds them there the way Send
-  message does (their email, number, profiles, picture and notes; no message is sent). Each then shows the next lead
+  it approved (out of Available, into Approved). Each then shows the next lead
   of the list the detail was opened from (its filter and order at that moment; a lead that left that list meanwhile
   is passed over); after the last one the detail closes with "All reviewed". The keys act only while no text field
   has the focus. Approved and rejected leads stay in the ledger: never collected again. Phone: the same bar at the
-  bottom of the sheet (no caps), the note and an Approve to picker above it.
+  bottom of the sheet (no caps).
 
 Older leads fill in what they miss (bio, counts, links, the newest videos' views and dates) when their detail opens: one
 read of the profile, at most once a day per lead, never during a run on that platform (Instagram only with its session).
@@ -96,7 +94,9 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   business-looking one wins. Typed by hand ("typed") it is never replaced. YouTube's own business email sits behind a
   sign-in and a captcha: not read.
 - **The 3 newest videos**: URL, title, thumbnail; pictures and thumbnails are cached in `avatars/` when the lead is
-  kept (TikTok's and Instagram's image links expire).
+  kept (TikTok's and Instagram's image links expire), one at a time behind the others (a CRM import queues hundreds).
+  An opening detail's picture and thumbnails go first: `POST fill` fetches the missing ones itself (8 s at most)
+  before it answers, and the PC's open detail is read again when more pictures come in.
 - **Send message**: a template (the SpokPay CRM's outreach emails, `{name}` / `{handle}` filled), the channel
   (Persons › Creators' Gmail; its WhatsApp when their bio gives a number), To, Subject, the message, then Send… and a
   second "Send now". The lead becomes a person in Persons › Creators and the message is in that chat. The CRM's guards:
@@ -113,7 +113,8 @@ missing are then read one lead at a time through the usual fill (1.2 s apart; In
 
 Records are the userscript's field for field (`lib/types.ts` `CreatorRecord`) plus Hub's own (`email_source`,
 `email_manual`, `found_video`, `restricted`, `approved` {at, to, person}, `note`, `contacted`, `reach`,
-`whatsapp_manual`, `edited`, `filled_at`, `imported_from`); `settings.approveTo` is the review bar's last Approve to. Older state.json files load as they are; the old daily
+`whatsapp_manual`, `edited`, `filled_at`, `imported_from`); `settings.approveTo` and `note` are kept from the
+removed Approve to and Quick note (harmless; the routes still take them). Older state.json files load as they are; the old daily
 update's state and each record's history are dropped.
 
 Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last run with its leads' ids, a log),

@@ -20,11 +20,9 @@ export struct ClRow {
 export struct ClStat { icon: string, value: string, label: string }
 /** One of the podium's videos (render order 2-1-3: the newest, featured, in the middle). */
 export struct ClDVid { url: string, title: string, meta: string, thumb: image, has-thumb: bool, short: bool, featured: bool, empty: bool }
-export struct ClLink { title: string, url: string, brand: string, color: color }
 export struct ClReach { kind: string, label: string, color: color, on: bool }
 export struct ClNav { id: string, label: string, count: int, on: bool }
 export struct ClTpl { id: string, name: string, description: string, on: bool }
-export struct ClApprove { value: string, label: string, tip: string, on: bool }
 /** The lists' Sort menu ("sep": a separator above it) and platform menu (brand colour, count on the list). */
 export struct ClSort { value: string, label: string, on: bool, sep: bool }
 export struct ClPlat { value: string, label: string, color: color, count: int, on: bool }
@@ -98,8 +96,6 @@ export global CollectorBus {
     in property <[ClStat]> d-stats;
     in property <[ClDVid]> d-videos;
     in property <string> d-bio;
-    in property <string> d-found;
-    in property <string> d-found-platform;
     in property <string> d-contacted;
     in property <[ClReach]> d-reaches;
     in property <string> d-reach-hint;
@@ -111,20 +107,15 @@ export global CollectorBus {
     in property <bool> d-reach-busy;
     in property <string> d-reach-send;
     in property <string> d-reach-send-kind;
-    in property <[ClLink]> d-links;
     in property <string> d-url;
     in property <string> d-open-label;
     in property <bool> d-filling;
-    // The review bar (Reject / Skip / Approve) and the row above it (Quick note, Approve to)
-    in-out property <string> d-note;
+    // The review bar (Reject / Skip / Approve)
     in property <string> d-approved-note;
     in property <bool> d-restricted;
     in property <bool> d-approved;
     /** "3 of 12": where this lead is in the list the detail was opened from ("" alone). */
     in property <string> d-position;
-    in property <string> approve-to-label;
-    in property <bool> approve-open;
-    in property <[ClApprove]> approve-choices;
     in property <bool> review-busy;
     // The lists' Sort and "Show only — platforms" (beside the filter box)
     in property <string> sort-label;
@@ -182,10 +173,6 @@ export global CollectorBus {
     callback edit-close();
     /** "reject", "skip" or "approve": then the next lead of the list. */
     callback review(string);
-    callback note-edited(string);
-    callback note-done();
-    callback approve-menu(bool);
-    callback approve-pick(string);
     /** A card's Unapprove (false). */
     callback approve-set(string, bool);
     callback list-menu-show(string);
@@ -1309,12 +1296,15 @@ component VidTile inherits Rectangle {
 
 /** MOST RECENT: the 3 newest as a podium (the CRM's CreatorRecentVideosPodium): #2, #1 (wider, raised), #3. */
 component Podium inherits Rectangle {
+    /** At most this tall (the detail fits the window without scrolling): narrower tiles, centred. */
+    in property <length> max-h: 1000px;
     property <length> gap: 8px;
-    property <length> unit: (root.width - 2 * root.gap) / 3.25;
+    property <length> unit: max(60px, min((root.width - 2 * root.gap) / 3.25, ((root.max-h - 70px) * 16 / 9 + 12px) / 1.25));
     property <length> mid-h: (1.25 * root.unit - 12px) * 9 / 16 + 70px;
+    property <length> left: (root.width - 3.25 * root.unit - 2 * root.gap) / 2;
     height: root.mid-h;
     for v[i] in CollectorBus.d-videos: Rectangle {
-        x: i == 0 ? 0px : i == 1 ? root.unit + root.gap : 2.25 * root.unit + 2 * root.gap;
+        x: root.left + (i == 0 ? 0px : i == 1 ? root.unit + root.gap : 2.25 * root.unit + 2 * root.gap);
         width: v.featured ? 1.25 * root.unit : root.unit;
         height: root.mid-h;
         if !v.empty: VidTile {
@@ -1436,10 +1426,10 @@ component ReviewCell inherits Rectangle {
     }
 }
 
-/** A lead's detail: the SpokPay CRM's creator profile dialog (creator-profile-dialog.tsx), class for class. Header
- *  (picture, name, PLATFORM @handle, Has Contact), the stat tiles, MOST RECENT, Bio, How we found them, Reach, Social
- *  media; footer: the Quick note, Approve to, Open channel / Edit, then the review queue's bar (Reject / Skip / Approve,
- *  R S A or ← ↓ →; N focuses the note). The keys act only while no text field has the focus. */
+/** A lead's detail: the SpokPay CRM's creator profile dialog (creator-profile-dialog.tsx), trimmed to one screen that
+ *  never scrolls. Header (picture, name, PLATFORM @handle, Has Contact; Open channel, Edit, "3 of 12" and × on the
+ *  right), the stat tiles, MOST RECENT, Bio (3 lines at most), Reach; then the review queue's bar (Reject / Skip /
+ *  Approve, R S A or ← ↓ →). The keys act only while no text field has the focus. */
 component DetailDialog inherits Rectangle {
     background: Theme.scrim;
     TouchArea {
@@ -1448,9 +1438,9 @@ component DetailDialog inherits Rectangle {
         }
     }
     property <length> box-w: min(720px, root.width - 32px);
-    property <length> row-h: 56px;
-    property <length> bar-h: 56px;
-    property <length> foot-h: root.row-h + 1px + root.bar-h;
+    property <length> bar-h: 52px;
+    /** Everything but the podium, about (the podium gives way when the window is short). */
+    property <length> rest-h: 410px;
     // Edit or Send message closed over the detail: the keys come back to the review bar.
     property <bool> covered: CollectorBus.edit-open || CollectorBus.send-open;
     changed covered => {
@@ -1468,10 +1458,7 @@ component DetailDialog inherits Rectangle {
         }
         key-pressed(e) => {
             if e.text == Key.Escape {
-                if CollectorBus.approve-open {
-                    CollectorBus.approve-menu(false);
-                } else if !self.has-focus {
-                    CollectorBus.note-done();
+                if !self.has-focus {
                     self.focus();
                 } else {
                     CollectorBus.detail-close();
@@ -1494,16 +1481,12 @@ component DetailDialog inherits Rectangle {
                 CollectorBus.review("approve");
                 return accept;
             }
-            if e.text == "n" || e.text == "N" {
-                note.focus-field();
-                return accept;
-            }
             reject
         }
     }
     box := Rectangle {
         width: root.box-w;
-        height: min(root.height - 48px, inner.preferred-height + 48px + root.foot-h);
+        height: min(root.height - 32px, inner.preferred-height + 1px + root.bar-h);
         background: Theme.bg100;
         border-width: 1px;
         border-color: Theme.border;
@@ -1517,344 +1500,286 @@ component DetailDialog inherits Rectangle {
                 keys.focus();
             }
         }
-        sc := Scroll {
+        inner := VerticalLayout {
             x: 0;
             y: 0;
             width: parent.width;
-            height: parent.height - root.foot-h;
-            inner := VerticalLayout {
-                padding: 24px;
-                padding-bottom: 20px;
-                spacing: 16px;
-                width: sc.width;
-                // Header: picture, name, PLATFORM @handle, Has Contact.
-                HorizontalLayout {
-                    spacing: 12px;
-                    padding-right: CollectorBus.d-position != "" ? 84px : 28px;
-                    Rectangle {
-                        width: 56px;
-                        height: 56px;
-                        border-radius: 12px;
-                        clip: true;
-                        background: CollectorBus.d-has-avatar ? Theme.fg.with-alpha(0.06) : CollectorBus.d-color;
-                        if CollectorBus.d-has-avatar: Image {
-                            width: parent.width;
-                            height: parent.height;
-                            source: CollectorBus.d-avatar;
-                            image-fit: cover;
+            height: parent.height - 1px - root.bar-h;
+            padding: 20px;
+            padding-bottom: 16px;
+            spacing: 12px;
+            alignment: start;
+            // Header: picture, name, PLATFORM @handle, Has Contact; Open channel, Edit, "3 of 12", × on the right.
+            HorizontalLayout {
+                spacing: 12px;
+                Rectangle {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 10px;
+                    clip: true;
+                    background: CollectorBus.d-has-avatar ? Theme.fg.with-alpha(0.06) : CollectorBus.d-color;
+                    if CollectorBus.d-has-avatar: Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: CollectorBus.d-avatar;
+                        image-fit: cover;
+                    }
+                    if !CollectorBus.d-has-avatar: Text {
+                        text: CollectorBus.d-initials;
+                        font-size: 16px;
+                        font-weight: 600;
+                        color: white;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: CollectorBus.d-name;
+                        font-size: 16px;
+                        font-weight: 600;
+                        color: Theme.fg;
+                        overflow: elide;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: CollectorBus.d-platform;
+                            font-size: 12px;
+                            letter-spacing: 0.5px;
+                            color: Theme.fg.with-alpha(0.3);
+                            vertical-alignment: center;
                         }
-                        if !CollectorBus.d-has-avatar: Text {
-                            text: CollectorBus.d-initials;
-                            font-size: 18px;
-                            font-weight: 600;
-                            color: white;
+                        if CollectorBus.d-handle != "": Text {
+                            text: CollectorBus.d-handle;
+                            font-size: 12.5px;
+                            color: Theme.fg.with-alpha(0.45);
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        if CollectorBus.d-has-contact: Rectangle {
+                            width: hc.preferred-width + 14px;
+                            height: 19px;
+                            border-radius: 9.5px;
+                            background: Theme.fg.with-alpha(0.07);
+                            hc := Text {
+                                text: "Has Contact";
+                                font-size: 10.5px;
+                                color: Theme.fg.with-alpha(0.55);
+                            }
+                        }
+                        if CollectorBus.d-approved || CollectorBus.d-restricted: Rectangle {
+                            width: st.preferred-width + 14px;
+                            height: 19px;
+                            border-radius: 9.5px;
+                            background: (CollectorBus.d-approved ? Theme.green-900 : Theme.red-900).with-alpha(0.12);
+                            st := Text {
+                                text: CollectorBus.d-approved ? "Approved" : "Restricted";
+                                font-size: 10.5px;
+                                color: CollectorBus.d-approved ? Theme.green-900 : Theme.red-900;
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    VerticalLayout {
+                        alignment: center;
+                        if CollectorBus.d-url != "": Btn {
+                            text: CollectorBus.d-open-label;
+                            icon: Icons.external;
+                            size: sm;
+                            variant: outline;
+                            clicked => {
+                                CollectorBus.open(CollectorBus.d-url);
+                            }
                         }
                     }
                     VerticalLayout {
                         alignment: center;
-                        spacing: 4px;
-                        horizontal-stretch: 1;
-                        Text {
-                            text: CollectorBus.d-name;
-                            font-size: 17px;
-                            font-weight: 600;
-                            color: Theme.fg;
-                            wrap: word-wrap;
-                        }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: start;
-                            Text {
-                                text: CollectorBus.d-platform;
-                                font-size: 12px;
-                                letter-spacing: 0.5px;
-                                color: Theme.fg.with-alpha(0.3);
-                                vertical-alignment: center;
-                            }
-                            if CollectorBus.d-handle != "": Text {
-                                text: CollectorBus.d-handle;
-                                font-size: 12.5px;
-                                color: Theme.fg.with-alpha(0.45);
-                                overflow: elide;
-                                vertical-alignment: center;
-                            }
-                            if CollectorBus.d-has-contact: Rectangle {
-                                width: hc.preferred-width + 14px;
-                                height: 19px;
-                                border-radius: 9.5px;
-                                background: Theme.fg.with-alpha(0.07);
-                                hc := Text {
-                                    text: "Has Contact";
-                                    font-size: 10.5px;
-                                    color: Theme.fg.with-alpha(0.55);
-                                }
-                            }
-                            if CollectorBus.d-approved || CollectorBus.d-restricted: Rectangle {
-                                width: st.preferred-width + 14px;
-                                height: 19px;
-                                border-radius: 9.5px;
-                                background: (CollectorBus.d-approved ? Theme.green-900 : Theme.red-900).with-alpha(0.12);
-                                st := Text {
-                                    text: CollectorBus.d-approved ? "Approved" : "Restricted";
-                                    font-size: 10.5px;
-                                    color: CollectorBus.d-approved ? Theme.green-900 : Theme.red-900;
-                                }
-                            }
-                        }
-                    }
-                }
-                // The stat tiles (only those with data).
-                if CollectorBus.d-stats.length > 0: HorizontalLayout {
-                    spacing: 8px;
-                    for s in CollectorBus.d-stats: StatTile {
-                        s: s;
-                        horizontal-stretch: 1;
-                    }
-                }
-                if CollectorBus.d-filling && CollectorBus.d-stats.length == 0: Text {
-                    text: "Reading their profile…";
-                    font-size: 12px;
-                    color: Theme.fg.with-alpha(0.3);
-                }
-                // MOST RECENT
-                if CollectorBus.d-videos.length > 0: VerticalLayout {
-                    spacing: 10px;
-                    HorizontalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        Glyph {
-                            icon: Icons.flame;
-                            size: 16px;
-                            color: Theme.fg.with-alpha(0.4);
-                        }
-                        Text {
-                            text: "MOST RECENT";
-                            font-size: 14px;
-                            font-weight: 600;
-                            letter-spacing: 2.8px;
-                            color: Theme.fg.with-alpha(0.7);
-                            vertical-alignment: center;
-                        }
-                    }
-                    Podium { }
-                }
-                DSection {
-                    icon: Icons.sticky-note;
-                    title: "BIO";
-                    Text {
-                        text: CollectorBus.d-bio != "" ? CollectorBus.d-bio : CollectorBus.d-filling ? "Reading their profile…" : "No bio on the profile.";
-                        font-size: 12.5px;
-                        color: CollectorBus.d-bio != "" ? Theme.fg.with-alpha(0.65) : Theme.fg.with-alpha(0.3);
-                        wrap: word-wrap;
-                    }
-                }
-                DSection {
-                    icon: Icons.search;
-                    title: "HOW WE FOUND THEM";
-                    if CollectorBus.d-found != "": Rectangle {
-                        height: fv.preferred-height;
-                        border-radius: Ds.radius-md;
-                        background: Theme.fg.with-alpha(0.035);
-                        fv := HorizontalLayout {
-                            padding-top: 7px;
-                            padding-bottom: 7px;
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            alignment: start;
-                            Text {
-                                text: "Search: ";
-                                font-size: 12.5px;
-                                color: Theme.fg.with-alpha(0.35);
-                            }
-                            Text {
-                                text: "“" + CollectorBus.d-found + "”";
-                                font-size: 12.5px;
-                                color: Theme.fg.with-alpha(0.65);
-                                overflow: elide;
-                            }
-                            if CollectorBus.d-found-platform != "": Text {
-                                text: " on " + CollectorBus.d-found-platform;
-                                font-size: 12.5px;
-                                color: Theme.fg.with-alpha(0.35);
-                            }
-                        }
-                    }
-                    if CollectorBus.d-found == "": Text {
-                        text: "Not recorded.";
-                        font-size: 12.5px;
-                        color: Theme.fg.with-alpha(0.3);
-                    }
-                }
-                DSection {
-                    icon: Icons.mail;
-                    title: "REACH";
-                    Text {
-                        text: "One way to contact them. The matching icon shows on their card.";
-                        font-size: 11.5px;
-                        color: Theme.fg.with-alpha(0.4);
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        spacing: 4px;
-                        alignment: start;
-                        for k in CollectorBus.d-reaches: Rectangle {
-                            width: 32px;
-                            height: 32px;
-                            border-radius: Ds.radius-md;
-                            background: k.on ? k.color.with-alpha(0.13) : kta.has-hover ? Theme.fg.with-alpha(0.08) : Theme.fg.with-alpha(0.04);
-                            border-width: k.on ? 1px : 0px;
-                            border-color: Theme.fg.with-alpha(0.4);
-                            BrandGlyph {
-                                kind: k.kind;
-                                size: 16px;
-                                ink: k.on ? k.color : kta.has-hover ? Theme.fg.with-alpha(0.7) : Theme.fg.with-alpha(0.4);
-                            }
-                            kta := TipArea {
-                                tip: k.label;
-                                clicked => {
-                                    CollectorBus.reach-pick(k.kind);
-                                }
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        Input {
-                            horizontal-stretch: 1;
-                            text <=> CollectorBus.d-reach-text;
-                            hint: CollectorBus.d-reach-hint;
-                            edited(t) => {
-                                CollectorBus.reach-edited(t);
-                            }
-                            accepted => {
-                                CollectorBus.reach-save();
-                            }
-                        }
                         Btn {
-                            text: CollectorBus.d-reach-busy ? "Saving…" : "Save";
+                            text: "Edit";
+                            icon: Icons.pencil;
                             size: sm;
                             variant: primary;
-                            enabled: CollectorBus.d-reach-can-save && !CollectorBus.d-reach-busy;
                             clicked => {
-                                CollectorBus.reach-save();
-                            }
-                        }
-                        if CollectorBus.d-reach-saved: Btn {
-                            text: "Clear";
-                            size: sm;
-                            variant: ghost-muted;
-                            enabled: !CollectorBus.d-reach-busy;
-                            clicked => {
-                                CollectorBus.reach-clear();
+                                CollectorBus.edit-show();
                             }
                         }
                     }
-                    if CollectorBus.d-reach-error != "": Text {
-                        text: CollectorBus.d-reach-error;
-                        font-size: 11.5px;
-                        color: Theme.red-900;
-                        wrap: word-wrap;
+                    if CollectorBus.d-position != "": Text {
+                        text: CollectorBus.d-position;
+                        font-size: 12.5px;
+                        color: Theme.gray-800;
+                        vertical-alignment: center;
                     }
-                    if CollectorBus.d-reach-error == "" && CollectorBus.d-reach-help != "": Text {
-                        text: CollectorBus.d-reach-help;
-                        font-size: 11.5px;
-                        color: Theme.fg.with-alpha(0.3);
-                        wrap: word-wrap;
-                    }
-                    if CollectorBus.d-reach-send != "": HorizontalLayout {
-                        padding-top: 2px;
-                        alignment: start;
-                        Btn {
-                            text: CollectorBus.d-reach-send;
-                            icon: CollectorBus.d-reach-send-kind == "email" ? Icons.mail : CollectorBus.d-reach-send-kind == "whatsapp" ? Icons.send : Icons.external;
-                            size: sm;
-                            variant: secondary;
+                    VerticalLayout {
+                        alignment: center;
+                        TouchArea {
+                            width: 28px;
+                            height: 28px;
+                            mouse-cursor: pointer;
                             clicked => {
-                                CollectorBus.reach-send();
-                            }
-                        }
-                    }
-                    if CollectorBus.d-contacted != "": Text {
-                        text: CollectorBus.d-contacted;
-                        font-size: 11.5px;
-                        color: Theme.fg.with-alpha(0.4);
-                        wrap: word-wrap;
-                    }
-                    if CollectorBus.d-approved-note != "": Text {
-                        text: CollectorBus.d-approved-note + ".";
-                        font-size: 11.5px;
-                        color: Theme.fg.with-alpha(0.4);
-                        wrap: word-wrap;
-                    }
-                }
-                DSection {
-                    icon: Icons.link;
-                    title: "SOCIAL MEDIA";
-                    for l in CollectorBus.d-links: Rectangle {
-                        height: 32px;
-                        border-radius: Ds.radius-md;
-                        background: lta.has-hover ? Theme.fg.with-alpha(0.07) : Theme.fg.with-alpha(0.035);
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 10px;
-                            spacing: 8px;
-                            VerticalLayout {
-                                alignment: center;
-                                Rectangle {
-                                    width: 20px;
-                                    height: 20px;
-                                    border-radius: 4px;
-                                    background: l.color.with-alpha(0.13);
-                                    BrandGlyph {
-                                        kind: l.brand;
-                                        size: 12px;
-                                        ink: l.color;
-                                    }
-                                }
-                            }
-                            Text {
-                                text: l.title;
-                                font-size: 12.5px;
-                                font-weight: 500;
-                                color: lta.has-hover ? Theme.fg : Theme.fg.with-alpha(0.65);
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 0;
-                                max-width: min(self.preferred-width, 260px);
-                            }
-                            Text {
-                                text: l.url;
-                                font-size: 12.5px;
-                                color: Theme.fg.with-alpha(0.35);
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 1;
+                                CollectorBus.detail-close();
                             }
                             Glyph {
-                                icon: Icons.external;
-                                size: 12px;
-                                color: Theme.fg.with-alpha(0.3);
-                            }
-                        }
-                        lta := TipArea {
-                            tip: l.url;
-                            clicked => {
-                                CollectorBus.open(l.url);
+                                icon: Icons.x;
+                                size: 16px;
+                                color: parent.has-hover ? Theme.fg : Theme.subtle;
                             }
                         }
                     }
-                    if CollectorBus.d-links.length == 0: Text {
-                        text: "No links on the profile.";
-                        font-size: 12.5px;
-                        color: Theme.fg.with-alpha(0.3);
+                }
+            }
+            // The stat tiles (only those with data).
+            if CollectorBus.d-stats.length > 0: HorizontalLayout {
+                spacing: 8px;
+                for s in CollectorBus.d-stats: StatTile {
+                    s: s;
+                    horizontal-stretch: 1;
+                    height: 48px;
+                }
+            }
+            if CollectorBus.d-filling && CollectorBus.d-stats.length == 0: Text {
+                text: "Reading their profile…";
+                font-size: 12px;
+                color: Theme.fg.with-alpha(0.3);
+            }
+            // MOST RECENT
+            if CollectorBus.d-videos.length > 0: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Glyph {
+                        icon: Icons.flame;
+                        size: 14px;
+                        color: Theme.fg.with-alpha(0.4);
+                    }
+                    Text {
+                        text: "MOST RECENT";
+                        font-size: 12px;
+                        font-weight: 600;
+                        letter-spacing: 2.4px;
+                        color: Theme.fg.with-alpha(0.7);
+                        vertical-alignment: center;
+                    }
+                }
+                Podium {
+                    max-h: root.height - 32px - root.rest-h;
+                }
+            }
+            DSection {
+                icon: Icons.sticky-note;
+                title: "BIO";
+                Text {
+                    text: CollectorBus.d-bio != "" ? CollectorBus.d-bio : CollectorBus.d-filling ? "Reading their profile…" : "No bio on the profile.";
+                    font-size: 12.5px;
+                    color: CollectorBus.d-bio != "" ? Theme.fg.with-alpha(0.65) : Theme.fg.with-alpha(0.3);
+                    wrap: word-wrap;
+                    overflow: elide;
+                    // Three lines at most: the dialog never scrolls.
+                    max-height: 51px;
+                }
+            }
+            DSection {
+                icon: Icons.mail;
+                title: "REACH";
+                HorizontalLayout {
+                    spacing: 6px;
+                    for k in CollectorBus.d-reaches: Rectangle {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: Ds.radius-md;
+                        background: k.on ? k.color.with-alpha(0.13) : kta.has-hover ? Theme.fg.with-alpha(0.08) : Theme.fg.with-alpha(0.04);
+                        border-width: k.on ? 1px : 0px;
+                        border-color: Theme.fg.with-alpha(0.4);
+                        BrandGlyph {
+                            kind: k.kind;
+                            size: 16px;
+                            ink: k.on ? k.color : kta.has-hover ? Theme.fg.with-alpha(0.7) : Theme.fg.with-alpha(0.4);
+                        }
+                        kta := TipArea {
+                            tip: k.label + ": one way to contact them (its icon shows on their card)";
+                            clicked => {
+                                CollectorBus.reach-pick(k.kind);
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: 2px;
+                    }
+                    Input {
+                        horizontal-stretch: 1;
+                        text <=> CollectorBus.d-reach-text;
+                        hint: CollectorBus.d-reach-hint;
+                        edited(t) => {
+                            CollectorBus.reach-edited(t);
+                        }
+                        accepted => {
+                            CollectorBus.reach-save();
+                        }
+                    }
+                    Btn {
+                        text: CollectorBus.d-reach-busy ? "Saving…" : "Save";
+                        size: sm;
+                        variant: primary;
+                        enabled: CollectorBus.d-reach-can-save && !CollectorBus.d-reach-busy;
+                        clicked => {
+                            CollectorBus.reach-save();
+                        }
+                    }
+                    if CollectorBus.d-reach-saved: Btn {
+                        text: "Clear";
+                        size: sm;
+                        variant: ghost-muted;
+                        enabled: !CollectorBus.d-reach-busy;
+                        clicked => {
+                            CollectorBus.reach-clear();
+                        }
+                    }
+                }
+                if CollectorBus.d-reach-error != "": Text {
+                    text: CollectorBus.d-reach-error;
+                    font-size: 11.5px;
+                    color: Theme.red-900;
+                    overflow: elide;
+                }
+                if CollectorBus.d-reach-error == "" && CollectorBus.d-reach-help != "": Text {
+                    text: CollectorBus.d-reach-help;
+                    font-size: 11.5px;
+                    color: Theme.fg.with-alpha(0.3);
+                    overflow: elide;
+                }
+                if CollectorBus.d-reach-send != "" || CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    if CollectorBus.d-reach-send != "": Btn {
+                        text: CollectorBus.d-reach-send;
+                        icon: CollectorBus.d-reach-send-kind == "email" ? Icons.mail : CollectorBus.d-reach-send-kind == "whatsapp" ? Icons.send : Icons.external;
+                        size: sm;
+                        variant: secondary;
+                        clicked => {
+                            CollectorBus.reach-send();
+                        }
+                    }
+                    if CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": Text {
+                        text: CollectorBus.d-contacted != "" ? CollectorBus.d-contacted : CollectorBus.d-approved-note + ".";
+                        font-size: 11.5px;
+                        color: Theme.fg.with-alpha(0.4);
+                        vertical-alignment: center;
+                        overflow: elide;
                     }
                 }
             }
         }
-        // Footer: the Quick note and Approve to, Open channel / Edit on the right; under it the review bar.
+        // The review bar at the bottom.
         Rectangle {
-            y: parent.height - root.foot-h;
-            height: root.foot-h;
+            y: parent.height - 1px - root.bar-h;
+            height: 1px + root.bar-h;
             background: Theme.dark ? #00000040 : Theme.fg.with-alpha(0.03);
             Rectangle {
                 y: 0;
@@ -1862,98 +1787,7 @@ component DetailDialog inherits Rectangle {
                 background: Theme.border;
             }
             HorizontalLayout {
-                y: 0;
-                height: root.row-h;
-                padding-left: 24px;
-                padding-right: 24px;
-                padding-top: 12px;
-                padding-bottom: 12px;
-                spacing: 8px;
-                // Escape in the note gives the keys back to the review bar.
-                FocusScope {
-                    width: min(200px, root.box-w / 4);
-                    height: 32px;
-                    focus-on-click: false;
-                    key-pressed(e) => {
-                        if e.text == Key.Escape {
-                            CollectorBus.note-done();
-                            keys.focus();
-                            return accept;
-                        }
-                        reject
-                    }
-                    note := Input {
-                        width: parent.width;
-                        height: parent.height;
-                        hint: "Quick note (private) · N";
-                        text <=> CollectorBus.d-note;
-                        edited(t) => {
-                            CollectorBus.note-edited(t);
-                        }
-                        accepted => {
-                            CollectorBus.note-done();
-                            keys.focus();
-                        }
-                    }
-                }
-                approve-to := Rectangle {
-                    width: at-text.preferred-width + 38px;
-                    height: 32px;
-                    border-radius: Ds.radius-md;
-                    border-width: 1px;
-                    border-color: CollectorBus.approve-open ? Theme.gray-1000 : Theme.border;
-                    background: at-area.has-hover ? Theme.accent : Theme.bg100;
-                    at-text := Text {
-                        x: 12px;
-                        text: "Approve to: " + CollectorBus.approve-to-label;
-                        font-size: 13px;
-                        color: Theme.fg;
-                        vertical-alignment: center;
-                    }
-                    Glyph {
-                        x: parent.width - 22px;
-                        width: 14px;
-                        icon: Icons.down;
-                        size: 13px;
-                        color: Theme.subtle;
-                    }
-                    at-area := TipArea {
-                        mouse-cursor: pointer;
-                        tip: "Where Approve (A or →) sends a lead";
-                        clicked => {
-                            CollectorBus.approve-menu(!CollectorBus.approve-open);
-                        }
-                    }
-                }
-                Rectangle {
-                    horizontal-stretch: 1;
-                }
-                if CollectorBus.d-url != "": Btn {
-                    text: CollectorBus.d-open-label;
-                    icon: Icons.external;
-                    size: sm;
-                    variant: outline;
-                    clicked => {
-                        CollectorBus.open(CollectorBus.d-url);
-                    }
-                }
-                Btn {
-                    text: "Edit";
-                    icon: Icons.pencil;
-                    size: sm;
-                    variant: primary;
-                    clicked => {
-                        CollectorBus.edit-show();
-                    }
-                }
-            }
-            Rectangle {
-                y: root.row-h;
-                height: 1px;
-                background: Theme.border;
-            }
-            HorizontalLayout {
-                y: root.row-h + 1px;
+                y: 1px;
                 height: root.bar-h;
                 ReviewCell {
                     width: (root.box-w - 2px) / 3;
@@ -1996,60 +1830,12 @@ component DetailDialog inherits Rectangle {
                     ink: Theme.green-900;
                     cap: "A";
                     cap-icon: Icons.arrow-right;
-                    tip: "Approve to: " + CollectorBus.approve-to-label + ", then the next lead";
+                    tip: "To the Approved list, then the next lead";
                     enabled: !CollectorBus.review-busy;
                     clicked => {
                         CollectorBus.review("approve");
                     }
                 }
-            }
-        }
-        // Approve to's menu, over the footer, above its button.
-        if CollectorBus.approve-open: TouchArea {
-            clicked => {
-                CollectorBus.approve-menu(false);
-            }
-        }
-        if CollectorBus.approve-open: PopoverFrame {
-            x: approve-to.x;
-            y: parent.height - root.foot-h + 8px - self.height;
-            width: 300px;
-            height: menu.preferred-height;
-            menu := VerticalLayout {
-                padding: 4px;
-                for c in CollectorBus.approve-choices: MenuItem {
-                    label: c.label;
-                    desc: c.tip;
-                    checked: c.on;
-                    clicked => {
-                        CollectorBus.approve-pick(c.value);
-                        keys.focus();
-                    }
-                }
-            }
-        }
-        if CollectorBus.d-position != "": Text {
-            x: parent.width - 45px - self.width;
-            y: 17px;
-            height: 28px;
-            text: CollectorBus.d-position;
-            font-size: 12.5px;
-            color: Theme.gray-800;
-            vertical-alignment: center;
-        }
-        TouchArea {
-            x: parent.width - 37px;
-            y: 17px;
-            width: 28px;
-            height: 28px;
-            mouse-cursor: pointer;
-            clicked => {
-                CollectorBus.detail-close();
-            }
-            Glyph {
-                icon: Icons.x;
-                size: 16px;
-                color: parent.has-hover ? Theme.fg : Theme.subtle;
             }
         }
     }

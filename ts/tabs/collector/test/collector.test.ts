@@ -549,6 +549,20 @@ describe("lead detail", () => {
     await call("POST", "fill", { id: "youtube:UC1" });
     expect(yt.calls).toEqual([]);
   });
+  it("the opening detail's thumbnails come ahead of the picture queue, so the fill's answer shows them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const got: string[] = [];
+    // The queue is slow (a CRM import's hundreds): every picture takes a while, except when fetched for the detail.
+    const fetch = async (u: string) => (got.push(u), new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3])));
+    const c = new Collector(dir, deps({ fetch: fetch as never, sleep: () => new Promise((r) => setTimeout(r, 60_000)) }));
+    for (let i = 0; i < 5; i++) c.avatarPath(`https://img/queued-${i}.jpg`);
+    const vids = [1, 2, 3].map((i) => ({ url: `https://y/v${i}`, title: `v${i}`, thumbnail_url: `https://img/t${i}.jpg`, published_at: new Date(NOW).toISOString(), view_count: 5 }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC9", description: "bio", recent_videos: vids as never, filled_at: new Date().toISOString() }));
+    const d = (await caller(c)("POST", "fill", { id: "youtube:UC9" }))!.body as DetailView;
+    expect(d.recent.map((v) => !!v.thumbPath)).toEqual([true, true, true]);
+    expect(got.slice(0, 1)).toEqual(["https://img/queued-0.jpg"]);
+    expect(got).toContain("https://img/t3.jpg");
+  });
 });
 
 describe("SpokPay CRM import", () => {
