@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { textKey, ACTIONS, GROUPS, Keys, comboName, isChar, label, parseCombo } from "../src/logic/keys.ts";
+import { retypeEvents, textKey, ACTIONS, GROUPS, Keys, comboName, isChar, label, parseCombo } from "../src/logic/keys.ts";
 
 test("combos_round_trip_and_defaults_parse", () => {
   for (const s of ["Ctrl+N", "Ctrl+Shift+Backtick", "Shift+Enter", "Alt+F4", "Escape"]) {
@@ -69,5 +69,22 @@ describe("textKey: every text field's one key decision (Projects, Persons, Routi
   });
   test("printable keys are never taken", () => {
     for (const c of ["a", "Z", "ç", "/", "?", "~", "´"]) expect(textKey(c, m(), "compose")).toBe("");
+  });
+});
+
+describe("retypeEvents: a Ctrl+Alt character typed again (/ and ? on ABNT2)", () => {
+  test("lets go of both Ctrls (Slint tracks the left and the right one apart), then types the character", () => {
+    expect(retypeEvents("/")).toEqual([
+      { type: "key-released", text: "\u{11}" },
+      { type: "key-released", text: "\u{16}" },
+      { type: "key-pressed", text: "/" },
+      { type: "key-released", text: "/" },
+    ]);
+  });
+  test("never presses a modifier: one the hand already let go of would stay down and make every key a Ctrl shortcut", () => {
+    for (const t of ["/", "?", "°"]) {
+      const pressed = retypeEvents(t).filter((e) => e.type === "key-pressed").map((e) => e.text);
+      expect(pressed).toEqual([t]);
+    }
   });
 });

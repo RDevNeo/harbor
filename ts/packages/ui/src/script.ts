@@ -23,6 +23,7 @@ export function parseSteps(spec: string): Step[] {
 
 const KEYS: Record<string, string> = { Return: "\n", Tab: "\t", Escape: "\u{1b}", Up: "\u{f700}", Down: "\u{f701}", Left: "\u{f702}", Right: "\u{f703}", Backspace: "\u{8}", Delete: "\u{7f}" };
 const CONTROL = "\u{11}";
+const CONTROL_R = "\u{16}";
 const SHIFT = "\u{10}";
 const ALT = "\u{12}";
 
@@ -82,15 +83,19 @@ export function runStep(w: slint.Window, s: Step): void {
       w.dispatchEvent({ type: "key-released", text: SHIFT });
       break;
     // Ctrl+Alt held while a key types (a layout's AltGr; shell.ts typeCtrlAlt): let go 50 ms later, as a hand would.
+    // rctrlalt: the same with the right Ctrl.
     case "ctrlalt":
-      w.dispatchEvent({ type: "key-pressed", text: CONTROL });
+    case "rctrlalt": {
+      const ctrl = kind === "rctrlalt" ? CONTROL_R : CONTROL;
+      w.dispatchEvent({ type: "key-pressed", text: ctrl });
       w.dispatchEvent({ type: "key-pressed", text: ALT });
       press(w, KEYS[arg] ?? arg);
       setTimeout(() => {
         w.dispatchEvent({ type: "key-released", text: ALT });
-        w.dispatchEvent({ type: "key-released", text: CONTROL });
+        w.dispatchEvent({ type: "key-released", text: ctrl });
       }, 50);
       break;
+    }
   }
 }
 

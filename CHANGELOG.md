@@ -88,6 +88,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
 
 ### Fixed
+- Typing / and ? with Ctrl+Alt+Q / Ctrl+Alt+W (the ABNT2 AltGr combos the user's compositor injects) works with either
+  Ctrl in every tab's text fields: the window's retype let go only of the left Ctrl (Slint tracks the right one apart,
+  so nothing was typed), and pressed the left Ctrl again afterwards, a press nothing released: every later key became a
+  Ctrl shortcut (B hid the sidebar) and no text was typed. It now lets go of both and never presses Ctrl
+  (logic/keys.ts retypeEvents, tested). The shot rig's steps gain rctrlalt:<key>.
 - Accounts: signing in to Hub no longer moves the PC into a second, empty "Sam's Workspace" with every chat hidden.
   Hub's account service (its own D1) made a new personal workspace for an account that already had one from Harbor;
   it now adopts the one Clerk has (`harbor_personal`, the oldest) and makes one only when there is none (worker

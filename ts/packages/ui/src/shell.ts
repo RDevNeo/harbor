@@ -30,7 +30,7 @@ import { TAB_UIS, type TabCtx } from "./tabs/index.ts";
 import { tabFromSlug } from "./logic/pages.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
-import { Keys, textKey, type FieldKind, label as keyLabel } from "./logic/keys.ts";
+import { Keys, retypeEvents, textKey, type FieldKind, label as keyLabel } from "./logic/keys.ts";
 import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { richTip } from "./logic/tips.ts";
@@ -3216,17 +3216,14 @@ export class Shell {
    * by the window's own keys for what nothing else took.
    */
   /** Ctrl+Alt that types (ctrlAltTyped): Slint's text inputs would drop the character as a Ctrl shortcut, so it is sent
-   *  again with Ctrl let go for that one key (Alt stays, which text inputs accept), then Ctrl is down again as the user
-   *  still holds it. On the next turn of the loop: Slint is in the middle of this key's event. */
+   *  again with both Ctrls let go (logic/keys.ts retypeEvents: Alt stays, which text inputs accept; Ctrl is not pressed
+   *  again, so it can't stay stuck). On the next turn of the loop: Slint is in the middle of this key's event. */
   private typeCtrlAlt(e: KeyEvent): boolean {
     if (textKey(e.text, e.modifiers) !== "retype") return false;
     const w = this.win.window;
-    const text = e.text;
+    const events = retypeEvents(e.text);
     setTimeout(() => {
-      w.dispatchEvent({ type: "key-released", text: "\u{11}" });
-      w.dispatchEvent({ type: "key-pressed", text });
-      w.dispatchEvent({ type: "key-released", text });
-      w.dispatchEvent({ type: "key-pressed", text: "\u{11}" });
+      for (const ev of events) w.dispatchEvent(ev);
     }, 0);
     return true;
   }

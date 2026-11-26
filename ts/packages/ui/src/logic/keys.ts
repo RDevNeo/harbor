@@ -237,6 +237,21 @@ export function ctrlAltTyped(text: string, m: { control: boolean; alt: boolean; 
   return !/[\p{Lu}\p{Ll}\p{Lt}\p{Nd}\s]/u.test(c);
 }
 
+/** Slint's key codes for the left and the right Ctrl (Key.Control, Key.ControlR): Slint tracks each one on its own. */
+export const CONTROL_KEYS: readonly string[] = ["\u{11}", "\u{16}"];
+
+/**
+ * The key events that type a Ctrl+Alt character again (textKey "retype"): Ctrl let go, the left one and the right one
+ * (the user holds either; Slint counts Ctrl as held while either is down), then the character, which a text input then
+ * takes (Alt stays held: text inputs accept it). Ctrl is not pressed again: the press would be Slint's alone, and when the
+ * hand had let go of Ctrl before the window got here (a busy turn), or held the other Ctrl, nothing would ever release
+ * it, so every key after it became a Ctrl shortcut (B hid the sidebar) and no text was typed. While the hand still holds
+ * Ctrl, Slint counts it as up until it goes down again: more / and ? type as before.
+ */
+export function retypeEvents(text: string): { type: "key-pressed" | "key-released"; text: string }[] {
+  return [...CONTROL_KEYS.map((k) => ({ type: "key-released" as const, text: k })), { type: "key-pressed", text }, { type: "key-released", text }];
+}
+
 /** The kinds of text field (widgets.slint / ds-surface.slint): a one-line Input or SearchField, a multi-line TextBox
  *  (notes: Enter is a new line), a composer's ComposeField (Enter sends, Shift+Enter is a new line). */
 export type FieldKind = "line" | "lines" | "compose";
