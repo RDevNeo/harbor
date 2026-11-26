@@ -610,6 +610,7 @@ export class PersonsRoutes {
       status: m.status ?? null,
       voice: !!m.voice,
       embed: !!m.embed,
+      forwarded: !!m.forwarded,
       reply: r ? { id: r.id, text: quoted?.content ?? r.content ?? (r.attachments ? "📎 Attachment" : r.deleted ? "Deleted message" : ""), fromMe: quoted?.fromMe ?? !!r.fromMe } : null,
       files,
       channel: this.channelJson(ch, choices),

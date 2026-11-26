@@ -306,7 +306,7 @@ export function listRows(s: StateJson, q: string, open: UiState["open"]): Row[] 
 export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null; audio?: string; bars?: number[] | null; played?: boolean; transcript?: string | null; transcribing?: boolean; transcriptFailed?: boolean }
 /** The chat a message is in (a person's page shows every chat of theirs in one timeline). */
 export interface ChannelJson { key: string; kind: string; label: string }
-export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[]; channel?: ChannelJson }
+export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; forwarded?: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[]; channel?: ChannelJson }
 export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[]; channel?: ChannelJson }
 /** An answer's pieces (the engine's persons aiparts.ts): markdown, and the messages it drafted for the person (```reply). */
 export type AiPartJson = { type: "text"; text: string } | { type: "draft"; text: string };
@@ -507,6 +507,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.time = hhmm(m.at);
     r.meta = [m.edited ? "edited" : "", m.fromMe && m.status ? TICKS[m.status] ?? "" : ""].filter(Boolean).join(" · ");
     if (m.reply) r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${m.reply.text || "…"}`;
+    else if (m.forwarded) r.reply = "Forwarded";
     // every picture shown in the bubble (none of them again as a file below it)
     const imgs = m.files.filter((f) => f.image);
     const box = imageTiles(imgs);

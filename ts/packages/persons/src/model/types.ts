@@ -164,6 +164,8 @@ export interface Message {
   edited?: boolean;
   attachments?: Attachment[];
   embed?: boolean;
+  /** Discord: forwarded from another chat (content and files are the forwarded message's). */
+  forwarded?: boolean;
   voice?: boolean;
   /** Unread on the platform when last fetched. */
   unread?: boolean;

@@ -24,6 +24,14 @@ describe("Discord helpers", () => {
     expect(core.slimMessage({ id: "11", channel_id: "5", author: { id: "u" }, content: "", embeds: [{}], edited_timestamp: "x" }, "me")).toMatchObject({ embed: true, edited: true, fromMe: false });
   });
 
+  it("shows forwards (their snapshot) and stickers instead of an empty bubble", () => {
+    const fwd = core.slimMessage({ id: "12", channel_id: "5", author: { id: "u" }, content: "", message_snapshots: [{ message: { content: "look", attachments: [{ filename: "s.jpg", url: "v" }] } }] }, "me");
+    expect(fwd).toMatchObject({ forwarded: true, content: "look", attachments: [{ name: "s.jpg", url: "v" }] });
+    const st = core.slimMessage({ id: "13", channel_id: "5", author: { id: "u" }, content: "", sticker_items: [{ id: "99", name: "wave", format_type: 1 }, { id: "98", name: "dance", format_type: 3 }] }, "me");
+    expect(st.attachments).toEqual([{ name: "wave.png", url: "https://media.discordapp.net/stickers/99.png?size=160", type: "image/png", width: 160, height: 160 }]);
+    expect(st.content).toBe("[Sticker: dance]");
+  });
+
   it("keeps replies (quoted message) and voice waveforms", () => {
     const m = core.slimMessage({ id: "20", channel_id: "5", author: { id: "u" }, content: "yes", type: 19, message_reference: { message_id: "10" }, referenced_message: { id: "10", author: { id: "me" }, content: "question?" } }, "me");
     expect(m.reply).toEqual({ id: "10", authorId: "me", fromMe: true, content: "question?" });

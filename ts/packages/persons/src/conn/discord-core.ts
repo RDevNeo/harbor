@@ -43,6 +43,23 @@ export interface RawMessage {
   type?: number;
   message_reference?: { message_id?: string; channel_id?: string };
   referenced_message?: RawMessage | null;
+  /** A forwarded message: what was forwarded (its own content is empty). */
+  message_snapshots?: { message?: RawMessage | null }[];
+  sticker_items?: RawSticker[];
+}
+
+export interface RawSticker {
+  id?: string;
+  name?: string;
+  /** 1 PNG, 2 APNG, 3 Lottie, 4 GIF */
+  format_type?: number;
+}
+
+/** A sticker as a picture (Lottie ones have none: null). */
+export function stickerAttachment(s: RawSticker): Attachment | null {
+  if (!s.id || s.format_type === 3) return null;
+  const ext = s.format_type === 4 ? "gif" : "png";
+  return { name: `${s.name || "sticker"}.${ext}`, url: `https://media.discordapp.net/stickers/${s.id}.${ext}?size=160`, type: `image/${ext}`, width: 160, height: 160 };
 }
 
 export interface RawChannel {
@@ -105,10 +122,24 @@ export function slimMessage(m: RawMessage, meId: string | null | undefined): Mes
     content: String(m.content ?? ""),
     timestamp: m.timestamp ?? snowflakeTime(String(m.id)),
   };
+  // a forward carries its message in a snapshot; a sticker has no text: both showed as an empty bubble
+  const snap = m.message_snapshots?.[0]?.message ?? null;
+  if (snap) {
+    out.forwarded = true;
+    if (!out.content) out.content = String(snap.content ?? "");
+  }
+  const src = m.attachments?.length ? m.attachments : (snap?.attachments ?? []);
+  const files = src.map(slimAttachment);
+  const stickers = [...(m.sticker_items ?? []), ...(snap?.sticker_items ?? [])];
+  for (const st of stickers) {
+    const a = stickerAttachment(st);
+    if (a) files.push(a);
+    else if (!out.content) out.content = `[Sticker: ${st.name || "sticker"}]`;
+  }
   if (m.edited_timestamp) out.edited = true;
-  if (m.attachments?.length) out.attachments = m.attachments.map(slimAttachment);
+  if (files.length) out.attachments = files;
   if ((m.flags ?? 0) & 8192) out.voice = true;
-  if (m.embeds?.length && !m.content) out.embed = true;
+  if ((m.embeds?.length || snap?.embeds?.length) && !out.content) out.embed = true;
   const refId = m.message_reference?.message_id;
   if (refId && (m.type === 19 || m.referenced_message)) out.reply = slimReply(refId, m.referenced_message, meId);
   return out;
