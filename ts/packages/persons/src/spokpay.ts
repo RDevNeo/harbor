@@ -12,6 +12,12 @@ import * as core from "./spokpay-core.ts";
 import type { Category, ImageBytes, OwnerStore, Permission, Proposal, ProposalFields, ReplyDraft, SpStore, SrHeader, SrMessage, SrRow, SrThread, StatusMove } from "./spokpay-core.ts";
 
 const TIMEOUT = 20_000;
+/** A key's permissions change on spokpay.com/admin (Connect Claude) without a new key: asked again this often. */
+const RECHECK_MS = 10 * 60_000;
+/** A permission held as refused is asked again before a call that needs it, at most this often. */
+const REFUSED_RECHECK_MS = 15_000;
+/** With every permission held, asked again hourly (one may be taken away). */
+const HELD_RECHECK_MS = 60 * 60_000;
 
 export interface SpokpayStatus {
   connected: boolean;
@@ -66,6 +72,8 @@ export interface Spokpay {
   setKey(raw: string): Promise<SpokpayStatus>;
   clearKey(): SpokpayStatus;
   refresh(): Promise<SpokpayStatus>;
+  /** Asks the key's permissions again when some were refused or unknown and the last ask is older than `maxAgeMs`. */
+  recheck(maxAgeMs?: number): Promise<SpokpayStatus>;
   active(): Promise<SrRow[]>;
   waiting(): Promise<SrRow[]>;
   thread(ref: string, limit?: number): Promise<SrThread>;
@@ -220,17 +228,41 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
     return status();
   }
 
-  async function refresh(): Promise<SpokpayStatus> {
-    if (!acct) return status();
-    try {
-      acct = { ...acct, permissions: await probe(acct.key), checkedAt: Date.now() };
-      writeJson(FILE, acct);
-      error = "";
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    }
-    changed();
-    return status();
+  let probing: Promise<SpokpayStatus> | null = null;
+  let recheckTimer: ReturnType<typeof setInterval> | null = null;
+  function refresh(): Promise<SpokpayStatus> {
+    if (!acct) return Promise.resolve(status());
+    probing ??= (async () => {
+      const was = acct;
+      try {
+        const permissions = await probe(was!.key);
+        // a key replaced or removed meanwhile keeps its own
+        if (acct === was && acct) {
+          acct = { ...acct, permissions, checkedAt: Date.now() };
+          writeJson(FILE, acct);
+          if (JSON.stringify(permissions) !== JSON.stringify(was!.permissions)) log("spokpay: permissions changed");
+          error = "";
+        }
+      } catch (e) {
+        if (acct === was) error = e instanceof Error ? e.message : String(e);
+      } finally {
+        probing = null;
+      }
+      changed();
+      return status();
+    })();
+    return probing;
+  }
+
+  /**
+   * Permissions added (or removed) on spokpay.com/admin reach Hub without the key typed again or a restart: asked
+   * again when one is refused or unknown and the last ask is `maxAgeMs` old; all held, only hourly.
+   */
+  function recheck(maxAgeMs: number = RECHECK_MS): Promise<SpokpayStatus> {
+    if (!acct) return Promise.resolve(status());
+    const doubtful = Object.values(acct.permissions ?? {}).some((v) => v !== true);
+    const age = Date.now() - (acct.checkedAt ?? 0);
+    return age >= (doubtful ? maxAgeMs : HELD_RECHECK_MS) ? refresh() : Promise.resolve(status());
   }
 
   function clearKey(): SpokpayStatus {
@@ -246,10 +278,12 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
     return status();
   }
 
-  const need = (perm: Permission): void => {
+  /** Refused without a call while the key is known to lack `perm`; asked again first when that is 15 s old. */
+  const need = async (perm: Permission): Promise<void> => {
+    if (acct && acct.permissions?.[perm] === false) await recheck(REFUSED_RECHECK_MS);
     if (acct && acct.permissions?.[perm] === false) throw new core.SpokpayError(403, "NOT_AUTHORIZED", `This SpokPay API key lacks ${perm}`);
   };
-  /** A call that, refused with 401, means the key went bad: say so in the status too. */
+  /** A call that, refused with 401, means the key went bad: say so in the status too; a 403 asks the permissions again. */
   const guarded = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
       return await fn();
@@ -258,6 +292,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
         error = e.message;
         changed();
       }
+      if (isSpError(e) && e.status === 403 && acct && Date.now() - (acct.checkedAt ?? 0) >= REFUSED_RECHECK_MS) void refresh();
       throw e;
     }
   };
@@ -292,17 +327,17 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
   // ---------- reads ----------
   const active = (): Promise<SrRow[]> =>
     guarded(async () => {
-      need("site-requests:read");
+      await need("site-requests:read");
       return core.readRows((await request("GET", "/admin/site-requests/active")).body);
     });
   const waiting = (): Promise<SrRow[]> =>
     guarded(async () => {
-      need("site-requests:read");
+      await need("site-requests:read");
       return core.readRows((await request("GET", "/admin/site-requests/waiting")).body);
     });
   const thread = (ref: string, limit: number = core.LIMITS.threadMessages): Promise<SrThread> =>
     guarded(async () => {
-      need("site-requests:read");
+      await need("site-requests:read");
       const r = core.normalizeRef(ref);
       if (!r) throw new core.SpokpayError(400, "INVALID_INPUT", "Not a site request ref (SR-…)");
       const n = Math.max(1, Math.min(core.LIMITS.threadMessages, Number(limit) || core.LIMITS.threadMessages));
@@ -363,7 +398,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
   /** GET /admin/stores?search= (stores:read): name or slug, up to 20. */
   const stores = (search: string): Promise<SpStore[]> =>
     guarded(async () => {
-      need("stores:read");
+      await need("stores:read");
       const q = String(search ?? "")
         .trim()
         .slice(0, 100);
@@ -373,7 +408,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
   /** The stores of the store owners whose Discord handle is one of `usernames` (crm:read). */
   const ownerStores = (usernames: string[]): Promise<OwnerStore[]> =>
     guarded(async () => {
-      need("crm:read");
+      await need("crm:read");
       const names = [
         ...new Set(
           (Array.isArray(usernames) ? usernames : [])
@@ -392,7 +427,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
   /** POST /admin/site-requests (site-requests:open): the one write, only on the user's Open. */
   const open = (input: core.OpeningInput, idem?: string): Promise<{ siteRequest: SrHeader; opened: boolean }> =>
     guarded(async () => {
-      need("site-requests:open");
+      await need("site-requests:open");
       const built = core.buildOpening(input);
       const key = core.idempotencyKey(idem) ?? randomUUID();
       const r = await request("POST", "/admin/site-requests", built.json ? { json: built.json, idem: key } : { form: built.form, images: built.images, idem: key });
@@ -405,7 +440,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
   // ---------- reply and status (the user's Send / status menu only) ----------
   const reply = (ref: string, input: { text: string; images?: ImageBytes[] }, idem?: string): Promise<{ siteRequest: SrHeader; message: SrMessage | null }> =>
     guarded(async () => {
-      need("site-requests:write");
+      await need("site-requests:write");
       const r = core.normalizeRef(ref);
       if (!r) throw new core.SpokpayError(400, "INVALID_INPUT", "Not a site request ref (SR-…)");
       const built = core.buildReply(input);
@@ -421,7 +456,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
     });
   const setStatus = (ref: string, to: string): Promise<{ siteRequest: SrHeader }> =>
     guarded(async () => {
-      need("site-requests:status");
+      await need("site-requests:status");
       const r = core.normalizeRef(ref);
       if (!r) throw new core.SpokpayError(400, "INVALID_INPUT", "Not a site request ref (SR-…)");
       if (!(core.MOVES as readonly string[]).includes(to)) throw new core.SpokpayError(400, "INVALID_INPUT", "status must be working, review, completed or closed");
@@ -598,8 +633,13 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
     sendDraft,
     links: loadLinks,
     setLink,
+    recheck,
     start() {
       if (acct) void refresh();
+      if (!recheckTimer) {
+        recheckTimer = setInterval(() => void recheck(), RECHECK_MS);
+        (recheckTimer as { unref?: () => void }).unref?.();
+      }
     },
   };
 }

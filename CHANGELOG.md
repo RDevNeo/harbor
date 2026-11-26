@@ -28,6 +28,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   (account search dropped; a 429 waits a minute once). Copy JSONL leaves Restricted leads out.
 
 ### Added
+- Hub Persons: **a site request's pane writes like a person chat**. Its composer is now the person chats' own: "To
+  <avatar> <owner>" on top (the person linked to the store, else its owner with the store's icon), the field "Message
+  <owner> on SpokPay", then attach (pictures, up to 5), "To" with the switch [✨ AI | 💬 <owner>] and Send. To the owner it
+  answers the store as SpokPay, as before; to the AI it's a note to the Person AI (`POST v1/persons/site-request/{ref}/ai`):
+  the chat of the person linked to the store (that section's "<Person> · <Section>"), else the store's own "<Store> ·
+  SpokPay", in the project ending in creators-hub/tabs/Persons, with the request as hidden context (ref, subject, status,
+  store, owner, admin page, brief, its newest 40 messages and events) so it can answer and draft replies. Each side keeps
+  its own draft; the emoji grid is gone (the person chats' composer has none). Android's pane gets the same composer as
+  its person chats.
+- Hub Persons: **a SpokPay key's new permissions show without typing the key again**. A permission the key lacked is
+  asked again (the key's write-free probe) before the next call that needs it (at most every 15 s), when a pane opens or
+  re-reads (at most every minute) and every 10 minutes (hourly once all are held). So "The SpokPay key lacks
+  site-requests:write" clears by itself after the permission is added in Connect Claude on spokpay.com/admin.
+- Hub Persons: the Request brief's summary paragraph shows (with its divider before the fields) as soon as SpokPay's
+  admin API sends `siteRequest.summary`. It doesn't yet: `GET /assistant/v1/admin/site-requests/{ref}/messages` leaves
+  it out of the header (`convex/siteRequests/adapters/assistant.ts`, `buildSiteRequestHeaderForApi` and its validator).
 - Hub Persons: **a site request's pane**. A row of SpokPay › Site requests now opens the request in the Persons tab's main
   area instead of the browser, drawn as SpokPay's admin request page: the store's logo, the subject and the status pill,
   "Store · SR-215" with a copy button (the request's link), the status select with SpokPay's own moves (Complete and Close

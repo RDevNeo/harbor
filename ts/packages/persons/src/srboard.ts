@@ -8,9 +8,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivate } from "@harbor/store";
 import { normalizeRef, readRow, readThread, SpokpayError, type ImageBytes, type SrRow, type SrThread } from "./spokpay-core.ts";
-import type { Spokpay } from "./spokpay.ts";
+import type { SpLinks, Spokpay } from "./spokpay.ts";
 import { spError } from "./spokpay-view.ts";
-import { paneView, relativeEnglish, type PaneView } from "./srpane.ts";
+import { paneView, relativeEnglish, srAiContext, type PaneView } from "./srpane.ts";
 import { ACTIVE_LIMIT, failedAgain, listNotices, listRows, sweepSeen, type ListProblem, type ListRow, type Notice } from "./srlist.ts";
 
 const POLL_MS = 60_000;
@@ -18,6 +18,8 @@ const ICON_TTL = 24 * 3_600_000;
 const READS_PER_POLL = 5;
 /** The requests whose last read is kept (opened offline, or while SpokPay fails, the pane shows it). */
 const THREADS_KEPT = 12;
+/** An open pane asks a refused permission again at most this often (the pane reads every 30 s). */
+const PERMS_RECHECK_MS = 60_000;
 
 type Icon = { url: string | null; at: number };
 
@@ -138,36 +140,57 @@ export class SiteRequestBoard {
    * read here (the list's "Store replied" clears).
    */
   async pane(ref: string, imageRoute: (url: string) => string): Promise<PaneView> {
+    const { t, note } = await this.read(ref);
+    // a permission added on spokpay.com/admin since the last ask clears the pane's notice now, not after a restart
+    if (!note) await this.sp.recheck(PERMS_RECHECK_MS).catch(() => {});
+    const h = t.siteRequest;
+    this.markSeen(h.ref, h.lastActivityAt);
+    if (!note) this.save();
+    return paneView(t, { note, now: Date.now(), ...this.known(h.ref), permissions: this.sp.status().permissions, imageRoute });
+  }
+
+  /** The request as a note to the AI carries it (srpane.ts srAiContext): read now, or its last read. */
+  async aiContext(ref: string, url: string): Promise<{ context: string; ref: string; store: string; storeSlug: string | null; owner: string }> {
+    const { t } = await this.read(ref);
+    const k = this.known(t.siteRequest.ref);
+    const v = paneView(t, { now: Date.now(), ...k });
+    return { context: srAiContext(t, { now: Date.now(), url, ...(k.ownerEmail ? { owner: k.ownerEmail } : {}), ...(k.summary ? { summary: k.summary } : {}) }), ref: v.ref, store: v.store, storeSlug: v.storeSlug, owner: v.owner };
+  }
+
+  /** Which person / Persons store is which SpokPay store (spokpay-links.json). */
+  links(): SpLinks {
+    return this.sp.links();
+  }
+
+  /** The proposal Hub opened as this request (whose person asked for it), if any. */
+  openedBy(ref: string): string | null {
+    return this.sp.proposals().find((p) => p.state.kind === "opened" && p.state.ref === ref)?.personId ?? null;
+  }
+
+  /** What Hub knows of a request beyond the thread: the owner's address (the active list) and the summary it opened. */
+  private known(ref: string): { ownerEmail?: string; summary?: string } {
+    const row = this.rows?.find((x) => x.ref === ref);
+    const opened = this.sp.proposals().find((p) => p.state.kind === "opened" && p.state.ref === ref);
+    return { ...(row?.ownerEmail ? { ownerEmail: row.ownerEmail } : {}), ...(opened ? { summary: opened.shown.details } : {}) };
+  }
+
+  /** The thread read now (kept for later), or, when SpokPay fails, its last read with a note saying so. */
+  private async read(ref: string): Promise<{ t: SrThread; note: string | null }> {
     const r = normalizeRef(ref);
     if (!r) throw new SpokpayError(400, "INVALID_INPUT", "Not a site request ref (SR-…)");
-    let t: SrThread;
-    let note: string | null = null;
     try {
-      t = await this.sp.thread(r);
+      const t = await this.sp.thread(r);
       this.threads = Object.fromEntries(
         Object.entries({ ...this.threads, [r]: { at: Date.now(), t } })
           .sort((a, b) => b[1].at - a[1].at)
           .slice(0, THREADS_KEPT),
       );
+      return { t, note: null };
     } catch (e) {
       const kept = this.threads[r];
       if (!kept) throw e;
-      t = kept.t;
-      note = `Not read now (${spError(e).message}). Shown as read ${relativeEnglish(kept.at, Date.now())}.`;
+      return { t: kept.t, note: `Not read now (${spError(e).message}). Shown as read ${relativeEnglish(kept.at, Date.now())}.` };
     }
-    const h = t.siteRequest;
-    const row = this.rows?.find((x) => x.ref === h.ref);
-    const opened = this.sp.proposals().find((p) => p.state.kind === "opened" && p.state.ref === h.ref);
-    this.markSeen(h.ref, h.lastActivityAt);
-    if (!note) this.save();
-    return paneView(t, {
-      note,
-      now: Date.now(),
-      ...(row?.ownerEmail ? { ownerEmail: row.ownerEmail } : {}),
-      ...(opened ? { summary: opened.shown.details } : {}),
-      permissions: this.sp.status().permissions,
-      imageRoute,
-    });
   }
 
   /** The user's Send: their words (and pictures) to the store as SpokPay; the list is read again. */

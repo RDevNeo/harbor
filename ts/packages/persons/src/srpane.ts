@@ -118,6 +118,9 @@ export interface PaneView {
   finished: boolean;
   /** "This request is completed. The store opens a new one if something else comes up." */
   finishedNote: string;
+  /** Who the composer writes to: the store owner (their name in the thread, else the list's address, else the store). */
+  owner: string;
+  /** "Message <owner> on SpokPay" (the person chats' "Message <name> on Discord"). */
   placeholder: string;
   /** Older messages SpokPay didn't send (the API's 100). */
   hasMore: boolean;
@@ -227,7 +230,8 @@ export function paneView(t: SrThread, o: PaneOptions): PaneView {
     statuses: [h.status, ...STATUS_MOVES[h.status]].map((s) => ({ status: s, label: STATUS_LABEL[s].label, current: s === h.status })),
     finished,
     finishedNote: `This request is ${look.label.toLowerCase()}. The store opens a new one if something else comes up.`,
-    placeholder: `Write to ${owner}`,
+    owner,
+    placeholder: `Message ${owner} on SpokPay`,
     hasMore: t.hasMore,
     writeBlocked: refused("site-requests:write") ? "The SpokPay key lacks site-requests:write. Add it in Connect Claude on spokpay.com/admin." : null,
     statusBlocked: refused("site-requests:status") ? "The SpokPay key lacks site-requests:status. Add it in Connect Claude on spokpay.com/admin." : null,
@@ -250,3 +254,46 @@ export function factRows(facts: readonly PaneFact[]): [PaneFact, PaneFact | null
   return out;
 }
 
+
+/** How many of the thread's newest lines go to the AI. */
+export const AI_CONTEXT_LINES = 40;
+
+/**
+ * The hidden context of a note to the AI from a site request's composer (ai.ts withAiContext wraps it): the request
+ * (ref, subject, status, store, owner, the admin page), its brief as the admin page shows it, and the newest messages
+ * and events, oldest first. The AI drafts replies in ```reply blocks, as SpokPay, and never writes on the request.
+ */
+export function srAiContext(t: SrThread, o: { now: number; url: string; owner?: string; summary?: string }): string {
+  const v = paneView(t, { now: o.now, ...(o.owner ? { ownerEmail: o.owner } : {}), ...(o.summary ? { summary: o.summary } : {}) });
+  const h = t.siteRequest;
+  const stamp = (at: number): string => new Date(at).toISOString().slice(0, 16).replace("T", " ");
+  const lines = [
+    ...t.events.map((e) => ({ at: e.createdAt, text: `[${stamp(e.createdAt)}] — ${EVENT_LABEL[e.event]} —` })),
+    ...t.messages.map((m) => {
+      const who = m.side === "spokpay" ? `SpokPay (${m.authorName || "SpokPay"})` : `${m.authorName || v.store} (store)`;
+      const pics = m.attachments.length ? ` [${m.attachments.map((a) => a.name || "file").join(", ")}]` : "";
+      return { at: m.createdAt, text: `[${stamp(m.createdAt)}] ${who}: ${m.text.replace(/\n+/g, " ⏎ ")}${pics}` };
+    }),
+  ]
+    .sort((a, b) => a.at - b.at)
+    .slice(-AI_CONTEXT_LINES);
+  return [
+    "This note comes from a SpokPay site request's pane in Hub's Persons tab (SpokPay's admin request page). The user writes to you here; you never write on the request or to the store yourself (no SpokPay API writes, no Discord, Gmail or WhatsApp sends).",
+    "When you suggest a reply for the user to send on the request, put exactly that text in a fenced block that starts with ```reply, written as SpokPay to the store owner, in the store's language (usually Portuguese).",
+    "",
+    `Site request: ${v.ref} · ${v.subject}`,
+    `Status: ${v.statusLabel}${h.waitingOn ? ` · waiting on ${h.waitingOn === "spokpay" ? "SpokPay" : "the store"}` : ""}`,
+    `Store: ${v.store}${h.store.slug ? ` (slug ${h.store.slug})` : ""} · owner ${v.owner}`,
+    `Admin page: ${o.url}`,
+    "",
+    `Request brief: ${v.brief.sub}`,
+    v.brief.summary ? `Summary: ${v.brief.summary}` : "",
+    ...v.brief.facts.map((f) => `${f.label}: ${f.text}`),
+    v.brief.files.length ? `Pictures: ${v.brief.files.map((f) => f.name).join(", ")}` : "",
+    "",
+    lines.length ? `The last ${lines.length} messages and events of the request (oldest first${t.hasMore ? "; older ones not shown" : ""}):` : "No messages on the request yet.",
+    ...lines.map((l) => l.text),
+  ]
+    .filter((l, i, a) => l !== "" || (i > 0 && a[i - 1] !== ""))
+    .join("\n");
+}

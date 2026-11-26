@@ -19,6 +19,8 @@ interface Pixels {
   data: Uint8ClampedArray;
 }
 const NO_PX: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
+/** The store owner's avatar colour behind their initials when the store has no icon (SrLogo's gray). */
+const SR_OWNER_COLOR = "#71717a";
 
 type Cb = (...a: never[]) => unknown;
 interface Bus extends Record<string, unknown> {
@@ -166,12 +168,6 @@ class PersonsTab {
       const p = this.sr?.pane;
       if (p) void clipboard.copyText(p.url).then(() => this.setToast(`Link to ${p.ref} copied`), () => this.setToast("The link could not be copied."));
     });
-    on("sr_send", () => void this.srSend());
-    on("sr_attach", () => void this.srAttach());
-    on("sr_clear_attached", () => {
-      this.srFiles = [];
-      this.render();
-    });
     on("sr_retry", () => void this.loadSr());
     on("sr_open_image", ((owner: string, i: number) => void this.srOpenImage(owner, i)) as Cb);
     on("sr_open_file", ((owner: string, i: number) => {
@@ -193,7 +189,8 @@ class PersonsTab {
       this.chat = null;
       this.render();
     });
-    on("send", () => void this.send());
+    // the composer is the person chats' own: in a site request's pane it writes to the store (or to the AI about it)
+    on("send", () => void (this.sr ? this.srSend() : this.send()));
     on("typing", () => this.typing());
     on("older", () => void this.older());
     on("toggle_panel", () => {
@@ -205,9 +202,10 @@ class PersonsTab {
     on("msg_menu", ((id: string, x: number, y: number) => this.msgMenu(id, x, y)) as Cb);
     on("open_file", ((id: string) => void this.openFile(id)) as Cb);
     on("open_image", ((id: string, i: number) => void this.openImage(id, i)) as Cb);
-    on("attach", () => void this.attach());
+    on("attach", () => void (this.sr && !this.aiMode ? this.srAttach() : this.attach()));
     on("clear_attached", () => {
       if (this.aiMode) this.aiFiles = [];
+      else if (this.sr) this.srFiles = [];
       else this.files = [];
       this.render();
     });
@@ -217,7 +215,7 @@ class PersonsTab {
       this.render();
     });
     on("open_ai_chat", () => {
-      const id = this.chat?.aiChat;
+      const id = this.sr ? this.sr.pane?.aiChat : this.chat?.aiChat;
       if (id) this.ctx.openChat?.(id);
     });
     on("msg_unread", ((id: string) => this.markUnread(id)) as Cb);
@@ -533,9 +531,14 @@ class PersonsTab {
     return o ? `${o.id}:${o.section}` : "";
   }
 
+  /** What the composer remembers its recipient and drafts by: the open chat, or `sr:<ref>` in a site request's pane. */
+  private composerKey(): string {
+    return this.sr ? `sr:${this.sr.ref}` : this.chatKey();
+  }
+
   /** Switches the composer between the person and their AI, each with its own draft. */
   private setTo(ai: boolean): void {
-    const k = this.chatKey();
+    const k = this.composerKey();
     if (!k || ai === this.aiMode) return;
     this.drafts.set(`${k}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
     this.aiMode = ai;
@@ -830,6 +833,7 @@ class PersonsTab {
   }
 
   private typing(): void {
+    if (this.sr) return;
     const open = this.ui.open;
     if (!open || this.aiMode || Date.now() - this.typingAt < 8000) return;
     this.typingAt = Date.now();
@@ -1186,9 +1190,8 @@ class PersonsTab {
 
   /** The open request: its ref, the pane as last read, and whether a read is under way or failed. */
   private sr: { ref: string; pane: SrPaneJson | null; loading: boolean; error: string; sending: boolean; moving: boolean } | null = null;
-  /** Pictures going with the next reply (paths on this PC), and each request's unsent reply. */
+  /** Pictures going with the next reply (paths on this PC); the drafts are the composer's (`sr:<ref>:person|ai`). */
   private srFiles: string[] = [];
-  private srDrafts = new Map<string, string>();
   private srTimer: ReturnType<typeof setInterval> | null = null;
   private srSeq = 0;
 
@@ -1204,9 +1207,16 @@ class PersonsTab {
     this.ui.allActive = false;
     this.ui.srOpen = ref;
     this.sr = { ref, pane: null, loading: true, error: "", sending: false, moving: false };
-    this.bus.sr_draft = this.srDrafts.get(ref) ?? "";
+    this.replyTo = null;
+    this.forwarded = null;
+    this.files = [];
+    this.aiFiles = [];
+    const k = this.composerKey();
+    this.aiMode = this.toAi.get(k) ?? false;
+    this.bus.draft = this.drafts.get(`${k}:${this.aiMode ? "ai" : "person"}`) ?? "";
+    this.bus.subject = "";
     this.bus.sr_rev = (Number(this.bus.sr_rev) || 0) + 1;
-    this.bus.sr_focus_rev = (Number(this.bus.sr_focus_rev) || 0) + 1;
+    this.focusField();
     this.srTimer = setInterval(() => void this.loadSr(), 30_000);
     void this.loadSr();
     this.render();
@@ -1214,11 +1224,12 @@ class PersonsTab {
 
   /** The pane closes (another row, All people, Esc): its reply stays for next time. */
   private leaveSr(): void {
-    if (this.sr) this.srDrafts.set(this.sr.ref, String(this.bus.sr_draft ?? ""));
+    if (this.sr) this.drafts.set(`${this.composerKey()}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
     if (this.srTimer) clearInterval(this.srTimer);
     this.srTimer = null;
     this.sr = null;
     this.srFiles = [];
+    this.aiFiles = [];
     this.ui.srOpen = null;
   }
 
@@ -1246,13 +1257,32 @@ class PersonsTab {
     b.sr_ref = sr.ref;
     b.sr_loading = sr.loading;
     b.sr_error = p ? "" : sr.error;
-    b.sr_sending = sr.sending;
     b.sr_moving = sr.moving;
-    b.sr_attached = this.srFiles.length ? `${this.srFiles.length === 1 ? "1 picture" : `${this.srFiles.length} pictures`}: ${this.srFiles.map((f) => basename(f)).join(", ")}` : "";
     const icon = this.pics.get(p?.iconPath ?? row?.iconPath, 96);
     b.sr_icon = icon ?? NO_PX;
     b.sr_has_icon = !!icon;
     b.sr_initials = p?.initials ?? row?.initials ?? "";
+    // the composer (the person chats' own): "To <avatar> <owner>", "Message <owner> on SpokPay", To: AI | <owner>
+    const who = p?.person ?? null;
+    const name = who?.name ?? p?.owner ?? row?.store ?? sr.ref;
+    const face = who?.avatarPath ? this.pics.get(who.avatarPath, 96) : icon;
+    b.c_name = name;
+    b.c_initials = who?.initials ?? p?.initials ?? row?.initials ?? "";
+    b.c_color = who?.color ?? SR_OWNER_COLOR;
+    b.c_avatar = face ?? NO_PX;
+    b.c_has_avatar = !!face;
+    b.c_ai_on = true;
+    b.c_can_send = !!p && !p.writeBlocked;
+    b.c_blocked = p ? p.writeBlocked ?? "" : "Reading the request…";
+    b.c_need_subject = false;
+    b.c_hint = this.aiMode ? `Tell the AI what to do about ${sr.ref}` : composerHint({ toAi: false, forwarded: false, name, kind: "spokpay", me: "" });
+    b.has_ai_chat = !!p?.aiChat;
+    b.reply_name = "";
+    b.reply_text = "";
+    b.fwd_name = "";
+    b.fwd_text = "";
+    b.attached = this.aiMode ? this.aiFiles.map((f) => basename(f)).join(", ") : this.srFiles.length ? `${this.srFiles.length === 1 ? "1 picture" : `${this.srFiles.length} pictures`}: ${this.srFiles.map((f) => basename(f)).join(", ")}` : "";
+    b.ai_mode = this.aiMode;
     if (!p) {
       b.sr_subject = row?.subject || sr.ref;
       b.sr_store = row?.store ?? "";
@@ -1283,8 +1313,6 @@ class PersonsTab {
     b.sr_more = p.hasMore;
     b.sr_finished = p.finished;
     b.sr_finished_note = p.finishedNote;
-    b.sr_placeholder = p.placeholder;
-    b.sr_blocked = p.writeBlocked ?? "";
     b.sr_can_move = p.statuses.length > 1;
   }
 
@@ -1359,12 +1387,40 @@ class PersonsTab {
     this.render();
   }
 
-  /** Send: the reply (and its pictures) to the store as SpokPay; on a refusal both come back to the composer. */
+  /**
+   * Send: to the store as SpokPay (the reply and its pictures), or, with "To: AI", a note to the Person AI about the
+   * request (its context goes along, hidden); on a refusal the words and files come back to the composer.
+   */
   private async srSend(): Promise<void> {
     const sr = this.sr;
-    const text = String(this.bus.sr_draft ?? "").trim();
+    if (!sr) return;
+    const text = String(this.bus.draft ?? "").replace(/\s+$/, "");
+    const key = `${this.composerKey()}:${this.aiMode ? "ai" : "person"}`;
+    const fail = (e: unknown): { status: number; body: Record<string, unknown> } => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } });
+    if (this.aiMode) {
+      const paths = this.aiFiles;
+      if (!text.trim() && !paths.length) return;
+      this.bus.draft = "";
+      this.aiFiles = [];
+      this.render();
+      const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/ai`, { text, ...(paths.length ? { paths } : {}) }).catch(fail);
+      if (r.status === 200 && r.body.chat != null) {
+        const chat = String(r.body.chat);
+        if (sr.pane) sr.pane.aiChat = chat;
+        this.drafts.delete(key);
+        this.setToast("Sent to the AI", "Open", () => this.ctx.openChat?.(chat));
+      } else {
+        if (this.sr === sr && this.aiMode) {
+          if (!String(this.bus.draft ?? "")) this.bus.draft = text;
+          if (!this.aiFiles.length) this.aiFiles = paths;
+        } else this.drafts.set(key, text);
+        this.setToast(`AI: ${String(r.body.error ?? "the Person AI didn't answer")}`);
+      }
+      this.render();
+      return;
+    }
     const files = this.srFiles;
-    if (!sr || sr.sending || (!text && !files.length)) return;
+    if (sr.sending || !sr.pane || sr.pane.writeBlocked || (!text.trim() && !files.length)) return;
     const images: { name: string; type: string; data: string }[] = [];
     for (const f of files) {
       try {
@@ -1375,22 +1431,22 @@ class PersonsTab {
       }
     }
     sr.sending = true;
-    this.bus.sr_draft = "";
+    this.bus.draft = "";
     this.srFiles = [];
     this.render();
-    const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/reply`, { text, images, key: crypto.randomUUID() }).catch((e: unknown) => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } as Record<string, unknown> }));
+    const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/reply`, { text: text.trim(), images, key: crypto.randomUUID() }).catch(fail);
     sr.sending = false;
     if (r.status === 200 && r.body.pane) {
       if (this.sr === sr) {
         sr.pane = r.body.pane as SrPaneJson;
         this.bus.sr_rev = (Number(this.bus.sr_rev) || 0) + 1;
       }
-      this.srDrafts.delete(sr.ref);
+      this.drafts.delete(key);
     } else {
-      if (this.sr === sr) {
-        if (!String(this.bus.sr_draft ?? "")) this.bus.sr_draft = text;
+      if (this.sr === sr && !this.aiMode) {
+        if (!String(this.bus.draft ?? "")) this.bus.draft = text;
         if (!this.srFiles.length) this.srFiles = files;
-      } else this.srDrafts.set(sr.ref, text);
+      } else this.drafts.set(key, text);
       this.setToast(`Not sent: ${String(r.body.error ?? "SpokPay didn't answer")}`);
     }
     this.render();
@@ -1412,7 +1468,7 @@ class PersonsTab {
     const all = [...this.srFiles, ...ok];
     if (all.length > 5) this.setToast("SpokPay takes up to 5 pictures a message");
     this.srFiles = all.slice(0, 5);
-    this.bus.sr_focus_rev = (Number(this.bus.sr_focus_rev) || 0) + 1;
+    this.focusField();
     this.render();
   }
 

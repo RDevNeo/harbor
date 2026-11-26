@@ -2,10 +2,14 @@ package dev.harbor.app;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextWatcher;
+import android.text.style.ForegroundColorSpan;
 import android.text.util.Linkify;
 import android.view.Gravity;
 import android.view.View;
@@ -28,9 +32,11 @@ import java.util.List;
  *  (the store's square logo, the subject, the status pill, "Store · SR-215" whose tap copies the link, the status
  *  chip with SpokPay's moves; Complete and Close ask first), the Request brief card, the timeline (events as centered
  *  lines, the author and time over each run's first bubble, the store's on the left, SpokPay's dark ones on the right)
- *  and the composer ("Write to <owner>", up to 5 photos, Send as SpokPay). Read from the PC
+ *  and the composer, the person chats' own (PersonsChat): "To <avatar> <owner>", up to 5 photos, the field "Message
+ *  <owner> on SpokPay", attach / "To: AI | <owner>" / Send (to the store as SpokPay; the AI gets a note about the
+ *  request in its Person AI chat on the PC). Read from the PC
  *  (GET /v1/persons/site-request/{ref}: opening it marks what the store wrote seen), again every 30 s while open and
- *  when its row in the list moves. Emoji come from the keyboard; Edit isn't there (SpokPay's API has no route). */
+ *  when its row in the list moves. Edit isn't there (SpokPay's API has no route). */
 final class PersonsSr {
     final PersonsState p;
     final Activity a;
@@ -40,12 +46,15 @@ final class PersonsSr {
     private final ScrollView sv;
     private final LinearLayout content, bottom, thumbs;
     private final EditText edit;
-    private final FrameLayout send;
-    private final TextView finished, blocked;
-    private final LinearLayout box;
+    private final TextView finished, blocked, headText, headNote, toLabel, attach, maximize;
+    private final LinearLayout box, head, seg, segAi, segPerson, sendPill;
+    private final FrameLayout headMark, sendRound;
+    private final View headLine;
     private JSONObject pane;
     private String error;
-    private boolean closed, sending, moving, toBottom = true;
+    /** The composer writes to the AI (PersonsChat's "To: AI | <person>"), each side with its own words. */
+    private boolean closed, sending, moving, toBottom = true, toAi;
+    private String otherDraft = "";
     private long rowAt;
     /** Photos about to go: {name, type, data (base64)}, with their thumbnails. */
     private final List<JSONObject> files = new ArrayList<>();
@@ -74,17 +83,33 @@ final class PersonsSr {
         finished = Ui.text(a, "", 14, Ui.G700);
         finished.setPadding(Ui.dp(16), Ui.dp(12), Ui.dp(16), Ui.dp(14));
         bottom.addView(finished, Ui.fill());
+        // The composer (PersonsChat's): who it goes to on top ("To <owner>", or "Note to the AI · never sent to them"
+        // in the AI's tint), the photos, the field (or why the key can't reply), and attach / "To: AI | <owner>" / Send.
         box = Ui.col(a);
-        box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 20));
-        box.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(8), Ui.dp(6));
+        head = Ui.row(a);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setMinimumHeight(Ui.dp(40));
+        head.setPadding(Ui.dp(14), 0, Ui.dp(14), 0);
+        headMark = new FrameLayout(a);
+        head.addView(headMark, new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
+        headText = Ui.subtitle(Ui.text(a, "", 13, Ui.G700));
+        head.addView(headText, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        headNote = Ui.subtitle(Ui.text(a, "", 11.5f, Ui.G600));
+        head.addView(headNote, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        box.addView(head, Ui.fill());
+        headLine = new View(a);
+        box.addView(headLine, new LinearLayout.LayoutParams(-1, Ui.dp(1)));
+        LinearLayout body = Ui.col(a);
+        body.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(8), Ui.dp(6));
+        box.addView(body, Ui.fill());
         HorizontalScrollView hs = new HorizontalScrollView(a);
         hs.setHorizontalScrollBarEnabled(false);
         thumbs = Ui.row(a);
         hs.addView(thumbs);
-        box.addView(hs, Ui.margins(Ui.fill(), 0, 0, 0, 6));
-        blocked = Ui.text(a, "", 13, Ui.AMBER);
+        body.addView(hs, Ui.margins(Ui.fill(), 0, 0, 0, 8));
+        blocked = Ui.text(a, "", 13, Ui.G700);
         blocked.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(8));
-        box.addView(blocked, Ui.fill());
+        body.addView(blocked, Ui.fill());
         edit = new EditText(a);
         edit.setBackground(null);
         edit.setTextColor(Ui.FG);
@@ -99,17 +124,38 @@ final class PersonsSr {
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
             @Override public void afterTextChanged(Editable s) { sendState(); }
         });
-        box.addView(edit, Ui.fill());
+        body.addView(edit, Ui.fill());
         LinearLayout row = Ui.row(a);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView pic = Ui.iconButton(a, Ui.I_IMAGE, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickImage(this::addPhoto); });
-        pic.setContentDescription("Add photos");
-        row.addView(pic, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
-        row.addView(new View(a), new LinearLayout.LayoutParams(0, 1, 1));
-        send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 36, v -> send());
-        send.setContentDescription("Send as SpokPay");
-        row.addView(send);
-        box.addView(row, Ui.fill());
+        attach = Ui.iconButton(a, Ui.I_CLIP, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickImage(this::addPhoto); });
+        attach.setContentDescription("Attach a photo");
+        row.addView(attach, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
+        maximize = Ui.iconButton(a, Ui.I_MAXIMIZE, Ui.G700, v -> Ui.toast(a, "The AI's chat is in Projects on the PC"));
+        maximize.setContentDescription("Open in Projects");
+        row.addView(maximize, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
+        toLabel = Ui.text(a, "To", 13, Ui.G700);
+        row.addView(toLabel, Ui.margins(Ui.wrap(), 4, 0, 6, 0));
+        seg = Ui.row(a);
+        seg.setGravity(Gravity.CENTER_VERTICAL);
+        seg.setPadding(Ui.dp(2), Ui.dp(2), Ui.dp(2), Ui.dp(2));
+        segAi = segment(Ui.I_SPARKLES, v -> switchTo(true));
+        segPerson = segment(Ui.I_MESSAGE, v -> switchTo(false));
+        seg.addView(segAi);
+        seg.addView(segPerson, Ui.margins(new LinearLayout.LayoutParams(0, -2, 1), 2, 0, 0, 0));
+        row.addView(seg, new LinearLayout.LayoutParams(0, -2, 1));
+        row.addView(new View(a), new LinearLayout.LayoutParams(Ui.dp(8), 1));
+        sendPill = Ui.row(a);
+        sendPill.setGravity(Gravity.CENTER);
+        sendPill.setPadding(Ui.dp(14), 0, Ui.dp(12), 0);
+        sendPill.addView(Ui.bold(a, "Send", 14, Ui.ON_INK));
+        sendPill.addView(Ui.icon(a, Ui.I_UP, 15, Ui.ON_INK), Ui.margins(Ui.wrap(), 5, 0, 0, 0));
+        sendPill.setOnClickListener(v -> send());
+        sendPill.setContentDescription("Send as SpokPay");
+        row.addView(sendPill, new LinearLayout.LayoutParams(-2, Ui.dp(36)));
+        sendRound = Ui.roundButton(a, Ui.I_UP, Ui.CARD, Ui.FG, 36, v -> send());
+        sendRound.setContentDescription("Send to the AI");
+        row.addView(sendRound);
+        body.addView(row, Ui.fill());
         bottom.addView(box, Ui.margins(Ui.fill(), 10, 4, 10, 10));
         view.addView(bottom, Ui.fill());
 
@@ -414,6 +460,13 @@ final class PersonsSr {
 
     // ---- the composer and the status ----
 
+    /** Who the composer writes to: the person linked to the store, else its owner. */
+    private String name() {
+        JSONObject who = PersonsUi.obj(pane, "person");
+        String n = who == null ? "" : PersonsUi.s(who, "name");
+        return n.isEmpty() ? PersonsUi.s(pane, "owner") : n;
+    }
+
     private void composer() {
         boolean fin = pane != null && pane.optBoolean("finished");
         bottom.setVisibility(pane == null ? View.GONE : View.VISIBLE);
@@ -421,11 +474,35 @@ final class PersonsSr {
         box.setVisibility(fin ? View.GONE : View.VISIBLE);
         if (pane == null) return;
         finished.setText(PersonsUi.s(pane, "finishedNote"));
+        String n = name();
         String why = PersonsUi.s(pane, "writeBlocked");
-        blocked.setText(why);
-        blocked.setVisibility(why.isEmpty() ? View.GONE : View.VISIBLE);
-        edit.setVisibility(why.isEmpty() ? View.VISIBLE : View.GONE);
-        edit.setHint(PersonsUi.s(pane, "placeholder"));
+        boolean blockedNow = !toAi && !why.isEmpty();
+        // who it goes to
+        headMark.removeAllViews();
+        if (toAi) {
+            TextView mark = Ui.icon(a, Ui.I_SPARKLES, 11, Ui.BG);
+            mark.setBackground(Ui.round(Ui.FG, 0, 10));
+            headMark.addView(mark, new FrameLayout.LayoutParams(-1, -1));
+            headText.setText("Note to the AI");
+            headNote.setText("Never sent to " + n);
+            headNote.setVisibility(View.VISIBLE);
+        } else {
+            JSONObject who = PersonsUi.obj(pane, "person");
+            String av = who == null ? "" : PersonsUi.s(who, "avatar");
+            String ini = who == null ? PersonsUi.s(pane, "initials") : PersonsUi.s(who, "initials");
+            int color = who == null ? Ui.G500 : PersonsUi.color(PersonsUi.s(who, "color"), Ui.G500);
+            if (av.isEmpty()) av = PersonsUi.s(pane, "icon");
+            headMark.addView(PersonsUi.avatar(a, p.hub, av, ini, color, 20, ""), new FrameLayout.LayoutParams(-1, -1));
+            headText.setText(quote("To", n));
+            headNote.setVisibility(View.GONE);
+        }
+        headLine.setBackgroundColor(toAi ? PersonsUi.aiLine() : Ui.LINE);
+        if (toAi) {
+            GradientDrawable g = Ui.round(PersonsUi.aiFill(), 0, 24);
+            g.setStroke(Ui.dp(1), PersonsUi.aiLine(), Ui.dp(5), Ui.dp(4));
+            box.setBackground(g);
+        } else box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 20));
+        // the photos (to the store), the field or why the key can't reply
         thumbs.removeAllViews();
         for (int i = 0; i < thumbBits.size(); i++) {
             int at = i;
@@ -440,14 +517,75 @@ final class PersonsSr {
             f.setContentDescription("Remove this photo");
             thumbs.addView(f, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(56), Ui.dp(56)), 0, 0, 6, 0));
         }
-        ((View) thumbs.getParent()).setVisibility(thumbBits.isEmpty() ? View.GONE : View.VISIBLE);
+        ((View) thumbs.getParent()).setVisibility(toAi || thumbBits.isEmpty() ? View.GONE : View.VISIBLE);
+        blocked.setText(blockedNow ? why : "");
+        blocked.setVisibility(blockedNow ? View.VISIBLE : View.GONE);
+        edit.setVisibility(blockedNow ? View.GONE : View.VISIBLE);
+        edit.setHint(toAi ? "Tell the AI what to do about " + ref : PersonsUi.s(pane, "placeholder"));
+        // attach (photos to the store), the switch, send
+        attach.setVisibility(toAi ? View.GONE : View.VISIBLE);
+        attach.setEnabled(!blockedNow && a instanceof Base);
+        attach.setAlpha(!blockedNow ? 1f : 0.45f);
+        maximize.setVisibility(toAi ? View.VISIBLE : View.GONE);
+        seg.setBackground(Ui.round(Ui.BG, Ui.LINE, 17));
+        paintSegment(segAi, "AI", toAi);
+        paintSegment(segPerson, n, !toAi);
+        sendPill.setVisibility(toAi ? View.GONE : View.VISIBLE);
+        sendRound.setVisibility(toAi ? View.VISIBLE : View.GONE);
+        sendRound.setBackground(Ui.round(Ui.CARD, Ui.LINE, 18));
         sendState();
     }
 
     private void sendState() {
-        boolean can = pane != null && !sending && PersonsUi.s(pane, "writeBlocked").isEmpty() && (edit.getText().toString().trim().length() > 0 || !files.isEmpty());
-        send.setAlpha(can ? 1f : 0.35f);
-        send.setEnabled(can);
+        boolean has = edit.getText().toString().trim().length() > 0;
+        boolean can = pane != null && (toAi ? has : !sending && PersonsUi.s(pane, "writeBlocked").isEmpty() && (has || !files.isEmpty()));
+        sendPill.setEnabled(can);
+        sendPill.setAlpha(can ? 1f : 0.45f);
+        sendPill.setBackground(Ui.round(can ? Ui.INK : Ui.G300, 0, 18));
+        sendRound.setEnabled(can);
+        sendRound.setAlpha(can ? 1f : 0.45f);
+    }
+
+    /** The composer writes to the owner or to the AI, each with its own words; the field keeps the focus. */
+    private void switchTo(boolean ai) {
+        if (ai == toAi) return;
+        String now = edit.getText().toString();
+        toAi = ai;
+        edit.setText(otherDraft);
+        otherDraft = now;
+        composer();
+        edit.requestFocus();
+    }
+
+    /** One side of the "To" switch: a glyph and a label in a pill (PersonsChat's). */
+    private LinearLayout segment(String glyph, View.OnClickListener on) {
+        LinearLayout s = Ui.row(a);
+        s.setGravity(Gravity.CENTER_VERTICAL);
+        s.setPadding(Ui.dp(10), 0, Ui.dp(12), 0);
+        s.setMinimumHeight(Ui.dp(30));
+        s.addView(Ui.icon(a, glyph, 13, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)));
+        s.addView(Ui.subtitle(Ui.bold(a, "", 13, Ui.G700)), Ui.margins(Ui.wrap(), 5, 0, 0, 0));
+        s.setOnClickListener(on);
+        return s;
+    }
+
+    private void paintSegment(LinearLayout s, String label, boolean on) {
+        s.setBackground(on ? Ui.round(Ui.FG, 0, 15) : Ui.press(0, 0, 15));
+        ((TextView) s.getChildAt(0)).setTextColor(on ? Ui.BG : Ui.G700);
+        TextView t = (TextView) s.getChildAt(1);
+        t.setText(label);
+        t.setTextColor(on ? Ui.BG : Ui.G700);
+        s.setContentDescription("To " + label + (on ? ", selected" : ""));
+    }
+
+    /** "To <b>Name</b>". */
+    private CharSequence quote(String lead, String name) {
+        SpannableStringBuilder b = new SpannableStringBuilder(lead + " ");
+        int s0 = b.length();
+        b.append(name);
+        b.setSpan(new ForegroundColorSpan(Ui.FG), s0, b.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        b.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), s0, b.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return b;
     }
 
     /** A photo from the picker: scaled to 1600 px and sent as JPEG (SpokPay takes up to 5 a message). */
@@ -473,8 +611,32 @@ final class PersonsSr {
         });
     }
 
+    /** "To: AI": a note about the request to its Person AI chat on the PC (the request goes along as context). */
+    private void askAi() {
+        String text = edit.getText().toString().trim();
+        if (pane == null || text.isEmpty()) return;
+        edit.setText("");
+        composer();
+        JSONObject b = PersonsUi.put(new JSONObject(), "text", text);
+        Ui.pool.execute(() -> {
+            String why = null;
+            try {
+                JSONObject r = p.hub.call("POST", path() + "/ai", b, 60_000);
+                if (!r.optBoolean("ok", true) || r.has("error")) why = r.optString("error", "not sent");
+            } catch (Exception e) { why = Hub.why(e); }
+            String w = why;
+            Ui.main.post(() -> {
+                if (a.isDestroyed()) return;
+                if (w == null) { Ui.toast(a, "Sent to the AI: its chat is in Projects on the PC"); return; }
+                Ui.toast(a, "AI: " + w);
+                if (!closed && toAi && edit.getText().length() == 0) edit.setText(text);
+            });
+        });
+    }
+
     /** Send: the reply (and its photos) to the store as SpokPay; on a refusal both come back. */
     private void send() {
+        if (toAi) { askAi(); return; }
         String text = edit.getText().toString().trim();
         if (pane == null || sending || (text.isEmpty() && files.isEmpty())) return;
         JSONObject b = PersonsUi.put(new JSONObject(), "text", text);

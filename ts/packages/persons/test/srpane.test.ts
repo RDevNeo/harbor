@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { SrThread } from "../src/spokpay-core.ts";
-import { dateEnglish, factRows, finishWords, paneView, relativeEnglish } from "../src/srpane.ts";
+import { readThread, type SrThread } from "../src/spokpay-core.ts";
+import { dateEnglish, factRows, finishWords, paneView, relativeEnglish, srAiContext } from "../src/srpane.ts";
 
 const H = 3_600_000;
 const NOW = Date.UTC(2026, 10, 26, 12);
@@ -39,7 +39,7 @@ describe("srpane", () => {
 
   it("builds the header, the brief and the status choices", () => {
     const v = paneView(thread({}, [], [{ event: "opened_by_spokpay", createdAt: NOW - 7 * 24 * H }]), { now: NOW, summary: "Clientes avaliaram e não aparece", ownerEmail: "dono@x.com" });
-    expect(v).toMatchObject({ ref: "SR-215", statusLabel: "Working", tone: "info", store: "Wiz Store", finished: false, placeholder: "Write to dono@x.com" });
+    expect(v).toMatchObject({ ref: "SR-215", statusLabel: "Working", tone: "info", store: "Wiz Store", finished: false, owner: "dono@x.com", placeholder: "Message dono@x.com on SpokPay" });
     expect(v.brief.sub).toBe(`Website · Opened by SpokPay · ${dateEnglish(NOW - 7 * 24 * H)}`);
     expect(v.brief.summary).toBe("Clientes avaliaram e não aparece");
     expect(v.brief.facts.map((f) => f.label)).toEqual(["What changes", "Where", "Deadline", "Expected outcome"]);
@@ -50,6 +50,28 @@ describe("srpane", () => {
       { status: "completed", label: "Completed", current: false },
       { status: "closed", label: "Closed", current: false },
     ]);
+  });
+
+  it("shows SpokPay's summary paragraph as soon as the admin API sends siteRequest.summary", () => {
+    const raw = { siteRequest: { ...thread().siteRequest, summary: " A Wiz Store parou de receber avaliações novas dos clientes. " }, messages: [], events: [], hasMore: false };
+    expect(paneView(readThread(JSON.parse(JSON.stringify(raw))), { now: NOW, summary: "o que Hub abriu" }).brief.summary).toBe("A Wiz Store parou de receber avaliações novas dos clientes.");
+    expect(paneView(thread(), { now: NOW }).brief.summary).toBe("");
+  });
+
+  it("gives the AI the request: ref, status, store, owner, brief and the newest lines, oldest first", () => {
+    const t = thread({ summary: "A loja parou de receber avaliações." }, [msg("a", "store", "Truth", NOW - 9 * H, "sim\nok"), msg("b", "spokpay", "Igor", NOW - 2 * H, "Vou ver")], [{ event: "opened_by_spokpay", createdAt: NOW - 10 * H }]);
+    const c = srAiContext(t, { now: NOW, url: "https://spokpay.com/admin/requests?thread=x" });
+    expect(c).toContain("Site request: SR-215 · Avaliações novas não aparecem no site");
+    expect(c).toContain("Status: Working · waiting on SpokPay");
+    expect(c).toContain("Store: Wiz Store (slug wiz) · owner Truth");
+    expect(c).toContain("Admin page: https://spokpay.com/admin/requests?thread=x");
+    expect(c).toContain("Summary: A loja parou de receber avaliações.");
+    expect(c).toContain("What changes: Mostrar as novas");
+    expect(c).toContain("```reply");
+    const lines = c.split("\n");
+    const i = lines.findIndex((l) => l.includes("Opened by SpokPay —"));
+    expect(lines[i + 1]).toMatch(/Truth \(store\): sim ⏎ ok$/);
+    expect(lines[i + 2]).toMatch(/SpokPay \(Igor\): Vou ver$/);
   });
 
   it("puts events between messages and groups one author's run within an hour", () => {
@@ -63,7 +85,7 @@ describe("srpane", () => {
     expect(v.items.map((i) => (i.kind === "event" ? i.text : `${i.id}:${i.joinsPrev ? "<" : ""}${i.joinsNext ? ">" : ""}`))).toEqual(["Sent to SpokPay · 9 h ago", "a:>", "b:<", "c:", "Work started · 3 h ago", "d:"]);
     const d = v.items.at(-1);
     expect(d?.kind === "msg" && d.mine && d.head).toBe("Igor · 2 h ago");
-    expect(v.placeholder).toBe("Write to Truth");
+    expect(v.placeholder).toBe("Message Truth on SpokPay");
     expect(v.brief.sub).toContain("From Wiz Store");
   });
 

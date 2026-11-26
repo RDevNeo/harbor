@@ -46,6 +46,7 @@ describe("an AI answer's menu", () => {
 describe("the composer's words", () => {
   test("placeholders", () => {
     expect(composerHint({ toAi: false, forwarded: false, name: "Lua", kind: "discord", me: "" })).toBe("Message Lua on Discord");
+    expect(composerHint({ toAi: false, forwarded: false, name: "Truth", kind: "spokpay", me: "" })).toBe("Message Truth on SpokPay");
     expect(composerHint({ toAi: false, forwarded: false, name: "Lua", kind: "gmail", me: "igor" })).toBe("Email Lua as igor…");
     expect(composerHint({ toAi: true, forwarded: false, name: "Lua", kind: "discord", me: "" })).toBe("Tell the AI what to do about Lua");
     expect(composerHint({ toAi: true, forwarded: true, name: "Lua", kind: "discord", me: "" })).toContain("What should I reply to this?");

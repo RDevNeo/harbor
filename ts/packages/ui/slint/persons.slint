@@ -260,14 +260,8 @@ export global PersonsBus {
     in property <bool> sr-more; // SpokPay sent only its newest 100 messages
     in property <bool> sr-finished;
     in property <string> sr-finished-note;
-    in property <string> sr-placeholder;
-    in property <string> sr-blocked; // why the key can't reply
     in property <bool> sr-can-move; // the status menu has somewhere to go
     in property <bool> sr-moving;
-    in property <bool> sr-sending;
-    in-out property <string> sr-draft;
-    in property <string> sr-attached; // the pictures going with the reply, one line
-    in property <int> sr-focus-rev;
 
     callback all-people();
     callback open-person(string, string, string);
@@ -328,9 +322,6 @@ export global PersonsBus {
     callback sr-close();
     callback sr-status-menu(length, length); // the status button: SpokPay's moves
     callback sr-copy(); // the ref's copy button: the request's link
-    callback sr-send();
-    callback sr-attach();
-    callback sr-clear-attached();
     callback sr-retry();
     callback sr-open-image(string, int); // a picture of the brief ("brief") or of a message (its id)
     callback sr-open-file(string, int);
@@ -2019,7 +2010,7 @@ component ChatPane inherits Rectangle {
 // ThreadHeader (the store's square logo, the subject, the status badge, "Store · SR-215 ⧉", the status select), the
 // RequestBrief card, the timeline (events as centered dividers, messages as RequestLine: the author and time over the
 // bubble, the store's on the left in the secondary bubble, SpokPay's on the right in the dark one, one author's run
-// joined) and the Composer ("Write to <owner>", pictures, emoji, send). Edit is left out: SpokPay's admin API has no
+// joined) and the person chats' Composer (To <owner>, pictures, To: AI | <owner>, Send). Edit is left out: SpokPay's admin API has no
 // route for it.
 
 global SrLook {
@@ -2320,160 +2311,6 @@ component SrLine {
     }
 }
 
-// The composer's emoji (EmojiPicker, its most used): a click puts one at the end of the reply.
-component SrEmoji inherits Rectangle {
-    property <[string]> list: ["👍", "🙏", "😊", "😂", "❤️", "🎉", "✅", "👀", "🙌", "🔥", "💯", "😅", "🤔", "👏", "😉", "🚀", "✨", "💪", "😍", "🥳", "😢", "😮", "👌", "🤝", "⚠️", "📌", "⏳", "📷", "✍️", "💬", "☺️", "🫡"];
-    callback picked(string);
-    property <int> cols: 8;
-    width: 8 * 32px + 12px;
-    height: 4 * 32px + 12px;
-    border-radius: 10px;
-    border-width: 1px;
-    border-color: Theme.border;
-    background: Theme.bg100;
-    drop-shadow-blur: 12px;
-    drop-shadow-color: #0000002a;
-    for e[i] in root.list: Rectangle {
-        x: 6px + mod(i, root.cols) * 32px;
-        y: 6px + floor(i / root.cols) * 32px;
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
-        background: ea.has-hover ? Theme.gray-200 : transparent;
-        Text {
-            text: e;
-            font-size: 18px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        ea := TouchArea {
-            mouse-cursor: pointer;
-            clicked => {
-                root.picked(e);
-            }
-        }
-    }
-}
-
-// Composer: "Write to <owner>" with pictures (up to 5), emoji and send; a finished request says so instead.
-component SrComposer inherits Rectangle {
-    property <bool> focused;
-    property <bool> emoji;
-    property <bool> blocked: PersonsBus.sr-blocked != "";
-    property <bool> can-send: !blocked && !PersonsBus.sr-sending && (PersonsBus.sr-draft != "" || PersonsBus.sr-attached != "");
-    height: wrap.preferred-height;
-    wrap := VerticalLayout {
-        padding-left: 24px;
-        padding-right: 24px;
-        padding-top: 6px;
-        padding-bottom: 14px;
-        Rectangle {
-            border-radius: Ds.radius-xl;
-            border-width: 1px;
-            border-color: root.focused ? Theme.gray-600 : Theme.border;
-            background: Theme.bg100;
-            VerticalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                padding-top: 10px;
-                padding-bottom: 8px;
-                spacing: 8px;
-                if PersonsBus.sr-attached != "": QuoteChip {
-                    glyph: Icons.image;
-                    lead: "";
-                    name: PersonsBus.sr-attached;
-                    close-tip: "Remove the pictures";
-                    close => {
-                        PersonsBus.sr-clear-attached();
-                    }
-                }
-                if root.blocked: Text {
-                    text: PersonsBus.sr-blocked;
-                    font-size: 13px;
-                    color: Theme.amber-900;
-                    wrap: word-wrap;
-                }
-                if !root.blocked: ComposeField {
-                    text <=> PersonsBus.sr-draft;
-                    hint: PersonsBus.sr-placeholder;
-                    focus-rev: PersonsBus.sr-focus-rev;
-                    submit => {
-                        if root.can-send {
-                            PersonsBus.sr-send();
-                        }
-                    }
-                    escape => {
-                        if root.emoji {
-                            root.emoji = false;
-                            return true;
-                        }
-                        return false;
-                    }
-                    changed focused => {
-                        root.focused = self.focused;
-                    }
-                }
-                HorizontalLayout {
-                    height: 32px;
-                    spacing: 2px;
-                    Btn {
-                        icon: Icons.image;
-                        size: BtnSize.icon-sm;
-                        variant: Variant.ghost-muted;
-                        enabled: !root.blocked;
-                        tip: "Add pictures (up to 5)";
-                        clicked => {
-                            PersonsBus.sr-attach();
-                        }
-                    }
-                    emoji-btn := Btn {
-                        text: "☺";
-                        size: BtnSize.icon-sm;
-                        variant: Variant.ghost-muted;
-                        enabled: !root.blocked;
-                        pressed: root.emoji;
-                        tip: "Emoji";
-                        clicked => {
-                            root.emoji = !root.emoji;
-                        }
-                    }
-                    Rectangle {
-                        horizontal-stretch: 1;
-                    }
-                    if PersonsBus.sr-sending: VerticalLayout {
-                        alignment: center;
-                        Spinner { }
-                    }
-                    Btn {
-                        icon: Icons.arrow-up;
-                        size: BtnSize.icon-sm;
-                        variant: root.can-send ? Variant.primary : Variant.secondary;
-                        enabled: root.can-send;
-                        tip: "Send to " + PersonsBus.sr-store + " as SpokPay (Enter)";
-                        clicked => {
-                            PersonsBus.sr-send();
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if root.emoji: TouchArea {
-        // a click elsewhere in the composer closes it
-        clicked => {
-            root.emoji = false;
-        }
-    }
-    if root.emoji: SrEmoji {
-        x: 24px + 10px + 34px;
-        y: -self.height + 4px;
-        picked(e) => {
-            PersonsBus.sr-draft = PersonsBus.sr-draft + e;
-            root.emoji = false;
-        }
-    }
-}
-
 component SrPane inherits Rectangle {
     property <bool> at-bottom: true;
     changed width => {
@@ -2711,7 +2548,8 @@ component SrPane inherits Rectangle {
                 min-height: 46px;
             }
         }
-        if !PersonsBus.sr-finished && PersonsBus.sr-brief-sub != "": SrComposer { }
+        // the person chats' composer: To <owner>, "Message <owner> on SpokPay", attach, To: AI | <owner>, Send
+        if !PersonsBus.sr-finished && PersonsBus.sr-brief-sub != "": Composer { }
     }
     // another request opened: its end shows
     property <int> rev: PersonsBus.sr-rev;

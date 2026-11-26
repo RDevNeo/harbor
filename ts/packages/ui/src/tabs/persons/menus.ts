@@ -75,7 +75,7 @@ export function failedMenu(): MenuEntry[] {
 export function composerHint(o: { toAi: boolean; forwarded: boolean; name: string; kind: string; me: string }): string {
   if (o.toAi) return o.forwarded ? "Ask about this message (empty: “What should I reply to this?”)" : `Tell the AI what to do about ${o.name}`;
   if (o.kind === "gmail") return `Email ${o.name}${o.me ? ` as ${o.me}` : ""}…`;
-  return `Message ${o.name}${o.kind ? ` on ${o.kind === "whatsapp" ? "WhatsApp" : "Discord"}` : ""}`;
+  return `Message ${o.name}${o.kind ? ` on ${o.kind === "whatsapp" ? "WhatsApp" : o.kind === "spokpay" ? "SpokPay" : "Discord"}` : ""}`;
 }
 
 /** Why the composer can't write to the person (null: it can), Person Hub's notes. */

@@ -40,16 +40,24 @@ admin page (Copy link).
   `{ ok, pane }`: sent to the store as SpokPay (site-requests:write); `key` is the Idempotency-Key of a retry.
 - `POST /v1/persons/site-request/{ref}/status { to: working|review|completed|closed }` → `{ ok, pane }`
   (site-requests:status; only the moves in `statuses`; completed and closed are final: ask first, with `confirms`).
+- `POST /v1/persons/site-request/{ref}/ai { text, paths? }` → `{ ok, chat }`: the composer's "To: AI" note to the Person
+  AI (as `chat/{id}/ai`), with the request as hidden context (ref, subject, status, store, owner, admin page, brief,
+  its newest 40 messages and events): the chat of the person linked to its store (`pane.person`, that section's),
+  else the store's own "<Store> · SpokPay". Its reply drafts come as ```reply blocks.
 - A refusal: `{ error, code }` with SpokPay's status (403 a permission the key lacks, 404 gone, 429 its rate limit…).
+  A permission refused is asked again (the key's probe) before the next call that needs it, at most every 15 s, and
+  an open pane asks at most every minute: one added on spokpay.com/admin shows without the key typed again.
 
 `pane`: `{ ref, subject, status, statusLabel, tone: neutral|info|warning|success, store, storeSlug, initials, icon (a
 picture route), iconPath (PC), url, brief: { title, sub ("Website · Opened by SpokPay · 19 Nov 2026"), summary,
 facts: [{ label, text, full }], files }, factRows (facts paired as the card lays them out), items: [{ kind: "event",
 id, text } | { kind: "msg", id, mine (SpokPay's), side, author, head ("Truth · 7 h ago"), text, files, joinsPrev,
 joinsNext, at }], statuses: [{ status, label, current }] (the current one first), confirms: { completed, closed }:
-{ title, text, ok }, finished, finishedNote, placeholder ("Write to …"), hasMore, writeBlocked, statusBlocked,
-lastActivityAt, note }`. `files`: `[{ url (SpokPay's), name, image, src (a picture route) }]`. `summary` is "" until
-SpokPay's admin API sends it, except for requests Hub opened (the proposal's details).
+{ title, text, ok }, finished, finishedNote, owner, placeholder ("Message <owner> on SpokPay"), person (the linked
+person: { id, section, name, initials, color, avatar, avatarPath } | null), aiChat (its Person AI chat | null),
+hasMore, writeBlocked, statusBlocked, lastActivityAt, note }`. `files`: `[{ url (SpokPay's), name, image, src (a picture route) }]`. `summary` is "" until
+SpokPay's admin API sends it (`siteRequest.summary` of `GET …/admin/site-requests/{ref}/messages`; the admin page
+has it, the API's header leaves it out), except for requests Hub opened (the proposal's details).
 
 ## GET /v1/persons/chat/{personId}?section=S
 ```

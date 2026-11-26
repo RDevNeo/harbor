@@ -73,7 +73,13 @@ export interface SrPaneJson {
   statuses: { status: string; label: string; current: boolean }[];
   finished: boolean;
   finishedNote: string;
+  /** Who the composer writes to (the store owner) and its "Message <owner> on SpokPay". */
+  owner: string;
   placeholder: string;
+  /** The person linked to the store ("To <avatar> <name>"; their Person AI hears the notes), else null. */
+  person: { id: string; section: string; name: string; initials: string; color: string; avatarPath: string | null; avatar: string | null } | null;
+  /** The Person AI chat its notes go to, once there is one. */
+  aiChat: string | null;
   hasMore: boolean;
   writeBlocked: string | null;
   statusBlocked: string | null;

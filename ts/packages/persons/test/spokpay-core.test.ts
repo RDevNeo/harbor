@@ -1,5 +1,5 @@
 // Ported from Person Hub's src/lib/spokpay-core.test.ts: the pure part, then spokpay.ts against a fake SpokPay.
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -264,6 +264,36 @@ describe('spokpay.ts', () => {
     const list = await sp.requests(['lulu-store'])
     expect(list.map((r: { ref: string; status: string }) => [r.ref, r.status])).toEqual([['SR-200', 'completed'], ['SR-1', 'open']])
   })
+  it('a permission added to the key on spokpay.com/admin is picked up without the key typed again', async () => {
+    const perms = ['site-requests:read']
+    const f = fakeSpokpay(perms)
+    const sp = make(f)
+    const t0 = Date.now()
+    try {
+      await sp.setKey(KEY)
+      expect(sp.status().permissions['site-requests:write']).toBe(false)
+      perms.push('site-requests:write')
+      // refused at once while the last ask is fresh: no call
+      const before = f.calls.length
+      await expect(sp.reply('SR-7', { text: 'oi' })).rejects.toMatchObject({ code: 'NOT_AUTHORIZED' })
+      expect(f.calls.length).toBe(before)
+      // a pane's recheck (a minute old) asks again and the permission shows as held
+      setSystemTime(new Date(t0 + 61_000))
+      expect((await sp.recheck(60_000)).permissions['site-requests:write']).toBe(true)
+      perms.push('site-requests:status')
+      // a refused action asks again first (15 s old) and then goes through
+      setSystemTime(new Date(t0 + 80_000))
+      await expect(sp.setStatus('SR-7', 'working')).resolves.toMatchObject({ siteRequest: { status: 'working' } })
+      expect(sp.status().permissions['site-requests:status']).toBe(true)
+      // just asked: not again
+      const n = f.calls.length
+      await sp.recheck(60_000)
+      expect(f.calls.length).toBe(n)
+    } finally {
+      setSystemTime()
+    }
+  })
+
   it('does not call routes the key lacks, and remembers store links', async () => {
     const f = fakeSpokpay(['site-requests:read'])
     const sp = make(f)

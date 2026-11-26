@@ -2,7 +2,7 @@
 // phone API, so both see and change the same state. JSON only (pictures and files as base64).
 import type { AgentDiscord } from "./agent/index.ts";
 import { statSync } from "node:fs";
-import { chatKey, KIND_LABEL, isSection, normWhatsApp, pickChat, validPeer, type ChatRef } from "./model/accounts.ts";
+import { chatKey, KIND_LABEL, isSection, normWhatsApp, personSections, pickChat, validPeer, type ChatRef } from "./model/accounts.ts";
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
@@ -18,6 +18,7 @@ import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
 import type { SiteRequests } from "./siterequests.ts";
 import type { SiteRequestBoard } from "./srboard.ts";
 import { initialsOf, siteRequestPageUrl } from "./srlist.ts";
+import { normalizeRef } from "./spokpay-core.ts";
 import { spError } from "./spokpay-view.ts";
 import { factRows, finishWords, type PaneView } from "./srpane.ts";
 import type { Proposal, ProposalFields } from "./spokpay-core.ts";
@@ -402,6 +403,8 @@ export class PersonsRoutes {
         await board.reply(ref, str(b.text) ?? "", images, str(b.key));
       } else if (m === "POST" && act === "status") {
         await board.move(ref, str(b.to) ?? "");
+      } else if (m === "POST" && act === "ai") {
+        return await this.srAi(ref, b);
       } else if (!(m === "GET" && act === "")) return err(404, "no such call");
       return ok({ ok: true, pane: this.paneJson(await board.pane(ref, (u) => `/v1/persons/img/url?u=${encodeURIComponent(u)}`)) });
     } catch (e) {
@@ -411,10 +414,72 @@ export class PersonsRoutes {
     }
   }
 
+  /**
+   * The person a site request's composer writes "To" and whose Person AI hears its notes: the one Hub opened it for,
+   * else the one remembered as that SpokPay store (spokpay-links.json, the person's or their Persons store's).
+   */
+  private srPerson(ref: string, slug: string | null): { p: Person; section: SectionId } | null {
+    const board = this.extra.board;
+    const d = this.s.data;
+    if (!board || !d) return null;
+    const links = board.links();
+    const byId = (id: string | null | undefined): Person | undefined => (id ? this.s.person(id) ?? undefined : undefined);
+    const p =
+      byId(board.openedBy(ref)) ??
+      (slug
+        ? d.people.find((x) => links.people[x.id] === slug) ?? d.people.find((x) => d.stores.some((st) => links.stores[st.id] === slug && (st.ownerId === x.id || x.storeIds.includes(st.id))))
+        : undefined);
+    if (!p) return null;
+    const secs = personSections(p);
+    return { p, section: secs.includes("spokpay") ? "spokpay" : secs[0] ?? "spokpay" };
+  }
+
+  /** The Person AI chat of a request: its person's (that section's), else the store's own ("<Store> · SpokPay"). */
+  private srAiChat(v: { ref: string; storeSlug: string | null }): string | null {
+    const ai = this.extra.ai;
+    if (!ai) return null;
+    const who = this.srPerson(v.ref, v.storeSlug);
+    return who ? ai.chatOf?.(who.p, who.section) ?? null : ai.chatOfKey?.(srAiKey(v)) ?? null;
+  }
+
+  /**
+   * `POST site-request/{ref}/ai { text, paths? }`: the composer's "To: AI" note, to the Person AI as person chats send
+   * theirs, with the request (ref, subject, status, brief, the newest messages) as hidden context: the chat of the
+   * person linked to its store, else the store's own. Answers `{ ok, chat }`.
+   */
+  private async srAi(ref: string, b: Record<string, unknown>): Promise<Reply> {
+    const board = this.extra.board;
+    const ai = this.extra.ai;
+    if (!board) return err(404, "SpokPay isn't in this engine");
+    if (!ai) return err(503, "Person AI isn't available");
+    const attached = (Array.isArray(b.paths) ? b.paths : []).filter((x): x is string => typeof x === "string" && x.startsWith("/")).slice(0, 10);
+    let text = str(b.text) ?? "";
+    if (attached.length) text = `${text.trim()}\n\nFiles attached to this note (on this PC): ${attached.join(", ")}`.trim();
+    if (!text.trim()) return err(400, "empty");
+    const r = normalizeRef(ref);
+    if (!r) return err(400, "Not a site request ref (SR-…)");
+    const c = await board.aiContext(r, siteRequestPageUrl(r));
+    const who = this.srPerson(c.ref, c.storeSlug);
+    if (who && this.s.data) {
+      const { chat, choices } = this.chatConn(who.p, who.section);
+      const msgs = this.timeline(choices).map((x) => x.m);
+      const chatId = await ai.ask(who.p, who.section, text, msgs, chat?.conn.kind ?? null, this.s.data, undefined, c.context);
+      return ok({ ok: true, chat: chatId });
+    }
+    if (!ai.askAbout) return err(503, "Person AI can't take notes about a store here");
+    const chatId = await ai.askAbout(srAiKey(c), `${c.store} · SpokPay`, text, c.context);
+    return ok({ ok: true, chat: chatId });
+  }
+
   private paneJson(v: PaneView): Json {
     const icon = v.storeSlug ? this.extra.board?.view().icons[v.storeSlug] ?? null : null;
+    const who = this.srPerson(v.ref, v.storeSlug);
+    const pic = who ? this.picture(who.p) : null;
     return json({
       ...v,
+      // "To <avatar> <name>": the linked person as their chat shows them, else the owner with the store's icon
+      person: who ? { id: who.p.id, section: who.section, name: personLabel(who.p), initials: initials(personLabel(who.p)), color: colorOf(who.p.id), avatarPath: pic, avatar: pic ? this.pictureRef(who.p) : null } : null,
+      aiChat: this.srAiChat(v),
       factRows: factRows(v.brief.facts),
       confirms: { completed: finishWords("completed", v.store), closed: finishWords("closed", v.store) },
       initials: initialsOf(v.store),
@@ -1044,7 +1109,10 @@ export class PersonsRoutes {
 export interface AiPort {
   items(p: Person, section: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]>;
   /** `transcriptOf`: a message's voice transcript (attachment index), for the context's "[voice 0:20] …". */
-  ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData, transcriptOf?: (m: Message, index: number) => string | null | undefined): Promise<string | number>;
+  ask(p: Person, section: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData, transcriptOf?: (m: Message, index: number) => string | null | undefined, extra?: string): Promise<string | number>;
+  /** A note about something that isn't a person here (a site request of a store nobody is linked to): its own chat. */
+  askAbout?(key: string, title: string, text: string, context: string): Promise<string | number>;
+  chatOfKey?(key: string): string | null;
   /** The person's AI chat once it exists (known after items or ask). */
   chatOf?(p: Person, section: SectionId): string | null;
   /** Every AI chat known for a person (a linked person's stay reachable from the panel). */
@@ -1054,3 +1122,6 @@ export interface AiPort {
 }
 
 export { validPeer };
+
+/** The Person AI chat of a store nobody here is linked to (ai.ts askAbout): one per SpokPay store. */
+const srAiKey = (v: { ref: string; storeSlug: string | null }): string => `sr:${v.storeSlug ?? v.ref}`;

@@ -147,14 +147,17 @@ export class PersonAi implements AiPort {
   }
 
   /** The chat of a person+section (remembered, else found by title), and the project to create it in. */
-  async locate(p: Person, s: SectionId): Promise<{ project: string | null; chat: string | null }> {
+  locate(p: Person, s: SectionId): Promise<{ project: string | null; chat: string | null }> {
+    return this.locateKey(this.key(p, s), aiTitle(p, s));
+  }
+
+  private async locateKey(k: string, title: string): Promise<{ project: string | null; chat: string | null }> {
     const r = await this.call("GET", "v1/state");
     const body = (r.body ?? {}) as { projects?: StateProject[]; chats?: StateChat[] };
     const state = { projects: body.projects ?? [], chats: body.chats ?? [] };
-    const k = this.key(p, s);
     const known = this.chats[k];
-    if (known && state.chats.some((c) => String(c.id) === known)) return { project: findAiChat(state, aiTitle(p, s)).project, chat: known };
-    const f = findAiChat(state, aiTitle(p, s));
+    if (known && state.chats.some((c) => String(c.id) === known)) return { project: findAiChat(state, title).project, chat: known };
+    const f = findAiChat(state, title);
     if (f.chat) this.remember(k, f.chat);
     return f;
   }
@@ -192,20 +195,37 @@ export class PersonAi implements AiPort {
     return cardsToAi(b.items ?? [], !!b.running || (b.queued ?? 0) > 0);
   }
 
-  async ask(p: Person, s: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData, transcriptOf?: (m: Message, index: number) => string | null | undefined): Promise<string> {
+  /** `extra`: more hidden context after the person's (a site request's, srpane.ts srAiContext). */
+  ask(p: Person, s: SectionId, text: string, conversation: Message[], kind: ChannelKind | null, data: AppData, transcriptOf?: (m: Message, index: number) => string | null | undefined, extra?: string): Promise<string> {
     const channel = kind === "gmail" ? "Gmail" : kind === "whatsapp" ? "WhatsApp" : "Discord";
-    const full = withAiContext(text, aiContext({ person: p, section: s, data, channel, messages: conversation, ...(transcriptOf ? { transcriptOf } : {}) }));
-    const { project, chat } = await this.locate(p, s);
+    const context = aiContext({ person: p, section: s, data, channel, messages: conversation, ...(transcriptOf ? { transcriptOf } : {}) });
+    return this.send(this.key(p, s), aiTitle(p, s), withAiContext(text, extra ? `${context}\n\n${extra}` : context));
+  }
+
+  /**
+   * A note about something that isn't a person of Persons (a site request whose store nobody here is linked to): its
+   * own chat, remembered under `key`, titled `title` ("<Store> · SpokPay"), in the same project.
+   */
+  askAbout(key: string, title: string, text: string, context: string): Promise<string> {
+    return this.send(key, title, withAiContext(text, context));
+  }
+
+  chatOfKey(key: string): string | null {
+    return this.chats[key] ?? null;
+  }
+
+  private async send(k: string, title: string, full: string): Promise<string> {
+    const { project, chat } = await this.locateKey(k, title);
     if (chat) {
       const r = await this.call("POST", `v1/chats/${encodeURIComponent(chat)}/send`, {}, { text: full, mode: "queue", client_id: crypto.randomUUID() });
       if (r.status >= 400) throw new Error(String((r.body as { error?: string } | null)?.error ?? `Hub answered ${r.status}`));
       return chat;
     }
     if (!project) throw new Error("No project for Person AI: add the folder creators-hub/tabs/Persons as a project in Projects");
-    const r = await this.call("POST", "v1/chats", {}, { text: full, project_id: /^\d+$/.test(project) ? Number(project) : project, title: aiTitle(p, s) });
+    const r = await this.call("POST", "v1/chats", {}, { text: full, project_id: /^\d+$/.test(project) ? Number(project) : project, title });
     const id = (r.body as { id?: string | number | null } | null)?.id;
     if (r.status >= 400 || id == null) throw new Error(String((r.body as { error?: string } | null)?.error ?? "Hub didn't start the chat"));
-    this.remember(this.key(p, s), String(id));
+    this.remember(k, String(id));
     return String(id);
   }
 }
