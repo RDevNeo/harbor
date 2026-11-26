@@ -287,6 +287,7 @@ class PersonsTab {
   // ---------- data ----------
 
   async start(): Promise<void> {
+    await this.loadFolds();
     await this.refresh();
     void this.loop();
   }
@@ -1926,6 +1927,22 @@ class PersonsTab {
     if (set.has(id)) set.delete(id);
     else set.add(id);
     this.render();
+    this.saveFolds();
+  }
+
+  /** The sidebar's folds as last left on this PC (the engine's folds.json): sections, stores, Settled, Site requests. */
+  private async loadFolds(): Promise<void> {
+    const r = await this.ctx.call("GET", "v1/persons/folds").catch(() => null);
+    if (!r || r.status !== 200) return;
+    const f = foldsOf(r.body);
+    this.ui.closed = new Set(f.closed);
+    this.ui.stores = new Set(f.stores);
+    this.ui.settledOpen = new Set(f.settledOpen);
+  }
+
+  private saveFolds(): void {
+    const body = { closed: [...this.ui.closed], stores: [...this.ui.stores], settledOpen: [...this.ui.settledOpen] };
+    void this.ctx.call("POST", "v1/persons/folds", undefined, body).catch(() => {});
   }
 
   private setToast(text: string, action = "", run?: () => void): void {
@@ -1958,4 +1975,11 @@ export const personsUi: TabUi = {
 /** A request's turn with the AI is on its way: a note queued, or an answer being written. */
 function srAiBusy(ai: readonly AiJson[]): boolean {
   return ai.some((a) => a.streaming || a.queued);
+}
+
+/** The engine's folds reply (GET v1/persons/folds), anything odd left out. */
+export function foldsOf(v: unknown): { closed: string[]; stores: string[]; settledOpen: string[] } {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const ids = (x: unknown): string[] => (Array.isArray(x) ? x.filter((y): y is string => typeof y === "string") : []);
+  return { closed: ids(o.closed), stores: ids(o.stores), settledOpen: ids(o.settledOpen) };
 }

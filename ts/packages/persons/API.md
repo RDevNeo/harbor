@@ -32,6 +32,10 @@ admin page (Copy link).
 ## POST /v1/persons/site-requests/seen  { ref, at } → `{ ok }`   (a row opened at its `at`: "Store replied" goes, for every device)
 ## POST /v1/persons/site-requests/reload → `{ ok }`   (read SpokPay's list now)
 
+## GET /v1/persons/folds → `{ closed, stores, settledOpen }` · POST /v1/persons/folds (the same) → `{ ok, … }`
+The PC's sidebar folds (folds.ts, `<persons>/folds.json`): sections folded shut (`"sr"` = SpokPay › Site requests),
+stores unfolded, sections whose Settled fold is open. The phone keeps its own.
+
 ## A site request's pane (SpokPay's admin request page; `srpane.ts`)
 - `GET /v1/persons/site-request/{ref}` → `{ ok, pane }`: read from SpokPay now (its newest 100 messages), and what the
   store wrote counts as seen. Offline or while SpokPay fails, the last read of a request opened lately (12 kept) with

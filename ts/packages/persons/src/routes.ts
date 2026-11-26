@@ -21,6 +21,7 @@ import { initialsOf, siteRequestPageUrl } from "./srlist.ts";
 import { normalizeRef } from "./spokpay-core.ts";
 import { spError } from "./spokpay-view.ts";
 import { factRows, finishWords, type PaneView } from "./srpane.ts";
+import { normFolds, readFolds, writeFolds } from "./folds.ts";
 import type { Proposal, ProposalFields } from "./spokpay-core.ts";
 import { audioKey, waveBars, type AudioService } from "./audio.ts";
 import type { VoiceQueue } from "./voicequeue.ts";
@@ -95,6 +96,15 @@ export class PersonsRoutes {
     try {
       if (m === "GET" && rest[0] === "state" && rest.length === 1) return await this.state(c);
       if (m === "GET" && rest[0] === "unread" && rest.length === 1) return ok({ rev: this.s.rev, unread: this.unreadTotal() });
+      // the PC's sidebar folds (folds.ts): read once when the tab starts, saved on each fold
+      if (rest[0] === "folds" && rest.length === 1) {
+        if (m === "GET") return ok(json(readFolds(this.s.dir)));
+        if (m === "POST") {
+          const f = normFolds(c.body);
+          await writeFolds(this.s.dir, f);
+          return ok(json({ ok: true, ...f }));
+        }
+      }
       if (rest[0] === "chat" && rest[1]) {
         if (m === "GET" && rest.length === 2) return await this.chat(rest[1], c);
         if (m === "POST" && rest[2] === "send") return await this.send(rest[1], obj(c.body));

@@ -155,6 +155,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
 
 ### Fixed
+- Hub Persons: the PC's sidebar **folds stay as left**: SpokPay › Site requests, the sections, the stores and the
+  Settled folds were kept in memory only, so every start had them back to their defaults (Site requests had to be
+  opened or folded again each time). They're kept in `persons/folds.json` (`GET`/`POST v1/persons/folds`, written
+  asynchronously) and read before the sidebar first draws. Android already kept all of them, Site requests included
+  (SharedPreferences "persons"), and is unchanged.
 - Hub Persons: a site request's **brief card** was one line short per wrapped field (the fact rows' heights were
   worked out before their texts had a width), so its last field ("Expected outcome") drew over the timeline's first
   events, outside the card. Every brief field now wraps inside the card at its own width (half fields top-aligned).
