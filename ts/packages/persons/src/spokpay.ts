@@ -572,6 +572,8 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
       p.state = next;
       saveBox(b);
     }
+    // opened: that store is this person's from now on (an Edit of the store sticks for their next requests)
+    if (next.kind === "opened" && p?.personId && ID.test(p.personId) && SLUG.test(store.slug) && loadLinks().people[p.personId] !== store.slug) setLink("people", p.personId, store.slug);
     return p;
   }
 

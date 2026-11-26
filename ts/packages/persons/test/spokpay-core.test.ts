@@ -212,6 +212,21 @@ describe('spokpay.ts', () => {
     expect(fs.statSync(path.join(dir, 'spokpay-proposals.json')).mode & 0o777).toBe(0o600)
   })
 
+  it('an opened proposal remembers its store for the person; a failed one does not', async () => {
+    const sp = make(fakeSpokpay(['site-requests:read', 'site-requests:open']))
+    await sp.setKey(KEY)
+    sp.setLink('people', 'p_ufloop', 'larpbux')
+    const p = sp.propose({ personId: 'p_ufloop', store: { slug: 'larpbux', name: 'larpbux' }, fields: { subject: 'a', details: 'b' } })
+    sp.saveProposal(p.id, { store: { slug: 'lulu-store', name: 'L' } }) // the user's Edit
+    expect((await sp.openProposal(p.id))?.state).toMatchObject({ kind: 'opened' })
+    expect(sp.links().people['p_ufloop']).toBe('lulu-store')
+    const sp2 = make(fakeSpokpay(['site-requests:read']))
+    await sp2.setKey(KEY)
+    const q = sp2.propose({ personId: 'p_other', store: { slug: 'x-store', name: 'X' }, fields: { subject: 'a', details: 'b' } })
+    expect((await sp2.openProposal(q.id))?.state).toMatchObject({ kind: 'failed' })
+    expect(sp2.links().people['p_other']).toBeUndefined()
+  })
+
   it('a failed Open keeps the proposal for Retry; Discard hides it', async () => {
     const sp = make(fakeSpokpay(['site-requests:read']))
     await sp.setKey(KEY)

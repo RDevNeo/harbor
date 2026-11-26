@@ -161,6 +161,19 @@ export function resolveStore(p: Person, data: Pick<AppData, "stores">, links: Pi
   return { slug: null, name: "", source: null, choices };
 }
 
+/**
+ * The store a drafted proposal goes to: the slug the agent picked when it is one of the known stores (the CRM's and the
+ * remembered one), else the remembered/resolved `fallback`, and only without one the agent's own guess.
+ */
+export function pickStore(guess: string, known: { slug: string; name: string }[], fallback: { slug: string; name: string } | null): { slug: string; name: string } | null {
+  return known.find((x) => x.slug === guess) ?? fallback ?? (isSlug(guess) ? { slug: guess, name: guess } : null);
+}
+
+/** The stores the agent is told about: the remembered/resolved one first, then the CRM's. */
+export function knownStores(stores: { slug: string; name: string }[], fallback: { slug: string; name: string } | null): { slug: string; name: string }[] {
+  return fallback && !stores.some((x) => x.slug === fallback.slug) ? [fallback, ...stores] : stores;
+}
+
 // ---------- what the SpokPay agent proposes (Headquarters' open-site-request skill) ----------
 
 export interface Draft {

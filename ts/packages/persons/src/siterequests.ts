@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { personLabel } from "./model/data.ts";
 import type { AppData, Message, Person } from "./model/types.ts";
 import type { ImageBytes, Proposal, ProposalFields } from "./spokpay-core.ts";
-import { chatImages, discordUsernames, draftPrompt, isSlug, localDraft, offersSiteRequests, parseDraft, pickSpokpayProject, resolveStore, spError } from "./spokpay-view.ts";
+import { chatImages, discordUsernames, draftPrompt, knownStores, localDraft, offersSiteRequests, parseDraft, pickSpokpayProject, pickStore, resolveStore, spError } from "./spokpay-view.ts";
 import type { Spokpay } from "./spokpay.ts";
 
 type HubCall = (method: string, path: string, query?: Record<string, string>, body?: unknown) => Promise<{ status: number; body: unknown }>;
@@ -79,7 +79,8 @@ export class SiteRequests {
       this.touch();
     };
     void (async () => {
-      const { fallback, stores } = await this.storeOf(p, o.data);
+      const { fallback, stores: crm } = await this.storeOf(p, o.data);
+      const stores = knownStores(crm, fallback);
       const propose = (fields: ProposalFields, why: string, from: { name: string; chat?: string | null }, store: { slug: string; name: string } | null): void => {
         this.sp.propose({ personId: p.id, store, fields, why, from, images, source });
         this.busy.delete(m.id);
@@ -110,7 +111,7 @@ export class SiteRequests {
       if (!this.busy.has(m.id)) return; // dismissed meanwhile
       const d = parseDraft(reply);
       if (!d) throw new Error("The agent answered without a proposal.");
-      const store = stores.find((x) => x.slug === d.store) ?? (isSlug(d.store) ? { slug: d.store, name: d.store } : fallback);
+      const store = pickStore(d.store, stores, fallback);
       propose(d.fields, d.why, { name: "SpokPay agent", chat: item.chat }, store);
     })().catch((e) => fail(new Error(spError(e).message || String(e))));
   }

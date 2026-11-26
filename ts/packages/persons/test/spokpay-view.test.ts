@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Person, Store } from "../src/model/types.ts";
 import { type OwnerStore, SpokpayError } from "../src/spokpay-core.ts";
-import { discordUsernames, localDraft, moveWords, parseDraft, parseReplyDraft, partLabel, pickSpokpayProject, resolveStore, spError, SPOKPAY_CHECKOUT, STATUS, STATUS_MOVES } from "../src/spokpay-view.ts";
+import { discordUsernames, knownStores, localDraft, moveWords, parseDraft, parseReplyDraft, partLabel, pickSpokpayProject, pickStore, resolveStore, spError, SPOKPAY_CHECKOUT, STATUS, STATUS_MOVES } from "../src/spokpay-view.ts";
 
 const person = (p: Partial<Person> = {}): Person => ({ id: 'p1', name: 'Lua', discordId: '1', discordUsername: 'Horizon.A', storeIds: [], listIds: ['spokpay'], createdAt: '', updatedAt: '', ...p })
 const stores: Store[] = [{ id: 's1', name: 'Shark Store', ownerId: 'p1' }, { id: 's2', name: 'Other' }]
@@ -91,5 +91,27 @@ describe('errors', () => {
     expect(spError(new Error('[NOT_AUTHORIZED] This SpokPay API key lacks site-requests:open'))).toEqual({ code: 'NOT_AUTHORIZED', message: 'This SpokPay API key lacks site-requests:open' })
     expect(spError(new SpokpayError(403, 'NOT_AUTHORIZED', 'lacks x'))).toEqual({ code: 'NOT_AUTHORIZED', message: 'lacks x' })
     expect(spError(new Error('PC offline'))).toEqual({ code: '', message: 'PC offline' })
+  })
+})
+
+describe('the store a drafted site request goes to', () => {
+  const larp = { slug: 'larpstore', name: 'Larp Store' }
+  const crmList = [{ slug: 'a', name: 'A' }, { slug: 'b', name: 'B' }]
+  it('a store the agent picked from the known list wins', () => {
+    expect(pickStore('b', knownStores(crmList, larp), larp)).toEqual({ slug: 'b', name: 'B' })
+    expect(pickStore('larpstore', knownStores([], larp), larp)).toEqual(larp)
+  })
+  it("a guessed slug never beats the remembered store (ufloop: 'larpbux' vs larpstore)", () => {
+    expect(pickStore('larpbux', knownStores([], larp), larp)).toEqual(larp)
+    expect(pickStore('', knownStores(crmList, larp), larp)).toEqual(larp)
+  })
+  it('without a known store, the guess; else none', () => {
+    expect(pickStore('larpbux', [], null)).toEqual({ slug: 'larpbux', name: 'larpbux' })
+    expect(pickStore('Not a slug!', [], null)).toBeNull()
+  })
+  it('the agent is told the remembered store, once', () => {
+    expect(knownStores(crmList, larp)).toEqual([larp, ...crmList])
+    expect(knownStores([larp], larp)).toEqual([larp])
+    expect(knownStores(crmList, null)).toEqual(crmList)
   })
 })
