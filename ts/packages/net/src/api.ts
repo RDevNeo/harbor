@@ -142,6 +142,9 @@ export interface ApiDeps {
   env?: Record<string, string | undefined>;
 }
 
+/** The longest `GET /phone/wait` holds (seconds): below the 30 s idle timeout of a request's socket. */
+export const PHONE_WAIT_S = 20;
+
 /** Calls refused lately (unix s, why), newest last: Settings › Phones shows a few. */
 export const REFUSED: [number, string][] = [];
 
@@ -478,7 +481,8 @@ export class Api {
     if (segs[0] === "phone" && segs.length === 2 && this.d.phoneOta && (req.method === "GET" || req.method === "HEAD")) {
       const ota = this.d.phoneOta;
       if (segs[1] === "wait") {
-        const m = await ota.wait(Number(query(req, "have") ?? 0) || 0, Math.min(240, Math.max(0, Number(query(req, "wait") ?? 0) || 0)) * 1000);
+        // At most 20 s: the connection's idle timeout (30 s, above) would end a longer one; the phone asks again at once.
+        const m = await ota.wait(Number(query(req, "have") ?? 0) || 0, Math.min(PHONE_WAIT_S, Math.max(0, Number(query(req, "wait") ?? 0) || 0)) * 1000);
         return sendJson(w, 200, m === null ? { changed: false } : { changed: true, offer: m });
       }
       return this.serveFileAt(w, ota.file(segs[1] ?? ""), req.method === "HEAD");

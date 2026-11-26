@@ -336,7 +336,9 @@ public class Update extends BroadcastReceiver {
         if (OFF) return null;
         SharedPreferences p = Ui.prefs(c);
         long have = p.getLong("ota_have", 0);
-        Net.Http h = pcGet(c, PHONE + "wait?have=" + have + "&wait=" + holdS, holdS * 1000 + 30_000);
+        // The PC holds it 20 s at most (a request's connection idles out at 30 s there): asked again at once.
+        int hold = Math.min(holdS, 20);
+        Net.Http h = pcGet(c, PHONE + "wait?have=" + have + "&wait=" + hold, hold * 1000 + 30_000);
         try {
             int code = h.code();
             if (code != 200) throw new IOException("update news: HTTP " + code);
