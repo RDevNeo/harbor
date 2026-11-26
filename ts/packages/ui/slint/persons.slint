@@ -112,7 +112,7 @@ export struct PChip { id: string, label: string, on: bool, color: color }
 export struct PSrImg { image: image, w: length, h: length }
 export struct PSrFact { a-label: string, a-text: string, b-label: string, b-text: string, two: bool }
 export struct PSrItem {
-    kind: string, // event | msg
+    kind: string, // event | msg | ai (a turn with the Person AI: its note or answer, drawn as person chats draw it, in `ai`)
     id: string,
     mine: bool, // SpokPay's (right, dark bubble)
     head: string, // "Truth · 7 h ago" on a run's first message, else ""
@@ -122,6 +122,7 @@ export struct PSrItem {
     joins-next: bool,
     images: [PSrImg],
     files: [string],
+    ai: PMsg,
 }
 
 export global PersonsBus {
@@ -2154,6 +2155,11 @@ component SrBrief inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     background: Theme.bg100;
+    // Every wrapped text gets its width here: inside the repeated fact rows (two half ones side by side) a layout's
+    // height was worked out before its texts knew their width, one line short per wrapped one, and the card ended
+    // above its last fact, which then drew over the timeline below it.
+    property <length> inner-w: max(0px, root.width - 32px);
+    property <length> half-w: max(0px, (root.inner-w - 16px) / 2);
     height: col.preferred-height;
     col := VerticalLayout {
         padding: 16px;
@@ -2167,6 +2173,7 @@ component SrBrief inherits Rectangle {
                 color: Theme.fg;
             }
             Text {
+                width: root.inner-w;
                 text: PersonsBus.sr-brief-sub;
                 font-size: 13px;
                 color: Theme.subtle;
@@ -2174,6 +2181,7 @@ component SrBrief inherits Rectangle {
             }
         }
         if PersonsBus.sr-summary != "": Text {
+            width: root.inner-w;
             text: PersonsBus.sr-summary;
             font-size: 14px;
             color: Theme.fg;
@@ -2186,7 +2194,8 @@ component SrBrief inherits Rectangle {
         for f in PersonsBus.sr-facts: HorizontalLayout {
             spacing: 16px;
             VerticalLayout {
-                horizontal-stretch: 1;
+                width: f.two ? root.half-w : root.inner-w;
+                alignment: start;
                 spacing: 4px;
                 Text {
                     text: f.a-label;
@@ -2194,6 +2203,7 @@ component SrBrief inherits Rectangle {
                     color: Theme.subtle;
                 }
                 Text {
+                    width: f.two ? root.half-w : root.inner-w;
                     text: f.a-text;
                     font-size: 14px;
                     color: Theme.fg;
@@ -2201,7 +2211,8 @@ component SrBrief inherits Rectangle {
                 }
             }
             if f.two: VerticalLayout {
-                horizontal-stretch: 1;
+                width: root.half-w;
+                alignment: start;
                 spacing: 4px;
                 Text {
                     text: f.b-label;
@@ -2209,6 +2220,7 @@ component SrBrief inherits Rectangle {
                     color: Theme.subtle;
                 }
                 Text {
+                    width: root.half-w;
                     text: f.b-text;
                     font-size: 14px;
                     color: Theme.fg;
@@ -2229,17 +2241,29 @@ component SrBrief inherits Rectangle {
 
 // RequestLine: an event as a centered muted line; a message as the author and time over its bubble, with the avatar
 // beside the run's last one (the store's on the left, SpokPay's on the right). A right-click on a bubble opens the
-// person chats' message menu (ui.ts srMsgMenu).
+// person chats' message menu (ui.ts srMsgMenu). A turn with the Person AI (kind "ai": the note sent from this pane, or
+// the AI's answer) is the person chats' own AI card (Bubble: fold, copy, reply drafts with "Use as reply", its menu).
 component SrLine {
     in property <PSrItem> it;
     in property <length> max-w;
+    property <bool> is-ai: root.it.kind == "ai";
     property <length> pad-x: 12px;
     property <length> text-w: min(root.max-w * 0.85 - 2 * pad-x, body.preferred-width);
     property <length> img-w: root.it.images.length == 0 ? 0px : gal.preferred-width;
     property <length> bubble-w: min(root.max-w * 0.85, max(root.it.text == "" ? 0px : text-w + 2 * pad-x, img-w + 8px));
     property <length> r-in: 4px; // a joined corner (rounded-sm)
     property <length> r-out: 8px;
-    height: root.it.kind == "event" ? 28px : lay.preferred-height;
+    height: root.it.kind == "event" ? 28px : root.is-ai ? card.preferred-height + 6px : lay.preferred-height;
+    card := Bubble {
+        y: 6px;
+        width: root.width;
+        visible: root.is-ai;
+        m: root.it.ai;
+        max-w: root.max-w;
+        menu(x, y) => {
+            PersonsBus.msg-menu(root.it.ai.id, x, y);
+        }
+    }
     if root.it.kind == "event": Text {
         width: root.width;
         height: root.height;

@@ -163,6 +163,11 @@ export class SiteRequestBoard {
     return (r && this.threads[r]?.t.messages.find((m) => m.messageId === id)) || null;
   }
 
+  /** A request's store slug as last read (its row in the list, else its kept thread). */
+  slugOf(ref: string): string | null {
+    return this.rows?.find((x) => x.ref === ref)?.storeSlug ?? this.threads[ref]?.t.siteRequest.store.slug ?? null;
+  }
+
   /** Which person / Persons store is which SpokPay store (spokpay-links.json). */
   links(): SpLinks {
     return this.sp.links();

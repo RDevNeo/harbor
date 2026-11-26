@@ -44,7 +44,14 @@ admin page (Copy link).
   to AI: quoted as person chats quote theirs, `text` the question, empty = "What should I reply to this?"): the composer's "To: AI" note to the Person
   AI (as `chat/{id}/ai`), with the request as hidden context (ref, subject, status, store, owner, admin page, brief,
   its newest 40 messages and events): the chat of the person linked to its store (`pane.person`, that section's),
-  else the store's own "<Store> · SpokPay". Its reply drafts come as ```reply blocks.
+  else the store's own "<Store> · SpokPay". Its reply drafts come as ```reply blocks. Answers `{ ok, chat, ai }` (`ai`
+  as below, the note now in it).
+- `pane.ai` and `GET /v1/persons/site-request/{ref}/ai` → `{ ok, ai, aiChat }` (no SpokPay read; the pane asks every
+  1.5–2 s while the AI works): the request's own turns with the Person AI, as a chat's `ai` (role, text, at, streaming,
+  parts, forwarded), `queued: true` on a note still waiting behind a running turn. A note is the request's by its hidden
+  context's "Site request: SR-…" line; the chats its notes went to and the notes not yet shown are kept in
+  `<persons>/sr-ai.json`, so they show again after a restart (and when the store's person changes). The pane draws
+  each where it was sent among the request's lines.
 - A refusal: `{ error, code }` with SpokPay's status (403 a permission the key lacks, 404 gone, 429 its rate limit…).
   A permission refused is asked again (the key's probe) before the next call that needs it, at most every 15 s, and
   an open pane asks at most every minute: one added on spokpay.com/admin shows without the key typed again.

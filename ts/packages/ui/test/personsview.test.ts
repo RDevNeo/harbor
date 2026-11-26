@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
-import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -296,5 +296,37 @@ describe("a site request's pane", () => {
     expect(srImageSize(100, 80)).toEqual({ w: 100, h: 80 });
     expect(srImageSize(4000, 10)).toEqual({ w: 240, h: 24 });
     expect(srImageSize(0, 0)).toEqual({ w: 160, h: 120 });
+  });
+});
+
+describe("a site request's timeline with its AI turns", () => {
+  const T = Date.UTC(2026, 10, 26, 12);
+  const items = [
+    { kind: "event" as const, id: "e0", text: "Sent to SpokPay · 14 h ago", at: T - 50_000 },
+    { kind: "msg" as const, id: "m1", mine: false, side: "store", author: "Luma", head: "Luma · 1 h ago", text: "oi", files: [], joinsPrev: false, joinsNext: false, at: T - 30_000 },
+    { kind: "event" as const, id: "e1", text: "Work started · 36 min ago", at: T - 10_000 },
+  ];
+  const ai = [
+    { id: "c:h1", role: "user" as const, text: "what should I say?", at: new Date(T - 20_000).toISOString() },
+    { id: "c:h2", role: "assistant" as const, text: "Say hi\n\n```reply\nOi!\n```", at: new Date(T - 19_000).toISOString(), parts: [{ type: "text" as const, text: "Say hi" }, { type: "draft" as const, text: "Oi!" }] },
+    { id: "c:h3", role: "user" as const, text: "and now?", at: new Date(T - 5_000).toISOString() },
+    { id: "c:h-wait", role: "assistant" as const, text: "", at: new Date(T - 5_000).toISOString(), streaming: true },
+  ];
+
+  test("puts each note and answer where it was sent, as person chats draw them", () => {
+    const lines = srTimeline(items, ai, new Map());
+    expect(lines.map((l) => (l.kind === "sr" ? l.item.id : `${l.row.kind}:${l.row.id}`))).toEqual(["e0", "m1", "out:aic:h1", "ai:aic:h2", "e1", "out:aic:h3", "ai:aic:h-wait"]);
+    const answer = lines[3]!;
+    expect(answer.kind === "ai" && answer.row).toMatchObject({ draft: "Oi!", toAi: false, streaming: false });
+    const note = lines[2]!;
+    expect(note.kind === "ai" && note.row).toMatchObject({ mine: true, toAi: true, text: "what should I say?" });
+    // the newest answer stays open, an older one folds (the user's own toggle wins)
+    expect(answer.kind === "ai" && answer.row.folded).toBe(true);
+    const open = srTimeline(items, ai, new Map([["aic:h2", false]]))[3]!;
+    expect(open.kind === "ai" && open.row.folded).toBe(false);
+  });
+
+  test("is the request alone when no note was sent from it", () => {
+    expect(srTimeline(items, [], new Map()).map((l) => l.kind)).toEqual(["sr", "sr", "sr"]);
   });
 });

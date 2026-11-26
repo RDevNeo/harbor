@@ -80,6 +80,8 @@ export interface SrPaneJson {
   person: { id: string; section: string; name: string; initials: string; color: string; avatarPath: string | null; avatar: string | null } | null;
   /** The Person AI chat its notes go to, once there is one. */
   aiChat: string | null;
+  /** Its own turns with the Person AI (the notes sent from this pane and the answers to them), in time order. */
+  ai?: AiJson[];
   hasMore: boolean;
   writeBlocked: string | null;
   statusBlocked: string | null;
@@ -308,7 +310,7 @@ export interface MsgJson { id: string; fromMe: boolean; text: string; at: string
 export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[]; channel?: ChannelJson }
 /** An answer's pieces (the engine's persons aiparts.ts): markdown, and the messages it drafted for the person (```reply). */
 export type AiPartJson = { type: "text"; text: string } | { type: "draft"; text: string };
-export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; parts?: AiPartJson[]; forwarded?: { from: string; text: string } }
+export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; queued?: boolean; parts?: AiPartJson[]; forwarded?: { from: string; text: string } }
 export type ProposalStateJson = { kind: "waiting" } | { kind: "opening"; startedAt: number } | { kind: "opened"; at: number; ref: string } | { kind: "failed"; at: number; reason: string; fix: string } | { kind: "discarded"; at: number };
 /** A SpokPay site request proposed from a message (the engine's routes.ts proposalJson). */
 export interface ProposalJson { id: string; at: string; messageId: string | null; store: { slug: string; name: string } | null; category: string; subject: string; details: string; brief: Record<string, string>; why: string; from: string; chat: string | null; images: number; state: ProposalStateJson }
@@ -449,11 +451,52 @@ export function imageTiles(imgs: readonly { url: string; width: number | null; h
   return { tiles, w: maxW, h: rows * cellH + (rows - 1) * gap };
 }
 
+/** An empty chat row of a kind (the fields every PMsg carries). */
+export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
+
+/** A turn with the Person AI as its bubble: the user's note ("out", to the AI) or the AI's answer in parts. */
+export function aiRow(a: AiJson): MsgRow {
+  const r = blankRow("ai", `ai${a.id}`);
+  if (a.role === "user") {
+    r.kind = "out";
+    r.mine = true;
+    r.toAi = true;
+  }
+  r.text = a.text || (a.streaming ? "…" : "");
+  // Forward to AI: the forwarded message quoted over the question (empty: the default one)
+  if (a.forwarded) {
+    r.reply = `${a.forwarded.from}: ${a.forwarded.text || "…"}`;
+    r.text = a.text || "What should I reply to this?";
+  }
+  if (a.role !== "user") {
+    r.parts = a.parts ?? (r.text ? [{ type: "text", text: r.text }] : []);
+    r.preview = aiPreview(r.parts);
+    r.draft = r.parts.find((p) => p.type === "draft")?.text ?? "";
+  }
+  r.time = hhmm(a.at);
+  r.streaming = !!a.streaming;
+  return r;
+}
+
+/** A site request pane's timeline: its events and messages with its own AI turns, each where it was sent (by time; a
+ *  request's line first when they tie). The AI's answers fold as in person chats (`aiFolds`). */
+export type SrLineRow = { kind: "sr"; item: SrItemJson } | { kind: "ai"; row: MsgRow };
+export function srTimeline(items: readonly SrItemJson[], ai: readonly AiJson[], toggled: ReadonlyMap<string, boolean>): SrLineRow[] {
+  const all: { at: number; order: number; line: SrLineRow }[] = [
+    ...items.map((item, i) => ({ at: item.at, order: i, line: { kind: "sr" as const, item } })),
+    ...ai.map((a, i) => ({ at: Date.parse(a.at) || 0, order: items.length + i, line: { kind: "ai" as const, row: aiRow(a) } })),
+  ];
+  all.sort((a, b) => a.at - b.at || a.order - b.order);
+  const lines = all.map((x) => x.line);
+  aiFolds(lines.flatMap((l) => (l.kind === "ai" ? [l.row] : [])), toggled);
+  return lines;
+}
+
 /** Messages, AI bubbles and what's being sent, by time, with day separators, the unread line and email subjects. */
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
-  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
+  const blank = blankRow;
   // every message marked with its channel once the page shows more than one chat
   const marks = c.accounts.length > 1;
   let lastThread: string | null = null;
@@ -483,28 +526,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     if (c.unreadFrom === m.id) items.push({ at: m.at, row: { ...blank("unread", `u${m.id}`), text: "New" } });
     items.push({ at: m.at, row: r });
   }
-  for (const a of c.ai) {
-    const r = blank("ai", `ai${a.id}`);
-    if (a.role === "user") {
-      r.kind = "out";
-      r.mine = true;
-      r.toAi = true;
-    }
-    r.text = a.text || (a.streaming ? "…" : "");
-    // Forward to AI: the forwarded message quoted over the question (empty: the default one)
-    if (a.forwarded) {
-      r.reply = `${a.forwarded.from}: ${a.forwarded.text || "…"}`;
-      r.text = a.text || "What should I reply to this?";
-    }
-    if (a.role !== "user") {
-      r.parts = a.parts ?? (r.text ? [{ type: "text", text: r.text }] : []);
-      r.preview = aiPreview(r.parts);
-      r.draft = r.parts.find((p) => p.type === "draft")?.text ?? "";
-    }
-    r.time = hhmm(a.at);
-    r.streaming = !!a.streaming;
-    items.push({ at: a.at, row: r });
-  }
+  for (const a of c.ai) items.push({ at: a.at, row: aiRow(a) });
   for (const o of c.outgoing) {
     const r = blank("out", `o${o.key}`);
     r.mine = true;

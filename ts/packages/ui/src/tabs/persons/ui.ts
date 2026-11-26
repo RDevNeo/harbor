@@ -11,7 +11,7 @@ import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
-import { aiFolds, audioRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, srImageSize, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -1189,7 +1189,7 @@ class PersonsTab {
   // ---------- a site request's pane (SpokPay's admin request page, in Hub) ----------
 
   /** The open request: its ref, the pane as last read, and whether a read is under way or failed. */
-  private sr: { ref: string; pane: SrPaneJson | null; loading: boolean; error: string; sending: boolean; moving: boolean } | null = null;
+  private sr: { ref: string; pane: SrPaneJson | null; loading: boolean; error: string; sending: boolean; moving: boolean; aiUntil?: number } | null = null;
   /** Pictures going with the next reply (paths on this PC); the drafts are the composer's (`sr:<ref>:person|ai`). */
   private srFiles: string[] = [];
   private srTimer: ReturnType<typeof setInterval> | null = null;
@@ -1227,6 +1227,8 @@ class PersonsTab {
     if (this.sr) this.drafts.set(`${this.composerKey()}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
     if (this.srTimer) clearInterval(this.srTimer);
     this.srTimer = null;
+    if (this.srAiTimer) clearTimeout(this.srAiTimer);
+    this.srAiTimer = null;
     this.sr = null;
     this.srFiles = [];
     this.aiFiles = [];
@@ -1246,8 +1248,37 @@ class PersonsTab {
     if (r.status === 200 && r.body.pane) {
       sr.pane = r.body.pane as SrPaneJson;
       sr.error = "";
+      if (srAiBusy(sr.pane.ai ?? [])) this.srAiFollow(sr, 0);
     } else sr.error = String(r.body.error ?? `SpokPay answered ${r.status}`);
     this.render();
+  }
+
+  private srAiTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Follows the open request's turns with the AI (GET site-request/{ref}/ai, no SpokPay read) every 1.5 s while one is
+   * queued or being written, and until `until` while the newest note has no answer yet.
+   */
+  private srAiFollow(sr: NonNullable<typeof this.sr>, until: number): void {
+    sr.aiUntil = Math.max(sr.aiUntil ?? 0, until);
+    if (this.srAiTimer) return;
+    const tick = async (): Promise<void> => {
+      this.srAiTimer = null;
+      if (this.sr !== sr || !this.alive) return;
+      const r = await this.api("GET", `site-request/${encodeURIComponent(sr.ref)}/ai`).catch(() => null);
+      if (this.sr !== sr) return;
+      if (r?.status === 200 && sr.pane && Array.isArray(r.body.ai)) {
+        const ai = r.body.ai as AiJson[];
+        if (JSON.stringify(ai) !== JSON.stringify(sr.pane.ai ?? [])) {
+          sr.pane.ai = ai;
+          if (r.body.aiChat != null) sr.pane.aiChat = String(r.body.aiChat);
+          this.render();
+        }
+      }
+      const ai = sr.pane?.ai ?? [];
+      if (srAiBusy(ai) || (Date.now() < (sr.aiUntil ?? 0) && ai.at(-1)?.role !== "assistant")) this.srAiTimer = setTimeout(() => void tick(), 1500);
+    };
+    this.srAiTimer = setTimeout(() => void tick(), 1500);
   }
 
   private drawSr(): void {
@@ -1306,11 +1337,19 @@ class PersonsTab {
     b.sr_facts = p.factRows.map(([a, c]) => ({ a_label: a.label, a_text: a.text, b_label: c?.label ?? "", b_text: c?.text ?? "", two: !!c }));
     b.sr_brief_imgs = this.srImgs(p.brief.files);
     b.sr_brief_files = p.brief.files.filter((f) => !f.image).map((f) => f.name);
-    b.sr_items = p.items.map((it) =>
-      it.kind === "event"
-        ? { kind: "event", id: it.id, mine: false, head: "", text: it.text, avatar: false, joins_prev: false, joins_next: false, images: [], files: [] }
-        : { kind: "msg", id: it.id, mine: it.mine, head: it.joinsPrev ? "" : it.head, text: it.text, avatar: !it.joinsNext, joins_prev: it.joinsPrev, joins_next: it.joinsNext, images: this.srImgs(it.files), files: it.files.filter((f) => !f.image).map((f) => f.name) },
-    );
+    // the request's lines with its own turns with the Person AI, each where it was sent (person chats' AI card)
+    const lines = srTimeline(p.items, p.ai ?? [], this.aiFold);
+    const aiRows = lines.flatMap((l) => (l.kind === "ai" ? [l.row] : []));
+    this.foldedNow = new Set(aiRows.filter((r) => r.folded).map((r) => r.id));
+    this.keepParts(aiRows);
+    const none = this.msgJs(blankRow("msg", ""));
+    b.sr_items = lines.map((l) => {
+      if (l.kind === "ai") return { kind: "ai", id: l.row.id, mine: l.row.mine, head: "", text: "", avatar: false, joins_prev: false, joins_next: false, images: [], files: [], ai: this.msgJs(l.row) };
+      const it = l.item;
+      return it.kind === "event"
+        ? { kind: "event", id: it.id, mine: false, head: "", text: it.text, avatar: false, joins_prev: false, joins_next: false, images: [], files: [], ai: none }
+        : { kind: "msg", id: it.id, mine: it.mine, head: it.joinsPrev ? "" : it.head, text: it.text, avatar: !it.joinsNext, joins_prev: it.joinsPrev, joins_next: it.joinsNext, images: this.srImgs(it.files), files: it.files.filter((f) => !f.image).map((f) => f.name), ai: none };
+    });
     b.sr_more = p.hasMore;
     b.sr_finished = p.finished;
     b.sr_finished_note = p.finishedNote;
@@ -1408,10 +1447,14 @@ class PersonsTab {
       this.render();
       const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/ai`, { text, ...(paths.length ? { paths } : {}), ...(fwd ? { forward: fwd.id } : {}) }).catch(fail);
       if (r.status === 200 && r.body.chat != null) {
-        const chat = String(r.body.chat);
-        if (sr.pane) sr.pane.aiChat = chat;
+        // the note and the AI's answer show in the timeline (its AI card), followed while the AI works
+        if (sr.pane) {
+          sr.pane.aiChat = String(r.body.chat);
+          if (Array.isArray(r.body.ai)) sr.pane.ai = r.body.ai as AiJson[];
+        }
         this.drafts.delete(key);
-        this.setToast("Sent to the AI", "Open", () => this.ctx.openChat?.(chat));
+        if (this.sr === sr) this.bus.sr_rev = (Number(this.bus.sr_rev) || 0) + 1;
+        this.srAiFollow(sr, Date.now() + 180_000);
       } else {
         if (this.sr === sr && this.aiMode) {
           if (!String(this.bus.draft ?? "")) this.bus.draft = text;
@@ -1583,6 +1626,15 @@ class PersonsTab {
    */
   private srMsgMenu(id: string, x: number, y: number): void {
     const p = this.sr?.pane;
+    if (p && id.startsWith("ai")) {
+      // an AI card: the person chats' AI menu (Use as reply into the composer to the store, Copy text)
+      const a = (p.ai ?? []).find((x) => `ai${x.id}` === id);
+      if (!a) return;
+      const drafts = a.role === "user" ? [] : (a.parts ?? []).flatMap((q) => (q.type === "draft" ? [q.text] : []));
+      const entries = aiMenu({ drafts, text: a.text, canSend: !p.finished && !p.writeBlocked && a.role !== "user" });
+      this.showEntries(x, y, entries.map((e) => ({ ...e, ...(e.use !== undefined ? { run: () => this.useDraft(e.use!) } : e.action === "copy" ? { run: () => this.copy(a.text) } : {}) })));
+      return;
+    }
     const it = p?.items.find((i) => i.id === id);
     if (!p || !it || it.kind !== "msg") return;
     const entries = messageMenu({ fromMe: it.mine, hasText: !!it.text, hasFiles: it.files.length > 0, canSend: !p.finished && !p.writeBlocked, aiOn: !p.finished, siteRequests: false, siteRequest: true });
@@ -1902,3 +1954,8 @@ export const personsUi: TabUi = {
     if (on) void tab?.["refresh"]();
   },
 };
+
+/** A request's turn with the AI is on its way: a note queued, or an answer being written. */
+function srAiBusy(ai: readonly AiJson[]): boolean {
+  return ai.some((a) => a.streaming || a.queued);
+}

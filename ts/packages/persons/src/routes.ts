@@ -405,8 +405,15 @@ export class PersonsRoutes {
         await board.move(ref, str(b.to) ?? "");
       } else if (m === "POST" && act === "ai") {
         return await this.srAi(ref, b);
+      } else if (m === "GET" && act === "ai") {
+        // the request's AI turns alone (no SpokPay read): the pane asks again while the AI works
+        const r = normalizeRef(ref);
+        if (!r) return err(400, "Not a site request ref (SR-…)");
+        const v = { ref: r, storeSlug: board.slugOf(r) };
+        const chat = this.srAiChat(v);
+        return ok({ ok: true, ai: aiJson(await this.srAiItems(r, chat)), aiChat: chat });
       } else if (!(m === "GET" && act === "")) return err(404, "no such call");
-      return ok({ ok: true, pane: this.paneJson(await board.pane(ref, (u) => `/v1/persons/img/url?u=${encodeURIComponent(u)}`)) });
+      return ok({ ok: true, pane: await this.paneJson(await board.pane(ref, (u) => `/v1/persons/img/url?u=${encodeURIComponent(u)}`)) });
     } catch (e) {
       const x = spError(e);
       const status = typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : 502;
@@ -442,10 +449,16 @@ export class PersonsRoutes {
     return who ? ai.chatOf?.(who.p, who.section) ?? null : ai.chatOfKey?.(srAiKey(v)) ?? null;
   }
 
+  /** A request's turns with the Person AI (none when it isn't there or its chat can't be read now). */
+  private async srAiItems(ref: string, chat: string | null): Promise<{ id: string; role: string; text: string; at: string }[]> {
+    return (await this.extra.ai?.srItems?.(ref, chat).catch(() => [])) ?? [];
+  }
+
   /**
    * `POST site-request/{ref}/ai { text, paths?, forward? }`: the composer's "To: AI" note, to the Person AI as person chats send
    * theirs, with the request (ref, subject, status, brief, the newest messages) as hidden context: the chat of the
-   * person linked to its store, else the store's own. Answers `{ ok, chat }`.
+   * person linked to its store, else the store's own. Remembered as the request's (ai.ts sr-ai.json), so the note and
+   * the answer to it show in the pane, at the point it was sent. Answers `{ ok, chat, ai }` (`ai`: the request's turns).
    */
   private async srAi(ref: string, b: Record<string, unknown>): Promise<Reply> {
     const board = this.extra.board;
@@ -471,23 +484,29 @@ export class PersonsRoutes {
     if (who && this.s.data) {
       const { chat, choices } = this.chatConn(who.p, who.section);
       const msgs = this.timeline(choices).map((x) => x.m);
-      const chatId = await ai.ask(who.p, who.section, text, msgs, chat?.conn.kind ?? null, this.s.data, undefined, c.context);
-      return ok({ ok: true, chat: chatId });
+      const chatId = String(await ai.ask(who.p, who.section, text, msgs, chat?.conn.kind ?? null, this.s.data, undefined, c.context));
+      ai.noteSr?.(c.ref, chatId, text);
+      return ok({ ok: true, chat: chatId, ai: aiJson(await this.srAiItems(c.ref, chatId)) });
     }
     if (!ai.askAbout) return err(503, "Person AI can't take notes about a store here");
-    const chatId = await ai.askAbout(srAiKey(c), `${c.store} · SpokPay`, text, c.context);
-    return ok({ ok: true, chat: chatId });
+    const chatId = String(await ai.askAbout(srAiKey(c), `${c.store} · SpokPay`, text, c.context));
+    ai.noteSr?.(c.ref, chatId, text);
+    return ok({ ok: true, chat: chatId, ai: aiJson(await this.srAiItems(c.ref, chatId)) });
   }
 
-  private paneJson(v: PaneView): Json {
+  private async paneJson(v: PaneView): Promise<Json> {
     const icon = v.storeSlug ? this.extra.board?.view().icons[v.storeSlug] ?? null : null;
     const who = this.srPerson(v.ref, v.storeSlug);
     const pic = who ? this.picture(who.p) : null;
+    const aiChat = this.srAiChat(v);
+    // the request's notes to the AI and its answers, drawn in the timeline at the point each was sent
+    const ai = aiJson(await this.srAiItems(v.ref, aiChat));
     return json({
       ...v,
       // "To <avatar> <name>": the linked person as their chat shows them, else the owner with the store's icon
       person: who ? { id: who.p.id, section: who.section, name: personLabel(who.p), initials: initials(personLabel(who.p)), color: colorOf(who.p.id), avatarPath: pic, avatar: pic ? this.pictureRef(who.p) : null } : null,
-      aiChat: this.srAiChat(v),
+      aiChat,
+      ai,
       factRows: factRows(v.brief.facts),
       confirms: { completed: finishWords("completed", v.store), closed: finishWords("closed", v.store) },
       initials: initialsOf(v.store),
@@ -1127,6 +1146,10 @@ export interface AiPort {
   chatsOf?(p: Person): { section: SectionId; chat: string }[];
   /** Move to…: the person's AI chat of `from` becomes their chat of `to` (when `to` has none yet). */
   move?(p: Person, from: SectionId, to: SectionId): void;
+  /** A note went to `chat` from site request `ref`'s pane (its turns show in that pane; ai.ts sr-ai.json). */
+  noteSr?(ref: string, chat: string, text: string): void;
+  /** A site request's own turns with the Person AI (its notes and their answers; queued ones too), in time order. */
+  srItems?(ref: string, current: string | null): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; queued?: boolean }[]>;
 }
 
 export { validPeer };

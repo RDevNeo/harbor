@@ -6,6 +6,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
+- Hub Persons: **the AI card in a site request's pane** (PC and Android). A note sent "To: AI" from a request's composer
+  and the AI's answer show in the request's timeline, at the point the note was sent among its messages and events, as
+  the person chats' AI card: "To the AI" with a forwarded message quoted, the answer as it's written ("AI · writing…"),
+  its ```reply drafts with Copy and **Use as reply** (into the composer, to the store as SpokPay), fold, Copy and the
+  card's menu. The pane follows the answer while the AI works (`GET v1/persons/site-request/{ref}/ai`, every 1.5 s on
+  the PC, 2 s on the phone). Which turns are a request's is kept (each note's hidden context names its request; its
+  chats and queued notes in `persons/sr-ai.json`), so they show again after reopening or a restart. The "Sent to the
+  AI · Open" toast is gone (Open in Projects stays in the composer); Android's card is now PersonsAiCard, shared with
+  person chats.
 - Hub Persons: **a site request's messages have the person chats' menu** (right-click on the PC, long-press on Android;
   the same messageMenu / PersonsChat menu), with what works for a request: **Quote** (the words as "> " lines into the
   composer; SpokPay's admin API has no reply to a message, so Reply is Quote), **Forward to AI** (the AI composer with the
@@ -146,6 +155,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
 
 ### Fixed
+- Hub Persons: a site request's **brief card** was one line short per wrapped field (the fact rows' heights were
+  worked out before their texts had a width), so its last field ("Expected outcome") drew over the timeline's first
+  events, outside the card. Every brief field now wraps inside the card at its own width (half fields top-aligned).
+  Android's card had no such problem (its fields are plain wrapping text views).
 - Hub Persons: the **Persons tab shows its unread count** in the tab row (after its name, or on its icon's corner when
   only icons show), from any tab: everyone's unread messages, a chat marked unread included, the same total as the
   phone's Persons badge (`GET v1/persons/unread`, counted once per change; the window reads it every 3 s and the

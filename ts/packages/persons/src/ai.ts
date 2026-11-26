@@ -123,6 +123,85 @@ export function cardsToAi(cards: readonly Card[], running: boolean): { id: strin
   return out;
 }
 
+/**
+ * The site request a note to the AI came from: srpane.ts srAiContext puts "Site request: SR-215 · <subject>" on a line
+ * of its hidden context (the person's context comes first when the store's person is known). Null for anything else.
+ */
+export function srRefOf(raw: string): string | null {
+  const ctx = /<person-hub-context>([\s\S]*?)<\/person-hub-context>/.exec(raw)?.[1];
+  if (!ctx || !ctx.includes("SpokPay site request's pane")) return null;
+  return /^Site request: (SR-[A-Za-z0-9-]+) ·/m.exec(ctx)?.[1] ?? null;
+}
+
+export type AiTurn = { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; queued?: boolean };
+
+/**
+ * The turns of one site request in its Person AI chat (cardsToAi, but only the notes sent from that request's pane and
+ * the answers after each, up to the next note). `running`: the chat's turn is going; it is this request's while the
+ * chat's last note is one of them. Ids carry the chat's (a request's notes may sit in more than one chat).
+ */
+export function srTurns(cards: readonly Card[], ref: string, running: boolean, chat: string): AiTurn[] {
+  const out: AiTurn[] = [];
+  let reply: AiTurn | null = null;
+  let ours = false;
+  const at = (c: Card): string => new Date((c.at ?? Date.now() / 1000) * 1000).toISOString();
+  for (const c of cards) {
+    if (c.kind === "user") {
+      const raw = c.markdown ?? c.text ?? "";
+      ours = srRefOf(raw) === ref;
+      reply = null;
+      if (ours) out.push({ id: `${chat}:h${c.seq}`, role: "user", text: stripAiContext(raw), at: at(c) });
+    } else if (c.kind === "text" && ours) {
+      const text = c.markdown ?? c.text ?? "";
+      if (!reply) {
+        reply = { id: `${chat}:h${c.seq}`, role: "assistant", text, at: at(c) };
+        out.push(reply);
+      } else reply.text = [reply.text, text].filter(Boolean).join("\n\n");
+    }
+  }
+  const last = out.at(-1);
+  if (running && ours && last) {
+    if (last.role === "assistant") last.streaming = true;
+    else out.push({ id: `${chat}:h-wait`, role: "assistant", text: "", at: last.at, streaming: true });
+  }
+  return out;
+}
+
+/** A note sent from a request's pane that its chat hasn't shown yet (queued behind a running turn). */
+export interface SrPending {
+  at: number;
+  chat: string;
+  text: string;
+}
+/** sr-ai.json: each request's Person AI chats (its notes stay found when its person changes) and notes on their way. */
+export type SrNotes = Record<string, { chats: string[]; pending: SrPending[] }>;
+
+/** A pending note waits this long for its card, then it's dropped (the chat lost it, or the user cleared the queue). */
+export const PENDING_MS = 30 * 60_000;
+
+/**
+ * The request's turns from its chats plus its notes still on their way: a pending note goes once a note card with its
+ * words shows in its chat (sent at or after it), else after PENDING_MS. Returns the timeline (by time) and the pending
+ * notes still waiting.
+ */
+export function srMerge(turns: readonly AiTurn[], pending: readonly SrPending[], now: number): { items: AiTurn[]; pending: SrPending[] } {
+  const used = new Set<string>();
+  const left: SrPending[] = [];
+  for (const p of pending) {
+    const hit = turns.find((t) => t.role === "user" && !used.has(t.id) && t.id.startsWith(`${p.chat}:`) && Date.parse(t.at) >= p.at - 5_000 && t.text.trim() === p.text.trim());
+    if (hit) used.add(hit.id);
+    else if (now - p.at < PENDING_MS) left.push(p);
+  }
+  const items: AiTurn[] = [...turns];
+  for (const p of left) {
+    const at = new Date(p.at).toISOString();
+    items.push({ id: `p${p.at}`, role: "user", text: p.text, at, queued: true });
+    items.push({ id: `p${p.at}-wait`, role: "assistant", text: "", at, streaming: true });
+  }
+  items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  return { items, pending: left };
+}
+
 type HubCall = (method: string, path: string, query?: Record<string, string>, body?: unknown) => Promise<{ status: number; body: unknown }>;
 
 export class PersonAi implements AiPort {
@@ -136,9 +215,52 @@ export class PersonAi implements AiPort {
     } catch {
       this.chats = {};
     }
+    this.srFile = join(dir, "sr-ai.json");
+    try {
+      if (existsSync(this.srFile)) this.srNotes = JSON.parse(readFileSync(this.srFile, "utf8")) as SrNotes;
+    } catch {
+      this.srNotes = {};
+    }
+  }
+
+  private saveSr(): void {
+    writeAtomic(this.srFile, JSON.stringify(this.srNotes, null, 2));
+  }
+
+  /** A note went from request `ref`'s pane to `chat` (`text`: its words as the chat shows them, context left out). */
+  noteSr(ref: string, chat: string, text: string, now = Date.now()): void {
+    const e = this.srNotes[ref] ?? { chats: [], pending: [] };
+    if (!e.chats.includes(chat)) e.chats.push(chat);
+    e.pending.push({ at: now, chat, text });
+    this.srNotes[ref] = e;
+    this.saveSr();
+  }
+
+  /**
+   * Request `ref`'s turns with the Person AI, in time order: its notes and the answers to them, from every chat its notes
+   * went to (and `current`, the chat they go to now), plus its notes still queued.
+   */
+  async srItems(ref: string, current: string | null): Promise<AiTurn[]> {
+    const e = this.srNotes[ref];
+    const chats = [...new Set([...(e?.chats ?? []), ...(current ? [current] : [])])];
+    const turns: AiTurn[] = [];
+    for (const chat of chats) {
+      const r = await this.call("GET", `v1/chats/${encodeURIComponent(chat)}/items`, { since: "0" }).catch(() => null);
+      if (!r || r.status !== 200) continue;
+      const b = (r.body ?? {}) as { items?: Card[]; running?: boolean; queued?: number };
+      turns.push(...srTurns(b.items ?? [], ref, !!b.running, chat));
+    }
+    const m = srMerge(turns, e?.pending ?? [], Date.now());
+    if (e && m.pending.length !== e.pending.length) {
+      e.pending = m.pending;
+      this.saveSr();
+    }
+    return m.items;
   }
 
   private key = (p: Person, s: SectionId): string => `${p.id}:${s}`;
+  private srFile: string;
+  private srNotes: SrNotes = {};
 
   private remember(k: string, chat: string): void {
     if (this.chats[k] === chat) return;

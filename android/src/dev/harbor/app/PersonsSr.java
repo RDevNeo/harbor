@@ -197,6 +197,7 @@ final class PersonsSr {
     void close() {
         closed = true;
         Ui.main.removeCallbacks(tick);
+        Ui.main.removeCallbacks(aiTick);
     }
 
     /** Its row in the state's Site requests list (subject, store, icon until the pane is read). */
@@ -233,9 +234,80 @@ final class PersonsSr {
                 if (closed || a.isDestroyed()) return;
                 if (g != null) { pane = g; error = null; } else error = w;
                 render();
+                if (g != null && aiBusy()) follow(0);
             });
         });
     }
+
+    // ---- the request's turns with the Person AI (PersonsAiCard, as person chats draw them) ----
+
+    /** Until when the newest note is followed while it has no answer yet. */
+    private long aiUntil;
+    private boolean aiFollowing;
+
+    /** A note queued, or an answer being written. */
+    private boolean aiBusy() {
+        JSONArray ai = PersonsUi.arr(pane, "ai");
+        for (int i = 0; i < ai.length(); i++) {
+            JSONObject e = ai.optJSONObject(i);
+            if (e != null && (e.optBoolean("streaming") || e.optBoolean("queued"))) return true;
+        }
+        return false;
+    }
+
+    /** Asks for the request's AI turns (GET …/ai, no SpokPay read) every 2 s while the AI works on one of its notes. */
+    private void follow(long until) {
+        aiUntil = Math.max(aiUntil, until);
+        if (aiFollowing) return;
+        aiFollowing = true;
+        Ui.main.postDelayed(aiTick, 2000);
+    }
+
+    private final Runnable aiTick = new Runnable() {
+        @Override public void run() {
+            if (closed || a.isDestroyed()) { aiFollowing = false; return; }
+            Ui.pool.execute(() -> {
+                JSONObject got = null;
+                try { got = p.hub.call("GET", path() + "/ai", null, 30_000); } catch (Exception ignored) { }
+                JSONObject g = got;
+                Ui.main.post(() -> {
+                    if (closed || a.isDestroyed()) { aiFollowing = false; return; }
+                    JSONArray ai = g == null ? null : g.optJSONArray("ai");
+                    if (ai != null && pane != null && !ai.toString().equals(PersonsUi.arr(pane, "ai").toString())) {
+                        PersonsUi.put(pane, "ai", ai);
+                        if (g.has("aiChat")) PersonsUi.put(pane, "aiChat", g.opt("aiChat"));
+                        // still at the end: the answer stays in sight as it grows
+                        toBottom = sv.getScrollY() + sv.getHeight() >= content.getHeight() - Ui.dp(80);
+                        render();
+                    }
+                    JSONArray now = PersonsUi.arr(pane, "ai");
+                    JSONObject last = now.length() == 0 ? null : now.optJSONObject(now.length() - 1);
+                    boolean answered = last != null && "assistant".equals(PersonsUi.s(last, "role"));
+                    if (aiBusy() || (System.currentTimeMillis() < aiUntil && !answered)) Ui.main.postDelayed(aiTick, 2000);
+                    else aiFollowing = false;
+                });
+            });
+        }
+    };
+
+    private final PersonsAiCard.Host aiHost = new PersonsAiCard.Host() {
+        @Override public void useReply(String text) {
+            // into the composer to the store, as SpokPay
+            switchTo(false);
+            edit.setText(text);
+            edit.setSelection(edit.length());
+            edit.requestFocus();
+        }
+        @Override public void menu(String text, String use, boolean mine) {
+            List<Ds.Item> items = new ArrayList<>();
+            boolean canSend = pane != null && !pane.optBoolean("finished") && PersonsUi.s(pane, "writeBlocked").isEmpty();
+            if (!mine && canSend) items.add(Ds.item(Ui.I_STEER, "Use as reply", () -> useReply(use)));
+            items.add(Ds.sep());
+            if (!text.isEmpty()) items.add(Ds.item(Ui.I_COPY, "Copy text", () -> Ui.copy(a, text)));
+            Ds.menu(a, items);
+        }
+        @Override public void rerender() { render(); }
+    };
 
     // ---- drawing ----
 
@@ -268,11 +340,28 @@ final class PersonsSr {
             m.setGravity(Gravity.CENTER);
             content.addView(m, Ui.margins(Ui.fill(), 0, 6, 0, 0));
         }
+        // the request's events and messages with its own turns with the Person AI, each where it was sent (a request's
+        // line first when they tie): the person chats' AI card
+        List<Object[]> lines = new ArrayList<>();
         JSONArray items = PersonsUi.arr(pane, "items");
         for (int i = 0; i < items.length(); i++) {
             JSONObject it = items.optJSONObject(i);
-            if (it == null) continue;
-            if ("event".equals(PersonsUi.s(it, "kind"))) {
+            if (it != null) lines.add(new Object[]{it.optLong("at"), lines.size(), it, false});
+        }
+        JSONArray ai = PersonsUi.arr(pane, "ai");
+        String newestAi = "";
+        for (int i = 0; i < ai.length(); i++) {
+            JSONObject e = ai.optJSONObject(i);
+            if (e == null) continue;
+            if (!"user".equals(PersonsUi.s(e, "role"))) newestAi = PersonsUi.s(e, "id");
+            lines.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), lines.size(), e, true});
+        }
+        java.util.Collections.sort(lines, (x, y) -> x[0].equals(y[0]) ? Integer.compare((Integer) x[1], (Integer) y[1]) : Long.compare((Long) x[0], (Long) y[0]));
+        int maxW = (int) (a.getResources().getDisplayMetrics().widthPixels * 0.78f);
+        for (Object[] l : lines) {
+            JSONObject it = (JSONObject) l[2];
+            if ((Boolean) l[3]) content.addView(PersonsAiCard.view(a, it, newestAi, maxW, aiHost), Ui.fill());
+            else if ("event".equals(PersonsUi.s(it, "kind"))) {
                 TextView e = Ui.text(a, PersonsUi.s(it, "text"), 12, Ui.G700);
                 e.setGravity(Gravity.CENTER);
                 content.addView(e, Ui.margins(Ui.fill(), 0, 8, 0, 4));
@@ -697,14 +786,27 @@ final class PersonsSr {
         if (fwd != null) PersonsUi.put(b, "forward", PersonsUi.s(fwd, "id"));
         Ui.pool.execute(() -> {
             String why = null;
+            JSONObject got = null;
             try {
                 JSONObject r = p.hub.call("POST", path() + "/ai", b, 60_000);
                 if (!r.optBoolean("ok", true) || r.has("error")) why = r.optString("error", "not sent");
+                else got = r;
             } catch (Exception e) { why = Hub.why(e); }
             String w = why;
+            JSONObject g = got;
             Ui.main.post(() -> {
                 if (a.isDestroyed()) return;
-                if (w == null) { Ui.toast(a, "Sent to the AI: its chat is in Projects on the PC"); return; }
+                if (w == null) {
+                    // the note shows in the timeline as its AI card, and the answer under it while the AI writes
+                    if (closed || pane == null) return;
+                    JSONArray ai = g == null ? null : g.optJSONArray("ai");
+                    if (ai != null) PersonsUi.put(pane, "ai", ai);
+                    if (g != null && g.has("chat")) PersonsUi.put(pane, "aiChat", g.opt("chat"));
+                    toBottom = true;
+                    render();
+                    follow(System.currentTimeMillis() + 180_000);
+                    return;
+                }
                 Ui.toast(a, "AI: " + w);
                 if (!closed && toAi && edit.getText().length() == 0) edit.setText(text);
                 if (!closed && toAi && forwarded == null && fwd != null) { forwarded = fwd; composer(); }
