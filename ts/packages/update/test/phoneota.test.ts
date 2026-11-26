@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hubPinnedRuntime } from "../src/followmain.ts";
@@ -105,4 +105,30 @@ describe("phoneota", () => {
     expect(built).toBe(2);
     expect(calls.some((c) => c.includes("worktree"))).toBe(true);
   });
+
+  test("a build the Hub before this one started is waited for and taken, not made again", async () => {
+    const lib = tmp();
+    const home = tmp();
+    const keyFile = join(tmp(), "k");
+    loadCodeKey(keyFile, true);
+    const tip = `e${"4".repeat(39)}`;
+    mkdirSync(join(home, "phone", "out"), { recursive: true });
+    writeFileSync(join(home, "phone", "building.json"), JSON.stringify({ pid: 999999, tip }));
+    writeFileSync(join(home, "phone", "out", "exit"), "0\n");
+    writeFileSync(join(home, "phone", "out", "hub-phone-code.zip"), "zip");
+    const run: Run = async (cmd) => {
+      const a = cmd.slice(3);
+      if (a[0] === "log") return { code: 0, out: "1795000200" };
+      if (a[0] === "show" && a[1]?.endsWith("package.json")) return { code: 0, out: '{"version":"0.194.0"}' };
+      if (a[0] === "show") return { code: 0, out: "version=6\n" };
+      return { code: 0, out: "" };
+    };
+    let built = 0;
+    let asked = 0;
+    const pb = new PhoneBuilds({ installDir: lib, home, run, log: () => {}, keyFile, keystore: null, apksigner: null, alive: () => ++asked < 2, build: async () => (built++, true) });
+    pb.seen("src", tip);
+    await pb.idle();
+    expect(built).toBe(0);
+    expect(served(lib)?.phone.code).toBe(1795000200);
+  }, 15_000);
 });

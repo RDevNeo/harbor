@@ -13,12 +13,14 @@
 // served, and goes in live (Swap). Version numbers: the commit's time in seconds (it only grows along `hub`), the
 // same for the APK's versionCode and its built-in code, so they compare as one; the name a person reads is the
 // desktop's (`0.194.0+abc1234`). The builds run on boat.dev (scripts/boat/android), never on the PC.
+import { spawn } from "node:child_process";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as edSign } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { blake2b, blake2bFile } from "./minisign.ts";
-import { ensureDir, isFile, read, readJson, remove, writeAtomic } from "./files.ts";
+import { paths } from "@harbor/os";
+import { alive, ensureDir, isFile, read, readJson, remove, writeAtomic } from "./files.ts";
 
 export const PHONE_DIR = "phone";
 export const MANIFEST = "hub-app.json";
@@ -49,9 +51,9 @@ export interface CodeKey {
   sk: ReturnType<typeof createPrivateKey>;
 }
 
-/** Hub's code key: in HUB_CODE_KEY's file, else ~/.local/share/hub-android/hub-code.key (made once, 0600). */
+/** Hub's code key: in HUB_CODE_KEY's file, else hub-android/hub-code.key in the data home (made once, 0600). */
 export function codeKeyFile(env: Record<string, string | undefined> = process.env): string {
-  return env.HUB_CODE_KEY || join(homedir(), ".local", "share", "hub-android", "hub-code.key");
+  return env.HUB_CODE_KEY || join(paths.dataHome(env), "hub-android", "hub-code.key");
 }
 
 export function publicLine(id: Uint8Array, raw: Uint8Array): string {
@@ -192,6 +194,8 @@ export interface PhoneBuildDeps {
   keyFile?: string;
   /** The phone build (scripts/boat/android): replaced in tests. */
   build?: (worktree: string, out: string, log: string) => Promise<boolean>;
+  /** Whether a process runs (files.ts `alive`); tests replace it. */
+  alive?: (pid: number) => boolean;
   changed?: () => void;
 }
 
@@ -216,7 +220,7 @@ export function findApksigner(env: Record<string, string | undefined> = process.
 
 /** Hub's APK keystore, as android/build.sh's variables name it (ANDROID_KEYSTORE…), else Hub's default place. */
 export function findKeystore(env: Record<string, string | undefined> = process.env): { file: string; pass: string; alias: string } | null {
-  const file = env.ANDROID_KEYSTORE || join(homedir(), ".local", "share", "hub-android", "hub-android.jks");
+  const file = env.ANDROID_KEYSTORE || join(paths.dataHome(env), "hub-android", "hub-android.jks");
   if (!isFile(file)) return null;
   const passFile = file.replace(/\.jks$/, ".pass");
   return { file, pass: env.ANDROID_KEYSTORE_PASS ? "env:ANDROID_KEYSTORE_PASS" : `file:${passFile}`, alias: env.ANDROID_KEY_ALIAS || "hub" };
@@ -277,6 +281,26 @@ export class PhoneBuilds {
     return r.out;
   }
 
+  /**
+   * scripts/boat/android in its own process group, its exit code written to `out/exit` and its pid to
+   * `building.json`, so a Hub that restarts meanwhile (into a build of `hub`) leaves it running and the next one
+   * takes its result.
+   */
+  private async boat(wt: string, out: string, log: string, busyFile: string, tip: string): Promise<boolean> {
+    // detached: a session of its own, so the Hub's exit doesn't take it along.
+    const p = spawn("bash", ["-c", 'nice -n 19 bash scripts/boat/android --out "$1" --quiet >>"$2" 2>&1; echo $? >"$1/exit"', "phone-build", out, log], { cwd: wt, stdio: "ignore", detached: true });
+    p.unref();
+    if (p.pid !== undefined) writeAtomic(busyFile, JSON.stringify({ pid: p.pid, tip }));
+    const timer = setTimeout(() => p.kill("SIGTERM"), 45 * 60_000);
+    await new Promise<void>((r) => {
+      p.on("exit", () => r());
+      p.on("error", () => r());
+    });
+    clearTimeout(timer);
+    remove(busyFile);
+    return read(join(out, "exit")).trim() === "0";
+  }
+
   async look(src: string, tip: string): Promise<void> {
     const mem = this.memory();
     const now = served(this.d.installDir);
@@ -306,28 +330,42 @@ export class PhoneBuilds {
     const wt = join(this.dir, "src");
     const out = join(this.dir, "out");
     const log = join(this.dir, "build.log");
-    ensureDir(this.dir);
-    writeAtomic(log, `phone: building ${release} (code ${code}, shell ${shell})\n`);
-    this.d.log(`phone: building ${release} on boat (code ${code}, shell ${shell})`);
-    if (!isFile(join(wt, ".git"))) {
-      remove(wt);
-      await this.git(src, ["worktree", "prune"]).catch(() => "");
-      await this.git(src, ["worktree", "add", "--force", "--detach", wt, tip]);
-    } else {
-      await this.git(wt, ["checkout", "--quiet", "--force", "--detach", tip]);
-      await this.git(wt, ["clean", "-fdq"]);
-    }
-    // android/build.sh numbers the code and the APK from this (the sandbox has no .git to ask).
-    mkdirSync(join(wt, "android"), { recursive: true });
-    writeFileSync(join(wt, "android", "hub-code.env"), `HUB_CODE=${code}\nHUB_CODE_NAME=${release}\n`);
-    remove(out);
-    mkdirSync(out, { recursive: true });
-    const ok = this.d.build ? await this.d.build(wt, out, log) : (await this.d.run(["bash", "scripts/boat/android", "--out", out, "--quiet"], { cwd: wt, timeoutMs: 45 * 60_000, log, nice: true })).code === 0;
     const zip = join(out, "hub-phone-code.zip");
-    if (!ok || !isFile(zip)) {
-      this.remember({ looked: tip, failed: tip, why: `the boat build failed (${log})` });
-      this.d.log(`phone: ${release} didn't build (${log})`);
-      return;
+    ensureDir(this.dir);
+    // A build started by the Hub that ran before this one (a restart into a new build ends a process, not its
+    // boat build): waited for, and its result taken when it built this tip.
+    const busyFile = join(this.dir, "building.json");
+    const busy = readJson<{ pid: number; tip: string }>(busyFile);
+    const isAlive = this.d.alive ?? alive;
+    let adopted = false;
+    if (busy !== null) {
+      while (isAlive(busy.pid)) await new Promise((r) => setTimeout(r, 5_000));
+      adopted = busy.tip === tip && read(join(out, "exit")).trim() === "0" && isFile(zip);
+      remove(busyFile);
+      if (adopted) this.d.log(`phone: taking the build of ${release} the Hub before this one started`);
+    }
+    if (!adopted) {
+      writeAtomic(log, `phone: building ${release} (code ${code}, shell ${shell})\n`);
+      this.d.log(`phone: building ${release} on boat (code ${code}, shell ${shell})`);
+      if (!isFile(join(wt, ".git"))) {
+        remove(wt);
+        await this.git(src, ["worktree", "prune"]).catch(() => "");
+        await this.git(src, ["worktree", "add", "--force", "--detach", wt, tip]);
+      } else {
+        await this.git(wt, ["checkout", "--quiet", "--force", "--detach", tip]);
+        await this.git(wt, ["clean", "-fdq"]);
+      }
+      // android/build.sh numbers the code and the APK from this (the sandbox has no .git to ask).
+      mkdirSync(join(wt, "android"), { recursive: true });
+      writeFileSync(join(wt, "android", "hub-code.env"), `HUB_CODE=${code}\nHUB_CODE_NAME=${release}\n`);
+      remove(out);
+      mkdirSync(out, { recursive: true });
+      const ok = this.d.build ? await this.d.build(wt, out, log) : await this.boat(wt, out, log, busyFile, tip);
+      if (!ok || !isFile(zip)) {
+        this.remember({ looked: tip, failed: tip, why: `the boat build failed (${log})` });
+        this.d.log(`phone: ${release} didn't build (${log})`);
+        return;
+      }
     }
     const files: Partial<Record<typeof CODE_ZIP | typeof APK, string>> = { [CODE_ZIP]: zip };
     const m: PhoneManifest = { release, commit: tip, at: Math.floor(Date.now() / 1000), phone: { code, release, minShell: shell } };
