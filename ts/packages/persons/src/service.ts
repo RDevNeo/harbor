@@ -5,7 +5,8 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allPeers, chatsFor, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, validPeer, type ChatRef } from "./model/accounts.ts";
+import { allPeers, chatsFor, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
+import { personalShares, resolveContact, type ContactKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
@@ -109,6 +110,12 @@ export class PersonsService {
   async start(): Promise<void> {
     this.data = this.file.load();
     this.metas = loadConnections(this.dir);
+    // Personal talks through the Stores Discord and WhatsApp (the user's own logins) and its own Instagram
+    const shared = personalShares(this.metas, `personal-instagram-${randomBytes(3).toString("hex")}`);
+    if (shared !== this.metas) {
+      this.metas = shared;
+      if (!this.o.offline) saveConnections(this.dir, this.metas);
+    }
     this.data = migrateAllSeen(this.data, this.metas);
     for (const m of this.metas) this.slices.set(m.id, emptySlice());
     this.file.watch(() => this.data, (d) => {
@@ -132,7 +139,7 @@ export class PersonsService {
 
   /** A connection's conversations from its cache file, without starting it (offline: the screenshot rig). */
   private cachedConvos(m: ConnMeta): Record<string, Conversation> {
-    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : join(`whatsapp-${m.id}`, "chats.json");
+    const name = m.kind === "discord" ? (m.id === "stores" ? "discord-cache.json" : m.id === "spokpay" ? "discord-cache-spokpay.json" : `discord-cache-${m.id}.json`) : m.kind === "gmail" ? `gmail-cache-${m.id}.json` : m.kind === "instagram" ? `instagram-cache-${m.id}.json` : join(`whatsapp-${m.id}`, "chats.json");
     try {
       const raw = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as { conversations?: Record<string, Conversation>; chats?: Record<string, Message[]> };
       const out: Record<string, Conversation> = {};
@@ -391,7 +398,7 @@ export class PersonsService {
   private retrack(): void {
     if (!this.data || this.o.offline) return;
     const keyFor = (kind: ChannelKind): string[] => [...new Set((this.data?.people ?? []).flatMap((p) => allPeers(p, kind)))].sort();
-    const key = JSON.stringify([keyFor("discord"), keyFor("gmail"), keyFor("whatsapp"), this.metas.map((m) => `${m.id}:${this.slices.get(m.id)?.state.status}`)]);
+    const key = JSON.stringify([keyFor("discord"), keyFor("gmail"), keyFor("whatsapp"), keyFor("instagram"), this.metas.map((m) => `${m.id}:${this.slices.get(m.id)?.state.status}`)]);
     if (key === this.trackedKey) return;
     this.trackedKey = key;
     for (const m of this.metas) {
@@ -438,6 +445,61 @@ export class PersonsService {
     return m;
   }
 
+  /** Instagram: the session pasted from a browser's cookies (sessionid=…; ds_user_id=…), checked before it's kept. */
+  async setSession(id: string, cookie: string): Promise<ConnState> {
+    const c = this.conns.get(id);
+    if (!c?.setSession) throw new Error("That connection takes no session");
+    const st = await c.setSession(cookie);
+    this.patch(id, (s) => ({ ...s, state: st }));
+    this.trackedKey = "";
+    this.retrack();
+    return st;
+  }
+
+  /**
+   * Personal › Add contact: `handle` (a WhatsApp number, a Discord username, an Instagram username) resolved to who they
+   * are on that platform through a connection serving Personal, then saved as a person in Personal (someone already in
+   * Persons with that id just joins Personal). Throws with the reason when it can't be resolved: nothing is saved then.
+   */
+  async addContact(kind: ContactKind, handle: string, name = ""): Promise<{ person: Person; existed: boolean }> {
+    if (!this.data) throw new Error("Persons isn't loaded");
+    const views = this.views().filter((v) => v.kind === kind && serves(v, "personal"));
+    const conn = views.find((v) => v.connected) ?? views[0];
+    if (!conn) throw new Error(`No ${KIND_LABEL[kind]} connection in Personal`);
+    if (!conn.connected) throw new Error(`${KIND_LABEL[kind]} isn't connected${conn.state.error ? `: ${conn.state.error}` : ""}`);
+    const c = this.conns.get(conn.id);
+    if (!c) throw new Error("That connection is gone");
+    const r = await resolveContact(kind, handle, (q) => c.lookup(q));
+    const at = new Date().toISOString();
+    const existing = this.data.people.find((p) => allPeers(p, kind).includes(r.id));
+    if (existing) {
+      if (!existing.listIds.includes("personal")) this.updatePerson(existing.id, (x) => ({ ...x, listIds: [...x.listIds, "personal"], updatedAt: at }));
+      return { person: this.person(existing.id) ?? existing, existed: true };
+    }
+    const p: Person = { id: this.newId(), name: name.trim(), discordId: "", storeIds: [], listIds: ["personal"], createdAt: at, updatedAt: at };
+    if (kind === "discord") {
+      p.discordId = r.id;
+      p.discordUsername = r.username;
+      if (r.displayName) p.displayName = r.displayName;
+      if (r.avatar !== undefined) p.avatar = r.avatar;
+      p.profileAt = at;
+    } else if (kind === "whatsapp") {
+      p.whatsapp = r.id;
+      if (!p.name && r.displayName) p.name = r.displayName;
+    } else {
+      p.instagram = r.id;
+      p.instagramUsername = r.username;
+      if (r.displayName) p.displayName = r.displayName;
+      if (r.photo) {
+        p.photo = r.photo;
+        p.photoAt = at;
+      }
+    }
+    this.log("personal contact added", kind, p.id);
+    this.update((d) => ({ ...d, people: [...d.people, p] }));
+    return { person: p, existed: false };
+  }
+
   async removeConnection(id: string): Promise<void> {
     const c = this.conns.get(id);
     this.conns.delete(id);
@@ -449,6 +511,14 @@ export class PersonsService {
       await c.disconnect().catch(() => {});
       await c.stop().catch(() => {});
     }
+  }
+
+  /** Signs out and forgets the session; the connection stays in its section, signed out (Instagram's way). */
+  async disconnect(id: string): Promise<void> {
+    const c = this.conns.get(id);
+    if (!c) return;
+    const st = await c.disconnect();
+    this.patch(id, (s) => ({ ...s, state: st }));
   }
 
   connect(id: string): void {
@@ -474,7 +544,8 @@ export class PersonsService {
   /** A Discord connection to look people up with: the section's connected one, else any connected one. */
   discordFor(section?: SectionId | null): ConnView | undefined {
     const d = this.views().filter((c) => c.kind === "discord");
-    return d.find((c) => c.section === section && c.connected) ?? d.find((c) => c.connected) ?? d.find((c) => c.section === section) ?? d[0];
+    const mine = (c: ConnView): boolean => !!section && serves(c, section);
+    return d.find((c) => mine(c) && c.connected) ?? d.find((c) => c.connected) ?? d.find(mine) ?? d[0];
   }
 
   async lookup(connId: string, q: string): Promise<LookupResult> {
@@ -530,7 +601,7 @@ export class PersonsService {
     const m = this.metas.find((x) => x.id === connId);
     if (!p || !m) return { ok: false, error: "Not found" };
     const pid = this.peerFor(p, m, opts.peer);
-    if (!validPeer(m.kind, pid)) return { ok: false, error: m.kind === "gmail" ? "No email address" : m.kind === "whatsapp" ? "No WhatsApp number" : "No Discord id yet" };
+    if (!validPeer(m.kind, pid)) return { ok: false, error: m.kind === "gmail" ? "No email address" : m.kind === "whatsapp" ? "No WhatsApp number" : m.kind === "instagram" ? "No Instagram account" : "No Discord id yet" };
     const key = `o${Date.now().toString(36)}${randomBytes(2).toString("hex")}`;
     const item: Outgoing = { key, text, status: "sending", at: new Date().toISOString() };
     if (opts.files?.length) item.files = opts.files;
@@ -603,7 +674,7 @@ export class PersonsService {
 
   /** An attachment's bytes on disk (downloaded through the connection of its kind). */
   async fetchAttachment(url: string, name: string, connId?: string): Promise<string | null> {
-    const kind: ChannelKind = url.startsWith("chmail:") ? "gmail" : url.startsWith("chwa:") ? "whatsapp" : "discord";
+    const kind: ChannelKind = url.startsWith("chmail:") ? "gmail" : url.startsWith("chwa:") ? "whatsapp" : /^https:\/\/[^/]*(cdninstagram\.com|fbcdn\.net)\//.test(url) ? "instagram" : "discord";
     const views = this.views();
     const cid = connId?.split(":")[0];
     const c = (cid ? views.find((x) => x.id === cid) : undefined) ?? views.find((x) => x.kind === kind && x.connected) ?? views.find((x) => x.kind === kind);
@@ -667,7 +738,7 @@ export class PersonsService {
     let choices = chatsFor(p, views, section);
     if (!choices.length) choices = chatsFor(p, views, null);
     // the section's own account first: chats carried from a section they were moved out of only when it has none
-    const own = section ? choices.filter((c) => c.conn.section === section) : [];
+    const own = section ? choices.filter((c) => serves(c.conn, section)) : [];
     return { choices, current: defaultChat(p, own.length ? own : choices, this.data?.readSince) };
   }
 

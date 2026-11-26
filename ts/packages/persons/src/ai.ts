@@ -26,6 +26,7 @@ export const SECTION_MEANING: Record<SectionId, string> = {
   stores: "Stores: people who own a store on SpokPay (the user's platform that turns a seller into a Roblox store: storefront, PIX checkout, automatic Robux/gamepass delivery). The user supports them and talks to them on Discord (or WhatsApp). They are mostly Brazilian and the conversation is usually in Portuguese.",
   spokpay: "SpokPay: people the user is onboarding to SpokPay (bringing their Roblox store to the platform). The user talks to them on Discord (or WhatsApp). They are mostly Brazilian and the conversation is usually in Portuguese.",
   creators: "Creators: content creators / influencers the user reaches out to by email (Gmail), e.g. for partnerships and promotion.",
+  personal: "Personal: the user's own contacts (friends, family, acquaintances) on the user's own Discord, WhatsApp or Instagram. Not about SpokPay unless the conversation says so; answer in the conversation's language.",
 };
 
 /** The hidden context of a question (personAi.ts aiContext, unchanged wording). */

@@ -6,8 +6,8 @@ export const STORE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d
 
 /** Lists every dataset starts with (version 3 added them). */
 /** In sidebar order (after Stores). Version 3 had only SpokPay; version 4 added Creators. */
-export const DEFAULT_LISTS: PersonList[] = [{ id: 'creators', name: 'Creators', accountId: 'gmail' }, { id: 'spokpay', name: 'SpokPay', accountId: 'spokpay' }]
-const ACCOUNT_IDS = ['stores', 'spokpay', 'gmail'] as const
+export const DEFAULT_LISTS: PersonList[] = [{ id: 'creators', name: 'Creators', accountId: 'gmail' }, { id: 'spokpay', name: 'SpokPay', accountId: 'spokpay' }, { id: 'personal', name: 'Personal', accountId: 'personal' }]
+const ACCOUNT_IDS = ['stores', 'spokpay', 'gmail', 'personal'] as const
 
 export function emptyData(now = new Date().toISOString()): AppData {
   return { version: DATA_VERSION, people: [], stores: [], lists: DEFAULT_LISTS.map((l) => ({ ...l })), updatedAt: now }
@@ -51,7 +51,7 @@ export function normalizeData(raw: unknown): AppData {
       const id = str(l.id) ?? ''
       let acc = str(l.accountId) as PersonList['accountId'] | 'creators' | undefined
       if (acc === 'creators') acc = 'gmail' // 5 → 6
-      return { id, name: (str(l.name) ?? '').trim(), accountId: acc && (ACCOUNT_IDS as readonly string[]).includes(acc) ? acc : id === 'spokpay' ? 'spokpay' : 'stores' }
+      return { id, name: (str(l.name) ?? '').trim(), accountId: acc && (ACCOUNT_IDS as readonly string[]).includes(acc) ? acc : id === 'spokpay' ? 'spokpay' : id === 'personal' ? 'personal' : 'stores' }
     }).filter((l) => l.id && l.name)
     : DEFAULT_LISTS.map((l) => ({ ...l }))
   // version 4 adds the Creators list (once: a later removal is kept)
@@ -59,6 +59,8 @@ export function normalizeData(raw: unknown): AppData {
   // version 5: Creators talks through its own Discord login
   // version 5 gave Creators its own Discord login; version 6 moved Creators to Gmail
   if (version < 6) lists = lists.map((l) => (l.id === 'creators' && l.accountId === 'stores' ? { ...l, accountId: 'gmail' } : l))
+  // Personal (the user's own contacts on Discord, WhatsApp and Instagram) came later, without a version: added once, at the end
+  if (!lists.some((l) => l.id === 'personal')) lists = [...lists, { ...DEFAULT_LISTS[2]! }]
   const listIds = new Set(lists.map((l) => l.id))
 
   const people: Person[] = (Array.isArray(r.people) ? r.people : [])
@@ -97,8 +99,8 @@ function normPerson(x: unknown, storeIds: Set<string>, listIds: Set<string>, now
     let value = (str(i.value) ?? '').trim()
     if (kind === 'gmail') value = value.toLowerCase()
     if (kind === 'whatsapp') value = value.replace(/\D/g, '')
-    const ok = kind === 'discord' ? isDiscordId(value) : kind === 'gmail' ? isEmail(value) : kind === 'whatsapp' ? value.length >= 8 && value.length <= 15 : false
-    if (!ok || !section || !['stores', 'creators', 'spokpay'].includes(section)) return null
+    const ok = kind === 'discord' ? isDiscordId(value) : kind === 'gmail' ? isEmail(value) : kind === 'whatsapp' ? value.length >= 8 && value.length <= 15 : kind === 'instagram' ? /^\d{1,25}$/.test(value) : false
+    if (!ok || !section || !SETTLE_SECTIONS.includes(section)) return null
     const id: Identity = { kind: kind as Identity['kind'], value, section: section as Identity['section'] }
     if (str(i.username)) id.username = str(i.username)!
     if (str(i.displayName)) id.displayName = str(i.displayName)!
@@ -116,6 +118,10 @@ function normPerson(x: unknown, storeIds: Set<string>, listIds: Set<string>, now
   if (Object.keys(settled).length) person.settled = settled as Record<string, string>
   const wa = (str(p.whatsapp) ?? '').replace(/\D/g, '')
   if (wa.length >= 8 && wa.length <= 15) person.whatsapp = wa
+  const ig = (str(p.instagram) ?? '').trim()
+  if (/^\d{1,25}$/.test(ig)) person.instagram = ig
+  const igName = str(p.instagramUsername)?.trim().replace(/^@/, '')
+  if (igName) person.instagramUsername = igName
   const display = str(p.displayName)?.trim()
   if (display) person.displayName = display
   if (typeof p.avatar === 'string' || p.avatar === null) person.avatar = p.avatar as string | null
@@ -140,7 +146,7 @@ function normPerson(x: unknown, storeIds: Set<string>, listIds: Set<string>, now
   return person
 }
 
-const validPerson = (p: Person): boolean => !!(p.id && (p.name || p.discordId || p.discordUsername || p.email || p.whatsapp))
+const validPerson = (p: Person): boolean => !!(p.id && (p.name || p.discordId || p.discordUsername || p.email || p.whatsapp || p.instagram))
 
 function normLinks(v: unknown, storeIds: Set<string>, listIds: Set<string>, now: string, depth: number): PersonLink[] {
   if (!Array.isArray(v)) return []
@@ -165,9 +171,9 @@ function normLinks(v: unknown, storeIds: Set<string>, listIds: Set<string>, now:
 }
 
 /** The fields Link may copy into the person they join (link.ts). */
-export const LINK_FIELDS = ['name', 'discordId', 'discordUsername', 'displayName', 'avatar', 'profileAt', 'email', 'photo', 'photoAt', 'photoFull', 'whatsapp']
+export const LINK_FIELDS = ['name', 'discordId', 'discordUsername', 'displayName', 'avatar', 'profileAt', 'email', 'photo', 'photoAt', 'photoFull', 'whatsapp', 'instagram', 'instagramUsername']
 
-const SETTLE_SECTIONS = ['stores', 'creators', 'spokpay']
+const SETTLE_SECTIONS = ['stores', 'creators', 'spokpay', 'personal']
 const ms = (iso: string | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : NaN }
 
 /**
@@ -234,7 +240,7 @@ export const cleanUsername = (s: string) => s.trim().replace(/^@/, '')
 
 /** What search looks at: names, identifiers and notes, theirs and their linked people's (lowercase). */
 export function searchText(p: Person): string {
-  const one = (x: Person): string[] => [x.name, x.displayName ?? '', x.discordUsername ?? '', x.discordId, x.email ?? '', x.whatsapp ?? '', x.notes ?? '', ...(x.identities ?? []).flatMap((i) => [i.value, i.username ?? '', i.displayName ?? '']), ...(x.links ?? []).flatMap((l) => one(l.person))]
+  const one = (x: Person): string[] => [x.name, x.displayName ?? '', x.discordUsername ?? '', x.discordId, x.email ?? '', x.whatsapp ?? '', x.instagramUsername ?? '', x.notes ?? '', ...(x.identities ?? []).flatMap((i) => [i.value, i.username ?? '', i.displayName ?? '']), ...(x.links ?? []).flatMap((l) => one(l.person))]
   return one(p).filter(Boolean).join('\n').toLowerCase()
 }
 
@@ -320,7 +326,7 @@ export function defaultAvatar(id: string): string {
   return `${CDN}/embed/avatars/${n}.png`
 }
 
-export const personLabel = (p: Person) => p.name || p.displayName || p.discordUsername || p.email || p.discordId || 'No name'
+export const personLabel = (p: Person) => p.name || p.displayName || p.discordUsername || p.email || (p.instagramUsername ? `@${p.instagramUsername}` : '') || p.discordId || 'No name'
 
 export const isEmail = (s: string) => /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(s.trim())
 

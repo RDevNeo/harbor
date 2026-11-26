@@ -8,6 +8,8 @@ export interface ConnMeta {
   id: string;
   kind: ChannelKind;
   section: SectionId;
+  /** More sections it serves with the same login (Personal uses the Stores Discord and WhatsApp). */
+  also?: SectionId[];
 }
 
 export interface ConnContext extends ConnMeta {
@@ -48,6 +50,8 @@ export interface Connection extends ConnMeta {
   typing?(peer: string, on: boolean): Promise<unknown>;
   /** Follow their typing / presence closely while their chat is open. */
   watch?(peer: string): Promise<unknown>;
+  /** Instagram: a session pasted from a browser's cookies; checked with Instagram, kept only when it works. */
+  setSession?(cookie: string): Promise<ConnState>;
   /** WhatsApp: save the number in the address book. */
   saveContact?(peer: string, name: string): Promise<{ ok: boolean; saved?: boolean; already?: boolean; error?: string }>;
   /** WhatsApp profile photo of a number, as a local file path (cached daily), or null. */

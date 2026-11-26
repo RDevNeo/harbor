@@ -4,8 +4,8 @@
 /** data.json: version 7 (see data.ts normalizeData for the history). */
 export const DATA_VERSION = 7;
 
-export type SectionId = "stores" | "creators" | "spokpay";
-export type ChannelKind = "discord" | "gmail" | "whatsapp";
+export type SectionId = "stores" | "creators" | "spokpay" | "personal";
+export type ChannelKind = "discord" | "gmail" | "whatsapp" | "instagram";
 
 export interface Person {
   id: string;
@@ -17,6 +17,9 @@ export interface Person {
   email?: string;
   /** WhatsApp number: digits with the country code. */
   whatsapp?: string;
+  /** Instagram user id (the app API's pk, digits) and the username it was added by. */
+  instagram?: string;
+  instagramUsername?: string;
   /** More identities, each used in one section instead of the defaults above. */
   identities?: Identity[];
   /** Read state: per "<connection id>:<identifier>", the time of the newest message seen. */
@@ -77,7 +80,7 @@ export interface LinkAdded {
 
 export interface Identity {
   kind: ChannelKind;
-  /** Discord id, email address, or WhatsApp number (digits). */
+  /** Discord id, email address, WhatsApp number (digits) or Instagram user id. */
   value: string;
   section: SectionId;
   username?: string;
@@ -99,7 +102,7 @@ export interface Store {
 export interface PersonList {
   id: string;
   name: string;
-  accountId: "stores" | "spokpay" | "gmail";
+  accountId: "stores" | "spokpay" | "gmail" | "personal";
 }
 
 export interface AppData {

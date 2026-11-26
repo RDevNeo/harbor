@@ -200,7 +200,7 @@ export global PersonsBus {
     in property <string> sub-of;
     in property <length> sub-y;
     in property <length> sub-w: 232px;
-    // dialogs: "" | person | store | qr | confirm | rename
+    // dialogs: "" | person | store | qr | confirm | rename | contact | session
     in property <string> dialog;
     in property <string> d-title;
     in property <string> d-text;
@@ -216,6 +216,9 @@ export global PersonsBus {
     in-out property <string> f-store;
     in-out property <string> f-subject;
     in-out property <string> f-details;
+    // Personal › Add contact: the one field's label and hint (the platform picked)
+    in property <string> f-handle-label;
+    in property <string> f-handle-hint;
     in property <[PChip]> f-chips;
     in property <[PChip]> f-lists;
     in property <[PChip]> f-colors;
@@ -2926,7 +2929,7 @@ component Menu inherits MenuPanel {
             text: it.label;
         }
         // A channel (Discord, Gmail, WhatsApp) is its mark in the icon's place.
-        property <bool> brand: it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp";
+        property <bool> brand: it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp" || it.icon == "instagram";
         if !it.sep && !it.header: MenuItem {
             x: 0;
             y: 0;
@@ -2954,7 +2957,7 @@ component Menu inherits MenuPanel {
                 }
             }
         }
-        if !it.sep && !it.header && (it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp"): ChannelMark {
+        if !it.sep && !it.header && (it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp" || it.icon == "instagram"): ChannelMark {
             x: 9px;
             y: 9px;
             kind: it.icon;
@@ -3083,6 +3086,43 @@ component Dialog inherits DialogFrame {
             font-size: Ds.t-sm;
             color: Theme.subtle;
             wrap: word-wrap;
+        }
+    }
+    // Personal's Instagram: the session pasted from a browser's cookies
+    if PersonsBus.dialog == "session": Input {
+        hint: "sessionid=…; ds_user_id=…";
+        text <=> PersonsBus.f-socials;
+        accepted => {
+            PersonsBus.dialog-ok();
+        }
+    }
+    // Personal › Add contact: the platform, then their number or username (resolved there before it's saved)
+    if PersonsBus.dialog == "contact": VerticalLayout {
+        spacing: 12px;
+        VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: "Platform";
+            }
+            Choices {
+                chips: PersonsBus.f-chips;
+            }
+        }
+        Field {
+            label: PersonsBus.f-handle-label;
+            hint: PersonsBus.f-handle-hint;
+            text <=> PersonsBus.f-discord;
+            accepted => {
+                PersonsBus.dialog-ok();
+            }
+        }
+        Field {
+            label: "Name";
+            hint: "Optional: your name for them (empty: theirs there)";
+            text <=> PersonsBus.f-name;
+            accepted => {
+                PersonsBus.dialog-ok();
+            }
         }
     }
     if PersonsBus.dialog == "rename": Input {

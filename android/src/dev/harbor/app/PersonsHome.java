@@ -31,7 +31,7 @@ import java.util.Locale;
  *  press copies the link. */
 final class PersonsHome {
     static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7,
-            SR_HEAD = 8, SR_NOTICE = 9, SR = 10;
+            SR_HEAD = 8, SR_NOTICE = 9, SR = 10, ADD = 11;
 
     static final class Item {
         final int kind;
@@ -173,6 +173,7 @@ final class PersonsHome {
             if (!lh.open) continue;
             if (!section.isEmpty()) sectionConns(section, conns);
             if ("spokpay".equals(section)) siteRequests(st.optJSONObject("siteRequests"));
+            if ("personal".equals(section)) items.add(new Item(ADD));
             List<JSONObject> live = new ArrayList<>();
             for (JSONObject q : in) if (section.isEmpty() || !settled(q, section)) live.add(q);
             Collections.sort(live, recent(section));
@@ -206,7 +207,12 @@ final class PersonsHome {
         }
     }
 
-    static boolean isSection(String s) { return "stores".equals(s) || "creators".equals(s) || "spokpay".equals(s); }
+    static boolean isSection(String s) { return "stores".equals(s) || "creators".equals(s) || "spokpay".equals(s) || "personal".equals(s); }
+
+    /** Whether a connection serves a section: its own, or one it's shared with (Personal uses the Stores Discord and WhatsApp). */
+    static boolean serves(JSONObject c, String section) {
+        return section.equals(PersonsUi.s(c, "section")) || PersonsUi.has(PersonsUi.arr(c, "also"), section);
+    }
 
     private Item head(String section, String label, String key, List<JSONObject> people) {
         Item h = new Item(HEAD);
@@ -222,7 +228,7 @@ final class PersonsHome {
     /** The section's connections as chips, and a link waiting for its QR code. */
     private void sectionConns(String section, JSONArray conns) {
         List<JSONObject> mine = new ArrayList<>();
-        for (JSONObject c : objs(conns)) if (section.equals(PersonsUi.s(c, "section"))) mine.add(c);
+        for (JSONObject c : objs(conns)) if (serves(c, section)) mine.add(c);
         if (mine.isEmpty()) return;
         Item ch = new Item(CHIPS);
         ch.conns = mine;
@@ -413,6 +419,16 @@ final class PersonsHome {
             case SR: {
                 return Ds.inset(a, siteRequestRow(it.sr), 0);
             }
+            case ADD: {
+                // Personal › Add contact: a WhatsApp number, a Discord or Instagram username
+                LinearLayout r = Ds.row(a, false);
+                r.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
+                r.addView(Ui.icon(a, Ui.I_PLUS, 16, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 10, 0));
+                r.addView(Ds.rowTitle(a, "Add contact", false, Ui.G700), Ui.weight());
+                r.setOnClickListener(v -> addContact(p));
+                r.setContentDescription("Add contact");
+                return Ds.inset(a, r, 0);
+            }
             case FOLD: {
                 return Ds.foldBar(a, "Settled (" + it.count + ")", it.open, v -> { p.flip("settled_open", it.section); render(); });
             }
@@ -478,8 +494,8 @@ final class PersonsHome {
         r.addView(Ui.dot(a, dot, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 7, 0, 0, 0));
         String label = PersonsUi.s(c, "label"), err = PersonsUi.s(c, "error"), cid = PersonsUi.s(c, "id");
         r.setOnClickListener(v -> {
-            // Discord and WhatsApp sign in by QR code, right here; Gmail needs Google's page on the PC
-            if ("signed-out".equals(status) && !"gmail".equals(kind)) {
+            // Discord and WhatsApp sign in by QR code, right here; Gmail needs Google's page on the PC, Instagram a session pasted there
+            if ("signed-out".equals(status) && !"gmail".equals(kind) && !"instagram".equals(kind)) {
                 new android.app.AlertDialog.Builder(a)
                         .setTitle(PersonsUi.kindLabel(kind) + " is signed out")
                         .setMessage(err.isEmpty() ? "Sign in with a QR code?" : err + "\n\nSign in with a QR code?")
@@ -549,7 +565,7 @@ final class PersonsHome {
         for (JSONObject l : linked) opts.add("Unlink " + PersonsUi.s(l, "name") + "…");
         int moveAt = opts.size();
         opts.add("Move to…");
-        String from = !store.isEmpty() ? "store:" + store : "creators".equals(section) || "spokpay".equals(section) ? section : "";
+        String from = !store.isEmpty() ? "store:" + store : "creators".equals(section) || "spokpay".equals(section) || "personal".equals(section) ? section : "";
         Ui.dialog(p.a).setTitle(name).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) rename(p, id, name);
             else if (w == moveAt) moveTo(p, person, from);
@@ -572,7 +588,7 @@ final class PersonsHome {
         if (p.st != null) for (JSONObject s : objs(PersonsUi.arr(p.st, "stores")))
             if (id.equals(PersonsUi.s(s, "ownerId")) && !out.contains("store:" + PersonsUi.s(s, "id"))) out.add("store:" + PersonsUi.s(s, "id"));
         JSONArray li = PersonsUi.arr(person, "listIds");
-        for (String s : new String[]{"creators", "spokpay"}) if (PersonsUi.has(li, s)) out.add(s);
+        for (String s : new String[]{"creators", "spokpay", "personal"}) if (PersonsUi.has(li, s)) out.add(s);
         return out;
     }
 
@@ -590,6 +606,9 @@ final class PersonsHome {
         int n = 0;
         for (String s : places) if (s.startsWith("store:")) n++;
         o.add(new Sheet.Option("stores", "Stores  ›", n == 0 ? "Pick a store, or a new one" : from.startsWith("store:") ? "In " + storeName(p, from.substring(6)) : "In " + n + (n == 1 ? " store" : " stores"), true));
+        boolean inPersonal = from.isEmpty() ? places.contains("personal") : from.equals("personal");
+        if (inPersonal) here = "personal";
+        o.add(new Sheet.Option("personal", "Personal", inPersonal ? "Here now" : "", !inPersonal));
         Sheet.pick(p.a, "Move " + name + " to", "Their chats, notes, picture and AI chat come along. Nothing is sent.", o, here, to -> {
             if ("stores".equals(to)) moveToStore(p, person, from, places);
             else move(p, PersonsUi.s(person, "id"), name, from, to);
@@ -663,8 +682,56 @@ final class PersonsHome {
             if (id.equals(PersonsUi.s(s, "ownerId"))) inStore = true;
         if (inStore) out.add("stores");
         JSONArray li = PersonsUi.arr(person, "listIds");
-        for (String s : new String[]{"creators", "spokpay"}) if (PersonsUi.has(li, s)) out.add(s);
+        for (String s : new String[]{"creators", "spokpay", "personal"}) if (PersonsUi.has(li, s)) out.add(s);
         return out;
+    }
+
+    /** Personal › Add contact (the PC's dialog): the platform, then their number or username. The PC finds them there
+     *  first; when it can't, the reason shows in the dialog and nothing is saved. Their chat opens once added. */
+    static void addContact(PersonsState p) {
+        List<Sheet.Option> o = new ArrayList<>();
+        o.add(new Sheet.Option("discord", "Discord", "Their username", true));
+        o.add(new Sheet.Option("whatsapp", "WhatsApp", "Their number", true));
+        o.add(new Sheet.Option("instagram", "Instagram", "Their username", true));
+        Sheet.pick(p.a, "Add contact", "Where you talk to them: their conversation shows here.", o, "", kind -> contactForm(p, kind));
+    }
+
+    private static void contactForm(PersonsState p, String kind) {
+        boolean wa = "whatsapp".equals(kind);
+        EditText handle = Ui.input(p.a, wa ? "+55 11 91234-5678" : "@username", false);
+        if (wa) handle.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        EditText name = Ui.input(p.a, "Name (optional)", false);
+        TextView err = Ui.text(p.a, "", 13, Ui.RED);
+        err.setVisibility(View.GONE);
+        LinearLayout box = Ui.col(p.a);
+        box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        box.addView(handle, Ui.fill());
+        box.addView(name, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        box.addView(err, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        android.app.AlertDialog d = Ui.dialog(p.a).setTitle(PersonsUi.kindLabel(kind) + (wa ? " number" : " username")).setView(box)
+                .setPositiveButton("Add", null).setNegativeButton("Cancel", null).show();
+        handle.requestFocus();
+        // the dialog stays open on an error (its reason under the fields)
+        d.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            JSONObject body = PersonsUi.put(new JSONObject(), "kind", kind);
+            PersonsUi.put(body, "handle", handle.getText().toString().trim());
+            PersonsUi.put(body, "name", name.getText().toString().trim());
+            v.setEnabled(false);
+            err.setVisibility(View.GONE);
+            Ui.bg(p.a, () -> p.hub.call("POST", "/v1/persons/contacts", body, 60_000), r -> {
+                v.setEnabled(true);
+                if (!r.optBoolean("ok", false)) {
+                    err.setText(r.optString("error", "Not added"));
+                    err.setVisibility(View.VISIBLE);
+                    return;
+                }
+                d.dismiss();
+                JSONObject person = r.optJSONObject("person");
+                if (r.optBoolean("existed")) Ui.toast(p.a, "Already in Persons: now in Personal too");
+                p.refresh();
+                if (person != null) p.openChat(PersonsUi.s(person, "id"), "personal");
+            });
+        });
     }
 
     static void rename(PersonsState p, String id, String name) {

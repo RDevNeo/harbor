@@ -19,8 +19,8 @@ export function writeAtomic(file: string, text: string): void {
   renameSync(tmp, file);
 }
 
-const KINDS: ChannelKind[] = ["discord", "gmail", "whatsapp"];
-const SECTIONS: SectionId[] = ["stores", "creators", "spokpay"];
+const KINDS: ChannelKind[] = ["discord", "gmail", "whatsapp", "instagram"];
+const SECTIONS: SectionId[] = ["stores", "creators", "spokpay", "personal"];
 
 export function loadConnections(dir: string): ConnMeta[] {
   try {
@@ -29,11 +29,12 @@ export function loadConnections(dir: string): ConnMeta[] {
     const out: ConnMeta[] = [];
     for (const x of list) {
       if (!x || typeof x !== "object") continue;
-      const { id, kind, section } = x as Record<string, unknown>;
+      const { id, kind, section, also } = x as Record<string, unknown>;
       if (typeof id !== "string" || !/^[\w-]{1,60}$/.test(id)) continue;
       if (!KINDS.includes(kind as ChannelKind) || !SECTIONS.includes(section as SectionId)) continue;
       if (out.some((c) => c.id === id)) continue;
-      out.push({ id, kind: kind as ChannelKind, section: section as SectionId });
+      const more = Array.isArray(also) ? [...new Set(also.filter((s): s is SectionId => SECTIONS.includes(s as SectionId) && s !== section))] : [];
+      out.push(more.length ? { id, kind: kind as ChannelKind, section: section as SectionId, also: more } : { id, kind: kind as ChannelKind, section: section as SectionId });
     }
     return out;
   } catch {

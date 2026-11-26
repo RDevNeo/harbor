@@ -6,22 +6,27 @@ import { isDiscordId, isEmail, type Scope } from './data.ts'
  * Discord, Gmail, WhatsApp — each its own account (a "connection", id from the shell). A person has
  * an identifier per kind (Discord id, email, WhatsApp number); their chat uses one connection.
  */
-export type ChannelKind = 'discord' | 'gmail' | 'whatsapp'
-export type SectionId = 'stores' | 'creators' | 'spokpay'
+export type ChannelKind = 'discord' | 'gmail' | 'whatsapp' | 'instagram'
+export type SectionId = 'stores' | 'creators' | 'spokpay' | 'personal'
 /** A connection's id (the shell's: "stores", "spokpay", "gmail" for the original three, else generated). */
 export type AccountId = string
 
-export const KINDS: ChannelKind[] = ['discord', 'gmail', 'whatsapp']
-export const KIND_LABEL: Record<ChannelKind, string> = { discord: 'Discord', gmail: 'Gmail', whatsapp: 'WhatsApp' }
-export const SECTIONS: SectionId[] = ['stores', 'creators', 'spokpay']
-export const SECTION_LABEL: Record<SectionId, string> = { stores: 'Stores', creators: 'Creators', spokpay: 'SpokPay' }
+export const KINDS: ChannelKind[] = ['discord', 'gmail', 'whatsapp', 'instagram']
+export const KIND_LABEL: Record<ChannelKind, string> = { discord: 'Discord', gmail: 'Gmail', whatsapp: 'WhatsApp', instagram: 'Instagram' }
+export const SECTIONS: SectionId[] = ['stores', 'creators', 'spokpay', 'personal']
+export const SECTION_LABEL: Record<SectionId, string> = { stores: 'Stores', creators: 'Creators', spokpay: 'SpokPay', personal: 'Personal' }
 export const isSection = (s: string): s is SectionId => (SECTIONS as string[]).includes(s)
 
 export interface ConnMeta {
   id: AccountId
   kind: ChannelKind
   section: SectionId
+  /** More sections this connection serves (Personal talks through the Stores Discord and WhatsApp: the same logins). */
+  also?: SectionId[]
 }
+
+/** Whether a connection serves a section: its own, or one it is shared with (`also`). */
+export const serves = (c: { section: SectionId; also?: SectionId[] | undefined }, section: SectionId): boolean => c.section === section || !!c.also?.includes(section)
 
 /** A WhatsApp number as kept: digits with the country code (8–15). */
 export const normPhone = (s: string) => { const d = String(s ?? '').replace(/\D/g, ''); return d.length >= 8 && d.length <= 15 ? d : '' }
@@ -54,6 +59,7 @@ export function peerOf(p: Person, kind: ChannelKind, section?: SectionId): strin
   if (own) return own.value
   if (kind === 'gmail') return (p.email ?? '').toLowerCase()
   if (kind === 'whatsapp') return normPhone(p.whatsapp ?? '')
+  if (kind === 'instagram') return p.instagram ?? ''
   return p.discordId
 }
 
@@ -96,7 +102,7 @@ export function chatsFor<T extends ConnMeta>(p: Person, conns: T[], from: Sectio
   const seen = new Set<string>()
   for (const f of facets(p)) {
     for (const conn of channelsFor(f, conns, from)) {
-      const peer = peerOf(f, conn.kind, conn.section)
+      const peer = peerOf(f, conn.kind, from && serves(conn, from) ? from : conn.section)
       const k = seenKey(conn.id, peer)
       if (seen.has(k)) continue
       seen.add(k)
@@ -115,8 +121,10 @@ export function pickChat<T extends ConnMeta>(chats: ChatRef<T>[], account: strin
 /** Read-state key of a chat: the connection and who the person is on it. */
 export const seenKey = (connId: string, peer: string) => `${connId}:${peer}`
 export function validPeer(kind: ChannelKind, s: string): boolean {
-  return kind === 'gmail' ? isEmail(s) : kind === 'whatsapp' ? !!normPhone(s) && normPhone(s) === s : isDiscordId(s)
+  return kind === 'gmail' ? isEmail(s) : kind === 'whatsapp' ? !!normPhone(s) && normPhone(s) === s : kind === 'instagram' ? isInstagramId(s) : isDiscordId(s)
 }
+/** An Instagram user id (the app API's pk). */
+export const isInstagramId = (s: string) => /^\d{1,25}$/.test(s)
 
 /** The section a sidebar view belongs to (All people: none). */
 export const sectionOfScope = (s: Scope): SectionId | null => (s.kind === 'store' ? 'stores' : s.kind === 'list' && isSection(s.id) ? s.id : null)
@@ -139,6 +147,11 @@ export function channelsFor<T extends ConnMeta>(p: Person, conns: T[], from: Sec
   // chats of the sections they were moved out of (Move to…) come along, after the section's own
   const carried = (p.carried ?? []).filter((s) => !mine.includes(s))
   const sections = [...(from ? [from] : mine), ...carried.filter((s) => s !== from)]
-  const rank = (c: T) => sections.indexOf(c.section)
-  return conns.filter((c) => rank(c) >= 0 && validPeer(c.kind, peerOf(p, c.kind, c.section))).sort((a, b) => rank(a) - rank(b))
+  // a shared connection (`also`) ranks at the best of the sections it serves
+  const rank = (c: T) => {
+    const r = [c.section, ...(c.also ?? [])].map((s) => sections.indexOf(s)).filter((i) => i >= 0)
+    return r.length ? Math.min(...r) : -1
+  }
+  const secOf = (c: T): SectionId => sections.find((s) => serves(c, s)) ?? c.section
+  return conns.filter((c) => rank(c) >= 0 && validPeer(c.kind, peerOf(p, c.kind, secOf(c)))).sort((a, b) => rank(a) - rank(b))
 }

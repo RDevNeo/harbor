@@ -985,8 +985,8 @@ final class PersonsChat {
         if (data == null) return null;
         JSONObject ac = PersonsUi.obj(data, "account");
         String k = kind();
-        String app = "gmail".equals(k) ? "Gmail" : "whatsapp".equals(k) ? "WhatsApp" : "Discord";
-        String what = "gmail".equals(k) ? "email address" : "whatsapp".equals(k) ? "WhatsApp number" : "Discord account";
+        String app = "gmail".equals(k) ? "Gmail" : "whatsapp".equals(k) ? "WhatsApp" : "instagram".equals(k) ? "Instagram" : "Discord";
+        String what = "gmail".equals(k) ? "email address" : "whatsapp".equals(k) ? "WhatsApp number" : "instagram".equals(k) ? "Instagram account" : "Discord account";
         if (ac == null) return "No channel to talk to " + name() + " here: connect Discord, Gmail or WhatsApp on the PC, and give them that identifier.";
         if (PersonsUi.s(data, "peer").isEmpty()) return "Add their " + what + " on the PC (Edit) to message them here.";
         if (!ac.optBoolean("connected", true)) return "Sign in to " + app + " on the PC to message.";
