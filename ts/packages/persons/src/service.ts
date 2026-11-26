@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { allPeers, chatsFor, KIND_LABEL, peerOf, SECTION_LABEL, seenKey, validPeer, type ChatRef } from "./model/accounts.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
+import { movePerson, type Place } from "./model/move.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
 import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen } from "./model/readState.ts";
@@ -247,6 +248,17 @@ export class PersonsService {
 
   rename(id: string, name: string): void {
     this.updatePerson(id, (p) => renamePerson(p, name));
+  }
+
+  /** Move to…: person `id` leaves `from` (null: everywhere) for `to` (model/move.ts). Returns the sections they left. */
+  move(id: string, from: Place | null, to: Place): SectionId[] | null {
+    if (!this.data) return null;
+    const r = movePerson(this.data, id, from, to);
+    if (!r) return null;
+    this.log("moved", id, "to", to.section === "stores" ? `store ${to.store}` : to.section);
+    this.update(() => r.data);
+    this.flush();
+    return r.left;
   }
 
   setSettled(id: string, section: SectionId, on: boolean): void {
@@ -654,7 +666,9 @@ export class PersonsService {
     const views = this.views();
     let choices = chatsFor(p, views, section);
     if (!choices.length) choices = chatsFor(p, views, null);
-    return { choices, current: defaultChat(p, choices, this.data?.readSince) };
+    // the section's own account first: chats carried from a section they were moved out of only when it has none
+    const own = section ? choices.filter((c) => c.conn.section === section) : [];
+    return { choices, current: defaultChat(p, own.length ? own : choices, this.data?.readSince) };
   }
 
   // ---------- Link with… / Unlink ----------

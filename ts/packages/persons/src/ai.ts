@@ -173,6 +173,16 @@ export class PersonAi implements AiPort {
     return out;
   }
 
+  /** Move to…: the AI chat of `from` carries on as the chat of `to` (its title keeps the old section's name). Kept as
+   *  is when `to` already has one. */
+  move(p: Person, from: SectionId, to: SectionId): void {
+    const chat = this.chats[this.key(p, from)];
+    if (!chat || from === to || this.chats[this.key(p, to)]) return;
+    this.chats[this.key(p, to)] = chat;
+    delete this.chats[this.key(p, from)];
+    writeAtomic(this.file, JSON.stringify(this.chats, null, 2));
+  }
+
   async items(p: Person, s: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]> {
     const chat = this.chats[this.key(p, s)] ?? (await this.locate(p, s)).chat;
     if (!chat) return [];

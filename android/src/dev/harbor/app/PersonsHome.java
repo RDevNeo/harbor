@@ -23,7 +23,8 @@ import java.util.Locale;
 /** The Persons tab's home, Person Hub's sidebar on the phone: "All people", then Stores (each
  *  store a fold with its people, the owner first with a crown), then each list (Creators,
  *  SpokPay) with its people by their last message, each section with a "Settled (N)" fold and its
- *  connections' chips. A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink. */
+ *  connections' chips. A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink, Move to… (SpokPay,
+ *  Creators, Stores › a store or New store…). */
 final class PersonsHome {
     static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7;
 
@@ -138,6 +139,7 @@ final class PersonsHome {
                 boolean any = false;
                 if (owner != null && !settled(owner, "stores")) {
                     Item o = person(owner, "stores");
+                    o.store = s;
                     o.owner = true;
                     o.indent = true;
                     any = true;
@@ -147,7 +149,11 @@ final class PersonsHome {
                     if (!PersonsUi.s(q, "id").equals(ownerId) && !settled(q, "stores")) ms.add(q);
                 }
                 Collections.sort(ms, recent("stores"));
-                for (JSONObject q : ms) person(q, "stores").indent = true;
+                for (JSONObject q : ms) {
+                    Item m = person(q, "stores");
+                    m.store = s;
+                    m.indent = true;
+                }
                 if (!any && ms.isEmpty()) note("No one yet.", true);
             }
             fold("stores", storePeople);
@@ -338,7 +344,8 @@ final class PersonsHome {
                 if (it.settled) r.setAlpha(0.75f);
                 String id = PersonsUi.s(it.person, "id");
                 r.setOnClickListener(v -> p.openChat(id, it.section));
-                r.setOnLongClickListener(v -> { menu(p, it.person, it.section, it.settled); return true; });
+                String store = it.store == null ? "" : PersonsUi.s(it.store, "id");
+                r.setOnLongClickListener(v -> { menu(p, it.person, it.section, store, it.settled); return true; });
                 return Ds.inset(a, r, it.indent ? 22 : 0);
             }
             case FOLD: {
@@ -405,7 +412,10 @@ final class PersonsHome {
 
     // ---- a person's long-press menu (shared with the list) ----
 
-    static void menu(PersonsState p, JSONObject person, String section, boolean settled) {
+    static void menu(PersonsState p, JSONObject person, String section, boolean settled) { menu(p, person, section, "", settled); }
+
+    /** `store`: the store the row sits in ("" outside Stores), the place Move to… starts from. */
+    static void menu(PersonsState p, JSONObject person, String section, String store, boolean settled) {
         String id = PersonsUi.s(person, "id"), name = PersonsUi.s(person, "name");
         List<String> opts = new ArrayList<>();
         List<String[]> settles = new ArrayList<>(); // {section, "1" to settle}
@@ -426,14 +436,111 @@ final class PersonsHome {
         opts.add("Link with…");
         List<JSONObject> linked = PersonsLink.linked(person);
         for (JSONObject l : linked) opts.add("Unlink " + PersonsUi.s(l, "name") + "…");
+        int moveAt = opts.size();
+        opts.add("Move to…");
+        String from = !store.isEmpty() ? "store:" + store : "creators".equals(section) || "spokpay".equals(section) ? section : "";
         Ui.dialog(p.a).setTitle(name).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) rename(p, id, name);
+            else if (w == moveAt) moveTo(p, person, from);
             else if (w == linkAt) PersonsLink.pick(p, id);
             else if (w > linkAt) {
                 JSONObject l = linked.get(w - linkAt - 1);
                 PersonsLink.unlink(p, id, PersonsUi.s(l, "id"), PersonsUi.s(l, "name"), null);
             } else settle(p, id, settles.get(w - 1)[0], !settles.get(w - 1)[1].isEmpty());
         }).show();
+    }
+
+    // ---- Move to… (the desktop's MOVE TO: menus.ts moveEntries) ----
+
+    /** Where a person is: "store:<id>" for each store of theirs (owned too), "creators", "spokpay". */
+    static List<String> placesOf(PersonsState p, JSONObject person) {
+        List<String> out = new ArrayList<>();
+        String id = PersonsUi.s(person, "id");
+        JSONArray si = PersonsUi.arr(person, "storeIds");
+        for (int i = 0; i < si.length(); i++) out.add("store:" + si.optString(i));
+        if (p.st != null) for (JSONObject s : objs(PersonsUi.arr(p.st, "stores")))
+            if (id.equals(PersonsUi.s(s, "ownerId")) && !out.contains("store:" + PersonsUi.s(s, "id"))) out.add("store:" + PersonsUi.s(s, "id"));
+        JSONArray li = PersonsUi.arr(person, "listIds");
+        for (String s : new String[]{"creators", "spokpay"}) if (PersonsUi.has(li, s)) out.add(s);
+        return out;
+    }
+
+    /** SpokPay · Creators · Stores ›, the place they're in checked and greyed; `from` = the row's place ("" = everywhere). */
+    static void moveTo(PersonsState p, JSONObject person, String from) {
+        String name = PersonsUi.s(person, "name");
+        List<String> places = placesOf(p, person);
+        List<Sheet.Option> o = new ArrayList<>();
+        String here = "";
+        for (String s : new String[]{"spokpay", "creators"}) {
+            boolean in = from.isEmpty() ? places.contains(s) : from.equals(s);
+            if (in) here = s;
+            o.add(new Sheet.Option(s, PersonsUi.sectionLabel(s), in ? "Here now" : "", !in));
+        }
+        int n = 0;
+        for (String s : places) if (s.startsWith("store:")) n++;
+        o.add(new Sheet.Option("stores", "Stores  ›", n == 0 ? "Pick a store, or a new one" : from.startsWith("store:") ? "In " + storeName(p, from.substring(6)) : "In " + n + (n == 1 ? " store" : " stores"), true));
+        Sheet.pick(p.a, "Move " + name + " to", "Their chats, notes, picture and AI chat come along. Nothing is sent.", o, here, to -> {
+            if ("stores".equals(to)) moveToStore(p, person, from, places);
+            else move(p, PersonsUi.s(person, "id"), name, from, to);
+        });
+    }
+
+    /** Stores' submenu: every store (theirs checked and greyed), then New store…; Back returns to Move to. */
+    static void moveToStore(PersonsState p, JSONObject person, String from, List<String> places) {
+        String id = PersonsUi.s(person, "id"), name = PersonsUi.s(person, "name");
+        List<JSONObject> stores = new ArrayList<>(objs(PersonsUi.arr(p.st, "stores")));
+        Collections.sort(stores, (x, y) -> PersonsUi.s(x, "name").compareToIgnoreCase(PersonsUi.s(y, "name")));
+        List<Sheet.Option> o = new ArrayList<>();
+        o.add(new Sheet.Option("back", "‹  Back", "", true));
+        String here = "";
+        for (JSONObject s : stores) {
+            String key = "store:" + PersonsUi.s(s, "id");
+            boolean in = from.isEmpty() ? places.contains(key) : from.equals(key);
+            if (in) here = key;
+            o.add(new Sheet.Option(key, PersonsUi.s(s, "name"), in ? "Here now" : "", !in, PersonsUi.storeBadge(p.a, p.hub, s, 22)));
+        }
+        o.add(new Sheet.Option("new", "New store…", "", true));
+        Sheet.pick(p.a, "Move " + name + " to a store", null, o, here, to -> {
+            if ("back".equals(to)) moveTo(p, person, from);
+            else if ("new".equals(to)) newStore(p, id, name, from);
+            else move(p, id, name, from, to);
+        });
+    }
+
+    private static String storeName(PersonsState p, String sid) {
+        for (JSONObject s : objs(PersonsUi.arr(p.st, "stores"))) if (sid.equals(PersonsUi.s(s, "id"))) return PersonsUi.s(s, "name");
+        return "a store";
+    }
+
+    /** New store… (a name; the PC picks its colour), then the person moves into it. */
+    static void newStore(PersonsState p, String id, String name, String from) {
+        EditText e = Ui.input(p.a, "Store name", false);
+        LinearLayout box = Ui.col(p.a);
+        box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        box.addView(e, Ui.fill());
+        Ui.dialog(p.a).setTitle("New store").setView(box)
+                .setPositiveButton("Create", (d, w) -> {
+                    String v = e.getText().toString().trim();
+                    if (v.isEmpty()) return;
+                    Ui.bg(p.a, () -> p.hub.call("POST", "/v1/persons/stores", PersonsUi.put(new JSONObject(), "name", v)), r -> {
+                        JSONObject st = r.optJSONObject("store");
+                        if (st == null) { Ui.toast(p.a, r.optString("error", "Couldn't create the store")); return; }
+                        move(p, id, name, from, "store:" + PersonsUi.s(st, "id"));
+                    });
+                })
+                .setNegativeButton("Cancel", null).show();
+        e.requestFocus();
+    }
+
+    /** POST /v1/persons/person/{id}/move {to, from}: nothing is sent to anyone; the state follows. */
+    static void move(PersonsState p, String id, String name, String from, String to) {
+        JSONObject b = PersonsUi.put(new JSONObject(), "to", to);
+        if (!from.isEmpty()) PersonsUi.put(b, "from", from);
+        Ui.bg(p.a, () -> p.hub.call("POST", "/v1/persons/person/" + PersonsUi.enc(id) + "/move", b), r -> {
+            if (!r.optBoolean("ok", false)) { Ui.toast(p.a, r.optString("error", "Couldn't move them")); return; }
+            p.refresh();
+            Ui.toast(p.a, "Moved " + name + " to " + (to.startsWith("store:") ? storeName(p, to.substring(6)) : PersonsUi.sectionLabel(to)));
+        });
     }
 
     /** The sections a person is in: Stores (a member or an owner), and each section list. */

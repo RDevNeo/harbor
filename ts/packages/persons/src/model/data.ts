@@ -1,5 +1,5 @@
 import { DATA_VERSION } from './types.ts'
-import type { AppData, ChannelUser, Identity, LinkAdded, Person, PersonLink, PersonList, Store } from './types.ts'
+import type { AppData, ChannelUser, Identity, LinkAdded, Person, PersonLink, PersonList, SectionId, Store } from './types.ts'
 import { normalizeSocials, parseSocialUrl, type SocialTarget } from '../socials.ts'
 
 export const STORE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#8b5cf6', '#0ea5e9']
@@ -133,6 +133,8 @@ function normPerson(x: unknown, storeIds: Set<string>, listIds: Set<string>, now
   if (socials.length) person.socials = socials
   const tags = strArr(p.tags)
   if (tags.length) person.tags = tags
+  const carried = [...new Set(strArr(p.carried))].filter((x): x is SectionId => SETTLE_SECTIONS.includes(x))
+  if (carried.length) person.carried = carried
   const links = depth < 8 ? normLinks(p.links, storeIds, listIds, now, depth) : []
   if (links.length) person.links = links
   return person

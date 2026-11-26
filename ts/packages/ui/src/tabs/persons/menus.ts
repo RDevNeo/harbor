@@ -87,3 +87,32 @@ export function blockedNote(o: { hasAccount: boolean; hasPeer: boolean; connecte
   if (!o.connected) return `Sign in to ${app} (the section’s + menu › Connections) to message.`;
   return null;
 }
+
+/** Move to…'s entries in a person's menu (the phone's PersonsUi.moveMenu keeps the same rules). */
+export interface MoveEntry {
+  /** "spokpay", "creators", "stores" (opens the stores), "store:<id>", "new-store". */
+  to: string;
+  label: string;
+  /** Where they are now: a check, and it can't be picked. */
+  here?: boolean;
+  /** The stores (Stores' submenu): each store, a separator, New store…. */
+  sub?: MoveEntry[];
+  sep?: boolean;
+}
+
+/**
+ * SpokPay · Creators · Stores › (every store, then New store…). `places` = where the person is ("spokpay", "creators",
+ * "store:<id>"); `from` = the place the menu was opened in ("" = All people: every place they're in counts as here).
+ */
+export function moveEntries(o: { places: string[]; from: string; stores: { id: string; name: string }[] }): MoveEntry[] {
+  const here = (to: string): boolean => (o.from ? o.from === to : o.places.includes(to));
+  const stores: MoveEntry[] = [...o.stores].sort((a, b) => a.name.localeCompare(b.name)).map((s) => ({ to: `store:${s.id}`, label: s.name, ...(here(`store:${s.id}`) ? { here: true } : {}) }));
+  return [
+    { to: "spokpay", label: "SpokPay", ...(here("spokpay") ? { here: true } : {}) },
+    { to: "creators", label: "Creators", ...(here("creators") ? { here: true } : {}) },
+    { to: "stores", label: "Stores", sub: [...stores, ...(stores.length ? [{ to: "", label: "", sep: true }] : []), { to: "new-store", label: "New store…" }] },
+  ];
+}
+
+/** The place a sidebar row stands for: "store:<id>" in a store, its section's list, "" in All people. */
+export const placeOfRow = (section: string, store: string): string => (store ? `store:${store}` : section === "creators" || section === "spokpay" ? section : "");

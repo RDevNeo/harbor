@@ -156,7 +156,7 @@ phase boot $s
 # Downloaded app code, as Shell.stage leaves it (Boot: <code>.zip read-only, <code>.properties,
 # state.properties naming it staged), owned by the app and labelled as its data.
 if [ -n "${CODE:-}" ]; then
-  pkg_name=dev.harbor.app d=/data/data/dev.harbor.app/harbor-code
+  pkg_name=dev.hub.app d=/data/data/dev.hub.app/harbor-code
   size=$(stat -c %s "$HOME/out/harbor-phone-code.zip")
   timeout 60 "$adb" push "$HOME/out/harbor-phone-code.zip" /data/local/tmp/code.zip >/dev/null
   ad "am force-stop $pkg_name; mkdir -p $d && cp /data/local/tmp/code.zip $d/$ccode.zip && chmod 444 $d/$ccode.zip \
@@ -166,7 +166,8 @@ if [ -n "${CODE:-}" ]; then
   echo "staged code $cver ($size bytes) for the app's next start"
 fi
 
-pkg=dev.harbor.app
+# Hub's APK: applicationId dev.hub.app (android/build.sh), its classes still in dev.harbor.app.
+pkg=dev.hub.app cls=dev.harbor.app
 pid() { ad pidof "$pkg" | tr -d '\r'; }
 # Fails when the app crashed (its last words from logcat) or isn't the screen in front.
 alive() {
@@ -216,14 +217,15 @@ gid() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" <<< "$gids"; }
 open() {
   local what="$1" a=(-W -S -n)
   case "$what" in
-    home|chats) a+=("$pkg/.Hubs") ;;
-    chat) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "$(gid cards)") ;;
-    chat:lead) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "$(gid lead)") ;;
-    chat:composer) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "$(gid composer)") ;;
-    chat:*) a+=("$pkg/.Chat" --es hub ws:org_sam --es chat "${what#chat:}") ;;
-    settings) a+=("$pkg/.Settings" --es hub ws:org_sam) ;;
-    new) a+=("$pkg/.NewChat" --es hub ws:org_sam) ;;
-    palette) a+=("$pkg/.Palette" --es hub ws:org_sam) ;;
+    home|chats) a+=("$pkg/$cls.Hubs") ;;
+    chat) a+=("$pkg/$cls.Chat" --es hub ws:org_sam --es chat "$(gid cards)") ;;
+    chat:lead) a+=("$pkg/$cls.Chat" --es hub ws:org_sam --es chat "$(gid lead)") ;;
+    chat:composer) a+=("$pkg/$cls.Chat" --es hub ws:org_sam --es chat "$(gid composer)") ;;
+    chat:*) a+=("$pkg/$cls.Chat" --es hub ws:org_sam --es chat "${what#chat:}") ;;
+    settings) a+=("$pkg/$cls.Settings" --es hub ws:org_sam) ;;
+    new) a+=("$pkg/$cls.NewChat" --es hub ws:org_sam) ;;
+    palette) a+=("$pkg/$cls.Palette" --es hub ws:org_sam) ;;
+    persons) a+=("$pkg/$cls.Persons") ;;
     *) echo "unknown screen: $what"; return 2 ;;
   esac
   ad am start "${a[@]}" >/dev/null || { echo "could not open $what"; return 1; }
@@ -255,7 +257,7 @@ for st in "$@"; do
     # Harbor's process ends; the test caller comes in front; Listen alone starts Harbor again (as root: it
     # isn't exported), so the process has no screen at all.
     cold:*) ad am force-stop "$pkg"; ad am start -W -n dev.harbor.rigcaller/.Open >/dev/null
-      ad am start-foreground-service -n "$pkg/.Listen" >/dev/null || { echo "could not start Listen"; fail=1; break; }
+      ad am start-foreground-service -n "$pkg/$cls.Listen" >/dev/null || { echo "could not start Listen"; fail=1; break; }
       sleep 3; echo "cold: pid $(pid), front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     front:*) echo "front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     wait:*) sleep "${st#wait:}" ;;

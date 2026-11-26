@@ -131,9 +131,14 @@ export function personSections(p: Person): SectionId[] {
 
 /**
  * The connections a person can be talked to through: those of the section they were opened from
- * (or of all their sections from All people), for kinds the person has an identifier for.
+ * (or of all their sections from All people), then those of the sections they were moved out of (`carried`), for
+ * kinds the person has an identifier for.
  */
 export function channelsFor<T extends ConnMeta>(p: Person, conns: T[], from: SectionId | null): T[] {
-  const sections = from ? [from] : personSections(p)
-  return conns.filter((c) => sections.includes(c.section) && validPeer(c.kind, peerOf(p, c.kind, c.section)))
+  const mine = personSections(p)
+  // chats of the sections they were moved out of (Move to…) come along, after the section's own
+  const carried = (p.carried ?? []).filter((s) => !mine.includes(s))
+  const sections = [...(from ? [from] : mine), ...carried.filter((s) => s !== from)]
+  const rank = (c: T) => sections.indexOf(c.section)
+  return conns.filter((c) => rank(c) >= 0 && validPeer(c.kind, peerOf(p, c.kind, c.section))).sort((a, b) => rank(a) - rank(b))
 }
