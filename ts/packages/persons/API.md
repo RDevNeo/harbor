@@ -26,10 +26,30 @@ Sidebar order: Stores (each store: owner first, then members by last message), t
 Within a section, people are sorted by `rows[section].lastAt` desc; settled ones go to a "Settled" fold.
 `siteRequests` is the SpokPay section's "Site requests" list (Headquarters' Home list), drawn at the top of that section:
 SpokPay's active requests read every minute with the saved admin key, newest activity first. `waits`: one waits on
-SpokPay (the heading's amber dot). A row opens its admin page (`url`) and posts `site-requests/seen`.
+SpokPay (the heading's amber dot). A row opens the request's pane (`site-request/{ref}` below); `url` is its SpokPay
+admin page (Copy link).
 
 ## POST /v1/persons/site-requests/seen  { ref, at } → `{ ok }`   (a row opened at its `at`: "Store replied" goes, for every device)
 ## POST /v1/persons/site-requests/reload → `{ ok }`   (read SpokPay's list now)
+
+## A site request's pane (SpokPay's admin request page; `srpane.ts`)
+- `GET /v1/persons/site-request/{ref}` → `{ ok, pane }`: read from SpokPay now (its newest 100 messages), and what the
+  store wrote counts as seen. Offline or while SpokPay fails, the last read of a request opened lately (12 kept) with
+  `note` saying so; never opened here: the error.
+- `POST /v1/persons/site-request/{ref}/reply { text, images?: [{ name, type, data: base64 }] (≤ 5, ≤ 10 MB), key? }` →
+  `{ ok, pane }`: sent to the store as SpokPay (site-requests:write); `key` is the Idempotency-Key of a retry.
+- `POST /v1/persons/site-request/{ref}/status { to: working|review|completed|closed }` → `{ ok, pane }`
+  (site-requests:status; only the moves in `statuses`; completed and closed are final: ask first, with `confirms`).
+- A refusal: `{ error, code }` with SpokPay's status (403 a permission the key lacks, 404 gone, 429 its rate limit…).
+
+`pane`: `{ ref, subject, status, statusLabel, tone: neutral|info|warning|success, store, storeSlug, initials, icon (a
+picture route), iconPath (PC), url, brief: { title, sub ("Website · Opened by SpokPay · 19 Nov 2026"), summary,
+facts: [{ label, text, full }], files }, factRows (facts paired as the card lays them out), items: [{ kind: "event",
+id, text } | { kind: "msg", id, mine (SpokPay's), side, author, head ("Truth · 7 h ago"), text, files, joinsPrev,
+joinsNext, at }], statuses: [{ status, label, current }] (the current one first), confirms: { completed, closed }:
+{ title, text, ok }, finished, finishedNote, placeholder ("Write to …"), hasMore, writeBlocked, statusBlocked,
+lastActivityAt, note }`. `files`: `[{ url (SpokPay's), name, image, src (a picture route) }]`. `summary` is "" until
+SpokPay's admin API sends it, except for requests Hub opened (the proposal's details).
 
 ## GET /v1/persons/chat/{personId}?section=S
 ```

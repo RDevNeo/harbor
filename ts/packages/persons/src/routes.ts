@@ -18,6 +18,8 @@ import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
 import type { SiteRequests } from "./siterequests.ts";
 import type { SiteRequestBoard } from "./srboard.ts";
 import { initialsOf, siteRequestPageUrl } from "./srlist.ts";
+import { spError } from "./spokpay-view.ts";
+import { factRows, finishWords, type PaneView } from "./srpane.ts";
 import type { Proposal, ProposalFields } from "./spokpay-core.ts";
 import { audioKey, waveBars, type AudioService } from "./audio.ts";
 import type { VoiceQueue } from "./voicequeue.ts";
@@ -102,6 +104,7 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
       }
       if (m === "POST" && rest[0] === "site-requests" && rest.length === 2) return await this.siteRequestsRoute(rest[1]!, obj(c.body));
+      if (rest[0] === "site-request" && rest[1]) return await this.srPane(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "proposal" && rest[1]) return await this.proposal(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "proposing" && rest[1]) return await this.proposing(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "person" && rest[1]) {
@@ -370,6 +373,46 @@ export class PersonsRoutes {
       return ok({ ok: true });
     }
     return err(404, "no such call");
+  }
+
+  /**
+   * A site request's pane (SpokPay's admin request page): `GET site-request/{ref}` reads it now (and marks what the
+   * store wrote seen); `POST site-request/{ref}/reply { text, images?: [{ name, type, data: base64 }], key? }` answers
+   * the store as SpokPay; `POST site-request/{ref}/status { to }` moves it. Each answers `{ ok, pane }` (srpane.ts
+   * PaneView plus the store's icon and the admin page's link); a refusal is `{ error, code }`.
+   */
+  private async srPane(m: string, ref: string, act: string, b: Record<string, unknown>): Promise<Reply> {
+    const board = this.extra.board;
+    if (!board) return err(404, "SpokPay isn't in this engine");
+    try {
+      if (m === "POST" && act === "reply") {
+        const images = (Array.isArray(b.images) ? b.images : []).map((x) => {
+          const im = obj(x);
+          return { name: str(im.name) ?? "image.png", type: str(im.type) ?? "image/png", data: new Uint8Array(Buffer.from(str(im.data) ?? "", "base64")) };
+        });
+        await board.reply(ref, str(b.text) ?? "", images, str(b.key));
+      } else if (m === "POST" && act === "status") {
+        await board.move(ref, str(b.to) ?? "");
+      } else if (!(m === "GET" && act === "")) return err(404, "no such call");
+      return ok({ ok: true, pane: this.paneJson(await board.pane(ref, (u) => `/v1/persons/img/url?u=${encodeURIComponent(u)}`)) });
+    } catch (e) {
+      const x = spError(e);
+      const status = typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : 502;
+      return { status: status >= 400 ? status : 502, body: { error: x.message, code: x.code } };
+    }
+  }
+
+  private paneJson(v: PaneView): Json {
+    const icon = v.storeSlug ? this.extra.board?.view().icons[v.storeSlug] ?? null : null;
+    return json({
+      ...v,
+      factRows: factRows(v.brief.facts),
+      confirms: { completed: finishWords("completed", v.store), closed: finishWords("closed", v.store) },
+      initials: initialsOf(v.store),
+      iconPath: icon ? this.avatars.file(icon) : null,
+      icon: icon ? `/v1/persons/img/url?u=${encodeURIComponent(icon)}` : null,
+      url: siteRequestPageUrl(v.ref),
+    });
   }
 
   private isSettledNow(p: Person, sec: SectionId): boolean {

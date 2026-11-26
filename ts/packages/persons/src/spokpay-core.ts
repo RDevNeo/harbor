@@ -122,6 +122,8 @@ export interface SrHeader {
   status: SrStatus;
   store: { name: string; slug: string | null };
   waitingOn: Side | null;
+  /** SpokPay's `summary` (the paragraph its admin page shows first): "" while the admin API doesn't send it. */
+  summary: string;
   brief: Brief;
   attachments: SrAttachment[];
   createdAt: number;
@@ -213,6 +215,7 @@ export function readHeader(xv: unknown): SrHeader {
     status: oneOf(x.status, STATUSES, "open"),
     store: { name: str(store.name), slug: strOrNull(store.slug) },
     waitingOn: sideOrNull(x.waitingOn),
+    summary: str(x.summary),
     brief: Object.fromEntries(BRIEF_PARTS.map((p) => [p, str(brief[p])])) as Brief,
     attachments: arr(x.attachments).map(readAttachment),
     createdAt: num(x.createdAt),

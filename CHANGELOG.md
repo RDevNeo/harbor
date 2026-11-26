@@ -6,6 +6,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Added
+- Hub Persons: **a site request's pane**. A row of SpokPay › Site requests now opens the request in the Persons tab's main
+  area instead of the browser, drawn as SpokPay's admin request page: the store's logo, the subject and the status pill,
+  "Store · SR-215" with a copy button (the request's link), the status select with SpokPay's own moves (Complete and Close
+  ask first: final); the Request brief card ("Website · Opened by SpokPay · 19 Nov 2026", the summary, What changes /
+  Where / Deadline / References / Expected outcome, pictures); events as centered lines ("Work started · 19 Nov 2026");
+  messages as "Truth · 7 h ago" over a bubble, the store's on the left with its logo, SpokPay's dark ones on the right
+  with SpokPay's mark, one author's run within an hour joined; and the composer "Write to <owner>" with pictures (up to
+  5), emoji and Send, which answers the store as SpokPay. Finished requests say so instead of the composer. Read with the
+  saved admin key (`srpane.ts`, unit tested; `GET/POST v1/persons/site-request/{ref}[/reply|/status]`) on open, every
+  30 s while shown and when its row moves; opening it marks what the store wrote seen. The last read of the 12 requests
+  opened lately is kept, so a pane opens offline (with a note). Left out: Edit (SpokPay's admin API has no route for
+  it), the summary paragraph (the API doesn't send it; requests Hub opened show theirs), reactions, replies to a message,
+  removing a message and the typing dots (not in the admin API). PC (Linux, macOS, Windows) and Android (emoji from the
+  keyboard; pictures open in the browser).
 - Hub **Collector** tab (PC and phone): the Lead Collector userscript, native (no browser). Collects creators from
   YouTube (search passes), TikTok (its search suggestions; no login) and Instagram (hashtags and account search, on the
   user's own session pasted once, kept only on this PC). Nobody is collected twice: not across runs or platforms (a

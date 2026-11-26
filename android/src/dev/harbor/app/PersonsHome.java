@@ -27,7 +27,7 @@ import java.util.Locale;
  *  Creators, Stores › a store or New store…).
  *  At the top of SpokPay: Headquarters' "Site requests" list (the state's siteRequests): its heading (amber dot while one
  *  waits on SpokPay, the count, the chevron), its notices, and each active request (the store's square icon, the
- *  subject, "Store replied" / "Store waiting" / "Nothing new", the ref); a tap opens its SpokPay admin page, a long
+ *  subject, "Store replied" / "Store waiting" / "Nothing new", the ref); a tap opens its pane (PersonsSr, SpokPay's admin request page), a long
  *  press copies the link. */
 final class PersonsHome {
     static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7,
@@ -455,14 +455,8 @@ final class PersonsHome {
         col.addView(line, Ui.fill());
         r.addView(col, Ui.weight());
         r.setContentDescription((subject.isEmpty() ? ref : subject) + ", " + (side == null ? "Nothing new" : PersonsUi.s(side, "text")) + ", " + ref);
-        r.setOnClickListener(v -> {
-            if (sr.optBoolean("unread")) {
-                JSONObject b = new JSONObject();
-                try { b.put("ref", ref).put("at", sr.optLong("at")); } catch (Exception ignored) { }
-                Ui.bg(a, () -> p.hub.call("POST", "/v1/persons/site-requests/seen", b), x -> p.refresh());
-            }
-            Ui.openUrl(a, url);
-        });
+        // its pane (PersonsSr) opens over the home; reading it marks what the store wrote seen
+        r.setOnClickListener(v -> p.openSr(ref));
         r.setOnLongClickListener(v -> {
             List<Ds.Item> m = new ArrayList<>();
             m.add(Ds.item(Ui.I_LINK, "Copy link", () -> Ui.copy(a, url)));

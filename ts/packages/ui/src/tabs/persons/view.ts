@@ -47,6 +47,47 @@ export interface SrRowJson {
   icon: string | null;
   url: string;
 }
+/** A site request's pane (the engine's GET v1/persons/site-request/{ref}: srpane.ts PaneView and the store's face). */
+export interface SrFileJson { url: string; name: string; image: boolean; src: string | null }
+export interface SrFactJson { label: string; text: string; full: boolean }
+export type SrItemJson =
+  | { kind: "event"; id: string; text: string; at: number }
+  | { kind: "msg"; id: string; mine: boolean; side: string; author: string; head: string; text: string; files: SrFileJson[]; joinsPrev: boolean; joinsNext: boolean; at: number };
+export interface SrPaneJson {
+  ref: string;
+  subject: string;
+  status: string;
+  statusLabel: string;
+  tone: string;
+  store: string;
+  storeSlug: string | null;
+  initials: string;
+  iconPath: string | null;
+  icon: string | null;
+  url: string;
+  brief: { title: string; sub: string; summary: string; facts: SrFactJson[]; files: SrFileJson[] };
+  factRows: [SrFactJson, SrFactJson | null][];
+  /** The confirm dialog before a final move. */
+  confirms: Record<"completed" | "closed", { title: string; text: string; ok: string }>;
+  items: SrItemJson[];
+  statuses: { status: string; label: string; current: boolean }[];
+  finished: boolean;
+  finishedNote: string;
+  placeholder: string;
+  hasMore: boolean;
+  writeBlocked: string | null;
+  statusBlocked: string | null;
+  lastActivityAt: number;
+  note: string | null;
+}
+
+/** A picture's drawn size in the pane: its own shape inside 240 × 180 (a placeholder's until it's decoded). */
+export function srImageSize(w: number, h: number, maxW = 240, maxH = 180): { w: number; h: number } {
+  if (!(w > 0 && h > 0)) return { w: 160, h: 120 };
+  const k = Math.min(1, maxW / w, maxH / h);
+  return { w: Math.max(24, Math.round(w * k)), h: Math.max(24, Math.round(h * k)) };
+}
+
 export interface SrListJson { waits: boolean; notices: { title: string; text: string }[]; rows: SrRowJson[] }
 export interface StateJson { rev: number; unread: number; connections: ConnJson[]; stores: StoreJson[]; lists: ListJson[]; people: PersonJson[]; loading?: boolean; audio?: AudioStateJson | null; siteRequests?: SrListJson | null }
 

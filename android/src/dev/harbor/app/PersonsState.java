@@ -40,6 +40,8 @@ final class PersonsState {
     PersonsList list;
     PersonsChat chat;
     PersonsPanel panel;
+    /** A SpokPay site request's pane (the SpokPay section's Site requests). */
+    PersonsSr sr;
 
     private volatile boolean vis;
     private int gen;
@@ -154,6 +156,7 @@ final class PersonsState {
         if (list != null) list.render();
         if (chat != null) chat.stateChanged();
         if (panel != null) panel.stateChanged();
+        if (sr != null) sr.stateChanged();
         if (changed) PersonsTab.changed();
     }
 
@@ -236,6 +239,20 @@ final class PersonsState {
         panel = null;
     }
 
+    /** A site request's pane, from its row in the SpokPay section. */
+    void openSr(String ref) {
+        if (sr != null) closeSr();
+        sr = new PersonsSr(this, ref);
+        push(sr.view);
+    }
+
+    void closeSr() {
+        if (sr == null) return;
+        sr.close();
+        pop(sr.view);
+        sr = null;
+    }
+
     /** A person was deleted: their chat and panel go. */
     void gone() {
         closePanel();
@@ -246,9 +263,10 @@ final class PersonsState {
     boolean back() {
         if (panel != null) { closePanel(); return true; }
         if (chat != null) { closeChat(); return true; }
+        if (sr != null) { closeSr(); return true; }
         if (list != null) { pop(list.view); list = null; return true; }
         return false;
     }
 
-    boolean deep() { return chat != null || panel != null; }
+    boolean deep() { return chat != null || panel != null || sr != null; }
 }

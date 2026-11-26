@@ -2,7 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll } from "ds.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll } from "ds.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 
 export struct PRow {
@@ -106,6 +106,23 @@ export struct PUpload { title: string, meta: string, url: string, thumb: image, 
 export struct PSocial { platform: string, handle: string, url: string, uploads: [PUpload], note: string }
 
 export struct PChip { id: string, label: string, on: bool, color: color }
+
+// A site request's pane (SpokPay's admin request page): a picture of the brief or a message at its drawn size, a fact
+// row of the brief (two half ones side by side), and one line of the timeline (an event or a message).
+export struct PSrImg { image: image, w: length, h: length }
+export struct PSrFact { a-label: string, a-text: string, b-label: string, b-text: string, two: bool }
+export struct PSrItem {
+    kind: string, // event | msg
+    id: string,
+    mine: bool, // SpokPay's (right, dark bubble)
+    head: string, // "Truth · 7 h ago" on a run's first message, else ""
+    text: string,
+    avatar: bool, // the run's last message carries the avatar
+    joins-prev: bool,
+    joins-next: bool,
+    images: [PSrImg],
+    files: [string],
+}
 
 export global PersonsBus {
     in-out property <bool> ready;
@@ -220,6 +237,38 @@ export global PersonsBus {
     in property <string> f-picked; // "2 picked: Evellin, Eve"
     in property <[PPick]> p-linked;
 
+    // a site request's pane (view "sr"): SpokPay's admin request page
+    in property <string> sr-subject;
+    in property <string> sr-status;
+    in property <string> sr-tone; // neutral | info | warning | success
+    in property <string> sr-store;
+    in property <string> sr-ref;
+    in property <string> sr-initials;
+    in property <image> sr-icon;
+    in property <bool> sr-has-icon;
+    in property <string> sr-brief-title;
+    in property <string> sr-brief-sub;
+    in property <string> sr-summary;
+    in property <[PSrFact]> sr-facts;
+    in property <[PSrImg]> sr-brief-imgs;
+    in property <[string]> sr-brief-files;
+    in property <[PSrItem]> sr-items;
+    in property <int> sr-rev; // another request opened: the view goes to its end
+    in property <bool> sr-loading;
+    in property <string> sr-error; // it couldn't be read (with Try again)
+    in property <string> sr-note; // an earlier read is shown (SpokPay didn't answer now)
+    in property <bool> sr-more; // SpokPay sent only its newest 100 messages
+    in property <bool> sr-finished;
+    in property <string> sr-finished-note;
+    in property <string> sr-placeholder;
+    in property <string> sr-blocked; // why the key can't reply
+    in property <bool> sr-can-move; // the status menu has somewhere to go
+    in property <bool> sr-moving;
+    in property <bool> sr-sending;
+    in-out property <string> sr-draft;
+    in property <string> sr-attached; // the pictures going with the reply, one line
+    in property <int> sr-focus-rev;
+
     callback all-people();
     callback open-person(string, string, string);
     callback toggle-store(string);
@@ -276,6 +325,15 @@ export global PersonsBus {
     callback pick-query(string);
     callback unlink(string); // the panel's LINKED: back on their own
     callback panel-menu(length, length); // the panel's ⋯
+    callback sr-close();
+    callback sr-status-menu(length, length); // the status button: SpokPay's moves
+    callback sr-copy(); // the ref's copy button: the request's link
+    callback sr-send();
+    callback sr-attach();
+    callback sr-clear-attached();
+    callback sr-retry();
+    callback sr-open-image(string, int); // a picture of the brief ("brief") or of a message (its id)
+    callback sr-open-file(string, int);
 }
 
 // ---------- rows (ds-list.slint's ListRow, SectionHead, FoldBar) ----------
@@ -1957,6 +2015,711 @@ component ChatPane inherits Rectangle {
     }
 }
 
+// ---------- a site request's pane (SpokPay's admin request page, request-thread.tsx, drawn in Hub) ----------
+// ThreadHeader (the store's square logo, the subject, the status badge, "Store · SR-215 ⧉", the status select), the
+// RequestBrief card, the timeline (events as centered dividers, messages as RequestLine: the author and time over the
+// bubble, the store's on the left in the secondary bubble, SpokPay's on the right in the dark one, one author's run
+// joined) and the Composer ("Write to <owner>", pictures, emoji, send). Edit is left out: SpokPay's admin API has no
+// route for it.
+
+global SrLook {
+    // rengaf's Badge tones (bg 200, border 400, text 900; neutral's text 1000)
+    public pure function pill-bg(tone: string) -> color {
+        return tone == "info" ? Theme.blue-200 : tone == "warning" ? Theme.amber-200 : tone == "success" ? Theme.green-200 : Theme.gray-200;
+    }
+    public pure function pill-line(tone: string) -> color {
+        return tone == "info" ? Theme.blue-400 : tone == "warning" ? Theme.amber-400 : tone == "success" ? Theme.green-400 : Theme.gray-400;
+    }
+    public pure function pill-fg(tone: string) -> color {
+        return tone == "info" ? Theme.blue-900 : tone == "warning" ? Theme.amber-900 : tone == "success" ? Theme.green-900 : Theme.gray-1000;
+    }
+}
+
+// StoreLogo: the store's picture, else its initials, in a rounded square.
+component SrLogo inherits Rectangle {
+    in property <length> size: 32px;
+    width: root.size;
+    height: root.size;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.gray-400;
+    background: Theme.gray-100;
+    clip: true;
+    if !PersonsBus.sr-has-icon: Text {
+        text: PersonsBus.sr-initials;
+        font-size: root.size >= 40px ? 15px : 12px;
+        font-weight: 500;
+        color: Theme.gray-900;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if PersonsBus.sr-has-icon: Image {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        source: PersonsBus.sr-icon;
+        image-fit: cover;
+    }
+}
+
+// SpokPayAvatar: SpokPay's mark in a bordered circle.
+component SrSpokPayAvatar inherits Rectangle {
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg100;
+    Path {
+        x: 8px;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        viewbox-x: 29.8;
+        viewbox-y: 29.9;
+        viewbox-width: 413.8;
+        viewbox-height: 413.8;
+        fill: Theme.fg;
+        commands: "M41.5 309.3C41.6 275.6 70.7 249 99.3 236.2C110.4 231.2 122.1 227.8 134.2 226.1C137.3 225.7 140.5 225.4 143.7 225.2C144.8 225.1 147.1 226.1 147 225C147 224 141.9 220.5 141 219.6C137.2 215.9 133.7 211.9 130.6 207.5C116.1 187.2 108.5 154.3 130.5 135.9C147.2 122 171.8 125 190.1 134C196.3 137 202.2 140.8 207.5 145.2C208.6 146.1 209.7 147 210.7 147.9C210.9 148.1 211.4 148.9 211.4 148.5C211.8 143.3 211 137.7 211.3 132.4C212 120.5 214.2 108.6 218 97.3C230.9 58.9 271.9 13.1 316.4 35.5C352.7 53.7 360.3 102.7 353.5 138.7C352 146.5 349.8 154.2 347 161.6C345.6 165.2 343.5 168.6 342.4 172.2C342.3 172.5 343 172 343.3 171.9C344.7 171.4 346.2 171 347.6 170.6C354.5 168.6 361.5 167.4 368.7 166.9C390.2 165.7 415.7 172.3 427 192.5C440.3 216.1 424.9 242.9 405.5 257.6C396.9 264.2 387 269.2 376.7 272.5C374 273.4 371.2 274.1 368.4 274.8C367.6 275 365.8 274.6 366.1 275.3C366.7 276.8 373.1 279.3 374.7 280.3C380.3 283.8 385.6 287.9 390.6 292.4C411.6 311.5 428.5 340.6 424.9 369.9C421.5 396.7 399.1 413.4 372.8 413.7C356.3 413.8 340 408.4 325.8 400.2C316.1 394.6 307.2 387.6 299.5 379.4C296.9 376.7 294.4 373.9 292.1 370.9C291.2 369.8 290.1 367.5 288.9 366.7C288.3 366.4 288.8 368.2 288.7 368.9C288.4 371.4 288.1 374 287.6 376.5C285.5 387.7 281.6 398.6 276 408.5C263 431.2 236.4 451.8 209.3 440.7C187.1 431.6 176.9 406.4 175.4 384C174.9 375.3 175.5 366.7 177.1 358.2C177.5 356 178 353.8 178.5 351.6C178.7 350.9 179.8 349.7 179.1 349.5C178.5 349.3 175.9 351.3 175.3 351.6C172.5 353.1 169.5 354.6 166.6 355.9C158.3 359.5 149.7 362.3 140.9 364.1C126 367.2 110.5 367.8 95.6 364.9C67.8 359.4 41.5 339.8 41.5 309.3Z";
+    }
+}
+
+// Pictures in a row (BubbleGallery, simply): each at its drawn size, a click opens the lightbox.
+component SrGallery inherits HorizontalLayout {
+    in property <[PSrImg]> imgs;
+    in property <string> owner;
+    spacing: 4px;
+    alignment: start;
+    for p[i] in root.imgs: Rectangle {
+        width: p.w;
+        height: p.h;
+        border-radius: 6px;
+        clip: true;
+        background: Theme.gray-200;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: p.image;
+            image-fit: cover;
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                PersonsBus.sr-open-image(root.owner, i);
+            }
+        }
+    }
+}
+
+// Files that aren't pictures: a chip each, opened by the system.
+component SrFiles inherits HorizontalLayout {
+    in property <[string]> names;
+    in property <string> owner;
+    in property <color> ink: Theme.fg;
+    spacing: 6px;
+    alignment: start;
+    for n[i] in root.names: Rectangle {
+        height: 24px;
+        width: fl.preferred-width + 16px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: fa.has-hover ? Theme.gray-200 : transparent;
+        fl := HorizontalLayout {
+            x: 8px;
+            spacing: 4px;
+            Glyph {
+                icon: Icons.file;
+                size: 12px;
+                color: root.ink;
+            }
+            Text {
+                text: n;
+                font-size: 12px;
+                color: root.ink;
+                vertical-alignment: center;
+            }
+        }
+        fa := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                PersonsBus.sr-open-file(root.owner, i);
+            }
+        }
+    }
+}
+
+// RequestBrief: a compact card: "Request brief", "Website · Opened by SpokPay · 19 Nov 2026", the summary, a divider,
+// the brief's parts (small muted label, the text under it), the pictures.
+component SrBrief inherits Rectangle {
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg100;
+    height: col.preferred-height;
+    col := VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: PersonsBus.sr-brief-title;
+                font-size: 14px;
+                font-weight: 600;
+                color: Theme.fg;
+            }
+            Text {
+                text: PersonsBus.sr-brief-sub;
+                font-size: 13px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+        if PersonsBus.sr-summary != "": Text {
+            text: PersonsBus.sr-summary;
+            font-size: 14px;
+            color: Theme.fg;
+            wrap: word-wrap;
+        }
+        if PersonsBus.sr-facts.length > 0 && PersonsBus.sr-summary != "": Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+        for f in PersonsBus.sr-facts: HorizontalLayout {
+            spacing: 16px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text {
+                    text: f.a-label;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: f.a-text;
+                    font-size: 14px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+            if f.two: VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text {
+                    text: f.b-label;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: f.b-text;
+                    font-size: 14px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        if PersonsBus.sr-brief-imgs.length > 0: SrGallery {
+            imgs: PersonsBus.sr-brief-imgs;
+            owner: "brief";
+        }
+        if PersonsBus.sr-brief-files.length > 0: SrFiles {
+            names: PersonsBus.sr-brief-files;
+            owner: "brief";
+        }
+    }
+}
+
+// RequestLine: an event as a centered muted line; a message as the author and time over its bubble, with the avatar
+// beside the run's last one (the store's on the left, SpokPay's on the right).
+component SrLine {
+    in property <PSrItem> it;
+    in property <length> max-w;
+    property <length> pad-x: 12px;
+    property <length> text-w: min(root.max-w * 0.85 - 2 * pad-x, body.preferred-width);
+    property <length> img-w: root.it.images.length == 0 ? 0px : gal.preferred-width;
+    property <length> bubble-w: min(root.max-w * 0.85, max(root.it.text == "" ? 0px : text-w + 2 * pad-x, img-w + 8px));
+    property <length> r-in: 4px; // a joined corner (rounded-sm)
+    property <length> r-out: 8px;
+    height: root.it.kind == "event" ? 28px : lay.preferred-height;
+    if root.it.kind == "event": Text {
+        width: root.width;
+        height: root.height;
+        text: root.it.text;
+        font-size: 12px;
+        color: Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    lay := HorizontalLayout {
+        visible: root.it.kind == "msg";
+        width: root.width;
+        padding-top: root.it.joins-prev ? 2px : 10px;
+        spacing: 12px;
+        alignment: root.it.mine ? end : start;
+        // the avatar column (left for the store)
+        if !root.it.mine: VerticalLayout {
+            width: 32px;
+            alignment: end;
+            if root.it.avatar: SrLogo { }
+        }
+        VerticalLayout {
+            spacing: 4px;
+            if root.it.head != "": Text {
+                text: root.it.head;
+                font-size: 12px;
+                color: Theme.subtle;
+                horizontal-alignment: root.it.mine ? right : left;
+            }
+            HorizontalLayout {
+                alignment: root.it.mine ? end : start;
+                Rectangle {
+                    width: root.bubble-w;
+                    border-top-left-radius: !root.it.mine && root.it.joins-prev ? root.r-in : root.r-out;
+                    border-bottom-left-radius: !root.it.mine && root.it.joins-next ? root.r-in : root.r-out;
+                    border-top-right-radius: root.it.mine && root.it.joins-prev ? root.r-in : root.r-out;
+                    border-bottom-right-radius: root.it.mine && root.it.joins-next ? root.r-in : root.r-out;
+                    border-width: root.it.mine ? 0px : 1px;
+                    border-color: Theme.border;
+                    background: root.it.mine ? Theme.fg : Theme.bg200;
+                    VerticalLayout {
+                        padding-left: root.it.text == "" ? 4px : root.pad-x;
+                        padding-right: root.it.text == "" ? 4px : root.pad-x;
+                        padding-top: root.it.text == "" ? 4px : 8px;
+                        padding-bottom: root.it.text == "" ? 4px : 8px;
+                        spacing: 6px;
+                        body := Text {
+                            visible: root.it.text != "";
+                            height: root.it.text == "" ? 0px : self.preferred-height;
+                            width: root.text-w;
+                            text: root.it.text;
+                            font-size: 13px;
+                            color: root.it.mine ? Theme.bg100 : Theme.fg;
+                            wrap: word-wrap;
+                        }
+                        gal := SrGallery {
+                            visible: root.it.images.length > 0;
+                            imgs: root.it.images;
+                            owner: root.it.id;
+                        }
+                        if root.it.files.length > 0: SrFiles {
+                            names: root.it.files;
+                            owner: root.it.id;
+                            ink: root.it.mine ? Theme.bg100 : Theme.fg;
+                        }
+                    }
+                }
+            }
+        }
+        if root.it.mine: VerticalLayout {
+            width: 32px;
+            alignment: end;
+            if root.it.avatar: SrSpokPayAvatar { }
+        }
+    }
+}
+
+// The composer's emoji (EmojiPicker, its most used): a click puts one at the end of the reply.
+component SrEmoji inherits Rectangle {
+    property <[string]> list: ["👍", "🙏", "😊", "😂", "❤️", "🎉", "✅", "👀", "🙌", "🔥", "💯", "😅", "🤔", "👏", "😉", "🚀", "✨", "💪", "😍", "🥳", "😢", "😮", "👌", "🤝", "⚠️", "📌", "⏳", "📷", "✍️", "💬", "☺️", "🫡"];
+    callback picked(string);
+    property <int> cols: 8;
+    width: 8 * 32px + 12px;
+    height: 4 * 32px + 12px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg100;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #0000002a;
+    for e[i] in root.list: Rectangle {
+        x: 6px + mod(i, root.cols) * 32px;
+        y: 6px + floor(i / root.cols) * 32px;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        background: ea.has-hover ? Theme.gray-200 : transparent;
+        Text {
+            text: e;
+            font-size: 18px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        ea := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.picked(e);
+            }
+        }
+    }
+}
+
+// Composer: "Write to <owner>" with pictures (up to 5), emoji and send; a finished request says so instead.
+component SrComposer inherits Rectangle {
+    property <bool> focused;
+    property <bool> emoji;
+    property <bool> blocked: PersonsBus.sr-blocked != "";
+    property <bool> can-send: !blocked && !PersonsBus.sr-sending && (PersonsBus.sr-draft != "" || PersonsBus.sr-attached != "");
+    height: wrap.preferred-height;
+    wrap := VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 6px;
+        padding-bottom: 14px;
+        Rectangle {
+            border-radius: Ds.radius-xl;
+            border-width: 1px;
+            border-color: root.focused ? Theme.gray-600 : Theme.border;
+            background: Theme.bg100;
+            VerticalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 10px;
+                padding-bottom: 8px;
+                spacing: 8px;
+                if PersonsBus.sr-attached != "": QuoteChip {
+                    glyph: Icons.image;
+                    lead: "";
+                    name: PersonsBus.sr-attached;
+                    close-tip: "Remove the pictures";
+                    close => {
+                        PersonsBus.sr-clear-attached();
+                    }
+                }
+                if root.blocked: Text {
+                    text: PersonsBus.sr-blocked;
+                    font-size: 13px;
+                    color: Theme.amber-900;
+                    wrap: word-wrap;
+                }
+                if !root.blocked: ComposeField {
+                    text <=> PersonsBus.sr-draft;
+                    hint: PersonsBus.sr-placeholder;
+                    focus-rev: PersonsBus.sr-focus-rev;
+                    submit => {
+                        if root.can-send {
+                            PersonsBus.sr-send();
+                        }
+                    }
+                    escape => {
+                        if root.emoji {
+                            root.emoji = false;
+                            return true;
+                        }
+                        return false;
+                    }
+                    changed focused => {
+                        root.focused = self.focused;
+                    }
+                }
+                HorizontalLayout {
+                    height: 32px;
+                    spacing: 2px;
+                    Btn {
+                        icon: Icons.image;
+                        size: BtnSize.icon-sm;
+                        variant: Variant.ghost-muted;
+                        enabled: !root.blocked;
+                        tip: "Add pictures (up to 5)";
+                        clicked => {
+                            PersonsBus.sr-attach();
+                        }
+                    }
+                    emoji-btn := Btn {
+                        text: "☺";
+                        size: BtnSize.icon-sm;
+                        variant: Variant.ghost-muted;
+                        enabled: !root.blocked;
+                        pressed: root.emoji;
+                        tip: "Emoji";
+                        clicked => {
+                            root.emoji = !root.emoji;
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    if PersonsBus.sr-sending: VerticalLayout {
+                        alignment: center;
+                        Spinner { }
+                    }
+                    Btn {
+                        icon: Icons.arrow-up;
+                        size: BtnSize.icon-sm;
+                        variant: root.can-send ? Variant.primary : Variant.secondary;
+                        enabled: root.can-send;
+                        tip: "Send to " + PersonsBus.sr-store + " as SpokPay (Enter)";
+                        clicked => {
+                            PersonsBus.sr-send();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.emoji: TouchArea {
+        // a click elsewhere in the composer closes it
+        clicked => {
+            root.emoji = false;
+        }
+    }
+    if root.emoji: SrEmoji {
+        x: 24px + 10px + 34px;
+        y: -self.height + 4px;
+        picked(e) => {
+            PersonsBus.sr-draft = PersonsBus.sr-draft + e;
+            root.emoji = false;
+        }
+    }
+}
+
+component SrPane inherits Rectangle {
+    property <bool> at-bottom: true;
+    changed width => {
+        root.at-bottom = true;
+    }
+    VerticalLayout {
+        // ThreadHeader
+        Rectangle {
+            height: head.preferred-height;
+            head := HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 14px;
+                spacing: 12px;
+                if PersonsBus.side-hidden: VerticalLayout {
+                    alignment: center;
+                    ShowSideBtn {
+                        clicked => {
+                            PersonsBus.side-hidden = false;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        icon: Icons.arrow-left;
+                        size: BtnSize.icon-xs;
+                        variant: Variant.ghost-muted;
+                        tip: "Back to requests (Esc)";
+                        clicked => {
+                            PersonsBus.sr-close();
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    SrLogo {
+                        size: 48px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    spacing: 4px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 0;
+                            max-width: self.preferred-width;
+                            text: PersonsBus.sr-subject;
+                            font-size: 18px;
+                            font-weight: 600;
+                            color: Theme.fg;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        if PersonsBus.sr-status != "": VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 22px;
+                                width: pill.preferred-width + 18px;
+                                border-radius: 11px;
+                                border-width: 1px;
+                                border-color: SrLook.pill-line(PersonsBus.sr-tone);
+                                background: SrLook.pill-bg(PersonsBus.sr-tone);
+                                pill := Text {
+                                    text: PersonsBus.sr-status;
+                                    font-size: 12px;
+                                    font-weight: 500;
+                                    color: SrLook.pill-fg(PersonsBus.sr-tone);
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 0px;
+                        Text {
+                            horizontal-stretch: 0;
+                            text: PersonsBus.sr-store + " · ";
+                            font-size: 13px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        ref := Rectangle {
+                            horizontal-stretch: 0;
+                            width: rl.preferred-width;
+                            rl := HorizontalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: PersonsBus.sr-ref;
+                                    font-size: 13px;
+                                    color: ra.has-hover ? Theme.fg : Theme.subtle;
+                                    vertical-alignment: center;
+                                }
+                                Glyph {
+                                    icon: Icons.copy;
+                                    size: 12px;
+                                    color: ra.has-hover ? Theme.fg : Theme.subtle;
+                                }
+                            }
+                            ra := TipArea {
+                                tip: "Copy the request's link";
+                                clicked => {
+                                    PersonsBus.sr-copy();
+                                }
+                            }
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+                // the status select (SpokPay's own moves; a final one asks first)
+                if PersonsBus.sr-status != "": VerticalLayout {
+                    alignment: center;
+                    st := Btn {
+                        text: PersonsBus.sr-moving ? "Moving…" : PersonsBus.sr-status;
+                        trailing: Icons.down;
+                        size: BtnSize.sm;
+                        variant: Variant.outline;
+                        enabled: PersonsBus.sr-can-move && !PersonsBus.sr-moving;
+                        tip: PersonsBus.sr-finished ? "Final: SpokPay doesn't move it again" : "Status";
+                        clicked => {
+                            PersonsBus.sr-status-menu(self.absolute-position.x, self.absolute-position.y + self.height + 4px);
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+        // the conversation: the brief, then events and messages in order
+        Rectangle {
+            vertical-stretch: 1;
+            if PersonsBus.sr-loading && PersonsBus.sr-items.length == 0 && PersonsBus.sr-brief-sub == "": Spinner { }
+            if PersonsBus.sr-error != "" && PersonsBus.sr-brief-sub == "": VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "Could not load " + PersonsBus.sr-ref;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: Theme.fg;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: PersonsBus.sr-error;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Btn {
+                        text: "Try again";
+                        icon: Icons.rotate-cw;
+                        size: BtnSize.sm;
+                        variant: Variant.outline;
+                        clicked => {
+                            PersonsBus.sr-retry();
+                        }
+                    }
+                }
+            }
+            if PersonsBus.sr-brief-sub != "": sv := Scroll {
+                property <length> col-w: min(self.visible-width - 48px, 768px);
+                changed content-height => {
+                    if root.at-bottom {
+                        self.content-y = min(0px, self.visible-height - self.content-height);
+                    }
+                }
+                changed visible-height => {
+                    if root.at-bottom {
+                        self.content-y = min(0px, self.visible-height - self.content-height);
+                    }
+                }
+                scrolled => {
+                    root.at-bottom = self.content-y <= self.visible-height - self.content-height + 40px;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalLayout {
+                        width: sv.col-w;
+                        alignment: start;
+                        padding-top: 20px;
+                        padding-bottom: 12px;
+                        spacing: 4px;
+                        if PersonsBus.sr-note != "": Text {
+                            text: PersonsBus.sr-note;
+                            font-size: 12px;
+                            color: Theme.amber-900;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                        SrBrief { }
+                        if PersonsBus.sr-more: Text {
+                            text: "Older messages are on spokpay.com.";
+                            font-size: 12px;
+                            color: Theme.subtle;
+                            horizontal-alignment: center;
+                        }
+                        for it in PersonsBus.sr-items: SrLine {
+                            it: it;
+                            max-w: sv.col-w - 44px;
+                        }
+                    }
+                }
+            }
+        }
+        if PersonsBus.sr-finished && PersonsBus.sr-brief-sub != "": Rectangle {
+            height: fin.preferred-height;
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.border;
+            }
+            fin := Text {
+                x: 16px;
+                width: parent.width - 32px;
+                text: PersonsBus.sr-finished-note;
+                font-size: 14px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+                vertical-alignment: center;
+                min-height: 46px;
+            }
+        }
+        if !PersonsBus.sr-finished && PersonsBus.sr-brief-sub != "": SrComposer { }
+    }
+    // another request opened: its end shows
+    property <int> rev: PersonsBus.sr-rev;
+    changed rev => {
+        root.at-bottom = true;
+    }
+}
+
 
 // ---------- the person panel ----------
 
@@ -2581,6 +3344,8 @@ export component PersonsPage {
                     PersonsBus.dialog-cancel();
                 } else if PersonsBus.view == "chat" {
                     PersonsBus.close-chat();
+                } else if PersonsBus.view == "sr" {
+                    PersonsBus.sr-close();
                 }
                 return accept;
             }
@@ -2595,6 +3360,7 @@ export component PersonsPage {
                 if PersonsBus.view == "loading": Spinner { }
                 if PersonsBus.view == "list": ListPane { }
                 if PersonsBus.view == "chat": ChatPane { }
+                if PersonsBus.view == "sr": SrPane { }
             }
             if PersonsBus.view == "chat" && PersonsBus.panel: Panel {
                 // Whole physical pixels: its hairline (PanelSurface) lands on one.

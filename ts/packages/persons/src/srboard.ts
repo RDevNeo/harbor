@@ -7,14 +7,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivate } from "@harbor/store";
-import { readRow, type SrRow } from "./spokpay-core.ts";
+import { normalizeRef, readRow, readThread, SpokpayError, type ImageBytes, type SrRow, type SrThread } from "./spokpay-core.ts";
 import type { Spokpay } from "./spokpay.ts";
 import { spError } from "./spokpay-view.ts";
+import { paneView, relativeEnglish, type PaneView } from "./srpane.ts";
 import { ACTIVE_LIMIT, failedAgain, listNotices, listRows, sweepSeen, type ListProblem, type ListRow, type Notice } from "./srlist.ts";
 
 const POLL_MS = 60_000;
 const ICON_TTL = 24 * 3_600_000;
 const READS_PER_POLL = 5;
+/** The requests whose last read is kept (opened offline, or while SpokPay fails, the pane shows it). */
+const THREADS_KEPT = 12;
 
 type Icon = { url: string | null; at: number };
 
@@ -33,6 +36,7 @@ export class SiteRequestBoard {
   private truncated = false;
   private seen: Record<string, number> = {};
   private icons: Record<string, Icon> = {};
+  private threads: Record<string, { at: number; t: SrThread }> = {};
   private reading: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly file: string;
@@ -44,7 +48,15 @@ export class SiteRequestBoard {
   ) {
     this.file = join(dir, "spokpay-board.json");
     try {
-      const j = JSON.parse(readFileSync(this.file, "utf8")) as { seen?: unknown; icons?: unknown; rows?: unknown };
+      const j = JSON.parse(readFileSync(this.file, "utf8")) as { seen?: unknown; icons?: unknown; rows?: unknown; threads?: unknown };
+      if (j.threads && typeof j.threads === "object")
+        for (const [ref, v] of Object.entries(j.threads as Record<string, { at?: unknown; t?: unknown }>)) {
+          try {
+            if (typeof v.at === "number") this.threads[ref] = { at: v.at, t: readThread(v.t) };
+          } catch {
+            // a bad one is read again
+          }
+        }
       if (j.seen && typeof j.seen === "object") this.seen = j.seen as Record<string, number>;
       if (j.icons && typeof j.icons === "object") this.icons = j.icons as Record<string, Icon>;
       if (Array.isArray(j.rows)) {
@@ -119,6 +131,57 @@ export class SiteRequestBoard {
     this.touch();
   }
 
+  // ---------- a request's pane (SpokPay's admin request page, in Hub) ----------
+
+  /**
+   * The request read now (the whole thread SpokPay sends, its newest 100 messages): opened, so what the store wrote is
+   * read here (the list's "Store replied" clears).
+   */
+  async pane(ref: string, imageRoute: (url: string) => string): Promise<PaneView> {
+    const r = normalizeRef(ref);
+    if (!r) throw new SpokpayError(400, "INVALID_INPUT", "Not a site request ref (SR-…)");
+    let t: SrThread;
+    let note: string | null = null;
+    try {
+      t = await this.sp.thread(r);
+      this.threads = Object.fromEntries(
+        Object.entries({ ...this.threads, [r]: { at: Date.now(), t } })
+          .sort((a, b) => b[1].at - a[1].at)
+          .slice(0, THREADS_KEPT),
+      );
+    } catch (e) {
+      const kept = this.threads[r];
+      if (!kept) throw e;
+      t = kept.t;
+      note = `Not read now (${spError(e).message}). Shown as read ${relativeEnglish(kept.at, Date.now())}.`;
+    }
+    const h = t.siteRequest;
+    const row = this.rows?.find((x) => x.ref === h.ref);
+    const opened = this.sp.proposals().find((p) => p.state.kind === "opened" && p.state.ref === h.ref);
+    this.markSeen(h.ref, h.lastActivityAt);
+    if (!note) this.save();
+    return paneView(t, {
+      note,
+      now: Date.now(),
+      ...(row?.ownerEmail ? { ownerEmail: row.ownerEmail } : {}),
+      ...(opened ? { summary: opened.shown.details } : {}),
+      permissions: this.sp.status().permissions,
+      imageRoute,
+    });
+  }
+
+  /** The user's Send: their words (and pictures) to the store as SpokPay; the list is read again. */
+  async reply(ref: string, text: string, images: ImageBytes[], key?: string): Promise<void> {
+    await this.sp.reply(ref, { text, images }, key);
+    void this.reload();
+  }
+
+  /** The status menu's move (SpokPay's admin moves only); the list is read again. */
+  async move(ref: string, to: string): Promise<void> {
+    await this.sp.setStatus(ref, to);
+    void this.reload();
+  }
+
   view(): BoardView {
     const rows = listRows(this.rows ?? [], this.seen);
     const icons: Record<string, string | null> = {};
@@ -134,7 +197,7 @@ export class SiteRequestBoard {
 
   private save(): void {
     try {
-      writePrivate(this.file, JSON.stringify({ seen: this.seen, icons: this.icons, rows: this.rows ?? [] }));
+      writePrivate(this.file, JSON.stringify({ seen: this.seen, icons: this.icons, rows: this.rows ?? [], threads: this.threads }));
     } catch {
       // the marks stay in memory
     }

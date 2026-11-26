@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
-import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -286,5 +286,15 @@ describe("SpokPay › Site requests (Headquarters' Home list)", () => {
     expect(folded.filter((r) => r.kind.startsWith("sr")).map((r) => r.kind)).toEqual(["sr-head", "sr-gap"]);
     expect(sideRows(withSr({ waits: false, notices: [], rows: [sr()] }), ui({ srOpen: "SR-1" })).find((r) => r.kind === "sr")!.active).toBe(true);
     expect(sideRows(withSr(null), ui()).some((r) => r.kind.startsWith("sr"))).toBe(false);
+  });
+});
+
+describe("a site request's pane", () => {
+  test("pictures keep their shape inside 240 × 180, a placeholder's until decoded", () => {
+    expect(srImageSize(1200, 600)).toEqual({ w: 240, h: 120 });
+    expect(srImageSize(600, 1200)).toEqual({ w: 90, h: 180 });
+    expect(srImageSize(100, 80)).toEqual({ w: 100, h: 80 });
+    expect(srImageSize(4000, 10)).toEqual({ w: 240, h: 24 });
+    expect(srImageSize(0, 0)).toEqual({ w: 160, h: 120 });
   });
 });

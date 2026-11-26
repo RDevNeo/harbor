@@ -11,7 +11,7 @@ import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, moveEntries, placeOfRow, type MenuEntry, type MoveEntry } from "./menus.ts";
-import { aiFolds, audioRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, srImageSize, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -142,7 +142,7 @@ class PersonsTab {
     };
     on("all_people", () => {
       this.stopAudio();
-      this.ui.srOpen = null;
+      this.leaveSr();
       this.ui.open = null;
       this.ui.allActive = true;
       this.chat = null;
@@ -151,6 +151,28 @@ class PersonsTab {
     on("open_person", ((id: string, section: string, store: string) => void this.openPerson(id, section, store)) as Cb);
     on("open_sr", ((ref: string) => this.openSiteRequest(ref)) as Cb);
     on("sr_menu", ((ref: string, x: number, y: number) => this.siteRequestMenu(ref, x, y)) as Cb);
+    on("sr_close", () => {
+      this.leaveSr();
+      this.ui.allActive = true;
+      this.render();
+    });
+    on("sr_status_menu", ((x: number, y: number) => this.srStatusMenu(x, y)) as Cb);
+    on("sr_copy", () => {
+      const p = this.sr?.pane;
+      if (p) void clipboard.copyText(p.url).then(() => this.setToast(`Link to ${p.ref} copied`), () => this.setToast("The link could not be copied."));
+    });
+    on("sr_send", () => void this.srSend());
+    on("sr_attach", () => void this.srAttach());
+    on("sr_clear_attached", () => {
+      this.srFiles = [];
+      this.render();
+    });
+    on("sr_retry", () => void this.loadSr());
+    on("sr_open_image", ((owner: string, i: number) => void this.srOpenImage(owner, i)) as Cb);
+    on("sr_open_file", ((owner: string, i: number) => {
+      const f = this.srFilesOf(owner).filter((x) => !x.image)[i];
+      if (f) ctx.openExternal(f.url);
+    }) as Cb);
     on("toggle_store", ((id: string) => this.toggle(this.ui.stores, id)) as Cb);
     on("toggle_section", ((sec: string) => (sec.startsWith("settled:") ? this.toggle(this.ui.settledOpen, sec.slice(8)) : this.toggle(this.ui.closed, sec))) as Cb);
     on("section_menu", ((sec: string, x: number, y: number) => this.sectionMenu(sec, x, y)) as Cb);
@@ -307,6 +329,13 @@ class PersonsTab {
       this.closeDialog();
     }
     this.render();
+    // the open request follows its row in the list (a message, a move)
+    const sr = this.sr;
+    if (sr) {
+      const was = before?.siteRequests?.rows.find((r) => r.ref === sr.ref);
+      const now = s.siteRequests?.rows.find((r) => r.ref === sr.ref);
+      if (now && was && now.at !== was.at && now.at > (sr.pane?.lastActivityAt ?? 0)) void this.loadSr();
+    }
     // the open chat follows its person's row (a message, typing, presence)
     const open = this.ui.open;
     if (open) {
@@ -382,6 +411,11 @@ class PersonsTab {
     b.unread_total = s.unread;
     const off = s.connections.filter((c) => c.status === "signed-out");
     b.note = off.length ? `${off.map((c) => `${SECTION_LABEL[c.section]} ${KIND_LABEL[c.kind]}`).join(", ")} signed out` : "";
+    if (this.sr && this.ui.srOpen === this.sr.ref) {
+      b.view = "sr";
+      this.drawSr();
+      return;
+    }
     if (!this.ui.open || !this.chat) {
       b.view = this.ui.open ? "chat" : "list";
       const rows = listRows(s, this.query, this.ui.open);
@@ -642,7 +676,7 @@ class PersonsTab {
     const was = this.chatKey();
     if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
     this.stopAudio();
-    this.ui.srOpen = null;
+    this.leaveSr();
     this.ui.open = { id, section, store };
     this.ui.allActive = false;
     this.chat = null;
@@ -1139,16 +1173,237 @@ class PersonsTab {
 
   // ---------- SpokPay › Site requests (Headquarters' Home list) ----------
 
-  /**
-   * A request's row: Hub has no request pane, so its SpokPay admin page opens (the row stays current), and what the
-   * store wrote counts as seen (for every device: the engine keeps the marks).
-   */
+  // ---------- a site request's pane (SpokPay's admin request page, in Hub) ----------
+
+  /** The open request: its ref, the pane as last read, and whether a read is under way or failed. */
+  private sr: { ref: string; pane: SrPaneJson | null; loading: boolean; error: string; sending: boolean; moving: boolean } | null = null;
+  /** Pictures going with the next reply (paths on this PC), and each request's unsent reply. */
+  private srFiles: string[] = [];
+  private srDrafts = new Map<string, string>();
+  private srTimer: ReturnType<typeof setInterval> | null = null;
+  private srSeq = 0;
+
+  /** A request's row: its pane opens in the main area (read now, and every 30 s while it shows). */
   private openSiteRequest(ref: string): void {
-    const r = this.state?.siteRequests?.rows.find((x) => x.ref === ref);
-    if (!r) return;
+    if (this.sr?.ref === ref && this.ui.srOpen === ref) return;
+    const was = this.chatKey();
+    if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
+    this.stopAudio();
+    this.leaveSr();
+    this.ui.open = null;
+    this.chat = null;
+    this.ui.allActive = false;
     this.ui.srOpen = ref;
-    if (r.unread) void this.api("POST", "site-requests/seen", { ref, at: r.at });
-    this.ctx.openExternal(r.url);
+    this.sr = { ref, pane: null, loading: true, error: "", sending: false, moving: false };
+    this.bus.sr_draft = this.srDrafts.get(ref) ?? "";
+    this.bus.sr_rev = (Number(this.bus.sr_rev) || 0) + 1;
+    this.bus.sr_focus_rev = (Number(this.bus.sr_focus_rev) || 0) + 1;
+    this.srTimer = setInterval(() => void this.loadSr(), 30_000);
+    void this.loadSr();
+    this.render();
+  }
+
+  /** The pane closes (another row, All people, Esc): its reply stays for next time. */
+  private leaveSr(): void {
+    if (this.sr) this.srDrafts.set(this.sr.ref, String(this.bus.sr_draft ?? ""));
+    if (this.srTimer) clearInterval(this.srTimer);
+    this.srTimer = null;
+    this.sr = null;
+    this.srFiles = [];
+    this.ui.srOpen = null;
+  }
+
+  /** Reads the request now (the engine marks what the store wrote seen). */
+  private async loadSr(): Promise<void> {
+    const sr = this.sr;
+    if (!sr) return;
+    const seq = ++this.srSeq;
+    sr.loading = true;
+    const r = await this.api("GET", `site-request/${encodeURIComponent(sr.ref)}`).catch((e: unknown) => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } as Record<string, unknown> }));
+    if (this.sr !== sr || seq !== this.srSeq) return;
+    sr.loading = false;
+    if (r.status === 200 && r.body.pane) {
+      sr.pane = r.body.pane as SrPaneJson;
+      sr.error = "";
+    } else sr.error = String(r.body.error ?? `SpokPay answered ${r.status}`);
+    this.render();
+  }
+
+  private drawSr(): void {
+    const b = this.bus;
+    const sr = this.sr!;
+    const p = sr.pane;
+    const row = this.state?.siteRequests?.rows.find((r) => r.ref === sr.ref);
+    b.sr_ref = sr.ref;
+    b.sr_loading = sr.loading;
+    b.sr_error = p ? "" : sr.error;
+    b.sr_sending = sr.sending;
+    b.sr_moving = sr.moving;
+    b.sr_attached = this.srFiles.length ? `${this.srFiles.length === 1 ? "1 picture" : `${this.srFiles.length} pictures`}: ${this.srFiles.map((f) => basename(f)).join(", ")}` : "";
+    const icon = this.pics.get(p?.iconPath ?? row?.iconPath, 96);
+    b.sr_icon = icon ?? NO_PX;
+    b.sr_has_icon = !!icon;
+    b.sr_initials = p?.initials ?? row?.initials ?? "";
+    if (!p) {
+      b.sr_subject = row?.subject || sr.ref;
+      b.sr_store = row?.store ?? "";
+      b.sr_status = "";
+      b.sr_brief_sub = "";
+      b.sr_items = [];
+      b.sr_facts = [];
+      b.sr_brief_imgs = [];
+      b.sr_brief_files = [];
+      return;
+    }
+    b.sr_subject = p.subject;
+    b.sr_note = p.note ?? "";
+    b.sr_status = p.statusLabel;
+    b.sr_tone = p.tone;
+    b.sr_store = p.store;
+    b.sr_brief_title = p.brief.title;
+    b.sr_brief_sub = p.brief.sub;
+    b.sr_summary = p.brief.summary;
+    b.sr_facts = p.factRows.map(([a, c]) => ({ a_label: a.label, a_text: a.text, b_label: c?.label ?? "", b_text: c?.text ?? "", two: !!c }));
+    b.sr_brief_imgs = this.srImgs(p.brief.files);
+    b.sr_brief_files = p.brief.files.filter((f) => !f.image).map((f) => f.name);
+    b.sr_items = p.items.map((it) =>
+      it.kind === "event"
+        ? { kind: "event", id: it.id, mine: false, head: "", text: it.text, avatar: false, joins_prev: false, joins_next: false, images: [], files: [] }
+        : { kind: "msg", id: it.id, mine: it.mine, head: it.joinsPrev ? "" : it.head, text: it.text, avatar: !it.joinsNext, joins_prev: it.joinsPrev, joins_next: it.joinsNext, images: this.srImgs(it.files), files: it.files.filter((f) => !f.image).map((f) => f.name) },
+    );
+    b.sr_more = p.hasMore;
+    b.sr_finished = p.finished;
+    b.sr_finished_note = p.finishedNote;
+    b.sr_placeholder = p.placeholder;
+    b.sr_blocked = p.writeBlocked ?? "";
+    b.sr_can_move = p.statuses.length > 1;
+  }
+
+  /** A list's pictures as drawn (each decoded once from the engine's copy; a placeholder until then). */
+  private srImgs(files: SrFileJson[]): Record<string, unknown>[] {
+    return files
+      .filter((f) => f.image && f.src)
+      .map((f) => {
+        const path = this.localPath(f.src!);
+        const px = path ? this.pics.get(path, 480) : null;
+        const size = srImageSize(px?.width ?? 0, px?.height ?? 0);
+        return { image: px ?? NO_PX, w: size.w, h: size.h };
+      });
+  }
+
+  private srFilesOf(owner: string): SrFileJson[] {
+    const p = this.sr?.pane;
+    if (!p) return [];
+    if (owner === "brief") return p.brief.files;
+    const it = p.items.find((x) => x.id === owner);
+    return it?.kind === "msg" ? it.files : [];
+  }
+
+  /** A picture of the brief or of a message: Hub's lightbox, browsing that one's pictures. */
+  private async srOpenImage(owner: string, i: number): Promise<void> {
+    const imgs = this.srFilesOf(owner).filter((f) => f.image && f.src);
+    const paths = await Promise.all(imgs.map(async (f) => this.attachPaths.get(f.src!) || (await this.fetchPath(f.src!))));
+    const path = paths[Math.min(Math.max(i, 0), paths.length - 1)];
+    if (!path) {
+      const url = imgs[i]?.url;
+      if (url) this.ctx.openExternal(url);
+      else this.setToast("Couldn't download that picture");
+      return;
+    }
+    const group = paths.filter((x): x is string => !!x);
+    if (this.ctx.openImage) this.ctx.openImage(path, group);
+    else this.ctx.openExternal(path);
+  }
+
+  /** The status select: the current status, then SpokPay's moves from it; a final one (Complete, Close) asks first. */
+  private srStatusMenu(x: number, y: number): void {
+    const p = this.sr?.pane;
+    if (!p || p.statuses.length < 2) return;
+    const items: MenuIn[] = [{ label: "Status", header: true }];
+    if (p.statusBlocked) items.push({ label: p.statusBlocked, disabled: true });
+    for (const st of p.statuses)
+      items.push({
+        label: st.label,
+        checked: st.current,
+        disabled: st.current || !!p.statusBlocked,
+        run: () => {
+          if (st.status === "completed" || st.status === "closed") {
+            const words = p.confirms[st.status];
+            this.openDialog("confirm", words.title, words.text, words.ok, () => this.srMove(st.status, st.label));
+          } else void this.srMove(st.status, st.label);
+        },
+      });
+    this.showMenu(x, y, items, 232);
+  }
+
+  private async srMove(to: string, label: string): Promise<void> {
+    const sr = this.sr;
+    if (!sr) return;
+    sr.moving = true;
+    this.render();
+    const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/status`, { to }).catch((e: unknown) => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } as Record<string, unknown> }));
+    sr.moving = false;
+    if (r.status === 200 && r.body.pane) {
+      if (this.sr === sr) sr.pane = r.body.pane as SrPaneJson;
+      this.setToast(`Now ${label.toLowerCase()}`);
+    } else this.setToast(`Status not changed: ${String(r.body.error ?? "SpokPay didn't answer")}`);
+    this.render();
+  }
+
+  /** Send: the reply (and its pictures) to the store as SpokPay; on a refusal both come back to the composer. */
+  private async srSend(): Promise<void> {
+    const sr = this.sr;
+    const text = String(this.bus.sr_draft ?? "").trim();
+    const files = this.srFiles;
+    if (!sr || sr.sending || (!text && !files.length)) return;
+    const images: { name: string; type: string; data: string }[] = [];
+    for (const f of files) {
+      try {
+        images.push({ name: basename(f), type: mimeOf(f), data: readFileSync(f).toString("base64") });
+      } catch {
+        this.setToast(`Can't read ${basename(f)}`);
+        return;
+      }
+    }
+    sr.sending = true;
+    this.bus.sr_draft = "";
+    this.srFiles = [];
+    this.render();
+    const r = await this.api("POST", `site-request/${encodeURIComponent(sr.ref)}/reply`, { text, images, key: crypto.randomUUID() }).catch((e: unknown) => ({ status: 0, body: { error: e instanceof Error ? e.message : String(e) } as Record<string, unknown> }));
+    sr.sending = false;
+    if (r.status === 200 && r.body.pane) {
+      if (this.sr === sr) {
+        sr.pane = r.body.pane as SrPaneJson;
+        this.bus.sr_rev = (Number(this.bus.sr_rev) || 0) + 1;
+      }
+      this.srDrafts.delete(sr.ref);
+    } else {
+      if (this.sr === sr) {
+        if (!String(this.bus.sr_draft ?? "")) this.bus.sr_draft = text;
+        if (!this.srFiles.length) this.srFiles = files;
+      } else this.srDrafts.set(sr.ref, text);
+      this.setToast(`Not sent: ${String(r.body.error ?? "SpokPay didn't answer")}`);
+    }
+    this.render();
+  }
+
+  /** Pictures for the reply (SpokPay takes up to 5 images of 10 MB each). */
+  private async srAttach(): Promise<void> {
+    const got = await picker.pick({ title: "Add pictures", multiple: true, filter: ["Images", ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp"]] }).catch(() => [] as string[]);
+    const ok: string[] = [];
+    for (const f of got) {
+      try {
+        if (!mimeOf(f).startsWith("image/")) this.setToast(`${basename(f)} is not a picture`);
+        else if (statSync(f).size > 10 << 20) this.setToast(`${basename(f)} is over 10 MB`);
+        else ok.push(f);
+      } catch {
+        // gone
+      }
+    }
+    const all = [...this.srFiles, ...ok];
+    if (all.length > 5) this.setToast("SpokPay takes up to 5 pictures a message");
+    this.srFiles = all.slice(0, 5);
+    this.bus.sr_focus_rev = (Number(this.bus.sr_focus_rev) || 0) + 1;
     this.render();
   }
 
