@@ -39,6 +39,15 @@ export struct PPart {
     gap: length,
 }
 
+// A picture in a message's bubble at its place in the bubble's image box (img-w × img-h).
+export struct PImg {
+    image: image,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+}
+
 export struct PMsg {
     kind: string, // msg | day | unread | subject | ai | out
     id: string,
@@ -48,7 +57,7 @@ export struct PMsg {
     meta: string, // "edited", ticks
     reply: string,
     has-reply: bool,
-    image: image,
+    images: [PImg],
     has-image: bool,
     img-w: length,
     img-h: length,
@@ -220,6 +229,8 @@ export global PersonsBus {
     callback account-menu(length, length);
     callback msg-menu(string, length, length);
     callback open-file(string, int);
+    // A picture of a message (its index): Hub's lightbox, browsing that message's pictures.
+    callback open-image(string, int);
     callback cancel-reply();
     callback attach();
     callback clear-attached();
@@ -881,18 +892,25 @@ component Bubble {
                 if root.m.has-image: Rectangle {
                     width: root.m.img-w;
                     height: root.m.img-h;
-                    border-radius: 8px;
-                    clip: true;
-                    Image {
-                        width: parent.width;
-                        height: parent.height;
-                        source: root.m.image;
-                        image-fit: cover;
-                    }
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            PersonsBus.open-file(root.m.id, 0);
+                    for p[i] in root.m.images: Rectangle {
+                        x: p.x;
+                        y: p.y;
+                        width: p.w;
+                        height: p.h;
+                        border-radius: 8px;
+                        clip: true;
+                        background: Theme.fg.with-alpha(0.06);
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: p.image;
+                            image-fit: cover;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                PersonsBus.open-image(root.m.id, i);
+                            }
                         }
                     }
                 }

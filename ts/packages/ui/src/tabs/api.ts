@@ -14,6 +14,8 @@ export interface TabCtx {
   dark(): boolean;
   toast(text: string): void;
   openExternal(url: string): void;
+  /** Shows a picture on this PC in Hub's lightbox (Esc closes it), browsing `group` (the pictures it came with). */
+  openImage?(path: string, group?: string[]): void;
   /** Whether the tab is the one on screen. */
   shown(): boolean;
   /** Called every 3 s while a tab besides Projects is on screen (a phone may have changed something): re-read. */

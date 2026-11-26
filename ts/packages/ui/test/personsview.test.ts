@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -132,6 +132,24 @@ describe("Persons chat rows", () => {
     expect([rows[2]!.imgW, rows[2]!.imgH]).toEqual([280, 140]);
     expect(rows[3]).toMatchObject({ failed: true, meta: "paced" });
     expect(fitImage(null, null)).toEqual([280, 185]);
+  });
+
+  test("every picture of a message is in the bubble, never also a file row below it", () => {
+    const pic = (name: string) => ({ name, url: `/f/${name}`, raw: name, type: "image/jpeg", size: 782263, width: 1080, height: 2340, kind: "image", image: true, duration: null });
+    const doc = { ...pic("a.pdf"), type: "application/pdf", size: 2048, width: null, height: null, kind: "file", image: false };
+    // two screenshots sent together (the second one used to show as "📄 … · 764 KB")
+    const two = chatRows(chat({ messages: [msg("m", "2026-11-24T10:00:00", true, { files: [pic("s1.jpg"), pic("s2.jpg")] })] })).find((x) => x.kind === "msg")!;
+    expect(two.files).toBe("");
+    expect(two.images.map((t) => [t.url, t.x, t.y, t.w, t.h])).toEqual([["/f/s1.jpg", 0, 0, 137, 180], ["/f/s2.jpg", 143, 0, 137, 180]]);
+    expect([two.imgW, two.imgH]).toEqual([280, 180]);
+    // three: the odd last one takes the width; other files still listed
+    const three = chatRows(chat({ messages: [msg("m", "2026-11-24T10:00:00", false, { files: [pic("a.jpg"), doc, pic("b.jpg"), pic("c.jpg")] })] })).find((x) => x.kind === "msg")!;
+    expect(three.files).toBe("a.pdf · 2 KB");
+    expect(three.images.map((t) => [t.x, t.y, t.w])).toEqual([[0, 0, 137], [143, 0, 137], [0, 186, 280]]);
+    expect(three.imgH).toBe(366);
+    // one keeps its ratio; none: no box
+    expect(imageTiles([{ url: "u", width: 1080, height: 2340 }])).toEqual({ tiles: [{ url: "u", x: 0, y: 0, w: 148, h: 320 }], w: 148, h: 320 });
+    expect(imageTiles([])).toEqual({ tiles: [], w: 0, h: 0 });
   });
 
   test("shortAgo", () => {

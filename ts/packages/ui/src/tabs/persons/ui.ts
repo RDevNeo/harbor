@@ -169,6 +169,7 @@ class PersonsTab {
     on("account_menu", ((x: number, y: number) => this.accountMenu(x, y)) as Cb);
     on("msg_menu", ((id: string, x: number, y: number) => this.msgMenu(id, x, y)) as Cb);
     on("open_file", ((id: string) => void this.openFile(id)) as Cb);
+    on("open_image", ((id: string, i: number) => void this.openImage(id, i)) as Cb);
     on("attach", () => void this.attach());
     on("clear_attached", () => {
       if (this.aiMode) this.aiFiles = [];
@@ -492,17 +493,11 @@ class PersonsTab {
   }
 
   private msgJs(r: MsgRow): Record<string, unknown> {
-    let px: Pixels | null = null;
-    if (r.imageUrl) {
-      const known = this.attachPaths.get(r.imageUrl);
-      if (known === undefined) {
-        this.attachPaths.set(r.imageUrl, null);
-        void this.fetchPath(r.imageUrl).then((p) => {
-          this.attachPaths.set(r.imageUrl, p);
-          if (p) this.render();
-        });
-      } else if (known) px = this.pics.get(known, 640);
-    }
+    const images = r.images.map((t) => {
+      const known = this.localPath(t.url);
+      const px = known ? this.pics.get(known, 640) : null;
+      return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h };
+    });
     return {
       kind: r.kind,
       id: r.id,
@@ -512,8 +507,8 @@ class PersonsTab {
       meta: r.meta,
       reply: r.reply,
       has_reply: r.reply !== "",
-      image: px ?? NO_PX,
-      has_image: !!r.imageUrl,
+      images,
+      has_image: images.length > 0,
       img_w: r.imgW,
       img_h: r.imgH,
       files: r.files,
@@ -544,6 +539,18 @@ class PersonsTab {
       a_transcribing: !!r.audio && (r.audio.transcribing || this.transcribing.has(r.audio.key)),
       a_hidden: !!r.audio && this.hiddenTranscripts.has(r.audio.key),
     };
+  }
+
+  /** A file route's local path when it's here; else fetched once in the background (then drawn again). */
+  private localPath(url: string): string | null {
+    const known = this.attachPaths.get(url);
+    if (known !== undefined) return known;
+    this.attachPaths.set(url, null);
+    void this.fetchPath(url).then((p) => {
+      this.attachPaths.set(url, p);
+      if (p) this.render();
+    });
+    return null;
   }
 
   /** A file route's local path (the engine downloads it once). */
@@ -768,13 +775,42 @@ class PersonsTab {
     void this.api("POST", `chat/${encodeURIComponent(open.id)}/typing`, { section: open.section, account: this.chat?.account?.id, on: true });
   }
 
+  /** A file below the bubble (or the menu's Open attachment): its first file that isn't a picture, opened by the
+   * system; a message with only pictures shows them in the lightbox. */
   private async openFile(id: string): Promise<void> {
     const m = this.chat?.messages.find((x) => x.id === id);
-    const f = m?.files[0];
-    if (!f) return;
+    const f = m?.files.find((x) => !x.image);
+    if (!f) {
+      if (m?.files.some((x) => x.image)) await this.openImage(id, 0);
+      return;
+    }
     const path = await this.fetchPath(f.url);
     if (path) this.ctx.openExternal(path);
     else this.setToast("Couldn't download that file");
+  }
+
+  /** A picture in a bubble was clicked: Hub's lightbox, browsing every picture of that message. */
+  private async openImage(id: string, i: number): Promise<void> {
+    const m = this.chat?.messages.find((x) => x.id === id);
+    const imgs = m?.files.filter((x) => x.image) ?? [];
+    if (!imgs.length) return;
+    const paths = await Promise.all(
+      imgs.map(async (f) => {
+        const known = this.attachPaths.get(f.url);
+        if (known) return known;
+        const p = await this.fetchPath(f.url);
+        if (p) this.attachPaths.set(f.url, p);
+        return p;
+      }),
+    );
+    const path = paths[Math.min(Math.max(i, 0), paths.length - 1)];
+    if (!path) {
+      this.setToast("Couldn't download that picture");
+      return;
+    }
+    const group = paths.filter((p): p is string => !!p);
+    if (this.ctx.openImage) this.ctx.openImage(path, group);
+    else this.ctx.openExternal(path);
   }
 
   // ---------- voice messages and audio files ----------

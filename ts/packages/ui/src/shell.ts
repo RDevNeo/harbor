@@ -3977,6 +3977,18 @@ export class Shell {
     img.openClicked(path, group);
   }
 
+  /** A tab's picture (a Persons message's) in the lightbox, browsing `group`; what it can't show, the system opens. */
+  private openImageIn(path: string, group: string[] = [path]): void {
+    const img = this.images;
+    const media = this.media;
+    if (!img || !media || !media.images.isImage(path)) {
+      osDesktop.open(path);
+      return;
+    }
+    const list = group.filter((p) => media.images.isImage(p));
+    img.openClicked(path, list.includes(path) ? list : [path, ...list]);
+  }
+
   private refreshLightbox(): void {
     const w = this.win;
     const v = this.images?.view();
@@ -5807,6 +5819,7 @@ export class Shell {
       dark: () => this.dark,
       toast: (t) => this.toast(t),
       openExternal: (url) => this.openExternal(url),
+      openImage: (path, group) => this.openImageIn(path, group),
       shown: () => tabs.current === id,
       onChanged: (f) => void this.tabChanged.add(f),
       openChat: (chat) => {

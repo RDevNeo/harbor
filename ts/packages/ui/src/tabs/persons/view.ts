@@ -253,7 +253,16 @@ export interface AudioRow {
   voice: boolean;
 }
 
-/** One chat row (PMsg); `imageUrl`: the file route of its first picture (the driver decodes it). */
+/** A picture in a message's bubble: its file route (the driver decodes it) and its place in the bubble's image box. */
+export interface ImgTile {
+  url: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One chat row (PMsg); `images`: every picture of the message, tiled in a box of `imgW` × `imgH`. */
 export interface MsgRow {
   kind: "msg" | "day" | "unread" | "subject" | "ai" | "out" | "proposal" | "proposing";
   id: string;
@@ -262,7 +271,7 @@ export interface MsgRow {
   time: string;
   meta: string;
   reply: string;
-  imageUrl: string;
+  images: ImgTile[];
   imgW: number;
   imgH: number;
   files: string;
@@ -321,11 +330,29 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
   return [Math.max(40, Math.round(w * k)), Math.max(40, Math.round(h * k))];
 }
 
+/** A message's pictures in its bubble: one keeps its ratio (`fitImage`); more go two by two in cropped cells (an
+ * odd last one takes the whole width). Returns the tiles and the box they fill. */
+export function imageTiles(imgs: readonly { url: string; width: number | null; height: number | null }[], maxW = 280, cellH = 180, gap = 6): { tiles: ImgTile[]; w: number; h: number } {
+  if (!imgs.length) return { tiles: [], w: 0, h: 0 };
+  if (imgs.length === 1) {
+    const [w, h] = fitImage(imgs[0]!.width, imgs[0]!.height, maxW);
+    return { tiles: [{ url: imgs[0]!.url, x: 0, y: 0, w, h }], w, h };
+  }
+  const half = Math.floor((maxW - gap) / 2);
+  const tiles = imgs.map((f, i) => {
+    const row = Math.floor(i / 2);
+    const alone = i === imgs.length - 1 && i % 2 === 0;
+    return { url: f.url, x: alone || i % 2 === 0 ? 0 : half + gap, y: row * (cellH + gap), w: alone ? maxW : half, h: cellH };
+  });
+  const rows = Math.ceil(imgs.length / 2);
+  return { tiles, w: maxW, h: rows * cellH + (rows - 1) * gap };
+}
+
 /** Messages, AI bubbles and what's being sent, by time, with day separators, the unread line and email subjects. */
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
-  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", imageUrl: "", imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
+  const blank = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
   // every message marked with its channel once the page shows more than one chat
   const marks = c.accounts.length > 1;
   let lastThread: string | null = null;
@@ -336,14 +363,15 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.time = hhmm(m.at);
     r.meta = [m.edited ? "edited" : "", m.fromMe && m.status ? TICKS[m.status] ?? "" : ""].filter(Boolean).join(" · ");
     if (m.reply) r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${m.reply.text || "…"}`;
-    const img = m.files.find((f) => f.image);
-    if (img) {
-      r.imageUrl = img.url;
-      [r.imgW, r.imgH] = fitImage(img.width, img.height);
-    }
-    const sound = m.files.find((f) => f !== img && (f.kind === "audio" || (m.voice && !f.image)));
+    // every picture shown in the bubble (none of them again as a file below it)
+    const imgs = m.files.filter((f) => f.image);
+    const box = imageTiles(imgs);
+    r.images = box.tiles;
+    r.imgW = box.w;
+    r.imgH = box.h;
+    const sound = m.files.find((f) => !f.image && (f.kind === "audio" || m.voice));
     if (sound) r.audio = audioRow(sound, m.voice, c.account?.conn ?? c.account?.id ?? "");
-    const rest = m.files.filter((f) => f !== img && f !== sound);
+    const rest = m.files.filter((f) => !f.image && f !== sound);
     r.files = rest.map((f) => `${f.name}${f.size ? ` · ${formatBytes(f.size)}` : ""}`).join("\n");
     if (marks && m.channel) {
       r.chan = m.channel.kind;
