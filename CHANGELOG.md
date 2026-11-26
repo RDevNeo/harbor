@@ -102,6 +102,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   is kept. Removed: the Discord host, its setup, freezer and repair, the `discord/` shell, the vault's Discord session.
 
 ### Fixed
+- Hub Persons: **Mark as unread** stays (PC and phone). The open chat's reload, which follows its person's row, saw
+  the row turn unread and marked the chat seen again at once (and acked it on Discord again), so the unread mark
+  flicked back within a second, in every section. As in Person Hub, a chat marked unread is not marked seen again until
+  it is opened again.
 - Typing / and ? with Ctrl+Alt+Q / Ctrl+Alt+W (the ABNT2 AltGr combos the user's compositor injects) works with either
   Ctrl in every tab's text fields: the window's retype let go only of the left Ctrl (Slint tracks the right one apart,
   so nothing was typed), and pressed the left Ctrl again afterwards, a press nothing released: every later key became a

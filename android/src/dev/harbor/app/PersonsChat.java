@@ -71,6 +71,8 @@ final class PersonsChat {
     /** The newest answer's id in this chat: it starts open. */
     private String newestAi = "";
     private boolean more, loading, loadingOlder, first = true, closed, toAi, toBottom;
+    /** Marked unread here: not marked read again while this chat stays open (its reload follows the row going unread). */
+    private boolean holdUnread;
     private String loadError;
     private String rowSig = "";
     private JSONObject replyTo;
@@ -280,7 +282,7 @@ final class PersonsChat {
         composer();
         first = false;
         JSONObject q = p.person(pid);
-        if (wasFirst || PersonsUi.info(q, section).optInt("unread") > 0 || !PersonsUi.s(r, "unreadFrom").isEmpty()) markRead();
+        if (!holdUnread && (wasFirst || PersonsUi.info(q, section).optInt("unread") > 0 || !PersonsUi.s(r, "unreadFrom").isEmpty())) markRead();
     }
 
     private void loadOlder() {
@@ -953,6 +955,7 @@ final class PersonsChat {
     private void markUnread(String id) {
         String ac = acctId();
         if (ac == null || p.hub == null) return;
+        holdUnread = true;
         JSONObject b = PersonsUi.put(new JSONObject(), "section", section);
         PersonsUi.put(b, "account", ac);
         PersonsUi.put(b, "messageId", id);

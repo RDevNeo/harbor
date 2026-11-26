@@ -127,6 +127,11 @@ class PersonsTab {
   private msgModel = new slint.ArrayModel<Record<string, unknown>>([]);
   private renderQueued = false;
   private chatSeq = 0;
+  /**
+   * The chat (chatKey) the user marked unread while it was open: it isn't marked seen again until it's opened again
+   * (another chat, then this one). Without it the open chat's reload, which follows its row going unread, read it at once.
+   */
+  private holdUnread = "";
   private qr: ((text: string) => Pixels) | null = null;
   private alive = true;
 
@@ -678,6 +683,7 @@ class PersonsTab {
     this.stopAudio();
     this.leaveSr();
     this.ui.open = { id, section, store };
+    this.holdUnread = "";
     this.ui.allActive = false;
     this.chat = null;
     this.panelData = null;
@@ -707,9 +713,9 @@ class PersonsTab {
     const c = r.body as ChatJson;
     this.chat = c;
     this.render();
-    // seen: the newest message (as opening it in the official client does)
+    // seen: the newest message (as opening it in the official client does), unless it was just marked unread
     const unread = this.person(open.id)?.rows[open.section]?.unread ?? 0;
-    if (unread > 0 && this.ctx.shown()) void this.api("POST", `chat/${encodeURIComponent(open.id)}/read`, { section: open.section, account: c.account?.id });
+    if (unread > 0 && this.ctx.shown() && this.holdUnread !== this.chatKey()) void this.api("POST", `chat/${encodeURIComponent(open.id)}/read`, { section: open.section, account: c.account?.id });
   }
 
   /** The panel: at once with the socials as cached, then again once their latest uploads are read. */
@@ -1454,6 +1460,7 @@ class PersonsTab {
     const c = this.chat;
     const m = c?.messages.find((x) => x.id === id);
     if (!open || !c || !m || m.fromMe) return;
+    this.holdUnread = this.chatKey();
     void this.api("POST", `chat/${encodeURIComponent(open.id)}/unread`, { section: open.section, account: c.account?.id, messageId: m.id }).then(() => this.setToast("Marked as unread"));
   }
 
