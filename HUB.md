@@ -56,6 +56,9 @@ names: nobody reads them, and renaming them would only make merging Harbor's cha
   Only a **shell** change (manifest, permissions, `res/`, `android/shell/src`, native libraries: `lock.sh check`
   fails the build until `android/shell/lock.sh bump`) needs a new APK: the PC builds and signs it too, and the
   app downloads it and asks to install it itself (Settings › Update).
+- **Timings measured (2026-11-26):** push → PC running it ≈ 35-45 s (notice ~3 s from this PC's checkout, tsc +
+  bundle ~5 s, handover restart ~5 s); push → phone running new code ≈ 2 min (boat build ~1-1.5 min, then the
+  phone hears in < 1 s, downloads ~1 MB in < 0.1 s and restarts in place in ~1 s).
 - **Keys** (never print or commit them; backups in `~/.local/share/hub/keys/`):
   - `~/.local/share/hub-android/hub-code.key`: Hub's code key (minisign/Ed25519). Its public half is
     `Minisign.HUB_PUBKEY` in the shell; a phone takes nothing it didn't sign. Losing it means a new shell APK.
