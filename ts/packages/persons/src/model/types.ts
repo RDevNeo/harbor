@@ -42,6 +42,8 @@ export interface Person {
   socials?: string[];
   /** Kept from version 1 (no longer shown). */
   tags?: string[];
+  /** Sections they were moved out of (Move to…): those sections' chats with them still show, and can be sent on. */
+  carried?: SectionId[];
   /** People linked into this one (Link with…): the same human on other channels. Unlink brings each back. */
   links?: PersonLink[];
   createdAt: string;

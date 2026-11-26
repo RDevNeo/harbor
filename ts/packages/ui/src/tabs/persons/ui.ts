@@ -10,7 +10,7 @@ import { sameRow, syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
-import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, type MenuEntry } from "./menus.ts";
+import { aiMenu, blockedNote, composerHint, failedMenu, messageMenu, moveEntries, placeOfRow, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { aiFolds, audioRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, sideRows, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
@@ -54,6 +54,9 @@ const hash = (id: string): number => {
 const shortAgoText = (iso: string): string => shortAgo(iso);
 const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay" };
 const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp" };
+/** One entry of a Persons menu (showMenu): `children` makes it open a submenu. */
+type MenuIn = { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; checked?: boolean; children?: MenuIn[]; run?: () => void };
+
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
 
 /** Decoded pictures by file (and size class), shared by every row that draws them. */
@@ -110,6 +113,8 @@ class PersonsTab {
   /** Unsent text per chat and recipient (kept when switching people or recipient). */
   private drafts = new Map<string, string>();
   private menuActions = new Map<string, () => void>();
+  /** A menu entry's submenu (its PMenu rows), by the entry's id. */
+  private subMenus = new Map<string, Record<string, unknown>[]>();
   private dialogOk: (() => Promise<void> | void) | null = null;
   private chipState = new Map<string, boolean>();
   private colorPick = "";
@@ -204,8 +209,10 @@ class PersonsTab {
       this.render();
     }) as Cb);
     on("menu_pick", ((id: string) => this.pick(id)) as Cb);
+    on("menu_hover", ((id: string, y: number) => this.menuHover(id, y)) as Cb);
     on("menu_close", () => {
       b.menu_open = false;
+      b.sub_open = false;
     });
     on("dialog_ok", () => void this.okDialog());
     on("dialog_cancel", () => this.closeDialog());
@@ -1000,22 +1007,41 @@ class PersonsTab {
 
   // ---------- menus ----------
 
-  private showMenu(x: number, y: number, items: { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; run?: () => void }[], width = 264): void {
+  private showMenu(x: number, y: number, items: MenuIn[], width = 264): void {
     this.menuActions.clear();
+    this.subMenus.clear();
+    this.bus.sub_open = false;
     let n = 0;
-    this.bus.menu = items.map((it) => {
+    const entry = (it: MenuIn): Record<string, unknown> => {
       const id = it.id ?? `m${n++}`;
       if (it.run) this.menuActions.set(id, it.run);
-      return { id, label: it.label, icon: it.icon ?? "", sub: it.sub ?? "", hint: it.hint ?? "", danger: !!it.danger, sep: !!it.sep, header: !!it.header, disabled: !!it.disabled };
-    });
+      if (it.children) this.subMenus.set(id, it.children.map(entry));
+      return { id, label: it.label, icon: it.icon ?? "", sub: it.sub ?? "", hint: it.hint ?? "", danger: !!it.danger, sep: !!it.sep, header: !!it.header, disabled: !!it.disabled, checked: !!it.checked, submenu: !!it.children };
+    };
+    this.bus.menu = items.map(entry);
     this.bus.menu_w = width;
     this.bus.menu_x = x;
     this.bus.menu_y = y;
     this.bus.menu_open = true;
   }
 
+  /** The pointer on a menu entry: its submenu opens beside it (another one closes). */
+  private menuHover(id: string, y: number): void {
+    const kids = this.subMenus.get(id);
+    if (!kids) {
+      if (this.bus.sub_open) this.bus.sub_open = false;
+      return;
+    }
+    if (this.bus.sub_open && this.bus.sub_of === id) return;
+    this.bus.sub_menu = kids;
+    this.bus.sub_of = id;
+    this.bus.sub_y = y;
+    this.bus.sub_open = true;
+  }
+
   private pick(id: string): void {
     this.bus.menu_open = false;
+    this.bus.sub_open = false;
     if (id === "panel:edit" && this.ui.open) return this.personDialog(this.ui.open.id);
     if (id === "panel:rename" && this.ui.open) return this.renameDialog(this.ui.open.id);
     if (id === "panel:delete" && this.ui.open) return void this.deletePerson(this.ui.open.id);
@@ -1066,8 +1092,43 @@ class PersonsTab {
       ...(store ? [{ label: `Remove from ${this.state?.stores.find((s) => s.id === store)?.name ?? "the store"}`, run: () => void this.removeFromStore(id, store) }] : []),
       ...(store ? [{ label: "Make store owner", run: () => void this.api("PATCH", `stores/${encodeURIComponent(store)}`, { ownerId: id }) }] : []),
       { sep: true, label: "" },
+      { header: true, label: "MOVE TO" },
+      ...this.moveItems(id, placeOfRow(sec, store)),
+      { sep: true, label: "" },
       { label: "Delete", danger: true, run: () => void this.deletePerson(id) },
     ]);
+  }
+
+  /** Where a person is: their stores (and the ones they own), Creators, SpokPay (as menus.ts moveEntries' words). */
+  private placesOf(id: string): string[] {
+    const p = this.person(id);
+    if (!p) return [];
+    const owned = (this.state?.stores ?? []).filter((s) => s.ownerId === id).map((s) => s.id);
+    return [...new Set([...p.storeIds, ...owned])].map((s) => `store:${s}`).concat(p.listIds.filter((l) => l === "creators" || l === "spokpay"));
+  }
+
+  /** Move to…'s entries (menus.ts), with their actions. */
+  private moveItems(id: string, from: string): MenuIn[] {
+    const item = (e: MoveEntry): MenuIn =>
+      e.sep ? { sep: true, label: "" } : {
+        label: e.label,
+        ...(e.here ? { checked: true, disabled: true } : {}),
+        ...(e.sub ? { children: e.sub.map(item) } : e.to === "new-store" ? { run: () => this.storeDialog(null, (sid) => void this.movePerson(id, from, `store:${sid}`)) } : { run: () => void this.movePerson(id, from, e.to) }),
+      };
+    return moveEntries({ places: this.placesOf(id), from, stores: this.state?.stores ?? [] }).map(item);
+  }
+
+  /** Move to…: they leave `from` ("" = everywhere) for `to`; their chats, notes, picture and AI come along. */
+  private async movePerson(id: string, from: string, to: string): Promise<void> {
+    const p = this.person(id);
+    if (!p) return;
+    const r = await this.api("POST", `person/${encodeURIComponent(id)}/move`, { to, ...(from ? { from } : {}) });
+    if (r.status !== 200) return this.setToast(String(r.body.error ?? "Not moved"));
+    await this.refresh();
+    const where = to.startsWith("store:") ? this.state?.stores.find((s) => `store:${s.id}` === to)?.name ?? "the store" : SECTION_LABEL[to] ?? to;
+    this.setToast(`Moved ${p.name} to ${where}`);
+    // their open chat follows them to the new place
+    if (this.ui.open?.id === id) void this.openPerson(id, to.startsWith("store:") ? "stores" : to, to.startsWith("store:") ? to.slice(6) : "");
   }
 
   private storeMenu(id: string, x: number, y: number): void {
@@ -1383,7 +1444,7 @@ class PersonsTab {
     })();
   }
 
-  private storeDialog(id: string | null): void {
+  private storeDialog(id: string | null, created?: (storeId: string) => void): void {
     const st = id ? this.state?.stores.find((s) => s.id === id) : undefined;
     this.bus.f_name = st?.name ?? "";
     this.colorPick = st?.color ?? COLORS[(this.state?.stores.length ?? 0) % COLORS.length]!;
@@ -1395,6 +1456,8 @@ class PersonsTab {
       if (!name) throw new Error("A store needs a name");
       const r = st ? await this.api("PATCH", `stores/${encodeURIComponent(st.id)}`, { name, color: this.colorPick }) : await this.api("POST", "stores", { name, color: this.colorPick });
       if (r.status !== 200) throw new Error(String(r.body.error ?? "Not saved"));
+      const sid = (r.body.store as { id?: string } | undefined)?.id;
+      if (!st && sid && created) created(sid);
     });
   }
 

@@ -6,6 +6,7 @@ import { chatKey, KIND_LABEL, isSection, normWhatsApp, pickChat, validPeer, type
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
+import { parsePlace } from "./model/move.ts";
 import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel, searchText } from "./model/data.ts";
 import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
@@ -103,6 +104,7 @@ export class PersonsRoutes {
       if (rest[0] === "person" && rest[1]) {
         if (m === "POST" && rest[2] === "link") return this.link(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "unlink") return this.unlinkRoute(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "move") return this.moveRoute(rest[1], obj(c.body));
         if (m === "GET") return await this.panel(rest[1], q(c, "socials") !== "cached");
         if (m === "PATCH") return this.patchPerson(rest[1], obj(c.body));
         if (m === "DELETE") return this.deletePerson(rest[1]);
@@ -723,6 +725,21 @@ export class PersonsRoutes {
     return ok({ ok: true, person: json(this.s.person(other)) });
   }
 
+  /** `POST person/{id}/move {to, from?}`: Move to… ("creators", "spokpay" or "store:<id>"; `from` the place the menu
+   *  was opened in, none = everywhere). Their chats, identities, notes, pictures and AI chat come along; nothing is sent. */
+  private moveRoute(personId: string, b: Record<string, unknown>): Reply {
+    const id = decodeURIComponent(personId);
+    const p = this.s.person(id);
+    if (!p) return err(404, "no such person");
+    const to = parsePlace(str(b.to) ?? "");
+    if (!to) return err(400, "to: creators, spokpay or store:<id>");
+    const from = str(b.from) ? parsePlace(str(b.from)!) : null;
+    const left = this.s.move(id, from, to);
+    if (!left) return err(400, "nothing to move");
+    for (const sec of left) this.extra.ai?.move?.(p, sec, to.section);
+    return ok({ ok: true, person: json(this.s.person(id)) });
+  }
+
   // ---------- people ----------
 
   /** `fresh` false: socials as cached (instant); true: read now where stale (may take a few seconds). */
@@ -924,6 +941,8 @@ export interface AiPort {
   chatOf?(p: Person, section: SectionId): string | null;
   /** Every AI chat known for a person (a linked person's stay reachable from the panel). */
   chatsOf?(p: Person): { section: SectionId; chat: string }[];
+  /** Move to…: the person's AI chat of `from` becomes their chat of `to` (when `to` has none yet). */
+  move?(p: Person, from: SectionId, to: SectionId): void;
 }
 
 export { validPeer };

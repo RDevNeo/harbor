@@ -1,6 +1,6 @@
 // A hub with made-up data for the phone app's screenshots (scripts/boat/phoneshot, on a boat.dev
 // sandbox): `bun rig/phonehub.ts DIR PORT TOKEN` seeds DIR (projects, chats with every kind of
-// card, a lead with its team) and serves the phone API on 127.0.0.1:PORT, taking TOKEN, until
+// card, a lead with its team; Persons' made-up stores and people) and serves the phone API on 127.0.0.1:PORT, taking TOKEN, until
 // killed. Prints "phonehub ready <port>" and a JSON line of the chats' gids once it listens.
 // A Discord captcha waits in one chat (gid CAPTCHA_GID, `--screen chat:<it>`) at hCaptcha's
 // challenge stage: a made-up picture drawn here, answered by this file in front of the hub (the
@@ -38,8 +38,31 @@ Object.assign(process.env, {
   // OpenCode; a Tower that is off, with Codex.
   // The Desk, on with Claude, takes over a chat of the Tower while that is off (failover.ts).
   HARBOR_FAKE_PEERS: "pc:laptop=Laptop:9000@Dana_Reyes+opencode,pc:tower=Tower:4000@Dario_Reis+codex!off,pc:desk=Desk:12000@Dana_Reyes",
+  // Persons (`--screen persons`): made-up stores and people below, no connections, nothing read from the network.
+  HUB_PERSONS_DIR: join(dir, "persons"),
+  HUB_PERSONS_OFFLINE: "1",
 });
-for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
+for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
+{
+  const at = "2026-11-20T10:00:00.000Z";
+  const person = (id: string, name: string, x: Record<string, unknown>) => ({ id, name, discordId: "", storeIds: [], listIds: [], createdAt: at, updatedAt: at, ...x });
+  writeFileSync(join(dir, "persons", "data.json"), JSON.stringify({
+    version: 7,
+    updatedAt: at,
+    readSince: at,
+    stores: [{ id: "s1", name: "Loja Aurora", color: "#3b82f6", ownerId: "p1" }, { id: "s2", name: "Bella Moda", color: "#10b981", ownerId: "p4" }, { id: "s3", name: "Casa Verde", color: "#f59e0b" }],
+    lists: [{ id: "creators", name: "Creators", accountId: "gmail" }, { id: "spokpay", name: "SpokPay", accountId: "spokpay" }],
+    people: [
+      person("p1", "Ana Souza", { discordId: "100000000000000001", storeIds: ["s1"] }),
+      person("p2", "Bruno Lima", { discordId: "100000000000000002", storeIds: ["s1"] }),
+      person("p4", "Diego Rocha", { discordId: "100000000000000004", storeIds: ["s2"] }),
+      person("p5", "Elisa Prado", { email: "elisa@example.com", listIds: ["creators"] }),
+      person("p6", "Felipe Costa", { email: "felipe@example.com", listIds: ["creators"] }),
+      person("p7", "Gabi Torres", { discordId: "100000000000000007", listIds: ["spokpay"] }),
+    ],
+  }));
+  writeFileSync(join(dir, "persons", "connections.json"), "{}");
+}
 // OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.
 mkdirSync(join(dir, "home", ".opencode", "bin"), { recursive: true });
 writeFileSync(join(dir, "home", ".opencode", "bin", "opencode"), '#!/bin/sh\n[ "$1" = models ] && printf "nvidia/z-ai/glm-5.3-flash\\nopencode/big-pickle\\nopenrouter/qwen/qwen3-coder\\n"\nexit 0\n', { mode: 0o755 });

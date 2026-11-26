@@ -695,11 +695,16 @@ export component MenuItem {
     in property <bool> danger;
     // A shortcut on the right ("Alt+Click"), small and muted.
     in property <string> hint;
+    // Opens a cascading submenu (a chevron on the right); `open` while it shows, so the row stays lit.
+    in property <bool> submenu;
+    in property <bool> open;
     callback clicked;
+    // The pointer came onto the row (submenus open on hover, as Projects' menus).
+    callback hovered;
     height: (desc != "" ? 44px : 32px);
     opacity: enabled ? 1 : 0.5;
     Rectangle {
-        background: area.has-hover && root.enabled ? Theme.accent : transparent;
+        background: (area.has-hover || root.open) && root.enabled ? Theme.accent : transparent;
         border-radius: 4px;
     }
     if root.icon != "": Glyph {
@@ -723,7 +728,7 @@ export component MenuItem {
     Text {
         x: root.icon != "" ? 32px : 8px;
         y: 7px;
-        width: parent.width - self.x - (root.checked ? 32px : 8px) - (root.hint != "" ? 72px : 0px);
+        width: parent.width - self.x - (root.checked || root.submenu ? 32px : 8px) - (root.hint != "" ? 72px : 0px);
         text: root.label;
         font-size: 14px;
         color: root.danger ? Theme.red-900 : Theme.fg;
@@ -738,7 +743,16 @@ export component MenuItem {
         color: Theme.subtle;
         overflow: elide;
     }
-    if root.checked: Glyph {
+    if root.submenu: Glyph {
+        x: parent.width - 24px;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        icon: Icons.right;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    if root.checked && !root.submenu: Glyph {
         x: parent.width - 24px;
         y: 8px;
         width: 16px;
@@ -750,6 +764,11 @@ export component MenuItem {
     area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
         clicked => {
             root.clicked();
         }

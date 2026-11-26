@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aiMenu, blockedNote, composerHint, messageMenu, type MsgMenuIn } from "../src/tabs/persons/menus.ts";
+import { aiMenu, blockedNote, composerHint, messageMenu, moveEntries, placeOfRow, type MsgMenuIn } from "../src/tabs/persons/menus.ts";
 import { chatRows, proposalCard, type ChatJson, type ProposalJson } from "../src/tabs/persons/view.ts";
 
 const base: MsgMenuIn = { fromMe: false, hasText: true, hasFiles: false, canSend: true, aiOn: true, siteRequests: false };
@@ -78,5 +78,23 @@ describe("site request cards", () => {
   test("a forwarded note shows the quote and the question", () => {
     const rows = chatRows(chat({ ai: [{ id: "h1", role: "user", text: "", at: "2026-11-25T10:00:00.000Z", forwarded: { from: "Lua", text: "Oi" } }] }), Date.parse("2026-11-25T12:00:00Z"));
     expect(rows[1]).toMatchObject({ kind: "out", toAi: true, reply: "Lua: Oi", text: "What should I reply to this?" });
+  });
+});
+
+describe("moveEntries", () => {
+  const stores = [{ id: "b", name: "Beta" }, { id: "a", name: "Alfa" }];
+  test("SpokPay, Creators, Stores › stores then New store…; the current place checked", () => {
+    const m = moveEntries({ places: ["store:a"], from: "store:a", stores });
+    expect(m.map((e) => [e.to, !!e.here])).toEqual([["spokpay", false], ["creators", false], ["stores", false]]);
+    expect(m[2]!.sub!.map((e) => (e.sep ? "-" : `${e.label}${e.here ? " ✓" : ""}`))).toEqual(["Alfa ✓", "Beta", "-", "New store…"]);
+    expect(moveEntries({ places: ["spokpay"], from: "spokpay", stores: [] })[0]!.here).toBe(true);
+    expect(moveEntries({ places: [], from: "", stores: [] })[2]!.sub!.map((e) => e.to)).toEqual(["new-store"]);
+  });
+  test("All people: every place they're in is checked", () => {
+    const m = moveEntries({ places: ["creators", "store:b"], from: "", stores });
+    expect(m[1]!.here).toBe(true);
+    expect(m[2]!.sub!.find((e) => e.to === "store:b")!.here).toBe(true);
+    expect(placeOfRow("stores", "b")).toBe("store:b");
+    expect(placeOfRow("", "")).toBe("");
   });
 });

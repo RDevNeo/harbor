@@ -98,7 +98,7 @@ export struct PMsg {
 // Someone to link with (the Link with… picker), or someone linked (the panel's LINKED).
 export struct PPick { id: string, name: string, sub: string, initials: string, color: color, avatar: image, has-avatar: bool, on: bool }
 
-export struct PMenu { id: string, label: string, icon: string, sub: string, hint: string, danger: bool, sep: bool, header: bool, disabled: bool }
+export struct PMenu { id: string, label: string, icon: string, sub: string, hint: string, danger: bool, sep: bool, header: bool, disabled: bool, checked: bool, submenu: bool }
 
 export struct PUpload { title: string, meta: string, url: string, thumb: image, has-thumb: bool }
 
@@ -175,6 +175,12 @@ export global PersonsBus {
     in property <length> menu-x;
     in property <length> menu-y;
     in property <length> menu-w: 264px;
+    // a menu entry's cascading submenu (Move to › Stores): beside the menu, its top at `sub-y` (the entry's)
+    in property <[PMenu]> sub-menu;
+    in property <bool> sub-open;
+    in property <string> sub-of;
+    in property <length> sub-y;
+    in property <length> sub-w: 232px;
     // dialogs: "" | person | store | qr | confirm | rename
     in property <string> dialog;
     in property <string> d-title;
@@ -248,6 +254,8 @@ export global PersonsBus {
     callback use-draft(string);
     callback ai-fold(string); // an AI answer's chevron (or a click on it folded): fold / unfold it
     callback menu-pick(string);
+    // the pointer came onto a menu entry (its id, its top): opens its submenu, or closes another's
+    callback menu-hover(string, length);
     callback menu-close();
     callback dialog-ok();
     callback dialog-cancel();
@@ -2020,8 +2028,11 @@ component Panel inherits PanelSurface {
 // ---------- popups (ds-surface.slint's MenuPanel and DialogFrame) ----------
 
 component Menu inherits MenuPanel {
+    in property <[PMenu]> items: PersonsBus.menu;
+    // the submenu itself: its entries open nothing further
+    in property <bool> nested;
     menu-w: PersonsBus.menu-w;
-    for it in PersonsBus.menu: Rectangle {
+    for it in root.items: Rectangle {
         height: it.sep ? 9px : it.header ? 28px : it.sub != "" ? 44px : 32px;
         // Each entry fills its slot (without a size a child of a Rectangle gets its preferred width, 0, and is
         // centred: an empty menu with a dash in it).
@@ -2051,8 +2062,20 @@ component Menu inherits MenuPanel {
             hint: it.hint;
             danger: it.danger;
             enabled: !it.disabled;
+            checked: it.checked;
+            submenu: it.submenu;
+            open: it.submenu && PersonsBus.sub-open && PersonsBus.sub-of == it.id;
+            hovered => {
+                if !root.nested {
+                    PersonsBus.menu-hover(it.id, self.absolute-position.y);
+                }
+            }
             clicked => {
-                PersonsBus.menu-pick(it.id);
+                if it.submenu {
+                    PersonsBus.menu-hover(it.id, self.absolute-position.y);
+                } else {
+                    PersonsBus.menu-pick(it.id);
+                }
             }
         }
         if !it.sep && !it.header && (it.icon == "discord" || it.icon == "gmail" || it.icon == "whatsapp"): ChannelMark {
@@ -2354,9 +2377,20 @@ export component PersonsPage {
             }
         }
     }
+    // where the menu lands (kept inside the window), so its submenu can open beside it
+    property <length> menu-left: min(PersonsBus.menu-x - root.absolute-position.x, root.width - PersonsBus.menu-w - 8px);
     if PersonsBus.menu-open: Menu {
-        x: min(PersonsBus.menu-x - root.absolute-position.x, root.width - self.width - 8px);
+        x: root.menu-left;
         y: min(PersonsBus.menu-y - root.absolute-position.y, root.height - self.height - 8px);
+    }
+    // Projects' cascading submenu: right of the menu with its top on the entry's, flipped left at the window's edge,
+    // shifted up at its bottom
+    if PersonsBus.menu-open && PersonsBus.sub-open: Menu {
+        items: PersonsBus.sub-menu;
+        nested: true;
+        menu-w: PersonsBus.sub-w;
+        x: root.menu-left + PersonsBus.menu-w + 2px + self.width <= root.width - 4px ? root.menu-left + PersonsBus.menu-w + 2px : max(4px, root.menu-left - self.width - 2px);
+        y: max(0px, min(PersonsBus.sub-y - root.absolute-position.y - 4px, root.height - self.height - 8px));
     }
     if PersonsBus.dialog != "": Dialog { }
     if PersonsBus.toast != "": Toast {
