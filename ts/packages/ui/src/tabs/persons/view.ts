@@ -31,11 +31,29 @@ export interface ListJson { id: string; name: string; accountId: string }
 export interface ConnJson { id: string; kind: string; section: string; status: string; gateway: string; label: string; who: string; error: string | null; qr: string | null; contacts: boolean | null }
 /** The PC's audio player (the engine plays voice messages): `pos` at `at` (ms), moving `speed` s/s while playing. */
 export interface AudioStateJson { key: string | null; playing: boolean; pos: number; speed: number; duration: number | null; at: number; error: string | null }
-export interface StateJson { rev: number; unread: number; connections: ConnJson[]; stores: StoreJson[]; lists: ListJson[]; people: PersonJson[]; loading?: boolean; audio?: AudioStateJson | null }
+/** A SpokPay site request in the SpokPay section's list (the engine's routes.ts siteRequestsJson). */
+export interface SrRowJson {
+  ref: string;
+  subject: string;
+  store: string;
+  storeSlug: string | null;
+  initials: string;
+  line: string;
+  waiting: boolean;
+  unread: boolean;
+  at: number;
+  side: { text: string; tone: "info" | "warning" } | null;
+  iconPath: string | null;
+  icon: string | null;
+  url: string;
+}
+export interface SrListJson { waits: boolean; notices: { title: string; text: string }[]; rows: SrRowJson[] }
+export interface StateJson { rev: number; unread: number; connections: ConnJson[]; stores: StoreJson[]; lists: ListJson[]; people: PersonJson[]; loading?: boolean; audio?: AudioStateJson | null; siteRequests?: SrListJson | null }
 
 /** One sidebar / list row, as PRow in persons.slint (images filled in by the driver). */
 export interface Row {
-  kind: "all" | "section" | "store" | "person" | "settled" | "empty";
+  /** sr-*: the SpokPay section's Site requests (Headquarters' Home list): its heading, a notice, "none open", a request, the gap after. */
+  kind: "all" | "section" | "store" | "person" | "settled" | "empty" | "sr-head" | "sr-notice" | "sr-empty" | "sr" | "sr-gap";
   id: string;
   section: string;
   store: string;
@@ -56,6 +74,8 @@ export interface Row {
   count: number;
   depth: number;
   dim: boolean;
+  /** A row's tooltip (a site request: who spoke last). */
+  tip: string;
 }
 
 export interface UiState {
@@ -66,6 +86,8 @@ export interface UiState {
   /** The open person and the row they were opened from. */
   open: { id: string; section: string; store: string } | null;
   allActive: boolean;
+  /** The site request last opened from the list (its row shows as current); "sr" in `closed` folds the list. */
+  srOpen?: string | null;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -101,7 +123,38 @@ export function byRecent(a: PersonJson, b: PersonJson): number {
 const SECTION_NAMES: Record<string, string> = { stores: "STORES", creators: "CREATORS", spokpay: "SPOKPAY" };
 
 function base(kind: Row["kind"]): Row {
-  return { kind, id: "", section: "", store: "", name: "", initials: "", color: "#64748b", avatarPath: "", presence: "", status: "", tone: "", channel: "", time: "", unread: 0, typing: "", owner: false, active: false, expanded: false, count: 0, depth: 0, dim: false };
+  return { kind, id: "", section: "", store: "", name: "", initials: "", color: "#64748b", avatarPath: "", presence: "", status: "", tone: "", channel: "", time: "", unread: 0, typing: "", owner: false, active: false, expanded: false, count: 0, depth: 0, dim: false, tip: "" };
+}
+
+/**
+ * Headquarters' Home › Site requests (chat-list/Section.tsx FoldingSection, chat-list/Row.tsx, spokpay/home/row.ts), at
+ * the top of the SpokPay section: the heading ("Site requests", amber dot while one waits on SpokPay, the count, the
+ * chevron), its notices, "No site request is open at SpokPay." or one row per request (the store's square icon, the
+ * subject, the store's side or "Nothing new", the ref on the right), newest activity first.
+ */
+export function siteRequestRows(sr: SrListJson, ui: UiState): Row[] {
+  const open = !ui.closed.has("sr");
+  const out: Row[] = [{ ...base("sr-head"), id: "sr", section: "spokpay", name: "Site requests", count: sr.rows.length, expanded: open, tone: sr.waits ? "needs" : "" }];
+  if (open) {
+    for (const n of sr.notices) out.push({ ...base("sr-notice"), section: "spokpay", name: n.title, status: n.text });
+    if (!sr.rows.length) out.push({ ...base("sr-empty"), section: "spokpay", name: "No site request is open at SpokPay." });
+    for (const r of sr.rows)
+      out.push({
+        ...base("sr"),
+        id: r.ref,
+        section: "spokpay",
+        name: r.subject || r.ref,
+        initials: r.initials,
+        avatarPath: r.iconPath ?? "",
+        status: r.side?.text ?? "Nothing new",
+        tone: r.side?.tone ?? "",
+        time: r.ref,
+        active: !!ui.srOpen && ui.srOpen === r.ref,
+        tip: r.line,
+      });
+  }
+  out.push({ ...base("sr-gap"), section: "spokpay" });
+  return out;
 }
 
 export function personRow(p: PersonJson, section: string, store = "", depth = 0, open: UiState["open"] = null): Row {
@@ -179,6 +232,7 @@ export function sideRows(s: StateJson, ui: UiState): Row[] {
     const settled = all.filter((p) => settledIn(p, sec));
     const members = all.filter((p) => !settledIn(p, sec));
     sectionRows(sec, l.name.toUpperCase(), all, () => {
+      if (sec === "spokpay" && s.siteRequests) out.push(...siteRequestRows(s.siteRequests, ui));
       if (!all.length) out.push({ ...base("empty"), name: "No one yet." });
       for (const p of members) out.push(personRow(p, sec, "", 0, ui.open));
     }, settled);

@@ -142,12 +142,15 @@ class PersonsTab {
     };
     on("all_people", () => {
       this.stopAudio();
+      this.ui.srOpen = null;
       this.ui.open = null;
       this.ui.allActive = true;
       this.chat = null;
       this.render();
     });
     on("open_person", ((id: string, section: string, store: string) => void this.openPerson(id, section, store)) as Cb);
+    on("open_sr", ((ref: string) => this.openSiteRequest(ref)) as Cb);
+    on("sr_menu", ((ref: string, x: number, y: number) => this.siteRequestMenu(ref, x, y)) as Cb);
     on("toggle_store", ((id: string) => this.toggle(this.ui.stores, id)) as Cb);
     on("toggle_section", ((sec: string) => (sec.startsWith("settled:") ? this.toggle(this.ui.settledOpen, sec.slice(8)) : this.toggle(this.ui.closed, sec))) as Cb);
     on("section_menu", ((sec: string, x: number, y: number) => this.sectionMenu(sec, x, y)) as Cb);
@@ -364,6 +367,7 @@ class PersonsTab {
       count: r.count,
       depth: r.depth,
       dim: r.dim,
+      tip: r.tip,
     };
   }
 
@@ -638,6 +642,7 @@ class PersonsTab {
     const was = this.chatKey();
     if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
     this.stopAudio();
+    this.ui.srOpen = null;
     this.ui.open = { id, section, store };
     this.ui.allActive = false;
     this.chat = null;
@@ -1130,6 +1135,28 @@ class PersonsTab {
     this.setToast(`Moved ${p.name} to ${where}`);
     // their open chat follows them to the new place
     if (this.ui.open?.id === id) void this.openPerson(id, to.startsWith("store:") ? "stores" : to, to.startsWith("store:") ? to.slice(6) : "");
+  }
+
+  // ---------- SpokPay › Site requests (Headquarters' Home list) ----------
+
+  /**
+   * A request's row: Hub has no request pane, so its SpokPay admin page opens (the row stays current), and what the
+   * store wrote counts as seen (for every device: the engine keeps the marks).
+   */
+  private openSiteRequest(ref: string): void {
+    const r = this.state?.siteRequests?.rows.find((x) => x.ref === ref);
+    if (!r) return;
+    this.ui.srOpen = ref;
+    if (r.unread) void this.api("POST", "site-requests/seen", { ref, at: r.at });
+    this.ctx.openExternal(r.url);
+    this.render();
+  }
+
+  /** Right-click › Copy link (the request's admin page). */
+  private siteRequestMenu(ref: string, x: number, y: number): void {
+    const r = this.state?.siteRequests?.rows.find((x) => x.ref === ref);
+    if (!r) return;
+    this.showMenu(x, y, [{ label: "Copy link", icon: GLYPHS.LINK, run: () => void clipboard.copyText(r.url).then(() => this.setToast(`Link to ${ref} copied`), () => this.setToast("The link could not be copied.")) }], 200);
   }
 
   private storeMenu(id: string, x: number, y: number): void {

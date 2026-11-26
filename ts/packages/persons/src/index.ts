@@ -9,6 +9,7 @@ export { FACTORIES } from "./conn/index.ts";
 export { createSocials, formatAge, formatCount, type Socials, type SocialResult } from "./socials.ts";
 export { createSpokpay } from "./spokpay.ts";
 export { SiteRequests } from "./siterequests.ts";
+export { SiteRequestBoard } from "./srboard.ts";
 export { AgentDiscord, cardLine as discordCardLine, DiscordTools, type AgentDiscordInfo } from "./agent/index.ts";
 export { AudioService, audioKey, waveBars, type AudioMeta, type PlayState } from "./audio.ts";
 export { VoiceQueue, voiceJobs, type VoiceJob } from "./voicequeue.ts";

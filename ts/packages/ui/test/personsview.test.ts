@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
-import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -259,5 +259,32 @@ describe("the Person AI's answer", () => {
   test("a folded answer's preview is one plain paragraph", () => {
     expect(aiPreview([{ type: "text", text: "The payment is fixed.\n\n- **#28853 is paid.** See [the order](https://x.y/1).\n- Deliver to `Rafarib113`.\n\n```\ncode\n```" }, { type: "draft", text: "Opa" }])).toBe("The payment is fixed. #28853 is paid. See the order. Deliver to Rafarib113. code");
     expect(aiPreview([{ type: "text", text: "x".repeat(500) }]).length).toBe(400);
+  });
+});
+
+describe("SpokPay › Site requests (Headquarters' Home list)", () => {
+  const sr = (o: Partial<SrRowJson> = {}): SrRowJson => ({ ref: "SR-1", subject: "Banner", store: "Loja Nebulosa", storeSlug: "nebulosa", initials: "LN", line: "No messages yet", waiting: true, unread: false, at: 10, side: { text: "Store waiting", tone: "warning" }, iconPath: null, icon: null, url: "https://spokpay.com/admin/requests?thread=SR-1", ...o });
+  const withSr = (list: SrListJson | null): StateJson => ({ ...state(), siteRequests: list });
+
+  test("sit at the top of the SpokPay section, above its people", () => {
+    const rows = sideRows(withSr({ waits: true, notices: [], rows: [sr(), sr({ ref: "SR-2", subject: "", side: null, waiting: false })] }), ui());
+    const kinds = rows.map((r) => `${r.kind}:${r.name}`);
+    const at = kinds.indexOf("section:SPOKPAY");
+    expect(kinds.slice(at, at + 6)).toEqual(["section:SPOKPAY", "sr-head:Site requests", "sr:Banner", "sr:SR-2", "sr-gap:", "person:Bia"]);
+    const head = rows.find((r) => r.kind === "sr-head")!;
+    expect([head.count, head.tone, head.expanded]).toEqual([2, "needs", true]);
+    const [a, b] = rows.filter((r) => r.kind === "sr");
+    expect([a!.status, a!.tone, a!.time, a!.initials, a!.tip]).toEqual(["Store waiting", "warning", "SR-1", "LN", "No messages yet"]);
+    expect([b!.status, b!.tone]).toEqual(["Nothing new", ""]);
+  });
+
+  test("notices, the empty line, folding, the current row; none without SpokPay", () => {
+    const empty = sideRows(withSr({ waits: false, notices: [{ title: "SpokPay is not connected", text: "…" }], rows: [] }), ui());
+    expect(empty.filter((r) => r.kind.startsWith("sr")).map((r) => r.kind)).toEqual(["sr-head", "sr-notice", "sr-empty", "sr-gap"]);
+    expect(empty.find((r) => r.kind === "sr-head")!.tone).toBe("");
+    const folded = sideRows(withSr({ waits: true, notices: [], rows: [sr()] }), ui({ closed: new Set(["sr"]) }));
+    expect(folded.filter((r) => r.kind.startsWith("sr")).map((r) => r.kind)).toEqual(["sr-head", "sr-gap"]);
+    expect(sideRows(withSr({ waits: false, notices: [], rows: [sr()] }), ui({ srOpen: "SR-1" })).find((r) => r.kind === "sr")!.active).toBe(true);
+    expect(sideRows(withSr(null), ui()).some((r) => r.kind.startsWith("sr"))).toBe(false);
   });
 });

@@ -15,6 +15,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   Send message writes to a creator through Persons › Creators' Gmail (or WhatsApp) with the CRM's templates; they become
   a person there and the message is in their chat. Copy JSONL for SpokPayCRM → Creators → Import. COLLECTOR.md has the
   details. The phone app needs the new APK once (shell 5).
+- Hub Persons: **SpokPay › Site requests** at the top of the SpokPay section, Headquarters' Home list drawn as
+  Headquarters draws it (its heading with an amber dot while one waits on SpokPay, the count and the fold; amber
+  notices: not connected, not read, not read yet, only the newest 100; "No site request is open at SpokPay."; each
+  request as its chat row: the store's square icon or initials, the subject, "Store replied" / "Store waiting" /
+  "Nothing new" and the ref, newest activity first; right-click (phone: long press) › Copy link). SpokPay's active
+  requests are read by the engine every minute with the saved admin key (`srboard.ts`, logic in `srlist.ts`, unit
+  tested), again when the key changes or a proposal opens one, and shown at once on the next start; store icons from
+  SpokPay's store list, a day each. Hub has no request pane yet, so a row opens the request's SpokPay admin page and
+  marks what the store wrote as seen (on every device). PC (Linux, macOS, Windows) and Android.
 - Hub Persons: **Link with…** (a person's right-click menu, the panel's ⋯ and LINKED section; Android: long press and
   the panel) makes the same human on several channels one person: identifiers combined, notes concatenated, stores,
   lists and socials unioned, read marks kept; their chat is one timeline of every channel (each message marked with

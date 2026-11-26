@@ -3,7 +3,7 @@
 // HUB_PERSONS_OFFLINE=1 (or Hub's HARBOR_OFFLINE=1) starts it without connections or background reads, conversations from
 // the caches on disk (the screenshot rig); HARBOR_PERSONS_DIR points it at another folder (a copy of the data).
 import { desktop } from "../../packages/os/src/index.ts";
-import { AgentDiscord, AudioService, VoiceQueue, createSocials, createSpokpay, SiteRequests, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
+import { AgentDiscord, AudioService, VoiceQueue, createSocials, createSpokpay, SiteRequestBoard, SiteRequests, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
 import { dictate } from "../../packages/media/src/index.ts";
 import { parseSocialUrl, PLATFORM_LABEL, socialHandle } from "../../packages/persons/src/socials.ts";
 import type { Call, Reply } from "../../packages/net/src/index.ts";
@@ -16,6 +16,7 @@ let socials: Socials | null = null;
 let routes: PersonsRoutes | null = null;
 let audio: AudioService | null = null;
 let voice: VoiceQueue | null = null;
+let boardRef: SiteRequestBoard | null = null;
 
 /** Persons' service, in-process, for Collector's Send message (Persons › Creators: find or add the creator, send, see
  * what was sent) and its "already in Persons" check; null while Persons isn't up. */
@@ -62,8 +63,15 @@ export const personsEngine: TabEngine = {
     agentsDiscord.provide({ info: () => agent.info(), signIn: () => agent.signIn(), cancel: () => agent.cancel(), signOut: () => agent.signOut() });
     // SpokPay (the admin key in <dir>/spokpay.json): the message menu's Open Site Request and the proposals' cards
     const svc = service;
-    const spokpay = createSpokpay({ dir, log: (...a) => ctx.log(a.map(String).join(" ")) });
-    if (!offline) spokpay.start();
+    // the SpokPay section's Site requests list (Headquarters'): read again when the key changes or a proposal opens one
+    let board: SiteRequestBoard | null = null;
+    const spokpay = createSpokpay({ dir, log: (...a) => ctx.log(a.map(String).join(" ")), emit: (ev) => void (ev.type !== "spokpay-links" && board?.reload()) });
+    board = new SiteRequestBoard(spokpay, dir, () => svc.touch());
+    if (!offline) {
+      spokpay.start();
+      board.start();
+    }
+    boardRef = board;
     const sites = new SiteRequests(spokpay, async (m, p, q, b) => ctx.call(m, p, q, b), () => svc.touch(), (url, name, account) => svc.fetchAttachment(url, name, account));
     // voice messages: played here (ffmpeg into PipeWire…), transcribed with the composer mic's speech to text
     audio = new AudioService({ dir, changed: () => svc.touch(), log: (...a) => ctx.log(a.map(String).join(" ")), transcribe: (samples) => dictate.local(samples, "auto") });
@@ -75,7 +83,7 @@ export const personsEngine: TabEngine = {
       fetch: (url, name, connId) => svc.fetchAttachment(url, name, connId),
       log: (...a) => ctx.log(a.map(String).join(" ")),
     });
-    routes = new PersonsRoutes(service, { agent, sites, audio, ...(voice ? { voice } : {}), ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
+    routes = new PersonsRoutes(service, { agent, sites, board, audio, ...(voice ? { voice } : {}), ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
     service.onChange(() => {
       ctx.changed();
       voice?.kick();
@@ -89,6 +97,7 @@ export const personsEngine: TabEngine = {
   },
   async stop() {
     agentsDiscord.provide(null);
+    boardRef?.stop();
     voice?.stop();
     audio?.close();
     await service?.stop();

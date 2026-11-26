@@ -24,14 +24,19 @@ import java.util.Locale;
  *  store a fold with its people, the owner first with a crown), then each list (Creators,
  *  SpokPay) with its people by their last message, each section with a "Settled (N)" fold and its
  *  connections' chips. A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink, Move to… (SpokPay,
- *  Creators, Stores › a store or New store…). */
+ *  Creators, Stores › a store or New store…).
+ *  At the top of SpokPay: Headquarters' "Site requests" list (the state's siteRequests): its heading (amber dot while one
+ *  waits on SpokPay, the count, the chevron), its notices, and each active request (the store's square icon, the
+ *  subject, "Store replied" / "Store waiting" / "Nothing new", the ref); a tap opens its SpokPay admin page, a long
+ *  press copies the link. */
 final class PersonsHome {
-    static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7;
+    static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7,
+            SR_HEAD = 8, SR_NOTICE = 9, SR = 10;
 
     static final class Item {
         final int kind;
         String section = "", text = "", key = "";
-        JSONObject person, store;
+        JSONObject person, store, sr;
         List<JSONObject> conns;
         boolean owner, settled, open, indent;
         int count, unread;
@@ -167,12 +172,37 @@ final class PersonsHome {
             Item lh = head(section.isEmpty() ? "" : section, PersonsUi.s(l, "name").isEmpty() ? PersonsUi.sectionLabel(lid) : PersonsUi.s(l, "name"), "list:" + lid, in);
             if (!lh.open) continue;
             if (!section.isEmpty()) sectionConns(section, conns);
+            if ("spokpay".equals(section)) siteRequests(st.optJSONObject("siteRequests"));
             List<JSONObject> live = new ArrayList<>();
             for (JSONObject q : in) if (section.isEmpty() || !settled(q, section)) live.add(q);
             Collections.sort(live, recent(section));
             if (in.isEmpty()) note("No one yet.", false);
             for (JSONObject q : live) person(q, section);
             if (!section.isEmpty()) fold(section, in);
+        }
+    }
+
+    /** Headquarters' Home › Site requests (the engine's siteRequests), at the top of the SpokPay section. */
+    private void siteRequests(JSONObject sr) {
+        if (sr == null) return;
+        JSONArray rows = PersonsUi.arr(sr, "rows");
+        Item h = new Item(SR_HEAD);
+        h.count = rows.length();
+        h.owner = sr.optBoolean("waits");
+        h.open = !p.in("closed", "sr");
+        items.add(h);
+        if (!h.open) return;
+        for (JSONObject n : objs(PersonsUi.arr(sr, "notices"))) {
+            Item it = new Item(SR_NOTICE);
+            it.text = PersonsUi.s(n, "title");
+            it.key = PersonsUi.s(n, "text");
+            items.add(it);
+        }
+        if (rows.length() == 0) note("No site request is open at SpokPay.", false);
+        for (JSONObject r : objs(rows)) {
+            Item it = new Item(SR);
+            it.sr = r;
+            items.add(it);
         }
     }
 
@@ -348,11 +378,98 @@ final class PersonsHome {
                 r.setOnLongClickListener(v -> { menu(p, it.person, it.section, store, it.settled); return true; });
                 return Ds.inset(a, r, it.indent ? 22 : 0);
             }
+            case SR_HEAD: {
+                // FoldingSection's heading: label-12, fg while one waits on SpokPay (its amber dot), else subtle
+                LinearLayout r = Ui.row(a);
+                r.setMinimumHeight(Ui.dp(32));
+                r.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
+                r.setBackground(Ui.press(0, 0, 6));
+                int ink = it.owner ? Ui.FG : Ui.G700;
+                r.addView(Ui.text(a, "Site requests", 12, ink));
+                if (it.owner) r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 8, 0, 0, 0));
+                r.addView(new View(a), Ui.weight());
+                if (it.count > 0) r.addView(Ui.text(a, String.valueOf(it.count), 12, ink), Ui.margins(Ui.wrap(), 0, 0, 4, 0));
+                r.addView(Ui.icon(a, it.open ? Ui.I_DOWN : Ui.I_CHEV_RIGHT, 14, ink), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
+                r.setOnClickListener(v -> { p.flip("closed", "sr"); render(); });
+                r.setContentDescription("Site requests, " + it.count + (it.owner ? ", one waits on SpokPay" : "") + (it.open ? ", open" : ", folded"));
+                return Ds.inset(a, r, 0);
+            }
+            case SR_NOTICE: {
+                // NoticeRow: amber border and fill, CircleAlert, the title and the words in amber
+                LinearLayout box = Ui.row(a);
+                box.setGravity(android.view.Gravity.TOP);
+                box.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(10), Ui.dp(8));
+                box.setBackground(Ui.round((Ui.AMBER & 0x00ffffff) | 0x1f000000, (Ui.AMBER & 0x00ffffff) | 0x55000000, 6));
+                box.addView(Ui.icon(a, Ui.I_ALERT, 14, Ui.AMBER), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 0, 2, 8, 0));
+                LinearLayout words = Ui.col(a);
+                words.addView(Ui.text(a, it.text, 13, Ui.AMBER));
+                words.addView(Ui.text(a, it.key, 13, Ui.AMBER), Ui.margins(Ui.fill(), 0, 2, 0, 0));
+                box.addView(words, Ui.weight());
+                LinearLayout w = Ui.col(a);
+                w.setPadding(Ui.dp(Ds.ROW_INSET + 4), 0, Ui.dp(Ds.ROW_INSET + 4), Ui.dp(4));
+                w.addView(box, Ui.fill());
+                return w;
+            }
+            case SR: {
+                return Ds.inset(a, siteRequestRow(it.sr), 0);
+            }
             case FOLD: {
                 return Ds.foldBar(a, "Settled (" + it.count + ")", it.open, v -> { p.flip("settled_open", it.section); render(); });
             }
         }
         return new View(a);
+    }
+
+    /** ChatListRow for a site request: the store's square bordered icon (initials until read), the subject, then the
+     *  store's side ("Store replied" blue / "Store waiting" amber / "Nothing new") with the ref on the right. */
+    private View siteRequestRow(JSONObject sr) {
+        String ref = PersonsUi.s(sr, "ref"), url = PersonsUi.s(sr, "url"), subject = PersonsUi.s(sr, "subject"), icon = PersonsUi.s(sr, "icon");
+        JSONObject side = sr.optJSONObject("side");
+        LinearLayout r = Ui.row(a);
+        r.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+        r.setBackground(Ui.press(0, 0, 6));
+        android.widget.FrameLayout badge = new android.widget.FrameLayout(a);
+        TextView ini = Ui.text(a, PersonsUi.s(sr, "initials"), 13, Ui.G700);
+        ini.setGravity(android.view.Gravity.CENTER);
+        ini.setIncludeFontPadding(false);
+        ini.setBackground(Ui.round(Ui.G100, Ui.LINE, 6));
+        badge.addView(ini, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        if (!icon.isEmpty()) {
+            android.widget.ImageView iv = new android.widget.ImageView(a);
+            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            iv.setBackground(Ui.round(0, 0, 6));
+            iv.setClipToOutline(true);
+            badge.addView(iv, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            PersonsUi.image(a, p.hub, icon, iv, Ui.dp(32), null);
+        }
+        r.addView(badge, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(32)), 0, 0, 10, 0));
+        LinearLayout col = Ui.col(a);
+        col.addView(Ui.subtitle(Ui.text(a, subject.isEmpty() ? ref : subject, 14, Ui.FG)));
+        LinearLayout line = Ui.row(a);
+        String tone = side == null ? "" : PersonsUi.s(side, "tone");
+        int color = "info".equals(tone) ? Ui.BLUE : "warning".equals(tone) ? Ui.AMBER : Ui.G700;
+        line.addView(Ui.subtitle(Ui.text(a, side == null ? "Nothing new" : PersonsUi.s(side, "text"), 12, color)), Ui.weight());
+        TextView refView = Ui.text(a, ref, 12, Ui.G700);
+        refView.setTypeface(Ui.mono);
+        line.addView(refView, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        col.addView(line, Ui.fill());
+        r.addView(col, Ui.weight());
+        r.setContentDescription((subject.isEmpty() ? ref : subject) + ", " + (side == null ? "Nothing new" : PersonsUi.s(side, "text")) + ", " + ref);
+        r.setOnClickListener(v -> {
+            if (sr.optBoolean("unread")) {
+                JSONObject b = new JSONObject();
+                try { b.put("ref", ref).put("at", sr.optLong("at")); } catch (Exception ignored) { }
+                Ui.bg(a, () -> p.hub.call("POST", "/v1/persons/site-requests/seen", b), x -> p.refresh());
+            }
+            Ui.openUrl(a, url);
+        });
+        r.setOnLongClickListener(v -> {
+            List<Ds.Item> m = new ArrayList<>();
+            m.add(Ds.item(Ui.I_LINK, "Copy link", () -> Ui.copy(a, url)));
+            Ds.menu(a, m);
+            return true;
+        });
+        return r;
     }
 
     /** A connection: its mark, "Discord · Connected", a dot by status; a tap says more. */

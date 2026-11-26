@@ -6,7 +6,7 @@ import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, Sea
 import { MdBlock, MdBlockView } from "markdown.slint";
 
 export struct PRow {
-    kind: string, // all | section | store | person | settled | empty
+    kind: string, // all | section | store | person | settled | empty | sr-head | sr-notice | sr-empty | sr | sr-gap
     id: string,
     section: string,
     store: string,
@@ -28,6 +28,7 @@ export struct PRow {
     count: int,
     depth: int,
     dim: bool,
+    tip: string, // a site request: who spoke last
 }
 
 // One piece of the Person AI's answer: a markdown block (markdown.slint, as Projects' chat draws it) or a message it
@@ -222,6 +223,8 @@ export global PersonsBus {
     callback all-people();
     callback open-person(string, string, string);
     callback toggle-store(string);
+    callback open-sr(string); // a site request's row (its ref)
+    callback sr-menu(string, length, length); // right-click on it: Copy link
     callback toggle-section(string);
     callback section-menu(string, length, length);
     callback row-menu(string, string, string, length, length);
@@ -309,13 +312,222 @@ component PersonRow inherits ListRow {
     }
 }
 
+// ---------- SpokPay › Site requests (Headquarters' Home list, drawn as Headquarters draws it) ----------
+// Headquarters' chat-list/Section.tsx (FoldingSection, NoticeRow) and chat-list/Row.tsx, class for class: rengaf's
+// tokens are Theme's (gray-900 subtle, gray-1000 fg, amber, blue); the alpha greys are written out.
+
+global SrTokens {
+    // --gray-alpha-100 (hover) and --gray-alpha-200 (current)
+    out property <color> hover: Theme.dark ? #ffffff0f : #0000000d;
+    out property <color> current: Theme.dark ? #ffffff17 : #00000014;
+}
+
+// FoldingSection's heading: h-8, pl-3 pr-3, label-12; fg while one waits on SpokPay (its amber dot), else subtle.
+component SrHead {
+    in property <PRow> r;
+    property <bool> waits: r.tone == "needs";
+    height: 32px;
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            PersonsBus.toggle-section("sr");
+        }
+    }
+    property <color> ink: area.has-hover || root.waits ? Theme.gray-1000 : Theme.gray-900;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: "Site requests";
+                font-size: 12px;
+                font-weight: 400;
+                color: root.ink;
+                vertical-alignment: center;
+            }
+            // chat-list/status.tsx's StatusDot "needs-you": size-2, --amber-700
+            if root.waits: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: Theme.amber-700;
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: end;
+            if root.r.count > 0: Text {
+                text: root.r.count;
+                font-size: 12px;
+                color: root.ink;
+                vertical-alignment: center;
+            }
+            Glyph {
+                width: 14px;
+                icon: root.r.expanded ? Icons.down : Icons.right;
+                size: 14px;
+                color: root.ink;
+            }
+        }
+    }
+}
+
+// NoticeRow: mx-1 mb-1, rounded-md, --amber-400 border, --amber-100 fill, px-2.5 py-2, CircleAlert and words in --amber-900.
+component SrNotice {
+    in property <PRow> r;
+    height: box.preferred-height + 4px;
+    box := Rectangle {
+        x: 4px;
+        y: 0;
+        width: root.width - 8px;
+        height: root.height - 4px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.amber-400;
+        background: Theme.amber-100;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            spacing: 8px;
+            VerticalLayout {
+                padding-top: 2px;
+                alignment: start;
+                Glyph {
+                    width: 14px;
+                    height: 14px;
+                    icon: Icons.alert;
+                    size: 14px;
+                    color: Theme.amber-900;
+                }
+            }
+            VerticalLayout {
+                spacing: 2px;
+                Text {
+                    min-height: 16px;
+                    text: root.r.name;
+                    font-size: 13px;
+                    color: Theme.amber-900;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                Text {
+                    min-height: 18px;
+                    text: root.r.status;
+                    font-size: 13px;
+                    color: Theme.amber-900;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// ChatListRow for a site request: px-3 py-1.5 gap-2.5, rounded-md, hover --gray-alpha-100, current --gray-alpha-200; the
+// store's square bordered icon (size-8, initials until read), the subject (label-14), then the store's side
+// ("Store replied" --blue-900 / "Store waiting" --amber-900 / "Nothing new") with the ref on the right (label-12-mono).
+component SrRow {
+    in property <PRow> r;
+    height: 48px;
+    Rectangle {
+        border-radius: 6px;
+        background: root.r.active ? SrTokens.current : area.has-hover ? SrTokens.hover : transparent;
+    }
+    area := TipArea {
+        tip: root.r.tip;
+        clicked => {
+            PersonsBus.open-sr(root.r.id);
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                PersonsBus.sr-menu(root.r.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Theme.gray-400;
+                background: Theme.gray-100;
+                clip: true;
+                if !root.r.has-avatar: Text {
+                    text: root.r.initials;
+                    font-size: 13px;
+                    color: Theme.gray-900;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                if root.r.has-avatar: Image {
+                    x: 1px;
+                    y: 1px;
+                    width: 30px;
+                    height: 30px;
+                    source: root.r.avatar;
+                    image-fit: cover;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text {
+                height: 20px;
+                text: root.r.name;
+                font-size: 14px;
+                font-weight: 400;
+                color: Theme.gray-1000;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                height: 16px;
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.r.status;
+                    font-size: 12px;
+                    color: root.r.tone == "info" ? Theme.blue-900 : root.r.tone == "warning" ? Theme.amber-900 : Theme.gray-900;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 0;
+                    text: root.r.time;
+                    font-size: 12px;
+                    font-family: "Geist Mono";
+                    color: Theme.gray-900;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
 // ---------- sidebar ----------
 
 component SideRow {
     in property <PRow> r;
     // A person's row has a second line while there's a status or someone types.
     property <length> person-h: r.status != "" || r.typing != "" ? Ds.row2-h : Ds.row-h;
-    height: r.kind == "section" ? 34px : r.kind == "settled" ? Theme.row-h : r.kind == "empty" ? 24px : r.kind == "person" ? person-h : r.kind == "store" ? Ds.head-row-h : Ds.row-h;
+    height: r.kind == "section" ? 34px : r.kind == "settled" ? Theme.row-h : r.kind == "empty" ? 24px : r.kind == "person" ? person-h : r.kind == "store" ? Ds.head-row-h
+        : r.kind == "sr-head" ? 32px : r.kind == "sr" ? 48px : r.kind == "sr-empty" ? 26px : r.kind == "sr-gap" ? 10px : r.kind == "sr-notice" ? notice.height : Ds.row-h;
     if root.r.kind == "all" || root.r.kind == "store": ListRow {
         width: root.width;
         active: root.r.active;
@@ -372,6 +584,29 @@ component SideRow {
     if root.r.kind == "empty": ListNote {
         depth: root.r.depth;
         text: root.r.name;
+    }
+    if root.r.kind == "sr-head": SrHead {
+        width: root.width;
+        r: root.r;
+    }
+    // px-3 py-1, copy-13, subtle
+    if root.r.kind == "sr-empty": Text {
+        x: 12px;
+        width: root.width - 24px;
+        text: root.r.name;
+        font-size: 13px;
+        color: Theme.gray-900;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.r.kind == "sr": SrRow {
+        width: root.width;
+        r: root.r;
+    }
+    notice := SrNotice {
+        width: root.width;
+        visible: root.r.kind == "sr-notice";
+        r: root.r;
     }
     person := PersonRow {
         width: root.width;

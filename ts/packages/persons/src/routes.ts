@@ -16,6 +16,8 @@ import { normalizeSocials } from "./socials.ts";
 import type { ConnView, PersonsService, RowInfo } from "./service.ts";
 import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
 import type { SiteRequests } from "./siterequests.ts";
+import type { SiteRequestBoard } from "./srboard.ts";
+import { initialsOf, siteRequestPageUrl } from "./srlist.ts";
 import type { Proposal, ProposalFields } from "./spokpay-core.ts";
 import { audioKey, waveBars, type AudioService } from "./audio.ts";
 import type { VoiceQueue } from "./voicequeue.ts";
@@ -78,7 +80,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; audio?: AudioService; voice?: VoiceQueue } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; board?: SiteRequestBoard; audio?: AudioService; voice?: VoiceQueue } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -99,6 +101,7 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
       }
+      if (m === "POST" && rest[0] === "site-requests" && rest.length === 2) return await this.siteRequestsRoute(rest[1]!, obj(c.body));
       if (rest[0] === "proposal" && rest[1]) return await this.proposal(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "proposing" && rest[1]) return await this.proposing(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "person" && rest[1]) {
@@ -313,7 +316,60 @@ export class PersonsRoutes {
       }),
       lists: d.lists.map((l) => ({ id: l.id, name: l.name, accountId: l.accountId })),
       people,
+      siteRequests: this.siteRequestsJson(),
     };
+  }
+
+  /**
+   * The SpokPay section's Site requests (Headquarters' Home list, srboard.ts): SpokPay's active requests, newest
+   * activity first, each with its store's side ("Store replied" / "Store waiting"), its store icon (a file here, a
+   * picture URL for the phone) and its admin page; the notices that keep it from being current; `waits` lights the
+   * heading's amber dot. Null without SpokPay in this engine.
+   */
+  private siteRequestsJson(): Json {
+    const b = this.extra.board;
+    if (!b) return null;
+    const v = b.view();
+    return json({
+      waits: v.waits,
+      notices: v.notices,
+      rows: v.rows.map((r) => {
+        const icon = r.storeSlug ? v.icons[r.storeSlug] ?? null : null;
+        return {
+          ref: r.ref,
+          subject: r.subject,
+          store: r.store,
+          storeSlug: r.storeSlug,
+          initials: initialsOf(r.store),
+          line: r.line,
+          waiting: r.waiting,
+          unread: r.unread,
+          at: r.lastActivityAt,
+          side: r.side,
+          iconPath: icon ? this.avatars.file(icon) : null,
+          icon: icon ? `/v1/persons/img/url?u=${encodeURIComponent(icon)}` : null,
+          url: siteRequestPageUrl(r.ref),
+        };
+      }),
+    });
+  }
+
+  /** POST site-requests/seen {ref, at} (a row opened: the store's words read, here only); POST site-requests/reload. */
+  private async siteRequestsRoute(act: string, b: Record<string, unknown>): Promise<Reply> {
+    const board = this.extra.board;
+    if (!board) return err(404, "SpokPay isn't in this engine");
+    if (act === "seen") {
+      const ref = str(b.ref) ?? "";
+      const at = Number(b.at);
+      if (!ref || !Number.isFinite(at)) return err(400, "ref and at are needed");
+      board.markSeen(ref, at);
+      return ok({ ok: true });
+    }
+    if (act === "reload") {
+      await board.reload();
+      return ok({ ok: true });
+    }
+    return err(404, "no such call");
   }
 
   private isSettledNow(p: Person, sec: SectionId): boolean {

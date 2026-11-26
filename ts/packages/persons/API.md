@@ -13,13 +13,23 @@ Long-poll: with `rev` equal to the current one, waits up to 25 s for a change, t
   lists:  [{ id: "creators"|"spokpay", name, accountId }],
   people: [{ id, name, avatar: "/v1/persons/img/person/ID?v=HASH"|null, initials: "AB", color: "#hex",
              storeIds: [], listIds: [], settled: { stores?: true, ... },
-             rows: { "": RowInfo, stores?: RowInfo, creators?: RowInfo, spokpay?: RowInfo } }] }
+             rows: { "": RowInfo, stores?: RowInfo, creators?: RowInfo, spokpay?: RowInfo } }],
+  siteRequests: null | { waits: bool, notices: [{ title, text }],
+                         rows: [{ ref: "SR-121", subject, store, storeSlug|null, initials, line, waiting, unread, at: <ms>,
+                                  side: { text: "Store replied"|"Store waiting", tone: "info"|"warning" }|null,
+                                  icon: "/v1/persons/img/url?u=…"|null, url: "https://spokpay.com/admin/requests?thread=SR-121" }] } }
 RowInfo = { lastAt|null, unread: 0, presence: "online"|"idle"|"dnd"|"offline"|null,
             status: { text: "Online", tone: "green"|"yellow"|"red"|"muted" }|null,
             channel: "discord"|"gmail"|"whatsapp"|null, typing: "typing"|"recording"|null }
 ```
 Sidebar order: Stores (each store: owner first, then members by last message), then lists in order.
 Within a section, people are sorted by `rows[section].lastAt` desc; settled ones go to a "Settled" fold.
+`siteRequests` is the SpokPay section's "Site requests" list (Headquarters' Home list), drawn at the top of that section:
+SpokPay's active requests read every minute with the saved admin key, newest activity first. `waits`: one waits on
+SpokPay (the heading's amber dot). A row opens its admin page (`url`) and posts `site-requests/seen`.
+
+## POST /v1/persons/site-requests/seen  { ref, at } → `{ ok }`   (a row opened at its `at`: "Store replied" goes, for every device)
+## POST /v1/persons/site-requests/reload → `{ ok }`   (read SpokPay's list now)
 
 ## GET /v1/persons/chat/{personId}?section=S
 ```
