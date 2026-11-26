@@ -387,6 +387,35 @@ final class CollectorCreator {
     static final String I_MAIL = "", I_FLAME = "", I_VIDEO = "", I_EYE = "", I_HEART = "",
             I_NOTE = "", I_PENCIL = "";
 
+    /** Lucide's arrow-down (not in the font subset), stroked: the review bar's Skip. */
+    static final class ArrowDown extends android.graphics.drawable.Drawable {
+        private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        ArrowDown(int color) {
+            p.setColor(color);
+            p.setStyle(android.graphics.Paint.Style.STROKE);
+            p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            p.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+        }
+        @Override public void draw(android.graphics.Canvas c) {
+            android.graphics.Rect b = getBounds();
+            float s = Math.min(b.width(), b.height()) / 24f;
+            c.save();
+            c.translate(b.left, b.top);
+            c.scale(s, s);
+            p.setStrokeWidth(2);
+            c.drawLine(12, 5, 12, 19, p);
+            android.graphics.Path h = new android.graphics.Path();
+            h.moveTo(19, 12);
+            h.lineTo(12, 19);
+            h.lineTo(5, 12);
+            c.drawPath(h, p);
+            c.restore();
+        }
+        @Override public void setAlpha(int a) { p.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter f) { p.setColorFilter(f); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+    }
+
     /** Lucide's Instagram (its font dropped it): a rounded square, the lens and the dot, stroked. */
     static final class Instagram extends android.graphics.drawable.Drawable {
         private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
@@ -424,22 +453,34 @@ final class CollectorCreator {
     /** A lead's detail, full screen (the PC's dialog, the SpokPay CRM's creator profile): picture, name, PLATFORM
      *  @handle, Has Contact; the stat tiles with data; MOST RECENT as the podium (#2, #1, #3); Bio; How we found them;
      *  Reach (Email, Discord, WhatsApp, Instagram: one value, Save / Clear, Send); Social media; Open channel and Edit.
+     *  At the bottom the review bar (the PC's): a Quick note (private) and Approve to, then Reject / Skip / Approve,
+     *  each going on to the next lead of the list the detail was opened from.
      *  GET /v1/collector/creator, then POST fill (an older lead's missing data, read once). */
     static final class Detail implements Collector.Screen {
         private final Collector a;
         private final Hub h;
-        private final String id;
-        private final LinearLayout root, body, foot;
+        private final String id, title;
+        private final LinearLayout root, body, foot, acts;
+        private final java.util.List<String> queue;
+        private final EditText note;
+        private final TextView approveTo;
+        private String noteSaved = null;
+        private boolean busy;
+        private final Runnable noteLater = this::saveNote;
         private JSONObject d;
         private String kind = "email";
         private final java.util.Map<String, String> drafts = new java.util.HashMap<>();
         private EditText field;
         private boolean filling;
 
-        Detail(Collector a, String id, String name) {
+        Detail(Collector a, String id, String name) { this(a, id, name, new java.util.ArrayList<>()); }
+
+        Detail(Collector a, String id, String name, java.util.List<String> queue) {
             this.a = a;
             this.h = a.hub;
             this.id = id;
+            this.title = name;
+            this.queue = queue;
             root = Ui.col(a);
             root.setBackgroundColor(Ui.BG);
             root.addView(topBar(a, name, a::pop), Ui.fill());
@@ -448,9 +489,55 @@ final class CollectorCreator {
             body.setPadding(Ui.dp(16), Ui.dp(4), Ui.dp(16), Ui.dp(24));
             sv.addView(body);
             root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
-            foot = Ui.row(a);
-            foot.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), Ui.dp(12));
+            foot = Ui.col(a);
             foot.setBackground(Ui.round(Ui.BG2, 0, 0));
+            View top = new View(a);
+            top.setBackgroundColor(Ui.LINE);
+            foot.addView(top, new LinearLayout.LayoutParams(-1, 1));
+            // The Quick note and Approve to.
+            LinearLayout nr = Ui.row(a);
+            nr.setGravity(Gravity.CENTER_VERTICAL);
+            nr.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), 0);
+            note = Ui.input(a, "Quick note (private)", false);
+            note.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+            note.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(8));
+            note.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+            note.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence x, int b, int c, int d) { }
+                @Override public void onTextChanged(CharSequence x, int b, int c, int d) { }
+                @Override public void afterTextChanged(android.text.Editable e) {
+                    Ui.main.removeCallbacks(noteLater);
+                    if (noteSaved != null) Ui.main.postDelayed(noteLater, 800);
+                }
+            });
+            note.setOnFocusChangeListener((v, has) -> { if (!has) saveNote(); });
+            nr.addView(note, Ui.weight());
+            approveTo = Ui.text(a, "", 13, Ui.FG);
+            approveTo.setGravity(Gravity.CENTER_VERTICAL);
+            approveTo.setPadding(Ui.dp(12), Ui.dp(9), Ui.dp(12), Ui.dp(9));
+            approveTo.setBackground(Ui.press(Ui.CARD, Ui.LINE, 12));
+            approveTo.setSingleLine(true);
+            approveTo.setEllipsize(TextUtils.TruncateAt.END);
+            approveTo.setMaxWidth(Ui.dp(190));
+            approveTo.setOnClickListener(v -> pickApproveTo());
+            nr.addView(approveTo, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            foot.addView(nr, Ui.fill());
+            // Open channel, Edit (drawn with the detail).
+            acts = Ui.row(a);
+            acts.setGravity(Gravity.CENTER_VERTICAL);
+            acts.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), Ui.dp(10));
+            foot.addView(acts, Ui.fill());
+            // The review bar: three equal cells, hairlines between.
+            View line = new View(a);
+            line.setBackgroundColor(Ui.LINE);
+            foot.addView(line, new LinearLayout.LayoutParams(-1, 1));
+            LinearLayout bar = Ui.row(a);
+            bar.addView(cell(Ui.I_X, false, "Reject", Ui.RED, "reject"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            bar.addView(rule(), new LinearLayout.LayoutParams(1, -1));
+            bar.addView(cell(null, true, "Skip", Ui.G700, "skip"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            bar.addView(rule(), new LinearLayout.LayoutParams(1, -1));
+            bar.addView(cell(Ui.I_CHECK, false, "Approve", Ui.GREEN, "approve"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            foot.addView(bar, Ui.fill());
             root.addView(foot, Ui.fill());
             body.addView(Ds.empty(a, "Loading…"), Ui.fill());
             load(true);
@@ -459,6 +546,85 @@ final class CollectorCreator {
         @Override public View view() { return root; }
 
         @Override public void shown() { load(false); }
+
+        private View rule() {
+            View v = new View(a);
+            v.setBackgroundColor(Ui.LINE);
+            return v;
+        }
+
+        /** One third of the review bar: its icon (or Lucide's arrow-down, drawn) and label in its colour. */
+        private View cell(String glyph, boolean down, String label, int color, String what) {
+            LinearLayout c = Ui.row(a);
+            c.setGravity(Gravity.CENTER);
+            c.setBackground(Ui.press(Ui.BG2, 0, 0));
+            if (glyph != null) c.addView(Ui.icon(a, glyph, 16, color), new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)));
+            if (down) {
+                ImageView iv = new ImageView(a);
+                iv.setImageDrawable(new ArrowDown(color));
+                c.addView(iv, new LinearLayout.LayoutParams(Ui.dp(17), Ui.dp(17)));
+            }
+            TextView t = Ui.bold(a, label, 15, color);
+            t.setPadding(Ui.dp(7), 0, 0, 0);
+            c.addView(t, Ui.wrap());
+            c.setContentDescription(label);
+            c.setOnClickListener(v -> review(what));
+            return c;
+        }
+
+        private void review(String what) {
+            if (busy || d == null) return;
+            busy = true;
+            saveNote();
+            a.review(id, d.optString("name", title), what, a.approveTo(), queue);
+            // The next detail replaces this one; a refusal leaves it here, usable again.
+            Ui.main.postDelayed(() -> busy = false, 1500);
+        }
+
+        /** Saves the Quick note if it changed (private: never exported). */
+        private void saveNote() {
+            Ui.main.removeCallbacks(noteLater);
+            if (h == null || noteSaved == null) return;
+            final String text = note.getText().toString();
+            if (text.equals(noteSaved)) return;
+            noteSaved = text;
+            JSONObject b = new JSONObject();
+            try { b.put("id", id).put("note", text); } catch (Exception ignored) { }
+            Ui.pool.execute(() -> {
+                try { h.call("POST", "/v1/collector/note", b); } catch (Exception e) { Ui.main.post(() -> Ui.toast(a, h.whyDown(e))); }
+            });
+        }
+
+        private String approveLabel() {
+            JSONArray all = a.approveChoices();
+            String v = a.approveTo();
+            for (int i = 0; all != null && i < all.length(); i++) {
+                JSONObject o = all.optJSONObject(i);
+                if (o != null && v.equals(o.optString("value"))) return o.optString("label");
+            }
+            return "Approved list only";
+        }
+
+        /** Approve to: where Approve sends a lead (the last choice is remembered on the PC). */
+        private void pickApproveTo() {
+            JSONArray all = a.approveChoices();
+            if (all == null || all.length() == 0) return;
+            String[] labels = new String[all.length()];
+            int on = 0;
+            for (int i = 0; i < all.length(); i++) {
+                JSONObject o = all.optJSONObject(i);
+                labels[i] = o == null ? "" : o.optString("label");
+                if (o != null && o.optString("value").equals(a.approveTo())) on = i;
+            }
+            Ui.dialog(a).setTitle("Approve to").setSingleChoiceItems(labels, on, (dlg, w) -> {
+                JSONObject o = all.optJSONObject(w);
+                if (o != null) {
+                    a.setApproveTo(o.optString("value"));
+                    approveTo.setText("Approve to: " + o.optString("label") + "  ▾");
+                }
+                dlg.dismiss();
+            }).show();
+        }
 
         private void load(boolean fill) {
             if (h == null) return;
@@ -523,9 +689,15 @@ final class CollectorCreator {
 
         private void draw() {
             body.removeAllViews();
-            foot.removeAllViews();
+            acts.removeAllViews();
             field = null;
+            approveTo.setText("Approve to: " + approveLabel() + "  ▾");
             if (d == null) return;
+            // The Quick note: the saved one when the detail first comes (a later copy keeps what's being typed).
+            if (noteSaved == null) {
+                noteSaved = d.optString("note", "");
+                note.setText(noteSaved);
+            }
             final String name = d.optString("name");
             // Header: picture (a rounded square), name, PLATFORM @handle, Has Contact.
             LinearLayout head = Ui.row(a);
@@ -560,6 +732,14 @@ final class CollectorCreator {
                 chip.setPadding(Ui.dp(8), Ui.dp(2), Ui.dp(8), Ui.dp(2));
                 chip.setBackground(Ui.round(Ui.G200, 0, 10));
                 l2.addView(chip, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            }
+            boolean restricted = d.optBoolean("restricted"), approved = !restricted && d.optBoolean("approved");
+            if (restricted || approved) {
+                int tone = approved ? Ui.GREEN : Ui.RED;
+                TextView chip = Ui.text(a, approved ? "Approved" : "Restricted", 11, tone);
+                chip.setPadding(Ui.dp(8), Ui.dp(2), Ui.dp(8), Ui.dp(2));
+                chip.setBackground(Ui.round((tone & 0x00ffffff) | 0x1f000000, 0, 10));
+                l2.addView(chip, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             }
             who.addView(l2, Ui.margins(Ui.fill(), 0, 3, 0, 0));
             head.addView(who, Ui.weight());
@@ -669,11 +849,13 @@ final class CollectorCreator {
                 r.setOnClickListener(v -> Ui.openUrl(a, url));
                 body.addView(r, Ui.margins(Ui.fill(), 0, 0, 0, 6));
             }
-            // Footer: Open channel, Edit.
+            // Footer: Open channel, where this lead is in the list, Edit.
             final String url = d.optString("url");
-            if (!url.isEmpty()) foot.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.wrap());
-            foot.addView(new View(a), Ui.weight());
-            foot.addView(Ui.button(a, "Edit", true, v -> edit()), Ui.wrap());
+            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.wrap());
+            acts.addView(new View(a), Ui.weight());
+            int pos = queue.indexOf(id);
+            if (pos >= 0 && queue.size() > 1) acts.addView(Ui.text(a, (pos + 1) + " of " + queue.size(), 12.5f, Ui.G600), Ui.margins(Ui.wrap(), 0, 0, 10, 0));
+            acts.addView(Ui.button(a, "Edit", true, v -> edit()), Ui.wrap());
         }
 
         /** One of the podium's videos: 16:9 thumbnail, two lines of title, "yesterday · 22K views"; a tap opens it. */

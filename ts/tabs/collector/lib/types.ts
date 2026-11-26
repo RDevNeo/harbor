@@ -76,6 +76,20 @@ export interface CreatorRecord {
   filled_at?: string | null;
   /** Brought in from elsewhere rather than found by a run ("SpokPay CRM · Has Contact"). */
   imported_from?: string;
+  /** Approved in the detail's review bar: out of Available, into Approved (still never collected again). */
+  approved?: Approved | null;
+  /** The detail's Quick note: private, never exported. */
+  note?: string;
+}
+
+/** Where Approve sends a lead: Approved alone, or Approved and Persons › Creators (no message sent). */
+export type ApproveTo = "list" | "persons";
+export const APPROVE_TO: readonly ApproveTo[] = ["list", "persons"];
+export interface Approved {
+  at: string;
+  to: ApproveTo;
+  /** The person in Persons › Creators, when Approve added them there. */
+  person: string | null;
 }
 
 /** The CRM's Reach (creator-contacts.ts): one operator-owned way to contact a creator. */
@@ -98,6 +112,8 @@ export interface Settings {
   target: number;
   /** The Send message menu opens on the template used last. */
   lastTemplate: string;
+  /** The review bar's "Approve to", the last one picked. */
+  approveTo: ApproveTo;
 }
 
 export interface RunState {
@@ -151,7 +167,7 @@ export const GAP_CHOICES: { value: number; label: string }[] = [
 export const PLATFORM_LABEL: Record<CreatorPlatform, string> = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" };
 
 export function defaultSettings(): Settings {
-  return { platform: "youtube", query: "", gapDays: 14, target: 20, lastTemplate: "" };
+  return { platform: "youtube", query: "", gapDays: 14, target: 20, lastTemplate: "", approveTo: "list" };
 }
 
 export function defaultData(): CollectorData {
@@ -179,6 +195,7 @@ export function migrate(raw: unknown): CollectorData {
     gapDays: GAP_CHOICES.some((c) => c.value === s.gapDays) ? (s.gapDays as number) : d.settings.gapDays,
     target: t === undefined ? d.settings.target : normalizeTarget(t),
     lastTemplate: typeof s.lastTemplate === "string" ? s.lastTemplate : "",
+    approveTo: APPROVE_TO.includes(s.approveTo as ApproveTo) ? (s.approveTo as ApproveTo) : "list",
   };
   d.creators = Array.isArray(r.creators)
     ? (r.creators.filter((c) => c && typeof c === "object" && typeof (c as CreatorRecord).platform_id === "string" && typeof (c as CreatorRecord).platform === "string") as CreatorRecord[]).map((c) => ({
@@ -191,6 +208,16 @@ export function migrate(raw: unknown): CollectorData {
           const okReach = reach && typeof reach === "object" && REACH_KINDS.includes(reach.kind) && typeof reach.value === "string" && reach.value.trim();
           const okEdited = Array.isArray(edited) ? edited.filter((f): f is string => typeof f === "string") : [];
           return { ...rest, ...(okReach ? { reach: { kind: reach.kind, value: reach.value.trim() } } : {}), ...(okEdited.length ? { edited: okEdited } : {}) };
+        })
+        .map((c) => {
+          // Approve and the Quick note came later: a bad one dropped.
+          const { approved, note, ...rest } = c;
+          const okApproved = approved && typeof approved === "object" && typeof approved.at === "string";
+          return {
+            ...rest,
+            ...(okApproved ? { approved: { at: approved.at, to: APPROVE_TO.includes(approved.to) ? approved.to : "list", person: typeof approved.person === "string" ? approved.person : null } } : {}),
+            ...(typeof note === "string" && note.trim() ? { note } : {}),
+          };
         })
         .map((c) => {
           const { history: _h, update_error: _e, ...rest } = c as CreatorRecord & { history?: unknown; update_error?: unknown };
@@ -207,7 +234,7 @@ export function migrate(raw: unknown): CollectorData {
 
 /** The CRM's fields (and the email), as the record it imports. */
 export function exportRecord(c: CreatorRecord): Record<string, unknown> {
-  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, imported_from: _if, ...rest } = c;
+  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, imported_from: _if, approved: _a, note: _n, ...rest } = c;
   const out: Record<string, unknown> = { ...rest, links: c.links.map(({ label, url }) => ({ label, url })) };
   // The CRM's own Reach columns (creators.reach_kind / reach_value).
   if (reach) {
@@ -221,10 +248,15 @@ export function exportRecord(c: CreatorRecord): Record<string, unknown> {
   return out;
 }
 
-/** Copy for the CRM: the Available leads (Restricted ones left out) as JSONL, one complete record per line. */
-export function exportText(d: CollectorData): string {
+/** Which list a lead is in: Restricted, Approved, else Available. */
+export function listOf(c: CreatorRecord): "available" | "approved" | "restricted" {
+  return c.restricted ? "restricted" : c.approved ? "approved" : "available";
+}
+
+/** Copy for the CRM: the Available leads (or the Approved ones) as JSONL, one complete record per line. */
+export function exportText(d: CollectorData, which: "available" | "approved" = "available"): string {
   return d.creators
-    .filter((c) => !c.restricted)
+    .filter((c) => listOf(c) === which)
     .map((c) => JSON.stringify(exportRecord(c)))
     .join("\n");
 }

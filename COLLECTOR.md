@@ -7,17 +7,21 @@ No browser and no WebView: everything runs in the engine against the platforms' 
 
 ## What the user sees
 
-Three views, picked in the sidebar (the phone: chips under the title):
+Four views, picked in the sidebar (the phone: chips under the title):
 
 - **Collector**: the form (platform, search term, how many leads, Last upload window, Collect / Stop; Instagram's
   session when Instagram is picked), one line while a run goes ("3 of 20 · Checking @x…", then how it ended), and the
   leads that run found.
-- **Available**: every lead not Restricted, newest first, with one filter box (name, handle, email, platform, link).
-- **Restricted**: leads the user keeps out of Available. They stay remembered, so no run collects them again.
+- **Available**: every lead not Approved or Restricted, newest first, with one filter box (name, handle, email,
+  platform, link).
+- **Approved**: leads approved in the review bar (below), the same filter box, Unapprove on each card (back to
+  Available) and its own Copy JSONL.
+- **Restricted**: leads the user keeps out of Available (Restrict, or Reject in the review bar). They stay
+  remembered, so no run collects them again.
 
 A lead is one card: picture, name, platform, handle and profile link, the Reach icon when one is set, the email (and
 where it was found) or "Add email", the 3 newest videos (thumbnails; a click opens the video), **Restrict / Unrestrict**,
-and **Send message**. Copy JSONL (Available's page bar) gives the Available leads for SpokPayCRM → Creators → Import.
+and **Send message**. Copy JSONL (Available's and Approved's page bar) gives that view's leads for SpokPayCRM → Creators → Import.
 
 A click anywhere else on a card (Collector, Available or Restricted) opens the lead's **detail**, the SpokPay CRM's
 creator profile dialog (`src/components/creators/creator-profile-dialog.tsx`, `creator-recent-videos.tsx`,
@@ -35,7 +39,17 @@ creator profile dialog (`src/components/creators/creator-profile-dialog.tsx`, `c
   Clear. Only ever typed: an email or WhatsApp Reach is also the address Send message uses, typed (never replaced by one
   found later). The saved Reach's button: Send email / Send WhatsApp (Send message on that channel), Open in Discord /
   Open Instagram. Its icon shows on the card (a click does the same). Exported as the CRM's `reach_kind` / `reach_value`.
-- Footer: Open channel (Open profile), Edit (name, handle, bio, links typed by hand; a later read never replaces them).
+- Footer: the **Quick note** (private: saved on the lead, never exported; N focuses it, Enter or Esc gives the keys
+  back), **Approve to** (Approved list only, or Persons › Creators; the last choice is remembered), Open channel (Open
+  profile), Edit (name, handle, bio, links typed by hand; a later read never replaces them). "3 of 12" by the ×.
+- The **review bar** at the bottom (a review queue's: three equal cells, the keys' caps after each label):
+  **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
+  it approved (out of Available, into Approved), and with "Persons › Creators" also adds them there the way Send
+  message does (their email, number, profiles, picture and notes; no message is sent). Each then shows the next lead
+  of the list the detail was opened from (its filter and order at that moment; a lead that left that list meanwhile
+  is passed over); after the last one the detail closes with "All reviewed". The keys act only while no text field
+  has the focus. Approved and rejected leads stay in the ledger: never collected again. Phone: the same bar at the
+  bottom of the sheet (no caps), the note and an Approve to picker above it.
 
 Older leads fill in what they miss (bio, counts, links, the newest videos' views and dates) when their detail opens: one
 read of the profile, at most once a day per lead, never during a run on that platform (Instagram only with its session).
@@ -90,7 +104,8 @@ Every key goes into the never-twice ledger. Their newest videos (the CRM keeps t
 missing are then read one lead at a time through the usual fill (1.2 s apart; Instagram 2.5 s).
 
 Records are the userscript's field for field (`lib/types.ts` `CreatorRecord`) plus Hub's own (`email_source`,
-`email_manual`, `found_video`, `restricted`, `contacted`, `reach`, `whatsapp_manual`, `edited`, `filled_at`, `imported_from`). Older state.json files load as they are; the old daily
+`email_manual`, `found_video`, `restricted`, `approved` {at, to, person}, `note`, `contacted`, `reach`,
+`whatsapp_manual`, `edited`, `filled_at`, `imported_from`); `settings.approveTo` is the review bar's last Approve to. Older state.json files load as they are; the old daily
 update's state and each record's history are dropped.
 
 Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last run with its leads' ids, a log),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formOf, leadsOf, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { approveToOf, formOf, leadsOf, nextLead, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -50,6 +50,44 @@ describe("collector window", () => {
     expect(leadsOf(view(), "restricted", "").emptyTitle).toBe("Nobody restricted");
     expect(leadsOf(view(), "collector", "").emptyTitle).toBe("No search yet");
     expect(leadsOf(view({ run: run({ running: true }) }), "collector", "").emptyTitle).toBe("");
+  });
+  it("Approved leads leave Available and the run's list for their own view; the filter works there too", () => {
+    const creators = [row("c", { approved: true, email: "c@x.com" }), row("b", { restricted: true }), row("a")];
+    const v = view({ creators, run: run({ ids: ["a", "b", "c"] }) });
+    expect(leadsOf(v, "available", "").rows.map((r) => r.id)).toEqual(["a"]);
+    expect(leadsOf(v, "collector", "").rows.map((r) => r.id)).toEqual(["a"]);
+    expect(leadsOf(v, "approved", "").rows.map((r) => r.id)).toEqual(["c"]);
+    expect(leadsOf(v, "approved", "x.com").rows.map((r) => r.id)).toEqual(["c"]);
+    expect(leadsOf(v, "restricted", "").rows.map((r) => r.id)).toEqual(["b"]);
+    expect(leadsOf(view(), "approved", "").emptyTitle).toBe("Nobody approved");
+  });
+});
+
+describe("collector review bar", () => {
+  it("goes on to the next lead of the list it was opened from that is still in it; null at the end", () => {
+    const q = ["a", "b", "c", "d"];
+    // Skip: the lead stays; the next is the one after it.
+    expect(nextLead(q, "a", q)).toBe("b");
+    // Reject / Approve: the lead left the list; the next is still the one after it.
+    expect(nextLead(q, "b", ["a", "c", "d"])).toBe("c");
+    // One after it left meanwhile (another device): passed over.
+    expect(nextLead(q, "b", ["a", "d"])).toBe("d");
+    expect(nextLead(q, "d", q)).toBeNull();
+    expect(nextLead(q, "c", ["a", "b", "c"])).toBeNull();
+    expect(nextLead(q, "zz", q)).toBeNull();
+    expect(nextLead([], "a", ["a"])).toBeNull();
+  });
+  it("Approve to: the picked choice, else the first", () => {
+    const choices = [
+      { value: "list", label: "Approved list only", tip: "" },
+      { value: "persons", label: "Persons › Creators", tip: "" },
+    ];
+    const v = view({ approveTo: choices });
+    expect(approveToOf(v)).toEqual({ value: "list", label: "Approved list only" });
+    v.settings.approveTo = "persons";
+    expect(approveToOf(v)).toEqual({ value: "persons", label: "Persons › Creators" });
+    v.settings.approveTo = "bogus";
+    expect(approveToOf(v).value).toBe("list");
   });
 });
 
