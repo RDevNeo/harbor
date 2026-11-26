@@ -215,7 +215,8 @@ export const isHarborRemote = (url: string): boolean => REPO_RE.test(url.trim())
 
 export function findCheckout(kv: Kv, repos: FollowDeps["repos"]): string | null {
   const set = kv.get(CHECKOUT_KEY)?.trim();
-  if (set) return set;
+  // Only a checkout that is one here (a database copied from another PC names its folders).
+  if (set && exists(join(set, ".git"))) return set;
   for (const r of repos()) if (isHarborRemote(r.remote) && isFile(join(r.local ?? r.path, ".git", "HEAD"))) return r.local ?? r.path;
   // A worktree's .git is a file. Never another PC's project: its path isn't a folder here (on macOS a /home path is
   // the automounter's, and each look at it took milliseconds, hundreds of times at the start).
@@ -396,7 +397,8 @@ export class FollowMain {
   checkout(): string | null {
     // A checkout set by hand (kv) first, then the one this install was built from (Hub), then a project's.
     const set = this.d.kv.get(CHECKOUT_KEY)?.trim();
-    return set || (this.d.checkoutGuess?.() ?? findCheckout(this.d.kv, this.d.repos));
+    if (set && exists(join(set, ".git"))) return set;
+    return this.d.checkoutGuess?.() ?? findCheckout(this.d.kv, this.d.repos);
   }
 
   setOn(on: boolean): void {

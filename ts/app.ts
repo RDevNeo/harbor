@@ -69,7 +69,8 @@ const commands: Record<string, Command> = {
     const { defaultConfig: dc } = await import("./packages/update/src/index.ts");
     const libDir = dc().dir;
     const source = libDir !== null && ex(join(libDir, "SOURCE")) ? rf(join(libDir, "SOURCE"), "utf8").trim() : "";
-    const checkout = kv.get(followMain.CHECKOUT_KEY)?.trim() || (source !== "" && ex(join(source, ".git")) ? source : null) || followMain.findCheckout(kv, () => kv.repos());
+    const set = kv.get(followMain.CHECKOUT_KEY)?.trim() ?? "";
+    const checkout = (set !== "" && ex(join(set, ".git")) ? set : null) || (source !== "" && ex(join(source, ".git")) ? source : null) || followMain.findCheckout(kv, () => kv.repos());
     const on = followMain.enabled(kv);
     const { readJson } = await import("./packages/update/src/files.ts");
     const st = readJson<import("./packages/update/src/followmain.ts").FollowStatus>(join(dataDir(), followMain.DIR, "status.json"));
