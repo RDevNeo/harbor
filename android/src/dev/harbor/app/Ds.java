@@ -75,6 +75,134 @@ final class Ds {
         return r;
     }
 
+    // ---- the frame every tab shares: top bar, drawer (DESIGN.md "Android") ----
+
+    /** The top bar's height (dp): every page of every tab, chats too. */
+    static final int BAR_H = 52;
+    /** A top bar's title (sp, semi-bold) and its second line. */
+    static final float T_BAR = 16, T_BAR_SUB = 12;
+
+    /** A page's top bar: `lead` (the side-panel button, or a back arrow on a sub-page) at the far left, the title
+     *  (and an optional second line) beside it, the page's actions on the right. One hairline under it. */
+    static final class TopBar {
+        final LinearLayout view, row, actions, titles;
+        final FrameLayout lead;
+        final TextView title, sub;
+
+        TopBar(Context c, View leadView, String text) {
+            view = Ui.col(c);
+            view.setBackgroundColor(Ui.BG);
+            LinearLayout r = Ui.row(c);
+            row = r;
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(4), 0, Ui.dp(6), 0);
+            r.setMinimumHeight(Ui.dp(BAR_H));
+            lead = new FrameLayout(c);
+            if (leadView != null) lead.addView(leadView, new FrameLayout.LayoutParams(Ui.dp(44), Ui.dp(44), Gravity.CENTER));
+            r.addView(lead, new LinearLayout.LayoutParams(leadView == null ? Ui.dp(12) : Ui.dp(44), Ui.dp(44)));
+            titles = Ui.col(c);
+            titles.setGravity(Gravity.CENTER_VERTICAL);
+            titles.setPadding(Ui.dp(leadView == null ? 4 : 6), 0, Ui.dp(6), 0);
+            title = Ui.subtitle(Ui.bold(c, text == null ? "" : text, T_BAR, Ui.FG));
+            sub = Ui.subtitle(Ui.text(c, "", T_BAR_SUB, Ui.G700));
+            sub.setVisibility(View.GONE);
+            titles.addView(title, Ui.fill());
+            titles.addView(sub, Ui.fill());
+            r.addView(titles, Ui.weight());
+            actions = Ui.row(c);
+            actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            r.addView(actions, Ui.wrap());
+            view.addView(r, Ui.fill());
+            view.addView(hairline(c), new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))));
+        }
+
+        /** A mark before the title (a person's avatar, a store's square), `size` dp. */
+        TopBar mark(View v, int size) {
+            row.addView(v, row.indexOfChild(titles), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(size), Ui.dp(size)), 4, 0, 4, 0));
+            return this;
+        }
+
+        TopBar sub(CharSequence s, int color) {
+            sub.setText(s == null ? "" : s);
+            sub.setTextColor(color);
+            sub.setVisibility(s == null || s.length() == 0 ? View.GONE : View.VISIBLE);
+            return this;
+        }
+
+        /** A 40dp ghost icon button on the right. */
+        TextView action(String glyph, String label, View.OnClickListener on) {
+            TextView t = barButton(view.getContext(), glyph, on);
+            t.setContentDescription(label);
+            actions.addView(t);
+            return t;
+        }
+    }
+
+    static TopBar topBar(Context c, View lead, String title) { return new TopBar(c, lead, title); }
+
+    /** The top bar's side-panel button (Lucide panel-left): opens the tab's drawer. */
+    static TextView sideButton(Context c, View.OnClickListener on) {
+        TextView t = barButton(c, Ui.I_PANEL_LEFT, on);
+        t.setContentDescription("Open the side panel");
+        return t;
+    }
+
+    /** A sub-page's back arrow, in the side-panel button's place. */
+    static TextView backButton(Context c, View.OnClickListener on) {
+        TextView t = barButton(c, Ui.I_LEFT, on);
+        t.setContentDescription("Back");
+        return t;
+    }
+
+    /** A top bar's icon button: 20dp glyph on a 40dp round press. */
+    static TextView barButton(Context c, String glyph, View.OnClickListener on) {
+        TextView t = Ui.icon(c, glyph, 20, Ui.FG);
+        t.setBackground(Ui.press(0, 0, 20));
+        t.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
+        t.setOnClickListener(on);
+        return t;
+    }
+
+    static View hairline(Context c) {
+        View v = new View(c);
+        v.setBackgroundColor(Ui.LINE);
+        return v;
+    }
+
+    /** The drawer's width: most of the screen, as Headquarters' sheet (at most 340dp). */
+    static int drawerWidth(Context c) {
+        return Math.min(c.getResources().getDisplayMetrics().widthPixels * 84 / 100, Ui.dp(340));
+    }
+
+    /** A tab's drawer: BG2, its head (the tab's name, in line with the top bar) and `body` under it. */
+    static LinearLayout drawer(Context c, String title, View body) {
+        LinearLayout d = Ui.col(c);
+        d.setBackgroundColor(Ui.BG2);
+        d.setClickable(true); // taps never fall through to the page
+        LinearLayout h = Ui.row(c);
+        h.setGravity(Gravity.CENTER_VERTICAL);
+        h.setMinimumHeight(Ui.dp(BAR_H));
+        h.setPadding(Ui.dp(20), 0, Ui.dp(12), 0);
+        h.addView(Ui.subtitle(Ui.bold(c, title, T_BAR, Ui.FG)), Ui.weight());
+        d.addView(h, Ui.fill());
+        if (body != null) d.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+        return d;
+    }
+
+    /** A drawer's page row (Routine's Today, Collector's Available): glyph, label, an optional count; G200 when it's
+     *  the page on screen. */
+    static View navRow(Context c, String glyph, String label, String count, boolean on, View.OnClickListener l) {
+        LinearLayout r = row(c, false);
+        r.setBackground(on ? Ui.press(Ui.G200, 0, ROW_RADIUS) : Ui.press(0, 0, ROW_RADIUS));
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.addView(Ui.icon(c, glyph, 18, on ? Ui.FG : Ui.G700), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
+        r.addView(rowTitle(c, label, on, on ? Ui.FG : Ui.G900), Ui.margins(Ui.weight(), 12, 0, 0, 0));
+        if (count != null && !count.isEmpty()) r.addView(meta(c, count));
+        r.setContentDescription(label + (on ? ", open" : ""));
+        if (l != null) r.setOnClickListener(l);
+        return inset(c, r, 0);
+    }
+
     // ---- rows ----
 
     /** A side-list row: one line, ROW_H tall, the press fill rounded (G100 while selected). Lead marks, title and

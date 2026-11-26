@@ -6,33 +6,28 @@ import android.view.WindowManager;
 import android.widget.LinearLayout;
 
 /** Hub's Persons tab: Person Hub's people, chats and details, natively (PersonsTab / PersonsState),
- *  under the tab bar. Its data is the PC's: the routes under /v1/persons/… (ts/tabs/persons/engine.ts),
- *  on Tabs.hub(this). While a chat or a person's details fill the screen the tab bar steps aside. */
+ *  over the tab bar. Its data is the PC's: the routes under /v1/persons/… (ts/tabs/persons/engine.ts),
+ *  on Tabs.hub(this). Every page (the list, All people, a chat, a request, the details) has the shared top bar;
+ *  the people list is the tab's drawer too (its button, or a swipe right anywhere), and the tab bar stays. */
 public class Persons extends Base {
-    private LinearLayout around;
-
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         hub = Tabs.hub(this);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         View content = new PersonsTab().view(this, hub);
-        around = Tabs.around(this, content, Tabs.PERSONS);
-        page = around;
+        page = Ui.col(this);
+        page.setBackgroundColor(Ui.BG);
+        page.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(page);
-        PersonsTab.listen(this::bars);
-        bars();
-    }
-
-    /** The tab bar (and its line) hidden while a chat or details fill the screen. */
-    private void bars() {
-        if (around == null) return;
-        int vis = PersonsTab.deep() ? View.GONE : View.VISIBLE;
-        for (int i = 1; i < around.getChildCount(); i++) around.getChildAt(i).setVisibility(vis);
+        PersonsState ps = PersonsState.cur;
+        installTab(Tabs.PERSONS, ps.drawer());
+        ps.navigated = this::closeDrawer;
     }
 
     @Override
     public void onBackPressed() {
+        if (drawerOpen() || rightOpen()) { closeDrawer(); return; }
         if (PersonsTab.back()) return;
         super.onBackPressed();
     }

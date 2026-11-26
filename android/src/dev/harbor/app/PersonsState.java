@@ -37,6 +37,10 @@ final class PersonsState {
     private final Map<String, JSONObject> byId = new HashMap<>();
 
     final PersonsHome home;
+    /** The tab's drawer: the same list as `home` (made by drawer()). */
+    private PersonsHome drawerHome;
+    /** Runs after a row opened a screen (the host closes its drawer). */
+    Runnable navigated;
     PersonsList list;
     PersonsChat chat;
     PersonsPanel panel;
@@ -53,7 +57,7 @@ final class PersonsState {
         prefs = a.getSharedPreferences("persons", 0);
         root = new FrameLayout(a);
         root.setBackgroundColor(Ui.BG);
-        home = new PersonsHome(this);
+        home = new PersonsHome(this, false);
         root.addView(home.view, new FrameLayout.LayoutParams(-1, -1));
         root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override public void onViewAttachedToWindow(View v) { Ui.main.removeCallbacks(tick); Ui.main.post(tick); }
@@ -133,7 +137,7 @@ final class PersonsState {
 
     private void failed(String why) {
         error = why;
-        home.render();
+        redrawHomes();
     }
 
     /** A new state: every open screen redraws from it. */
@@ -153,6 +157,7 @@ final class PersonsState {
         boolean changed = u != unread;
         unread = u;
         home.render();
+        if (drawerHome != null) drawerHome.render();
         if (list != null) list.render();
         if (chat != null) chat.stateChanged();
         if (panel != null) panel.stateChanged();
@@ -161,6 +166,27 @@ final class PersonsState {
     }
 
     JSONObject person(String id) { return byId.get(id); }
+
+    /** The tab's drawer (Base.installTab): People's list again, as Projects' drawer is its chat list. */
+    View drawer() {
+        if (drawerHome == null) drawerHome = new PersonsHome(this, true);
+        return drawerHome.view;
+    }
+
+    /** Both lists again (a fold opened or closed in one of them). */
+    void redrawHomes() {
+        home.render();
+        if (drawerHome != null) drawerHome.render();
+    }
+
+    /** The top bar's side-panel button on every Persons page: opens the drawer. */
+    View sideButton() {
+        return Ds.sideButton(a, v -> { if (a instanceof Base) ((Base) a).openDrawer(); });
+    }
+
+    private void navigated() {
+        if (navigated != null) navigated.run();
+    }
 
     /** Fetch the state again now (after a change made here), without waiting for the long-poll. */
     void refresh() {
@@ -206,6 +232,7 @@ final class PersonsState {
     }
 
     void openList() {
+        navigated();
         if (list != null) return;
         list = new PersonsList(this);
         push(list.view);
@@ -213,6 +240,7 @@ final class PersonsState {
 
     /** A person's chat, from the row of a section ("" = All people). */
     void openChat(String id, String section) {
+        navigated();
         if (chat != null) closeChat();
         chat = new PersonsChat(this, id, section == null ? "" : section);
         push(chat.view);
@@ -241,6 +269,7 @@ final class PersonsState {
 
     /** A site request's pane, from its row in the SpokPay section. */
     void openSr(String ref) {
+        navigated();
         if (sr != null) closeSr();
         sr = new PersonsSr(this, ref);
         push(sr.view);

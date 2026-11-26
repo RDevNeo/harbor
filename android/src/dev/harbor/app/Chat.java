@@ -126,17 +126,13 @@ public class Chat extends Base implements Images.Gallery {
         teamBadge.addView(teamCount);
         teamBadge.setContentDescription("Team: agents, processes, wake-ups, webhooks");
         teamBadge.setOnClickListener(v -> { if (rightOpen()) closeDrawer(); else openRight(); });
-        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(32));
-        bl.setMargins(0, 0, Ui.dp(4), 0);
-        barActions.addView(teamBadge, bl);
-        action(Ui.I_MENU, v -> {
+        // On the phone the team is a swipe to the left (installRight) and the chat's menu (Rename, Settle, Copy link,
+        // Delete…) a tap on its title: no team or menu buttons in the top bar.
+        barTitle.setOnClickListener(v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
             if (c != null) Chats.menu(this, hub, c, this::refreshState, this::deleted);
         });
-        barTitle.setOnClickListener(v -> {
-            JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
-            if (c != null) Chats.rename(this, hub, c, this::refreshState);
-        });
+        barTitle.setContentDescription("Chat menu: rename, settle, copy link, delete");
 
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);

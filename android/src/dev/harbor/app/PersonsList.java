@@ -37,16 +37,10 @@ final class PersonsList {
         view = Ui.col(a);
         view.setBackgroundColor(Ui.BG);
         view.setClickable(true); // nothing under it takes the taps
-        LinearLayout bar = Ui.row(a);
-        bar.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(12), Ui.dp(6));
-        bar.setMinimumHeight(Ui.dp(56));
-        bar.addView(Ui.iconButton(a, Ui.I_LEFT, Ui.FG, v -> p.back()));
-        LinearLayout t = Ui.col(a);
-        t.addView(Ui.bold(a, "All people", 17, Ui.FG));
-        sub = Ui.text(a, "", 13, Ui.G700);
-        t.addView(sub);
-        bar.addView(t, Ui.margins(Ui.weight(), 6, 0, 0, 0));
-        view.addView(bar, Ui.fill());
+        Ds.TopBar bar = Ds.topBar(a, p.sideButton(), "All people");
+        sub = bar.sub;
+        sub.setVisibility(View.VISIBLE);
+        view.addView(bar.view, Ui.fill());
         search = Ui.input(a, "Search people", false);
         search.setTextSize(15);
         search.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));

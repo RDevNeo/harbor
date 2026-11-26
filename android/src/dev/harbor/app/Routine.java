@@ -60,25 +60,19 @@ public class Routine extends Base {
         super.onCreate(b);
         section = Ui.prefs(this).getString("routine_section", "today");
         hub = Tabs.hub(this);
-        LinearLayout col = Ui.col(this);
-        // The tab's title, as Projects' drawer ("Hub") and Persons have theirs (Ds.pageTitle).
-        LinearLayout top = Ui.row(this);
-        top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(2));
-        top.addView(Ds.pageTitle(this, "Routine"), Ui.weight());
-        col.addView(top, Ui.fill());
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        sections = Ui.row(this);
-        sections.setPadding(Ui.dp(12), Ui.dp(4), Ui.dp(12), Ui.dp(6));
-        hs.addView(sections);
-        col.addView(hs, Ui.fill());
+        // The shared frame: the top bar (the side-panel button, the page's name), the page, the tab bar; the
+        // pages (Today, History, Sleep, Goals, Coach) are the drawer's rows.
+        LinearLayout col = frame("Routine", menuButton(), false);
         scroll = new ScrollView(this);
         body = Ui.col(this);
-        body.setPadding(Ui.dp(16), Ui.dp(6), Ui.dp(16), Ui.dp(24));
+        body.setPadding(Ui.dp(16), Ui.dp(12), Ui.dp(16), Ui.dp(24));
         scroll.addView(body);
         col.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        page = Tabs.around(this, col, Tabs.ROUTINE);
-        setContentView(page);
+        sections = Ui.col(this);
+        sections.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
+        ScrollView ds = new ScrollView(this);
+        ds.addView(sections);
+        installTab(Tabs.ROUTINE, Ds.drawer(this, "Routine", ds));
         drawSections();
     }
 
@@ -150,19 +144,19 @@ public class Routine extends Base {
         for (int i = 0; i < SECTIONS.length; i++) {
             final String s = SECTIONS[i];
             boolean on = s.equals(section);
-            LinearLayout chip = Ds.iconChip(this, GLYPHS[i], LABELS[i], on, null);
-            chip.setOnClickListener(v -> {
+            if (on) barTitle.setText(LABELS[i]);
+            sections.addView(Ds.navRow(this, GLYPHS[i], LABELS[i], null, on, v -> {
+                closeDrawer();
+                if (s.equals(section)) return;
                 section = s;
                 Ui.prefs(this).edit().putString("routine_section", s).apply();
                 confirmReset = "";
                 confirmDel = "";
                 drawSections();
                 draw();
+                scroll.scrollTo(0, 0);
                 if ("coach".equals(s)) load();
-            });
-            LinearLayout.LayoutParams lp = Ui.wrap();
-            lp.rightMargin = Ui.dp(4);
-            sections.addView(chip, lp);
+            }), Ui.fill());
         }
     }
 
@@ -179,7 +173,8 @@ public class Routine extends Base {
             return;
         }
         boolean picking = view.optBoolean("picking");
-        sections.setVisibility(picking ? View.GONE : View.VISIBLE);
+        if (picking) barTitle.setText("Choose a plan");
+        else drawSections();
         if (!note.isEmpty()) body.addView(Ui.text(this, note, 13, Ui.RED), Ui.fill());
         if (picking) drawPicker();
         else if ("history".equals(section)) drawHistory();
@@ -260,7 +255,6 @@ public class Routine extends Base {
         if (t == null) return;
         LinearLayout hero = Ui.row(this);
         LinearLayout left = Ui.col(this);
-        left.addView(Ds.screenTitle(this, "Today"));
         if (!t.optString("walk").isEmpty()) {
             LinearLayout w = Ui.row(this);
             w.addView(Ui.icon(this, "", 15, Ui.G700));
@@ -405,7 +399,6 @@ public class Routine extends Base {
     private void drawHistory() {
         JSONObject h = view.optJSONObject("history");
         if (h == null) return;
-        body.addView(Ds.screenTitle(this, "History"));
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout segs = Ui.row(this);
@@ -520,7 +513,6 @@ public class Routine extends Base {
     // ---- Sleep ----
 
     private void drawSleep() {
-        body.addView(Ds.screenTitle(this, "Sleep"));
         TextView now = Ui.button(this, "Going to sleep now", true, v -> wakeChoices());
         LinearLayout.LayoutParams nl = Ui.fill();
         nl.bottomMargin = Ui.dp(12);
@@ -596,7 +588,7 @@ public class Routine extends Base {
         JSONObject g = view.optJSONObject("goals");
         if (g == null) return;
         LinearLayout head = Ui.row(this);
-        head.addView(Ds.screenTitle(this, "Goals"), Ui.weight());
+        head.addView(new View(this), Ui.weight());
         head.addView(Ds.chip(this, "+ New", true, v -> goalForm(null)));
         body.addView(head, Ui.fill());
         LinearLayout plan = Ds.card(this);
@@ -644,7 +636,6 @@ public class Routine extends Base {
     }
 
     private void drawPicker() {
-        body.addView(Ds.screenTitle(this, "Choose a plan"));
         JSONObject g = view.optJSONObject("goals");
         JSONArray plans = g == null ? null : g.optJSONArray("plans");
         for (int i = 0; plans != null && i < plans.length(); i++) {
@@ -825,7 +816,6 @@ public class Routine extends Base {
     // ---- Coach ----
 
     private void drawCoach() {
-        body.addView(Ds.screenTitle(this, "Coach"));
         if (coach == null) { body.addView(Ui.text(this, "Loading…", 14, Ui.G700)); return; }
         JSONArray msgs = coach.optJSONArray("messages");
         if (!coach.optBoolean("ready")) body.addView(Ui.text(this, "Add the “" + coach.optString("project") + "” project in Projects: the Coach is a chat there.", 13, Ui.G700));

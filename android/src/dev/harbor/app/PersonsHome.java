@@ -50,15 +50,23 @@ final class PersonsHome {
     private final List<Item> items = new ArrayList<>();
     private final BaseAdapter adapter;
 
-    PersonsHome(PersonsState p) {
+    /** The tab's page (`drawer` false: under the top bar "Persons") or the tab's drawer (the same list, on BG2). */
+    PersonsHome(PersonsState p, boolean drawer) {
         this.p = p;
         a = p.a;
         view = Ui.col(a);
-        view.setBackgroundColor(Ui.BG);
-        LinearLayout top = Ui.row(a);
-        top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(6));
-        top.addView(Ds.pageTitle(a, "Persons"), Ui.weight());
-        view.addView(top, Ui.fill());
+        view.setBackgroundColor(drawer ? Ui.BG2 : Ui.BG);
+        view.setClickable(true);
+        if (drawer) {
+            LinearLayout h = Ui.row(a);
+            h.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            h.setMinimumHeight(Ui.dp(Ds.BAR_H));
+            h.setPadding(Ui.dp(20), 0, Ui.dp(12), 0);
+            h.addView(Ui.subtitle(Ui.bold(a, "Persons", Ds.T_BAR, Ui.FG)), Ui.weight());
+            view.addView(h, Ui.fill());
+        } else {
+            view.addView(Ds.topBar(a, p.sideButton(), "Persons").view, Ui.fill());
+        }
         error = Ui.text(a, "", 13, Ui.RED);
         error.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(6));
         error.setVisibility(View.GONE);
@@ -315,7 +323,7 @@ final class PersonsHome {
                 return Ds.inset(a, r, 0);
             }
             case HEAD: {
-                return Ds.inset(a, Ds.sectionHead(a, it.text, it.open, it.unread, v -> { p.flip("closed", it.key); render(); }), 0);
+                return Ds.inset(a, Ds.sectionHead(a, it.text, it.open, it.unread, v -> { p.flip("closed", it.key); p.redrawHomes(); }), 0);
             }
             case CHIPS: {
                 HorizontalScrollView hs = new HorizontalScrollView(a);
@@ -371,7 +379,7 @@ final class PersonsHome {
                 r.addView(Ds.rowTitle(a, name, true, Ui.FG), Ui.weight());
                 r.addView(Ds.meta(a, String.valueOf(it.count)));
                 String sid = PersonsUi.s(it.store, "id");
-                r.setOnClickListener(v -> { p.flip("stores_open", sid); render(); });
+                r.setOnClickListener(v -> { p.flip("stores_open", sid); p.redrawHomes(); });
                 r.setContentDescription(name + ", " + it.count + " people");
                 return Ds.inset(a, r, 0);
             }
@@ -396,7 +404,7 @@ final class PersonsHome {
                 r.addView(new View(a), Ui.weight());
                 if (it.count > 0) r.addView(Ui.text(a, String.valueOf(it.count), 12, ink), Ui.margins(Ui.wrap(), 0, 0, 4, 0));
                 r.addView(Ui.icon(a, it.open ? Ui.I_DOWN : Ui.I_CHEV_RIGHT, 14, ink), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
-                r.setOnClickListener(v -> { p.flip("closed", "sr"); render(); });
+                r.setOnClickListener(v -> { p.flip("closed", "sr"); p.redrawHomes(); });
                 r.setContentDescription("Site requests, " + it.count + (it.owner ? ", one waits on SpokPay" : "") + (it.open ? ", open" : ", folded"));
                 return Ds.inset(a, r, 0);
             }
@@ -430,7 +438,7 @@ final class PersonsHome {
                 return Ds.inset(a, r, 0);
             }
             case FOLD: {
-                return Ds.foldBar(a, "Settled (" + it.count + ")", it.open, v -> { p.flip("settled_open", it.section); render(); });
+                return Ds.foldBar(a, "Settled (" + it.count + ")", it.open, v -> { p.flip("settled_open", it.section); p.redrawHomes(); });
             }
         }
         return new View(a);

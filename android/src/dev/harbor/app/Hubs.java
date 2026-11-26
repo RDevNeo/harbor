@@ -39,14 +39,15 @@ public class Hubs extends Base {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        page = Ui.col(this);
-        page.setBackgroundColor(Ui.BG);
+        // The Projects tab opens straight in the workspace (Chats); this page is the drawer's "Workspaces & PCs":
+        // the same top bar as every page, Back to the workspace.
+        frame("Workspaces & PCs", Ds.backButton(this, v -> back()), false);
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
         list = Ui.col(this);
-        list.setPadding(Ui.dp(20), Ui.dp(24), Ui.dp(20), Ui.dp(24));
+        list.setPadding(Ui.dp(16), Ui.dp(8), Ui.dp(16), Ui.dp(24));
         sv.addView(list);
-        page.addView(sv, new LinearLayout.LayoutParams(-1, -1));
+        page.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
         // Hub's tabs (Tabs.java): this screen and the chats it opens are Projects.
         setContentView(Tabs.around(this, page, Tabs.PROJECTS));
 
@@ -61,11 +62,29 @@ public class Hubs extends Base {
 
     /** A cold start goes straight back to the workspace used last. */
     private void openLast() {
+        String last = lastHub();
+        if (last == null) return;
+        // It goes on to the workspace at once: nothing drawn here meanwhile (no flash of this page).
+        restoring = true;
+        open(last);
+    }
+
+    /** The workspace (or PC) the Projects tab opens in: the one used last, else the only one; null when none. */
+    private String lastHub() {
         String last = Hub.last(this);
         List<Hub> all = Hub.all(this);
         if (last == null && all.size() == 1) last = all.get(0).id;
-        if (last != null && Hub.get(this, last) != null) open(last);
+        return last != null && Hub.get(this, last) != null ? last : null;
     }
+
+    /** The top bar's back: to the workspace's page, or out of the app when there is none yet. */
+    private void back() {
+        if (lastHub() != null) Tabs.go(this, Tabs.PROJECTS);
+        else moveTaskToBack(true);
+    }
+
+    @Override
+    public void onBackPressed() { back(); }
 
     @Override
     protected void onNewIntent(Intent i) {
@@ -163,8 +182,8 @@ public class Hubs extends Base {
 
     private void render() {
         list.removeAllViews();
+        page.setVisibility(restoring ? View.INVISIBLE : View.VISIBLE);
         if (restoring) return;
-        list.addView(Ui.title(this, "Hub", 44), Ui.margins(Ui.fill(), 4, 24, 4, 8));
         if (Pair.ON) { renderPaired(); return; }
         if (Account.needsSignIn(this)) {
             boolean ran = Account.signedIn(this);

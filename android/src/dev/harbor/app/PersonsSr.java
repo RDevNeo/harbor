@@ -381,16 +381,17 @@ final class PersonsSr {
         JSONObject r = row();
         LinearLayout h = Ui.row(a);
         h.setGravity(Gravity.CENTER_VERTICAL);
-        h.setPadding(Ui.dp(4), Ui.dp(8), Ui.dp(10), Ui.dp(8));
-        TextView back = Ui.iconButton(a, Ui.I_LEFT, Ui.FG, v -> p.back());
-        back.setContentDescription("Back to requests");
-        h.addView(back);
+        // The shared top bar's frame (Ds.TopBar): the side-panel button, the store's square, the subject and its line.
+        h.setPadding(Ui.dp(4), Ui.dp(6), Ui.dp(6), Ui.dp(6));
+        h.setMinimumHeight(Ui.dp(Ds.BAR_H));
+        View side = p.sideButton();
+        h.addView(side, new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)));
         JSONObject face = pane != null ? pane : r;
-        h.addView(logo(face == null ? "" : PersonsUi.s(face, "initials"), face == null ? "" : PersonsUi.s(face, "icon"), 40),
-                Ui.margins(new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)), 2, 0, 10, 0));
+        h.addView(logo(face == null ? "" : PersonsUi.s(face, "initials"), face == null ? "" : PersonsUi.s(face, "icon"), 32),
+                Ui.margins(new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(32)), 4, 0, 8, 0));
         LinearLayout t = Ui.col(a);
         String subject = pane != null ? PersonsUi.s(pane, "subject") : r != null ? PersonsUi.s(r, "subject") : ref;
-        TextView title = Ui.bold(a, subject.isEmpty() ? ref : subject, 16, Ui.FG);
+        TextView title = Ui.bold(a, subject.isEmpty() ? ref : subject, Ds.T_BAR, Ui.FG);
         title.setMaxLines(2);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         t.addView(title);
@@ -398,7 +399,7 @@ final class PersonsSr {
         meta.setGravity(Gravity.CENTER_VERTICAL);
         if (pane != null) meta.addView(pill(PersonsUi.s(pane, "statusLabel"), PersonsUi.s(pane, "tone")), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
         String store = pane != null ? PersonsUi.s(pane, "store") : r != null ? PersonsUi.s(r, "store") : "";
-        TextView where = Ui.subtitle(Ui.text(a, (store.isEmpty() ? "" : store + " · ") + ref, 13, Ui.G700));
+        TextView where = Ui.subtitle(Ui.text(a, (store.isEmpty() ? "" : store + " · ") + ref, Ds.T_BAR_SUB, Ui.G700));
         meta.addView(where, new LinearLayout.LayoutParams(0, -2, 1));
         meta.addView(Ui.icon(a, Ui.I_COPY, 12, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 4, 0, 0, 0));
         String url = pane != null ? PersonsUi.s(pane, "url") : r != null ? PersonsUi.s(r, "url") : "";
@@ -419,7 +420,10 @@ final class PersonsSr {
             chip.setContentDescription("Status: " + PersonsUi.s(pane, "statusLabel"));
             h.addView(chip, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         }
-        headBox.addView(h, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout col = Ui.col(a);
+        col.addView(h, Ui.fill());
+        col.addView(Ds.hairline(a), new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))));
+        headBox.addView(col, new FrameLayout.LayoutParams(-1, -2));
     }
 
     /** StoreLogo: the store's picture, else its initials, in a rounded square. */

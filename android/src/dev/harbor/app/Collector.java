@@ -65,14 +65,11 @@ public class Collector extends Base {
         hub = Tabs.hub(this);
         String p = getIntent().getStringExtra("page");
         if ("available".equals(p) || "approved".equals(p) || "restricted".equals(p)) sel = p;
-        LinearLayout col = Ui.col(this);
-        LinearLayout top = Ui.col(this);
-        top.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(12), Ui.dp(2));
-        top.addView(Ds.pageTitle(this, "Collector"), Ui.fill());
-        segs = Ui.row(this);
-        segs.setPadding(0, Ui.dp(8), 0, Ui.dp(6));
-        top.addView(segs, Ui.fill());
-        col.addView(top, Ui.fill());
+        // The shared frame: the top bar (the side-panel button, the view's name), the page, the tab bar; the four
+        // views (Collector, Available, Approved, Restricted, with their counts) are the drawer's rows.
+        LinearLayout col = frame("Collector", menuButton(), false);
+        segs = Ui.col(this);
+        segs.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
         ScrollView scroll = new ScrollView(this);
         LinearLayout body = Ui.col(this);
         body.setPadding(Ui.dp(16), Ui.dp(6), Ui.dp(16), Ui.dp(24));
@@ -99,8 +96,9 @@ public class Collector extends Base {
         body.addView(list, Ui.fill());
         scroll.addView(body);
         col.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        page = Tabs.around(this, col, Tabs.COLLECTOR);
-        setContentView(page);
+        ScrollView ds = new ScrollView(this);
+        ds.addView(segs);
+        installTab(Tabs.COLLECTOR, Ds.drawer(this, "Collector", ds));
         draw();
         // Send message or a lead's detail opened straight away: the phone screenshot rig (screen:collector-send, collector-detail).
         String c = getIntent().getStringExtra("creator");
@@ -149,7 +147,7 @@ public class Collector extends Base {
         hideKeyboard();
         stack.remove(stack.size() - 1);
         if (stack.isEmpty()) {
-            setContentView(page);
+            setContentView(root());
             load();
         } else {
             Screen s = stack.get(stack.size() - 1);
@@ -256,10 +254,10 @@ public class Collector extends Base {
         }
         JSONObject c = view.optJSONObject("counts");
         int avail = c == null ? 0 : c.optInt("available"), appr = c == null ? 0 : c.optInt("approved"), restr = c == null ? 0 : c.optInt("restricted");
-        seg("collector", running() ? "Collector · running" : "Collector");
-        seg("available", "Available" + (avail > 0 ? " " + avail : ""));
-        seg("approved", "Approved" + (appr > 0 ? " " + appr : ""));
-        seg("restricted", "Restricted" + (restr > 0 ? " " + restr : ""));
+        seg("collector", "Collector", running() ? "running" : "");
+        seg("available", "Available", avail > 0 ? String.valueOf(avail) : "");
+        seg("approved", "Approved", appr > 0 ? String.valueOf(appr) : "");
+        seg("restricted", "Restricted", restr > 0 ? String.valueOf(restr) : "");
         if (!lists) {
             drawForm();
             drawRun();
@@ -270,15 +268,20 @@ public class Collector extends Base {
     }
 
     /** One of the four views; a tap shows it. */
-    private void seg(String id, String label) {
-        LinearLayout.LayoutParams lp = Ui.wrap();
-        lp.rightMargin = Ui.dp(6);
-        segs.addView(Ds.chip(this, label, id.equals(sel), v -> {
+    private void seg(String id, String label) { seg(id, label, ""); }
+
+    private void seg(String id, String label, String count) {
+        boolean on = id.equals(sel);
+        if (on) barTitle.setText(label);
+        String glyph = "collector".equals(id) ? Ui.I_SEARCH : "available".equals(id) ? Ui.I_USERS
+                : "approved".equals(id) ? Ui.I_CIRCLE_CHECK : Ui.I_CIRCLE_SLASH;
+        segs.addView(Ds.navRow(this, glyph, label, count, on, v -> {
+            closeDrawer();
             if (id.equals(sel)) return;
             sel = id;
             hideKeyboard();
             draw();
-        }), lp);
+        }), Ui.fill());
     }
 
     /** The form: rebuilt only when what it shows changes (so typing keeps its field). */

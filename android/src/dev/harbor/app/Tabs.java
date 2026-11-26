@@ -159,24 +159,75 @@ final class Tabs {
         return bar;
     }
 
-    /** `content` with the bar under it, as an activity's whole screen. */
+    /** `content` with the bar under it, as an activity's whole screen. The bar stays on every page of every tab,
+     *  chats too; only while the keyboard is up does it step aside (as Headquarters' tab bar), so the composer
+     *  keeps the room. */
     static LinearLayout around(Activity a, View content, String current) {
         LinearLayout col = Ui.col(a);
         col.setBackgroundColor(Ui.BG);
+        // A page already shown on its own (Base.frame sets it as the content view) moves under the bar.
+        if (content.getParent() != null) ((ViewGroup) content.getParent()).removeView(content);
         col.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         View line = new View(a);
         line.setBackgroundColor(Ui.LINE);
         col.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(0.5f))));
-        col.addView(bar(a, current), Ui.fill());
+        LinearLayout bar = bar(a, current);
+        col.addView(bar, Ui.fill());
+        col.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            int vis = keyboardUp(col) ? View.GONE : View.VISIBLE;
+            if (bar.getVisibility() != vis) {
+                bar.setVisibility(vis);
+                line.setVisibility(vis);
+            }
+        });
         return col;
     }
 
-    /** Opens tab `id`: its screen comes back as it was (or starts). */
+    /** Whether the soft keyboard covers part of the window `v` is in. */
+    private static boolean keyboardUp(View v) {
+        View root = v.getRootView();
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsets in = root.getRootWindowInsets();
+            if (in != null) return in.isVisible(android.view.WindowInsets.Type.ime());
+        }
+        android.graphics.Rect r = new android.graphics.Rect();
+        root.getWindowVisibleDisplayFrame(r);
+        return root.getHeight() - r.bottom > Ui.dp(120);
+    }
+
+    /** The Projects screen seen last (a chat, the chat list, a GitHub list), so the tab comes back to it. */
+    private static WeakReference<Base> lastProjects;
+
+    /** A Projects screen came to the front. */
+    static void projectsShown(Base b) { lastProjects = new WeakReference<>(b); }
+
+    /** Opens tab `id`: its screen comes back as it was (or starts). Projects comes back to the screen it showed
+     *  (the chat, else the workspace's chat list), never Hub's start screen while a PC is known. */
     static void go(Activity a, String id) {
-        Class<?> to = PERSONS.equals(id) ? Persons.class : ROUTINE.equals(id) ? Routine.class : COLLECTOR.equals(id) ? Collector.class : Hubs.class;
-        Intent i = new Intent(a, to).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        a.startActivity(i);
+        if (PROJECTS.equals(id)) { goProjects(a); return; }
+        Class<?> to = PERSONS.equals(id) ? Persons.class : ROUTINE.equals(id) ? Routine.class : Collector.class;
+        reorder(a, new Intent(a, to));
         a.overridePendingTransition(0, 0);
+    }
+
+    private static void goProjects(Activity a) {
+        Base last = lastProjects == null ? null : lastProjects.get();
+        if (last != null && (last.isFinishing() || last.isDestroyed())) last = null;
+        Hub h = last != null && last.hub != null ? last.hub : hub(a);
+        if (last instanceof Chat || last instanceof GhList) {
+            // The chat list under it first, so Back from the chat lands on it, as before the switch.
+            reorder(a, new Intent(a, Chats.class).putExtra("hub", last.hub.id));
+            reorder(a, new Intent(a, last.getClass()).putExtras(last.getIntent()));
+        } else if (h != null) {
+            reorder(a, new Intent(a, Chats.class).putExtra("hub", h.id));
+        } else {
+            reorder(a, new Intent(a, Hubs.class));
+        }
+        a.overridePendingTransition(0, 0);
+    }
+
+    private static void reorder(Activity a, Intent i) {
+        a.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NO_ANIMATION));
     }
 
     /** The PC a tab's data comes from: the one used last, else the only one paired; null when none. */

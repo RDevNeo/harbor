@@ -87,39 +87,28 @@ abstract class Base extends Activity {
         return true;
     }
 
-    /** A column with the top bar, then content filling the rest. back: an arrow that closes
-     *  the screen; else nothing on the left (drawer screens put the menu button there). */
+    /** A column with the top bar (Ds.TopBar), then content filling the rest. back: an arrow that closes
+     *  the screen (a sub-page); else nothing on the left (tab screens put the side-panel button there). */
     LinearLayout frame(String title, boolean back) {
-        return frame(title, back ? Ui.iconButton(this, Ui.I_LEFT, Ui.FG, v -> finish()) : null, true);
+        return frame(title, back ? Ds.backButton(this, v -> finish()) : null, true);
     }
 
-    /** serifTitle: a page title like "Settings"; else a chat's title in the body font. */
-    LinearLayout frame(String title, View leading, boolean serifTitle) {
+    /** The page's top bar: `leading` at the far left (the side-panel button, or a back arrow), the title beside
+     *  it, actions on the right; the same bar on every page of every tab (DESIGN.md "Android"). */
+    LinearLayout frame(String title, View leading, boolean unused) {
         page = Ui.col(this);
         page.setBackgroundColor(Ui.BG);
-        bar = Ui.row(this);
-        bar.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(6), Ui.dp(6));
-        bar.setMinimumHeight(Ui.dp(60));
-        FrameLayout lead = new FrameLayout(this);
-        if (leading != null) lead.addView(leading, new FrameLayout.LayoutParams(Ui.dp(44), Ui.dp(44), Gravity.CENTER_VERTICAL | Gravity.START));
-        bar.addView(lead, new LinearLayout.LayoutParams(Ui.dp(88), Ui.dp(44)));
-        LinearLayout t = Ui.col(this);
-        t.setGravity(Gravity.CENTER_HORIZONTAL);
-        barTitle = Ui.subtitle(serifTitle ? Ui.title(this, title, 24) : Ui.bold(this, title, 17, Ui.FG));
-        barTitle.setGravity(Gravity.CENTER);
-        barSub = Ui.subtitle(Ui.text(this, "", 13, Ui.G700));
-        barSub.setGravity(Gravity.CENTER);
-        barSub.setVisibility(View.GONE);
-        t.addView(barTitle, Ui.fill());
-        t.addView(barSub, Ui.fill());
-        bar.addView(t, Ui.weight());
-        barActions = Ui.row(this);
-        barActions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        bar.addView(barActions, new LinearLayout.LayoutParams(Ui.dp(88), Ui.dp(44)));
+        topBar = Ds.topBar(this, leading, title);
+        bar = topBar.view;
+        barTitle = topBar.title;
+        barSub = topBar.sub;
+        barActions = topBar.actions;
         page.addView(bar, Ui.fill());
         setContentView(page);
         return page;
     }
+
+    Ds.TopBar topBar;
 
     void sub(String s, int color) {
         barSub.setText(s);
@@ -128,7 +117,7 @@ abstract class Base extends Activity {
     }
 
     TextView action(String glyph, View.OnClickListener on) {
-        TextView t = Ui.iconButton(this, glyph, Ui.FG, on);
+        TextView t = Ds.barButton(this, glyph, on);
         barActions.addView(t);
         return t;
     }
@@ -176,53 +165,72 @@ abstract class Base extends Activity {
         if (p != null && res == RESULT_OK && data != null && data.getData() != null) p.on(data.getData());
     }
 
-    // ---- the side panels (Chat, NewChat): the chat list slides in from the left, a chat's
-    // team (Team) from the right ----
+    // ---- the tab frame: every tab's screen is its page over the tab bar, the tab's drawer sliding in from the
+    // left over both (a swipe right anywhere, or the top bar's side-panel button), and on a chat its team from
+    // the right (a swipe left). Projects' drawer is the chat list (Sidebar), Persons' its people, Routine's and
+    // Collector's their pages. ----
 
     static final int NONE = 0, LEFT = 1, RIGHT = 2;
     Sidebar side;
+    /** The tab this screen belongs to (Tabs.PROJECTS…), null on screens outside the tabs. */
+    String tab;
+    private View drawer; // the left panel
     private View right; // the right panel, or null on screens without one
     private FrameLayout shell;
     private View scrim;
     private int panelW, rightW;
     private int open = NONE;
 
-    /** The menu button for the top bar's left. */
-    View menuButton() {
-        FrameLayout b = Ui.roundButton(this, new Ui.Draw(Ui.Draw.MENU, Ui.FG), 0, Ui.FG, 44, v -> openDrawer());
-        b.setBackground(Ui.press(0, 0, 22));
-        b.setContentDescription("Chats");
-        return b;
-    }
+    /** The top bar's side-panel button: opens the tab's drawer. */
+    View menuButton() { return Ds.sideButton(this, v -> openDrawer()); }
 
-    /** Puts the page (frame()) under a drawer holding the chat list. Call after frame(). */
+    /** Projects' screens: the page (frame()) over the tab bar, the chat list as the drawer. Call after frame(). */
     void installDrawer(String currentChat) {
         side = new Sidebar(this, currentChat);
+        installTab(Tabs.PROJECTS, side.view);
+        JSONObject st = Hub.states.get(hub.id);
+        if (st != null) side.render(st);
+    }
+
+    /** The page (`page`, already the content view) over the tab bar of `tab`, `drawerView` as its drawer. */
+    void installTab(String tab, View drawerView) {
+        this.tab = tab;
+        drawer = drawerView;
         shell = new FrameLayout(this);
-        ((ViewGroup) page.getParent()).removeView(page);
-        shell.addView(page, frameFill());
+        if (page.getParent() != null) ((ViewGroup) page.getParent()).removeView(page);
+        shell.addView(Tabs.around(this, page, tab), frameFill());
         scrim = new View(this);
-        scrim.setBackgroundColor(0x66000000);
+        scrim.setBackgroundColor(0x99000000);
         scrim.setAlpha(0);
         scrim.setVisibility(View.GONE);
         scrim.setOnClickListener(v -> closeDrawer());
         shell.addView(scrim, frameFill());
-        panelW = Math.min(getResources().getDisplayMetrics().widthPixels * 86 / 100, Ui.dp(400));
-        side.view.setElevation(Ui.dp(8));
-        shell.addView(side.view, new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.MATCH_PARENT));
-        side.view.setTranslationX(-panelW);
-        side.view.setVisibility(View.INVISIBLE);
+        panelW = Ds.drawerWidth(this);
+        drawer.setElevation(Ui.dp(8));
+        if (drawer.getParent() != null) ((ViewGroup) drawer.getParent()).removeView(drawer);
+        shell.addView(drawer, new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.MATCH_PARENT));
+        drawer.setTranslationX(-panelW);
+        drawer.setVisibility(View.INVISIBLE);
         setContentView(shell);
-        JSONObject st = Hub.states.get(hub.id);
-        if (st != null) side.render(st);
         // Redrawn for the drawer's sun/moon: the drawer stays open, as it was when tapped.
         if (reopenDrawer) {
             reopenDrawer = false;
             open = LEFT;
-            side.view.setVisibility(View.VISIBLE);
-            side.view.setTranslationX(0);
+            drawer.setVisibility(View.VISIBLE);
+            drawer.setTranslationX(0);
             scrim.setVisibility(View.VISIBLE);
             scrim.setAlpha(1f);
+        }
+    }
+
+    /** The screen's root: the tab frame (page, tab bar, drawer), or the page alone. */
+    View root() { return shell != null ? shell : page; }
+
+    /** The drawer is coming out: its list is drawn fresh (Projects' from the last state). */
+    void onDrawerOpening() {
+        if (side != null && hub != null) {
+            JSONObject st = Hub.states.get(hub.id);
+            if (st != null) side.render(st);
         }
     }
 
@@ -266,9 +274,9 @@ abstract class Base extends Activity {
     /** panel: LEFT or RIGHT; f: 0 closed .. 1 open. */
     private void slide(int panel, float f, boolean animate) {
         if (shell == null || (panel == RIGHT && right == null)) return;
-        View p = panel == LEFT ? side.view : right;
+        View p = panel == LEFT ? drawer : right;
         int w = panel == LEFT ? panelW : rightW;
-        View other = panel == LEFT ? right : side.view;
+        View other = panel == LEFT ? right : drawer;
         if (other != null && other.getVisibility() == View.VISIBLE) { // only one at a time
             other.animate().cancel();
             other.setTranslationX(panel == LEFT ? rightW : -panelW);
@@ -283,8 +291,7 @@ abstract class Base extends Activity {
             if (open == panel) {
                 hideKeyboard();
                 if (panel == LEFT) {
-                    JSONObject st = Hub.states.get(hub.id);
-                    if (st != null) side.render(st);
+                    if (!was) onDrawerOpening();
                 } else if (!was) onRightOpened();
             }
             p.animate().translationX(x).setDuration(200).withEndAction(() -> {
@@ -319,7 +326,8 @@ abstract class Base extends Activity {
     @Override
     public boolean dispatchTouchEvent(MotionEvent e) {
         Swap.touch(e);
-        if (shell == null) return super.dispatchTouchEvent(e); // no drawer on this screen
+        // No drawer on this screen, or a screen of its own over it (Collector's lead detail).
+        if (shell == null || !shell.isAttachedToWindow()) return super.dispatchTouchEvent(e);
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downX = e.getRawX();
@@ -439,6 +447,7 @@ abstract class Base extends Activity {
         outFor = 0;
         resumed++;
         front = true;
+        if (Tabs.PROJECTS.equals(tab)) Tabs.projectsShown(this);
         Inbox.resumed(this);
         Gmail.sayPending(this);
         Invites.resumed(this);
@@ -509,7 +518,7 @@ abstract class Base extends Activity {
         String p = Swap.state(this, saved, "panel");
         int which = p == null ? NONE : "1".equals(p) ? LEFT : "2".equals(p) ? RIGHT : NONE;
         if (which == NONE || shell == null || (which == RIGHT && right == null)) return;
-        View v = which == LEFT ? side.view : right;
+        View v = which == LEFT ? drawer : right;
         open = which;
         v.setVisibility(View.VISIBLE);
         v.setTranslationX(0);

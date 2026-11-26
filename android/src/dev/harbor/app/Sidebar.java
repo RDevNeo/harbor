@@ -81,33 +81,45 @@ final class Sidebar {
         else r.addView(m, at, lp);
     }
 
-    Sidebar(Base a, String current) {
+    /** Sidebar(a, current) as the tab's drawer; `asPage` true: the Projects tab's own page (Chats), the list
+     *  alone under the page's top bar (which carries the workspace, Add project and Search). */
+    Sidebar(Base a, String current) { this(a, current, false); }
+
+    private final boolean asPage;
+    private TextView headTitle;
+
+    Sidebar(Base a, String current, boolean asPage) {
         this.a = a;
         this.current = current;
+        this.asPage = asPage;
         filter = Ui.prefs(a).getString("filter-" + a.hub.id, "");
         view = new FrameLayout(a);
-        view.setBackgroundColor(Ui.BG);
+        view.setBackgroundColor(asPage ? Ui.BG : Ui.BG2);
+        view.setClickable(true);
         LinearLayout col = Ui.col(a);
 
+        // The drawer's head, in line with the page's top bar (Ds.drawer): the workspace's name (a tap picks the
+        // workspaces shown), Add project and Search everything.
         LinearLayout head = Ui.row(a);
-        head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
-        head.addView(Ds.pageTitle(a, "Hub"), Ui.weight());
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setMinimumHeight(Ui.dp(Ds.BAR_H));
+        head.setPadding(Ui.dp(20), 0, Ui.dp(6), 0);
+        headTitle = Ui.subtitle(Ui.bold(a, workspaceName(a, null), Ds.T_BAR, Ui.FG));
+        head.addView(headTitle, Ui.weight());
         // Which workspace's chats show; hidden until `render` knows there are any.
-        wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspaces());
-        wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        wsBtn = Ds.barButton(a, Ui.I_USERS, v -> pickWorkspaces());
         wsBtn.setVisibility(View.GONE);
         head.addView(wsBtn);
         // Add project (the desktop sidebar's folder-plus beside its filters).
-        TextView addBtn = Ui.iconButton(a, Ui.I_FOLDER_PLUS, Ui.FG, v -> addProject());
-        addBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        TextView addBtn = Ds.barButton(a, Ui.I_FOLDER_PLUS, v -> addProject());
         addBtn.setContentDescription("Add project");
         head.addView(addBtn);
         // Search everything (the desktop's Ctrl+K palette); a long press filters this list instead.
-        TextView find = Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> palette());
+        TextView find = Ds.barButton(a, Ui.I_SEARCH, v -> palette());
         find.setOnLongClickListener(v -> { toggleSearch(); return true; });
-        find.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
         find.setContentDescription("Search everything");
         head.addView(find);
+        if (asPage) head.setVisibility(View.GONE);
         col.addView(head, Ui.fill());
 
         search = Ui.input(a, "Search chats", false);
@@ -130,7 +142,8 @@ final class Sidebar {
 
         // The last rows fade out under the floating buttons.
         View fade = new View(a);
-        fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{Ui.BG, Ui.BG, Ui.BG & 0x00ffffff}));
+        int under = asPage ? Ui.BG : Ui.BG2;
+        fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{under, under, under & 0x00ffffff}));
         view.addView(fade, new FrameLayout.LayoutParams(-1, Ui.dp(84), Gravity.BOTTOM));
 
         // Bottom: avatar (your photo → Settings) and New session.
@@ -138,6 +151,7 @@ final class Sidebar {
         avatar.setGravity(Gravity.CENTER);
         avatar.setBackground(Ui.press(0xff7a6ad8, 0, 20));
         avatar.setOnClickListener(v -> settings());
+        avatar.setOnLongClickListener(v -> { workspaces(); return true; });
         FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
         ap.setMargins(Ui.dp(16), 0, 0, Ui.dp(18));
         view.addView(avatar, ap);
@@ -172,6 +186,36 @@ final class Sidebar {
         avatar.setText(l.isEmpty() ? "?" : l.substring(0, 1).toUpperCase());
         Avatars.into(avatar, avatar, photo);
     }
+
+    /** The name the Projects tab goes by: the one workspace shown, else this PC's workspace ("Igor's Workspace"),
+     *  else the PC's own name. */
+    static String workspaceName(Base a, JSONObject st) {
+        Map<String, String> ws = Account.workspaces(a);
+        List<String> shown = WsFilter.picked(Ui.prefs(a).getString("ws-filter", ""), ws.keySet());
+        if (shown.size() == 1 && ws.get(shown.get(0)) != null) return ws.get(shown.get(0));
+        String id = Account.wsOf(a.hub);
+        if (id == null && st != null) id = Account.pcWorkspaces(a).get(st.optString("hub_id"));
+        if (id != null && ws.get(id) != null && !ws.get(id).isEmpty()) return ws.get(id);
+        String pc = st == null ? "" : st.optString("hub_name", "");
+        if (pc.isEmpty() && a.hub != null) pc = a.hub.label();
+        return pc == null || pc.isEmpty() ? "Projects" : pc;
+    }
+
+    /** Hub's start screen: the account, its workspaces and the paired PCs (another workspace or PC). */
+    void workspaces() {
+        a.startActivity(new Intent(a, Hubs.class).putExtra("browse", true)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        a.closeDrawer();
+    }
+
+    /** The page's top bar runs these (Chats): the workspace picker, Add project, Search everything. */
+    void pickWorkspacesNow() { pickWorkspaces(); }
+    void addProjectNow() { addProject(); }
+    void paletteNow() { palette(); }
+    void toggleSearchNow() { toggleSearch(); }
+
+    /** Runs after every render: the page's top bar follows the workspace's name. */
+    Runnable onRendered;
 
     private void toggleSearch() {
         boolean on = search.getVisibility() != View.VISIBLE;
@@ -212,6 +256,14 @@ final class Sidebar {
     // ---- the list ----
 
     void render(JSONObject st) {
+        renderList(st);
+        if (onRendered != null) onRendered.run();
+    }
+
+    /** The name over the list now (the page's top bar, Chats). */
+    String title() { return workspaceName(a, st); }
+
+    private void renderList(JSONObject st) {
         label(); // your photo may have come with a newer directory
         this.st = st;
         list.removeAllViews();
@@ -257,16 +309,24 @@ final class Sidebar {
         }
         // Their Update buttons need the PC: not while it doesn't answer.
         if (offTitle == null) banners(st);
-        list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
-        // No PCs row (Settings lists the workspace's PCs), and no
-        // Pull requests or Issues rows (the search's pages and a project's sheet open them).
-        list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
+        headTitle.setText(workspaceName(a, st));
+        // The drawer's pages (as Headquarters' drawer lists its app's): a project filter, Settings, and the
+        // workspaces and PCs; the tab's own page (Chats) is the list alone, its top bar has the rest.
+        if (!asPage || !filter.isEmpty()) list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
+        if (!asPage) {
+            // No PCs row (Settings lists the workspace's PCs), and no
+            // Pull requests or Issues rows (the search's pages and a project's sheet open them).
+            list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
+            list.addView(nav(Ui.I_MONITOR, "Workspaces & PCs", null, Ui.FG, v -> workspaces()), Ui.inset());
+        }
         // A newer app on GitHub: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
         long offered = Update.known(a);
         if (offered > Settings.myCode(a)) Ui.main.post(() -> Update.prompt(a, offered));
-        View line = new View(a);
-        line.setBackgroundColor(Ui.LINE);
-        list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 8, 20, 2));
+        if (!asPage || !filter.isEmpty()) {
+            View line = new View(a);
+            line.setBackgroundColor(Ui.LINE);
+            list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 8, 20, 2));
+        }
 
         String q = search.getText().toString().trim().toLowerCase();
         String you = st.optString("you", "");

@@ -42,17 +42,10 @@ final class PersonsPanel {
         view = Ui.col(a);
         view.setBackgroundColor(Ui.BG);
         view.setClickable(true);
-        LinearLayout bar = Ui.row(a);
-        bar.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(6), Ui.dp(6));
-        bar.setMinimumHeight(Ui.dp(56));
-        TextView x = Ui.iconButton(a, Ui.I_LEFT, Ui.FG, v -> p.back());
+        // A sub-page of the chat: the shared top bar with a back arrow in the side-panel button's place.
+        TextView x = Ds.backButton(a, v -> p.back());
         x.setContentDescription("Back to the chat");
-        bar.addView(x);
-        TextView t = Ui.bold(a, "Details", 17, Ui.FG);
-        t.setGravity(Gravity.CENTER);
-        bar.addView(t, Ui.weight());
-        bar.addView(new View(a), new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)));
-        view.addView(bar, Ui.fill());
+        view.addView(Ds.topBar(a, x, "Details").view, Ui.fill());
         ScrollView sv = new ScrollView(a);
         body = Ui.col(a);
         body.setPadding(Ui.dp(16), Ui.dp(4), Ui.dp(16), Ui.dp(32));

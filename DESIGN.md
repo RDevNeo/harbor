@@ -141,9 +141,31 @@ shell.ts binds:
 
 ## Android (`Ds.java`)
 
-The phone keeps its own scale (dp, larger touch targets, the serif page titles). It shares the same components:
+The phone keeps its own scale (dp, larger touch targets). Every tab has the same frame (Headquarters' phone shell is
+the model: a slim top bar with the sidebar button, a sheet from the left, the tab bar always under the page):
 
-- `Ds.pageTitle` — a tab's title ("Hub", "Persons", "Routine"): serif bold 26sp.
+- **Top bar** (`Ds.TopBar`, `Base.frame`): 52dp + hairline on every page of every tab, chats too. Far left the
+  side-panel button (`Ds.sideButton`, Lucide panel-left, 40dp round press; a sub-page such as Settings, Search or a
+  person's Details has `Ds.backButton` there instead), then the page's name (16sp semi-bold, an optional 12sp line
+  under it; a person's chat puts their 32dp avatar before it), the page's actions on the right (`Ds.barButton`,
+  20dp glyphs). No big serif tab titles: the tab bar says which tab, the top bar which page. Projects' first page
+  is the workspace ("Igor's Workspace", a tap picks the workspaces shown; Add project, Search); a Projects chat's
+  title opens its menu (Rename, Settle, Copy link, Delete…); its team is a swipe to the left (no team or menu
+  buttons on the phone).
+- **Drawer** (`Base.installTab`, `Ds.drawer`, `Ds.drawerWidth`): the tab's side list on BG2 sliding in from the left
+  over the page and the tab bar (84% of the width, at most 340dp; scrim 60% black), opened by the top bar's
+  button or a swipe right anywhere (not on something that scrolls sideways), closed by a swipe left, the scrim or
+  Back; picking a row closes it. Its head is the tab's name in line with the top bar. Projects: the chat list
+  (Sidebar; its first rows Projects, Settings, Workspaces & PCs). Persons: the people list (PersonsHome: All
+  people, Stores, Creators, SpokPay). Routine: Today, History, Sleep, Goals, Coach. Collector: Collector,
+  Available, Approved, Restricted with their counts (`Ds.navRow`: 18dp glyph, label, count; G200 on the page shown).
+- **Tab bar** (`Tabs.around`): Projects, Persons, Routine, Collector, on every page including chats; it steps aside
+  only while the keyboard is up. Tapping a tab brings back the page it showed (Projects: the chat, else the
+  workspace; never Hub's start screen, which is the drawer's Workspaces & PCs).
+
+Components:
+
+- `Ds.pageTitle` — kept for older callers; no tab draws a big title any more.
 - `Ds.sectionHead` — "PROJECTS", "CREATORS": 11.5sp semi-bold G600, 0.06em spacing, with an optional fold chevron,
   unread pill and +.
 - `Ds.row` / `Ds.inset` — a side-panel row: min 44dp, 12dp radius press fill, G100 when selected, 8dp in from the edges.
@@ -154,4 +176,5 @@ The phone keeps its own scale (dp, larger touch targets, the serif page titles).
 - `Ds.chip` — a pill choice or quick action (INK when on).
 - `Ds.card` — a content card (CARD fill, LINE border, 16dp radius, 14/12dp padding).
 
-Used by Projects' drawer (Sidebar.java), Persons (PersonsHome, PersonsUi, PersonsPanel) and Routine (Routine.java).
+Used by Projects (Chats, Chat, Sidebar.java), Persons (PersonsHome, PersonsList, PersonsChat, PersonsSr, PersonsPanel),
+Routine (Routine.java) and Collector (Collector.java).

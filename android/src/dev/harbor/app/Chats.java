@@ -19,18 +19,39 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Home for one hub: its chats as the full-screen sidebar (the reference's drawer). */
+/** The Projects tab's page for one hub: the workspace's projects and chats (Sidebar as a page) under the top bar
+ *  ("Igor's Workspace": a tap picks the workspaces shown; Add project, Search), the same list as the tab's drawer. */
 public class Chats extends Base {
     private boolean loading;
+    /** The list on the page; `side` (Base) is the drawer's. */
+    private Sidebar list;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         if (noHub()) return;
-        side = new Sidebar(this, null);
-        setContentView(Tabs.around(this, side.view, Tabs.PROJECTS));
+        frame("", menuButton(), false);
+        list = new Sidebar(this, null, true);
+        page.addView(list.view, new LinearLayout.LayoutParams(-1, 0, 1));
+        barTitle.setOnClickListener(v -> list.pickWorkspacesNow());
+        barTitle.setContentDescription("Pick the workspaces shown");
+        TextView add = action(Ui.I_FOLDER_PLUS, v -> list.addProjectNow());
+        add.setContentDescription("Add project");
+        TextView find = action(Ui.I_SEARCH, v -> list.paletteNow());
+        find.setContentDescription("Search everything");
+        find.setOnLongClickListener(v -> { list.toggleSearchNow(); return true; });
+        list.onRendered = () -> barTitle.setText(list.title());
+        barTitle.setText(list.title());
+        installDrawer(null);
         JSONObject cached = Hub.states.get(hub.id);
-        if (cached != null) side.render(cached);
+        if (cached != null) list.render(cached);
+    }
+
+    /** Back on the tab's first page leaves the app (Hub's start screen is the drawer's Workspaces & PCs). */
+    @Override
+    public void onBackPressed() {
+        if (drawerOpen() || rightOpen()) { closeDrawer(); return; }
+        moveTaskToBack(true);
     }
 
     @Override
@@ -41,7 +62,7 @@ public class Chats extends Base {
         if (fresh == null) { finish(); return; }
         hub = fresh;
         Update.shown(this, hub.id, null);
-        side.label();
+        list.label();
         load();
     }
 
@@ -54,7 +75,7 @@ public class Chats extends Base {
         Ui.pool.execute(() -> {
             try {
                 JSONObject st = hub.state();
-                Ui.main.post(() -> { loading = false; if (!isFinishing()) { side.offline(null, null, null); side.render(st); } });
+                Ui.main.post(() -> { loading = false; if (!isFinishing()) { list.offline(null, null, null); list.render(st); } });
             } catch (Exception e) {
                 String why = hub.whyDown(e);
                 boolean down = Hub.down(e) != null;
@@ -62,7 +83,7 @@ public class Chats extends Base {
                 Ui.main.post(() -> {
                     loading = false;
                     if (isFinishing()) return;
-                    if (down) { side.offline(title, why, this::retryNow); lookAway(); } else Ui.toast(this, why);
+                    if (down) { list.offline(title, why, this::retryNow); lookAway(); } else Ui.toast(this, why);
                 });
             }
         });
@@ -79,11 +100,11 @@ public class Chats extends Base {
     void onOffline(boolean off, String why) {
         // A card over the last list it sent, not a toast that goes away: the poll keeps trying.
         if (off) {
-            side.offline(hub.downTitle(offlineError), why, this::retryNow);
+            list.offline(hub.downTitle(offlineError), why, this::retryNow);
             if (Hub.down(offlineError) != null) lookAway();
         } else {
-            side.away(null, false);
-            side.offline(null, null, null);
+            list.away(null, false);
+            list.offline(null, null, null);
             load();
         }
     }
@@ -96,11 +117,11 @@ public class Chats extends Base {
      *  unless the user came back here lately (Fallback.auto). */
     private void lookAway() {
         if (hub == null || isFinishing() || !Away.others(this, hub)) return;
-        side.away(null, true);
+        list.away(null, true);
         final Hub off = hub;
         Away.find(this, off, pcs -> {
-            if (isFinishing() || hub == null || !hub.id.equals(off.id) || !side.isOffline()) return;
-            side.away(pcs, false);
+            if (isFinishing() || hub == null || !hub.id.equals(off.id) || !list.isOffline()) return;
+            list.away(pcs, false);
             if (front && !movedAway && Fallback.auto(pcs.size(), Away.stayedAt(this, off.id), System.currentTimeMillis())) {
                 movedAway = true;
                 Away.use(this, off, pcs.get(0), true);

@@ -355,48 +355,38 @@ final class PersonsChat {
 
     private void header() {
         headBox.removeAllViews();
-        LinearLayout r = Ui.row(a);
-        r.setPadding(Ui.dp(4), Ui.dp(6), Ui.dp(6), Ui.dp(6));
-        r.setMinimumHeight(Ui.dp(60));
-        TextView back = Ui.iconButton(a, Ui.I_LEFT, Ui.FG, v -> p.back());
-        back.setContentDescription("Back");
-        r.addView(back);
+        // The shared top bar: the side-panel button (People's list as the drawer), the person's avatar, name and
+        // status line, then the channel switch and Details.
+        Ds.TopBar bar = Ds.topBar(a, p.sideButton(), name());
         JSONObject st = p.person(pid);
         JSONObject cp = PersonsUi.obj(data, "person");
         String presence = PersonsUi.s(cp, "presence");
         if (presence.isEmpty()) presence = PersonsUi.s(PersonsUi.info(st, section), "presence");
         String av = PersonsUi.s(cp, "avatar");
         if (av.isEmpty()) av = PersonsUi.s(st, "avatar");
-        r.addView(PersonsUi.avatar(a, p.hub, av, PersonsUi.s(st, "initials"), PersonsUi.color(PersonsUi.s(st, "color"), Ui.G500), 40, presence),
-                Ui.margins(new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)), 2, 0, 10, 0));
-        LinearLayout t = Ui.col(a);
-        t.addView(Ui.subtitle(Ui.bold(a, name(), 16, Ui.FG)));
+        bar.mark(PersonsUi.avatar(a, p.hub, av, PersonsUi.s(st, "initials"), PersonsUi.color(PersonsUi.s(st, "color"), Ui.G500), 32, presence), 32);
         String typing = PersonsUi.s(data, "typing");
         if (typing.isEmpty()) typing = PersonsUi.s(PersonsUi.info(st, section), "typing");
         JSONObject status = PersonsUi.obj(cp, "status");
         if (status == null) status = PersonsUi.obj(PersonsUi.info(st, section), "status");
         JSONObject ac = PersonsUi.obj(data, "account");
-        TextView line;
-        if (!typing.isEmpty()) line = Ui.text(a, "recording".equals(typing) ? "recording audio…" : "typing…", 13, PersonsUi.tone("green"));
-        else if (status != null && !PersonsUi.s(status, "text").isEmpty()) line = Ui.text(a, PersonsUi.s(status, "text"), 13, PersonsUi.tone(PersonsUi.s(status, "tone")));
-        else line = Ui.text(a, ac == null ? "" : PersonsUi.s(ac, "label"), 13, Ui.G700);
-        if (line.getText().length() > 0) t.addView(Ui.subtitle(line));
-        r.addView(t, Ui.weight());
+        if (!typing.isEmpty()) bar.sub("recording".equals(typing) ? "recording audio…" : "typing…", PersonsUi.tone("green"));
+        else if (status != null && !PersonsUi.s(status, "text").isEmpty()) bar.sub(PersonsUi.s(status, "text"), PersonsUi.tone(PersonsUi.s(status, "tone")));
+        else bar.sub(ac == null ? "" : PersonsUi.s(ac, "label"), Ui.G700);
         JSONArray accounts = PersonsUi.arr(data, "accounts");
         if (accounts.length() > 1 && ac != null) {
             LinearLayout sw = Ui.row(a);
+            sw.setGravity(Gravity.CENTER_VERTICAL);
             sw.setPadding(Ui.dp(8), Ui.dp(6), Ui.dp(8), Ui.dp(6));
             sw.setBackground(Ui.press(Ui.CARD, Ui.LINE, 16));
             sw.addView(PersonsUi.channel(a, PersonsUi.s(ac, "kind"), 16), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
             sw.addView(Ui.icon(a, Ui.I_DOWN, 13, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 3, 0, 0, 0));
             sw.setContentDescription("Switch channel: " + PersonsUi.s(ac, "label"));
             sw.setOnClickListener(v -> switchAccount(accounts));
-            r.addView(sw, Ui.margins(Ui.wrap(), 4, 0, 2, 0));
+            bar.actions.addView(sw, Ui.margins(Ui.wrap(), 4, 0, 4, 0));
         }
-        TextView details = Ui.iconButton(a, Ui.I_PANEL_RIGHT, Ui.FG, v -> p.openPanel(pid, section));
-        details.setContentDescription("Details");
-        r.addView(details);
-        headBox.addView(r, new FrameLayout.LayoutParams(-1, -2));
+        bar.action(Ui.I_PANEL_RIGHT, "Details", v -> p.openPanel(pid, section));
+        headBox.addView(bar.view, new FrameLayout.LayoutParams(-1, -2));
 
         if (!typing.isEmpty()) {
             typingLine.setText(name() + " is " + ("recording".equals(typing) ? "recording audio…" : "typing…"));
