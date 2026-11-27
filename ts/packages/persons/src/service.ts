@@ -81,6 +81,16 @@ export interface Incoming {
   lines: IncomingLine[];
 }
 
+/** A message that went out (onSent): on which connection, to whom there, when. */
+export interface Sent {
+  connId: string;
+  kind: ChannelKind;
+  section: SectionId;
+  /** Who it went to on that connection: an email, WhatsApp digits, a Discord or Instagram id. */
+  peer: string;
+  at: string;
+}
+
 export interface ServiceOptions {
   dir?: string;
   factories?: Partial<Record<ChannelKind, ConnFactory>>;
@@ -121,6 +131,7 @@ export class PersonsService {
   /** Message ids already announced as incoming (this run). */
   private announced = new Set<string>();
   private incoming = new Set<(m: Incoming) => void>();
+  private sentTo = new Set<(s: Sent) => void>();
   rev = 1;
 
   constructor(private readonly o: ServiceOptions = {}) {
@@ -739,7 +750,24 @@ export class PersonsService {
       this.setOut(m.id, pid, (l) => l.filter((x) => x.key !== key));
     } else if (r.ok) this.setOut(m.id, pid, (l) => l.filter((x) => x.key !== key));
     else this.setOut(m.id, pid, (l) => l.map((x) => (x.key === key ? { ...x, status: "failed", error: r.error ?? "Not sent" } : x)));
+    if (r.ok) {
+      const ev: Sent = { connId: m.id, kind: m.kind, section: m.section, peer: pid, at: new Date().toISOString() };
+      for (const f of [...this.sentTo]) {
+        try {
+          f(ev);
+        } catch (e) {
+          this.log("sent listener failed", errText(e));
+        }
+      }
+    }
     return r;
+  }
+
+  /** Hears every message that went out (a send or a retry that the platform took; never a failed one): Collector
+   *  moves a lead it wrote to into Sent. Returns the unsubscribe. */
+  onSent(f: (s: Sent) => void): () => void {
+    this.sentTo.add(f);
+    return () => this.sentTo.delete(f);
   }
 
   /** Who a person is on a connection: `peer` when it is one of theirs (a linked person's number), else their own. */

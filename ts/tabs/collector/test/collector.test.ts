@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { YouTube, handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
 import { discoveryAppetite, sweepYouTube, type SweepCtx } from "../lib/sweep.ts";
-import { exportText, migrate, defaultData, type CreatorRecord } from "../lib/types.ts";
+import { exportText, listOf, migrate, defaultData, type CreatorRecord } from "../lib/types.ts";
 import { Collector, collectorRoute, type CollectorDeps } from "../engine.ts";
 import { compact } from "../view.ts";
 import { extractUrls, normalizeUrl, profileKeyOf, kindOf, whatsappOf } from "../lib/links.ts";
@@ -13,7 +13,7 @@ import { enrich, linktreeLinks } from "../lib/enrich.ts";
 import { allKeys } from "../lib/identity.ts";
 import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.ts";
 import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
-import { fakePersons, livePersons, type SendInput } from "../persons-bridge.ts";
+import { fakePersons, livePersons, type SendInput, type SentEvent } from "../persons-bridge.ts";
 import { brandOf, linkTitle, normalizeReach, parseLinks, reachError, reachHref } from "../lib/reach.ts";
 import { crmRecord } from "../lib/crm.ts";
 import type { DetailView } from "../view.ts";
@@ -545,6 +545,47 @@ describe("collector", () => {
     await c.settled();
     expect(keysAsked).toEqual(["store:robux"]);
   });
+  it("Sent: a send that went out moves the lead there (newest first); a failed one doesn't; Persons' sends count too", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    let fail = false;
+    let hear: ((e: SentEvent) => void) | null = null;
+    const base = fakePersons();
+    const persons = {
+      ...base,
+      send: async (i: SendInput) => (fail ? { ok: false, error: "Gmail said no" } : base.send(i)),
+      onSent: (cb: (e: SentEvent) => void) => ((hear = cb), () => {}),
+    };
+    const c = new Collector(dir, deps({ persons }));
+    c.data.creators.push(
+      rec({ platform: "youtube", platform_id: "UC1", name: "Ana", email: "ana@x.com" }),
+      rec({ platform: "youtube", platform_id: "UC2", name: "Bo", whatsapp: "5521975709440" }),
+      rec({ platform: "tiktok", platform_id: "7", name: "Cy", profile_url: "https://www.tiktok.com/@cy" }),
+      rec({ platform: "youtube", platform_id: "UC4", name: "Di", email: "di@x.com", restricted: true }),
+    );
+    const call = caller(c);
+    type V = { counts: { available: number; sent: number }; creators: { id: string; sent: boolean; sentLine: string; sentAt: string }[] };
+    fail = true;
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: "ana@x.com", subject: "Oi", text: "Oi" }))!.status).toBe(409);
+    expect(listOf(c.data.creators[0]!)).toBe("available");
+    fail = false;
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: "ana@x.com", subject: "Oi", text: "Oi" }))!.status).toBe(200);
+    expect(listOf(c.data.creators[0]!)).toBe("sent");
+    let v = (await call("GET", ""))!.body as V;
+    expect(v.counts).toMatchObject({ available: 2, sent: 1 });
+    expect(v.creators.find((x) => x.id === "youtube:UC1")!.sentLine).toMatch(/^Email · \d+ [A-Z][a-z]{2} \d{4}$/);
+    // from Persons: by the number it went to, and by the person's profiles
+    expect(c.sentFromPersons({ kind: "whatsapp", peer: "5521975709440", at: new Date(Date.now() + 1000).toISOString(), person: "p9", socials: [], emails: [], place: "creators", placeLabel: "Creators" })).toBe(1);
+    hear!({ kind: "discord", peer: "123456789012345678", at: new Date(Date.now() + 2000).toISOString(), person: "p8", socials: ["https://www.tiktok.com/@cy"], emails: [], place: "store:s1", placeLabel: "Robux Paradise" });
+    // a restricted lead stays Restricted; nobody else is touched
+    expect(c.sentFromPersons({ kind: "gmail", peer: "di@x.com", at: new Date().toISOString(), person: null, socials: [], emails: [], place: "creators", placeLabel: "Creators" })).toBe(1);
+    v = (await call("GET", ""))!.body as V;
+    expect(v.counts).toMatchObject({ available: 0, sent: 3, restricted: 1 });
+    const sent = v.creators.filter((x) => x.sent).sort((a, b) => b.sentAt.localeCompare(a.sentAt)).map((x) => x.id);
+    expect(sent).toEqual(["tiktok:7", "youtube:UC2", "youtube:UC1"]);
+    expect(c.data.creators.find((x) => x.platform_id === "7")!.contacted).toMatchObject({ via: "discord", place: "store:s1", placeLabel: "Robux Paradise" });
+    // an older send never replaces a newer one
+    expect(c.sentFromPersons({ kind: "gmail", peer: "ana@x.com", at: "2020-01-01T00:00:00.000Z", person: null, socials: [], emails: [], place: "creators", placeLabel: "Creators" })).toBe(0);
+  });
   it("Restrict keeps a lead out of Available and the export; Unrestrict brings it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const c = new Collector(dir, deps({}));
@@ -552,7 +593,7 @@ describe("collector", () => {
     const call = caller(c);
     expect((await call("POST", "restrict", { id: "nope", restricted: true }))!.status).toBe(404);
     const v = (await call("POST", "restrict", { id: "youtube:UC1", restricted: true }))!.body as { counts: { available: number; restricted: number }; creators: { id: string; restricted: boolean }[] };
-    expect(v.counts).toEqual({ available: 1, approved: 0, restricted: 1 });
+    expect(v.counts).toEqual({ available: 1, approved: 0, restricted: 1, sent: 0 });
     expect(v.creators.find((x) => x.id === "youtube:UC1")?.restricted).toBe(true);
     expect(((await call("GET", "export"))!.body as { count: number }).count).toBe(1);
     await call("POST", "restrict", { id: "youtube:UC1", restricted: false });
@@ -569,7 +610,7 @@ describe("collector", () => {
     expect((await call("POST", "approve", { id: "nope", approved: true }))!.status).toBe(404);
     // Default: the Approved list only; nothing goes to Persons.
     let v = (await call("POST", "approve", { id: "youtube:UC1", approved: true }))!.body as V;
-    expect(v.counts).toEqual({ available: 2, approved: 1, restricted: 0 });
+    expect(v.counts).toEqual({ available: 2, approved: 1, restricted: 0, sent: 0 });
     expect(v.creators.find((x) => x.id === "youtube:UC1")?.approved).toBe(true);
     expect(c.data.creators[0]!.approved).toMatchObject({ to: "list", person: null });
     expect(added).toEqual([]);
@@ -585,14 +626,14 @@ describe("collector", () => {
     expect(v.settings.approveTo).toBe("persons");
     // Reject (Restrict) an approved lead: out of Approved, into Restricted.
     v = (await call("POST", "restrict", { id: "tiktok:7", restricted: true }))!.body as V;
-    expect(v.counts).toEqual({ available: 1, approved: 1, restricted: 1 });
+    expect(v.counts).toEqual({ available: 1, approved: 1, restricted: 1, sent: 0 });
     expect(c.data.creators[1]!.approved).toBeUndefined();
     // Approve a restricted lead: it leaves Restricted.
     v = (await call("POST", "approve", { id: "tiktok:7", approved: true, to: "list" }))!.body as V;
-    expect(v.counts).toEqual({ available: 1, approved: 2, restricted: 0 });
+    expect(v.counts).toEqual({ available: 1, approved: 2, restricted: 0, sent: 0 });
     // Unapprove: back in Available.
     v = (await call("POST", "approve", { id: "youtube:UC1", approved: false }))!.body as V;
-    expect(v.counts).toEqual({ available: 2, approved: 1, restricted: 0 });
+    expect(v.counts).toEqual({ available: 2, approved: 1, restricted: 0, sent: 0 });
     // The last choice, the approval and a note survive a restart; a note is never exported.
     expect((await call("POST", "note", { id: "instagram:9", note: "  talked on IG  " }))!.status).toBe(200);
     expect((await call("POST", "note", { id: "nope", note: "x" }))!.status).toBe(404);

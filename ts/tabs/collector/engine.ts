@@ -65,7 +65,8 @@ import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData,
 import { YouTube } from "./lib/youtube.ts";
 import { keepRun, runRecord, type RunOutcome } from "./lib/history.ts";
 import { SECTION_LABEL } from "../../packages/persons/src/model/accounts.ts";
-import { DEFAULT_PLACE, fakePersons, livePersons, SEND_APP, SEND_KINDS, SEND_LABEL, type PersonsBridge, type SendKind } from "./persons-bridge.ts";
+import { DEFAULT_PLACE, fakePersons, livePersons, SEND_APP, SEND_KINDS, SEND_LABEL, socialsOf, type PersonsBridge, type SendKind, type SentEvent } from "./persons-bridge.ts";
+import { normWhatsApp } from "../../packages/persons/src/model/accounts.ts";
 
 /** Send message: why a channel has nobody to write to yet, and what Send asks for when To is empty. */
 const NO_TO: Record<SendKind, string> = {
@@ -167,6 +168,36 @@ export class Collector {
       this.data.runs = keepRun(this.data.runs, runRecord(this.data.run, "interrupted"));
       this.save();
     }
+    // A message that went out from Persons (or from Send message) to someone who is a lead moves that lead into Sent.
+    o.persons.onSent?.((e) => this.sentFromPersons(e));
+  }
+
+  /** Persons sent a message that went out: the leads that person is (by the address it went to, else their profiles)
+   *  are Sent from now on, the newest send kept. Never a failed send (Persons tells only those that went). */
+  sentFromPersons(e: SentEvent): number {
+    const peer = e.peer.trim();
+    const digits = (s: string): string => s.replace(/\D/g, "");
+    const socials = new Set(e.socials);
+    const emails = new Set(e.emails.map((x) => x.toLowerCase()));
+    let n = 0;
+    for (const c of this.data.creators) {
+      const hit =
+        (e.kind === "gmail" && !!c.email && (c.email.toLowerCase() === peer.toLowerCase() || emails.has(c.email.toLowerCase()))) ||
+        (e.kind === "whatsapp" && !!c.whatsapp && (digits(c.whatsapp) === digits(peer) || normWhatsApp(c.whatsapp) === digits(peer))) ||
+        (e.kind === "discord" && c.reach?.kind === "discord" && c.reach.value === peer) ||
+        (e.kind === "instagram" && c.platform === "instagram" && c.platform_id === peer) ||
+        (socials.size > 0 && socialsOf(c).some((u) => socials.has(u)));
+      if (!hit) continue;
+      if (c.contacted && c.contacted.at >= e.at) continue;
+      const to = e.kind === "whatsapp" ? `+${digits(peer)}` : e.kind === "instagram" && c.platform === "instagram" && c.handle ? `@${c.handle.replace(/^@/, "")}` : peer;
+      c.contacted = { at: e.at, via: e.kind, to, person: e.person, place: c.contacted?.place ?? e.place, placeLabel: c.contacted?.placeLabel ?? e.placeLabel };
+      n++;
+    }
+    if (n) {
+      this.logLine(`SENT from Persons (${SEND_APP[e.kind]}): ${n} lead${n === 1 ? "" : "s"} moved to Sent.`, "ok");
+      this.touch();
+    }
+    return n;
   }
 
   // ---------- storage ----------

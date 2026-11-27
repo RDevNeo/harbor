@@ -40,6 +40,10 @@ export interface Row {
   restricted: boolean;
   /** In Approved (not Available). */
   approved?: boolean;
+  /** In Sent (a message reached them), when (ISO) and "Email · 27 Nov 2026". */
+  sent?: boolean;
+  sentAt?: string;
+  sentLine?: string;
   /** "youtube", "tiktok", "instagram". */
   platformKey?: string;
   /** Followers (YouTube subscribers count as followers; null unknown). */
@@ -56,7 +60,7 @@ export interface CollectorView {
   canSend: boolean;
   gaps: { value: number; label: string }[];
   run: { running: boolean; label: string; platform: string; query: string; found: number; target: number; known: number; line: string; status: string; ids: string[]; elapsed: number } | null;
-  counts: { available: number; approved?: number; restricted: number };
+  counts: { available: number; approved?: number; restricted: number; sent?: number };
   /** The review bar's "Approve to" choices. */
   approveTo?: { value: string; label: string; tip: string }[];
   /** The lists' Sort menu. */
@@ -85,8 +89,14 @@ export interface Compose {
   guard: { sentToday: number; limit: number; already: string | null; justSent: boolean } | null;
 }
 
-export type Page = "collector" | "available" | "approved" | "restricted" | "history";
+export type Page = "collector" | "available" | "approved" | "sent" | "restricted" | "history";
 type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
+
+/** The review bar (Reject / Skip / Approve) is for leads still under review: a run's, Available's, Restricted's (its
+ *  Move to Available); not an Approved lead's, nor one opened from Sent (pure: tested). */
+export function underReview(d: { approved?: boolean; sent?: boolean }, page: string): boolean {
+  return !d.approved && !d.sent && page !== "approved" && page !== "sent";
+}
 
 /** The lead the review bar goes on to: the first one after `current` in the list the detail was opened from that is
  *  still in that list now (pure: tested). Null at the end. */
@@ -129,7 +139,7 @@ export function platformCounts(v: CollectorView, page: Page): Record<string, num
   return n;
 }
 
-const listOfRow = (c: Row): Page => (c.restricted ? "restricted" : c.approved ? "approved" : "available");
+const listOfRow = (c: Row): Page => (c.restricted ? "restricted" : c.sent ? "sent" : c.approved ? "approved" : "available");
 
 /** The podium's render order (the CRM's 2-1-3): the newest in the middle, featured; a missing one leaves its place
  *  empty (pure: tested). */
@@ -245,7 +255,7 @@ export function leadsOf(v: CollectorView, page: Page, filter: string, run = ""):
     const byId = new Map(v.creators.map((c) => [c.id, c]));
     const rows = (r?.ids ?? [])
       .map((id) => byId.get(id))
-      .filter((c): c is Row => !!c && !c.restricted && !c.approved)
+      .filter((c): c is Row => !!c && !c.restricted && !c.approved && !c.sent)
       .reverse();
     if (!r) return { rows, head: "", emptyTitle: "No search yet", emptyDesc: "Type a term and press Collect. Collector searches it for videos, as the platform shows them, and keeps each active creator once: picture, link, email when there is one, and their 3 newest videos." };
     return { rows, head: rows.length ? `FOUND FOR “${r.query.toUpperCase()}”` : "", emptyTitle: r.running ? "" : "Nothing new this time", emptyDesc: r.running ? "" : "Everyone it found was collected before, or hasn't posted inside Last upload. Try another term." };
@@ -254,8 +264,10 @@ export function leadsOf(v: CollectorView, page: Page, filter: string, run = ""):
   const all = v.creators.filter((c) => listOfRow(c) === page);
   const only = v.settings.platforms ?? [];
   const shown = only.length ? all.filter((c) => only.includes(c.platformKey ?? "")) : all;
-  const rows = sortRows(q ? shown.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : shown, v.settings.sort ?? "followers-desc");
-  const none: [string, string] = ({ restricted: ["Nobody restricted", "Restrict a lead (or Reject it in its detail) to keep it out of Available. It stays remembered, so no run collects it again."], approved: ["Nobody approved", "Open a lead and press Approve (A or →). Approved leads leave Available and stay remembered, so no run collects them again."], available: ["No leads yet", "Collect some from the Collector page."] } as Record<"available" | "approved" | "restricted", [string, string]>)[page];
+  const matched = q ? shown.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : shown;
+  // Sent: the newest sent first (Sort doesn't apply there)
+  const rows = page === "sent" ? [...matched].sort((a, b) => (b.sentAt ?? "").localeCompare(a.sentAt ?? "")) : sortRows(matched, v.settings.sort ?? "followers-desc");
+  const none: [string, string] = ({ restricted: ["Nobody restricted", "Restrict a lead (or Reject it in its detail) to keep it out of Available. It stays remembered, so no run collects it again."], approved: ["Nobody approved", "Open a lead and press Approve (A or →). Approved leads leave Available and stay remembered, so no run collects them again."], sent: ["Nobody written to yet", "Send a lead a message (Send message in its detail, or from Persons): once it goes out by email, WhatsApp, Discord or Instagram, the lead moves here. A failed send doesn't."], available: ["No leads yet", "Collect some from the Collector page."] } as Record<"available" | "approved" | "sent" | "restricted", [string, string]>)[page];
   const emptyTitle = all.length === 0 ? none[0] : "No match";
   const which = LIST_PLATFORMS.filter((p) => only.includes(p.key)).map((p) => p.label).join(" or ");
   const emptyDesc = all.length === 0 ? none[1] : q ? `Nobody matches “${filter.trim()}”${only.length ? ` on ${which}` : ""}.` : `Nobody here on ${which}.`;
@@ -298,6 +310,7 @@ const PAGES: { id: Page; label: string }[] = [
   { id: "collector", label: "Collector" },
   { id: "available", label: "Available" },
   { id: "approved", label: "Approved" },
+  { id: "sent", label: "Sent" },
   { id: "restricted", label: "Restricted" },
   { id: "history", label: "History" },
 ];
@@ -309,7 +322,7 @@ export function createCollectorUi(): TabUi {
   let copied = 0;
   let fast: ReturnType<typeof setInterval> | null = null;
   let editing = 0;
-  let page: Page = (["collector", "available", "approved", "restricted", "history"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
+  let page: Page = (["collector", "available", "approved", "sent", "restricted", "history"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
   /** History: the run open ("" the timeline). */
   let historyRun = "";
   let emailFor = "";
@@ -482,9 +495,10 @@ export function createCollectorUi(): TabUi {
     if (!b || !v) return;
     const s = v.settings;
     set("page", page);
-    set("nav", new slint.ArrayModel(PAGES.map((p) => ({ id: p.id, label: p.label, on: p.id === page, count: p.id === "available" ? v.counts.available : p.id === "approved" ? (v.counts.approved ?? 0) : p.id === "restricted" ? v.counts.restricted : 0 }))));
+    set("nav", new slint.ArrayModel(PAGES.map((p) => ({ id: p.id, label: p.label, on: p.id === page, count: p.id === "available" ? v.counts.available : p.id === "approved" ? (v.counts.approved ?? 0) : p.id === "sent" ? (v.counts.sent ?? 0) : p.id === "restricted" ? v.counts.restricted : 0 }))));
     set("n_available", v.counts.available);
     set("n_approved", v.counts.approved ?? 0);
+    set("n_sent", v.counts.sent ?? 0);
     set("n_restricted", v.counts.restricted);
     set("sources", new slint.ArrayModel(v.sources.map((x) => ({ value: x.value, label: x.label, on: x.value === s.platform, available: x.available, tip: x.available ? x.note : x.why }))));
     set("gaps", new slint.ArrayModel(v.gaps.map((g) => ({ value: String(g.value), label: g.label, on: g.value === s.gapDays, available: true, tip: g.value ? `Only creators who posted in the last ${g.value} days` : "Keep creators whenever they last posted" }))));
@@ -530,8 +544,9 @@ export function createCollectorUi(): TabUi {
           email: x.email,
           restricted: x.restricted,
           approved: !!x.approved,
-          followers: x.subs !== null && x.subs !== undefined ? `${compactCount(x.subs)} followers` : "",
-          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}`,
+          // Sent: the channel and the day on the right, in the followers' place
+          followers: page === "sent" && x.sentLine ? x.sentLine : x.subs !== null && x.subs !== undefined ? `${compactCount(x.subs)} followers` : "",
+          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}|${page === "sent" ? (x.sentLine ?? "") : ""}`,
         };
       }),
     );
@@ -567,8 +582,8 @@ export function createCollectorUi(): TabUi {
     const sort = v.settings.sort ?? "followers-desc";
     const only = v.settings.platforms ?? [];
     const sorts = v.sorts ?? [];
-    set("sort_label", sortShort(sorts.find((x) => x.value === sort)?.label ?? "Sort"));
-    set("sort_tip", `Sort: ${sorts.find((x) => x.value === sort)?.label ?? ""}`);
+    set("sort_label", page === "sent" ? "Newest sent" : sortShort(sorts.find((x) => x.value === sort)?.label ?? "Sort"));
+    set("sort_tip", page === "sent" ? "Sent: the newest sent first" : `Sort: ${sorts.find((x) => x.value === sort)?.label ?? ""}`);
     const counts = platformCounts(v, page);
     set("plat_label", only.length === 0 ? "All platforms" : only.length === 1 ? (LIST_PLATFORMS.find((p) => p.key === only[0])?.label ?? "") : `${only.length} platforms`);
     set("plat_on", only.length > 0);
@@ -632,6 +647,7 @@ export function createCollectorUi(): TabUi {
     set("d_approved_note", d.approvedNote ?? "");
     set("d_restricted", d.restricted);
     set("d_approved", !!d.approved);
+    set("d_review", underReview(d, page));
     const pos = queue.indexOf(d.id);
     set("d_position", pos >= 0 && queue.length > 1 ? `${pos + 1} of ${queue.length}` : "");
     set("review_busy", reviewBusy);
@@ -902,6 +918,8 @@ export function createCollectorUi(): TabUi {
       if (what === "reject" || what === "skip" || what === "approve") void review(what);
     });
     on("list_menu_show", (which: string) => {
+      // Sent has one order (the newest sent first)
+      if (which === "sort" && page === "sent") return;
       listMenu = listMenu === which ? "" : which;
       render();
     });
@@ -1058,7 +1076,7 @@ export function createCollectorUi(): TabUi {
         page,
         run: historyRun,
         filter: String(b.filter ?? ""),
-        y: { collector: y("y_collector"), available: y("y_available"), approved: y("y_approved"), restricted: y("y_restricted"), history: y("y_history") },
+        y: { collector: y("y_collector"), available: y("y_available"), approved: y("y_approved"), sent: y("y_sent"), restricted: y("y_restricted"), history: y("y_history") },
         sideHidden: b.side_hidden === true,
         detail: detailOpen && detail ? detail.id : null,
         queue: detailOpen ? queue.slice(0, 2000) : [],
@@ -1074,7 +1092,7 @@ export function createCollectorUi(): TabUi {
       if (typeof o.run === "string") historyRun = o.run;
       if (typeof o.filter === "string") b.filter = o.filter;
       const y = (o.y && typeof o.y === "object" ? o.y : {}) as Record<string, unknown>;
-      for (const k of ["collector", "available", "approved", "restricted", "history"]) if (typeof y[k] === "number" && Number.isFinite(y[k])) b[`y_${k}`] = y[k];
+      for (const k of ["collector", "available", "approved", "sent", "restricted", "history"]) if (typeof y[k] === "number" && Number.isFinite(y[k])) b[`y_${k}`] = y[k];
       if (typeof o.sideHidden === "boolean") b.side_hidden = o.sideHidden;
       render();
       if (typeof o.detail !== "string" || o.detail === "") return;

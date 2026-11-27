@@ -41,7 +41,7 @@ export struct ClHist {
 export global CollectorBus {
     in property <bool> loading: true;
     in property <string> error;
-    /** "collector", "available", "approved", "restricted" or "history". */
+    /** "collector", "available", "approved", "sent", "restricted" or "history". */
     in property <string> page: "collector";
     in property <[ClNav]> nav;
     // The form
@@ -73,10 +73,12 @@ export global CollectorBus {
     in-out property <length> y-collector;
     in-out property <length> y-available;
     in-out property <length> y-approved;
+    in-out property <length> y-sent;
     in-out property <length> y-restricted;
     in property <int> n-available;
     in property <int> n-restricted;
     in property <int> n-approved;
+    in property <int> n-sent;
     // History: every search run by day, newest first; a run opened shows its leads (rows)
     in property <[ClHist]> history;
     in property <int> n-runs;
@@ -151,6 +153,9 @@ export global CollectorBus {
     in property <string> d-approved-note;
     in property <bool> d-restricted;
     in property <bool> d-approved;
+    /** The lead is still under review (a run's leads, Available, Restricted): the review bar shows. Not for Approved
+     *  (nor Sent) leads. */
+    in property <bool> d-review: true;
     /** "3 of 12": where this lead is in the list the detail was opened from ("" alone). */
     in property <string> d-position;
     in property <bool> review-busy;
@@ -243,7 +248,7 @@ component Sidebar inherits SideSurface {
             vertical-stretch: 1;
             for n in CollectorBus.nav: ListRow {
                 lead: "glyph";
-                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : n.id == "approved" ? Icons.circle-check : n.id == "history" ? "\u{e063}" : Icons.circle-slash;
+                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : n.id == "approved" ? Icons.circle-check : n.id == "sent" ? Icons.send : n.id == "history" ? "\u{e063}" : Icons.circle-slash;
                 title: n.label;
                 active: n.on;
                 meta: n.id == "collector" ? (CollectorBus.running ? "running" : "") : n.count > 0 ? n.count : "";
@@ -690,7 +695,7 @@ component Leads inherits VerticalLayout {
         r: r;
     }
     if CollectorBus.rows.length == 0 && CollectorBus.empty-title != "": Empty {
-        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : CollectorBus.page == "approved" ? Icons.circle-check : CollectorBus.page == "history" ? "\u{e063}" : Icons.users;
+        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : CollectorBus.page == "approved" ? Icons.circle-check : CollectorBus.page == "sent" ? Icons.send : CollectorBus.page == "history" ? "\u{e063}" : Icons.users;
         title: CollectorBus.empty-title;
         desc: CollectorBus.empty-desc;
     }
@@ -1810,7 +1815,7 @@ component DetailDialog inherits Rectangle {
         }
     }
     property <length> box-w: min(720px, root.width - 32px);
-    property <length> bar-h: 52px;
+    property <length> bar-h: CollectorBus.d-review ? 52px : 0px;
     /** The bio's line and its three lines (one line of the same font, measured). */
     property <length> bio-line: bio-fm.preferred-height;
     property <length> bio-h: 3 * root.bio-line;
@@ -1854,7 +1859,7 @@ component DetailDialog inherits Rectangle {
                 return accept;
             }
             // Only while no text field has the focus (the scope itself has it), and never with a modifier.
-            if !self.has-focus || e.modifiers.control || e.modifiers.alt || e.modifiers.meta {
+            if !self.has-focus || e.modifiers.control || e.modifiers.alt || e.modifiers.meta || !CollectorBus.d-review {
                 return reject;
             }
             if e.text == "r" || e.text == "R" || e.text == Key.LeftArrow {
@@ -2198,8 +2203,8 @@ component DetailDialog inherits Rectangle {
                 }
             }
         }
-        // The review bar at the bottom.
-        Rectangle {
+        // The review bar at the bottom (leads under review only).
+        if CollectorBus.d-review: Rectangle {
             y: parent.height - 1px - root.bar-h;
             height: 1px + root.bar-h;
             background: Theme.dark ? #00000040 : Theme.fg.with-alpha(0.03);
@@ -2394,9 +2399,9 @@ component EditDialog inherits DialogFrame {
 component Column inherits Rectangle {
     in property <length> col-w;
     in property <length> col-x;
-    /** "collector", "available", "approved", "restricted", "history" (the timeline) or "history-run" (a run's leads). */
+    /** "collector", "available", "approved", "sent", "restricted", "history" (the timeline) or "history-run" (a run's leads). */
     in property <string> key;
-    property <length> kept: root.key == "available" ? CollectorBus.y-available : root.key == "approved" ? CollectorBus.y-approved : root.key == "restricted" ? CollectorBus.y-restricted : root.key == "history" ? CollectorBus.y-history : root.key == "history-run" ? 0 : CollectorBus.y-collector;
+    property <length> kept: root.key == "available" ? CollectorBus.y-available : root.key == "approved" ? CollectorBus.y-approved : root.key == "sent" ? CollectorBus.y-sent : root.key == "restricted" ? CollectorBus.y-restricted : root.key == "history" ? CollectorBus.y-history : root.key == "history-run" ? 0 : CollectorBus.y-collector;
     // Not `content-y <=> a global` (Slint 1.18 kept such a viewport at 0, settings.slint): set once, followed after.
     init => {
         f.content-y = root.kept;
@@ -2414,6 +2419,8 @@ component Column inherits Rectangle {
                 CollectorBus.y-available = self.content-y;
             } else if root.key == "approved" {
                 CollectorBus.y-approved = self.content-y;
+            } else if root.key == "sent" {
+                CollectorBus.y-sent = self.content-y;
             } else if root.key == "restricted" {
                 CollectorBus.y-restricted = self.content-y;
             } else if root.key == "history" {
@@ -2466,10 +2473,10 @@ export component CollectorPage {
         y: 0;
         width: root.main-w;
         side-hidden: CollectorBus.side-hidden;
-        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : CollectorBus.page == "approved" ? Icons.circle-check : CollectorBus.page == "history" ? "\u{e063}" : Icons.circle-slash;
+        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : CollectorBus.page == "approved" ? Icons.circle-check : CollectorBus.page == "sent" ? Icons.send : CollectorBus.page == "history" ? "\u{e063}" : Icons.circle-slash;
         section: "Collector";
-        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : CollectorBus.page == "approved" ? "Approved" : CollectorBus.page == "history" ? "History" : "Restricted";
-        sub: CollectorBus.page == "history" ? (CollectorBus.history-run != "" ? CollectorBus.rows.length + (CollectorBus.rows.length == 1 ? " lead" : " leads") : CollectorBus.n-runs + (CollectorBus.n-runs == 1 ? " search" : " searches")) : CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "approved" ? CollectorBus.n-approved + (CollectorBus.n-approved == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
+        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : CollectorBus.page == "approved" ? "Approved" : CollectorBus.page == "sent" ? "Sent" : CollectorBus.page == "history" ? "History" : "Restricted";
+        sub: CollectorBus.page == "history" ? (CollectorBus.history-run != "" ? CollectorBus.rows.length + (CollectorBus.rows.length == 1 ? " lead" : " leads") : CollectorBus.n-runs + (CollectorBus.n-runs == 1 ? " search" : " searches")) : CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "approved" ? CollectorBus.n-approved + (CollectorBus.n-approved == 1 ? " lead" : " leads") : CollectorBus.page == "sent" ? CollectorBus.n-sent + (CollectorBus.n-sent == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
         show-side => {
             CollectorBus.side-hidden = false;
         }
@@ -2518,6 +2525,16 @@ export component CollectorPage {
     }
     if !CollectorBus.loading && CollectorBus.page == "approved": Column {
         key: "approved";
+        x: root.main-x;
+        y: root.list-top;
+        width: root.main-w;
+        height: root.height - root.list-top;
+        col-w: root.col-w;
+        col-x: root.col-x;
+        ListScreen { }
+    }
+    if !CollectorBus.loading && CollectorBus.page == "sent": Column {
+        key: "sent";
         x: root.main-x;
         y: root.list-top;
         width: root.main-w;

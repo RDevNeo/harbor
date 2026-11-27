@@ -5,7 +5,7 @@ import { avatarKey } from "./avatar-key.ts";
 import { compactCount, dayAgo } from "./lib/format.ts";
 import { historyView } from "./lib/history.ts";
 import { brandOf, linkTitle, linksText, REACH_META, reachDrafts, reachHref, reachStart } from "./lib/reach.ts";
-import { GAP_CHOICES, PLATFORM_LABEL, type ApproveTo, type SortMode, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
+import { GAP_CHOICES, listOf, PLATFORM_LABEL, type ApproveTo, type SortMode, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
 
 export { compactCount as compact } from "./lib/format.ts";
 
@@ -56,6 +56,12 @@ export interface RowView {
   restricted: boolean;
   /** Approved in the review bar: in Approved, not Available. */
   approved: boolean;
+  /** A message reached them (Collector's Send message, or Persons): in Sent. */
+  sent: boolean;
+  /** When the newest one went (ISO, "" never): Sent's order. */
+  sentAt: string;
+  /** "Email · 27 Nov 2026", "WhatsApp · …" ("" never sent). */
+  sentLine: string;
   /** "youtube", "tiktok", "instagram": the lists' platform filter. */
   platformKey: string;
   /** Followers (YouTube subscribers count as followers): the lists' Sort (null: hidden or unknown). */
@@ -66,6 +72,9 @@ export interface RowView {
 }
 
 const ROWS_MAX = 2000;
+
+/** Sent's line: the channel a message went on. */
+const SENT_VIA: Record<string, string> = { gmail: "Email", whatsapp: "WhatsApp", discord: "Discord", instagram: "Instagram" };
 
 /** The lists' Sort menu: followers (YouTube subscribers count as followers), the default first. */
 export const SORT_CHOICES: { value: SortMode; label: string; group: number }[] = [
@@ -100,7 +109,10 @@ export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string
       thumbId: v.thumbnail_url ? avatarKey(v.thumbnail_url) : null,
     })),
     restricted: !!c.restricted,
-    approved: !c.restricted && !!c.approved,
+    approved: listOf(c) === "approved",
+    sent: listOf(c) === "sent",
+    sentAt: c.contacted?.at ?? "",
+    sentLine: c.contacted ? `${SENT_VIA[c.contacted.via] ?? "Sent"} · ${new Date(c.contacted.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : "",
     platformKey: c.platform,
     subs: c.subscriber_count ?? null,
     reach: c.reach?.kind ?? "",
@@ -229,6 +241,7 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
     .map((c) => creatorRow(c, pic));
   const restricted = rows.filter((r) => r.restricted).length;
   const approved = rows.filter((r) => r.approved).length;
+  const sent = rows.filter((r) => r.sent).length;
   return {
     rev,
     settings: d.settings,
@@ -251,7 +264,7 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
           elapsed: Math.max(0, Math.round(((run.running ? now : run.endedAt || now) - run.startedAt) / 1000)),
         }
       : null,
-    counts: { available: rows.length - restricted - approved, approved, restricted },
+    counts: { available: rows.length - restricted - approved - sent, approved, restricted, sent },
     approveTo: APPROVE_CHOICES,
     sorts: SORT_CHOICES,
     unseen: d.unseen,

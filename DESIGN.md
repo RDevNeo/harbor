@@ -89,8 +89,9 @@ Per tab:
 - **Routine**: sidebar = Today (with its %), History, Sleep, Goals, Coach as glyph rows, then PLAN (the current plan,
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
-- **Collector**: sidebar = the five views as glyph rows (Collector with "running" while a run goes, Available,
-  Approved and Restricted with their counts, History; the lists' bar: the filter SearchField full width, then 34px framed Sort
+- **Collector**: sidebar = the six views as glyph rows (Collector with "running" while a run goes, Available,
+  Approved, Sent (send glyph; its cards show "Email · 27 Nov 2026" in the followers' place, Sort reads "Newest sent")
+  and Restricted with their counts, History; the lists' bar: the filter SearchField full width, then 34px framed Sort
   and platform menu buttons, MenuItems and PlatRows with the tick on the left, brand mark, count); page = PageBar ("Collector / Collect leads", "Collector / Available  6 leads" with
   Copy JSONL on the right), then a column: on Collector the form Card (platform Chips, Instagram's "· needs sign-in"
   and, when picked, the session Well; search Input, Leads with −/+, Collect/Stop, Last upload Chips), one line under
@@ -106,10 +107,9 @@ Per tab:
   A click elsewhere on a card opens the lead's detail: the SpokPay CRM's creator profile dialog on Hub's tokens (720
   wide, radius 12, a scrolling body, a fixed footer with Open channel / Edit; tiles and rows on `fg` at 3.5%, caps heads
   at 35%), Edit a DialogFrame (512); on the phone a full-screen profile (CollectorCreator.Detail): the top bar (back,
-  the name, "3 of 121", previous / next), the 88dp picture, name, platform · handle, tags, the stat tiles, Send
-  message and Open channel, chips (Edit profile, Approve to Persons › Creators, Restrict, Copy link), then cards:
-  Recent videos, Bio, Contact (the email and its source, a pencil to type one; Reach), Links, Note; the review bar
-  under it. Under the footer's row (Quick note Input, the
+  the name, "3 of 121", previous / next), the 88dp picture, name, platform · handle, tags, Open channel and Edit
+  (outlined pills, half each), the stat tiles, then cards: Most recent, Bio, Reach (the four kinds, the field, Save /
+  Clear, Send message); the review bar under it while the lead is under review (none for an Approved one, as on the PC). Under the footer's row (Quick note Input, the
   "Approve to: …" trigger and its menu above it, Open channel / Edit) the review bar: three equal 56px cells with
   hairlines, Reject (red-900) / Skip (fg 60%) / Approve (green-900), icon + 15px/500 label + 16px outlined key caps,
   the cell tinted 8% on hover; keys R S A, ← ↓ →, N (the note) only while no field has the focus. Send message (the Reach section's one button) is a DialogFrame (760): templates on the left; on the right
@@ -119,7 +119,12 @@ Per tab:
   TextBox, and "From …" with a primary sm Send…; under the card "Add to Persons ›" and a 30px pill (users glyph,
   the place, chevron) whose PopoverFrame opens upward with MenuItems (Persons' places, tag glyph for a store, the tick); Send… turns it into a 448 confirm ("Send it?") with Back / Send now. Phone: the title,
   three Chips (Collector, Available n, Restricted n), the same cards in one scrolling column (an email dialog), Send
-  message as a screen over the tab.
+  message as a screen over the tab (CollectorCreator.Compose): the top bar (back, "Send message", the lead's name);
+  a composer card (CARD, LINE, radius 16): "To" and the destination pill (brand mark, name, chevron; 40dp, G100,
+  radius 20), the address, a hairline, Subject (email), the message (9 lines, 15sp), each field on BG with a LINE
+  border, radius 12; under it "Add to Persons ›" and the place pill, "Template" and its pill, Save as template / Edit
+  template; the pills open a list over the screen (CARD, radius 18, 56dp rows: tinted mark, title, who / why, tick);
+  a sticky foot over the keyboard: "From … · Creators Gmail" (or why not, amber) and the black Send pill.
 
 ## Scrolling (every tab)
 

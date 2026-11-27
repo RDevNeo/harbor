@@ -4,7 +4,7 @@
 // Creators, with their picture, profiles, links and the address it went to, and the message goes out through Persons,
 // so it's in that chat. Persons is the only sender: nothing here talks to Gmail, WhatsApp, Discord or Instagram itself.
 import type { PersonsService } from "../../packages/persons/src/index.ts";
-import { allPeers, isInstagramId, normWhatsApp, SECTION_LABEL, serves } from "../../packages/persons/src/model/accounts.ts";
+import { allPeers, isInstagramId, normWhatsApp, phoneVariants, SECTION_LABEL, serves } from "../../packages/persons/src/model/accounts.ts";
 import { DEFAULT_LISTS, joinScope, socialPhotoKey } from "../../packages/persons/src/model/data.ts";
 import { parsePlace, type Place } from "../../packages/persons/src/model/move.ts";
 import type { Message, Person } from "../../packages/persons/src/model/types.ts";
@@ -90,6 +90,24 @@ export interface PersonsBridge {
   /** The review bar's Approve to Persons › Creators: the creator becomes (or joins) a person there, as Send makes them,
    *  with no message sent. */
   add(rec: CreatorRecord): SendOutcome;
+  /** Every message Persons sent that went out (Collector's or typed in Persons; never a failed one), with who it went
+   *  to: Collector moves the lead that is that person into Sent. Returns the unsubscribe. */
+  onSent?(cb: (e: SentEvent) => void): () => void;
+}
+
+/** A message Persons sent (onSent), and who in Persons it went to. */
+export interface SentEvent {
+  kind: SendKind;
+  /** The email, WhatsApp digits, Discord or Instagram id it went to. */
+  peer: string;
+  at: string;
+  /** The person in Persons (null: nobody there has that address), their profiles and emails. */
+  person: string | null;
+  socials: string[];
+  emails: string[];
+  /** Where they are in Persons ("creators", "store:<id>"…) and its name. */
+  place: string;
+  placeLabel: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -185,6 +203,34 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       const stores = d.stores.map((x): PersonsPlace => ({ value: `store:${x.id}`, label: x.name, section: "stores" }));
       const lists = (["creators", "spokpay", "personal"] as const).map((id): PersonsPlace => ({ value: id, label: d.lists.find((l) => l.id === id)?.name || SECTION_LABEL[id], section: id }));
       return [...stores, ...lists];
+    },
+    onSent: (cb) => {
+      // Persons may come up after Collector: subscribe once it's there
+      let off: (() => void) | null = null;
+      let stopped = false;
+      const on = (): void => {
+        const s = svc();
+        if (!s || off || stopped || typeof s.onSent !== "function") return;
+        off = s.onSent((e) => {
+          if (!(SEND_KINDS as readonly string[]).includes(e.kind)) return;
+          const same = (v: string): boolean => v === e.peer || (e.kind === "whatsapp" && (phoneVariants(v).includes(e.peer) || phoneVariants(e.peer).includes(v)));
+          const p = (s.data?.people ?? []).find((x) => allPeers(x, e.kind).some(same)) ?? null;
+          const place = e.section === "stores" ? (p?.storeIds[0] ? `store:${p.storeIds[0]}` : DEFAULT_PLACE) : e.section;
+          const label = e.section === "stores" ? (s.data?.stores.find((x) => `store:${x.id}` === place)?.name ?? SECTION_LABEL.stores) : (s.data?.lists.find((l) => l.id === e.section)?.name ?? SECTION_LABEL[e.section]);
+          cb({ kind: e.kind as SendKind, peer: e.peer, at: e.at, person: p?.id ?? null, socials: p?.socials ?? [], emails: p ? allPeers(p, "gmail") : [], place, placeLabel: label });
+        });
+      };
+      on();
+      const t = off ? null : setInterval(() => {
+        on();
+        if (off && t) clearInterval(t);
+      }, 5000);
+      (t as { unref?: () => void } | null)?.unref?.();
+      return () => {
+        stopped = true;
+        off?.();
+        if (t) clearInterval(t);
+      };
     },
     creatorKeys: (places = []) =>
       people()

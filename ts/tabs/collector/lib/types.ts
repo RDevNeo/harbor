@@ -283,8 +283,10 @@ export function exportRecord(c: CreatorRecord): Record<string, unknown> {
 }
 
 /** Which list a lead is in: Restricted, Approved, else Available. */
-export function listOf(c: CreatorRecord): "available" | "approved" | "restricted" {
-  return c.restricted ? "restricted" : c.approved ? "approved" : "available";
+/** The list a lead is in: Restricted (kept out), else Sent (a message reached them, from Collector or Persons), else
+ *  Approved, else Available. */
+export function listOf(c: CreatorRecord): "available" | "approved" | "restricted" | "sent" {
+  return c.restricted ? "restricted" : c.contacted ? "sent" : c.approved ? "approved" : "available";
 }
 
 /** Copy for the CRM: the Available leads (or the Approved ones) as JSONL, one complete record per line. */

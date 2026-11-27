@@ -7,15 +7,22 @@ No browser and no WebView: everything runs in the engine against the platforms' 
 
 ## What the user sees
 
-Five views, picked in the sidebar (the phone: the drawer's rows):
+Six views, picked in the sidebar (the phone: the drawer's rows):
 
 - **Collector**: the form (platform, search term, how many leads, Last upload window, Collect / Stop; Instagram's
   session when Instagram is picked), one line while a run goes ("3 of 20 · Checking @x…", then how it ended), and the
   leads that run found.
-- **Available**: every lead not Approved or Restricted, newest first, with one filter box (name, handle, email,
+- **Available**: every lead not Approved, Sent or Restricted, newest first, with one filter box (name, handle, email,
   platform, link).
-- **Approved**: leads approved in the review bar (below), the same filter box and its own Copy JSONL. In their
-  detail the review bar's Approve is **Move to Available**.
+- **Approved**: leads approved in the review bar (below), the same filter box and its own Copy JSONL. Their detail
+  has no review bar (they're reviewed).
+- **Sent**: leads a message actually went out to, by email, WhatsApp, Discord or Instagram: from Collector's Send
+  message, or typed in Persons to the person a lead is (matched by the address it went to, else their profiles;
+  Persons tells Collector only of sends that went, `PersonsService.onSent`, so a failed send moves nobody). Newest sent
+  first (Sort doesn't apply there), each card with the channel and the day ("Email · 27 Nov 2026"; the phone: "Sent ·
+  Email · …"). A sent lead leaves Available and Approved (Restricted stays Restricted), has no review bar, and like
+  every lead is never collected again; the people in Persons places Collector sent to are skipped by runs too.
+  `listOf` in `lib/types.ts`: Restricted, else Sent (`contacted`), else Approved, else Available.
 - **Restricted**: leads the user keeps out of Available (Reject in the review bar). They stay remembered, so no run
   collects them again. In their detail the review bar's Reject is **Move to Available**.
 - **History**: every search run, newest first, grouped by day ("Today", "Yesterday", "Wed, Nov 25", the PC's time
@@ -65,14 +72,20 @@ the same content as a full-screen sheet:
   message** button, the same whichever icon is picked: it opens the composer with that icon's channel picked in To and
   To filled with the field's value (when it's valid). No per-channel "Send email" / "Open in Discord" buttons and no
   "Approved on" line. Exported as the CRM's `reach_kind` / `reach_value`.
-- The **review bar** at the bottom, always under the content (the podium gives way in a short window; nothing reaches
+- The **review bar** at the bottom, only for leads still under review (a run's, Available's, Restricted's: not an
+  Approved lead's, wherever it's opened, nor one opened from Approved or Sent; `underReview` in the PC's ui.ts), always under the content (the podium gives way in a short window; nothing reaches
   the bar) (a review queue's: three equal cells, the keys' caps after each label):
   **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
   it approved (out of Available, into Approved). Each then shows the next lead
   of the list the detail was opened from (its filter and order at that moment; a lead that left that list meanwhile
   is passed over); after the last one the detail closes (no toast after Reject, Skip, Approve, Restrict or Unapprove: the move is the feedback; a failed one still toasts why). The keys act only while no text field
   has the focus. Approved and rejected leads stay in the ledger: never collected again. Phone: the same bar at the
-  bottom of the sheet (no caps).
+  bottom of the sheet (no caps), hidden for an Approved lead.
+
+On the phone the detail is the PC dialog's structure in one scrolling column: the picture, name, platform · handle and
+tags, Open channel and Edit, the stat tiles, Most recent, Bio and Reach (with its Send message). No Copy link,
+Unapprove, Approve to Persons / Restrict chips, contact email row, Links or Note (Reach is where contact goes; the
+review bar approves and rejects).
 
 Older leads fill in what they miss (bio, counts, links, the newest videos' views and dates) when their detail opens: one
 read of the profile, at most once a day per lead, never during a run on that platform (Instagram only with its session).

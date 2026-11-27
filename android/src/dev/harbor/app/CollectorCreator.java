@@ -50,26 +50,29 @@ final class CollectorCreator {
 
     // ---------- Send message ----------
 
-    /** Send message, Persons' composer as a screen: To (where it goes: every Persons › Creators channel, Email,
-     *  WhatsApp, Discord, Instagram, each with who they are there; one that can't send says why) and the address, the
-     *  Subject (email), the message, the template it starts from, the CRM's guards (30 new emails a day, already
-     *  written to). Send asks first, then POST /v1/collector/send: a real send, only on that tap. The creator then
-     *  is a person in the Persons place picked under the message (a store, Creators, SpokPay, Personal; the one
-     *  picked last, else Creators), whose connections are To's. */
+    /** Send message, the PC's composer as a phone screen. The top bar (back, "Send message", the lead's name); then a
+     *  composer card: To (the destination: every channel of the Persons place picked, Email, WhatsApp, Discord,
+     *  Instagram, each with who they are there, in a list over the screen; one that can't send says why) and the
+     *  address, the Subject (email), the message; under it "Add to Persons" (Persons' places: each store, Creators,
+     *  SpokPay, Personal; the place's connections are To's), the template it starts from (a list over the screen),
+     *  Save as template and Edit template; the CRM's guards. At the bottom, always in sight (over the keyboard too),
+     *  the account it goes from and Send: it asks first, then POST /v1/collector/send, a real send, only on that tap.
+     *  The template, channel and place picked are remembered (the PC's too). */
     static final class Compose implements Collector.Screen {
         private final Collector a;
         private final Hub h;
         private final String id;
         private final LinearLayout root, body;
+        private final TextView fromLine, sendBtn;
         private JSONObject c;
         private EditText to, subject, text;
         private boolean sending;
         /** "email", "whatsapp", "discord" or "instagram": the channel it opens on (the Reach picked), else the usual pick. */
         private final String kind;
-        /** A place switch: the channel kind it was on (its connections differ), and To as typed. */
-        private String switchKind = "", switchTo = "";
         /** What the Reach field held for that kind: To starts with it. */
         private String typedTo;
+        /** A place switch: the channel kind it was on (its connections differ), and To as typed. */
+        private String switchKind = "", switchTo = "";
 
         Compose(Collector a, String id, String name) { this(a, id, name, "", ""); }
 
@@ -83,14 +86,33 @@ final class CollectorCreator {
             this.id = id;
             root = Ui.col(a);
             root.setBackgroundColor(Ui.BG);
-            root.addView(topBar(a, name.isEmpty() ? "Send message" : "Send message · " + name, a::pop), Ui.fill());
+            Ds.TopBar bar = Ds.topBar(a, Ds.backButton(a, v -> a.pop()), "Send message");
+            if (name != null && !name.isEmpty()) bar.sub(name, Ui.G700);
+            root.addView(bar.view, Ui.fill());
             ScrollView sv = new ScrollView(a);
+            sv.setFillViewport(true);
             body = Ui.col(a);
-            body.setPadding(Ui.dp(16), Ui.dp(4), Ui.dp(16), Ui.dp(24));
+            body.setPadding(Ui.dp(16), Ui.dp(12), Ui.dp(16), Ui.dp(20));
             sv.addView(body);
             root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
+            // The sticky foot: the account it goes from, Send.
+            LinearLayout foot = Ui.col(a);
+            foot.setBackgroundColor(Ui.BG);
+            View line = new View(a);
+            line.setBackgroundColor(Ui.LINE);
+            foot.addView(line, new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))));
+            LinearLayout fr = Ui.row(a);
+            fr.setGravity(Gravity.CENTER_VERTICAL);
+            fr.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), Ui.dp(12));
+            fromLine = Ui.subtitle(Ui.text(a, "", 12.5f, Ui.G700));
+            fr.addView(fromLine, Ui.weight());
+            sendBtn = Ui.button(a, "Send", true, v -> confirm());
+            sendBtn.setCompoundDrawablePadding(Ui.dp(6));
+            fr.addView(sendBtn, Ui.margins(Ui.wrap(), 12, 0, 0, 0));
+            foot.addView(fr, Ui.fill());
+            root.addView(foot, Ui.fill());
             body.addView(Ds.empty(a, "Loading…"), Ui.fill());
-            load("", "", false);
+            load("", "", false, false, "");
         }
 
         @Override public View view() { return root; }
@@ -101,27 +123,43 @@ final class CollectorCreator {
         private String channel() { return c == null ? "" : c.optString("channel"); }
         private String sendKind() { return c == null ? "gmail" : c.optString("kind", "gmail"); }
         private boolean email() { return "gmail".equals(sendKind()); }
+        private String place() { return c == null ? "" : c.optString("place", ""); }
+        private String placeLabel() { return c == null ? "Creators" : c.optString("placeLabel", "Creators"); }
 
         static String kindLabel(String k) {
             return "whatsapp".equals(k) ? "WhatsApp" : "discord".equals(k) ? "Discord" : "instagram".equals(k) ? "Instagram" : "Email";
         }
 
-        private void load(String template, String channel, boolean keep) { load(template, channel, keep, false, ""); }
+        /** The brand mark's kind for a channel kind (Gmail is drawn as email). */
+        private static String mark(String k) { return "gmail".equals(k) ? "email" : k; }
 
-        private void load(String template, String channel, boolean keep, boolean remember) { load(template, channel, keep, remember, ""); }
+        private JSONObject picked() {
+            JSONArray chs = c == null ? null : c.optJSONArray("channels");
+            for (int i = 0; chs != null && i < chs.length(); i++) {
+                JSONObject ch = chs.optJSONObject(i);
+                if (ch != null && ch.optString("id").equals(channel())) return ch;
+            }
+            return null;
+        }
 
-        private String place() { return c == null ? "" : c.optString("place", ""); }
-        private String placeLabel() { return c == null ? "Creators" : c.optString("placeLabel", "Creators"); }
+        private String templateName() {
+            JSONArray ts = c == null ? null : c.optJSONArray("templates");
+            for (int i = 0; ts != null && i < ts.length(); i++) {
+                JSONObject t = ts.optJSONObject(i);
+                if (t != null && t.optString("id").equals(template())) return t.optString("name");
+            }
+            return "Template";
+        }
 
-        /** GET compose: the message for this template and channel; keep = the typed message stays (a channel switch);
-         *  remember = the user picked it, so the next composer (PC or phone) opens on that template and channel. */
-        /** place: where in Persons they go ("" the one picked last, else Creators); its connections are To's. */
+        /** GET compose: the message for this template, channel and Persons place ("" the one picked last); keep = what
+         *  was written stays (another channel or place); remember = the user picked it, so the next composer (PC or
+         *  phone) opens on it. */
         private void load(String template, String channel, boolean keep, boolean remember, String place) {
             if (h == null) return;
-            final String pl = place.isEmpty() ? place() : place;
-            final String want = !switchKind.isEmpty() ? switchKind : kind;
             final String keepText = keep && text != null ? text.getText().toString() : null;
             final String keepSubject = keep && subject != null ? subject.getText().toString() : null;
+            final String pl = place.isEmpty() ? place() : place;
+            final String want = !switchKind.isEmpty() ? switchKind : kind;
             Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(want) : "") + "&place=" + Collector.q(pl) + (remember ? "&remember=1" : "")), r -> {
                 c = r;
                 draw();
@@ -137,141 +175,241 @@ final class CollectorCreator {
             });
         }
 
+        /** A pill that opens a list (the destination, the place, the template): its mark, its label, a chevron. */
+        private LinearLayout pill(View lead, String label, View.OnClickListener on) {
+            LinearLayout p = Ui.row(a);
+            p.setGravity(Gravity.CENTER_VERTICAL);
+            p.setPadding(Ui.dp(12), 0, Ui.dp(10), 0);
+            p.setMinimumHeight(Ui.dp(40));
+            p.setBackground(Ui.press(Ui.G100, Ui.LINE, 20));
+            if (lead != null) p.addView(lead, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 8, 0));
+            TextView t = Ui.subtitle(Ui.bold(a, label, 14, Ui.FG));
+            p.addView(t, Ui.wrap());
+            p.addView(Ui.icon(a, Ui.I_DOWN, 14, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 6, 0, 0, 0));
+            p.setOnClickListener(on);
+            return p;
+        }
+
+        private TextView label(String s) {
+            TextView t = Ui.text(a, s, 13, Ui.G600);
+            t.setMinWidth(Ui.dp(34));
+            return t;
+        }
+
+        private View hairline() {
+            View v = new View(a);
+            v.setBackgroundColor(Ui.LINE);
+            return v;
+        }
+
         private void draw() {
             body.removeAllViews();
             to = subject = text = null;
             if (c == null) return;
-            // To: where it goes (every channel of the Persons place picked below; one that can't send says why) and the address.
-            body.addView(head("TO"), Ui.fill());
-            HorizontalScrollView hs = new HorizontalScrollView(a);
-            hs.setHorizontalScrollBarEnabled(false);
-            LinearLayout chips = Ui.row(a);
-            JSONArray chs = c.optJSONArray("channels");
-            JSONObject picked = null;
-            for (int i = 0; chs != null && i < chs.length(); i++) {
-                JSONObject ch = chs.optJSONObject(i);
-                if (ch == null) continue;
-                final String cid = ch.optString("id");
-                boolean on = cid.equals(channel());
-                if (on) picked = ch;
-                boolean ok = ch.optBoolean("connected");
-                TextView chip = Ds.chip(a, kindLabel(ch.optString("kind")), on, on ? null : v -> load(template(), cid, true, true));
-                if (!ok) chip.setAlpha(0.45f);
-                chips.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            }
-            hs.addView(chips);
-            body.addView(hs, Ui.fill());
-            if (chs == null || chs.length() == 0)
-                body.addView(Collector.pad(Ui.text(a, "Nothing to send on: connect Gmail, WhatsApp, Discord or Instagram in Persons › " + placeLabel() + ".", 12.5f, Ui.AMBER), 2), Ui.fill());
-            if (picked != null) {
-                String acc = picked.optString("account", "");
-                boolean ok = picked.optBoolean("connected");
-                String app = "gmail".equals(picked.optString("kind")) ? "Gmail" : kindLabel(picked.optString("kind"));
-                if (ok) body.addView(Collector.pad(Ui.text(a, "From " + (!acc.isEmpty() && !"null".equals(acc) ? acc + " · " : "") + picked.optString("conn", "Creators " + app), 12.5f, Ui.G700), 6), Ui.fill());
-                if (!picked.optString("why").isEmpty())
-                    body.addView(Collector.pad(Ui.text(a, picked.optString("why"), 12.5f, ok ? Ui.G600 : Ui.AMBER), 2), Ui.fill());
-            }
-            boolean em = email();
+            JSONObject picked = picked();
             String sk = sendKind();
-            to = Ui.input(a, em ? "name@example.com" : "whatsapp".equals(sk) ? "+55 11 91234-5678" : "discord".equals(sk) ? "Discord user ID (17-20 digits)" : "@handle", false);
+            boolean em = email();
+            // The composer card: To (destination + address), Subject, the message.
+            LinearLayout card = Ui.col(a);
+            card.setBackground(Ui.round(Ui.CARD, Ui.LINE, 16));
+            card.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(12));
+            LinearLayout tr = Ui.row(a);
+            tr.setGravity(Gravity.CENTER_VERTICAL);
+            tr.addView(label("To"), Ui.wrap());
+            tr.addView(pill(brand(a, mark(sk), 16, picked != null && picked.optBoolean("connected") ? brandColor(mark(sk)) : Ui.G600), picked == null ? "Pick where it goes" : kindLabel(sk), v -> pickDestination()), Ui.wrap());
+            card.addView(tr, Ui.fill());
+            to = Ui.input(a, em ? "their@email.com" : "whatsapp".equals(sk) ? "+55 11 91234-5678" : "discord".equals(sk) ? "Discord user ID (17-20 digits)" : "@handle", false);
             to.setInputType(em ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(sk) ? InputType.TYPE_CLASS_PHONE : "discord".equals(sk) ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT);
             to.setTypeface(Ui.sans);
+            to.setBackground(Ui.round(Ui.BG, Ui.LINE, 12));
             to.setText(c.optString("to"));
-            body.addView(to, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+            card.addView(to, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+            if (picked != null && !picked.optString("why").isEmpty())
+                card.addView(Collector.pad(Ui.text(a, picked.optString("why"), 12.5f, picked.optBoolean("connected") ? Ui.G600 : Ui.AMBER), 6), Ui.fill());
+            JSONArray chs = c.optJSONArray("channels");
+            if (chs == null || chs.length() == 0)
+                card.addView(Collector.pad(Ui.text(a, "Nothing to send on: connect Gmail, WhatsApp, Discord or Instagram in Persons › " + placeLabel() + ".", 12.5f, Ui.AMBER), 6), Ui.fill());
+            card.addView(hairline(), Ui.margins(new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))), -12, 12, -12, 12));
             if (em) {
-                body.addView(label("Subject"), Ui.fill());
                 subject = Ui.input(a, "Subject", false);
                 subject.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+                subject.setBackground(Ui.round(Ui.BG, Ui.LINE, 12));
                 subject.setText(c.optString("subject"));
-                body.addView(subject, Ui.fill());
+                card.addView(subject, Ui.margins(Ui.fill(), 0, 0, 0, 10));
             }
-            body.addView(label("Message"), Ui.fill());
             text = Ui.input(a, "Write the message", true);
-            text.setMinLines(8);
+            text.setMinLines(9);
             text.setGravity(Gravity.TOP | Gravity.START);
+            text.setLineSpacing(0, 1.12f);
+            text.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            text.setBackground(Ui.round(Ui.BG, Ui.LINE, 12));
             text.setText(c.optString("text"));
-            body.addView(text, Ui.fill());
-            // The template the message starts from.
-            body.addView(head("TEMPLATE"), Ui.fill());
-            LinearLayout tl = Ds.card(a);
-            tl.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
-            JSONArray ts = c.optJSONArray("templates");
-            for (int i = 0; ts != null && i < ts.length(); i++) {
-                JSONObject t = ts.optJSONObject(i);
-                if (t == null) continue;
-                final String tid = t.optString("id");
-                boolean on = tid.equals(template());
-                LinearLayout r = Ds.row(a, on);
-                LinearLayout col = Ui.col(a);
-                col.addView(Ds.rowTitle(a, t.optString("name"), on, Ui.FG), Ui.fill());
-                if (!t.optString("description").isEmpty()) col.addView(Ui.subtitle(Ui.text(a, t.optString("description"), 12.5f, Ui.G600)), Ui.fill());
-                r.addView(col, Ui.weight());
-                if (on) r.addView(Ui.icon(a, Ui.I_CHECK, 16, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
-                r.setOnClickListener(on ? null : v -> load(tid, channel(), false, true));
-                tl.addView(r, Ui.fill());
-            }
-            body.addView(tl, Ui.fill());
+            card.addView(text, Ui.fill());
+            body.addView(card, Ui.fill());
+            // Where in Persons they go.
+            LinearLayout pr = Ui.row(a);
+            pr.setGravity(Gravity.CENTER_VERTICAL);
+            pr.addView(Ui.text(a, "Add to Persons ›", 13.5f, Ui.G700), Ui.margins(Ui.wrap(), 2, 0, 10, 0));
+            pr.addView(pill(Ui.icon(a, Ui.I_USERS, 14, Ui.G700), placeLabel(), v -> pickPlace()), Ui.wrap());
+            body.addView(pr, Ui.margins(Ui.fill(), 0, 16, 0, 0));
+            // The template: pick one (it fills the message again), save what's written into it, or edit it.
+            LinearLayout tl = Ui.row(a);
+            tl.setGravity(Gravity.CENTER_VERTICAL);
+            tl.addView(Ui.text(a, "Template", 13.5f, Ui.G700), Ui.margins(Ui.wrap(), 2, 0, 10, 0));
+            tl.addView(pill(Ui.icon(a, Ui.I_FILE, 14, Ui.G700), templateName(), v -> pickTemplate()), Ui.wrap());
+            body.addView(tl, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+            LinearLayout tb = Ui.row(a);
+            tb.addView(Ui.rowButton(a, "Save as template", false, v -> saveAsTemplate()), Ui.wrap());
+            tb.addView(Ui.rowButton(a, "Edit template", false, v -> editTemplate()), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            body.addView(tb, Ui.margins(Ui.fill(), 0, 10, 0, 0));
             // The guards.
             JSONObject g = c.optJSONObject("guard");
             boolean blocked = false;
             if (g != null) {
                 int limit = g.optInt("limit"), sent = g.optInt("sentToday");
-                if (limit > 0) {
-                    blocked = sent >= limit;
-                    body.addView(Collector.pad(Ui.text(a, sent + "/" + limit + " sent in the last 24 h" + (blocked ? ": try again later" : ""), 12.5f, blocked ? Ui.RED : Ui.G600), 10), Ui.fill());
+                if (limit > 0 && sent >= limit) {
+                    blocked = true;
+                    body.addView(Collector.pad(Ui.text(a, limit + " new emails in the last 24 h from this account already: try again later.", 12.5f, Ui.RED), 14), Ui.fill());
                 }
                 String already = g.optString("already", "");
-                if (!already.isEmpty() && !"null".equals(already)) body.addView(Collector.pad(Ui.text(a, already, 12.5f, Ui.AMBER), 2), Ui.fill());
+                if (!already.isEmpty() && !"null".equals(already)) body.addView(Collector.pad(Ui.text(a, already, 12.5f, Ui.AMBER), 10), Ui.fill());
                 if (g.optBoolean("justSent")) {
                     blocked = true;
-                    body.addView(Collector.pad(Ui.text(a, "Just sent to them: wait a couple of minutes before another.", 12.5f, Ui.RED), 2), Ui.fill());
+                    body.addView(Collector.pad(Ui.text(a, "Just sent to them: wait a couple of minutes before another.", 12.5f, Ui.RED), 10), Ui.fill());
                 }
             }
-            // Where in Persons they go (a store, Creators, SpokPay, Personal): To's channels are that place's.
-            body.addView(head("ADD TO PERSONS"), Ui.fill());
-            HorizontalScrollView ps = new HorizontalScrollView(a);
-            ps.setHorizontalScrollBarEnabled(false);
-            LinearLayout pchips = Ui.row(a);
-            JSONArray pls = c.optJSONArray("places");
-            for (int i = 0; pls != null && i < pls.length(); i++) {
+            // The foot: from, Send.
+            boolean ok = picked != null && picked.optBoolean("connected");
+            String acc = picked == null ? "" : picked.optString("account", "");
+            String conn = picked == null ? "" : picked.optString("conn", "");
+            fromLine.setText(ok ? "From " + (!acc.isEmpty() && !"null".equals(acc) ? acc + " · " : "") + conn : picked == null ? "Nothing to send on" : picked.optString("why"));
+            fromLine.setTextColor(ok ? Ui.G700 : Ui.AMBER);
+            boolean can = ok && !blocked && !sending;
+            sendBtn.setText(sending ? "Sending…" : "Send");
+            sendBtn.setEnabled(can);
+            sendBtn.setAlpha(can ? 1f : 0.45f);
+        }
+
+        /** A list over the screen (the destination, the place, the template): rows of a mark, a title and a line under
+         *  it, the picked one ticked; a tap picks and closes it. */
+        private void sheet(String title, java.util.List<View> rows, java.util.List<Runnable> picks) {
+            android.app.Dialog dlg = new android.app.Dialog(a);
+            dlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+            LinearLayout box = Ui.col(a);
+            box.setBackground(Ui.round(Ui.CARD, Ui.LINE, 18));
+            box.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(6), Ui.dp(8));
+            TextView t = Ds.caps(a, title, false);
+            t.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(6));
+            box.addView(t, Ui.fill());
+            for (int i = 0; i < rows.size(); i++) {
+                final Runnable run = picks.get(i);
+                View r = rows.get(i);
+                r.setOnClickListener(v -> { dlg.dismiss(); if (run != null) run.run(); });
+                box.addView(r, Ui.fill());
+            }
+            ScrollView sv = new ScrollView(a);
+            sv.addView(box);
+            dlg.setContentView(sv);
+            android.view.Window w = dlg.getWindow();
+            if (w != null) {
+                w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+                w.setLayout(a.getResources().getDisplayMetrics().widthPixels - Ui.dp(32), android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+                w.setDimAmount(0.6f);
+            }
+            dlg.setCanceledOnTouchOutside(true);
+            dlg.show();
+        }
+
+        /** One row of a list: its mark, the title (and what's beside it), the line under it, a tick when picked. */
+        private LinearLayout sheetRow(View mark, String title, String beside, String under, int underColor, boolean on, boolean dim) {
+            LinearLayout r = Ui.row(a);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setMinimumHeight(Ui.dp(56));
+            r.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(12), Ui.dp(8));
+            r.setBackground(Ui.press(on ? Ui.G100 : 0, 0, 12));
+            if (mark != null) {
+                android.widget.FrameLayout f = new android.widget.FrameLayout(a);
+                f.setBackground(Ui.round(Ui.G100, 0, 10));
+                f.addView(mark, new android.widget.FrameLayout.LayoutParams(Ui.dp(16), Ui.dp(16), Gravity.CENTER));
+                r.addView(f, new LinearLayout.LayoutParams(Ui.dp(34), Ui.dp(34)));
+            }
+            LinearLayout col = Ui.col(a);
+            col.setPadding(Ui.dp(12), 0, Ui.dp(8), 0);
+            LinearLayout tl = Ui.row(a);
+            tl.addView(Ui.bold(a, title, 15, dim ? Ui.G600 : Ui.FG), Ui.wrap());
+            if (beside != null && !beside.isEmpty()) tl.addView(Ui.subtitle(Ui.text(a, beside, 14, Ui.G700)), Ui.margins(Ui.weight(), 8, 0, 0, 0));
+            col.addView(tl, Ui.fill());
+            if (under != null && !under.isEmpty()) {
+                TextView u = Ui.text(a, under, 12.5f, underColor);
+                u.setMaxLines(2);
+                u.setEllipsize(TextUtils.TruncateAt.END);
+                col.addView(u, Ui.margins(Ui.fill(), 0, 2, 0, 0));
+            }
+            r.addView(col, Ui.weight());
+            if (on) r.addView(Ui.icon(a, Ui.I_CHECK, 16, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
+            return r;
+        }
+
+        private void pickDestination() {
+            JSONArray chs = c == null ? null : c.optJSONArray("channels");
+            if (chs == null || chs.length() == 0) { Ui.toast(a, "Nothing to send on in Persons › " + placeLabel() + "."); return; }
+            java.util.List<View> rows = new java.util.ArrayList<>();
+            java.util.List<Runnable> picks = new java.util.ArrayList<>();
+            for (int i = 0; i < chs.length(); i++) {
+                JSONObject ch = chs.optJSONObject(i);
+                if (ch == null) continue;
+                final String cid = ch.optString("id");
+                boolean ok = ch.optBoolean("connected"), on = cid.equals(channel());
+                String k = mark(ch.optString("kind"));
+                String acc = ch.optString("account", "");
+                String under = ok ? ch.optString("conn") + (!acc.isEmpty() && !"null".equals(acc) ? " · " + acc : "") + (ch.optString("to").isEmpty() ? " · none yet: type it in To" : "") : ch.optString("why");
+                rows.add(sheetRow(brand(a, k, 16, ok ? brandColor(k) : Ui.G600), kindLabel(ch.optString("kind")), ch.optString("to"), under, ok ? Ui.G600 : Ui.AMBER, on, !ok));
+                picks.add(on ? null : () -> load(template(), cid, true, true, ""));
+            }
+            sheet("Send through Persons › " + placeLabel(), rows, picks);
+        }
+
+        private void pickPlace() {
+            JSONArray pls = c == null ? null : c.optJSONArray("places");
+            if (pls == null || pls.length() == 0) return;
+            java.util.List<View> rows = new java.util.ArrayList<>();
+            java.util.List<Runnable> picks = new java.util.ArrayList<>();
+            for (int i = 0; i < pls.length(); i++) {
                 JSONObject p = pls.optJSONObject(i);
                 if (p == null) continue;
                 final String pv = p.optString("value");
                 boolean on = pv.equals(place());
-                pchips.addView(Ds.chip(a, p.optString("label"), on, on ? null : v -> {
+                boolean store = "stores".equals(p.optString("section"));
+                rows.add(sheetRow(Ui.icon(a, store ? Ui.I_TAG : Ui.I_USERS, 15, Ui.G900), p.optString("label"), "", store ? "A store (Stores' connections)" : "", Ui.G600, on, false));
+                picks.add(on ? null : () -> {
                     // the same kind of channel there when it has one, and what's written stays
                     switchKind = sendKind();
                     switchTo = to == null ? "" : to.getText().toString();
                     load(template(), "", true, true, pv);
-                }), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+                });
             }
-            ps.addView(pchips);
-            body.addView(ps, Ui.fill());
-            // Edit template, Send.
-            LinearLayout btns = Ui.row(a);
-            btns.addView(Ui.button(a, "Edit template", false, v -> editTemplate()), Ui.wrap());
-            boolean can = picked != null && picked.optBoolean("connected") && !blocked && !sending;
-            TextView send = Ui.button(a, sending ? "Sending…" : "Send", true, can ? v -> confirm() : null);
-            if (!can) send.setAlpha(0.5f);
-            btns.addView(send, Ui.margins(Ui.weight(), 8, 0, 0, 0));
-            body.addView(btns, Ui.margins(Ui.fill(), 0, 14, 0, 0));
+            sheet("Add them to", rows, picks);
         }
 
-        private TextView head(String s) {
-            TextView t = Ds.caps(a, s, false);
-            t.setPadding(Ui.dp(4), Ui.dp(16), 0, Ui.dp(6));
-            return t;
-        }
-
-        private TextView label(String s) {
-            TextView t = Ui.text(a, s, 13, Ui.G700);
-            t.setPadding(Ui.dp(2), Ui.dp(12), 0, Ui.dp(6));
-            return t;
+        private void pickTemplate() {
+            JSONArray ts = c == null ? null : c.optJSONArray("templates");
+            if (ts == null || ts.length() == 0) return;
+            java.util.List<View> rows = new java.util.ArrayList<>();
+            java.util.List<Runnable> picks = new java.util.ArrayList<>();
+            for (int i = 0; i < ts.length(); i++) {
+                JSONObject t = ts.optJSONObject(i);
+                if (t == null) continue;
+                final String tid = t.optString("id");
+                boolean on = tid.equals(template());
+                rows.add(sheetRow(null, t.optString("name"), "", t.optString("description"), Ui.G600, on, false));
+                picks.add(on ? null : () -> load(tid, channel(), false, true, ""));
+            }
+            sheet("Template", rows, picks);
         }
 
         /** Asks before the real send: to whom, on what, the subject and the start of the message. */
         private void confirm() {
-            if (c == null || to == null || text == null) return;
+            if (c == null || to == null || text == null || sending) return;
             final String dest = to.getText().toString().trim();
             final String subj = subject == null ? "" : subject.getText().toString().trim();
             final String msg = text.getText().toString().trim();
@@ -282,7 +420,7 @@ final class CollectorCreator {
             if (em && subj.isEmpty()) { Ui.toast(a, "Add a subject."); return; }
             String preview = msg.length() > 280 ? msg.substring(0, 280) + "…" : msg;
             Ui.dialog(a).setTitle(em ? "Send this email to " + dest + "?" : "Send this " + kindLabel(sk) + " message to " + dest + "?")
-                    .setMessage((em ? "Subject: " + subj + "\n\n" : "") + preview)
+                    .setMessage((em ? "Subject: " + subj + "\n\n" : "") + preview + "\n\nThey go to Persons › " + placeLabel() + ".")
                     .setPositiveButton("Send", (dlg, w) -> send(dest, subj, msg))
                     .setNegativeButton("Cancel", null)
                     .show();
@@ -322,6 +460,36 @@ final class CollectorCreator {
             if (to != null) to.setText(dest);
             if (subject != null) subject.setText(subj);
             if (text != null) text.setText(msg);
+        }
+
+        /** Save as template (the PC's): the subject and message as written go into the picked template (a new one from
+         *  Blank), the lead's name turned back into {name}. */
+        private void saveAsTemplate() {
+            if (h == null || c == null || text == null) return;
+            String tid = template();
+            String name = c.optString("name");
+            String bd = text.getText().toString();
+            if (!name.isEmpty()) bd = bd.replace(name, "{name}");
+            JSONObject b = new JSONObject();
+            try {
+                if (!tid.isEmpty() && !"blank".equals(tid)) b.put("id", tid).put("name", templateName());
+                else b.put("name", "Template " + new java.text.SimpleDateFormat("dd/MM/yyyy", Locale.US).format(new java.util.Date())).put("description", "");
+                b.put("subject", subject == null ? "" : subject.getText().toString()).put("body", bd);
+            } catch (Exception ignored) { }
+            final String keepS = subject == null ? null : subject.getText().toString();
+            final String keepT = text.getText().toString();
+            final String ch = channel();
+            Ui.bg(a, () -> h.call("POST", "/v1/collector/template", b), r -> {
+                JSONObject t = r.optJSONObject("template");
+                Ui.toast(a, "Template saved");
+                String nid = t == null ? tid : t.optString("id", tid);
+                Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(nid) + "&channel=" + Collector.q(ch) + "&place=" + Collector.q(place()) + "&remember=1"), r2 -> {
+                    String dest = to == null ? "" : to.getText().toString();
+                    c = r2;
+                    draw();
+                    restore(dest, keepS == null ? "" : keepS, keepT);
+                });
+            });
         }
 
         /** The picked template itself ({name} and {handle} as they are): name, description, subject, body; Save
@@ -382,7 +550,7 @@ final class CollectorCreator {
             Ui.bg(a, () -> h.call("POST", "/v1/collector/template", b), r -> {
                 JSONObject t = r.optJSONObject("template");
                 Ui.toast(a, "Template saved");
-                load(t == null ? tid : t.optString("id", tid), ch, false);
+                load(t == null ? tid : t.optString("id", tid), ch, false, true, "");
             });
         }
     }
@@ -499,18 +667,17 @@ final class CollectorCreator {
 
     /** A lead's profile, full screen over the tab (the PC's detail dialog, the SpokPay CRM's creator profile, on the
      *  phone's design system). The top bar: back, the name, "3 of 121" and the previous / next lead of the list it was
-     *  opened from. Then the profile: the picture, name, platform and handle, Approved / Restricted / Has contact, the
-     *  stat tiles (followers, videos, views), Send message and Open channel, then Edit, Email, Approve to Persons ›
-     *  Creators and Restrict as chips; then cards: Recent videos (3, a tap opens one), Bio, Contact (the email with
-     *  where it was found, typed by hand with its pencil; Reach: Email, Discord, WhatsApp, Instagram, one value, Save /
-     *  Clear, Send), Links, Note (private), and where it was found. At the bottom the review bar: Reject / Skip /
+     *  opened from. Then the profile as the PC's dialog has it: the picture, name, platform and handle, Approved /
+     *  Restricted / Has contact, Open channel and Edit, the stat tiles (followers, videos, views), then cards: Most
+     *  recent (3, a tap opens one), Bio, Reach (Email, Discord, WhatsApp, Instagram, one value, Save / Clear, Send
+     *  message). At the bottom, while the lead is under review (not Approved), the review bar: Reject / Skip /
      *  Approve, each going on to the next lead. GET /v1/collector/creator, then POST fill (an older lead's missing data,
      *  read once). */
     static final class Detail implements Collector.Screen {
         private final Collector a;
         private final Hub h;
         private final String id, title;
-        private final LinearLayout root, body;
+        private final LinearLayout root, body, foot;
         private final Ds.TopBar bar;
         private final TextView prev, next;
         private final java.util.List<String> queue;
@@ -556,7 +723,7 @@ final class CollectorCreator {
             body.setPadding(Ui.dp(16), Ui.dp(8), Ui.dp(16), Ui.dp(24));
             sv.addView(body);
             root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
-            LinearLayout foot = Ui.col(a);
+            foot = Ui.col(a);
             foot.setBackgroundColor(Ui.BG);
             View top = new View(a);
             top.setBackgroundColor(Ui.LINE);
@@ -737,6 +904,11 @@ final class CollectorCreator {
             if (d.optBoolean("hasContact")) tags.addView(tag("Has contact", Ui.G900), Ui.margins(Ui.wrap(), 3, 0, 3, 0));
             if (tags.getChildCount() > 0) head.addView(tags, Ui.margins(Ui.wrap(), 0, 10, 0, 0));
             body.addView(head, Ui.fill());
+            // Open channel and Edit (the PC dialog's header actions); Send message is Reach's.
+            LinearLayout acts = Ui.row(a);
+            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), new LinearLayout.LayoutParams(0, -2, 1));
+            acts.addView(Ui.button(a, "Edit", false, v -> edit()), Ui.margins(new LinearLayout.LayoutParams(0, -2, 1), url.isEmpty() ? 0 : 8, 0, 0, 0));
+            body.addView(acts, Ui.margins(Ui.fill(), 0, 16, 0, 0));
             // The stat tiles (only those with data): followers, videos, views.
             JSONArray st = d.optJSONArray("stats");
             if (st != null && st.length() > 0) {
@@ -766,26 +938,10 @@ final class CollectorCreator {
                 t.setGravity(Gravity.CENTER);
                 body.addView(t, Ui.margins(Ui.fill(), 0, 14, 0, 0));
             }
-            // Send message (primary) and Open channel; then the quieter actions as chips.
-            LinearLayout acts = Ui.row(a);
-            TextView send = Ui.button(a, "Send message", true, v -> a.push(new Compose(a, id, name)));
-            acts.addView(send, new LinearLayout.LayoutParams(0, -2, 1));
-            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.margins(new LinearLayout.LayoutParams(0, -2, 1), 8, 0, 0, 0));
-            body.addView(acts, Ui.margins(Ui.fill(), 0, 16, 0, 0));
-            HorizontalScrollView hs = new HorizontalScrollView(a);
-            hs.setHorizontalScrollBarEnabled(false);
-            LinearLayout chips = Ui.row(a);
-            chips.addView(Ds.chip(a, "Edit profile", false, v -> edit()), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            if (!approved) chips.addView(Ds.chip(a, "Approve to Persons › Creators", false, v -> approveToPersons(name)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            else chips.addView(Ds.chip(a, "Unapprove", false, v -> a.post("approve", () -> load(false), "id", id, "approved", false)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            if (!approved) chips.addView(Ds.chip(a, restricted ? "Unrestrict" : "Restrict", false, v -> a.post("restrict", () -> load(false), "id", id, "restricted", !restricted)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            if (!url.isEmpty()) chips.addView(Ds.chip(a, "Copy link", false, v -> Ui.copy(a, url)), Ui.wrap());
-            hs.addView(chips);
-            body.addView(hs, Ui.margins(Ui.fill(), 0, 10, 0, 0));
             // Recent videos: three across (16:9 for YouTube, upright for Shorts, TikTok and Reels).
             JSONArray rv = d.optJSONArray("recent");
             if (rv != null && rv.length() > 0) {
-                LinearLayout c = card(I_FLAME, "Recent videos", null, null);
+                LinearLayout c = card(I_FLAME, "Most recent", null, null);
                 LinearLayout row = Ui.row(a);
                 row.setBaselineAligned(false); // tops in line, whatever their titles' lines
                 row.setGravity(Gravity.TOP);
@@ -812,18 +968,9 @@ final class CollectorCreator {
                 t.setOnClickListener(v -> { t.setMaxLines(Integer.MAX_VALUE); t.setEllipsize(null); });
                 bc.addView(t, Ui.fill());
             }
-            drawContact();
-            drawLinks();
-            drawNote();
-            // Where it came from, and what happened with them.
-            String via = d.optString("foundVia"), ct = d.optString("contacted"), an = d.optString("approvedNote");
-            String meta = join("\n", via.isEmpty() ? "" : "Found searching “" + via + "”", ct, an);
-            if (!meta.isEmpty()) {
-                TextView t = Ui.text(a, meta, 12.5f, Ui.G600);
-                t.setGravity(Gravity.CENTER);
-                t.setLineSpacing(0, 1.2f);
-                body.addView(t, Ui.margins(Ui.fill(), 0, 16, 0, 0));
-            }
+            drawReach();
+            // The review bar only while the lead is under review (not an Approved or Sent one).
+            foot.setVisibility(approved || d.optBoolean("sent") ? View.GONE : View.VISIBLE);
         }
 
         /** Approve and add them to Persons › Creators (no message sent): the PC's "Approve to: Persons". */
@@ -859,31 +1006,10 @@ final class CollectorCreator {
             return t;
         }
 
-        /** Contact: the email (where it was found; the pencil types one by hand, which a found one never replaces),
-         *  then Reach: the four kinds, the picked one's value, Save / Clear, and Send message (that kind's channel). */
-        private void drawContact() {
-            LinearLayout c = card(I_MAIL, "Contact", null, null);
-            final String email = d.optString("email"), src = d.optString("emailSource");
-            LinearLayout er = Ui.row(a);
-            er.setGravity(Gravity.CENTER_VERTICAL);
-            er.setMinimumHeight(Ui.dp(44));
-            er.setBackground(Ui.press(0, 0, 10));
-            er.addView(Ui.icon(a, I_MAIL, 16, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
-            LinearLayout et = Ui.col(a);
-            et.setPadding(Ui.dp(10), 0, Ui.dp(6), 0);
-            et.addView(Ui.subtitle(Ui.text(a, email.isEmpty() ? "No email yet" : email, 14.5f, email.isEmpty() ? Ui.G600 : Ui.FG)), Ui.fill());
-            if (!src.isEmpty()) et.addView(Ui.subtitle(Ui.text(a, "typed".equals(src) ? "Typed by hand" : "Found in " + src, 12, Ui.G600)), Ui.fill());
-            er.addView(et, Ui.weight());
-            TextView pen = Ui.icon(a, I_PENCIL, 16, Ui.G900);
-            er.addView(pen, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
-            er.setContentDescription(email.isEmpty() ? "Add email" : "Edit email");
-            er.setOnClickListener(v -> a.editEmail(id, email, () -> load(false)));
-            c.addView(er, Ui.fill());
-            View line = new View(a);
-            line.setBackgroundColor(Ui.LINE);
-            c.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))), 0, 8, 0, 10));
-            TextView rh = Ui.text(a, "Reach: one way to contact them (its icon shows on their card).", 12.5f, Ui.G600);
-            c.addView(rh, Ui.fill());
+        /** Reach (the PC dialog's): one way to contact them, Email, Discord, WhatsApp or Instagram (the email found shows
+         *  under Email), the picked one's value, Save / Clear, and Send message (that kind's channel when it was tapped). */
+        private void drawReach() {
+            LinearLayout c = card(I_MAIL, "Reach", null, null);
             LinearLayout kinds = Ui.row(a);
             for (final String k : REACH) {
                 boolean on = k.equals(kind);
@@ -902,7 +1028,7 @@ final class CollectorCreator {
                 });
                 kinds.addView(b, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(40)), 0, 0, 6, 0));
             }
-            c.addView(kinds, Ui.margins(Ui.fill(), 0, 8, 0, 8));
+            c.addView(kinds, Ui.margins(Ui.fill(), 0, 0, 0, 8));
             field = Ui.input(a, "email".equals(kind) ? "name@studio.com" : "discord".equals(kind) ? "Discord user ID (17-20 digits)" : "whatsapp".equals(kind) ? "+55 21 97570-9440" : "@handle", false);
             field.setInputType("email".equals(kind) ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(kind) ? InputType.TYPE_CLASS_PHONE : "discord".equals(kind) ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT);
             field.setTypeface(Ui.sans);

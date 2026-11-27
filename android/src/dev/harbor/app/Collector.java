@@ -84,10 +84,10 @@ public class Collector extends Base {
         super.onCreate(b);
         hub = Tabs.hub(this);
         String p = getIntent().getStringExtra("page");
-        if ("available".equals(p) || "approved".equals(p) || "restricted".equals(p) || "history".equals(p)) sel = p;
+        if ("available".equals(p) || "approved".equals(p) || "sent".equals(p) || "restricted".equals(p) || "history".equals(p)) sel = p;
         firstRun = "history".equals(p) && "first".equals(getIntent().getStringExtra("run"));
-        // The shared frame: the top bar (the side-panel button, the view's name), the page, the tab bar; the five
-        // views (Collector, Available, Approved, Restricted with their counts, History) are the drawer's rows.
+        // The shared frame: the top bar (the side-panel button, the view's name), the page, the tab bar; the six
+        // views (Collector, Available, Approved, Sent, Restricted with their counts, History) are the drawer's rows.
         LinearLayout col = frame("Collector", menuButton(), false);
         segs = Ui.col(this);
         segs.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
@@ -104,7 +104,7 @@ public class Collector extends Base {
         listBar = Ui.row(this);
         listBar.setGravity(Gravity.CENTER_VERTICAL);
         listBar.addView(filter, Ui.weight());
-        sortBtn = listButton(v -> pickSort());
+        sortBtn = listButton(v -> { if (!"sent".equals(sel)) pickSort(); });
         platBtn = listButton(v -> pickPlatforms());
         listBar.addView(sortBtn, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         listBar.addView(platBtn, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
@@ -132,7 +132,7 @@ public class Collector extends Base {
         installTab(Tabs.COLLECTOR, Ds.drawer(this, "Collector", ds));
         // Right after a live restart (Swap) or a crash: the view, its filter, the list's place, an open lead.
         String ls = Swap.state(this, b, "sel");
-        if ("collector".equals(ls) || "available".equals(ls) || "approved".equals(ls) || "restricted".equals(ls) || "history".equals(ls)) sel = ls;
+        if ("collector".equals(ls) || "available".equals(ls) || "approved".equals(ls) || "sent".equals(ls) || "restricted".equals(ls) || "history".equals(ls)) sel = ls;
         String lr = Swap.state(this, b, "hrun");
         if (lr != null) histRun = lr;
         String lf = Swap.state(this, b, "filter");
@@ -293,7 +293,7 @@ public class Collector extends Base {
         form.setVisibility(lists ? View.GONE : View.VISIBLE);
         listBar.setVisibility(lists && !history && view != null ? View.VISIBLE : View.GONE);
         if (view != null) {
-            sortBtn.setText(sortShort(sortLabel(settings().optString("sort", "followers-desc"))) + "  ▾");
+            sortBtn.setText("sent".equals(sel) ? "Newest sent" : sortShort(sortLabel(settings().optString("sort", "followers-desc"))) + "  ▾");
             List<String> only = platforms();
             platBtn.setText((only.isEmpty() ? "All" : only.size() == 1 ? platformLabel(only.get(0)) : only.size() + " platforms") + "  ▾");
             platBtn.setTextColor(only.isEmpty() ? Ui.G700 : Ui.FG);
@@ -308,10 +308,11 @@ public class Collector extends Base {
             return;
         }
         JSONObject c = view.optJSONObject("counts");
-        int avail = c == null ? 0 : c.optInt("available"), appr = c == null ? 0 : c.optInt("approved"), restr = c == null ? 0 : c.optInt("restricted");
+        int avail = c == null ? 0 : c.optInt("available"), appr = c == null ? 0 : c.optInt("approved"), restr = c == null ? 0 : c.optInt("restricted"), sentN = c == null ? 0 : c.optInt("sent");
         seg("collector", "Collector", running() ? "running" : "");
         seg("available", "Available", avail > 0 ? String.valueOf(avail) : "");
         seg("approved", "Approved", appr > 0 ? String.valueOf(appr) : "");
+        seg("sent", "Sent", sentN > 0 ? String.valueOf(sentN) : "");
         seg("restricted", "Restricted", restr > 0 ? String.valueOf(restr) : "");
         seg("history", "History", "");
         if (firstRun) {
@@ -337,7 +338,7 @@ public class Collector extends Base {
         boolean on = id.equals(sel);
         if (on) barTitle.setText(label);
         String glyph = "collector".equals(id) ? Ui.I_SEARCH : "available".equals(id) ? Ui.I_USERS
-                : "approved".equals(id) ? Ui.I_CIRCLE_CHECK : "history".equals(id) ? I_HISTORY : Ui.I_CIRCLE_SLASH;
+                : "approved".equals(id) ? Ui.I_CIRCLE_CHECK : "sent".equals(id) ? Ui.I_SEND : "history".equals(id) ? I_HISTORY : Ui.I_CIRCLE_SLASH;
         segs.addView(Ds.navRow(this, glyph, label, count, on, v -> {
             closeDrawer();
             if (id.equals(sel) && histRun.isEmpty()) return;
@@ -548,9 +549,9 @@ public class Collector extends Base {
         runRow.addView(t, Ui.weight());
     }
 
-    /** Which list a lead is in: Restricted, Approved, else Available. */
+    /** Which list a lead is in: Restricted, Sent (a message reached them), Approved, else Available. */
     static String listOf(JSONObject o) {
-        return o.optBoolean("restricted") ? "restricted" : o.optBoolean("approved") ? "approved" : "available";
+        return o.optBoolean("restricted") ? "restricted" : o.optBoolean("sent") ? "sent" : o.optBoolean("approved") ? "approved" : "available";
     }
 
     /** The leads a view shows, in its order: the run's (still pending) on Collector, the others' list filtered by `f`. */
@@ -595,6 +596,11 @@ public class Collector extends Base {
             if (!only.isEmpty() && !only.contains(o.optString("platformKey"))) continue;
             String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short")).toLowerCase(Locale.ROOT);
             if (f.isEmpty() || hay.contains(f)) rows.add(o);
+        }
+        // Sent: the newest sent first (Sort doesn't apply there)
+        if ("sent".equals(which)) {
+            rows.sort((x, y) -> y.optString("sentAt").compareTo(x.optString("sentAt")));
+            return rows;
         }
         return sortRows(rows, settings().optString("sort", "followers-desc"));
     }
@@ -1120,6 +1126,7 @@ public class Collector extends Base {
             for (int i = 0; every != null && i < every.length(); i++) if (every.optJSONObject(i) != null && sel.equals(listOf(every.optJSONObject(i)))) total++;
             String none = "restricted".equals(sel) ? "Nobody restricted. Restrict a lead (or Reject it in its detail) to keep it out of Available; it stays remembered, so no run collects it again."
                     : "approved".equals(sel) ? "Nobody approved. Open a lead and tap Approve: approved leads leave Available and stay remembered, so no run collects them again."
+                    : "sent".equals(sel) ? "Nobody written to yet. Once a message to a lead goes out (Send message, or from Persons) by email, WhatsApp, Discord or Instagram, it moves here. A failed send doesn't."
                     : "No leads yet. Collect some from the Collector view.";
             empty = total == 0 ? none : !f.isEmpty() ? "Nobody matches “" + filter.getText().toString().trim() + "”." : "Nobody here on the platforms picked.";
         }
@@ -1317,6 +1324,12 @@ public class Collector extends Base {
             String src = r.optString("emailSource");
             email.setText(mail.isEmpty() ? "Add email" : mail + (src.isEmpty() ? "" : "  · " + src));
             email.setTextColor(mail.isEmpty() ? Ui.G600 : Ui.FG);
+            // Sent: the channel and the day it went
+            String sl = r.optString("sentLine", "");
+            if ("sent".equals(sel) && !sl.isEmpty()) {
+                email.setText("Sent · " + sl);
+                email.setTextColor(Ui.FG);
+            }
             JSONArray vids = r.optJSONArray("videos");
             boolean any = vids != null && vids.length() > 0;
             thumbs.setVisibility(any ? View.VISIBLE : View.GONE);

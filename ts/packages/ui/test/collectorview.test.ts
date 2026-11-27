@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bioLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -185,6 +185,13 @@ describe("collector lead detail", () => {
     const r = destRows(c);
     expect(r.map((x) => [x.kind, x.to, x.on, x.available])).toEqual([["email", "a@b.co", false, true], ["whatsapp", "", false, true], ["discord", "123456789012345678", true, true], ["instagram", "@ana", false, false]]);
     expect(r.map((x) => x.via)).toEqual(["Creators Gmail · igor@spokpay.com", "Creators WhatsApp · none yet: type it in To", "Creators Discord · spokpay", "Persons › Creators has no Instagram: add one there (Creators › Connections)."]);
+  });
+});
+
+describe("review bar", () => {
+  it("shows only for leads under review: not Approved ones, nor Sent's", () => {
+    expect([underReview({}, "available"), underReview({}, "collector"), underReview({}, "restricted")]).toEqual([true, true, true]);
+    expect([underReview({ approved: true }, "history"), underReview({}, "approved"), underReview({}, "sent")]).toEqual([false, false, false]);
   });
 });
 
