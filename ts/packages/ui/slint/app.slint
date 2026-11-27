@@ -1158,7 +1158,7 @@ export component AppWindow inherits Window {
                             height: parent.height;
                             split: true;
                             head-h: 54px;
-                            head-trail: team-badge.width + 4px;
+                            head-trail: body.split ? split-tools.width : 0px;
                             chat-title: root.team-chat-title;
                             agents: root.team-agents;
                             settled: root.team-settled;
@@ -1216,49 +1216,43 @@ export component AppWindow inherits Window {
                             z: 10;
                             height: parent.height;
                         }
-                        // The team's corner badge: agents (and how many work now); a click opens the panel, another closes it.
-                        team-badge := Rectangle {
+                        // The team's handle: a slim line with a chevron on the chat's right edge, at the panel's left edge
+                        // while it's open; low-contrast, brighter under the pointer; a click opens or closes the panel.
+                        team-handle := Rectangle {
                             visible: root.view == "chat" && root.team-enabled;
-                            x: parent.width - self.width - 12px;
-                            y: 12px;
+                            width: 14px;
+                            height: 64px;
+                            x: (body.team-float ? floor((parent.width - 300px) / 1phx) * 1phx : parent.width) - self.width - 6px;
+                            y: round((parent.height - self.height) / 2 / 1phx) * 1phx;
                             z: 12;
-                            width: badge-row.preferred-width + 20px;
-                            height: 30px;
-                            border-radius: 15px;
-                            border-width: 1px;
-                            border-color: Theme.border;
-                            background: root.team-pop ? Theme.gray-200 : badge-area.has-hover ? Theme.gray-100 : Theme.bg100;
-                            drop-shadow-blur: 6px;
-                            drop-shadow-color: #00000033;
-                            badge-row := HorizontalLayout {
-                                x: 10px;
-                                width: parent.width - 20px;
-                                spacing: 6px;
-                                alignment: center;
-                                Text {
-                                    text: "\u{e1a4}";
-                                    font-family: "lucide";
-                                    font-size: 14px;
-                                    color: Theme.fg;
-                                    vertical-alignment: center;
-                                }
-                                Text {
-                                    text: root.team-count == 0 ? "Agents" : root.team-running > 0 ? root.team-running + "/" + root.team-count + " working" : root.team-count + (root.team-count == 1 ? " agent" : " agents");
-                                    font-size: 12px;
-                                    font-weight: 600;
-                                    color: Theme.fg;
-                                    vertical-alignment: center;
-                                }
-                                if root.team-running > 0: Rectangle {
-                                    width: 7px;
-                                    height: 7px;
-                                    y: (parent.height - self.height) / 2;
-                                    border-radius: 3.5px;
-                                    background: Theme.green-800;
-                                }
+                            property <color> ink: handle-area.has-hover ? Theme.gray-900 : Theme.gray-500;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: 0;
+                                width: 2px;
+                                height: 20px;
+                                border-radius: 1px;
+                                background: parent.ink;
                             }
-                            badge-area := TipArea {
-                                tip: root.team-pop ? "Hide the team (agents, processes, wake-ups, webhooks)" : "Team: agents, processes, wake-ups, webhooks";
+                            Glyph {
+                                x: 0;
+                                y: 22px;
+                                width: parent.width;
+                                height: 20px;
+                                icon: root.team-pop ? Icons.right : Icons.left;
+                                size: 13px;
+                                color: parent.ink;
+                            }
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: parent.height - self.height;
+                                width: 2px;
+                                height: 20px;
+                                border-radius: 1px;
+                                background: parent.ink;
+                            }
+                            handle-area := TipArea {
+                                tip: "Agents";
                                 clicked => {
                                     root.team-pop = !root.team-pop;
                                 }
