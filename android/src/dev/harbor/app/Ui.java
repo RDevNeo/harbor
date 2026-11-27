@@ -316,6 +316,13 @@ final class Ui {
         return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
     }
 
+    /** For an empty View that only pushes what follows to the end of a row: 0 tall, weight 1. A bare View with
+     *  weight() (WRAP_CONTENT) takes all the height its parent allows (View.getDefaultSize under AT_MOST): at the top
+     *  of a drawer that made the head row as tall as the screen, its buttons centred on it and the list 0 tall. */
+    static LinearLayout.LayoutParams spacer() {
+        return new LinearLayout.LayoutParams(0, 0, 1);
+    }
+
     static <T extends ViewGroup.MarginLayoutParams> T margins(T p, float l, float t, float r, float b) {
         p.setMargins(dp(l), dp(t), dp(r), dp(b));
         return p;

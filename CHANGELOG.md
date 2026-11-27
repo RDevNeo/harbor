@@ -28,6 +28,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   "All people" row (the head's magnifier opens it) and the connection chips under the section heads. Phone only.
 
 ### Fixed
+- **Hub for Android: the Projects drawer shows its list again.** Since the drawer's title got its menu, the head's
+  spacer (an empty view with a wrap-content height) took the whole screen's height: the drawer came out black with
+  "Projects ⌄" and its buttons in the middle and no projects or chats. Spacers are now 0 tall (`Ui.spacer()`, used by
+  every row that had one).
 - **Phone: Collector scrolls smoothly with long lists.** Its leads were all built at once in one scrolling column and
   built again on every poll during a run (every 1.5 s), each card asking for its picture and three thumbnails at once
   (600 downloads for 150 leads, decoded near full size). The list is now recycled (only the cards on screen exist, a

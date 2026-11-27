@@ -68,7 +68,7 @@ final class PersonsAiCard {
         if (foldable) {
             View.OnClickListener flip = v -> { FOLD.put(aid, !folded); host.rerender(); };
             h.setGravity(Gravity.CENTER_VERTICAL);
-            h.addView(new View(a), Ui.weight());
+            h.addView(new View(a), Ui.spacer());
             h.addView(Ui.icon(a, folded ? Ui.I_DOWN : Ui.I_UP, 14, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
             h.setOnClickListener(flip);
             h.setContentDescription(folded ? "AI answer, folded: tap to show it all" : "AI answer: tap to fold it");

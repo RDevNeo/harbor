@@ -863,7 +863,7 @@ final class CollectorCreator {
             btns.addView(Ui.rowButton(a, "Save", true, v -> save(field.getText().toString().trim())), Ui.wrap());
             final String saved = d.optString("reach");
             if (!saved.isEmpty()) btns.addView(Ui.rowButton(a, "Clear", false, v -> save("")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
-            btns.addView(new View(a), Ui.weight());
+            btns.addView(new View(a), Ui.spacer());
             String send = d.optString("reachSend");
             if (!send.isEmpty()) btns.addView(Ui.rowButton(a, send, false, v -> go(saved, d.optString("reachValue"), d.optString("reachHref"))), Ui.wrap());
             c.addView(btns, Ui.margins(Ui.fill(), 0, 8, 0, 0));

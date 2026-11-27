@@ -588,7 +588,7 @@ public class Routine extends Base {
         JSONObject g = view.optJSONObject("goals");
         if (g == null) return;
         LinearLayout head = Ui.row(this);
-        head.addView(new View(this), Ui.weight());
+        head.addView(new View(this), Ui.spacer());
         head.addView(Ds.chip(this, "+ New", true, v -> goalForm(null)));
         body.addView(head, Ui.fill());
         LinearLayout plan = Ds.card(this);

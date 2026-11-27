@@ -68,7 +68,7 @@ final class Ds {
         t.setAllCaps(true);
         r.addView(t);
         r.addView(chevron(c, open), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 4, 0, 0, 0));
-        r.addView(new View(c), Ui.weight());
+        r.addView(new View(c), Ui.spacer());
         if (unread > 0) r.addView(pill(c, unread, true));
         if (toggle != null) r.setOnClickListener(toggle);
         r.setContentDescription(text + (open ? ", open" : ", folded"));

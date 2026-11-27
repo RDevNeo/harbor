@@ -390,7 +390,7 @@ final class PersonsHome {
                 int ink = it.owner ? Ui.FG : Ui.G700;
                 r.addView(Ui.text(a, "Site requests", 12, ink));
                 if (it.owner) r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 8, 0, 0, 0));
-                r.addView(new View(a), Ui.weight());
+                r.addView(new View(a), Ui.spacer());
                 if (it.count > 0) r.addView(Ui.text(a, String.valueOf(it.count), 12, ink), Ui.margins(Ui.wrap(), 0, 0, 4, 0));
                 r.addView(Ui.icon(a, it.open ? Ui.I_DOWN : Ui.I_CHEV_RIGHT, 14, ink), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
                 r.setOnClickListener(v -> { p.flip("closed", "sr"); p.redrawHomes(); });

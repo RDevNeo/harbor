@@ -112,7 +112,7 @@ final class Sidebar {
         titleBtn.setOnClickListener(v -> titleMenu());
         head.row.setPadding(Ui.dp(12), 0, Ui.dp(6), 0);
         head.row.addView(titleBtn, 0, Ui.wrap());
-        head.row.addView(new View(a), 1, Ui.weight());
+        head.row.addView(new View(a), 1, Ui.spacer());
         // Which workspace's chats show; hidden until `render` knows there are any.
         wsBtn = head.action(Ui.I_USERS, "Pick the workspaces shown", v -> pickWorkspaces());
         wsBtn.setVisibility(View.GONE);
