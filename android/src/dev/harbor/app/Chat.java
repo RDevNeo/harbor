@@ -108,13 +108,15 @@ public class Chat extends Base implements Images.Gallery {
     /** Opened from a captcha's notification: the first load scrolls to its card. */
     private boolean toCaptcha;
     private static final String CAPTCHA = "captcha";
-    /** A live restart's place (Swap): the item at the top of the screen and how far below it
-     *  the view was (-1: none, the end as usual), and the composer's files and mentions still to
-     *  come from the hub's copy of the draft. */
-    private int liveSeq = -1, liveOff;
-    /** A live restart brings the keyboard back over a place it restored: the keyboard's first opening keeps that
-     *  place (its offset was measured with the keyboard up), rather than snapping a place near the end to the end. */
-    private boolean liveIme;
+    /** A live restart's place (Swap): the lowest item on screen and how far its bottom was above the transcript's
+     *  bottom edge (-1: none, the end as usual; older code wrote `off`, the top item's offset from the top, instead),
+     *  and the composer's files and mentions still to come from the hub's copy of the draft. */
+    private int liveSeq = -1, liveOff, liveBelow = Integer.MIN_VALUE;
+    /** A remembered place being held (toBottomOf): the item stays `holdBelow` px above the transcript's bottom edge
+     *  while cards above it lay out and the keyboard and composer come back, until the finger moves the chat. */
+    private View holdV;
+    private int holdBelow;
+    private long holdStart, holdUntil;
     private boolean liveDraft;
 
     @Override
@@ -154,7 +156,7 @@ public class Chat extends Base implements Images.Gallery {
         // its end in view when it was there, instead of new cards sliding under the bars.
         scroll.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
-            if (liveIme && was > 0 && now < was) { liveIme = false; return; }
+            if (holding()) { if (now != was) hold(); return; }
             if (now < was && scroll.getScrollY() + was >= content.getHeight() - Ui.dp(120)) scroll.post(() -> scroll.scrollTo(0, content.getHeight()));
         });
         // The transcript and the bars under it; the slash menu floats over their bottom.
@@ -169,7 +171,15 @@ public class Chat extends Base implements Images.Gallery {
         jump = new ChatFlow.Jump(this, v -> jumpDown());
         reading.addView(jump.view, jump.params());
         scroll.setOnScrollChangeListener((sv, sx, sy, osx, osy) -> showJump());
-        content.addOnLayoutChangeListener((cv, cl, ct, cr, cb, col, cot, cor, cob) -> showJump());
+        content.addOnLayoutChangeListener((cv, cl, ct, cr, cb, col, cot, cor, cob) -> {
+            if (holding() && cb - ct != cob - cot) hold();
+            showJump();
+        });
+        scroll.setOnTouchListener((v, e) -> {
+            int act = e.getActionMasked();
+            if (act == android.view.MotionEvent.ACTION_DOWN || act == android.view.MotionEvent.ACTION_MOVE) holdV = null;
+            return false;
+        });
         above.addView(reading, new LinearLayout.LayoutParams(-1, 0, 1));
 
         // The desktop's bars under the transcript: queued messages, working, waiting for
@@ -213,6 +223,7 @@ public class Chat extends Base implements Images.Gallery {
             from = parseInt(liveFrom, -1);
             liveSeq = parseInt(Swap.state(this, b, "seq"), -1);
             liveOff = parseInt(Swap.state(this, b, "off"), 0);
+            liveBelow = parseInt(Swap.state(this, b, "below"), Integer.MIN_VALUE);
             if (liveSeq >= 0 && from > liveSeq) from = liveSeq;
         }
         echoKey = draftKey(hub, chatId);
@@ -287,8 +298,7 @@ public class Chat extends Base implements Images.Gallery {
         team.load();
         livePanel(b);
         if ("1".equals(Swap.state(this, b, "focus"))) {
-            // The keyboard was up on the composer: up again (over the place restored, which stays put).
-            liveIme = liveSeq >= 0;
+            // The keyboard was up on the composer: up again (the place is held by its bottom, so it lands as it was).
             composer.requestFocus();
             getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
                     | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -318,16 +328,14 @@ public class Chat extends Base implements Images.Gallery {
         if (ime && android.os.Build.VERSION.SDK_INT >= 30 && composer.getRootWindowInsets() != null)
             ime = composer.getRootWindowInsets().isVisible(android.view.WindowInsets.Type.ime());
         if (ime) s.state.put("focus", "1");
-        boolean atEnd = scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(120);
+        // Exactly at the end only (a spot a little short of it comes back to the pixel, not at the end).
+        boolean atEnd = scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(2);
         if (loaded && !atEnd && from >= 0) {
-            int y = scroll.getScrollY();
-            for (Map.Entry<Integer, View> e : views.entrySet()) {
-                View v = e.getValue();
-                if (v.getParent() != content || v.getBottom() <= y) continue;
+            int[] low = lowest();
+            if (low != null) {
                 s.state.put("from", Integer.toString(from));
-                s.state.put("seq", Integer.toString(e.getKey()));
-                s.state.put("off", Integer.toString(v.getTop() - y));
-                break;
+                s.state.put("seq", Integer.toString(low[0]));
+                s.state.put("below", Integer.toString(low[1]));
             }
         }
         return s;
@@ -561,7 +569,7 @@ public class Chat extends Base implements Images.Gallery {
     }
 
     private void apply(JSONObject r, boolean full) {
-        boolean atBottom = !loaded || scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(120);
+        boolean atBottom = !loaded || !holding() && scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(120);
         boolean firstLoad = !loaded;
         enterAfter = !loaded || full || items.isEmpty() ? -1 : items.lastKey();
         if (!loaded || full) clear();
@@ -636,9 +644,9 @@ public class Chat extends Base implements Images.Gallery {
         ChatFlow.Pos was = firstLoad && live == null && cap == null ? ChatFlow.place(posKey()) : null;
         View back = was != null && !was.end ? views.get(Integer.parseInt(was.anchor)) : null;
         if (cap != null) { toCaptcha = false; toView(cap); }
-        else if (live != null) toView(live, liveOff);
+        else if (live != null) { if (liveBelow != Integer.MIN_VALUE) toBottomOf(live, liveBelow); else toView(live, liveOff); }
         else if (firstLoad && newLine != null) toView(newLine, Ui.dp(24));
-        else if (back != null) toView(back, was.off);
+        else if (back != null) toBottomOf(back, was.off);
         else if (atBottom) toEnd(!firstLoad);
         if (loaded) toCaptcha = false;
     }
@@ -797,6 +805,7 @@ public class Chat extends Base implements Images.Gallery {
         int end = Math.max(0, content.getHeight() - scroll.getHeight());
         int y = end;
         if (first != null && first.getParent() == content) y = Math.min(end, Math.max(0, first.getTop() - Ui.dp(24)));
+        holdV = null;
         scroll.smoothScrollTo(0, y);
         unseen = 0;
         firstUnseen = -1;
@@ -808,6 +817,7 @@ public class Chat extends Base implements Images.Gallery {
     private void toEnd() { toEnd(true); }
 
     private void toEnd(boolean glide) {
+        holdV = null;
         android.view.ViewTreeObserver o = content.getViewTreeObserver();
         o.addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
             @Override public void onGlobalLayout() {
@@ -822,19 +832,66 @@ public class Chat extends Base implements Images.Gallery {
 
     private String posKey() { return hub.id + "/" + chatId; }
 
-    /** Where this chat is left (ChatFlow): at its end, or the card at the top of the screen and how far down it is;
-     *  and its last card then (for "N new messages" when it's opened again). */
+    /** Where this chat is left (ChatFlow): at its end, or the lowest card on screen and how far its bottom is above
+     *  the transcript's bottom edge; and its last card then (for "N new messages" when it's opened again). */
     private void savePlace() {
         if (!loaded || chatId == null || items.isEmpty()) return;
         int last = items.lastKey();
         if (ChatFlow.atEnd(scroll, content, Ui.dp(120))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, last)); return; }
-        int y = scroll.getScrollY();
+        int[] low = lowest();
+        if (low != null) ChatFlow.place(posKey(), new ChatFlow.Pos(false, String.valueOf(low[0]), low[1], last));
+    }
+
+    /** The lowest card on screen {seq, px from its bottom up to the transcript's bottom edge (negative: cut off)}, or
+     *  null. A place is kept by its bottom, as WhatsApp: what was just above the composer comes back just above it,
+     *  whatever the transcript's height while it's placed (the keyboard and composer resize it from the bottom). */
+    private int[] lowest() {
+        int y = scroll.getScrollY(), b = y + scroll.getHeight();
+        int[] best = null;
+        int top = Integer.MIN_VALUE;
         for (Map.Entry<Integer, View> e : views.entrySet()) {
             View v = e.getValue();
-            if (v.getParent() != content || v.getHeight() == 0 || v.getBottom() <= y) continue;
-            ChatFlow.place(posKey(), new ChatFlow.Pos(false, String.valueOf(e.getKey()), v.getTop() - y, last));
-            return;
+            if (v.getParent() != content || v.getHeight() == 0 || v.getBottom() <= y || v.getTop() >= b) continue;
+            if (v.getTop() > top) { top = v.getTop(); best = new int[] {e.getKey(), b - v.getBottom()}; }
         }
+        return best;
+    }
+
+    /** Scrolls the transcript, once laid out, so v's bottom is `below` px above its bottom edge, and holds it there
+     *  for a moment (hold). */
+    private void toBottomOf(View v, int below) {
+        content.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override public void onGlobalLayout() {
+                content.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                holdV = v;
+                holdBelow = below;
+                holdStart = android.os.SystemClock.uptimeMillis();
+                holdUntil = holdStart + 2_500;
+                scroll.scrollTo(0, holdY());
+                showJump();
+            }
+        });
+        content.requestLayout();
+    }
+
+    /** The held place: its card still here, the finger not on the chat, within its moment (a layout change keeps it
+     *  a little longer, at most 6 s). */
+    private boolean holding() {
+        return holdV != null && holdV.isAttachedToWindow() && android.os.SystemClock.uptimeMillis() < holdUntil;
+    }
+
+    private int holdY() {
+        int y = 0;
+        for (View x = holdV; x != null && x != content; x = x.getParent() instanceof View ? (View) x.getParent() : null) y += x.getTop();
+        return Math.max(0, y + holdV.getHeight() + holdBelow - scroll.getHeight());
+    }
+
+    /** Back to the held place once this layout is done. */
+    private void hold() {
+        long now = android.os.SystemClock.uptimeMillis();
+        holdUntil = Math.min(holdStart + 6_000, Math.max(holdUntil, now + 1_000));
+        View hv = holdV;
+        scroll.post(() -> { if (holdV == hv && holding()) scroll.scrollTo(0, holdY()); });
     }
 
     /** Opened again with replies that came while it was away (this run of the app): "N new messages" over the first. */

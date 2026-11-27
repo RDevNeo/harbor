@@ -79,6 +79,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   "All people" row (the head's magnifier opens it) and the connection chips under the section heads. Phone only.
 
 ### Fixed
+- **Phone: a chat comes back to the very pixel after an update (Persons and Projects).** The place was the top
+  message and its offset from the top, placed before the keyboard came back; a guard then skipped the keyboard's first
+  resize, but the suggestion strip settling after it (+167 px) still moved the chat, so it came back about a message
+  higher (or lower, depending on the order). The place is now the lowest message on screen and how far its bottom is
+  above the transcript's bottom edge, as WhatsApp keeps it, held there for a moment whatever resizes (keyboard,
+  composer, pictures above) until the finger moves the chat. A spot a little short of the end is no longer rounded
+  to the end on a restart, and a chat left at its very end comes back there (not at an unread line).
 - **Phone: a Persons chat no longer reopens at the same spot short of its end.** Opened at its end, a chat was placed
   before its pictures and AI notes had laid out; they pushed the newest messages below the fold, that spot then
   counted as "scrolled up" and was kept (and saved on leaving), so every reopen landed there. The chat now sticks to

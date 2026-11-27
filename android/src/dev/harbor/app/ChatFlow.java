@@ -135,7 +135,8 @@ final class ChatFlow {
         }
     }
 
-    /** Where a chat was left: at its end, or `anchor` (a message's id or seq) `off` px below the screen's top, and the
+    /** Where a chat was left: at its end, or `anchor` (a message's id or seq, the lowest one on screen) whose bottom was
+     *  `off` px above the transcript's bottom edge (negative: cut off by it), and the
      *  newest message it had then (Projects: its last seq, for "N new messages" on the way back). */
     static final class Pos {
         final boolean end;

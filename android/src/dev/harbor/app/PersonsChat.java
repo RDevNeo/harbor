@@ -67,14 +67,14 @@ final class PersonsChat {
     /** The finger is on the transcript, or let go of it in the last moment (a fling). */
     private long touchedAt;
     private boolean touching;
-    /** A restore brings the keyboard back over a place it restored: its first opening keeps that place (measured
-     *  with the keyboard up) instead of keeping the bottom in sight. */
-    private boolean liveIme;
-    /** Placed at a remembered message (placeFirst): for a moment it stays at that offset while what's above it lays
-     *  out (pictures, AI notes), until the finger moves the chat. */
+    /** Placed at a remembered message (placeFirst): for a moment it stays `holdBelow` px above the transcript's bottom
+     *  edge whatever lays out or resizes (pictures and AI notes above it, the keyboard and the composer coming back
+     *  after a restore), until the finger moves the chat. */
     private View holdView;
-    private int holdOff;
-    private long holdUntil;
+    /** A restart left the chat at its very end: it comes back there (not at an unread line still marked). */
+    private boolean liveEnd;
+    private int holdBelow;
+    private long holdStart, holdUntil;
     /** Their messages that came in while scrolled up, the first of them (the "↓" counts them and goes there). */
     private int unseen;
     private String firstUnseen = "";
@@ -147,18 +147,14 @@ final class PersonsChat {
         });
         // The content grew or shrank (a picture or an AI note laid out, a message in): at the end it stays there.
         content.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
-            if (holdView != null && android.os.SystemClock.uptimeMillis() < holdUntil && holdView.getParent() == content) {
-                View hv = holdView;
-                sv.post(() -> { if (holdView == hv) sv.scrollTo(0, Math.max(0, hv.getTop() - holdOff)); });
-                return;
-            }
+            if (holding()) { if (bottom - top != oldBottom - oldTop) hold(); return; }
             if (!positioned || !stickEnd || bottom - top == oldBottom - oldTop) return;
             sv.post(() -> { if (stickEnd) sv.scrollTo(0, Math.max(0, content.getHeight() - sv.getHeight())); });
         });
         // The keyboard (or the composer growing) shrinks the transcript: what was at its bottom stays there.
         sv.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
-            if (liveIme && was > 0 && now < was) { liveIme = false; return; }
+            if (holding()) { if (now != was) hold(); return; }
             if (was > 0 && now != was && positioned) sv.post(() -> sv.scrollBy(0, was - now));
         });
         // The transcript, the day pill floating on its top and the "↓" over its lower right corner (ChatFlow).
@@ -323,13 +319,15 @@ final class PersonsChat {
         if (ime && android.os.Build.VERSION.SDK_INT >= 30 && edit.getRootWindowInsets() != null)
             ime = edit.getRootWindowInsets().isVisible(android.view.WindowInsets.Type.ime());
         if (ime) st.put("focus", "1");
-        // The place is ChatFlow's (where this chat was left, per run): the message at the top and its offset.
+        // The place is ChatFlow's (where this chat was left, per run): the lowest message on screen and how far its
+        // bottom is above the transcript's bottom edge.
         if (data == null) return;
-        savePlace();
+        savePlace(true);
         ChatFlow.Pos pos = ChatFlow.place(posKey());
+        if (pos != null && pos.end) st.put("end", "1");
         if (pos == null || pos.end) return;
         st.put("anchor", pos.anchor);
-        st.put("off", Integer.toString(pos.off));
+        st.put("below", Integer.toString(pos.off));
     }
 
     /** Back as live() left it (right after the chat was made). */
@@ -349,15 +347,16 @@ final class PersonsChat {
         String su = st.get("subject");
         if (su != null) subject.setText(su);
         // Its place goes back into ChatFlow's memory, which the first render puts the chat at (placeFirst).
-        String an = st.get("anchor");
-        if (an != null && !an.isEmpty()) {
+        // (Older code wrote "off", from the top: not comparable, so such a place is let go.)
+        String an = st.get("anchor"), below = st.get("below");
+        if (an != null && !an.isEmpty() && below != null) {
             int off;
-            try { off = Integer.parseInt(st.get("off")); } catch (Exception e) { off = 0; }
+            try { off = Integer.parseInt(below); } catch (Exception e) { off = 0; }
             ChatFlow.place(posKey(), new ChatFlow.Pos(false, an, off, 0));
         }
+        liveEnd = "1".equals(st.get("end"));
         if ("1".equals(st.get("focus"))) {
-            // The keyboard was up on the composer: up again (over the place restored, which stays put).
-            liveIme = an != null && !an.isEmpty();
+            // The keyboard was up on the composer: up again (the place is held by its bottom, so it lands as it was).
             edit.requestFocus();
             a.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
                     | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -689,7 +688,7 @@ final class PersonsChat {
 
     private void render() {
         rows.clear();
-        boolean atBottom = !positioned || toBottom || stickEnd || ChatFlow.atEnd(sv, content, Ui.dp(80));
+        boolean atBottom = !positioned || toBottom || stickEnd || (!holding() && ChatFlow.atEnd(sv, content, Ui.dp(80)));
         if (toBottom) stickEnd = true;
         boolean sent = toBottom;
         toBottom = false;
@@ -879,15 +878,16 @@ final class PersonsChat {
     private void placeFirst(View unreadLine) {
         ChatFlow.Pos was = ChatFlow.place(posKey());
         View at = was != null && !was.end ? rows.get(was.anchor) : null;
-        if (unreadLine != null && (was == null || was.end || at == null)) {
+        if (unreadLine != null && !liveEnd && (was == null || was.end || at == null)) {
             stickEnd = false;
             sv.scrollTo(0, Math.max(0, unreadLine.getTop() - Ui.dp(24)));
         } else if (at != null) {
             stickEnd = false;
-            sv.scrollTo(0, Math.max(0, at.getTop() - was.off));
             holdView = at;
-            holdOff = was.off;
-            holdUntil = android.os.SystemClock.uptimeMillis() + 2_500;
+            holdBelow = was.off;
+            holdStart = android.os.SystemClock.uptimeMillis();
+            holdUntil = holdStart + 2_500;
+            sv.scrollTo(0, holdY());
         } else {
             stickEnd = true;
             sv.scrollTo(0, content.getHeight());
@@ -896,19 +896,43 @@ final class PersonsChat {
 
     private String posKey() { return p.hub == null ? pid + "|" + section : p.hub.id + "|" + pid + "|" + section; }
 
-    /** Where it's left now: at the end, or the first message on screen and how far down it is. */
-    private void savePlace() {
+    /** The place being held (placeFirst): its message still here, the finger not on the chat, within its moment. A
+     *  change in what lays out keeps it a little longer (the keyboard and composer coming back), at most 6 s. */
+    private boolean holding() {
+        return holdView != null && holdView.getParent() == content && android.os.SystemClock.uptimeMillis() < holdUntil;
+    }
+
+    /** Where the held message's bottom is `holdBelow` px above the transcript's bottom edge. */
+    private int holdY() { return Math.max(0, holdView.getBottom() + holdBelow - sv.getHeight()); }
+
+    /** Back to the held place once this layout is done (the transcript's or the content's new size known). */
+    private void hold() {
+        long now = android.os.SystemClock.uptimeMillis();
+        holdUntil = Math.min(holdStart + 6_000, Math.max(holdUntil, now + 1_000));
+        View hv = holdView;
+        sv.post(() -> { if (holdView == hv && hv.getParent() == content) sv.scrollTo(0, holdY()); });
+    }
+
+    /** Where it's left now: at the end, or the lowest message on screen and how far its bottom is above the
+     *  transcript's bottom edge (negative: cut off by it). By the bottom, as WhatsApp: what was just above the
+     *  composer comes back just above it, whatever the transcript's height is while it's placed (the keyboard and the
+     *  composer coming back after a restore resize it from the bottom). */
+    private void savePlace() { savePlace(false); }
+
+    /** exact: a restart's, which comes back to the very pixel; only the very end counts as the end (else a spot a
+     *  little short of it, e.g. at the unread line, came back at the end). Leaving the chat: near the end is the end. */
+    private void savePlace(boolean exact) {
         if (!positioned) return;
-        if (stickEnd || ChatFlow.atEnd(sv, content, Ui.dp(80))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, 0)); return; }
-        int y = sv.getScrollY();
+        if (exact ? ChatFlow.atEnd(sv, content, Ui.dp(2)) : stickEnd || ChatFlow.atEnd(sv, content, Ui.dp(80))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, 0)); return; }
+        int y = sv.getScrollY(), b = y + sv.getHeight();
         String best = null;
-        int top = Integer.MAX_VALUE;
+        int top = Integer.MIN_VALUE, bot = 0;
         for (Map.Entry<String, View> r : rows.entrySet()) {
             View v = r.getValue();
-            if (v.getParent() != content || v.getBottom() <= y) continue;
-            if (v.getTop() < top) { top = v.getTop(); best = r.getKey(); }
+            if (v.getParent() != content || v.getHeight() == 0 || v.getBottom() <= y || v.getTop() >= b) continue;
+            if (v.getTop() > top) { top = v.getTop(); bot = v.getBottom(); best = r.getKey(); }
         }
-        ChatFlow.place(posKey(), best == null ? null : new ChatFlow.Pos(false, best, top - y, 0));
+        ChatFlow.place(posKey(), best == null ? null : new ChatFlow.Pos(false, best, b - bot, 0));
     }
 
     /** After a scroll (or a render): the "↓" (more than a screen up, or new messages unseen), the unseen count
@@ -935,6 +959,7 @@ final class PersonsChat {
         View first = firstUnseen.isEmpty() ? null : rows.get(firstUnseen);
         int end = Math.max(0, content.getHeight() - sv.getHeight());
         int y = first != null && first.getParent() == content ? Math.min(end, Math.max(0, first.getTop() - Ui.dp(24))) : end;
+        holdView = null;
         sv.smoothScrollTo(0, y);
         stickEnd = y >= end;
         unseen = 0;
