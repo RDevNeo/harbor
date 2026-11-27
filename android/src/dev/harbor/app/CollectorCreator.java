@@ -496,7 +496,7 @@ final class CollectorCreator {
          *  (POST template), or Save as new; the message is filled from it again. */
         private void editTemplate() {
             if (h == null || c == null) return;
-            final String tid = template();
+            final String tid = template().isEmpty() ? "blank" : template(); // none picked yet: the empty message is Blank's
             Ui.bg(a, () -> h.get("/v1/collector/templates"), r -> {
                 JSONArray ts = r.optJSONArray("templates");
                 JSONObject t = null;

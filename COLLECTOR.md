@@ -138,7 +138,10 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   An opening detail's picture and thumbnails go first: `POST fill` fetches the missing ones itself (8 s at most)
   before it answers, and the PC's open detail is read again when more pictures come in.
 - **Send message** (the detail's Reach, the card's Reach icon): Persons' composer as a dialog (the phone: a screen).
-  The templates on the left (the SpokPay CRM's outreach emails, `{name}` / `{handle}` filled); on the right a composer
+  The templates on the left: SpokPay's (the SpokPay CRM's outreach emails, named "SpokPay · Sem loja", "SpokPay ·
+  Loja parceira", "SpokPay · Site para a loja"), the user's own from `templates.json` in its order, then Blank
+  (`{name}` / `{handle}` filled). There is no default template: it opens on the one picked last, else on none (an empty
+  message) until one is picked. On the right a composer
   card: **To** on top, a destination picker (a menu: every Persons › Creators connection, Email (Gmail), WhatsApp,
   Discord, Instagram, each with who they are there — their email, number, the Reach's Discord ID or Instagram handle —
   and the account it goes from, or why it can't: not signed in, or "Persons › Creators has no Discord: add one there")

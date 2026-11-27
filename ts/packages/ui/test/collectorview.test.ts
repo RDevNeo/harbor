@@ -168,7 +168,7 @@ describe("collector lead detail", () => {
       id: "youtube:UC1",
       name: "Ana",
       templates: [],
-      template: "padrao",
+      template: "",
       channel: "creators-discord",
       kind: "discord",
       to: "123456789012345678",

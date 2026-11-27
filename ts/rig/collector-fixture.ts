@@ -138,7 +138,7 @@ export async function writeCollectorFixture(cdir: string, o: FixtureOpts = {}): 
     join(cdir, "state.json"),
     JSON.stringify({
       v: 2,
-      settings: { platform: "youtube", query: "dress to impress", gapDays: 14, target: 20, lastTemplate: "padrao" },
+      settings: { platform: "youtube", query: "dress to impress", gapDays: 14, target: 20, lastTemplate: "" },
       creators: creators.slice().reverse(),
       seen: [...seen, "youtube:UCrigold1", "youtube:UCrigold2", "tiktok:@oldone"],
       run: o.running

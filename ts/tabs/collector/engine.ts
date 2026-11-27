@@ -33,7 +33,8 @@
 //   GET  v1/collector/compose?id=&template=&channel=&kind=&place=&remember=1   the message for that lead (remember=1: the
 //                                     template / channel was picked by the user, the next composer opens on it): channels (every Persons ›
 //                                     Creators connection: Gmail, WhatsApp, Discord, Instagram, with who they are
-//                                     there), to, subject (email), text, guard
+//                                     there), template (the one asked for, else the one picked last, else ""
+//                                     = none: no default), to, subject (email), text, guard
 //   POST v1/collector/send            {id, channel, to, subject, text, place}: a real send (only on the user's click);
 //                                     place: where in Persons they go (compose's `places`, "creators" when absent)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
@@ -59,7 +60,7 @@ import { crmCreators, crmRecord } from "./lib/crm.ts";
 import { isReachKind, normalizeReach, parseLinks, reachDrafts, reachError, whatsappDigits } from "./lib/reach.ts";
 import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
-import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
+import { BLANK_TEMPLATE, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
 import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
@@ -932,7 +933,9 @@ export class Collector {
       }
       if (moved) this.save();
     }
-    const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? defaultTemplate(this.templates)!;
+    // No default template: the one asked for, else the one picked last, else none (an empty message, Blank's).
+    const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? null;
+    const from = t ?? BLANK_TEMPLATE;
     // Every way Persons › Creators can write to them: its connections (Gmail, WhatsApp, Discord, Instagram), each with
     // who they are there (the email, the number, the Reach's Discord ID or Instagram handle); a kind Creators has no
     // connection for is still listed, with why it can't send.
@@ -971,7 +974,7 @@ export class Collector {
       id,
       name: c.name,
       templates: this.templates.map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: !!x.builtin })),
-      template: t.id,
+      template: t?.id ?? "",
       channels: chans,
       places: places.map((x) => ({ value: x.value, label: x.label, section: x.section })),
       place: place.value,
@@ -979,8 +982,8 @@ export class Collector {
       channel: pick?.id ?? "",
       kind: pick?.kind ?? "gmail",
       to: pick?.to ?? "",
-      subject: pick && pick.kind !== "gmail" ? "" : fillTemplate(t.subject, who),
-      text: fillTemplate(t.body, who),
+      subject: pick && pick.kind !== "gmail" ? "" : fillTemplate(from.subject, who),
+      text: fillTemplate(from.body, who),
       guard: pick && pick.connected ? this.o.persons.guard(pick.id, pick.to) : null,
       contacted: c.contacted ?? null,
     };

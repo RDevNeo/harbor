@@ -1,6 +1,7 @@
-// The Send message menu's templates: Person Hub's Email dialog (creators-hub/src/lib/emailTemplates.ts), which are the
-// SpokPay CRM's outreach emails (Settings › Gmail sender › Templates), signed by Igor. Edited copies are kept in
-// <collector dir>/templates.json; Reset brings a built-in one back. `{name}` and `{handle}` are filled per creator.
+// The Send message menu's templates: SpokPay's (the SpokPay CRM's outreach emails, Settings › Gmail sender › Templates,
+// signed by Igor, named "SpokPay · …"), then the user's own, then Blank. Edited copies and the user's own are kept in
+// <collector dir>/templates.json; Reset brings a built-in one back. There is no default: Send message opens on the
+// template picked last, else on none (an empty message, Blank's). `{name}` and `{handle}` are filled per creator.
 
 export interface Template {
   id: string;
@@ -16,10 +17,12 @@ const SIGNATURE = "Igor, SpokPay\nspokpay.com";
 
 export const BLANK_TEMPLATE: Template = { id: "blank", name: "Blank", description: "Em branco", subject: "", body: "", builtin: true };
 
+/** The built-ins: SpokPay's CRM outreach emails (ids kept, so edited copies in templates.json still map), named
+ *  "SpokPay · …" (none is a default), and Blank, always last. */
 export const BUILTIN_TEMPLATES: Template[] = [
   {
     id: "padrao",
-    name: "Padrão",
+    name: "SpokPay · Sem loja",
     description: "Criador sem loja: uma loja própria do canal",
     subject: "Sua loja profissional.",
     body: `Olá {name}, tudo bem?
@@ -35,7 +38,7 @@ ${SIGNATURE}`,
   },
   {
     id: "loja-parceira",
-    name: "Loja parceira",
+    name: "SpokPay · Loja parceira",
     description: "Criador que divulga a loja de um parceiro",
     subject: "Sua loja própria",
     body: `Olá {name}, tudo bem?
@@ -51,7 +54,7 @@ ${SIGNATURE}`,
   },
   {
     id: "site-da-loja",
-    name: "Site para a loja",
+    name: "SpokPay · Site para a loja",
     description: "Criador com loja num template genérico",
     subject: "Um site feito para a sua loja",
     body: `Olá {name}, tudo bem?
@@ -86,17 +89,13 @@ export function fillTemplate(template: string, who: { name?: string | null; hand
   return fill(fill(template, "{name}", name), "{handle}", handle);
 }
 
-/** "Padrão" / "Default", else the first. */
-export function defaultTemplate(list: Template[]): Template | undefined {
-  return list.find((t) => ["padrão", "padrao", "default"].includes(t.name.trim().toLowerCase())) ?? list[0];
-}
-
 /** The CRM's cap: Gmail flags accounts that send cold mail in bursts, so at most this many new emails a rolling 24 h. */
 export const DAILY_LIMIT = 30;
 /** A second send to the same creator inside this window is a double click. */
 export const REPEAT_GUARD_MS = 2 * 60 * 1000;
 
-/** The saved list (built-ins first, edited where edited, then the user's own), from templates.json's content. */
+/** The list from templates.json's content: SpokPay's built-ins (edited where edited), the user's own (anything that
+ *  isn't a built-in's id, in their order), then Blank. */
 export function loadTemplates(raw: unknown): Template[] {
   const saved = Array.isArray(raw) ? (raw.filter((t) => t && typeof t === "object" && typeof (t as Template).id === "string") as Template[]) : [];
   const clean = (t: Template, builtin: boolean): Template => ({

@@ -217,11 +217,17 @@ describe("templates", () => {
     expect(fillTemplate("Olá {name}, tudo bem? @{handle}", { name: "Kauã", handle: "kaua" })).toBe("Olá Kauã, tudo bem? @kaua");
     expect(fillTemplate("Olá {name}, tudo bem?", { name: "" })).toBe("Olá, tudo bem?");
   });
-  it("keeps edits of built-ins and the user's own, nothing else", () => {
-    const list = loadTemplates([{ id: "padrao", name: "Padrão", description: "d", subject: "Novo assunto", body: "b" }, { id: "t_1", name: "Meu", description: "", subject: "s", body: "oi {name}" }]);
-    expect(list.map((t) => t.id)).toEqual(["padrao", "loja-parceira", "site-da-loja", "t_1", "blank"]);
+  it("SpokPay's (named so, none a default), the user's own in their order, then Blank; edits of built-ins kept", () => {
+    expect(loadTemplates([]).map((t) => t.name)).toEqual(["SpokPay · Sem loja", "SpokPay · Loja parceira", "SpokPay · Site para a loja", "Blank"]);
+    const list = loadTemplates([
+      { id: "robux-paradise", name: "Robux Paradise", description: "", subject: "s", body: "oi {name}" },
+      { id: "padrao", name: "SpokPay · Sem loja", description: "d", subject: "Novo assunto", body: "b" },
+      { id: "meoow-store", name: "Meoow Store", description: "", subject: "s2", body: "b2" },
+    ]);
+    expect(list.map((t) => t.id)).toEqual(["padrao", "loja-parceira", "site-da-loja", "robux-paradise", "meoow-store", "blank"]);
+    expect(list.map((t) => !!t.builtin)).toEqual([true, true, true, false, false, true]);
     expect(list[0]!.subject).toBe("Novo assunto");
-    expect(templatesToSave(list).map((t) => t.id)).toEqual(["padrao", "t_1"]);
+    expect(templatesToSave(list).map((t) => t.id)).toEqual(["padrao", "robux-paradise", "meoow-store"]);
   });
 });
 
@@ -440,15 +446,21 @@ describe("collector", () => {
     expect((await call("POST", "email", { id: "youtube:UC1", email: "nope" }))!.status).toBe(400);
     await call("POST", "email", { id: "youtube:UC1", email: "Kaua@Canal.com" });
     expect([c.data.creators[0]!.email, c.data.creators[0]!.email_source, c.data.creators[0]!.email_manual]).toEqual(["kaua@canal.com", "typed", true]);
-    const m = (await call("GET", "compose", null, [["id", "youtube:UC1"], ["template", "padrao"]]))!.body as { to: string; subject: string; text: string; channel: string };
+    // no default template: nothing picked yet opens on none, an empty message
+    const none = (await call("GET", "compose", null, [["id", "youtube:UC1"]]))!.body as { template: string; subject: string; text: string; templates: { id: string }[] };
+    expect([none.template, none.subject, none.text, none.templates.map((t) => t.id)]).toEqual(["", "", "", ["padrao", "loja-parceira", "site-da-loja", "blank"]]);
+    const tid = "padrao";
+    const m = (await call("GET", "compose", null, [["id", "youtube:UC1"], ["template", tid]]))!.body as { to: string; subject: string; text: string; channel: string };
     expect([m.to, m.subject, m.channel]).toEqual(["kaua@canal.com", "Sua loja profissional.", "creators-gmail"]);
     expect(m.text.startsWith("Olá Kauã, tudo bem?")).toBe(true);
     expect((await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: m.to, subject: "", text: m.text }))!.status).toBe(409);
-    const r = await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: m.to, subject: m.subject, text: m.text, template: "padrao" });
+    const r = await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: m.to, subject: m.subject, text: m.text, template: tid });
     expect(r!.status).toBe(200);
     expect(sent.map((s) => [s.to, s.subject, s.rec.name])).toEqual([["kaua@canal.com", "Sua loja profissional.", "Kauã"]]);
     expect(c.data.creators[0]!.contacted?.via).toBe("gmail");
-    expect(c.data.settings.lastTemplate).toBe("padrao");
+    expect(c.data.settings.lastTemplate).toBe(tid);
+    // the template picked last is where the next one opens
+    expect(((await call("GET", "compose", null, [["id", "youtube:UC1"]]))!.body as { template: string }).template).toBe(tid);
   });
   it("Send message goes on every Persons › Creators channel (Gmail, WhatsApp, Discord, Instagram); a missing one says why", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
@@ -497,7 +509,7 @@ describe("collector", () => {
     const call = caller(c);
     type M = { channel: string; template: string };
     const open = async (id: string, q: [string, string][] = []): Promise<M> => (await call("GET", "compose", null, [["id", id], ...q]))!.body as M;
-    expect(await open("youtube:UC1")).toMatchObject({ channel: "creators-gmail", template: "padrao" });
+    expect(await open("youtube:UC1")).toMatchObject({ channel: "creators-gmail", template: "" }); // no default template on a first open
     // a plain open remembers nothing; a pick does
     await open("youtube:UC1", [["template", "loja-parceira"], ["channel", "creators-gmail-2"]]);
     expect([c.data.settings.lastTemplate, c.data.settings.lastChannel]).toEqual(["", undefined]);
