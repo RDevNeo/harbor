@@ -46,9 +46,24 @@ list's count on the right; several at once, the menu stays open). Both are remem
 `settings.platforms`, the phone's too) and give the review bar's next-lead order. Phone: two compact buttons beside
 the filter, each a simple menu.
 
-A lead is one card: picture, name, platform, handle and profile link, the email or "Add email", and its followers on
-the right ("9.2M followers"; YouTube subscribers count as followers; none when unknown). Review, Send message and the
+A lead is one card: picture, name, platform, handle and profile link, their **way of contact** (or "Add contact"), and
+its followers on the right ("9.2M followers"; YouTube subscribers count as followers; none when unknown). Review, Send message and the
 videos are in its detail. Copy JSONL (Available's and Approved's page bar) gives that view's leads for SpokPayCRM → Creators → Import.
+
+The way of contact is whichever channel they have (`lib/contacts.ts`, `contactsOf`): an email (any, gmail or not), a
+WhatsApp number (wa.me / api.whatsapp.com links, a Brazilian number a bio labels WhatsApp / Zap / Wpp), a Discord
+(discord.gg / discord.com/invite links, discord.com/users IDs, a username a bio labels "Discord:"), an Instagram
+(instagram.com/<handle> links, an @handle a bio labels Instagram / IG / insta; an Instagram lead's own profile last).
+Each keeps where it was found ("YouTube About", "linktr.ee/x"), as emails do; found in the bio, the platform's links
+and the links of link-in-bio pages while a run enriches a lead (and again on a fill or an Edit of the bio or links).
+Older leads got theirs once from what they already kept (`migrate`, nothing fetched). The card shows the best one
+(the detail's Reach, then typed ones, then email, WhatsApp, Instagram, Discord) with its brand mark, the next three as
+marks, "+N" past that, and a "+" to type another; a click opens WhatsApp, the Discord invite or user, the Instagram
+profile, or copies an email or Discord username. "Add contact" (none known) and "+" pick a channel (Email, WhatsApp,
+Discord, Instagram) and take a value (`POST v1/collector/contact`): a typed one is never replaced by a read; a typed
+email or number is also what Send message writes to. Send message opens on the lead's best channel Persons can send on
+when the last one picked can't reach them. The CRM's Import has no contact columns beyond the Reach the JSONL already
+carries, so the contacts stay out of it.
 
 A click anywhere else on a card (Collector, Available or Restricted) opens the lead's **detail**, the SpokPay CRM's
 creator profile dialog (`src/components/creators/creator-profile-dialog.tsx`, `creator-recent-videos.tsx`,

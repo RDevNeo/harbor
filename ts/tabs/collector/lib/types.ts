@@ -3,6 +3,7 @@
 // videos, and whether it's Restricted (kept out of Available). The record stays the userscript's, field for field (one
 // JSON object per line is what SpokPayCRM → Creators → Import parses: influencers/src/lib/leadImport.ts, platform +
 // platform_id + name required), so Copy JSONL and Send message (Persons › Creators) carry everything along.
+import { refreshContacts } from "./contacts.ts";
 import { backfillRuns, parseRuns, type RunRecord } from "./history.ts";
 
 export interface RecentVideo {
@@ -60,6 +61,9 @@ export interface CreatorRecord {
   email_source?: string | null;
   /** Typed by hand: never replaced by one found later. */
   email_manual?: boolean;
+  /** Every way to contact them found (bio, links, link-in-bio pages) or typed (Add contact), each with where it came
+   *  from: lib/contacts.ts. The email and the WhatsApp number also keep their own fields (Send writes to those). */
+  contacts?: Contact[];
   /** A WhatsApp number their bio or links give (digits, country code first). */
   whatsapp?: string | null;
   last_upload_at?: string | null;
@@ -94,6 +98,16 @@ export interface Approved {
   to: ApproveTo;
   /** The person in Persons › Creators, when Approve added them there. */
   person: string | null;
+}
+
+/** A way to contact a creator: the channel, its value ("a@b.com", "+5511987654321", "discord.gg/x" / a user ID / a
+ *  username, "@handle"), where it was found ("YouTube About", "linktr.ee/x", "typed"); typed ones are never replaced. */
+export type ContactKind = ReachKind;
+export interface Contact {
+  kind: ContactKind;
+  value: string;
+  source: string;
+  manual?: boolean;
 }
 
 /** The CRM's Reach (creator-contacts.ts): one operator-owned way to contact a creator. */
@@ -252,6 +266,18 @@ export function migrate(raw: unknown): CollectorData {
           };
         })
         .map((c) => {
+          // Contacts came later: an older lead's are found once in what it already keeps (its bio and links), nothing
+          // fetched; a bad entry dropped.
+          const { contacts, ...rest } = c;
+          if (!Array.isArray(contacts)) {
+            const out: CreatorRecord = { ...rest };
+            refreshContacts(out);
+            return out;
+          }
+          const ok = contacts.filter((x) => x && typeof x === "object" && REACH_KINDS.includes(x.kind) && typeof x.value === "string" && x.value.trim() && typeof x.source === "string").map((x) => ({ kind: x.kind, value: x.value.trim(), source: x.source, ...(x.manual ? { manual: true } : {}) }));
+          return { ...rest, contacts: ok };
+        })
+        .map((c) => {
           const { history: _h, update_error: _e, ...rest } = c as CreatorRecord & { history?: unknown; update_error?: unknown };
           return rest;
         })
@@ -268,7 +294,7 @@ export function migrate(raw: unknown): CollectorData {
 
 /** The CRM's fields (and the email), as the record it imports. */
 export function exportRecord(c: CreatorRecord): Record<string, unknown> {
-  const { email_manual: _m, whatsapp: _w, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, imported_from: _if, approved: _a, note: _n, ...rest } = c;
+  const { email_manual: _m, whatsapp: _w, contacts: _ct, updated_at: _u, contacted: _c, last_upload_at: _l, restricted: _r, found_video: _f, reach, whatsapp_manual: _wm, edited: _e, filled_at: _fa, imported_from: _if, approved: _a, note: _n, ...rest } = c;
   const out: Record<string, unknown> = { ...rest, links: c.links.map(({ label, url }) => ({ label, url })) };
   // The CRM's own Reach columns (creators.reach_kind / reach_value).
   if (reach) {

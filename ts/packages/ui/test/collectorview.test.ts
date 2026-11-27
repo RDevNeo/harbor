@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bioLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, contactLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -203,5 +203,19 @@ describe("detail bio", () => {
     expect(bioLine("")).toBe("");
     expect(bioLine("\n\n")).toBe("");
     expect(bioLine("one line")).toBe("one line");
+  });
+});
+
+describe("collector card's contact line", () => {
+  it("shows the best one, the next three as marks, how many more", () => {
+    const c = (kind: string, href = "") => ({ kind, text: kind, value: kind, source: "bio", href, tip: `${kind} · from bio` });
+    const l = contactLine([c("email"), c("whatsapp", "https://wa.me/1"), c("instagram", "x"), c("discord"), c("email"), c("email")]);
+    expect(l.has_contact).toBe(true);
+    expect(l.contact.kind).toBe("email");
+    expect(l.contact.tip).toBe("email · from bio · click to copy");
+    expect(l.more.map((x) => [x.kind, x.i])).toEqual([["whatsapp", 1], ["instagram", 2], ["discord", 3]]);
+    expect(l.more[0]!.tip).toEndWith("click to open");
+    expect(l.more_n).toBe(2);
+    expect(contactLine([]).has_contact).toBe(false);
   });
 });

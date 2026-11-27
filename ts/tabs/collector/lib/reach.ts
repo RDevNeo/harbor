@@ -1,6 +1,7 @@
 // Reach and Social media, as the SpokPay CRM has them (src/lib/creator-contacts.ts, src/lib/social-brands.tsx,
 // src/lib/creator-display.ts): one operator-owned way to contact a creator (Email, Discord user ID, WhatsApp, Instagram
 // handle) with the CRM's checks, and each profile link's brand (host first, then its label) and title.
+import { contactsOf } from "./contacts.ts";
 import { REACH_KINDS, type CreatorLink, type CreatorRecord, type Reach, type ReachKind } from "./types.ts";
 
 export const REACH_META: Record<ReachKind, { label: string; color: string; placeholder: string; send: string }> = {
@@ -76,10 +77,12 @@ export function reachHref(r: Reach): string | null {
 /** What each Reach kind's field starts with: the saved Reach, else what Collector found (email, bio's WhatsApp, the
  *  Instagram profile or a link to it). */
 export function reachDrafts(c: CreatorRecord): Record<ReachKind, string> {
-  const ig = c.platform === "instagram" && c.handle ? c.handle : (c.links.map((l) => l.url).find((u) => /instagram\.com\/[^/?#]+/i.test(u)) ?? "");
+  const found = contactsOf(c);
+  const ig = c.platform === "instagram" && c.handle ? c.handle : (found.find((x) => x.kind === "instagram")?.value ?? c.links.map((l) => l.url).find((u) => /instagram\.com\/[^/?#]+/i.test(u)) ?? "");
   const out: Record<ReachKind, string> = {
     email: c.email ?? "",
-    discord: "",
+    // a Discord user ID found (Send's Discord needs one; an invite or a username isn't)
+    discord: found.find((x) => x.kind === "discord" && SNOWFLAKE.test(x.value))?.value ?? "",
     whatsapp: c.whatsapp ? `+${c.whatsapp.replace(/\D/g, "")}` : "",
     instagram: ig ? `@${instagramHandle(ig).replace(/^@/, "")}` : "",
   };
@@ -90,9 +93,8 @@ export function reachDrafts(c: CreatorRecord): Record<ReachKind, string> {
 /** The Reach kind the detail opens on: the saved one, else the first that has something found. */
 export function reachStart(c: CreatorRecord): ReachKind {
   if (c.reach) return c.reach.kind;
-  if (c.email) return "email";
-  if (c.whatsapp) return "whatsapp";
-  return "email";
+  // their best contact the Reach can hold (a Discord invite or username can't: the CRM keeps a user ID)
+  return contactsOf(c).find((x) => x.kind !== "discord" || SNOWFLAKE.test(x.value))?.kind ?? "email";
 }
 
 export interface Brand {

@@ -10,6 +10,7 @@ import { readFileSync, statSync } from "node:fs";
 import { clipboard, images } from "@harbor/media";
 import type { TabCtx, TabUi } from "../api.ts";
 import { REACH_META, reachError } from "../../../../../tabs/collector/lib/reach.ts";
+import { CONTACT_HINT, CONTACT_LABEL } from "../../../../../tabs/collector/lib/contacts.ts";
 import { compactCount } from "../../../../../tabs/collector/lib/format.ts";
 import { REACH_KINDS, type ReachKind } from "../../../../../tabs/collector/lib/types.ts";
 import type { DetailView } from "../../../../../tabs/collector/view.ts";
@@ -51,6 +52,8 @@ export interface Row {
   /** The Reach picked in the detail ("" none) and its value. */
   reach?: string;
   reachValue?: string;
+  /** Every way to contact them, best first (view.ts ContactView). */
+  contacts?: { kind: string; text: string; value: string; source: string; href: string; tip: string }[];
 }
 export interface CollectorView {
   rev: number;
@@ -90,7 +93,20 @@ export interface Compose {
 }
 
 export type Page = "collector" | "available" | "approved" | "sent" | "restricted" | "history";
-type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
+type Bus = Record<string, unknown> & { query: string; target: string; filter: string; contact_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
+
+/** Add contact's channels, in the order the composer has them. */
+const CONTACT_KINDS: readonly ReachKind[] = ["email", "whatsapp", "discord", "instagram"];
+
+/** A card's contact line (pure: tested): the best way to contact them, the next 3's marks, how many more. */
+export function contactLine(list: NonNullable<Row["contacts"]>): { contact: { kind: string; color: string; text: string; tip: string; i: number }; has_contact: boolean; more: { kind: string; color: string; text: string; tip: string; i: number }[]; more_n: number } {
+  const one = (c: NonNullable<Row["contacts"]>[number], i: number): { kind: string; color: string; text: string; tip: string; i: number } => {
+    const color = REACH_META[c.kind as ReachKind]?.color ?? "#9aa4b2";
+    return { kind: c.kind, color, text: c.text, tip: `${c.tip}${c.href ? " · click to open" : " · click to copy"}`, i };
+  };
+  const all = list.map(one);
+  return { contact: all[0] ?? { kind: "", color: "#9aa4b2", text: "", tip: "", i: 0 }, has_contact: all.length > 0, more: all.slice(1, 4), more_n: Math.max(0, all.length - 4) };
+}
 
 /** The review bar (Reject / Skip / Approve) is for leads still under review: a run's, Available's, Restricted's (its
  *  Move to Available); not an Approved lead's, nor one opened from Sent (pure: tested). */
@@ -264,7 +280,7 @@ export function leadsOf(v: CollectorView, page: Page, filter: string, run = ""):
   const all = v.creators.filter((c) => listOfRow(c) === page);
   const only = v.settings.platforms ?? [];
   const shown = only.length ? all.filter((c) => only.includes(c.platformKey ?? "")) : all;
-  const matched = q ? shown.filter((c) => [c.name, c.handle, c.email, c.platform, c.short].some((x) => x.toLowerCase().includes(q))) : shown;
+  const matched = q ? shown.filter((c) => [c.name, c.handle, c.email, c.platform, c.short, ...(c.contacts ?? []).map((x) => x.value)].some((x) => x.toLowerCase().includes(q))) : shown;
   // Sent: the newest sent first (Sort doesn't apply there)
   const rows = page === "sent" ? [...matched].sort((a, b) => (b.sentAt ?? "").localeCompare(a.sentAt ?? "")) : sortRows(matched, v.settings.sort ?? "followers-desc");
   const none: [string, string] = ({ restricted: ["Nobody restricted", "Restrict a lead (or Reject it in its detail) to keep it out of Available. It stays remembered, so no run collects it again."], approved: ["Nobody approved", "Open a lead and press Approve (A or →). Approved leads leave Available and stay remembered, so no run collects them again."], sent: ["Nobody written to yet", "Send a lead a message (Send message in its detail, or from Persons): once it goes out by email, WhatsApp, Discord or Instagram, the lead moves here. A failed send doesn't."], available: ["No leads yet", "Collect some from the Collector page."] } as Record<"available" | "approved" | "sent" | "restricted", [string, string]>)[page];
@@ -325,7 +341,9 @@ export function createCollectorUi(): TabUi {
   let page: Page = (["collector", "available", "approved", "sent", "restricted", "history"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
   /** History: the run open ("" the timeline). */
   let historyRun = "";
-  let emailFor = "";
+  /** Add contact: the card being edited and the channel picked. */
+  let contactFor = "";
+  let contactKind: ReachKind = "email";
   let sessionBusy = false;
   // Send message
   let sendId = "";
@@ -520,7 +538,12 @@ export function createCollectorUi(): TabUi {
     set("running", !!v.run?.running);
     set("run_line", runLine(v));
     set("copy_label", Date.now() - copied < 2500 ? "Copied" : "Copy JSONL");
-    set("email_for", emailFor);
+    set("contact_for", contactFor);
+    set("contact_hint", CONTACT_HINT[contactKind]);
+    if (sigs.contact_kinds !== contactKind) {
+      b.contact_kinds = new slint.ArrayModel(CONTACT_KINDS.map((k) => ({ kind: k, label: CONTACT_LABEL[k], color: REACH_META[k].color, on: k === contactKind })));
+      sigs.contact_kinds = contactKind;
+    }
     renderHistory(v);
     const l = leadsOf(v, page, b.filter, historyRun);
     set("rows_head", l.head);
@@ -546,7 +569,8 @@ export function createCollectorUi(): TabUi {
           approved: !!x.approved,
           // Sent: the channel and the day on the right, in the followers' place
           followers: page === "sent" && x.sentLine ? x.sentLine : x.subs !== null && x.subs !== undefined ? `${compactCount(x.subs)} followers` : "",
-          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}|${page === "sent" ? (x.sentLine ?? "") : ""}`,
+          ...contactLine(x.contacts ?? []),
+          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}|${page === "sent" ? (x.sentLine ?? "") : ""}|${(x.contacts ?? []).map((c) => `${c.kind}:${c.value}:${c.source}`).join(",")}`,
         };
       }),
     );
@@ -768,7 +792,7 @@ export function createCollectorUi(): TabUi {
       page = (PAGES.find((p) => p.id === id)?.id ?? "collector") as Page;
       historyRun = "";
       listMenu = "";
-      emailFor = "";
+      contactFor = "";
       render();
       ctx?.saveSoon?.();
     });
@@ -812,25 +836,45 @@ export function createCollectorUi(): TabUi {
     });
     on("restrict", (id: string, yes: boolean) => void post("restrict", { id, restricted: yes }));
     on("filter_edited", () => render());
-    on("email_edit", (id: string) => {
-      emailFor = id;
-      b.email_text = view?.creators.find((c) => c.id === id)?.email ?? "";
+    on("contact_edit", (id: string) => {
+      contactFor = id;
+      // the first channel they have nothing on yet
+      const have = new Set((view?.creators.find((c) => c.id === id)?.contacts ?? []).map((c) => c.kind));
+      contactKind = CONTACT_KINDS.find((k) => !have.has(k)) ?? "email";
+      b.contact_text = "";
       render();
     });
-    on("email_cancel", () => {
-      emailFor = "";
+    on("contact_pick", (k: string) => {
+      if (!(CONTACT_KINDS as readonly string[]).includes(k)) return;
+      contactKind = k as ReachKind;
       render();
     });
-    on("email_save", () => {
-      const id = emailFor;
-      const email = b.email_text.trim();
-      void call("POST", "v1/collector/email", { id, email })
+    on("contact_cancel", () => {
+      contactFor = "";
+      render();
+    });
+    on("contact_save", () => {
+      const id = contactFor;
+      const kind = contactKind;
+      const value = b.contact_text.trim();
+      if (!value) return;
+      void call("POST", "v1/collector/contact", { id, kind, value })
         .then(() => {
-          emailFor = "";
-          ctx?.toast(email ? "Email saved." : "Email cleared.");
+          contactFor = "";
+          ctx?.toast(`${CONTACT_LABEL[kind]} saved.`);
           void load();
         })
         .catch((e: unknown) => ctx?.toast(errText(e)));
+    });
+    on("contact_open", (id: string, i: number) => {
+      const c = view?.creators.find((x) => x.id === id)?.contacts?.[i];
+      if (!c) return;
+      if (c.href) ctx?.openExternal(c.href);
+      else
+        void clipboard
+          .copyText(c.value)
+          .then(() => ctx?.toast(`Copied ${c.text}.`))
+          .catch((e: unknown) => ctx?.toast(errText(e)));
     });
     on("session_save", () => {
       const cookie = b.session_cookie.trim();

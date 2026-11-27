@@ -101,8 +101,9 @@ Per tab:
   term (14px) with the platform's 14px brand mark, a 13px subtle line and the early stop's reason in amber or red,
   20px under each row, the row accent on hover; a run opened: ghost "‹ History", the term at 20px/600, its line,
   then its leads. A lead is a bordered card (radius 8): 44px Avatar, name, platform
-  Tag, handle, the short profile link, the email with its source (or "Add email", which turns into an Input with Save /
-  Cancel), the 3 newest videos as 64×48 thumbnails (a click opens one, the title is its tip), Restrict / Unrestrict and
+  Tag, handle, the short profile link, their way of contact (the best one's 12px brand mark in its colour and
+  its value, the others' 11px marks on 18px hover squares, "+N", a "+" square; or "Add contact" in gray-700; either turns
+  into the four channel squares (28px, Reach's style), an Input with Save / Cancel), the 3 newest videos as 64×48 thumbnails (a click opens one, the title is its tip), Restrict / Unrestrict and
   Send (ghost-muted sm Btns); a lead with a Reach shows its icon after the handle (24px, the brand's mark on its tint).
   A click elsewhere on a card opens the lead's detail: the SpokPay CRM's creator profile dialog on Hub's tokens (720
   wide, radius 12, a scrolling body, a fixed footer with Open channel / Edit; tiles and rows on `fg` at 3.5%, caps heads

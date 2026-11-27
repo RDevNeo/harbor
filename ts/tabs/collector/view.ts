@@ -2,6 +2,7 @@
 // sources (with why one can't run), the run (one line while it goes, its leads), and every lead as a simple card:
 // picture, name and handle, platform, profile link, email (and where it came from), the 3 newest videos, Restricted.
 import { avatarKey } from "./avatar-key.ts";
+import { CONTACT_LABEL, contactHref, contactsOf, contactText } from "./lib/contacts.ts";
 import { compactCount, dayAgo } from "./lib/format.ts";
 import { historyView } from "./lib/history.ts";
 import { brandOf, linkTitle, linksText, REACH_META, reachDrafts, reachHref, reachStart } from "./lib/reach.ts";
@@ -69,6 +70,23 @@ export interface RowView {
   /** The Reach kind picked in the detail ("email", "discord", "whatsapp", "instagram"), "" when none: its icon on the card. */
   reach: string;
   reachValue: string;
+  /** Every way to contact them, best first (typed, then found: email, WhatsApp, Instagram, Discord): the card's
+   *  contact line shows the first and the others' marks. */
+  contacts: ContactView[];
+}
+
+export interface ContactView {
+  /** "email", "whatsapp", "discord", "instagram". */
+  kind: string;
+  /** As shown: "a@b.com", "+55 11 98765-4321", "discord.gg/x", "@handle". */
+  text: string;
+  value: string;
+  /** "YouTube About", "linktr.ee/x", "typed"… */
+  source: string;
+  /** Where it opens ("" for an email: copied, and a Discord username). */
+  href: string;
+  /** "WhatsApp +55 11 98765-4321 · from YouTube About". */
+  tip: string;
 }
 
 const ROWS_MAX = 2000;
@@ -117,6 +135,10 @@ export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string
     subs: c.subscriber_count ?? null,
     reach: c.reach?.kind ?? "",
     reachValue: c.reach?.value ?? "",
+    contacts: contactsOf(c).map((x) => {
+      const text = contactText(x);
+      return { kind: x.kind, text, value: x.value, source: x.source, href: contactHref(x) ?? "", tip: `${CONTACT_LABEL[x.kind]} ${text} · ${x.source === "typed" ? "typed" : `from ${x.source}`}` };
+    }),
   };
 }
 
@@ -204,7 +226,7 @@ export function creatorDetail(c: CreatorRecord, pic: (url: string | null) => str
   return {
     ...row,
     platformKey: c.platform,
-    hasContact: !!(c.email || c.whatsapp || c.reach),
+    hasContact: !!(c.email || c.whatsapp || c.reach || row.contacts.length),
     stats,
     recent,
     bio: c.description ?? "",

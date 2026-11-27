@@ -594,7 +594,10 @@ public class Collector extends Base {
             JSONObject o = all.optJSONObject(i);
             if (o == null || !which.equals(listOf(o))) continue;
             if (!only.isEmpty() && !only.contains(o.optString("platformKey"))) continue;
-            String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short")).toLowerCase(Locale.ROOT);
+            StringBuilder cs = new StringBuilder();
+            JSONArray cl = o.optJSONArray("contacts");
+            for (int j = 0; cl != null && j < cl.length(); j++) cs.append(' ').append(cl.optJSONObject(j).optString("value"));
+            String hay = (o.optString("name") + " " + o.optString("handle") + " " + o.optString("email") + " " + o.optString("platform") + " " + o.optString("short") + cs).toLowerCase(Locale.ROOT);
             if (f.isEmpty() || hay.contains(f)) rows.add(o);
         }
         // Sent: the newest sent first (Sort doesn't apply there)
@@ -1214,6 +1217,8 @@ public class Collector extends Base {
         final LinearLayout view, card;
         final android.widget.FrameLayout avBox, reachBox;
         final TextView ini, name, badge, link, email, send, act;
+        /** Their way of contact: the best one's mark and text, the others' marks, + to type another. */
+        final LinearLayout contact;
         final ImageView av;
         final LinearLayout thumbs;
         final ImageView[] th = new ImageView[3];
@@ -1256,8 +1261,10 @@ public class Collector extends Base {
             text.addView(link, Ui.fill());
             email = Ui.subtitle(Ui.text(c, "", 12.5f, Ui.FG));
             email.setPadding(0, Ui.dp(2), 0, 0);
-            email.setOnClickListener(v -> { if (cur != null) editEmail(cur.optString("id"), cur.optString("email")); });
             text.addView(email, Ui.fill());
+            contact = Ui.row(c);
+            contact.setGravity(Gravity.CENTER_VERTICAL);
+            text.addView(contact, Ui.margins(Ui.fill(), 0, 2, 0, 0));
             top.addView(text, Ui.weight());
             card.addView(top, Ui.fill());
             thumbs = Ui.row(c);
@@ -1295,6 +1302,44 @@ public class Collector extends Base {
             card.setOnClickListener(v -> { if (cur != null) push(new CollectorCreator.Detail(c, cur.optString("id"), cur.optString("name"), rowIds())); });
         }
 
+        /** The contact line: the best way to contact them (a tap opens WhatsApp, Discord or Instagram, or copies an
+         *  email), up to 3 others' marks (a tap each), a + to type another; "Add contact" when none is known. */
+        void bindContacts(final String rid, JSONArray list) {
+            Collector c = Collector.this;
+            contact.removeAllViews();
+            int n = list == null ? 0 : list.length();
+            if (n == 0) {
+                contact.addView(Ui.icon(c, CollectorCreator.I_AT, 13, Ui.G600), Ui.wrap());
+                TextView t = Ui.text(c, "Add contact", 12.5f, Ui.G600);
+                contact.addView(t, Ui.margins(Ui.wrap(), 5, 0, 0, 0));
+                contact.setOnClickListener(v -> addContact(rid, null));
+                return;
+            }
+            contact.setOnClickListener(null);
+            JSONObject best = list.optJSONObject(0);
+            String k0 = best.optString("kind");
+            View m0 = CollectorCreator.brand(c, k0, 13, CollectorCreator.brandColor(k0));
+            contact.addView(m0, new LinearLayout.LayoutParams(Ui.dp(13), Ui.dp(13)));
+            TextView t = Ui.subtitle(Ui.text(c, best.optString("text") + "  · " + best.optString("source"), 12.5f, Ui.FG));
+            t.setOnClickListener(v -> openContact(best));
+            contact.addView(t, Ui.margins(new LinearLayout.LayoutParams(0, -2, 1), 5, 0, 0, 0));
+            for (int i = 1; i < Math.min(n, 4); i++) {
+                final JSONObject o = list.optJSONObject(i);
+                String k = o.optString("kind");
+                android.widget.FrameLayout b = new android.widget.FrameLayout(c);
+                b.addView(CollectorCreator.brand(c, k, 13, CollectorCreator.brandColor(k)), new android.widget.FrameLayout.LayoutParams(Ui.dp(13), Ui.dp(13), Gravity.CENTER));
+                b.setContentDescription(o.optString("tip"));
+                b.setOnClickListener(v -> openContact(o));
+                contact.addView(b, new LinearLayout.LayoutParams(Ui.dp(26), Ui.dp(24)));
+            }
+            if (n > 4) contact.addView(Ui.text(c, "+" + (n - 4), 11.5f, Ui.G700), Ui.wrap());
+            TextView plus = Ui.icon(c, Ui.I_PLUS, 14, Ui.G600);
+            plus.setGravity(Gravity.CENTER);
+            plus.setContentDescription("Add another way to contact them");
+            plus.setOnClickListener(v -> addContact(rid, list));
+            contact.addView(plus, new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(24)));
+        }
+
         JSONObject video(int i) {
             JSONArray vids = cur == null ? null : cur.optJSONArray("videos");
             return vids == null || i >= vids.length() ? null : vids.optJSONObject(i);
@@ -1321,15 +1366,12 @@ public class Collector extends Base {
             } else reachBox.setVisibility(View.GONE);
             String handle = r.optString("handle");
             link.setText((handle.isEmpty() ? "" : handle + " · ") + r.optString("short"));
-            String src = r.optString("emailSource");
-            email.setText(mail.isEmpty() ? "Add email" : mail + (src.isEmpty() ? "" : "  · " + src));
-            email.setTextColor(mail.isEmpty() ? Ui.G600 : Ui.FG);
+            bindContacts(rid, r.optJSONArray("contacts"));
             // Sent: the channel and the day it went
             String sl = r.optString("sentLine", "");
-            if ("sent".equals(sel) && !sl.isEmpty()) {
-                email.setText("Sent · " + sl);
-                email.setTextColor(Ui.FG);
-            }
+            boolean sentLine = "sent".equals(sel) && !sl.isEmpty();
+            email.setVisibility(sentLine ? View.VISIBLE : View.GONE);
+            if (sentLine) email.setText("Sent · " + sl);
             JSONArray vids = r.optJSONArray("videos");
             boolean any = vids != null && vids.length() > 0;
             thumbs.setVisibility(any ? View.VISIBLE : View.GONE);
@@ -1356,6 +1398,70 @@ public class Collector extends Base {
             thumbW = Math.max(Ui.dp(40), w / 3);
         }
         return thumbW;
+    }
+
+    /** A card's contact tapped: WhatsApp, a Discord invite or user, an Instagram open; an email (or a Discord username)
+     *  is copied. */
+    void openContact(JSONObject o) {
+        String href = o.optString("href", "");
+        if (!href.isEmpty()) Ui.openUrl(this, href);
+        else {
+            Ui.copy(this, o.optString("value"));
+            Ui.toast(this, "Copied " + o.optString("text"));
+        }
+    }
+
+    /** Add contact: the channel (Email, WhatsApp, Discord, Instagram; the first they have nothing on), then its value.
+     *  A typed one is never replaced by one found later. */
+    void addContact(final String id, JSONArray have) {
+        final String[] kinds = {"email", "whatsapp", "discord", "instagram"};
+        java.util.Set<String> got = new java.util.HashSet<>();
+        for (int i = 0; have != null && i < have.length(); i++) got.add(have.optJSONObject(i).optString("kind"));
+        final String[] pick = {"email"};
+        for (String k : kinds) if (!got.contains(k)) { pick[0] = k; break; }
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        final LinearLayout row = Ui.row(this);
+        final EditText f = Ui.input(this, "", false);
+        f.setTypeface(Ui.sans);
+        final Runnable[] draw = new Runnable[1];
+        draw[0] = () -> {
+            row.removeAllViews();
+            for (final String k : kinds) {
+                boolean on = k.equals(pick[0]);
+                android.widget.FrameLayout b = new android.widget.FrameLayout(this);
+                b.setBackground(Ui.press(on ? CollectorCreator.tint(CollectorCreator.brandColor(k)) : Ui.G100, on ? Ui.G700 : 0, 10));
+                View m = CollectorCreator.brand(this, k, 18, on ? CollectorCreator.brandColor(k) : Ui.G600);
+                if (!on) m.setAlpha(0.6f);
+                b.addView(m, new android.widget.FrameLayout.LayoutParams(Ui.dp(18), Ui.dp(18), Gravity.CENTER));
+                b.setContentDescription(CollectorCreator.reachLabel(k));
+                b.setOnClickListener(v -> { pick[0] = k; draw[0].run(); });
+                row.addView(b, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(40)), 0, 0, 6, 0));
+            }
+            String k = pick[0];
+            f.setHint("email".equals(k) ? "name@studio.com" : "whatsapp".equals(k) ? "+55 21 97570-9440" : "discord".equals(k) ? "discord.gg/invite, user ID or username" : "@handle or instagram.com/handle");
+            f.setInputType("email".equals(k) ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(k) ? InputType.TYPE_CLASS_PHONE : InputType.TYPE_CLASS_TEXT);
+        };
+        draw[0].run();
+        box.addView(row, Ui.margins(Ui.fill(), 0, 0, 0, 8));
+        box.addView(f, Ui.fill());
+        Ui.dialog(this).setTitle("Add contact").setView(box)
+                .setPositiveButton("Save", (d, w) -> {
+                    if (hub == null) return;
+                    final Hub h = hub;
+                    final String kind = pick[0];
+                    JSONObject b = new JSONObject();
+                    try { b.put("id", id).put("kind", kind).put("value", f.getText().toString().trim()); } catch (Exception ignored) { }
+                    Ui.pool.execute(() -> {
+                        try {
+                            h.call("POST", "/v1/collector/contact", b);
+                            Ui.main.post(() -> { Ui.toast(this, CollectorCreator.reachLabel(kind) + " saved"); load(); });
+                        } catch (Exception e) {
+                            Ui.main.post(() -> Ui.toast(this, h.whyDown(e)));
+                        }
+                    });
+                })
+                .setNegativeButton("Cancel", null).show();
     }
 
     /** Type (or correct) a lead's email; a typed one is never replaced by one found later. Empty clears it. */

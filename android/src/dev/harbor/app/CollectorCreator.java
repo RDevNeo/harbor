@@ -600,7 +600,7 @@ final class CollectorCreator {
     }
 
     static final String I_MAIL = "", I_FLAME = "", I_VIDEO = "", I_EYE = "", I_HEART = "",
-            I_NOTE = "", I_PENCIL = "";
+            I_NOTE = "", I_PENCIL = "", I_AT = "\ue04e";
 
     /** Lucide's arrow-down (not in the font subset), stroked: the review bar's Skip. */
     static final class ArrowDown extends android.graphics.drawable.Drawable {

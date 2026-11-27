@@ -25,6 +25,8 @@
 //   POST v1/collector/note {id, note} the detail's Quick note (private: never exported)
 //   POST v1/collector/remove {id}     forget the row (still never collected again)
 //   POST v1/collector/email           {id, email}: typed by hand ("" lets a found one take its place again)
+//   POST v1/collector/contact         {id, kind: email|whatsapp|discord|instagram, value}: a card's Add contact (typed,
+//                                     never replaced by one found later); answers the view
 //   GET  v1/collector/export?which=   {text, count}: the Available (or "approved") leads as JSONL for SpokPayCRM →
 //                                     Creators → Import
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
@@ -52,6 +54,7 @@ import { sniff } from "../../packages/persons/src/avatars.ts";
 import type { TabEngine, TabEngineCtx } from "../api.ts";
 import { personsService } from "../persons/engine.ts";
 import { avatarKey } from "./avatar-key.ts";
+import { contactsOf, refreshContacts, typedContact } from "./lib/contacts.ts";
 import { enrich } from "./lib/enrich.ts";
 import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
 import { Instagram } from "./lib/instagram.ts";
@@ -186,6 +189,7 @@ export class Collector {
         (e.kind === "gmail" && !!c.email && (c.email.toLowerCase() === peer.toLowerCase() || emails.has(c.email.toLowerCase()))) ||
         (e.kind === "whatsapp" && !!c.whatsapp && (digits(c.whatsapp) === digits(peer) || normWhatsApp(c.whatsapp) === digits(peer))) ||
         (e.kind === "discord" && c.reach?.kind === "discord" && c.reach.value === peer) ||
+        ((e.kind === "discord" || e.kind === "instagram") && contactsOf(c).some((x) => x.kind === e.kind && x.value.replace(/^@/, "").toLowerCase() === peer.replace(/^@/, "").toLowerCase())) ||
         (e.kind === "instagram" && c.platform === "instagram" && c.platform_id === peer) ||
         (socials.size > 0 && socialsOf(c).some((u) => socials.has(u)));
       if (!hit) continue;
@@ -367,6 +371,7 @@ export class Collector {
         for (const v of fresh.recent_videos) this.avatarPath(v.thumbnail_url);
       }
       this.avatarPath(cur.avatar_url);
+      refreshContacts(cur, { keepOld: true });
       cur.filled_at = new Date().toISOString();
       this.touch();
       return true;
@@ -525,6 +530,8 @@ export class Collector {
       out.email = found?.email ?? rec.email ?? null;
       out.email_source = found?.source ?? rec.email_source ?? null;
     }
+    // Every way to contact them (WhatsApp, Discord, Instagram, emails), each with where it was found.
+    refreshContacts(out, { emails: [...(platformEmail ? [platformEmail] : []), ...e.emails], bioSource });
     return out;
   }
 
@@ -884,6 +891,28 @@ export class Collector {
       }
     }
     if (typed.size) c.edited = [...typed];
+    // The bio or links typed: the contacts they give read again (typed ones stay).
+    if (typeof b.description === "string" || typeof b.links === "string") refreshContacts(c);
+    this.touch();
+    return null;
+  }
+
+  /** Add contact (a card's): a way to contact them typed by hand, on any channel. An email or a WhatsApp number is also
+   *  what Send message writes to; none is ever replaced by one found later. */
+  addContact(id: string, kind: string, value: string): string | null {
+    const c = this.find(id);
+    if (!c) return "No such lead.";
+    if (!isReachKind(kind)) return "Pick Email, WhatsApp, Discord or Instagram.";
+    const t = typedContact(kind, value);
+    if (t.error) return t.error;
+    if (kind === "email") return this.setEmail(id, t.value);
+    if (kind === "whatsapp") {
+      c.whatsapp = t.value.replace(/\D/g, "");
+      c.whatsapp_manual = true;
+    } else {
+      // One typed per channel: a new one replaces the one typed before.
+      c.contacts = [{ kind, value: t.value, source: "typed", manual: true }, ...(c.contacts ?? []).filter((x) => !(x.manual && x.kind === kind))];
+    }
     this.touch();
     return null;
   }
@@ -968,7 +997,10 @@ export class Collector {
     // that connection, else (another place's connections) one of the same kind here
     const lastKind = lastCh ? this.o.persons.channels().find((y) => y.id === lastCh)?.kind : undefined;
     const last = lastCh ? (chans.find((x) => x.id === lastCh && valid(x)) ?? (lastKind ? chans.find((x) => x.kind === lastKind && valid(x)) : undefined)) : undefined;
-    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? last ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
+    // else the lead's own best way of contact (Reach first, then what was found) that Persons can send on
+    const theirs = [...new Set([...(reachKind ? [reachKind] : []), ...contactsOf(c).map((x): SendKind => (x.kind === "email" ? "gmail" : x.kind))])];
+    const best = theirs.map((k) => chans.find((x) => x.kind === k && valid(x))).find(Boolean);
+    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? last ?? best ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
     const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
     return {
       id,
@@ -1158,6 +1190,12 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       await c.picsNow(id);
       const d = c.detail(id);
       return d ? ok(d as never) : err(404, "No such creator");
+    }
+    case "POST contact": {
+      const b = bodyOf(call);
+      const why = c.addContact(String(b.id ?? ""), String(b.kind ?? ""), String(b.value ?? ""));
+      if (why) return err(400, why);
+      return ok(c.view() as never);
     }
     case "POST reach": {
       const b = bodyOf(call);
