@@ -32,8 +32,16 @@ public class Chat extends Base implements Images.Gallery {
     private PatchLinks links;
     private WorkBar work;
     private ScrollView scroll;
-    /** Over the transcript's lower edge while it's scrolled up from the latest message. */
-    private View jump;
+    /** Over the transcript's lower right corner while it's a screen or more up from the latest message, or replies
+     *  came in unseen (ChatFlow.Jump: their count). */
+    private ChatFlow.Jump jump;
+    /** Replies that came in while scrolled up, the first one's seq (-1: none). */
+    private int unseen, firstUnseen = -1;
+    /** New items are drawn after this seq (a reply coming in): they enter with ChatFlow.enter. -1: none (a load
+     *  that draws the chat from scratch, a page of earlier ones). */
+    private int enterAfter = -1;
+    /** "N new messages" above what came while this chat was away (this run of the app), until it's left again. */
+    private View newLine;
     private LinearLayout content, status;
     private Composer comp;
     /** A test build's stand-in for a keyboard's clipboard (Rig.keyboard); null in every other build. */
@@ -152,12 +160,10 @@ public class Chat extends Base implements Images.Gallery {
         reading.addView(scroll, frameFill());
         // "Scroll to bottom": glides to the end; arriving there makes new output follow again
         // (apply's atBottom). A touch on the transcript stops the glide, so it never fights a drag.
-        jump = Ui.roundButton(this, Ui.I_DOWN, Ui.CARD, Ui.FG, 40, v -> scroll.smoothScrollTo(0, content.getHeight()));
-        jump.setBackground(Ui.press(Ui.CARD, Ui.LINE, 20));
-        jump.setElevation(Ui.dp(3));
-        jump.setContentDescription("Scroll to bottom");
-        jump.setVisibility(View.GONE);
-        reading.addView(jump, Ui.margins(new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL), 0, 0, 0, 12));
+        // WhatsApp's: over the lower right corner, with the count of replies that came in while scrolled up; a tap
+        // glides to the first of them (or the end).
+        jump = new ChatFlow.Jump(this, v -> jumpDown());
+        reading.addView(jump.view, jump.params());
         scroll.setOnScrollChangeListener((sv, sx, sy, osx, osy) -> showJump());
         content.addOnLayoutChangeListener((cv, cl, ct, cr, cb, col, cot, cor, cob) -> showJump());
         above.addView(reading, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -343,6 +349,7 @@ public class Chat extends Base implements Images.Gallery {
     protected void onPause() {
         super.onPause();
         front = false;
+        savePlace();
         if (comp.voice != null) comp.voice.cancel();
         if (composer == null || gone) return;
         typing(false, false);
@@ -550,6 +557,8 @@ public class Chat extends Base implements Images.Gallery {
 
     private void apply(JSONObject r, boolean full) {
         boolean atBottom = !loaded || scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(120);
+        boolean firstLoad = !loaded;
+        enterAfter = !loaded || full || items.isEmpty() ? -1 : items.lastKey();
         if (!loaded || full) clear();
         loaded = true;
         rev = Math.max(full ? 0 : rev, r.optLong("rev"));
@@ -598,6 +607,17 @@ public class Chat extends Base implements Images.Gallery {
             }
         }
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
+        // Replies new at the end while scrolled up: the "↓" counts them.
+        if (enterAfter >= 0 && !atBottom) for (int seq : touched) {
+            JSONObject it = items.get(seq);
+            if (seq > enterAfter && it != null && "text".equals(it.optString("kind"))) {
+                if (unseen == 0) firstUnseen = seq;
+                unseen++;
+            }
+        }
+        jump.count(unseen);
+        enterAfter = -1;
+        if (firstLoad) newMessagesLine();
         earlierButton();
         if (items.isEmpty()) { hintView = emptyView(); content.addView(hintView); }
         if (r.has("typing")) comp.who(Sidebar.typingWho(r, you()));
@@ -608,9 +628,13 @@ public class Chat extends Base implements Images.Gallery {
         View cap = toCaptcha ? content.findViewWithTag(CAPTCHA) : null;
         View live = liveSeq >= 0 ? views.get(liveSeq) : null;
         if (liveSeq >= 0 && !items.isEmpty()) liveSeq = -1; // once, at the first load
+        ChatFlow.Pos was = firstLoad && live == null && cap == null ? ChatFlow.place(posKey()) : null;
+        View back = was != null && !was.end ? views.get(Integer.parseInt(was.anchor)) : null;
         if (cap != null) { toCaptcha = false; toView(cap); }
         else if (live != null) toView(live, liveOff);
-        else if (atBottom) toEnd();
+        else if (firstLoad && newLine != null) toView(newLine, Ui.dp(24));
+        else if (back != null) toView(back, was.off);
+        else if (atBottom) toEnd(!firstLoad);
         if (loaded) toCaptcha = false;
     }
 
@@ -649,6 +673,7 @@ public class Chat extends Base implements Images.Gallery {
 
     private void clear() {
         content.removeAllViews();
+        newLine = null;
         views.clear();
         hintView = earlier = null;
     }
@@ -669,6 +694,9 @@ public class Chat extends Base implements Images.Gallery {
         boolean joined = it != null && joinedAbove(it);
         // A joined bubble is pulled up to 3 dp under the one above (whose padding is 10 dp).
         content.addView(nv, Math.max(0, Math.min(idx, content.getChildCount())), joined ? Ui.margins(Ui.fill(), 0, -7, 0, 0) : Ui.fill());
+        // A card new at the end (a reply, my message's card) comes in with WhatsApp's short entry; my own message
+        // takes its echo's place without one.
+        if (ov == null && enterAfter >= 0 && seq > enterAfter && it != null && !"user".equals(it.optString("kind"))) ChatFlow.enter(nv);
         // The bubble above loses its rounded bottom-right corner when this one joins it.
         Integer above = drawnAbove(seq);
         if (above != null) reshape(above);
@@ -749,22 +777,86 @@ public class Chat extends Base implements Images.Gallery {
         });
     }
 
-    /** The jump button shows while the transcript is scrolled up from its end (apply's threshold). */
+    /** The "↓" shows while the transcript is a screen or more up from its end, or replies came in unseen; back at
+     *  the end, they're seen. */
     private void showJump() {
-        boolean up = loaded && scroll.getScrollY() + scroll.getHeight() < content.getHeight() - Ui.dp(120);
-        jump.setVisibility(up ? View.VISIBLE : View.GONE);
+        if (!loaded) { jump.show(false); return; }
+        int up = ChatFlow.fromEnd(scroll, content);
+        if (up < Ui.dp(120) && unseen > 0) { unseen = 0; firstUnseen = -1; jump.count(0); }
+        jump.show(up > scroll.getHeight() || (unseen > 0 && up >= Ui.dp(120)));
     }
 
-    /** Scrolls to the end once the new items are laid out. */
-    private void toEnd() {
+    /** The "↓": glides to the first reply that came in unseen when it's more than a screen up, else to the end. */
+    private void jumpDown() {
+        View first = firstUnseen >= 0 ? views.get(firstUnseen) : null;
+        int end = Math.max(0, content.getHeight() - scroll.getHeight());
+        int y = end;
+        if (first != null && first.getParent() == content) y = Math.min(end, Math.max(0, first.getTop() - Ui.dp(24)));
+        scroll.smoothScrollTo(0, y);
+        unseen = 0;
+        firstUnseen = -1;
+        jump.count(0);
+    }
+
+    /** Scrolls to the end once the new items are laid out: at once (opening the chat), else gliding (a reply coming
+     *  in, a message sent), as WhatsApp. */
+    private void toEnd() { toEnd(true); }
+
+    private void toEnd(boolean glide) {
         android.view.ViewTreeObserver o = content.getViewTreeObserver();
         o.addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
             @Override public void onGlobalLayout() {
                 content.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                scroll.scrollTo(0, content.getHeight());
+                int end = Math.max(0, content.getHeight() - scroll.getHeight());
+                if (glide && end - scroll.getScrollY() < scroll.getHeight() * 2) scroll.smoothScrollTo(0, end);
+                else scroll.scrollTo(0, end);
             }
         });
         content.requestLayout();
+    }
+
+    private String posKey() { return hub.id + "/" + chatId; }
+
+    /** Where this chat is left (ChatFlow): at its end, or the card at the top of the screen and how far down it is;
+     *  and its last card then (for "N new messages" when it's opened again). */
+    private void savePlace() {
+        if (!loaded || chatId == null || items.isEmpty()) return;
+        int last = items.lastKey();
+        if (ChatFlow.atEnd(scroll, content, Ui.dp(120))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, last)); return; }
+        int y = scroll.getScrollY();
+        for (Map.Entry<Integer, View> e : views.entrySet()) {
+            View v = e.getValue();
+            if (v.getParent() != content || v.getHeight() == 0 || v.getBottom() <= y) continue;
+            ChatFlow.place(posKey(), new ChatFlow.Pos(false, String.valueOf(e.getKey()), v.getTop() - y, last));
+            return;
+        }
+    }
+
+    /** Opened again with replies that came while it was away (this run of the app): "N new messages" over the first. */
+    private void newMessagesLine() {
+        ChatFlow.Pos was = ChatFlow.place(posKey());
+        if (was == null || items.isEmpty() || items.lastKey() <= was.last) return;
+        int n = 0, first = -1;
+        for (Map.Entry<Integer, JSONObject> e : items.tailMap(was.last + 1).entrySet()) {
+            if (!"text".equals(e.getValue().optString("kind"))) continue;
+            if (first < 0) first = e.getKey();
+            n++;
+        }
+        View at = first < 0 ? null : views.get(first);
+        if (at == null || at.getParent() != content) return;
+        LinearLayout r = Ui.row(this);
+        r.setGravity(Gravity.CENTER);
+        r.setPadding(Ui.dp(16), Ui.dp(10), Ui.dp(16), Ui.dp(6));
+        View l1 = new View(this), l2 = new View(this);
+        l1.setBackgroundColor(Ui.BLUE);
+        l2.setBackgroundColor(Ui.BLUE);
+        r.addView(l1, new LinearLayout.LayoutParams(0, Ui.dp(1), 1));
+        TextView t = Ui.subtitle(Ui.bold(this, n == 1 ? "1 new message" : n + " new messages", 12, Ui.BLUE));
+        t.setPadding(Ui.dp(10), 0, Ui.dp(10), 0);
+        r.addView(t, new LinearLayout.LayoutParams(-2, -2, 0));
+        r.addView(l2, new LinearLayout.LayoutParams(0, Ui.dp(1), 1));
+        newLine = r;
+        content.addView(r, content.indexOfChild(at), Ui.fill());
     }
 
     /** The desktop's bars (PROTOCOL.md "status"), then who else is typing. */
@@ -772,7 +864,15 @@ public class Chat extends Base implements Images.Gallery {
         status.removeAllViews();
         workingText = null;
         // Messages sent from here that the chat doesn't show yet: the user's bubbles, at once.
-        if (echo != null) for (Echo.Msg m : echo.shown()) status.addView(echoView(m), Ui.margins(Ui.fill(), 36, 4, 0, 4));
+        Set<String> nowEchoes = new HashSet<>();
+        if (echo != null) for (Echo.Msg m : echo.shown()) {
+            View ev = echoView(m);
+            status.addView(ev, Ui.margins(Ui.fill(), 36, 4, 0, 4));
+            nowEchoes.add(m.cid);
+            // just sent: it comes in as WhatsApp's does
+            if (!drawnEchoes.contains(m.cid) && System.currentTimeMillis() - m.at < 1_000) ChatFlow.enter(ev);
+        }
+        drawnEchoes = nowEchoes;
         JSONObject b = bars == null ? new JSONObject() : bars;
         // Steers on their way in sit with the turn; "Up next" comes after the bars (drawQueue).
         List<JSONObject> waitingQ = new ArrayList<>();
@@ -2582,6 +2682,8 @@ public class Chat extends Base implements Images.Gallery {
     private static final Map<String, java.util.concurrent.ExecutorService> lanes = new java.util.HashMap<>();
     private Echo echo;
     private String echoKey;
+    /** The messages on their way drawn last time (a new one enters). */
+    private Set<String> drawnEchoes = new HashSet<>();
 
     /** The chat's messages on their way; read from disk the first time in this process, where
      *  a send that was under way goes again (the PC runs it once however often it comes). */
@@ -2687,13 +2789,16 @@ public class Chat extends Base implements Images.Gallery {
         t.setBackground(Ui.round(Ui.G100, 0, 20));
         t.setPadding(Ui.dp(16), Ui.dp(11), Ui.dp(16), Ui.dp(11));
         t.setMaxWidth(maxBubble());
-        if (m.state == Echo.SENDING) t.setAlpha(0.6f);
+        if (m.state == Echo.FAILED) t.setBackground(Ui.round(Ui.G100, Ui.RED, 20));
         w.addView(t, Ui.wrap());
+        // WhatsApp's marks under it: a clock while it goes ("Sending…" too when that takes a while), ✓ once the PC
+        // has it (its card then takes the place, and the working line shows under it); not sent: red, Tap to retry.
         long now = System.currentTimeMillis();
-        if (m.state == Echo.SENDING && now - m.at >= SLOW) w.addView(Ui.text(this, "Sending…", 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 3, 4, 0));
+        String mark = m.state == Echo.SENT ? "✓" : m.state == Echo.FAILED ? "⚠ Not sent · Tap to retry" : now - m.at >= SLOW ? "🕓 Sending…" : "🕓";
+        TextView st = Ui.text(this, mark, 12, m.state == Echo.FAILED ? Ui.RED : Ui.G600);
+        st.setContentDescription(m.state == Echo.SENT ? "sent" : m.state == Echo.FAILED ? "not sent" : "sending");
+        w.addView(st, Ui.margins(Ui.wrap(), 0, 3, 4, 0));
         if (m.state == Echo.FAILED) {
-            TextView no = Ui.text(this, "Not sent · Tap to try again", 12, Ui.RED);
-            w.addView(no, Ui.margins(Ui.wrap(), 0, 3, 4, 0));
             w.setOnClickListener(v -> retryEcho(m));
             w.setOnLongClickListener(v -> { echoMenu(m); return true; });
         }

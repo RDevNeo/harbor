@@ -6,6 +6,21 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Chats move like WhatsApp's (Persons and Projects, phone and PC).** A new message fades and slides in (~180 ms) and
+  the chat glides to it when you're at the bottom, instead of the whole list being rebuilt (the phone's Persons chat
+  now patches its views: only new or changed messages are built, pictures aren't loaded again). Scrolled up, nothing
+  moves: a round "↓" in the lower right corner (also whenever you're more than a screen up) counts the messages that
+  came in meanwhile (green badge); a tap glides down (on the phone to the first of them). Sending shows your message
+  at once with a clock, then ✓ (Projects: until its card comes; Persons: the channel's ✓ / ✓✓ / read ticks), always
+  gliding to the bottom; a failed send turns red with "Tap to retry" (Persons used to only dismiss it). Each chat
+  remembers where you left it for this run of the app (the message at the top and its offset, or the bottom) and
+  opens there at once; a Persons chat with unread messages opens at its "N unread messages" line, and a Projects
+  chat on the phone that got replies while you were away shows "N new messages" above them. Older pages load
+  under a small spinner without moving what's on screen, the keyboard opening keeps the last message in sight, and
+  the day ("Today", "Yesterday"…) floats in a pill at the top while a Persons chat scrolls. The phone rig gets
+  `--screen persons:ana` and `--broadcast dev.harbor.app.RIG_INCOMING` (made-up incoming messages) for testing this.
+  Every platform: the PC side is the same Slint/TS for Linux, macOS and Windows. Projects chats have no day lines
+  (no day pill there), and no unread line on the PC (the engine keeps only an unread flag per chat).
 - **A notification goes once its chat is seen, on every device, like WhatsApp.** Opening a Projects chat (on the
   phone or the PC) or writing to it takes its "needs you" / key notifications away on the phone and its popup on the
   PC; a person's conversation notification goes once their messages are read anywhere (the PC's Persons tab, the

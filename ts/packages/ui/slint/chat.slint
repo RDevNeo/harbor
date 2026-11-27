@@ -1295,6 +1295,7 @@ export component Transcript {
     // From the view's top to the content's end (px): what a restart keeps, and puts back with `keep-from-end`.
     out property <length> from-end-now: list.content-height + list.content-y;
     public function keep-from-end(d: length) {
+        root.gliding = false;
         root.follow = false;
         root.anchoring = true;
         root.from-end = d;
@@ -1312,12 +1313,69 @@ export component Transcript {
     }
     // Stuck to the end while it grows (egui's stick_to_bottom) until scrolled up.
     in-out property <bool> follow: true;
-    public function scroll-to-end() {
+    // WhatsApp's flow: once a chat has settled (`live`, 700 ms after `open-rev` moved), a card new at the end fades
+    // in and the view glides to the end (a Timer, ~200 ms) instead of jumping; replies that came in while scrolled up
+    // (`arrived` counts them since the chat opened) are the "↓"'s badge.
+    in property <int> open-rev;
+    in property <int> arrived;
+    property <bool> live;
+    property <bool> gliding;
+    property <length> glide-to;
+    property <int> seen-upto;
+    out property <int> unseen: max(0, root.arrived - root.seen-upto);
+    changed open-rev => {
+        root.live = false;
+        root.gliding = false;
+        root.seen-upto = 0;
+    }
+    changed arrived => {
+        if root.follow || root.arrived < root.seen-upto {
+            root.seen-upto = root.arrived;
+        }
+    }
+    changed at-end => {
+        if root.at-end {
+            root.seen-upto = root.arrived;
+        }
+    }
+    Timer {
+        interval: 700ms;
+        running: !root.live;
+        triggered => {
+            root.live = true;
+        }
+    }
+    Timer {
+        interval: 16ms;
+        running: root.gliding;
+        triggered => {
+            root.glide-to = min(0px, list.height - list.content-height);
+            if abs(root.glide-to - list.content-y) < 1px {
+                list.content-y = root.glide-to;
+                root.gliding = false;
+            } else {
+                list.content-y = list.content-y + (root.glide-to - list.content-y) * 0.3;
+            }
+        }
+    }
+    // To the end: gliding when it's near (new cards, a message sent) or asked (`glide`), at once when far or the chat
+    // just opened.
+    function to-end(glide: bool) {
         root.follow = true;
         root.anchoring = false;
-        list.content-y = min(0px, list.height - col.preferred-height);
+        if root.live && (glide || list.content-y - min(0px, list.height - col.preferred-height) < list.height) {
+            root.glide-to = min(0px, list.height - col.preferred-height);
+            root.gliding = true;
+        } else {
+            root.gliding = false;
+            list.content-y = min(0px, list.height - col.preferred-height);
+        }
+    }
+    public function scroll-to-end() {
+        root.to-end(false);
     }
     public function scroll-by(dy: length) {
+        root.gliding = false;
         list.content-y = max(min(0px, list.height - list.content-height), min(0px, list.content-y + dy));
         root.follow = root.at-end;
         root.moved();
@@ -1326,6 +1384,7 @@ export component Transcript {
         root.scroll-by(dir * list.height * 0.9);
     }
     public function scroll-to-top() {
+        root.gliding = false;
         list.content-y = 0px;
         root.follow = root.at-end;
         root.moved();
@@ -1342,7 +1401,12 @@ export component Transcript {
         content-height: col.preferred-height;
         changed content-height => {
             if root.follow {
-                self.content-y = min(0px, self.height - self.content-height);
+                if root.live && -self.content-y + self.height < self.content-height && self.content-height + self.content-y - self.height < self.height * 0.6 {
+                    root.glide-to = min(0px, self.height - self.content-height);
+                    root.gliding = true;
+                } else if !root.gliding {
+                    self.content-y = min(0px, self.height - self.content-height);
+                }
             } else if root.anchoring {
                 root.apply-anchor();
             }
@@ -1353,6 +1417,7 @@ export component Transcript {
             }
         }
         flicked => {
+            root.gliding = false;
             root.follow = root.at-end;
             if root.follow {
                 root.anchoring = false;
@@ -1363,8 +1428,19 @@ export component Transcript {
             x: root.side;
             width: root.column;
             alignment: start;
-            for c in root.cards: cell := Rectangle {
+            for c[i] in root.cards: cell := Rectangle {
                 property <length> h: row.preferred-height;
+                // new at the end once the chat has settled: fades in (~180 ms)
+                property <bool> landed: !(root.live && i >= root.cards.length - 4 && c.kind != "space");
+                opacity: self.landed ? 1 : 0;
+                animate opacity { duration: 180ms; easing: ease-out; }
+                Timer {
+                    interval: 16ms;
+                    running: !cell.landed;
+                    triggered => {
+                        cell.landed = true;
+                    }
+                }
                 min-height: h;
                 max-height: h;
                 // Every frame walks each drawn item: rows far off screen are left out.
@@ -1529,25 +1605,43 @@ export component Transcript {
             list.content-y = v;
         }
     }
-    // chat.rs `scroll_to_bottom_button`: floats over the lower edge while reading back.
-    if !root.at-end: Rectangle {
-        x: (root.width - 34px) / 2;
-        y: root.height - 14px - 34px;
-        width: 34px;
-        height: 34px;
-        border-radius: 17px;
+    // WhatsApp's "↓" over the lower right corner: a screen or more up, or replies came in unseen (their count on its
+    // badge); a click glides to the end.
+    if (-list.content-y + 2 * list.height < list.content-height || (root.unseen > 0 && !root.at-end)) && !root.gliding: Rectangle {
+        x: root.width - 36px - max(16px, root.side - 46px);
+        y: root.height - 14px - 36px;
+        width: 36px;
+        height: 36px;
+        border-radius: 18px;
         background: down-area.has-hover ? Theme.gray-200 : Theme.gray-100;
         border-width: 1px;
         border-color: Theme.border;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000026;
         Glyph {
             icon: Icons.down;
             size: 16px;
             color: Theme.fg;
         }
         down-area := TipArea {
-            tip: "Scroll to bottom";
+            tip: root.unseen > 0 ? "\{root.unseen} new" : "Scroll to bottom";
             clicked => {
-                root.scroll-to-end();
+                root.seen-upto = root.arrived;
+                root.to-end(true);
+            }
+        }
+        if root.unseen > 0: Rectangle {
+            x: -6px;
+            y: -6px;
+            width: max(18px, badge-t.preferred-width + 10px);
+            height: 18px;
+            border-radius: 9px;
+            background: #25a35a;
+            badge-t := Text {
+                text: root.unseen > 99 ? "99+" : "\{root.unseen}";
+                font-size: 10.5px;
+                font-weight: 700;
+                color: #ffffff;
             }
         }
     }

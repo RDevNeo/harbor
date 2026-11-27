@@ -432,6 +432,8 @@ export interface MsgRow {
   chanLabel: string;
   /** Its voice message or audio file, drawn as a player. */
   audio: AudioRow | null;
+  /** The day it's on, as its day line says ("Today"…): the floating day pill while the chat scrolls. */
+  day: string;
 }
 
 /** Bars of an audio without a waveform: a flat line (the player still seeks on it). */
@@ -485,7 +487,7 @@ export function imageTiles(imgs: readonly { url: string; width: number | null; h
 }
 
 /** An empty chat row of a kind (the fields every PMsg carries). */
-export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
+export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null, day: "" });
 
 /** A turn with the Person AI as its bubble: the user's note ("out", to the AI) or the AI's answer in parts. */
 export function aiRow(a: AiJson): MsgRow {
@@ -526,6 +528,13 @@ export function srTimeline(items: readonly SrItemJson[], ai: readonly AiJson[], 
 }
 
 /** Messages, AI bubbles and what's being sent, by time, with day separators, the unread line and email subjects. */
+/** The unread line (WhatsApp's): "3 unread messages", theirs from `unreadFrom` on. */
+export function unreadLabel(c: ChatJson): string {
+  const i = c.messages.findIndex((m) => m.id === c.unreadFrom);
+  const n = i < 0 ? 0 : c.messages.slice(i).filter((m) => !m.fromMe).length;
+  return n <= 1 ? "1 unread message" : `${n} unread messages`;
+}
+
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];
@@ -559,7 +568,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     }
     if (m.subject && m.threadId !== lastThread) items.push({ at: m.at, row: { ...blank("subject", `s${m.id}`), text: m.subject } });
     if (m.threadId) lastThread = m.threadId;
-    if (c.unreadFrom === m.id) items.push({ at: m.at, row: { ...blank("unread", `u${m.id}`), text: "New" } });
+    if (c.unreadFrom === m.id) items.push({ at: m.at, row: { ...blank("unread", `u${m.id}`), text: unreadLabel(c) } });
     items.push({ at: m.at, row: r });
   }
   for (const a of c.ai) items.push({ at: a.at, row: aiRow(a) });
@@ -594,15 +603,18 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   items.sort((a, b) => at(a.at) - at(b.at));
   const out: MsgRow[] = [];
   let day = "";
+  let dayText = "";
   let prev: MsgRow | null = null;
   let prevAt = 0;
   for (const it of items) {
     const k = dayKey(it.at);
     if (k !== day) {
       day = k;
-      out.push({ ...blank("day", `d${k}`), text: dayLabel(it.at, now) });
+      dayText = dayLabel(it.at, now);
+      out.push({ ...blank("day", `d${k}`), text: dayText, day: dayText });
       prev = null;
     }
+    it.row.day = dayText;
     const t = at(it.at);
     if (it.row.kind === "msg" || it.row.kind === "out" || it.row.kind === "ai") {
       it.row.first = !(prev && prev.kind === it.row.kind && prev.mine === it.row.mine && t - prevAt < 7 * 60_000);

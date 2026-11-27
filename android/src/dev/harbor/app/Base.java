@@ -58,6 +58,7 @@ abstract class Base extends Activity {
         super.onCreate(b);
         alive.add(this);
         Ui.init(this);
+        if (Rig.on()) Rig.incoming(this);
         Ui.bars(this);
         myTheme = Ui.themeGen;
         String id = getIntent().getStringExtra("hub");

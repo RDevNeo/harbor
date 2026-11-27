@@ -583,6 +583,9 @@ export component AppWindow inherits Window {
     callback read-only-act();
     callback toggle(int);
     callback transcript-near-top();
+    // The transcript's WhatsApp flow (chat.slint Transcript): a chat opened, and the replies new in it since.
+    in property <int> transcript-open-rev;
+    in property <int> transcript-arrived;
     callback link(string);
     callback open-url(string);
     callback card-act(int, string);
@@ -1273,6 +1276,8 @@ export component AppWindow inherits Window {
                             live-seq: root.live-seq;
                             running: root.chat-running;
                             content-w: root.content-w;
+                            open-rev: root.transcript-open-rev;
+                            arrived: root.transcript-arrived;
                             toggle(seq) => {
                                 root.toggle(seq);
                             }

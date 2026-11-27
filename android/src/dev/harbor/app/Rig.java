@@ -41,6 +41,31 @@ final class Rig {
         return r;
     }
 
+    private static boolean incomingOn;
+
+    /** A test build's hook for phoneshot `--broadcast dev.harbor.app.RIG_INCOMING`: the rig hub (ts/rig/phonehub.ts
+     *  `/rig/incoming`) has new messages come in, two from Ana in Persons and two replies in the cards chat, as a
+     *  person or an agent writing would (the chats' WhatsApp flow: entry, the "↓" count). */
+    static void incoming(android.content.Context c) {
+        if (incomingOn) return;
+        incomingOn = true;
+        android.content.BroadcastReceiver r = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context x, android.content.Intent in) {
+                android.util.Log.i("harbor-rig", "RIG_INCOMING");
+                Ui.pool.execute(() -> {
+                    try {
+                        // through the app's own client (plain http from here is refused: the network security config)
+                        for (Hub h : Hub.all(x)) android.util.Log.i("harbor-rig", "incoming: " + h.call("POST", "/rig/incoming", new JSONObject()));
+                    } catch (Exception e) { android.util.Log.w("harbor-rig", "incoming: " + e); }
+                });
+            }
+        };
+        android.content.IntentFilter f = new android.content.IntentFilter("dev.harbor.app.RIG_INCOMING");
+        android.content.Context app = c.getApplicationContext();
+        if (android.os.Build.VERSION.SDK_INT >= 33) app.registerReceiver(r, f, android.content.Context.RECEIVER_EXPORTED);
+        else app.registerReceiver(r, f);
+    }
+
     static JSONObject account() {
         try {
             JSONArray members = new JSONArray()

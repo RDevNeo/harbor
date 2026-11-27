@@ -108,6 +108,8 @@ export struct PMsg {
     // The channel it came or went on (a mark by the time when the person has more than one chat).
     chan: string,
     chan-label: string,
+    // The day it's on ("Today", "Yesterday", "Mon 3 Nov"): the floating day pill over the chat while it scrolls.
+    day: string,
     // A voice message or audio file, drawn as a player: its key, length (s), bars 0..1, played, transcript.
     has-audio: bool,
     a-key: string,
@@ -192,6 +194,18 @@ export global PersonsBus {
     // tinted, fading out once it's cleared (WhatsApp's flash).
     in property <string> jump-id;
     in property <int> jump-rev;
+    // WhatsApp's flow (ChatPane): a chat opened (`c-open-rev`) starts at its end; `place-id` (each bumps `place-rev`)
+    // puts that row `place-off` under the view's top at once (where the chat was left, its unread line). `c-arrived`
+    // counts their messages new since it opened: those that came while scrolled up are the "↓"'s badge. The pane
+    // says where it is: at its end, else the row at its top (`c-top-id`) and how far above the view's top it starts.
+    in property <int> c-open-rev;
+    in property <string> place-id;
+    in property <length> place-off;
+    in property <int> place-rev;
+    in property <int> c-arrived;
+    in-out property <bool> c-at-bottom: true;
+    in-out property <string> c-top-id;
+    in-out property <length> c-top-off;
     in property <string> flash-id;
     in-out property <string> draft;
     in-out property <string> subject;
@@ -1740,6 +1754,18 @@ component SiteCard {
 component MsgRow {
     in property <PMsg> m;
     in property <length> max-w;
+    // A message new at the end while the chat is open fades in (~180 ms, WhatsApp's entry); rows drawn when it opens don't.
+    in property <bool> enter;
+    property <bool> landed: !root.enter;
+    opacity: root.landed ? 1 : 0;
+    animate opacity { duration: 180ms; easing: ease-out; }
+    Timer {
+        interval: 16ms;
+        running: !root.landed;
+        triggered => {
+            root.landed = true;
+        }
+    }
     // how far the tint reaches past the row on each side (the chat's padding: it spans the whole column)
     in property <length> bleed: 0px;
     property <bool> flash: m.id != "" && m.id == PersonsBus.flash-id;
@@ -2169,6 +2195,82 @@ component Composer inherits Rectangle {
 
 component ChatPane inherits Rectangle {
     property <bool> at-bottom: true;
+    // WhatsApp's flow: new messages fade in once the chat has settled (`live`), the view glides to the end (Timer
+    // below), their messages that came while scrolled up are counted on the "↓", the day pill floats on top while
+    // scrolling, and the row at the top is kept in place when rows above it change.
+    property <bool> live;
+    property <bool> gliding;
+    property <length> glide-to;
+    property <int> seen-upto;
+    property <int> unseen: max(0, PersonsBus.c-arrived - root.seen-upto);
+    property <string> top-id;
+    property <length> top-y;
+    property <string> top-day;
+    property <bool> pill-on;
+    property <int> pill-idle;
+    function glide-end() {
+        root.at-bottom = true;
+        root.seen-upto = PersonsBus.c-arrived;
+        root.glide-to = min(0px, sv.visible-height - sv.content-height);
+        root.gliding = true;
+        root.tell();
+    }
+    // where it is, for PersonsTab (it keeps each chat's place for when it's opened again)
+    function tell() {
+        if root.at-bottom {
+            root.seen-upto = PersonsBus.c-arrived;
+        }
+        PersonsBus.c-at-bottom = root.at-bottom;
+        PersonsBus.c-top-id = root.top-id;
+        PersonsBus.c-top-off = root.top-y + sv.content-y;
+    }
+    Timer {
+        interval: 16ms;
+        running: root.gliding;
+        triggered => {
+            if abs(root.glide-to - sv.content-y) < 1px {
+                sv.content-y = root.glide-to;
+                root.gliding = false;
+                root.tell();
+            } else {
+                sv.content-y = sv.content-y + (root.glide-to - sv.content-y) * 0.3;
+            }
+        }
+    }
+    Timer {
+        interval: 200ms;
+        running: root.pill-on;
+        triggered => {
+            root.pill-idle += 1;
+            if root.pill-idle > 7 {
+                root.pill-on = false;
+            }
+        }
+    }
+    // a chat opened: at its end; its messages enter (fade) once it's had a moment to come in
+    property <int> open-rev: PersonsBus.c-open-rev;
+    property <int> arrived: PersonsBus.c-arrived;
+    changed open-rev => {
+        root.live = false;
+        root.at-bottom = true;
+        root.gliding = false;
+        root.top-id = "";
+        root.seen-upto = 0;
+        root.pill-on = false;
+        root.tell();
+    }
+    Timer {
+        interval: 700ms;
+        running: !root.live;
+        triggered => {
+            root.live = true;
+        }
+    }
+    changed arrived => {
+        if root.at-bottom || PersonsBus.c-arrived < root.seen-upto {
+            root.seen-upto = PersonsBus.c-arrived;
+        }
+    }
     // the audio playing moves on by itself (the engine says when it ends or stops)
     Timer {
         interval: 100ms;
@@ -2274,10 +2376,17 @@ component ChatPane inherits Rectangle {
             vertical-stretch: 1;
             sv := Scroll {
                 property <length> max-w: min(640px, self.visible-width * 0.78);
+                property <length> last-h;
                 changed content-height => {
                     if root.at-bottom {
-                        self.content-y = min(0px, self.visible-height - self.content-height);
+                        // a message or two more at the end: the view glides down to it; a whole page at once
+                        if root.live && self.content-height > self.last-h && self.content-height - self.last-h < self.visible-height * 0.6 {
+                            root.glide-end();
+                        } else {
+                            self.content-y = min(0px, self.visible-height - self.content-height);
+                        }
                     }
+                    self.last-h = self.content-height;
                 }
                 // the composer grew (a reply, a forward, a longer text): the newest message stays in sight
                 changed visible-height => {
@@ -2286,7 +2395,11 @@ component ChatPane inherits Rectangle {
                     }
                 }
                 scrolled => {
+                    root.gliding = false;
                     root.at-bottom = self.content-y <= self.visible-height - self.content-height + 40px;
+                    root.tell();
+                    root.pill-idle = 0;
+                    root.pill-on = true;
                     if self.content-y >= -2px && PersonsBus.c-more && !PersonsBus.c-loading {
                         PersonsBus.older();
                     }
@@ -2296,6 +2409,7 @@ component ChatPane inherits Rectangle {
                     padding-bottom: 8px;
                     spacing: 2px;
                     alignment: end;
+                    // older pages: the spinner on top while one loads (the rows on screen stay where they are)
                     if PersonsBus.c-loading: HorizontalLayout {
                         alignment: center;
                         Spinner { }
@@ -2306,18 +2420,108 @@ component ChatPane inherits Rectangle {
                         color: Theme.subtle;
                         horizontal-alignment: center;
                     }
-                    for m in PersonsBus.msgs: MsgRow {
+                    for m[i] in PersonsBus.msgs: MsgRow {
                         property <int> jump: m.id == PersonsBus.jump-id ? PersonsBus.jump-rev : 0;
+                        property <int> place: m.id == PersonsBus.place-id ? PersonsBus.place-rev : 0;
+                        // the row across the view's top: the anchor kept while rows above it change, the pill's day
+                        property <bool> at-top: self.y + sv.content-y <= 0px && self.y + self.height + sv.content-y > 0px;
                         m: m;
                         max-w: sv.max-w;
                         bleed: 16px;
+                        enter: root.live && i >= PersonsBus.msgs.length - 3 && (m.kind == "msg" || m.kind == "out" || m.kind == "ai");
                         // a reply's quote jumped here: the row comes into view at about 40% of the height
                         changed jump => {
                             if self.jump > 0 {
                                 root.at-bottom = false;
                                 sv.content-y = max(min(0px, sv.visible-height - sv.content-height), min(0px, sv.visible-height * 0.4 - self.y - self.height / 2));
+                                root.tell();
                             }
                         }
+                        // where the chat was left, or its unread line: at once
+                        changed place => {
+                            if self.place > 0 {
+                                root.gliding = false;
+                                root.at-bottom = false;
+                                sv.content-y = max(min(0px, sv.visible-height - sv.content-height), min(0px, PersonsBus.place-off - self.y));
+                                root.at-bottom = sv.content-y <= sv.visible-height - sv.content-height + 40px;
+                                root.top-id = m.id;
+                                root.top-y = self.y;
+                                root.tell();
+                            }
+                        }
+                        changed at-top => {
+                            if self.at-top {
+                                root.top-id = m.id;
+                                root.top-y = self.y;
+                                root.top-day = m.kind == "day" ? "" : m.day;
+                            }
+                        }
+                        // rows above the one at the top changed (an older page, pictures coming in): it stays put
+                        changed y => {
+                            if m.id == root.top-id {
+                                if !root.at-bottom && !root.gliding {
+                                    sv.content-y = max(min(0px, sv.visible-height - sv.content-height), min(0px, PersonsBus.c-top-off - self.y));
+                                }
+                                root.top-y = self.y;
+                            }
+                        }
+                    }
+                }
+            }
+            // the day of what's at the top, floating there while it scrolls (WhatsApp's)
+            if root.pill-on && root.top-day != "" && sv.content-y < -8px: Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 8px;
+                width: pill-t.preferred-width + 20px;
+                height: 22px;
+                border-radius: 11px;
+                background: Theme.gray-100;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 4px;
+                drop-shadow-color: #00000022;
+                pill-t := Text {
+                    text: root.top-day;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: Theme.gray-900;
+                }
+            }
+            // "↓": a screen or more up, or their messages came in unseen (the badge counts them); a click glides down
+            if (sv.content-y > 2 * sv.visible-height - sv.content-height || (root.unseen > 0 && !root.at-bottom)) && !root.gliding: Rectangle {
+                x: parent.width - 36px - 18px;
+                y: parent.height - 36px - 14px;
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                background: down-area.has-hover ? Theme.gray-200 : Theme.gray-100;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 6px;
+                drop-shadow-color: #00000026;
+                Glyph {
+                    icon: Icons.down;
+                    size: 16px;
+                    color: Theme.fg;
+                }
+                down-area := TipArea {
+                    tip: root.unseen > 0 ? "\{root.unseen} new" : "Scroll to the latest message";
+                    clicked => {
+                        root.glide-end();
+                    }
+                }
+                if root.unseen > 0: Rectangle {
+                    x: -6px;
+                    y: -6px;
+                    width: max(18px, badge-t.preferred-width + 10px);
+                    height: 18px;
+                    border-radius: 9px;
+                    background: #25a35a;
+                    badge-t := Text {
+                        text: root.unseen > 99 ? "99+" : "\{root.unseen}";
+                        font-size: 10.5px;
+                        font-weight: 700;
+                        color: #ffffff;
                     }
                 }
             }

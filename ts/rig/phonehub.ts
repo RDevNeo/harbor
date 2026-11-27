@@ -473,6 +473,7 @@ const captcha = async (b: Record<string, unknown>): Promise<Record<string, unkno
 };
 
 // In front of the hub: the captcha's calls answered here, the rest passed through as they are.
+let rigIncoming = 0;
 const front = Bun.serve({
   hostname: "127.0.0.1",
   port,
@@ -486,6 +487,20 @@ const front = Bun.serve({
     }
     // No speech model on a rig PC: a voice message's WAV (the phone's local API decodes it to 16 kHz mono, as the
     // composer's mic records) is checked and answered with its length, "" for silence (as a transcriber hears it).
+    // The test build's RIG_INCOMING (Rig.java): new messages come in, as a person or an agent writing would: two from
+    // Ana in Persons (her Discord chat), two replies in the cards chat.
+    if (req.method === "POST" && u.pathname === "/rig/incoming") {
+      rigIncoming++;
+      console.log(`phonehub incoming ${rigIncoming}`);
+      const now = Date.now();
+      const svc = (await import("../tabs/persons/engine.ts")).personsService() as unknown as { onEvent(id: string, ev: unknown): void } | null;
+      svc?.onEvent("stores", { type: "messages", peerId: "100000000000000001", messages: [0, 1].map((i) => ({ id: String(500000000000000900n + BigInt(rigIncoming * 2 + i)), channelId: "300000000000000001", authorId: "100000000000000001", fromMe: false, content: i === 0 ? `Oi! Chegou mais um pedido agora (#${4900 + rigIncoming}).` : "Consegue ver isso pra mim? 🙏", timestamp: new Date(now + i).toISOString() })) });
+      const eng = h.engine as unknown as { transcript(id: number): { items: Item[] }; persist(id: number): void };
+      for (const t of [`Checked again (${rigIncoming}): the test suite passes on the new branch.`, "Next I'll open the pull request and ask for a review."]) eng.transcript(cards.id).items.push(say(t, Math.floor(Date.now() / 1000)));
+      eng.persist(cards.id);
+      console.log(`phonehub incoming ${rigIncoming}: persons ${svc ? "yes" : "no"}, cards ${eng.transcript(cards.id).items.length}`);
+      return Response.json({ ok: true });
+    }
     if (req.method === "POST" && u.pathname === "/v1/transcribe") {
       if (req.headers.get("authorization") !== `Bearer ${token}`) return Response.json({ error: "Sign in again." }, { status: 401 });
       const b = new Uint8Array(await req.arrayBuffer());

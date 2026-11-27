@@ -56,6 +56,13 @@ final class PersonsChat {
     private final ScrollView sv;
     private final LinearLayout content;
     private final TextView typingLine;
+    private final ChatFlow.Jump jump;
+    private final ChatFlow.DayPill dayPill;
+    /** The first render with the chat's messages placed it (where it was left, its unread line, else its end). */
+    private boolean positioned;
+    /** Their messages that came in while scrolled up, the first of them (the "↓" counts them and goes there). */
+    private int unseen;
+    private String firstUnseen = "";
     private final LinearLayout box, head, replyBox, fwdBox, seg, segAi, segPerson, sendPill;
     private final FrameLayout headMark, sendRound;
     private final View headLine;
@@ -110,8 +117,21 @@ final class PersonsChat {
         sv.addView(content, new FrameLayout.LayoutParams(-1, -2));
         sv.setOnScrollChangeListener((v, x, y, ox, oy) -> {
             if (y < Ui.dp(120) && y < oy && more && !loadingOlder && !msgs.isEmpty()) loadOlder();
+            scrolled(y != oy);
         });
-        view.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
+        // The keyboard (or the composer growing) shrinks the transcript: what was at its bottom stays there.
+        sv.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
+            int was = oldBottom - oldTop, now = bottom - top;
+            if (was > 0 && now != was && positioned) sv.post(() -> sv.scrollBy(0, was - now));
+        });
+        // The transcript, the day pill floating on its top and the "↓" over its lower right corner (ChatFlow).
+        FrameLayout stage = new FrameLayout(a);
+        stage.addView(sv, new FrameLayout.LayoutParams(-1, -1));
+        dayPill = new ChatFlow.DayPill(a);
+        stage.addView(dayPill.view, dayPill.params());
+        jump = new ChatFlow.Jump(a, v -> jumpDown());
+        stage.addView(jump.view, jump.params());
+        view.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
 
         typingLine = Ui.text(a, "", 13, Ui.G700);
         typingLine.setPadding(Ui.dp(20), Ui.dp(2), Ui.dp(20), Ui.dp(2));
@@ -417,6 +437,7 @@ final class PersonsChat {
     }
 
     void close() {
+        savePlace();
         closed = true;
         typingOff();
         PersonsAudio.stop();
@@ -494,30 +515,87 @@ final class PersonsChat {
     /** Each message's row as drawn now, by id (a reply's quote scrolls to it). */
     private final Map<String, View> rows = new java.util.HashMap<>();
 
+    /** The views drawn last time by key ("m:<id>", "d:<day>", "ai:<id>", …), with what they were drawn from: a render
+     *  keeps those whose data didn't change and only builds, moves or drops the others, so a new message is one view
+     *  added at the end (no flash of the whole list, pictures not loaded again). */
+    private final Map<String, View> drawn = new java.util.HashMap<>();
+    private final Map<String, String> drawnSig = new java.util.HashMap<>();
+    /** What every view depends on beside its own data (their name, the width): a change draws everything anew. */
+    private String drawnAll = "";
+    /** The AI's cards fold by a tap (rerender): they're built anew on the next render. */
+    private boolean dropAi;
+    /** Every picture in the chat, in order (the viewer's gallery): the same list across renders, refilled each time. */
+    private final List<String[]> gallery = new ArrayList<>();
+    /** The day lines drawn now, top to bottom, with their labels (the floating day pill). */
+    private final List<View> dayViews = new ArrayList<>();
+
+    private View keep(Map<String, View> next, Map<String, String> nextSig, String key, String sig, java.util.function.Supplier<View> make, java.util.Set<View> fresh) {
+        View v = drawn.get(key);
+        if (v == null || !sig.equals(drawnSig.get(key)) || next.containsKey(key)) {
+            v = make.get();
+            fresh.add(v);
+        }
+        next.put(key, v);
+        nextSig.put(key, sig);
+        return v;
+    }
+
     private void render() {
         rows.clear();
-        boolean atBottom = first || toBottom || content.getHeight() == 0 || sv.getScrollY() + sv.getHeight() >= content.getHeight() - Ui.dp(80);
-        int fromBottom = content.getHeight() - sv.getScrollY();
+        boolean atBottom = !positioned || toBottom || ChatFlow.atEnd(sv, content, Ui.dp(80));
+        boolean sent = toBottom;
         toBottom = false;
-        content.removeAllViews();
+        // What's at the top of the screen now and how far down: it stays there (older pages above, new ones below).
+        View anchor = null;
+        int anchorOff = 0;
+        if (positioned && !atBottom) {
+            int y = sv.getScrollY();
+            for (int i = 0; i < content.getChildCount(); i++) {
+                View c = content.getChildAt(i);
+                if (c.getBottom() > y) { anchor = c; anchorOff = c.getTop() - y; break; }
+            }
+        }
+        String all = name() + "|" + maxW() + "|" + PersonsUi.arr(data, "accounts").length() + "|" + Ui.dark;
+        if (!all.equals(drawnAll)) { drawn.clear(); drawnSig.clear(); drawnAll = all; }
+        Map<String, View> next = new java.util.HashMap<>();
+        Map<String, String> nextSig = new java.util.HashMap<>();
+        java.util.Set<View> fresh = new java.util.HashSet<>();
+        List<View> want = new ArrayList<>();
+        dayViews.clear();
         if (more && !msgs.isEmpty()) {
-            TextView older = Ui.rowButton(a, loadingOlder ? "Loading…" : "Load older", false, v -> loadOlder());
-            LinearLayout.LayoutParams lp = Ui.wrap();
-            lp.gravity = Gravity.CENTER_HORIZONTAL;
-            content.addView(older, Ui.margins(lp, 0, 4, 0, 4));
+            // older pages: a small spinner on top while one loads (the view stays where it is)
+            want.add(keep(next, nextSig, "older", String.valueOf(loadingOlder), () -> {
+                if (loadingOlder) {
+                    android.widget.ProgressBar pb = new android.widget.ProgressBar(a);
+                    pb.setIndeterminate(true);
+                    FrameLayout f = new FrameLayout(a);
+                    f.addView(pb, new FrameLayout.LayoutParams(Ui.dp(22), Ui.dp(22), Gravity.CENTER));
+                    f.setLayoutParams(new LinearLayout.LayoutParams(-1, Ui.dp(40)));
+                    return f;
+                }
+                TextView older = Ui.rowButton(a, "Load older", false, v -> loadOlder());
+                LinearLayout.LayoutParams lp = Ui.wrap();
+                lp.gravity = Gravity.CENTER_HORIZONTAL;
+                older.setLayoutParams(Ui.margins(lp, 0, 4, 0, 4));
+                return older;
+            }, fresh));
         }
         if (msgs.isEmpty() && ai.length() == 0 && pending.isEmpty()) {
             String s = loadError != null ? loadError : data == null ? "" : acctId() == null
                     ? "No channel to talk to them here: connect Discord, Gmail or WhatsApp in the section's + menu on the PC, and give them that identifier."
                     : "No messages yet.";
-            TextView t = Ui.text(a, s, 14, loadError != null ? Ui.RED : Ui.G700);
-            t.setGravity(Gravity.CENTER);
-            t.setPadding(Ui.dp(28), Ui.dp(40), Ui.dp(28), Ui.dp(40));
-            if (loadError != null) {
-                t.setText(loadError + "\nTap to try again.");
-                t.setOnClickListener(v -> { loadError = null; render(); load(false); });
-            }
-            content.addView(t, Ui.fill());
+            boolean err = loadError != null;
+            want.add(keep(next, nextSig, "empty", err + s, () -> {
+                TextView t = Ui.text(a, s, 14, err ? Ui.RED : Ui.G700);
+                t.setGravity(Gravity.CENTER);
+                t.setPadding(Ui.dp(28), Ui.dp(40), Ui.dp(28), Ui.dp(40));
+                if (err) {
+                    t.setText(s + "\nTap to try again.");
+                    t.setOnClickListener(v -> { loadError = null; render(); load(false); });
+                }
+                t.setLayoutParams(Ui.fill());
+                return t;
+            }, fresh));
         }
         newestAi = "";
         for (JSONObject e : PersonsHome.objs(ai)) if (!"user".equals(PersonsUi.s(e, "role"))) newestAi = PersonsUi.s(e, "id");
@@ -530,23 +608,37 @@ final class PersonsChat {
         for (JSONObject e : PersonsHome.objs(PersonsUi.arr(data, "proposing"))) line.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), e, "proposing"});
         Collections.sort(line, (x, y) -> Long.compare((Long) x[0], (Long) y[0]));
         String unreadFrom = PersonsUi.s(data, "unreadFrom");
-        List<String[]> gallery = new ArrayList<>();
+        gallery.clear();
         for (JSONObject m : msgs) for (JSONObject f : PersonsHome.objs(PersonsUi.arr(m, "files")))
             if (f.optBoolean("image")) gallery.add(new String[]{PersonsUi.s(f, "url"), PersonsUi.s(f, "name")});
         long prevDay = -1, prevAt = 0;
         JSONObject prev = null;
         String prevSubject = "";
+        View unreadLine = null;
+        // Their messages new since the last render (drawn at the end): counted while scrolled up.
+        List<String> arrived = new ArrayList<>();
+        int ai0 = 0;
+        boolean dropAiNow = dropAi;
+        dropAi = false;
         for (Object[] e : line) {
             long t = (Long) e[0];
             JSONObject o = (JSONObject) e[1];
             boolean broke = false;
             if (t > 0 && PersonsUi.dayOf(t) != prevDay) {
                 prevDay = PersonsUi.dayOf(t);
-                content.addView(divider(PersonsUi.day(t), Ui.G700, false));
+                String label = PersonsUi.day(t);
+                View dv = keep(next, nextSig, "d:" + prevDay, label, () -> divider(label, Ui.G700, false), fresh);
+                dv.setTag(label);
+                dayViews.add(dv);
+                want.add(dv);
                 broke = true;
             }
             if (!"msg".equals(e[2])) {
-                content.addView("ai".equals(e[2]) ? aiView(o) : siteCard(o, "proposing".equals(e[2])));
+                String kind = (String) e[2];
+                String key = kind + ":" + ("ai".equals(kind) ? PersonsUi.s(o, "id") : PersonsUi.s(o, "id").isEmpty() ? PersonsUi.s(o, "messageId") + ":" + (ai0++) : PersonsUi.s(o, "id"));
+                if ("ai".equals(kind) && dropAiNow) drawn.remove(key);
+                String sig = o.toString() + ("ai".equals(kind) ? "|" + newestAi : "");
+                want.add(keep(next, nextSig, key, sig, () -> "ai".equals(kind) ? aiView(o) : siteCard(o, "proposing".equals(kind)), fresh));
                 prev = null;
                 continue;
             }
@@ -558,28 +650,139 @@ final class PersonsChat {
                     if (PersonsUi.s(m, "id").equals(unreadFrom)) on = true;
                     if (on && !m.optBoolean("fromMe")) n++;
                 }
-                content.addView(divider(n + " unread", Ui.BLUE, true));
+                String label = n == 1 ? "1 unread message" : n + " unread messages";
+                unreadLine = keep(next, nextSig, "u:" + id, label, () -> divider(label, Ui.BLUE, true), fresh);
+                want.add(unreadLine);
                 broke = true;
             }
             String subj = PersonsUi.s(o, "subject").replaceAll("(?i)^((re|fwd?|enc|res):\\s*)+", "").trim();
             if (!PersonsUi.s(o, "subject").isEmpty() && !subj.equals(prevSubject)) {
-                content.addView(divider(subj.isEmpty() ? "(no subject)" : subj, Ui.G700, true));
+                String label = subj.isEmpty() ? "(no subject)" : subj;
+                want.add(keep(next, nextSig, "s:" + id, label, () -> divider(label, Ui.G700, true), fresh));
                 prevSubject = subj;
                 broke = true;
             }
             boolean joined = !broke && prev != null && prev.optBoolean("fromMe") == o.optBoolean("fromMe") && t - prevAt < GROUP_MS && chanOf(prev).equals(chanOf(o));
-            View row = bubble(o, joined, gallery);
+            boolean newOne = positioned && !drawn.containsKey("m:" + id);
+            View row = keep(next, nextSig, "m:" + id, joined + "|" + o, () -> bubble(o, joined, gallery), fresh);
+            if (newOne && !o.optBoolean("fromMe")) arrived.add(id);
             rows.put(id, row);
             if (id.equals(flashId)) tint(row);
-            content.addView(row);
+            want.add(row);
             prev = o;
             prevAt = t;
         }
-        for (JSONObject o : pending) content.addView(pendingView(o));
+        for (JSONObject o : pending) {
+            String key = "p:" + System.identityHashCode(o);
+            want.add(keep(next, nextSig, key, PersonsUi.s(o, "error") + "|" + o.optBoolean("retrying"), () -> pendingView(o), fresh));
+        }
+        // Put the views in order touching only what changed: kept ones stay, new ones go in, gone ones go.
+        int lastKept = -1;
+        for (int i = 0; i < want.size(); i++) if (!fresh.contains(want.get(i))) lastKept = i;
+        for (int i = 0; i < want.size(); i++) {
+            View w = want.get(i);
+            if (content.getChildAt(i) == w) continue;
+            if (w.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) w.getParent()).removeView(w);
+            content.addView(w, Math.min(i, content.getChildCount()));
+        }
+        while (content.getChildCount() > want.size()) content.removeViewAt(content.getChildCount() - 1);
+        drawn.clear();
+        drawn.putAll(next);
+        drawnSig.clear();
+        drawnSig.putAll(nextSig);
+        // A message new at the end (theirs, or mine on its way) comes in with WhatsApp's short entry.
+        if (positioned) for (int i = lastKept + 1; i < want.size(); i++) {
+            View w = want.get(i);
+            if (!fresh.contains(w)) continue;
+            boolean mine = false;
+            for (Map.Entry<String, View> r : rows.entrySet()) if (r.getValue() == w) {
+                for (JSONObject m : msgs) if (PersonsUi.s(m, "id").equals(r.getKey())) mine = m.optBoolean("fromMe");
+            }
+            if (!mine) ChatFlow.enter(w);
+        }
+        boolean wasPositioned = positioned;
+        boolean hasData = data != null || loadError != null;
+        if (!wasPositioned && hasData) positioned = true;
+        View anchorV = anchor;
+        int anchorO = anchorOff;
+        View unreadV = unreadLine;
+        if (!atBottom && !arrived.isEmpty()) {
+            if (unseen == 0) firstUnseen = arrived.get(0);
+            unseen += arrived.size();
+            jump.count(unseen);
+        }
         afterLayout(() -> {
-            if (atBottom) sv.scrollTo(0, content.getHeight());
-            else sv.scrollTo(0, Math.max(0, content.getHeight() - fromBottom));
+            if (!wasPositioned) {
+                if (positioned) placeFirst(unreadV);
+                else sv.scrollTo(0, content.getHeight());
+            } else if (atBottom) {
+                int end = Math.max(0, content.getHeight() - sv.getHeight());
+                if (sent || end - sv.getScrollY() < sv.getHeight() * 2) sv.smoothScrollTo(0, end);
+                else sv.scrollTo(0, end);
+            } else if (anchorV != null && anchorV.getParent() == content) {
+                sv.scrollTo(0, Math.max(0, anchorV.getTop() - anchorO));
+            }
+            scrolled(false);
         });
+    }
+
+    /** The first time the messages are here: where this chat was left (this run of the app), else the unread line
+     *  near the top, else the end. At once, before the first frame (no visible scroll). */
+    private void placeFirst(View unreadLine) {
+        ChatFlow.Pos was = ChatFlow.place(posKey());
+        View at = was != null && !was.end ? rows.get(was.anchor) : null;
+        if (unreadLine != null && (was == null || was.end || at == null)) {
+            sv.scrollTo(0, Math.max(0, unreadLine.getTop() - Ui.dp(24)));
+        } else if (at != null) {
+            sv.scrollTo(0, Math.max(0, at.getTop() - was.off));
+        } else sv.scrollTo(0, content.getHeight());
+    }
+
+    private String posKey() { return p.hub == null ? pid + "|" + section : p.hub.id + "|" + pid + "|" + section; }
+
+    /** Where it's left now: at the end, or the first message on screen and how far down it is. */
+    private void savePlace() {
+        if (!positioned) return;
+        if (ChatFlow.atEnd(sv, content, Ui.dp(80))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, 0)); return; }
+        int y = sv.getScrollY();
+        String best = null;
+        int top = Integer.MAX_VALUE;
+        for (Map.Entry<String, View> r : rows.entrySet()) {
+            View v = r.getValue();
+            if (v.getParent() != content || v.getBottom() <= y) continue;
+            if (v.getTop() < top) { top = v.getTop(); best = r.getKey(); }
+        }
+        ChatFlow.place(posKey(), best == null ? null : new ChatFlow.Pos(false, best, top - y, 0));
+    }
+
+    /** After a scroll (or a render): the "↓" (more than a screen up, or new messages unseen), the unseen count
+     *  cleared at the end, the floating day pill while the finger moves it. */
+    private void scrolled(boolean moved) {
+        if (!positioned) return;
+        int up = ChatFlow.fromEnd(sv, content);
+        if (up < Ui.dp(80) && unseen > 0) { unseen = 0; firstUnseen = ""; jump.count(0); }
+        jump.show(up > sv.getHeight() || (unseen > 0 && up >= Ui.dp(80)));
+        if (!moved) return;
+        int y = sv.getScrollY();
+        String day = "";
+        for (View d : dayViews) {
+            if (d.getParent() != content) continue;
+            if (d.getTop() <= y + Ui.dp(4)) day = (String) d.getTag();
+            else break;
+        }
+        // its own line is on screen near the top: no pill over it
+        dayPill.show(y < Ui.dp(8) ? "" : day);
+    }
+
+    /** The "↓": to their first message that came in unseen when it's more than a screen up, else the end. */
+    private void jumpDown() {
+        View first = firstUnseen.isEmpty() ? null : rows.get(firstUnseen);
+        int end = Math.max(0, content.getHeight() - sv.getHeight());
+        int y = first != null && first.getParent() == content ? Math.min(end, Math.max(0, first.getTop() - Ui.dp(24))) : end;
+        sv.smoothScrollTo(0, y);
+        unseen = 0;
+        firstUnseen = "";
+        jump.count(0);
     }
 
     /** Runs once the content has been laid out again (its new height known). */
@@ -765,7 +968,7 @@ final class PersonsChat {
         String s;
         int c = Ui.G600;
         switch (status) {
-            case "pending": s = "⏱"; break;
+            case "pending": s = "🕓"; break;
             case "sent": s = "✓"; break;
             case "delivered": s = "✓✓"; break;
             case "read": s = "✓✓"; c = 0xff53bdeb; break;
@@ -838,7 +1041,7 @@ final class PersonsChat {
     private final PersonsAiCard.Host aiHost = new PersonsAiCard.Host() {
         @Override public void useReply(String text) { PersonsChat.this.useReply(text); }
         @Override public void menu(String text, String use, boolean mine) { aiMenu(text, use, mine); }
-        @Override public void rerender() { render(); }
+        @Override public void rerender() { dropAi = true; render(); }
     };
 
     /** A draft into the composer, to send to the person. */
@@ -865,11 +1068,16 @@ final class PersonsChat {
             b.addView(tv, textWidth(tv, text, maxW() - Ui.dp(24)));
         }
         if (n > 0) b.addView(Ui.text(a, n == 1 ? "1 photo" : n + " photos", 13, Ui.G700));
+        // WhatsApp's: a clock while it goes; not sent: red, a tap sends it again, a long press drops it
         String err = PersonsUi.s(o, "error");
-        TextView st = Ui.text(a, err.isEmpty() ? "sending…" : "Not sent: " + err + " · tap to dismiss", 11, err.isEmpty() ? Ui.G600 : Ui.RED);
+        TextView st = err.isEmpty() ? ticks("pending") : Ui.text(a, "⚠ Not sent · Tap to retry", 11.5f, Ui.RED);
         b.addView(st, Ui.margins(endWrap(), 0, 2, 0, 0));
-        if (!err.isEmpty()) b.setOnClickListener(v -> { pending.remove(o); render(); });
-        else b.setAlpha(0.7f);
+        if (!err.isEmpty()) {
+            b.setBackground(Ui.round(Ui.G100, Ui.RED, 18));
+            b.setOnClickListener(v -> retry(o));
+            b.setOnLongClickListener(v -> { pending.remove(o); render(); return true; });
+            b.setContentDescription("Not sent: " + err + ". Tap to retry, long-press to remove.");
+        }
         wrap.addView(b, Ui.wrap());
         return wrap;
     }
@@ -1277,6 +1485,17 @@ final class PersonsChat {
         composer();
         toBottom = true;
         render();
+        PersonsUi.put(pend, "body", b);
+        PersonsUi.put(pend, "subj", subj);
+        deliver(pend);
+    }
+
+    /** Sends a message on its way (`pending`): once it's in, the chat is read again (its bubble takes the clock's
+     *  place, with the channel's ticks); not sent, it turns red with Tap to retry. */
+    private void deliver(JSONObject pend) {
+        JSONObject b = pend.optJSONObject("body");
+        boolean subj = pend.optBoolean("subj");
+        if (b == null) return;
         String path = base() + "/send";
         Ui.pool.execute(() -> {
             String err = null;
@@ -1301,6 +1520,14 @@ final class PersonsChat {
                 }
             });
         });
+    }
+
+    private void retry(JSONObject pend) {
+        if (pend.optJSONObject("body") == null) return;
+        pend.remove("error");
+        toBottom = true;
+        render();
+        deliver(pend);
     }
 
     /** "Ask AI": the note goes to the Person AI of this person and section; its answer shows in

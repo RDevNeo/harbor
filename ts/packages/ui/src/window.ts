@@ -888,6 +888,10 @@ export interface AppWindow extends slint.ComponentHandle {
   readonly transcript_height: number;
   readonly transcript_view: number;
   readonly transcript_follow: boolean;
+  /** Bumped when a chat is opened (the transcript's WhatsApp flow: chat.slint Transcript `open-rev`). */
+  transcript_open_rev: number;
+  /** Replies new in the open chat since it opened (the "↓"'s badge while scrolled up). */
+  transcript_arrived: number;
   /** Physical pixels per logical pixel. */
   readonly scale_factor: number;
   /** Browser-style zoom: the level (1 = 100%). */

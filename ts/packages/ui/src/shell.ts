@@ -1491,13 +1491,28 @@ export class Shell {
 
   /** Chat `id` on screen, from anywhere (the sidebar, a link, a notification, a restart): in a stored split, that
    * split comes with its pane focused; else it shows alone and every split stays as it is (splitrun.ts `opened`). */
+  /** Where each chat was left (this run): its distance from the transcript's end, or null at the end. */
+  private places = new Map<number, number | null>();
+  /** The shown chat's reply cards (seqs) drawn so far (null: not drawn yet): new ones count up `transcript_arrived`. */
+  private arrived: { chat: number | null; seqs: Set<number> | null } = { chat: null, seqs: null };
+
   openChat(id: number, fromEnd: number | null = null): void {
     if (!this.data.chat(id)) return;
     this.openTok++;
     switchTrace.begin(`open ${id}`);
     // A split pane on screen taking the keyboard: its transcript stays as it is, where it was read.
     const inPane = this.view === "chat" && this.page === null && this.split.holds(id);
+    // WhatsApp's: the chat left keeps its place (this run); opened again, it's back there (at its end if it was).
+    if (this.view === "chat" && this.page === null && this.chatId !== null && this.chatId !== id && !this.split.holds(this.chatId)) {
+      this.places.set(this.chatId, this.win.at_end ? null : this.win.transcript_from_end);
+    }
+    if (fromEnd === null && !inPane && this.chatId !== id) fromEnd = this.places.get(id) ?? null;
     if (inPane) fromEnd = null;
+    if (!inPane && this.chatId !== id) {
+      this.win.transcript_open_rev = (this.win.transcript_open_rev || 0) + 1;
+      this.win.transcript_arrived = 0;
+      this.arrived = { chat: id, seqs: null };
+    }
     // The transcript sticks to the end before the new cards come in, so the chat's first frame shows its end, not
     // the place the last one was read at.
     if (fromEnd === null && !inPane) this.win.scroll_to_end();
@@ -2087,10 +2102,27 @@ export class Shell {
     }
     rows?.sweep();
     sync(t.cards, transcript.now.withQueue(this.live(next, running, t), queue), sameCard);
+    if (t.cards === this.cards) this.countArrived(chat.id, next);
     this.chatCap.cards(chat.id, next.filter((c) => c.kind === "captcha").map((c) => c.detail));
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
 
+
+  /** Replies new at the end of the shown chat since it was drawn: `transcript_arrived` goes up by them (the "↓"'s
+   *  badge while scrolled up). */
+  private countArrived(chat: number, cards: readonly CardData[]): void {
+    if (this.arrived.chat !== chat) this.arrived = { chat, seqs: null };
+    const seqs = new Set<number>();
+    for (const c of cards) if (c.kind === "text") seqs.add(c.seq);
+    const before = this.arrived.seqs;
+    this.arrived.seqs = seqs;
+    if (!before) return;
+    let max = -1;
+    for (const q of before) max = Math.max(max, q);
+    let n = 0;
+    for (const q of seqs) if (q > max && !before.has(q)) n++;
+    if (n > 0) this.win.transcript_arrived = (this.win.transcript_arrived || 0) + n;
+  }
 
   private statusData(s: Status): StatusData {
     switch (s.kind) {

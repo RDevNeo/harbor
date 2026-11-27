@@ -17,7 +17,8 @@ text. The sandbox is always deleted, also on error, Ctrl+C or kill.
 Screens and steps run in the order given; each --screen opens a screen and shoots it:
   --screen NAME    chats (the chat list), chat (the chat with every card kind), chat:lead (a lead
                    with its team), chat:composer (two images in its shared draft), chat:GID,
-                   settings, new (new chat), palette, collector, persons, routine (those tabs), home (the app's first screen). Several:
+                   settings, new (new chat), palette, collector, persons, routine (those tabs), persons:ana (Ana's
+                   chat in Persons › Stores), home (the app's first screen). Several:
                    --screen chats,chat,settings. Default: chats.
   --tap X,Y        a tap, in the PNG's pixels (1080x2400)
   --press X,Y      a long press there (a message's sheet, a text box's Paste)
@@ -26,7 +27,9 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --key NAME       an Android key: BACK, ENTER, DEL, TAB…
   --broadcast ACTION  a broadcast to the app, for a test build's hooks (Rig.java):
                    dev.harbor.app.RIG_KEYBOARD_PASTE types the clipboard's text as a keyboard's
-                   clipboard does, dev.harbor.app.RIG_TEXT_CLIP leaves only its text on it
+                   clipboard does, dev.harbor.app.RIG_TEXT_CLIP leaves only its text on it;
+                   dev.harbor.app.RIG_INCOMING has new messages come in (2 from Ana in Persons, 2 replies
+                   in the cards chat: ts/rig/phonehub.ts /rig/incoming)
   --view CHAT[@PC]  opens a chat link as another app or a browser does (an ACTION_VIEW intent of
                    harbor://chat/<gid>?pc=<PC>, through the manifest's filter, not by class):
                    CHAT is a rig chat (cards, lead, composer, waiting…) or a made-up gid

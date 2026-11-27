@@ -160,6 +160,7 @@ class PersonsTab {
       b[name] = f;
     };
     on("all_people", () => {
+      this.keepPlace();
       this.stopAudio();
       this.leaveSr();
       this.ui.open = null;
@@ -202,6 +203,7 @@ class PersonsTab {
       this.render();
     }) as Cb);
     on("close_chat", () => {
+      this.keepPlace();
       this.stopAudio();
       this.ui.open = null;
       this.chat = null;
@@ -547,6 +549,7 @@ class PersonsTab {
     this.paintAttached(b);
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
+    this.countArrived(c);
     const rows = aiFolds(chatRows(c).slice(-400), this.aiFold);
     this.foldedNow = new Set(rows.filter((r) => r.folded).map((r) => r.id));
     this.keepParts(rows);
@@ -766,6 +769,7 @@ class PersonsTab {
       card_chat: r.card.chat,
       chan: r.chan,
       chan_label: r.chanLabel,
+      day: r.day,
       has_audio: !!r.audio,
       a_key: r.audio?.key ?? "",
       a_dur: r.audio?.duration ?? 0,
@@ -861,6 +865,7 @@ class PersonsTab {
     if (this.ui.open?.id === id && this.ui.open.section === section && this.ui.open.store === store) return;
     const was = this.chatKey();
     if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
+    this.keepPlace();
     this.stopAudio();
     this.leaveSr();
     this.ui.open = { id, section, store };
@@ -873,6 +878,9 @@ class PersonsTab {
     this.files = [];
     this.aiFiles = [];
     const k = this.chatKey();
+    this.bus.c_open_rev = (Number(this.bus.c_open_rev) || 0) + 1;
+    this.bus.c_arrived = 0;
+    this.arrivedOf = { key: k, ids: null };
     this.aiMode = this.toAi.get(k) ?? false;
     this.bus.draft = this.drafts.get(`${k}:${this.aiMode ? "ai" : "person"}`) ?? "";
     this.bus.subject = "";
@@ -881,6 +889,62 @@ class PersonsTab {
   }
 
   private account: string | null = null;
+
+  /** Where each chat was left (this run): at its end, or the row at the top and how far above the view's top it
+   *  started (WhatsApp's: opened again, it's back there). */
+  private places = new Map<string, { end: boolean; id: string; off: number }>();
+  /** The open chat's message ids drawn so far (null: not drawn yet), to count theirs that come in (`c_arrived`). */
+  private arrivedOf: { key: string; ids: Set<string> | null } = { key: "", ids: null };
+
+  /** The chat on screen is left: its place is kept. */
+  private keepPlace(): void {
+    const k = this.chatKey();
+    if (!k || !this.chat) return;
+    const b = this.bus;
+    const end = b.c_at_bottom !== false;
+    const id = String(b.c_top_id ?? "");
+    if (!end && !id) return;
+    this.places.set(k, { end, id, off: Number(b.c_top_off) || 0 });
+  }
+
+  /** A chat's first draw: back where it was left; else at its unread line ("N unread messages") near the top; else
+   *  its end (where ChatPane starts it). Rows exist once Slint has laid them out: placed on its next frames. */
+  private placeOpened(c: ChatJson): void {
+    const k = this.chatKey();
+    const was = this.places.get(k);
+    const rows = this.msgModel;
+    const has = (id: string): boolean => {
+      for (let i = 0; i < rows.length; i++) if (rows.rowData(i)?.id === id) return true;
+      return false;
+    };
+    let target: { id: string; off: number } | null = null;
+    if (c.unreadFrom && (!was || was.end)) target = { id: `u${c.unreadFrom}`, off: 24 };
+    else if (was && !was.end && has(was.id)) target = { id: was.id, off: was.off };
+    if (!target || !has(target.id)) return;
+    const t = target;
+    const put = (): void => {
+      if (this.chatKey() !== k) return;
+      this.bus.place_id = t.id;
+      this.bus.place_off = t.off;
+      this.bus.place_rev = (Number(this.bus.place_rev) || 0) + 1;
+    };
+    put();
+    setTimeout(put, 16);
+    setTimeout(put, 60);
+  }
+
+  /** Their messages new in the open chat since it was drawn: `c_arrived` goes up by them (ChatPane's "↓" badge). */
+  private countArrived(c: ChatJson): void {
+    const k = this.chatKey();
+    if (this.arrivedOf.key !== k) this.arrivedOf = { key: k, ids: null };
+    const ids = new Set(c.messages.map((m) => m.id));
+    const before = this.arrivedOf.ids;
+    this.arrivedOf.ids = ids;
+    if (!before) return;
+    const last = c.messages.findLastIndex((m) => before.has(m.id));
+    const n = c.messages.slice(last + 1).filter((m) => !m.fromMe && !before.has(m.id)).length;
+    if (n > 0) this.bus.c_arrived = (Number(this.bus.c_arrived) || 0) + n;
+  }
 
   private async loadChat(first: boolean): Promise<void> {
     const open = this.ui.open;
@@ -894,6 +958,7 @@ class PersonsTab {
     const c = r.body as ChatJson;
     this.chat = c;
     this.render();
+    if (first) this.placeOpened(c);
     // seen: the newest message (as opening it in the official client does), unless it was just marked unread
     const unread = this.person(open.id)?.rows[open.section]?.unread ?? 0;
     if (unread > 0 && this.ctx.shown() && this.holdUnread !== this.chatKey()) void this.api("POST", `chat/${encodeURIComponent(open.id)}/read`, { section: open.section, account: c.account?.id });
@@ -1548,6 +1613,7 @@ class PersonsTab {
     if (this.sr?.ref === ref && this.ui.srOpen === ref) return;
     const was = this.chatKey();
     if (was) this.drafts.set(`${was}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
+    this.keepPlace();
     this.stopAudio();
     this.leaveSr();
     this.ui.open = null;
