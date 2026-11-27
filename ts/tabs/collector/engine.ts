@@ -59,6 +59,7 @@ import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Tem
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
 import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
+import { keepRun, runRecord, type RunOutcome } from "./lib/history.ts";
 import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
 import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
 
@@ -144,6 +145,7 @@ export class Collector {
     // A run can't outlive the engine: one saved as running was cut by a restart (the rig keeps it, to show one).
     if (this.data.run?.running && !o.offline) {
       this.data.run = { ...this.data.run, running: false, endedAt: Date.now(), line: "", status: "Interrupted: Hub restarted." };
+      this.data.runs = keepRun(this.data.runs, runRecord(this.data.run, "interrupted"));
       this.save();
     }
   }
@@ -527,7 +529,7 @@ export class Collector {
         : () => sweepSocial({ ...common, platform, client: platform === "tiktok" ? this.tiktok() : this.instagram() });
     this.stopFlag = false;
     const now = Date.now();
-    this.data.run = { running: true, label: src.label, platform, query, startedAt: now, endedAt: 0, status: "Running…", found: 0, target, considered: 0, dropped: 0, known: 0, ids: [], line: `Searching ${src.label} for videos of “${query}”…` };
+    this.data.run = { running: true, label: src.label, platform, query, startedAt: now, endedAt: 0, status: "Running…", found: 0, target, considered: 0, dropped: 0, known: 0, ids: [], gapDays: s.gapDays, line: `Searching ${src.label} for videos of “${query}”…` };
     this.touch();
     let failed = "";
     this.running = (async () => {
@@ -546,6 +548,9 @@ export class Collector {
           r.line = "";
           const leads = `${n} new lead${n === 1 ? "" : "s"}`;
           const known = r.known ? ` · ${r.known} already collected, passed over` : "";
+          // History: how it ended. A run cut by Hub closing is "interrupted" (the next start says so too).
+          const outcome: RunOutcome = this.disposing ? "interrupted" : failed ? "failed" : this.stopFlag ? "stopped" : n === 0 ? "none" : target > 0 && n >= target ? "done" : "exhausted";
+          this.data.runs = keepRun(this.data.runs, runRecord(r, outcome, failed));
           r.status = (this.stopFlag ? `Stopped: ${leads}` : target > 0 && n >= target ? `Done: ${leads}` : n === 0 ? `No new leads for “${query}”. Try another term or a wider Last upload.` : `Done: ${leads} (no more for this term)`) + (n === 0 && !this.stopFlag ? "" : known);
           if (!this.disposing) {
             // The Collector tab's count (until the user opens it) and Hub's notification, as a Persons message gets.

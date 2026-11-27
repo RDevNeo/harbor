@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bioLine, formOf, leadsOf, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -23,6 +23,45 @@ const view = (over: Partial<CollectorView> = {}): CollectorView => ({
 });
 
 const run = (over: Partial<NonNullable<CollectorView["run"]>> = {}): NonNullable<CollectorView["run"]> => ({ running: false, label: "YouTube", platform: "youtube", query: "dress to impress", found: 2, target: 5, known: 0, line: "", status: "Done: 2 new leads", ids: [], elapsed: 3, ...over });
+
+const hist = (): NonNullable<CollectorView["history"]> => [
+  {
+    key: "2026-11-27",
+    label: "Today",
+    runs: [
+      { id: "run-2", time: "09:52", query: "anime", platform: "YouTube", platformKey: "youtube", line: "3 new leads · 7 already collected", note: "", tone: "done", running: false, ids: ["c", "gone", "a", "b"], found: 4 },
+      { id: "run-1", time: "08:26", query: "dti", platform: "Instagram", platformKey: "instagram", line: "No new leads", note: "Stopped on an error: HTTP 429", tone: "failed", running: false, ids: [], found: 0 },
+    ],
+  },
+  { key: "2026-11-26", label: "Yesterday", runs: [{ id: "run-0", time: "10:16", query: "old", platform: "TikTok", platformKey: "tiktok", line: "1 new lead", note: "", tone: "done", running: false, ids: ["gone"], found: 1 }] },
+];
+
+describe("collector history", () => {
+  it("lays History out as the timeline: each day's head, its runs, no line under a day's last dot", () => {
+    const items = historyItems(hist());
+    expect(items.map((x) => [x.kind, x.kind === "day" ? x.label : x.query, x.first, x.last])).toEqual([
+      ["day", "Today", true, false],
+      ["run", "anime", false, false],
+      ["run", "dti", false, true],
+      ["day", "Yesterday", false, false],
+      ["run", "old", false, true],
+    ]);
+    expect(items[2]).toMatchObject({ platform_key: "instagram", tone: "failed", note: "Stopped on an error: HTTP 429" });
+    expect(historyItems([])).toEqual([]);
+  });
+  it("an opened run shows the leads it found in the order found, whatever list they're in now; its head says how it went", () => {
+    const v = view({ history: hist(), creators: [row("a"), row("b", { restricted: true }), row("c", { approved: true })] });
+    expect(leadsOf(v, "history", "", "run-2").rows.map((r) => r.id)).toEqual(["c", "a", "b"]);
+    // The filter box belongs to the lists, not to a run.
+    expect(leadsOf(v, "history", "zzz", "run-2").rows.length).toBe(3);
+    expect(leadsOf(v, "history", "", "run-1")).toMatchObject({ rows: [], emptyTitle: "Nothing new this time" });
+    expect(leadsOf(v, "history", "", "run-0")).toMatchObject({ rows: [], emptyTitle: "Its leads are gone" });
+    expect(leadsOf(v, "history", "", "")).toMatchObject({ rows: [], emptyTitle: "" });
+    expect(runHead(v, "run-2")).toEqual({ query: "anime", platformKey: "youtube", sub: "YouTube · Today 09:52 · 3 new leads · 7 already collected", note: "", tone: "done" });
+    expect(runHead(v, "run-1")!.note).toBe("Stopped on an error: HTTP 429");
+    expect(runHead(v, "nope")).toBeNull();
+  });
+});
 
 describe("collector window", () => {
   it("names why a source can't run, and asks for Instagram's session", () => {

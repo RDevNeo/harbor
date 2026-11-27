@@ -1,6 +1,7 @@
 // Collector tab, window side: drives CollectorBus (slint/collector.slint) from the engine's view (GET v1/collector, the
-// same routes Hub for Android calls) and sends every change back. Four views (Collector, Available, Approved, Restricted),
-// picked in the sidebar; one filter box on the lists. A lead's detail has the review bar (Reject / Skip / Approve, R S A
+// same routes Hub for Android calls) and sends every change back. Five views (Collector, Available, Approved, Restricted,
+// History), picked in the sidebar; one filter box on the lists. History is every search run by day (Headquarters'
+// Timeline); a click on one shows the leads it found. A lead's detail has the review bar (Reject / Skip / Approve, R S A
 // or ← ↓ →; Approve puts them in the Approved list): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
 // While a run is going it re-reads every second; otherwise on the tabs' change events.
 // Send message is a real send: it only goes out from the dialog's second step ("Send now").
@@ -12,6 +13,7 @@ import { REACH_META, reachError, reachHref } from "../../../../../tabs/collector
 import { compactCount } from "../../../../../tabs/collector/lib/format.ts";
 import { REACH_KINDS, type ReachKind } from "../../../../../tabs/collector/lib/types.ts";
 import type { DetailView } from "../../../../../tabs/collector/view.ts";
+import type { HistoryDay } from "../../../../../tabs/collector/lib/history.ts";
 
 type Pixels = { width: number; height: number; data: Uint8ClampedArray };
 const NO_PX: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
@@ -61,6 +63,8 @@ export interface CollectorView {
   sorts?: { value: string; label: string; group: number }[];
   /** Finished runs not looked at yet: the tab's count (TabsBus.collector-unread). */
   unseen?: number;
+  /** Every search run by day, newest first. */
+  history?: HistoryDay[];
   creators: Row[];
 }
 interface Compose {
@@ -77,7 +81,7 @@ interface Compose {
   guard: { sentToday: number; limit: number; already: string | null; justSent: boolean } | null;
 }
 
-export type Page = "collector" | "available" | "approved" | "restricted";
+export type Page = "collector" | "available" | "approved" | "restricted" | "history";
 type Bus = Record<string, unknown> & { query: string; target: string; filter: string; email_text: string; session_cookie: string; s_to: string; s_subject: string; s_text: string; d_reach_text: string; e_name: string; e_handle: string; e_bio: string; e_links: string };
 
 /** The lead the review bar goes on to: the first one after `current` in the list the detail was opened from that is
@@ -178,8 +182,45 @@ export function runLine(v: CollectorView): string {
   return `${n} · ${r.line || "Searching…"}`;
 }
 
-/** The leads one view shows, and its heading and empty state (pure: tested). */
-export function leadsOf(v: CollectorView, page: Page, filter: string): { rows: Row[]; head: string; emptyTitle: string; emptyDesc: string } {
+/** History as the timeline's lines: each day's head, then its runs (the day's last has no line under its dot) (pure:
+ *  tested). */
+export function historyItems(days: HistoryDay[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  days.forEach((d, di) => {
+    out.push({ kind: "day", label: d.label, first: di === 0, id: `day-${d.key}`, time: "", query: "", platform: "", platform_key: "", line: "", note: "", tone: "", running: false, last: false });
+    d.runs.forEach((r, i) => out.push({ kind: "run", label: "", first: false, id: r.id, time: r.time, query: r.query, platform: r.platform, platform_key: r.platformKey, line: r.line, note: r.note, tone: r.tone, running: r.running, last: i === d.runs.length - 1 }));
+  });
+  return out;
+}
+
+/** A run of History by its id, with the day it ran on. */
+export function findRun(v: CollectorView, id: string): { day: HistoryDay; run: HistoryDay["runs"][number] } | null {
+  for (const day of v.history ?? []) for (const run of day.runs) if (run.id === id) return { day, run };
+  return null;
+}
+
+/** An opened run's head: the term, its platform, "YouTube · Today 08:26 · 20 new leads", why it stopped (pure: tested). */
+export function runHead(v: CollectorView, id: string): { query: string; platformKey: string; sub: string; note: string; tone: string } | null {
+  const f = findRun(v, id);
+  if (!f) return null;
+  const { day, run } = f;
+  const when = run.running ? "running now" : `${day.label} ${run.time}`;
+  return { query: run.query, platformKey: run.platformKey, sub: `${run.platform} · ${when} · ${run.line}`, note: run.note, tone: run.tone };
+}
+
+/** The leads one view shows, and its heading and empty state (pure: tested). On History, `run` is the run open: the
+ *  leads it found, in the order found, whichever list they're in now. */
+export function leadsOf(v: CollectorView, page: Page, filter: string, run = ""): { rows: Row[]; head: string; emptyTitle: string; emptyDesc: string } {
+  if (page === "history") {
+    const f = run ? findRun(v, run) : null;
+    if (!f) return { rows: [], head: "", emptyTitle: "", emptyDesc: "" };
+    const byId = new Map(v.creators.map((c) => [c.id, c]));
+    const rows = f.run.ids.map((id) => byId.get(id)).filter((c): c is Row => !!c);
+    if (rows.length) return { rows, head: "", emptyTitle: "", emptyDesc: "" };
+    return f.run.ids.length
+      ? { rows, head: "", emptyTitle: "Its leads are gone", emptyDesc: "The leads this search found were removed since. They stay remembered, so no run collects them again." }
+      : { rows, head: "", emptyTitle: f.run.running ? "" : "Nothing new this time", emptyDesc: f.run.running ? "" : "Everyone it found was collected before, or hadn't posted inside Last upload." };
+  }
   if (page === "collector") {
     const r = v.run;
     const byId = new Map(v.creators.map((c) => [c.id, c]));
@@ -239,6 +280,7 @@ const PAGES: { id: Page; label: string }[] = [
   { id: "available", label: "Available" },
   { id: "approved", label: "Approved" },
   { id: "restricted", label: "Restricted" },
+  { id: "history", label: "History" },
 ];
 
 export function createCollectorUi(): TabUi {
@@ -248,7 +290,9 @@ export function createCollectorUi(): TabUi {
   let copied = 0;
   let fast: ReturnType<typeof setInterval> | null = null;
   let editing = 0;
-  let page: Page = (["collector", "available", "approved", "restricted"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
+  let page: Page = (["collector", "available", "approved", "restricted", "history"] as const).find((p) => p === process.env.HUB_COLLECTOR_SHOT_PAGE) ?? "collector";
+  /** History: the run open ("" the timeline). */
+  let historyRun = "";
   let emailFor = "";
   let sessionBusy = false;
   // Send message
@@ -327,6 +371,8 @@ export function createCollectorUi(): TabUi {
   // The screenshot rig opens the Send dialog for the first lead straight away, once the first view is in.
   let shot = process.env.HUB_COLLECTOR_SHOT_SEND === "1";
   let shotDetail = process.env.HUB_COLLECTOR_SHOT_DETAIL === "1";
+  // …or History's newest run that found someone (HUB_COLLECTOR_SHOT_RUN=1).
+  let shotRun = process.env.HUB_COLLECTOR_SHOT_RUN === "1";
   const load = async (): Promise<void> => {
     try {
       take((await call("GET", "v1/collector")) as CollectorView);
@@ -336,6 +382,15 @@ export function createCollectorUi(): TabUi {
         if (first) {
           sendId = first.id;
           await openCompose(view?.settings.lastTemplate ?? "", "");
+        }
+      }
+      if (shotRun) {
+        shotRun = false;
+        const first = (view?.history ?? []).flatMap((d) => d.runs).find((r) => r.found > 0);
+        if (first) {
+          page = "history";
+          historyRun = first.id;
+          render();
         }
       }
       if (shotDetail) {
@@ -411,7 +466,8 @@ export function createCollectorUi(): TabUi {
     set("run_line", runLine(v));
     set("copy_label", Date.now() - copied < 2500 ? "Copied" : "Copy JSONL");
     set("email_for", emailFor);
-    const l = leadsOf(v, page, b.filter);
+    renderHistory(v);
+    const l = leadsOf(v, page, b.filter, historyRun);
     set("rows_head", l.head);
     renderListMenus(v);
     set("empty_title", l.emptyTitle);
@@ -441,6 +497,27 @@ export function createCollectorUi(): TabUi {
     if (b.rows !== rowModel) b.rows = rowModel;
     renderSend();
     renderDetail();
+  }
+
+  function renderHistory(v: CollectorView): void {
+    const b = bus;
+    if (!b) return;
+    // A run that's no longer there (it can't be, but a restore might ask for one): back to the timeline.
+    if (historyRun && !findRun(v, historyRun)) historyRun = "";
+    set("history_run", page === "history" ? historyRun : "");
+    set("n_runs", (v.history ?? []).reduce((n, d) => n + d.runs.length, 0));
+    const items = historyItems(v.history ?? []);
+    const sig = JSON.stringify(items);
+    if (sigs.history !== sig) {
+      b.history = new slint.ArrayModel(items);
+      sigs.history = sig;
+    }
+    const h = historyRun ? runHead(v, historyRun) : null;
+    set("hr_query", h?.query ?? "");
+    set("hr_platform_key", h?.platformKey ?? "");
+    set("hr_sub", h?.sub ?? "");
+    set("hr_note", h?.note ?? "");
+    set("hr_tone", h?.tone ?? "");
   }
 
   function renderListMenus(v: CollectorView): void {
@@ -568,7 +645,7 @@ export function createCollectorUi(): TabUi {
         ctx?.toast(`${d.name} approved.`);
       }
       const v = view;
-      const next = v ? nextLead(queue, d.id, leadsOf(v, page, bus?.filter ?? "").rows.map((r) => r.id)) : null;
+      const next = v ? nextLead(queue, d.id, leadsOf(v, page, bus?.filter ?? "", historyRun).rows.map((r) => r.id)) : null;
       if (next) await showDetail(next, false);
       else {
         closeDetail();
@@ -585,7 +662,7 @@ export function createCollectorUi(): TabUi {
   const showDetail = async (id: string, fromList = true): Promise<void> => {
     try {
       // Opened from a card: the review bar goes through that list, in its filter and order.
-      if (fromList && view && bus) queue = leadsOf(view, page, bus.filter).rows.map((r) => r.id);
+      if (fromList && view && bus) queue = leadsOf(view, page, bus.filter, historyRun).rows.map((r) => r.id);
       const d = (await call("GET", `v1/collector/creator?id=${encodeURIComponent(id)}`)) as DetailView;
       detailOpen = true;
       editOpen = false;
@@ -653,6 +730,7 @@ export function createCollectorUi(): TabUi {
     };
     on("go", (id: string) => {
       page = (PAGES.find((p) => p.id === id)?.id ?? "collector") as Page;
+      historyRun = "";
       listMenu = "";
       emailFor = "";
       render();
@@ -786,6 +864,16 @@ export function createCollectorUi(): TabUi {
         });
     });
     on("detail_show", (id: string) => void showDetail(id));
+    on("history_open", (id: string) => {
+      historyRun = id;
+      render();
+      ctx?.saveSoon?.();
+    });
+    on("history_back", () => {
+      historyRun = "";
+      render();
+      ctx?.saveSoon?.();
+    });
     on("detail_close", () => closeDetail());
     on("review", (what: string) => {
       if (what === "reject" || what === "skip" || what === "approve") void review(what);
@@ -937,8 +1025,9 @@ export function createCollectorUi(): TabUi {
       const y = (k: string): number => Number(b[k]) || 0;
       return {
         page,
+        run: historyRun,
         filter: String(b.filter ?? ""),
-        y: { collector: y("y_collector"), available: y("y_available"), approved: y("y_approved"), restricted: y("y_restricted") },
+        y: { collector: y("y_collector"), available: y("y_available"), approved: y("y_approved"), restricted: y("y_restricted"), history: y("y_history") },
         sideHidden: b.side_hidden === true,
         detail: detailOpen && detail ? detail.id : null,
         queue: detailOpen ? queue.slice(0, 2000) : [],
@@ -951,9 +1040,10 @@ export function createCollectorUi(): TabUi {
       if (!b) return;
       const p = PAGES.find((x) => x.id === o.page)?.id;
       if (p) page = p as Page;
+      if (typeof o.run === "string") historyRun = o.run;
       if (typeof o.filter === "string") b.filter = o.filter;
       const y = (o.y && typeof o.y === "object" ? o.y : {}) as Record<string, unknown>;
-      for (const k of ["collector", "available", "approved", "restricted"]) if (typeof y[k] === "number" && Number.isFinite(y[k])) b[`y_${k}`] = y[k];
+      for (const k of ["collector", "available", "approved", "restricted", "history"]) if (typeof y[k] === "number" && Number.isFinite(y[k])) b[`y_${k}`] = y[k];
       if (typeof o.sideHidden === "boolean") b.side_hidden = o.sideHidden;
       render();
       if (typeof o.detail !== "string" || o.detail === "") return;

@@ -7,7 +7,7 @@ No browser and no WebView: everything runs in the engine against the platforms' 
 
 ## What the user sees
 
-Four views, picked in the sidebar (the phone: chips under the title):
+Five views, picked in the sidebar (the phone: the drawer's rows):
 
 - **Collector**: the form (platform, search term, how many leads, Last upload window, Collect / Stop; Instagram's
   session when Instagram is picked), one line while a run goes ("3 of 20 · Checking @x…", then how it ended), and the
@@ -18,6 +18,15 @@ Four views, picked in the sidebar (the phone: chips under the title):
   detail the review bar's Approve is **Move to Available**.
 - **Restricted**: leads the user keeps out of Available (Reject in the review bar). They stay remembered, so no run
   collects them again. In their detail the review bar's Reject is **Move to Available**.
+- **History**: every search run, newest first, grouped by day ("Today", "Yesterday", "Wed, Nov 25", the PC's time
+  zone), drawn as Headquarters' Timeline (`app/src/spaces/blox-survivors/TimelineView.tsx`): the start time (13px
+  mono, right-aligned in a 52px column; a run going shows how long, "5m", in blue), a dot on the day's vertical line
+  (blue going, green done, amber stopped or interrupted, red an error, a smaller grey one when nobody new, that row
+  at 60%), then the term with the platform's mark, "YouTube · 20 new leads · 7 already collected", and only when it
+  ended early why ("Stopped before the target (20).", "Stopped on an error: …", "Interrupted: Hub restarted."). A
+  click (a tap) shows that run: ‹ History, the term, "YouTube · Today 08:26 · 20 new leads", and the leads it found
+  in the order found, whichever list they're in now, as the usual cards; a card opens the usual detail, whose review
+  bar goes through that run's leads. Back (the phone's) returns to the timeline. No filters, no deleting.
 
 Each view keeps its scroll while Hub runs (the detail, a review, a refresh or another tab doesn't move it); a new
 filter, sort or platform choice starts the list at the top.
@@ -131,13 +140,25 @@ Records are the userscript's field for field (`lib/types.ts` `CreatorRecord`) pl
 removed Approve to and Quick note (harmless; the routes still take them). Older state.json files load as they are; the old daily
 update's state and each record's history are dropped.
 
-Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last run with its leads' ids, a log),
+**Runs** (`lib/history.ts`): each run is recorded in state.json's `runs` (oldest first, the newest 1000) when it ends:
+`{id: "run-<startedAt>", platform, query, gapDays, target, startedAt, endedAt, found, known, ids, outcome, error?}`,
+outcome one of done (the target in), exhausted (no more for the term), none (nobody new), stopped, failed (with the
+error), interrupted (cut by Hub closing or a restart; recorded at the next start). The view (`GET v1/collector`)
+carries `history`: days `{key, label, runs: [{id, time, query, platform, platformKey, line, note, tone, running, ids,
+found}]}`, the run going now on top. A state.json from before History gets its runs rebuilt once (when it has no
+`runs`): the saved last run as it was, and every other lead a run found (not one imported from the CRM) grouped by
+platform and search term (`discovered_via`), a new run wherever two were captured more than an hour apart
+(`backfilled: true`: no settings, counts of passed-over creators or stop reason).
+
+Data: `<hub data>/collector/state.json` (settings, leads, the ledger, the last run with its leads' ids, every run
+(History), a log),
 `templates.json`, `sessions.json`, `avatars/`. A run doesn't survive a restart (it's marked "Interrupted").
 `HUB_COLLECTOR_DIR` points at another folder, `HUB_COLLECTOR_OFFLINE=1` fetches nothing (the screenshot rigs;
 `ts/rig/collector-fixture.ts` writes made-up data).
 
 Checks: `bun test tabs/collector packages/ui/test/collectorview.test.ts`; `bun ts/rig/collector-fixture.ts <dir>` then
 `scripts/shot --empty --view tab:collector --env HUB_COLLECTOR_DIR=<dir> --env HUB_COLLECTOR_OFFLINE=1`
-(`HUB_COLLECTOR_SHOT_PAGE=available|restricted` opens that view, `HUB_COLLECTOR_SHOT_SEND=1` the Send dialog,
+(`HUB_COLLECTOR_SHOT_PAGE=available|restricted|history` opens that view, `HUB_COLLECTOR_SHOT_RUN=1` History's newest
+run that found someone, `HUB_COLLECTOR_SHOT_SEND=1` the Send dialog,
 `HUB_COLLECTOR_SHOT_DETAIL=1` the first lead's detail); `scripts/boat/phoneshot --screen collector` (also
-`collector-available`, `collector-restricted`, `collector-send`, `collector-detail`).
+`collector-available`, `collector-restricted`, `collector-history`, `collector-history-run`, `collector-send`, `collector-detail`).

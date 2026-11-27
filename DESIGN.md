@@ -89,13 +89,17 @@ Per tab:
 - **Routine**: sidebar = Today (with its %), History, Sleep, Goals, Coach as glyph rows, then PLAN (the current plan,
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are
   DialogFrames.
-- **Collector**: sidebar = the four views as glyph rows (Collector with "running" while a run goes, Available,
-  Approved and Restricted with their counts; the lists' bar: the filter SearchField full width, then 34px framed Sort
+- **Collector**: sidebar = the five views as glyph rows (Collector with "running" while a run goes, Available,
+  Approved and Restricted with their counts, History; the lists' bar: the filter SearchField full width, then 34px framed Sort
   and platform menu buttons, MenuItems and PlatRows with the tick on the left, brand mark, count); page = PageBar ("Collector / Collect leads", "Collector / Available  6 leads" with
   Copy JSONL on the right), then a column: on Collector the form Card (platform Chips, Instagram's "· needs sign-in"
   and, when picked, the session Well; search Input, Leads with −/+, Collect/Stop, Last upload Chips), one line under
   it while a run goes (Spinner + "3 of 20 · Checking @x…", or how it ended), then the run's leads; on Available and
-  Restricted one framed SearchField, then the leads. A lead is a bordered card (radius 8): 44px Avatar, name, platform
+  Restricted one framed SearchField, then the leads; on History ("Collector / History  10 searches") Headquarters'
+  Timeline in a 680px column: 13px day heads, rows of a 52px mono time, a 10px tone dot on a 1px gray-400 line, the
+  term (14px) with the platform's 14px brand mark, a 13px subtle line and the early stop's reason in amber or red,
+  20px under each row, the row accent on hover; a run opened: ghost "‹ History", the term at 20px/600, its line,
+  then its leads. A lead is a bordered card (radius 8): 44px Avatar, name, platform
   Tag, handle, the short profile link, the email with its source (or "Add email", which turns into an Input with Save /
   Cancel), the 3 newest videos as 64×48 thumbnails (a click opens one, the title is its tip), Restrict / Unrestrict and
   Send (ghost-muted sm Btns); a lead with a Reach shows its icon after the handle (24px, the brand's mark on its tint).
@@ -168,7 +172,7 @@ the model: a slim top bar with the sidebar button, a sheet from the left, the ta
   avatar, no theme button: the phone is always black). Persons: "Persons" (its magnifier opens All people), then
   Stores, Creators, SpokPay, Personal (PersonsHome; no All people row, no connection chips: only a sign-in waiting
   for its QR code shows). Routine: Today, History, Sleep, Goals, Coach. Collector: Collector, Available, Approved,
-  Restricted with their counts.
+  Restricted with their counts, History.
 - **Tab bar** (`Tabs.around`): Projects, Persons, Routine, Collector, on every page including chats; it steps aside
   only while the keyboard is up. Every tab carries a count on its icon's corner (`Ds.pill`), as WhatsApp's and the PC's tab
   row (same routes): Projects the chats that need you, Persons everyone's unread messages, Routine today's goals still

@@ -1,6 +1,6 @@
 // Collector's made-up data for the screenshot rigs (scripts/shot on the PC, ts/rig/phonehub.ts for the phone): creators
 // from YouTube, TikTok and Instagram (emails found in different places, made-up video thumbnails), two Restricted, and the
-// last run (or one under way). No network, nobody real.
+// last run (or one under way), and History's runs (one of each ending). No network, nobody real.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -120,6 +120,20 @@ export async function writeCollectorFixture(cdir: string, o: FixtureOpts = {}): 
   const seen = creators.flatMap((c) => [`${c.platform}:${c.platform_id}`, `${c.platform}:${c.handle.toLowerCase()}`]);
   // The last run found the first five (newest last in the file: the lists show Lia, Caio… first).
   const ids = creators.slice(creators.length - fixed, creators.length - fixed + 5).map((c) => `${c.platform}:${c.platform_id}`).reverse();
+  // History: the last run, and a few others, one of each ending (an error, Stop, nobody new, the target in).
+  const idOf = (name: string): string => {
+    const c = creators.find((x) => x.name === name)!;
+    return `${c.platform}:${c.platform_id}`;
+  };
+  const hour = 3_600_000;
+  const past = (platform: string, query: string, ago: number, mins: number, more: Record<string, unknown>) => ({ id: `run-${now - ago}`, platform, query, gapDays: 14, target: 20, startedAt: now - ago, endedAt: now - ago + mins * 60_000, found: 0, known: 0, ids: [] as string[], outcome: "done", ...more });
+  const runs = [
+    past("youtube", "dress to impress", 3 * day, 7, { found: 5, known: 2, ids, outcome: "exhausted" }),
+    past("youtube", "vestindo inscritos", day + 2 * hour, 3, { target: 1, found: 1, ids: [idOf("Duda Robux")], outcome: "done" }),
+    past("youtube", "roblox fashion", 4 * hour, 2, { known: 7, outcome: "none" }),
+    past("tiktok", "dti", 2.5 * hour, 4, { found: 1, known: 3, ids: [idOf("Nina Fits")], outcome: "stopped" }),
+    past("instagram", "brookhaven", hour, 5, { found: 1, ids: [idOf("Gui Brookhaven")], outcome: "failed", error: "Instagram answered 429 twice: try again in a few minutes." }),
+  ];
   writeFileSync(
     join(cdir, "state.json"),
     JSON.stringify({
@@ -131,6 +145,7 @@ export async function writeCollectorFixture(cdir: string, o: FixtureOpts = {}): 
         ? { running: true, label: "YouTube", platform: "youtube", query: "dress to impress", startedAt: now - 95_000, endedAt: 0, status: "Running…", found: 5, target: 20, considered: 11, dropped: 3, known: 2, ids, line: "Checking Duda Robux…" }
         : { running: false, label: "YouTube", platform: "youtube", query: "dress to impress", startedAt: now - 3 * day, endedAt: now - 3 * day + 410_000, status: "Done: 5 new leads (no more for this term) · 2 already collected, passed over", found: 5, target: 20, considered: 19, dropped: 9, known: 2, ids, line: "" },
       log: [],
+      runs,
     }),
   );
 }

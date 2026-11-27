@@ -3,6 +3,7 @@
 // picture, name and handle, platform, profile link, email (and where it came from), the 3 newest videos, Restricted.
 import { avatarKey } from "./avatar-key.ts";
 import { compactCount, dayAgo } from "./lib/format.ts";
+import { historyView } from "./lib/history.ts";
 import { brandOf, linkTitle, linksText, REACH_META, reachDrafts, reachHref, reachStart } from "./lib/reach.ts";
 import { GAP_CHOICES, PLATFORM_LABEL, type ApproveTo, type SortMode, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
 
@@ -252,6 +253,8 @@ export function buildView(d: CollectorData, rev: number, x: ViewExtras, pic: (ur
     approveTo: APPROVE_CHOICES,
     sorts: SORT_CHOICES,
     unseen: d.unseen,
+    /** History: every search run by day, newest first (the run going now on top). */
+    history: historyView(d, now),
     creators: rows,
   };
 }

@@ -28,9 +28,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Hub's Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Four views, the drawer's rows:
+/** Hub's Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Five views, the drawer's rows:
  *  Collector (the search form, one line while a run goes, the leads it found), Available (every lead not Restricted
- *  or Approved, with the filter bar over the list), Approved and Restricted. The leads are a recycled ListView, PAGE
+ *  or Approved, with the filter bar over the list), Approved, Restricted and History (every search run by day, as
+ *  Headquarters' Timeline; a tap shows the leads it found, Back returns to the timeline). The leads are a recycled ListView, PAGE
  *  at a time; their pictures load only for the rows on screen, at the size drawn, cached in memory and on disk
  *  (Thumbs). A lead is a card: picture, name, platform, handle and
  *  profile link, email (tap to type one), the 3 newest videos (tap opens), Send message (adds them to Persons ›
@@ -54,8 +55,12 @@ public class Collector extends Base {
     private JSONObject view;
     private boolean loading;
     private String formSig = "", note = "";
-    /** The view on screen: "collector", "available", "approved" or "restricted". */
+    /** The view on screen: "collector", "available", "approved", "restricted" or "history". */
     private String sel = "collector";
+    /** History: the run open ("" the timeline). */
+    private String histRun = "";
+    /** The screenshot rig: open History's newest run that found someone, once the view is in. */
+    private boolean firstRun;
     private long typed;
     /** A live restart's place in the list: the lead at its top and its offset (null: none, or reached). */
     private String liveLead;
@@ -79,9 +84,10 @@ public class Collector extends Base {
         super.onCreate(b);
         hub = Tabs.hub(this);
         String p = getIntent().getStringExtra("page");
-        if ("available".equals(p) || "approved".equals(p) || "restricted".equals(p)) sel = p;
-        // The shared frame: the top bar (the side-panel button, the view's name), the page, the tab bar; the four
-        // views (Collector, Available, Approved, Restricted, with their counts) are the drawer's rows.
+        if ("available".equals(p) || "approved".equals(p) || "restricted".equals(p) || "history".equals(p)) sel = p;
+        firstRun = "history".equals(p) && "first".equals(getIntent().getStringExtra("run"));
+        // The shared frame: the top bar (the side-panel button, the view's name), the page, the tab bar; the five
+        // views (Collector, Available, Approved, Restricted with their counts, History) are the drawer's rows.
         LinearLayout col = frame("Collector", menuButton(), false);
         segs = Ui.col(this);
         segs.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
@@ -126,7 +132,9 @@ public class Collector extends Base {
         installTab(Tabs.COLLECTOR, Ds.drawer(this, "Collector", ds));
         // Right after a live restart (Swap) or a crash: the view, its filter, the list's place, an open lead.
         String ls = Swap.state(this, b, "sel");
-        if ("collector".equals(ls) || "available".equals(ls) || "approved".equals(ls) || "restricted".equals(ls)) sel = ls;
+        if ("collector".equals(ls) || "available".equals(ls) || "approved".equals(ls) || "restricted".equals(ls) || "history".equals(ls)) sel = ls;
+        String lr = Swap.state(this, b, "hrun");
+        if (lr != null) histRun = lr;
         String lf = Swap.state(this, b, "filter");
         if (lf != null) filter.setText(lf);
         liveLead = Swap.state(this, b, "lead");
@@ -166,6 +174,7 @@ public class Collector extends Base {
     @Override
     public void onBackPressed() {
         if (!stack.isEmpty()) { pop(); return; }
+        if ("history".equals(sel) && !histRun.isEmpty()) { closeRun(); return; }
         super.onBackPressed();
     }
 
@@ -280,8 +289,9 @@ public class Collector extends Base {
         segs.removeAllViews();
         runRow.removeAllViews();
         boolean lists = !"collector".equals(sel);
+        boolean history = "history".equals(sel);
         form.setVisibility(lists ? View.GONE : View.VISIBLE);
-        listBar.setVisibility(lists && view != null ? View.VISIBLE : View.GONE);
+        listBar.setVisibility(lists && !history && view != null ? View.VISIBLE : View.GONE);
         if (view != null) {
             sortBtn.setText(sortShort(sortLabel(settings().optString("sort", "followers-desc"))) + "  ▾");
             List<String> only = platforms();
@@ -303,6 +313,14 @@ public class Collector extends Base {
         seg("available", "Available", avail > 0 ? String.valueOf(avail) : "");
         seg("approved", "Approved", appr > 0 ? String.valueOf(appr) : "");
         seg("restricted", "Restricted", restr > 0 ? String.valueOf(restr) : "");
+        seg("history", "History", "");
+        if (firstRun) {
+            firstRun = false;
+            JSONObject r = firstRunWithLeads();
+            if (r != null) histRun = r.optString("id");
+        }
+        // A run that's no longer in History (a restore that asks for one): back to the timeline.
+        if (!histRun.isEmpty() && findRun(histRun) == null) histRun = "";
         if (!lists) {
             drawForm();
             drawRun();
@@ -319,11 +337,12 @@ public class Collector extends Base {
         boolean on = id.equals(sel);
         if (on) barTitle.setText(label);
         String glyph = "collector".equals(id) ? Ui.I_SEARCH : "available".equals(id) ? Ui.I_USERS
-                : "approved".equals(id) ? Ui.I_CIRCLE_CHECK : Ui.I_CIRCLE_SLASH;
+                : "approved".equals(id) ? Ui.I_CIRCLE_CHECK : "history".equals(id) ? I_HISTORY : Ui.I_CIRCLE_SLASH;
         segs.addView(Ds.navRow(this, glyph, label, count, on, v -> {
             closeDrawer();
-            if (id.equals(sel)) return;
+            if (id.equals(sel) && histRun.isEmpty()) return;
             sel = id;
+            histRun = "";
             hideKeyboard();
             draw();
             list.setSelection(0);
@@ -539,6 +558,22 @@ public class Collector extends Base {
         List<JSONObject> rows = new ArrayList<>();
         if (view == null) return rows;
         JSONArray all = view.optJSONArray("creators");
+        if ("history".equals(which)) {
+            // The run open: the leads it found, in the order found, whatever list they're in now.
+            JSONObject run = findRun(histRun);
+            JSONArray ids = run == null ? null : run.optJSONArray("ids");
+            if (ids == null) return rows;
+            Map<String, JSONObject> byId = new HashMap<>();
+            for (int i = 0; all != null && i < all.length(); i++) {
+                JSONObject o = all.optJSONObject(i);
+                if (o != null) byId.put(o.optString("id"), o);
+            }
+            for (int i = 0; i < ids.length(); i++) {
+                JSONObject o = byId.get(ids.optString(i));
+                if (o != null) rows.add(o);
+            }
+            return rows;
+        }
         if ("collector".equals(which)) {
             JSONObject r = view.optJSONObject("run");
             Map<String, JSONObject> byId = new HashMap<>();
@@ -562,6 +597,265 @@ public class Collector extends Base {
             if (f.isEmpty() || hay.contains(f)) rows.add(o);
         }
         return sortRows(rows, settings().optString("sort", "followers-desc"));
+    }
+
+    // ---------- History: every search run by day (Headquarters' Timeline) ----------
+
+    /** Lucide's history glyph, as Routine's History. */
+    static final String I_HISTORY = "";
+
+    /** A run of History by its id (null when it isn't there). */
+    JSONObject findRun(String id) {
+        if (id == null || id.isEmpty()) return null;
+        JSONArray days = view == null ? null : view.optJSONArray("history");
+        for (int d = 0; days != null && d < days.length(); d++) {
+            JSONObject day = days.optJSONObject(d);
+            JSONArray runs = day == null ? null : day.optJSONArray("runs");
+            for (int i = 0; runs != null && i < runs.length(); i++) {
+                JSONObject r = runs.optJSONObject(i);
+                if (r != null && id.equals(r.optString("id"))) {
+                    try { r.put("dayLabel", day.optString("label")); } catch (Exception ignored) { }
+                    return r;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The newest run that found someone (the screenshot rig's). */
+    private JSONObject firstRunWithLeads() {
+        JSONArray days = view == null ? null : view.optJSONArray("history");
+        for (int d = 0; days != null && d < days.length(); d++) {
+            JSONArray runs = days.optJSONObject(d) == null ? null : days.optJSONObject(d).optJSONArray("runs");
+            for (int i = 0; runs != null && i < runs.length(); i++) if (runs.optJSONObject(i) != null && runs.optJSONObject(i).optInt("found") > 0) return runs.optJSONObject(i);
+        }
+        return null;
+    }
+
+    private void openRun(String id) {
+        histRun = id;
+        draw();
+        list.setSelection(0);
+    }
+
+    private void closeRun() {
+        histRun = "";
+        draw();
+    }
+
+    /** The timeline: each day's head ("Today", "Yesterday", "Wed, Nov 25"), then its runs, newest first. */
+    private void drawTimeline() {
+        JSONArray days = view.optJSONArray("history");
+        for (int d = 0; days != null && d < days.length(); d++) {
+            JSONObject day = days.optJSONObject(d);
+            JSONArray runs = day == null ? null : day.optJSONArray("runs");
+            if (runs == null || runs.length() == 0) continue;
+            rows.add(new Item(DAY, day.optString("label"), null));
+            for (int i = 0; i < runs.length(); i++) rows.add(new Item(RUN, null, runs.optJSONObject(i), i == runs.length() - 1));
+        }
+        if (rows.isEmpty()) rows.add(new Item(EMPTY, "No searches yet. Every search you run shows here, by day: the term, the platform, how many new leads it found. Tap one to see its leads.", null));
+        adapter.notifyDataSetChanged();
+    }
+
+    private TextView dayHead() {
+        TextView t = Ui.text(this, "", 13, Ui.G600);
+        t.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, -2));
+        return t;
+    }
+
+    /** A run's tone as its dot's colour: blue going, green done, amber stopped, red failed, grey nobody new. */
+    static int toneDot(String tone) {
+        switch (tone) {
+            case "running": return 0xff0070f7;
+            case "done": return 0xff46a758;
+            case "stopped": return 0xffffb224;
+            case "failed": return 0xffe5484d;
+            default: return 0xff7d7d7d;
+        }
+    }
+
+    static int toneText(String tone) {
+        return "failed".equals(tone) ? Ui.RED : "stopped".equals(tone) ? Ui.AMBER : Ui.G600;
+    }
+
+    /** One run on the timeline (Headquarters' Timeline): the time (mono, right-aligned, 52dp), its dot on the day's
+     *  line, the term with the platform's mark, how it went, why it stopped early. A tap shows the leads it found. */
+    private final class RunRow {
+        final LinearLayout view, row, body;
+        final TextView time, query, line, note;
+        final View dot, rail;
+        final android.widget.FrameLayout mark;
+        JSONObject cur;
+
+        RunRow() {
+            Collector c = Collector.this;
+            // The press fill reaches 8dp past the time and the text (Headquarters' -mx-2 px-2), 8dp in from the screen.
+            view = Ui.col(c);
+            view.setTag(this);
+            view.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
+            row = Ui.row(c);
+            row.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
+            row.setBackground(Ui.press(0, 0, 8));
+            row.setOnClickListener(v -> { if (cur != null) openRun(cur.optString("id")); });
+            view.addView(row, Ui.fill());
+            time = Ui.text(c, "", 13, Ui.G600);
+            time.setTypeface(Ui.mono);
+            time.setGravity(Gravity.END);
+            time.setPadding(0, Ui.dp(1), 0, 0);
+            row.addView(time, new LinearLayout.LayoutParams(Ui.dp(52), -2));
+            LinearLayout guide = Ui.col(c);
+            guide.setGravity(Gravity.CENTER_HORIZONTAL);
+            dot = new View(c);
+            LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(Ui.dp(10), Ui.dp(10));
+            dl.topMargin = Ui.dp(6);
+            guide.addView(dot, dl);
+            rail = new View(c);
+            rail.setBackgroundColor(Ui.G400);
+            LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(Ui.dp(1), 0, 1);
+            rl.topMargin = Ui.dp(6);
+            guide.addView(rail, rl);
+            LinearLayout.LayoutParams gl = new LinearLayout.LayoutParams(Ui.dp(10), -1);
+            gl.leftMargin = Ui.dp(12);
+            gl.rightMargin = Ui.dp(12);
+            row.addView(guide, gl);
+            body = Ui.col(c);
+            body.setPadding(0, 0, 0, Ui.dp(20));
+            LinearLayout top = Ui.row(c);
+            top.setGravity(Gravity.CENTER_VERTICAL);
+            mark = new android.widget.FrameLayout(c);
+            top.addView(mark, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)), 0, 0, 7, 0));
+            query = Ui.text(c, "", 15, Ui.FG);
+            query.setSingleLine(true);
+            query.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            top.addView(query, Ui.weight());
+            body.addView(top, Ui.fill());
+            line = Ui.text(c, "", 13.5f, Ui.G600);
+            body.addView(line, Ui.margins(Ui.fill(), 0, 5, 0, 0));
+            note = Ui.text(c, "", 13.5f, Ui.G600);
+            note.setMaxLines(2);
+            note.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            body.addView(note, Ui.margins(Ui.fill(), 0, 4, 0, 0));
+            row.addView(body, Ui.weight());
+        }
+
+        void bind(JSONObject r, boolean last) {
+            cur = r;
+            String tone = r.optString("tone");
+            boolean running = r.optBoolean("running"), dim = "empty".equals(tone);
+            time.setText(r.optString("time"));
+            time.setTextColor(running ? 0xff52a8ff : Ui.G600);
+            int d = Ui.dp(dim ? 8 : 10);
+            LinearLayout.LayoutParams dl = (LinearLayout.LayoutParams) dot.getLayoutParams();
+            dl.width = d;
+            dl.height = d;
+            dl.topMargin = Ui.dp(dim ? 7 : 6);
+            dot.setLayoutParams(dl);
+            dot.setBackground(Ui.round(toneDot(tone), 0, d / 2f / Ui.density));
+            rail.setVisibility(last ? View.INVISIBLE : View.VISIBLE);
+            mark.removeAllViews();
+            mark.addView(platMark(Collector.this, r.optString("platformKey"), 15), new android.widget.FrameLayout.LayoutParams(-1, -1));
+            query.setText(r.optString("query"));
+            line.setText(r.optString("platform") + " · " + r.optString("line"));
+            String n = r.optString("note");
+            note.setText(n);
+            note.setTextColor(toneText(tone));
+            note.setVisibility(n.isEmpty() ? View.GONE : View.VISIBLE);
+            float a = dim ? 0.6f : 1f;
+            time.setAlpha(a);
+            query.setAlpha(a);
+            line.setAlpha(a);
+        }
+    }
+
+    /** An opened run's head: back to History, the term with its platform's mark, "YouTube · Today 08:26 · 20 new
+     *  leads", why it stopped early. */
+    private View runHead(JSONObject r) {
+        LinearLayout w = Ui.col(this);
+        w.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, -2));
+        w.setPadding(Ui.dp(12), Ui.dp(4), Ui.dp(16), Ui.dp(14));
+        LinearLayout back = Ui.row(this);
+        back.setGravity(Gravity.CENTER_VERTICAL);
+        back.setPadding(Ui.dp(4), Ui.dp(6), Ui.dp(10), Ui.dp(6));
+        back.setBackground(Ui.press(0, 0, 8));
+        back.addView(Ui.icon(this, Ui.I_LEFT, 16, Ui.FG));
+        back.addView(Ui.bold(this, "History", 14, Ui.FG), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        back.setOnClickListener(v -> closeRun());
+        w.addView(back, Ui.wrap());
+        if (r == null) return w;
+        LinearLayout t = Ui.row(this);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setPadding(Ui.dp(4), Ui.dp(10), 0, 0);
+        t.addView(platMark(this, r.optString("platformKey"), 18), new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)));
+        TextView q = Ui.bold(this, r.optString("query"), 20, Ui.FG);
+        q.setSingleLine(true);
+        q.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.addView(q, Ui.margins(Ui.weight(), 10, 0, 0, 0));
+        w.addView(t, Ui.fill());
+        String when = r.optBoolean("running") ? "running now" : r.optString("dayLabel") + " " + r.optString("time");
+        TextView sub = Ui.text(this, r.optString("platform") + " · " + when + " · " + r.optString("line"), 13.5f, Ui.G600);
+        sub.setPadding(Ui.dp(4), Ui.dp(6), 0, 0);
+        w.addView(sub, Ui.fill());
+        String n = r.optString("note");
+        if (!n.isEmpty()) {
+            TextView nt = Ui.text(this, n, 13.5f, toneText(r.optString("tone")));
+            nt.setPadding(Ui.dp(4), Ui.dp(4), 0, 0);
+            w.addView(nt, Ui.fill());
+        }
+        return w;
+    }
+
+    /** A platform's mark in its brand colour: YouTube's and TikTok's drawn (the icon font has neither), Instagram's. */
+    static View platMark(android.content.Context c, String kind, float size) {
+        int color = CollectorCreator.brandColor(kind);
+        if ("instagram".equals(kind)) return CollectorCreator.brand(c, kind, size, color);
+        View v = new View(c);
+        v.setBackground(new PlatMark(kind, color));
+        v.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(size), Ui.dp(size)));
+        return v;
+    }
+
+    /** Lucide's youtube (stroked, the play triangle filled) and a simple TikTok note, on a 24-unit grid. */
+    static final class PlatMark extends android.graphics.drawable.Drawable {
+        private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final String kind;
+        PlatMark(String kind, int color) {
+            this.kind = kind;
+            p.setColor(color);
+            p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            p.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+        }
+        @Override public void draw(android.graphics.Canvas c) {
+            android.graphics.Rect b = getBounds();
+            float s = Math.min(b.width(), b.height()) / 24f;
+            c.save();
+            c.translate(b.left, b.top);
+            c.scale(s, s);
+            if ("youtube".equals(kind)) {
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                p.setStrokeWidth(2);
+                c.drawRoundRect(new android.graphics.RectF(2.5f, 5f, 21.5f, 19f), 4, 4, p);
+                android.graphics.Path t = new android.graphics.Path();
+                t.moveTo(10, 9);
+                t.lineTo(15, 12);
+                t.lineTo(10, 15);
+                t.close();
+                p.setStyle(android.graphics.Paint.Style.FILL);
+                c.drawPath(t, p);
+            } else {
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                p.setStrokeWidth(3.2f);
+                c.drawCircle(9.5f, 16.5f, 4.2f, p);
+                android.graphics.Path n = new android.graphics.Path();
+                n.moveTo(13.7f, 16.5f);
+                n.lineTo(13.7f, 2.5f);
+                n.quadTo(15f, 7.5f, 20.5f, 7.8f);
+                c.drawPath(n, p);
+            }
+            c.restore();
+        }
+        @Override public void setAlpha(int a) { p.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter f) { p.setColorFilter(f); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
     // ---------- the lists' Sort and "Show only — platforms" (the SpokPay CRM's creator column menus) ----------
@@ -721,21 +1015,25 @@ public class Collector extends Base {
 
     // ---------- the list: recycled rows ----------
 
-    static final int CAPS = 0, EMPTY = 1, LEAD = 2, MORE = 3;
+    /** DAY: History's day head; RUN: one run on the timeline (`lead` is the run, `last` its day's last); RUNHEAD: an
+     *  opened run's head (back, the term, how it went). */
+    static final int CAPS = 0, EMPTY = 1, LEAD = 2, MORE = 3, DAY = 4, RUN = 5, RUNHEAD = 6;
 
     /** One row of the list. */
     static final class Item {
         final int kind;
         final String text;
         final JSONObject lead;
-        Item(int kind, String text, JSONObject lead) { this.kind = kind; this.text = text; this.lead = lead; }
+        final boolean last;
+        Item(int kind, String text, JSONObject lead) { this(kind, text, lead, false); }
+        Item(int kind, String text, JSONObject lead, boolean last) { this.kind = kind; this.text = text; this.lead = lead; this.last = last; }
     }
 
     private final android.widget.BaseAdapter adapter = new android.widget.BaseAdapter() {
         @Override public int getCount() { return rows.size(); }
         @Override public Object getItem(int i) { return rows.get(i); }
         @Override public long getItemId(int i) { return i; }
-        @Override public int getViewTypeCount() { return 4; }
+        @Override public int getViewTypeCount() { return 7; }
         @Override public int getItemViewType(int i) { return rows.get(i).kind; }
         @Override public boolean isEnabled(int i) { return false; }
         @Override public View getView(int i, View convert, android.view.ViewGroup parent) {
@@ -746,6 +1044,18 @@ public class Collector extends Base {
                     h.bind(it.lead);
                     return h.view;
                 }
+                case DAY: {
+                    TextView t = convert != null ? (TextView) convert : dayHead();
+                    t.setText(it.text);
+                    t.setPadding(Ui.dp(16), Ui.dp(i == 0 ? 8 : 24), Ui.dp(16), Ui.dp(12));
+                    return t;
+                }
+                case RUN: {
+                    RunRow h = convert != null ? (RunRow) convert.getTag() : new RunRow();
+                    h.bind(it.lead, it.last);
+                    return h.view;
+                }
+                case RUNHEAD: return runHead(it.lead);
                 case CAPS: {
                     TextView t = convert != null ? (TextView) convert : Ds.caps(Collector.this, "", false);
                     t.setText(it.text);
@@ -782,7 +1092,18 @@ public class Collector extends Base {
         String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
         String key = sel + "|" + f + "|" + settings().optString("sort") + "|" + platforms();
         if (!key.equals(shownFor)) { shownFor = key; if (!keepShown) shown = PAGE; keepShown = false; }
-        if ("collector".equals(sel)) {
+        if ("history".equals(sel)) {
+            if (histRun.isEmpty()) {
+                drawTimeline();
+                return;
+            }
+            JSONObject run = findRun(histRun);
+            rows.add(new Item(RUNHEAD, null, run));
+            leads = rowsFor("history", "");
+            JSONArray ids = run == null ? null : run.optJSONArray("ids");
+            empty = ids != null && ids.length() > 0 ? "Its leads are gone: they were removed since. They stay remembered, so no run collects them again."
+                    : run != null && run.optBoolean("running") ? "" : "Nothing new this time: everyone it found was collected before, or hadn't posted inside Last upload.";
+        } else if ("collector".equals(sel)) {
             JSONObject r = view.optJSONObject("run");
             leads = rowsFor("collector", "");
             if (r == null) empty = "Type a term and press Collect. Collector searches it for videos, as the platform shows them, and keeps each active creator once: picture, link, email when there is one, and their 3 newest videos.";
@@ -840,6 +1161,7 @@ public class Collector extends Base {
         Live.Screen s = super.liveScreen();
         if (s == null) return null;
         s.state.put("sel", sel);
+        if (!histRun.isEmpty()) s.state.put("hrun", histRun);
         if (filter.length() > 0) s.state.put("filter", filter.getText().toString());
         if (shown > PAGE) s.state.put("shown", Integer.toString(shown));
         int fp = list.getFirstVisiblePosition(), heads = list.getHeaderViewsCount();

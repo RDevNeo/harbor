@@ -1,7 +1,7 @@
-// Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Four views, picked in the sidebar:
+// Collector tab: leads (content creators) from YouTube, TikTok and Instagram. Five views, picked in the sidebar:
 // Collector (the search form, one line while a run goes, and the leads it found), Available (every lead not
-// Approved or Restricted), Approved (approved in a lead's review bar) and Restricted (leads the user keeps out of
-// Available). A lead is a card: picture, name and handle, platform, profile link, email (found, or typed by hand)
+// Approved or Restricted), Approved (approved in a lead's review bar), Restricted (leads the user keeps out of
+// Available) and History (every search run by day, as Headquarters' Timeline; a click shows the leads it found). A lead is a card: picture, name and handle, platform, profile link, email (found, or typed by hand)
 // and followers; a click opens its detail, with the 3 newest videos, the review bar (Reject / Skip / Approve, or Move to
 // Available) and Send message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
 // driven by src/tabs/collector/ui.ts, the same data Hub for Android shows. Built on Hub's design system (ds.slint,
@@ -25,11 +25,18 @@ export struct ClTpl { id: string, name: string, description: string, on: bool }
 /** The lists' Sort menu ("sep": a separator above it) and platform menu (brand colour, count on the list). */
 export struct ClSort { value: string, label: string, on: bool, sep: bool }
 export struct ClPlat { value: string, label: string, color: color, count: int, on: bool }
+/** One line of History: a day's head ("day": label, first) or a run ("run": time, term, platform, how it went, its
+ *  tone: "running", "done", "empty", "stopped", "failed"; last: the day's last, no line under its dot). */
+export struct ClHist {
+    kind: string, label: string, first: bool,
+    id: string, time: string, query: string, platform: string, platform-key: string,
+    line: string, note: string, tone: string, running: bool, last: bool,
+}
 
 export global CollectorBus {
     in property <bool> loading: true;
     in property <string> error;
-    /** "collector", "available" or "restricted". */
+    /** "collector", "available", "approved", "restricted" or "history". */
     in property <string> page: "collector";
     in property <[ClNav]> nav;
     // The form
@@ -65,6 +72,18 @@ export global CollectorBus {
     in property <int> n-available;
     in property <int> n-restricted;
     in property <int> n-approved;
+    // History: every search run by day, newest first; a run opened shows its leads (rows)
+    in property <[ClHist]> history;
+    in property <int> n-runs;
+    /** The run open ("" the timeline). */
+    in property <string> history-run;
+    in property <string> hr-query;
+    in property <string> hr-platform-key;
+    /** "YouTube · Today 08:26 · 20 new leads · 7 already collected". */
+    in property <string> hr-sub;
+    in property <string> hr-note;
+    in property <string> hr-tone;
+    in-out property <length> y-history;
     in property <string> copy-label;
     in-out property <bool> side-hidden;
     // A typed email: the card being edited and the text
@@ -185,9 +204,12 @@ export global CollectorBus {
     callback sort-pick(string);
     /** A platform ticked or unticked; "" is All platforms. */
     callback plat-pick(string);
+    /** History: a run's leads, and back to the timeline. */
+    callback history-open(string);
+    callback history-back();
 }
 
-/** Collector, Available, Restricted: the three views. A click shows that view. */
+/** Collector, Available, Approved, Restricted, History: the five views. A click shows that view. */
 component Sidebar inherits SideSurface {
     VerticalLayout {
         padding-top: Ds.side-pad-top;
@@ -207,7 +229,7 @@ component Sidebar inherits SideSurface {
             vertical-stretch: 1;
             for n in CollectorBus.nav: ListRow {
                 lead: "glyph";
-                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : n.id == "approved" ? Icons.circle-check : Icons.circle-slash;
+                glyph: n.id == "collector" ? Icons.search : n.id == "available" ? Icons.users : n.id == "approved" ? Icons.circle-check : n.id == "history" ? "\u{e063}" : Icons.circle-slash;
                 title: n.label;
                 active: n.on;
                 meta: n.id == "collector" ? (CollectorBus.running ? "running" : "") : n.count > 0 ? n.count : "";
@@ -654,7 +676,7 @@ component Leads inherits VerticalLayout {
         r: r;
     }
     if CollectorBus.rows.length == 0 && CollectorBus.empty-title != "": Empty {
-        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : CollectorBus.page == "approved" ? Icons.circle-check : Icons.users;
+        icon: CollectorBus.page == "restricted" ? Icons.circle-slash : CollectorBus.page == "approved" ? Icons.circle-check : CollectorBus.page == "history" ? "\u{e063}" : Icons.users;
         title: CollectorBus.empty-title;
         desc: CollectorBus.empty-desc;
     }
@@ -873,6 +895,206 @@ component CollectScreen inherits VerticalLayout {
         }
     }
     Leads { }
+}
+
+/** A run's tone as its dot (Headquarters' Timeline: blue going, green done, amber stopped, red failed, grey nobody new). */
+component HistDot inherits Rectangle {
+    in property <string> tone;
+    property <length> d: root.tone == "empty" ? 8px : 10px;
+    width: 10px;
+    height: 10px;
+    Rectangle {
+        width: root.d;
+        height: root.d;
+        border-radius: root.d / 2;
+        background: root.tone == "running" ? Theme.blue-700 : root.tone == "done" ? Theme.green-700 : root.tone == "stopped" ? Theme.amber-700 : root.tone == "failed" ? Theme.red-800 : Theme.gray-600;
+    }
+}
+
+/** A platform's mark in its brand colour. */
+component PlatMark inherits BrandGlyph {
+    size: 14px;
+    ink: root.kind == "youtube" ? #ff0000 : root.kind == "tiktok" ? #fe2c55 : root.kind == "instagram" ? #e1306c : Theme.subtle;
+}
+
+/** One run on the timeline: the time (mono, right-aligned), its dot on the day's line, the term with the platform's
+ *  mark, how it went, and why it stopped early. A click shows the leads it found. */
+component HistRow inherits Rectangle {
+    in property <ClHist> h;
+    property <length> time-w: 52px;
+    property <length> dot-x: 8px + root.time-w + 12px;
+    property <length> body-x: root.dot-x + 10px + 12px;
+    property <float> dim: root.h.tone == "empty" ? 0.6 : 1;
+    height: body.preferred-height + 20px;
+    border-radius: Ds.radius-md;
+    background: ta.has-hover ? Theme.accent : transparent;
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            CollectorBus.history-open(root.h.id);
+        }
+    }
+    Text {
+        x: 8px;
+        y: 2px;
+        width: root.time-w;
+        text: root.h.time;
+        font-family: "Geist Mono";
+        font-size: 13px;
+        horizontal-alignment: right;
+        color: root.h.running ? Theme.blue-900 : Theme.subtle;
+        opacity: root.dim;
+    }
+    HistDot {
+        x: root.dot-x;
+        y: 6px;
+        tone: root.h.tone;
+    }
+    if !root.h.last: Rectangle {
+        x: root.dot-x + 4.5px;
+        y: 22px;
+        width: 1px;
+        height: root.height - 22px;
+        background: Theme.gray-400;
+    }
+    body := VerticalLayout {
+        x: root.body-x;
+        y: 0;
+        width: root.width - root.body-x - 8px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 7px;
+            height: 20px;
+            VerticalLayout {
+                alignment: center;
+                PlatMark {
+                    kind: root.h.platform-key;
+                }
+            }
+            Text {
+                text: root.h.query;
+                font-size: 14px;
+                color: Theme.fg;
+                overflow: elide;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                opacity: root.dim;
+            }
+        }
+        // One line each (elided; the run's page has it all), so the row's height is exact.
+        Text {
+            height: 18px;
+            text: root.h.platform + " · " + root.h.line;
+            font-size: 13px;
+            color: Theme.subtle;
+            overflow: elide;
+            vertical-alignment: center;
+            opacity: root.dim;
+        }
+        if root.h.note != "": Text {
+            height: 18px;
+            text: root.h.note;
+            font-size: 13px;
+            color: root.h.tone == "failed" ? Theme.red-900 : root.h.tone == "stopped" ? Theme.amber-900 : Theme.subtle;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+}
+
+/** A day's head ("Today", "Yesterday", "Wed, Nov 25") or one run. */
+component HistItem inherits VerticalLayout {
+    in property <ClHist> h;
+    spacing: 0;
+    if root.h.kind == "day": VerticalLayout {
+        spacing: 0;
+        padding-top: root.h.first ? 0 : 24px;
+        padding-bottom: 12px;
+        Text {
+            height: 18px;
+            vertical-alignment: center;
+            text: root.h.label;
+            font-size: 13px;
+            color: Theme.subtle;
+        }
+    }
+    if root.h.kind == "run": HistRow {
+        h: root.h;
+    }
+}
+
+/** History: every search run, by day, newest first (Headquarters' Timeline); a run opened: its term, how it went, and
+ *  the leads it found (the usual cards and detail). */
+component HistoryScreen inherits VerticalLayout {
+    spacing: 0;
+    if CollectorBus.history-run == "": VerticalLayout {
+        spacing: 0;
+        for h in CollectorBus.history: HistItem {
+            h: h;
+        }
+        if CollectorBus.history.length == 0: Empty {
+            icon: "\u{e063}";
+            title: "No searches yet";
+            desc: "Every search you run shows here, by day: the term, the platform, how many new leads it found. Click one to see its leads.";
+        }
+    }
+    if CollectorBus.history-run != "": VerticalLayout {
+        spacing: 14px;
+        HorizontalLayout {
+            alignment: start;
+            Btn {
+                text: "History";
+                icon: Icons.left;
+                variant: ghost;
+                size: sm;
+                clicked => {
+                    CollectorBus.history-back();
+                }
+            }
+        }
+        VerticalLayout {
+            spacing: 6px;
+            padding-left: 4px;
+            HorizontalLayout {
+                spacing: 10px;
+                height: 28px;
+                VerticalLayout {
+                    alignment: center;
+                    PlatMark {
+                        kind: CollectorBus.hr-platform-key;
+                        size: 18px;
+                    }
+                }
+                Text {
+                    text: CollectorBus.hr-query;
+                    vertical-alignment: center;
+                    font-size: 20px;
+                    font-weight: 600;
+                    letter-spacing: -0.4px;
+                    color: Theme.fg;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+            Text {
+                height: 18px;
+                text: CollectorBus.hr-sub;
+                font-size: 13px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if CollectorBus.hr-note != "": Text {
+                height: 18px;
+                text: CollectorBus.hr-note;
+                font-size: 13px;
+                color: CollectorBus.hr-tone == "failed" ? Theme.red-900 : CollectorBus.hr-tone == "stopped" ? Theme.amber-900 : Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+        Leads { }
+    }
 }
 
 component SendDialog inherits DialogFrame {
@@ -1939,9 +2161,9 @@ component EditDialog inherits DialogFrame {
 component Column inherits Rectangle {
     in property <length> col-w;
     in property <length> col-x;
-    /** "collector", "available", "approved" or "restricted". */
+    /** "collector", "available", "approved", "restricted", "history" (the timeline) or "history-run" (a run's leads). */
     in property <string> key;
-    property <length> kept: root.key == "available" ? CollectorBus.y-available : root.key == "approved" ? CollectorBus.y-approved : root.key == "restricted" ? CollectorBus.y-restricted : CollectorBus.y-collector;
+    property <length> kept: root.key == "available" ? CollectorBus.y-available : root.key == "approved" ? CollectorBus.y-approved : root.key == "restricted" ? CollectorBus.y-restricted : root.key == "history" ? CollectorBus.y-history : root.key == "history-run" ? 0 : CollectorBus.y-collector;
     // Not `content-y <=> a global` (Slint 1.18 kept such a viewport at 0, settings.slint): set once, followed after.
     init => {
         f.content-y = root.kept;
@@ -1961,6 +2183,10 @@ component Column inherits Rectangle {
                 CollectorBus.y-approved = self.content-y;
             } else if root.key == "restricted" {
                 CollectorBus.y-restricted = self.content-y;
+            } else if root.key == "history" {
+                CollectorBus.y-history = self.content-y;
+            } else if root.key == "history-run" {
+                // a run's leads open at the top each time
             } else {
                 CollectorBus.y-collector = self.content-y;
             }
@@ -2007,10 +2233,10 @@ export component CollectorPage {
         y: 0;
         width: root.main-w;
         side-hidden: CollectorBus.side-hidden;
-        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : CollectorBus.page == "approved" ? Icons.circle-check : Icons.circle-slash;
+        icon: CollectorBus.page == "collector" ? Icons.search : CollectorBus.page == "available" ? Icons.users : CollectorBus.page == "approved" ? Icons.circle-check : CollectorBus.page == "history" ? "\u{e063}" : Icons.circle-slash;
         section: "Collector";
-        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : CollectorBus.page == "approved" ? "Approved" : "Restricted";
-        sub: CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "approved" ? CollectorBus.n-approved + (CollectorBus.n-approved == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
+        title: CollectorBus.page == "collector" ? "Collect leads" : CollectorBus.page == "available" ? "Available" : CollectorBus.page == "approved" ? "Approved" : CollectorBus.page == "history" ? "History" : "Restricted";
+        sub: CollectorBus.page == "history" ? (CollectorBus.history-run != "" ? CollectorBus.rows.length + (CollectorBus.rows.length == 1 ? " lead" : " leads") : CollectorBus.n-runs + (CollectorBus.n-runs == 1 ? " search" : " searches")) : CollectorBus.page == "available" ? CollectorBus.n-available + (CollectorBus.n-available == 1 ? " lead" : " leads") : CollectorBus.page == "approved" ? CollectorBus.n-approved + (CollectorBus.n-approved == 1 ? " lead" : " leads") : CollectorBus.page == "restricted" ? CollectorBus.n-restricted + (CollectorBus.n-restricted == 1 ? " lead" : " leads") : "";
         show-side => {
             CollectorBus.side-hidden = false;
         }
@@ -2077,12 +2303,32 @@ export component CollectorPage {
         col-x: root.col-x;
         ListScreen { }
     }
-    if !CollectorBus.loading && CollectorBus.page != "collector" && CollectorBus.list-menu != "": TouchArea {
+    if !CollectorBus.loading && CollectorBus.page == "history" && CollectorBus.history-run == "": Column {
+        key: "history";
+        x: root.main-x;
+        y: root.top;
+        width: root.main-w;
+        height: root.height - root.top;
+        col-w: min(Ds.page-max-w, root.col-w);
+        col-x: (root.main-w - self.col-w) / 2;
+        HistoryScreen { }
+    }
+    if !CollectorBus.loading && CollectorBus.page == "history" && CollectorBus.history-run != "": Column {
+        key: "history-run";
+        x: root.main-x;
+        y: root.top;
+        width: root.main-w;
+        height: root.height - root.top;
+        col-w: root.col-w;
+        col-x: root.col-x;
+        HistoryScreen { }
+    }
+    if !CollectorBus.loading && CollectorBus.page != "collector" && CollectorBus.page != "history" && CollectorBus.list-menu != "": TouchArea {
         clicked => {
             CollectorBus.list-menu-show("");
         }
     }
-    if !CollectorBus.loading && CollectorBus.page != "collector": ListBar {
+    if !CollectorBus.loading && CollectorBus.page != "collector" && CollectorBus.page != "history": ListBar {
         x: root.main-x + root.col-x;
         y: root.top + Ds.sp8;
         width: root.col-w;

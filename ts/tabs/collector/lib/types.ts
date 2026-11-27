@@ -3,6 +3,7 @@
 // videos, and whether it's Restricted (kept out of Available). The record stays the userscript's, field for field (one
 // JSON object per line is what SpokPayCRM → Creators → Import parses: influencers/src/lib/leadImport.ts, platform +
 // platform_id + name required), so Copy JSONL and Send message (Persons › Creators) carry everything along.
+import { backfillRuns, parseRuns, type RunRecord } from "./history.ts";
 
 export interface RecentVideo {
   video_id: string;
@@ -143,6 +144,8 @@ export interface RunState {
   ids: string[];
   /** What it's doing now, one line. */
   line: string;
+  /** The Last upload window it runs with (days, 0 any time): History keeps it. */
+  gapDays?: number;
 }
 
 export interface LogLine {
@@ -162,6 +165,8 @@ export interface CollectorData {
   log: LogLine[];
   /** Runs that finished since the user last looked at the Collector tab (PC or phone): the tab's count. */
   unseen: number;
+  /** Every finished run (History), oldest first (lib/history.ts). */
+  runs: RunRecord[];
 }
 
 export const GAP_CHOICES: { value: number; label: string }[] = [
@@ -179,7 +184,7 @@ export function defaultSettings(): Settings {
 }
 
 export function defaultData(): CollectorData {
-  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, log: [], unseen: 0 };
+  return { v: 2, settings: defaultSettings(), creators: [], seen: [], run: null, log: [], unseen: 0, runs: [] };
 }
 
 /** A "Show only — platforms" choice: known platforms, once each, in the usual order; anything else is "all" ([]). */
@@ -246,6 +251,8 @@ export function migrate(raw: unknown): CollectorData {
   d.run = run && run.tab !== "servers" ? ({ known: 0, platform: "youtube", line: "", ...run, ids: Array.isArray(run.ids) ? run.ids.filter((x) => typeof x === "string") : [] } as unknown as RunState) : null;
   d.log = Array.isArray(r.log) ? (r.log.filter((l) => l && typeof l === "object" && typeof (l as LogLine).text === "string") as LogLine[]) : [];
   d.unseen = typeof r.unseen === "number" && Number.isInteger(r.unseen) && r.unseen > 0 ? r.unseen : 0;
+  // History came later: a file without it gets its runs rebuilt once from the leads (and the last run as saved).
+  d.runs = Array.isArray(r.runs) ? parseRuns(r.runs) : backfillRuns(d.creators, d.run);
   return d;
 }
 
