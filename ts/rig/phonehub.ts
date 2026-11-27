@@ -99,6 +99,14 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
   const clip = "https://cdn.discordapp.com/attachments/300000000000000001/700000000000000001/unboxing.mp4";
   mkdirSync(join(dir, "persons", "files"), { recursive: true });
   copyFileSync(join(import.meta.dir, "fixtures", "rig-video.mp4"), join(dir, "persons", "files", "700000000000000001-unboxing.mp4"));
+  // Two pictures from Ana right before it (a wide one and a tall one), for opening a chat whose pictures load as it
+  // shows: nothing on screen may move while they do (scripts/boat/phoneshot --record).
+  const pics: [string, number, number, string][] = [["vitrine.png", 800, 500, "#d9822b"], ["etiqueta.png", 600, 900, "#2b8ad9"]];
+  for (const [i, [name, w, h, tint]] of pics.entries()) {
+    const aid = String(700000000000000010n + BigInt(i));
+    await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${tint}"/><text x="40" y="${h / 2}" font-family="sans-serif" font-size="56" fill="white">${name}</text></svg>`)).png().toFile(join(dir, "persons", "files", `${aid}-${name}`));
+    msgs.push({ id: String(500000000000000190n + BigInt(i)), channelId: "300000000000000001", authorId: ana, fromMe: false, content: i ? "" : "Fotos da vitrine nova", timestamp: new Date(Date.parse(String(msgs[17].timestamp)) + 30_000 * (i + 1)).toISOString(), attachments: [{ name, url: `https://cdn.discordapp.com/attachments/300000000000000001/${aid}/${name}`, type: "image/png", size: 40000, width: w, height: h }] });
+  }
   msgs.push({ id: "500000000000000200", channelId: "300000000000000001", authorId: ana, fromMe: false, content: "Olha o unboxing que gravei 👀", timestamp: new Date(Date.parse(String(msgs[17].timestamp)) + 120_000).toISOString(), attachments: [{ name: "unboxing.mp4", url: clip, type: "video/mp4", size: 110864, width: 480, height: 270, duration: 17 }] });
   writeFileSync(join(dir, "persons", "discord-cache.json"), JSON.stringify({ conversations: { [ana]: { channelId: "300000000000000001", messages: msgs } } }));
 }

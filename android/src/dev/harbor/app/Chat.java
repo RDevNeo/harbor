@@ -157,7 +157,7 @@ public class Chat extends Base implements Images.Gallery {
         scroll.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
             if (holding()) { if (now != was) hold(); return; }
-            if (now < was && scroll.getScrollY() + was >= content.getHeight() - Ui.dp(120)) scroll.post(() -> scroll.scrollTo(0, content.getHeight()));
+            if (now < was && scroll.getScrollY() + was >= content.getHeight() - Ui.dp(120)) ChatFlow.beforeDraw(scroll, () -> scroll.scrollTo(0, content.getHeight()));
         });
         // The transcript and the bars under it; the slash menu floats over their bottom.
         FrameLayout stage = new FrameLayout(this);
@@ -891,7 +891,7 @@ public class Chat extends Base implements Images.Gallery {
         long now = android.os.SystemClock.uptimeMillis();
         holdUntil = Math.min(holdStart + 6_000, Math.max(holdUntil, now + 1_000));
         View hv = holdV;
-        scroll.post(() -> { if (holdV == hv && holding()) scroll.scrollTo(0, holdY()); });
+        ChatFlow.beforeDraw(scroll, () -> { if (holdV == hv && holding()) scroll.scrollTo(0, holdY()); });
     }
 
     /** Opened again with replies that came while it was away (this run of the app): "N new messages" over the first. */

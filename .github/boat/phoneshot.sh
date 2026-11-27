@@ -10,6 +10,7 @@
 # broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>, front:now (prints the
 # activity in front), cold:now (Harbor's process restarted by its service Listen alone, the test caller in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
 # the test caller app android/rigcaller),
+# record:<name>[:<seconds>] (screenrecord in the background while the next steps run, ~/out/shots/<name>.mp4),
 # gfx:<name> (the app's frame times since the last gfx step, printed; gfx:reset only starts counting),
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; LEADS=N more
 # made-up Collector leads (ts/rig/collector-fixture.ts); IMAGE (an
@@ -196,10 +197,30 @@ capture() {
   fi
   timeout 20 "$adb" exec-out screencap -p > "$1"
 }
+# record:<name>[:<seconds>]: screenrecord runs while the next steps do; record_end waits for it and
+# brings its file over (a shot, another record and the end of the steps wait for it).
+rec_pid="" rec_name=""
+record() {
+  record_end
+  rec_name=${1%%:*}; local secs=5; [ "$1" = "$rec_name" ] || secs=${1#*:}
+  ad rm -f /sdcard/rec.mp4 >/dev/null 2>&1 || true
+  timeout $((secs + 20)) "$adb" shell screenrecord --time-limit "$secs" --bit-rate 16000000 /sdcard/rec.mp4 > "$logs/rec-$rec_name.log" 2>&1 &
+  rec_pid=$!
+  sleep 0.4
+}
+record_end() {
+  [ -n "$rec_pid" ] || return 0
+  wait "$rec_pid" || echo "record $rec_name: screenrecord said $(tr -d '\r' < "$logs/rec-$rec_name.log" | tail -2)"
+  rec_pid=""
+  sleep 0.5
+  if timeout 60 "$adb" pull /sdcard/rec.mp4 "$shots/$rec_name.mp4" >/dev/null 2>&1; then echo "record $rec_name.mp4 $(stat -c %s "$shots/$rec_name.mp4") bytes"
+  else echo "record $rec_name: nothing recorded"; fi
+}
 # Waits until the screen stops changing (two equal frames 0.6 s apart, after at least 1.5 s; at
 # most 25 s), then keeps a PNG of it.
 n=0
 shot() {
+  record_end
   local name="$1" a="" b t=$SECONDS out
   sleep 1.5
   while [ $((SECONDS - t)) -lt 25 ]; do
@@ -291,9 +312,11 @@ for e in ET.parse(sys.argv[1]).iter("node"):
     gfx:*) echo "gfx ${st#gfx:}:"; ad dumpsys gfxinfo "$pkg" reset | tr -d '\r' |
       grep -E '^(Total frames rendered|Janky frames|[0-9]+th percentile|Number (Slow|Frozen|High input))' | sed 's/^/  /' ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;
+    record:*) record "${st#record:}" ;;
     *) echo "unknown step: $st"; fail=1; break ;;
   esac
 done
+record_end
 phase shots $s
 ad logcat -d > "$logs/logcat.txt" 2>/dev/null || true
 grep -E 'LOCALAPI|RIGCALLER' "$logs/logcat.txt" | sed 's/^[^:]*: //' | tail -80 || true

@@ -60,6 +60,8 @@ final class PersonsChat {
     private final ChatFlow.DayPill dayPill;
     /** The first render with the chat's messages placed it (where it was left, its unread line, else its end). */
     private boolean positioned;
+    /** How many times placeFirst ran (a correction queued before it is let go). */
+    private int placed;
     /** The chat is at its end and stays there while its content grows (pictures and AI notes lay out after the first
      *  placement; without this the newest messages ended up below the fold and that spot was kept as "scrolled up").
      *  Off once the finger scrolls it up; on again at the end. */
@@ -98,6 +100,10 @@ final class PersonsChat {
     private boolean more, loading, loadingOlder, first = true, closed, toAi, toBottom;
     /** Marked unread here: not marked read again while this chat stays open (its reload follows the row going unread). */
     private boolean holdUnread;
+    /** The unread line this chat opened with: it stays while the chat is open (as WhatsApp's), not dropped by the
+     *  reload that marking it read brings (that moved everything under it up by its height), and none comes up while
+     *  it's open (the "↓" counts those); a message sent ends it. */
+    private String keptUnread = "";
     private String loadError;
     private String rowSig = "";
     private JSONObject replyTo;
@@ -149,13 +155,17 @@ final class PersonsChat {
         content.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             if (holding()) { if (bottom - top != oldBottom - oldTop) hold(); return; }
             if (!positioned || !stickEnd || bottom - top == oldBottom - oldTop) return;
-            sv.post(() -> { if (stickEnd) sv.scrollTo(0, Math.max(0, content.getHeight() - sv.getHeight())); });
+            ChatFlow.beforeDraw(sv, () -> { if (stickEnd) sv.scrollTo(0, Math.max(0, content.getHeight() - sv.getHeight())); });
         });
         // The keyboard (or the composer growing) shrinks the transcript: what was at its bottom stays there.
         sv.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
             if (holding()) { if (now != was) hold(); return; }
-            if (was > 0 && now != was && positioned) sv.post(() -> sv.scrollBy(0, was - now));
+            if (was > 0 && now != was && positioned) {
+                // (not when the chat was placed meanwhile, in this same layout: that place is already exact)
+                int g = placed;
+                ChatFlow.beforeDraw(sv, () -> { if (g == placed) sv.scrollBy(0, was - now); });
+            }
         });
         // The transcript, the day pill floating on its top and the "↓" over its lower right corner (ChatFlow).
         FrameLayout stage = new FrameLayout(a);
@@ -666,6 +676,8 @@ final class PersonsChat {
      *  added at the end (no flash of the whole list, pictures not loaded again). */
     private final Map<String, View> drawn = new java.util.HashMap<>();
     private final Map<String, String> drawnSig = new java.util.HashMap<>();
+    /** The keys on screen after the last render, also when `drawn` was let go (a rebuilt row isn't a new one). */
+    private final java.util.Set<String> shownKeys = new java.util.HashSet<>();
     /** What every view depends on beside its own data (their name, the width): a change draws everything anew. */
     private String drawnAll = "";
     /** The AI's cards fold by a tap (rerender): they're built anew on the next render. */
@@ -755,6 +767,9 @@ final class PersonsChat {
         for (JSONObject e : PersonsHome.objs(PersonsUi.arr(data, "proposing"))) line.add(new Object[]{PersonsUi.ms(PersonsUi.s(e, "at")), e, "proposing"});
         Collections.sort(line, (x, y) -> Long.compare((Long) x[0], (Long) y[0]));
         String unreadFrom = PersonsUi.s(data, "unreadFrom");
+        if (!positioned) keptUnread = unreadFrom;
+        if (sent) keptUnread = "";
+        unreadFrom = keptUnread;
         gallery.clear();
         for (JSONObject m : msgs) for (JSONObject f : PersonsHome.objs(PersonsUi.arr(m, "files")))
             if (f.optBoolean("image")) gallery.add(new String[]{PersonsUi.s(f, "url"), PersonsUi.s(f, "name")});
@@ -837,10 +852,15 @@ final class PersonsChat {
         drawn.putAll(next);
         drawnSig.clear();
         drawnSig.putAll(nextSig);
-        // A message new at the end (theirs, or mine on its way) comes in with WhatsApp's short entry.
+        // A message new at the end (theirs, or mine on its way) comes in with WhatsApp's short entry. Only one that
+        // wasn't on screen: a row built anew (its data or the chat's name changed, a reload) stays still.
+        java.util.Set<View> brandNew = new java.util.HashSet<>();
+        for (Map.Entry<String, View> e : next.entrySet()) if (!shownKeys.contains(e.getKey())) brandNew.add(e.getValue());
+        shownKeys.clear();
+        shownKeys.addAll(next.keySet());
         if (positioned) for (int i = lastKept + 1; i < want.size(); i++) {
             View w = want.get(i);
-            if (!fresh.contains(w)) continue;
+            if (!fresh.contains(w) || !brandNew.contains(w)) continue;
             boolean mine = false;
             for (Map.Entry<String, View> r : rows.entrySet()) if (r.getValue() == w) {
                 for (JSONObject m : msgs) if (PersonsUi.s(m, "id").equals(r.getKey())) mine = m.optBoolean("fromMe");
@@ -876,6 +896,7 @@ final class PersonsChat {
     /** The first time the messages are here: where this chat was left (this run of the app), else the unread line
      *  near the top, else the end. At once, before the first frame (no visible scroll). */
     private void placeFirst(View unreadLine) {
+        placed++;
         ChatFlow.Pos was = ChatFlow.place(posKey());
         View at = was != null && !was.end ? rows.get(was.anchor) : null;
         if (unreadLine != null && !liveEnd && (was == null || was.end || at == null)) {
@@ -910,7 +931,7 @@ final class PersonsChat {
         long now = android.os.SystemClock.uptimeMillis();
         holdUntil = Math.min(holdStart + 6_000, Math.max(holdUntil, now + 1_000));
         View hv = holdView;
-        sv.post(() -> { if (holdView == hv && hv.getParent() == content) sv.scrollTo(0, holdY()); });
+        ChatFlow.beforeDraw(sv, () -> { if (holdView == hv && hv.getParent() == content) sv.scrollTo(0, holdY()); });
     }
 
     /** Where it's left now: at the end, or the lowest message on screen and how far its bottom is above the
@@ -1091,7 +1112,11 @@ final class PersonsChat {
                     : f.optBoolean("video") ? videoView(f, inner)
                     : audio ? PersonsAudio.view(a, p.hub, f, me, fileAccount(f), inner, () -> load(false))
                     : fileRow(f, m.optBoolean("voice"), inner);
-            b.addView(fv, Ui.margins(Ui.wrap(), 0, b.getChildCount() > 0 ? 6 : 0, 0, 0));
+            // a picture's or video's tile keeps the size it was made with (its ratio, before it loads): wrap_content
+            // here made it 0 px high until the picture came, which moved everything as a chat opened
+            android.view.ViewGroup.LayoutParams own = fv.getLayoutParams();
+            LinearLayout.LayoutParams lp = own != null && own.width > 0 && own.height > 0 ? new LinearLayout.LayoutParams(own.width, own.height) : Ui.wrap();
+            b.addView(fv, Ui.margins(lp, 0, b.getChildCount() > 0 ? 6 : 0, 0, 0));
         }
         String status = PersonsUi.s(m, "status");
         if (me && !status.isEmpty()) b.addView(ticks(status), Ui.margins(endWrap(), 0, 2, 0, 0));

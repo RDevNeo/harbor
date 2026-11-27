@@ -28,6 +28,23 @@ final class ChatFlow {
         v.animate().alpha(1f).translationY(0f).setDuration(ENTER_MS).setInterpolator(new DecelerateInterpolator()).start();
     }
 
+    /** Runs `r` right before the next frame is drawn (a scroll it makes is in that frame), not after it as post()
+     *  does: a correction after a layout change (a picture, a note, the keyboard) never shows a frame at the old
+     *  place first, which flickered while a chat opened. */
+    static void beforeDraw(View v, Runnable r) {
+        android.view.ViewTreeObserver o = v.getViewTreeObserver();
+        o.addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                android.view.ViewTreeObserver now = v.getViewTreeObserver();
+                if (now.isAlive()) now.removeOnPreDrawListener(this);
+                if (o.isAlive() && o != now) o.removeOnPreDrawListener(this);
+                r.run();
+                return true;
+            }
+        });
+        v.invalidate();
+    }
+
     /** Whether the transcript shows its end (within `slack` px). */
     static boolean atEnd(ScrollView sv, View content, int slack) {
         return content.getHeight() == 0 || sv.getScrollY() + sv.getHeight() >= content.getHeight() - slack;

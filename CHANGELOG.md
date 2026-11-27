@@ -84,6 +84,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   "All people" row (the head's magnifier opens it) and the connection chips under the section heads. Phone only.
 
 ### Fixed
+- **Phone: opening a chat shows it at its place at once, without the scroll flickering for a moment.** A Persons
+  chat's pictures and videos were 0 px high until they loaded (their tile's size, from the picture's ratio, was
+  replaced by wrap_content), so the chat jumped several times as each came; they now keep their size from the start.
+  Corrections after a layout change (the end kept, a remembered place held, the keyboard) are made right before the
+  next frame instead of one frame after it (Persons and Projects), a row only rebuilt by a reload no longer plays a
+  new message's entry, and the unread line a chat opened with stays while it's open (marking it read used to take
+  it away, moving everything under it). After an update a chat still comes back to the very pixel.
 - **Phone: a chat comes back to the very pixel after an update (Persons and Projects).** The place was the top
   message and its offset from the top, placed before the keyboard came back; a guard then skipped the keyboard's first
   resize, but the suggestion strip settling after it (+167 px) still moved the chat, so it came back about a message

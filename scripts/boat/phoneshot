@@ -57,6 +57,10 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
                    dev.harbor.app.RIG_LOCAL_BG then runs the local API's chat calls there)
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
+  --record NAME[:SECONDS]  records the screen from now on for SECONDS (default 5) while the next steps
+                   run (Android's screenrecord), as NAME.mp4 next to the PNGs, e.g. --record open
+                   --tap-text "Ana Souza" (a later --shot or --record waits for it to end); for frame by
+                   frame checks that nothing moves (ffmpeg -i NAME.mp4 -vf mpdecimate …)
   --gfx NAME       the app's frame times since the last --gfx (Android's gfxinfo: frames drawn, janky
                    ones, 50th/90th/95th/99th percentile), printed under NAME; `--gfx reset` only starts
                    counting (e.g. --gfx reset --swipe … --swipe … --gfx scroll)
@@ -99,7 +103,7 @@ while [ $# -gt 0 ]; do
     --alarms) steps+=("alarms:now") ;;
     --cold) steps+=("cold:now") ;;
     --tap-text) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("taptext:$2"); shift ;;
-    --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot|--gfx) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
+    --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot|--gfx|--record) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --leads) leads=$2; shift ;;
     --code) code=1 ;;
@@ -158,6 +162,7 @@ mkdir -p "$dest"
 if "$boat" scp "$id:/home/user/out/shots.tgz" "$work/shots.tgz" > "$work/scp.log" 2>&1 || { sed 's/^/  scp: /' "$work/scp.log" >&2; false; }; then
   tar -xzf "$work/shots.tgz" -C "$dest"
   mv "$dest"/shots/*.png "$dest"/ 2>/dev/null || true
+  mv "$dest"/shots/*.mp4 "$dest"/ 2>/dev/null || true
   rmdir "$dest/shots" 2>/dev/null || true
   pngs=$(find "$dest" -maxdepth 1 -name '*.png' | sort)
 fi
