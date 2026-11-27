@@ -30,7 +30,8 @@
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
 //   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
 //                                     POST template-delete {id} (a built-in one is reset)
-//   GET  v1/collector/compose?id=&template=&channel=&kind=   the message for that lead: channels (every Persons ›
+//   GET  v1/collector/compose?id=&template=&channel=&kind=&remember=1   the message for that lead (remember=1: the
+//                                     template / channel was picked by the user, the next composer opens on it): channels (every Persons ›
 //                                     Creators connection: Gmail, WhatsApp, Discord, Instagram, with who they are
 //                                     there), to, subject (email), text, guard
 //   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
@@ -872,9 +873,22 @@ export class Collector {
   }
 
   /** The message for a creator: the channels it can go on (and to whom), the template filled, the CRM's guards. */
-  compose(id: string, templateId: string, channelId: string, kind = ""): unknown | null {
+  compose(id: string, templateId: string, channelId: string, kind = "", remember = false): unknown | null {
     const c = this.find(id);
     if (!c) return null;
+    // a template or channel the user picked in the composer is where the next one opens (kept in state.json: PC and phone)
+    if (remember) {
+      let moved = false;
+      if (templateId && this.templates.some((x) => x.id === templateId) && this.data.settings.lastTemplate !== templateId) {
+        this.data.settings.lastTemplate = templateId;
+        moved = true;
+      }
+      if (channelId && this.o.persons.channels().some((x) => x.id === channelId) && this.data.settings.lastChannel !== channelId) {
+        this.data.settings.lastChannel = channelId;
+        moved = true;
+      }
+      if (moved) this.save();
+    }
     const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? defaultTemplate(this.templates)!;
     // Every way Persons › Creators can write to them: its connections (Gmail, WhatsApp, Discord, Instagram), each with
     // who they are there (the email, the number, the Reach's Discord ID or Instagram handle); a kind Creators has no
@@ -902,7 +916,11 @@ export class Collector {
     const want: SendKind | "" = kind === "email" || kind === "gmail" ? "gmail" : (SEND_KINDS as readonly string[]).includes(kind) ? (kind as SendKind) : "";
     const reachKind: SendKind | "" = c.reach ? (c.reach.kind === "email" ? "gmail" : c.reach.kind) : "";
     const byKind = (k: SendKind | ""): (typeof chans)[number] | undefined => (k ? (chans.find((x) => x.kind === k && x.connected) ?? chans.find((x) => x.kind === k)) : undefined);
-    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
+    // the channel picked last, when it can send and the lead has someone valid there (an email, a number…)
+    const lastCh = this.data.settings.lastChannel;
+    const valid = (x: (typeof chans)[number]): boolean => x.connected && !!x.to && !reachError(x.kind === "gmail" ? "email" : x.kind, x.to);
+    const last = lastCh ? (chans.find((x) => x.id === lastCh && valid(x)) ?? chans.find((x) => x.kind === chans.find((y) => y.id === lastCh)?.kind && valid(x))) : undefined;
+    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? last ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
     const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
     return {
       id,
@@ -958,7 +976,8 @@ export class Collector {
       // a Discord ID or Instagram handle typed here is kept as their Reach when they have none
       if ((ch.kind === "discord" || ch.kind === "instagram") && !cur.reach) cur.reach = { kind: ch.kind, value: normalizeReach(ch.kind, to) };
     }
-    if (typeof b.template === "string") this.data.settings.lastTemplate = b.template;
+    if (typeof b.template === "string" && b.template) this.data.settings.lastTemplate = b.template;
+    this.data.settings.lastChannel = ch.id;
     this.logLine(`SENT ${ch.kind === "gmail" ? "email" : SEND_APP[ch.kind]} to ${c.name} (${to}); they're in Persons › Creators.`, "ok");
     return { ok: true, ...(r.person ? { person: r.person } : {}) };
   }
@@ -1125,7 +1144,7 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       c.deleteTemplate(String(bodyOf(call).id ?? ""));
       return ok({ templates: c.templates } as never);
     case "GET compose": {
-      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"));
+      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"), queryOf(call, "remember") === "1");
       return d ? ok(d as never) : err(404, "No such creator");
     }
     case "POST send": {

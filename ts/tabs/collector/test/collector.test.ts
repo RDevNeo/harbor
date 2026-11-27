@@ -483,6 +483,37 @@ describe("collector", () => {
     expect(c.data.creators[0]!.contacted?.via).toBe("discord");
     expect(((await call("GET", "creator", null, [["id", "instagram:99"]]))!.body as DetailView).contacted).toContain("Sent a Discord message on");
   });
+  it("the composer remembers the template and channel picked last (state.json); a Reach icon's channel still wins", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const persons = fakePersons({
+      channels: [
+        { id: "creators-gmail", kind: "gmail", label: "Email", account: "igor@spokpay.com", connected: true },
+        { id: "creators-gmail-2", kind: "gmail", label: "Email", account: "fagner@spokpay.com", connected: true },
+        { id: "creators-whatsapp", kind: "whatsapp", label: "WhatsApp", account: null, connected: true },
+      ],
+    });
+    const c = new Collector(dir, deps({ persons }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Ana", email: "ana@x.com", whatsapp: "5521975709440" }), rec({ platform: "youtube", platform_id: "UC2", name: "Bo", email: "bo@x.com" }));
+    const call = caller(c);
+    type M = { channel: string; template: string };
+    const open = async (id: string, q: [string, string][] = []): Promise<M> => (await call("GET", "compose", null, [["id", id], ...q]))!.body as M;
+    expect(await open("youtube:UC1")).toMatchObject({ channel: "creators-gmail", template: "padrao" });
+    // a plain open remembers nothing; a pick does
+    await open("youtube:UC1", [["template", "loja-parceira"], ["channel", "creators-gmail-2"]]);
+    expect([c.data.settings.lastTemplate, c.data.settings.lastChannel]).toEqual(["", undefined]);
+    await open("youtube:UC1", [["template", "loja-parceira"], ["channel", "creators-gmail-2"], ["remember", "1"]]);
+    expect(c.data.settings).toMatchObject({ lastTemplate: "loja-parceira", lastChannel: "creators-gmail-2" });
+    expect(await open("youtube:UC2")).toMatchObject({ channel: "creators-gmail-2", template: "loja-parceira" });
+    await open("youtube:UC1", [["channel", "creators-whatsapp"], ["remember", "1"]]);
+    // Bo has no number: the last channel can't reach him, so the usual pick
+    expect((await open("youtube:UC2")).channel).toBe("creators-gmail");
+    expect((await open("youtube:UC1")).channel).toBe("creators-whatsapp");
+    // opened from a Reach icon: that channel
+    expect((await open("youtube:UC1", [["kind", "email"]])).channel).toBe("creators-gmail");
+    await c.flush();
+    const again = new Collector(dir, deps({ persons }));
+    expect(again.data.settings).toMatchObject({ lastTemplate: "loja-parceira", lastChannel: "creators-whatsapp" });
+  });
   it("Restrict keeps a lead out of Available and the export; Unrestrict brings it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const c = new Collector(dir, deps({}));

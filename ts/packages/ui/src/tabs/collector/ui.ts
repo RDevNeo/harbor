@@ -323,6 +323,8 @@ export function createCollectorUi(): TabUi {
   let detailOpen = false;
   let filling = false;
   let reachKind: ReachKind = "email";
+  /** A Reach icon was clicked in this detail: Send message opens on its channel (else on the one picked last). */
+  let reachPicked = false;
   let drafts: Record<ReachKind, string> = { email: "", discord: "", whatsapp: "", instagram: "" };
   let reachBusy = false;
   let reachErr = "";
@@ -396,7 +398,7 @@ export function createCollectorUi(): TabUi {
         const first = view?.creators.find((c) => !c.restricted);
         if (first) {
           sendId = first.id;
-          await openCompose(view?.settings.lastTemplate ?? "", "");
+          await openCompose("", "");
         }
       }
       if (shotRun) {
@@ -631,6 +633,7 @@ export function createCollectorUi(): TabUi {
     detail = d;
     if (resetReach || !prev || prev.id !== d.id) {
       reachKind = d.reachKind;
+      reachPicked = false;
       drafts = { ...d.drafts };
       if (bus) bus.d_reach_text = drafts[reachKind];
       reachErr = "";
@@ -709,10 +712,10 @@ export function createCollectorUi(): TabUi {
     }
   }
 
-  const openCompose = async (template = "", channel = "", kind = "", to = ""): Promise<void> => {
+  const openCompose = async (template = "", channel = "", kind = "", to = "", remember = false): Promise<void> => {
     if (!sendId || !bus) return;
     try {
-      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}`)) as Compose;
+      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}${remember ? "&remember=1" : ""}`)) as Compose;
       const keepTo = compose && compose.id === c.id && compose.channel === c.channel ? bus.s_to : null;
       // another destination keeps what was written (the same template); another template fills it again
       const keep = !!compose && compose.id === c.id && compose.template === c.template && compose.channel !== c.channel;
@@ -825,7 +828,7 @@ export function createCollectorUi(): TabUi {
       sendId = id;
       sendConfirm = false;
       compose = null;
-      void openCompose(view?.settings.lastTemplate ?? "", "");
+      void openCompose("", "");
     });
     on("send_close", () => {
       if (sendBusy) return;
@@ -833,8 +836,9 @@ export function createCollectorUi(): TabUi {
       sendConfirm = false;
       render();
     });
-    on("pick_template", (id: string) => void openCompose(id, compose?.channel ?? ""));
-    on("pick_channel", (id: string) => void openCompose(compose?.template ?? "", id));
+    // what the user picks is remembered (the next composer opens on that template and channel)
+    on("pick_template", (id: string) => void openCompose(id, compose?.channel ?? "", "", "", true));
+    on("pick_channel", (id: string) => void openCompose(compose?.template ?? "", id, "", "", true));
     on("send_ask", () => {
       sendError = "";
       sendConfirm = true;
@@ -906,6 +910,7 @@ export function createCollectorUi(): TabUi {
       if (!(REACH_KINDS as readonly string[]).includes(k) || k === reachKind) return;
       drafts[reachKind] = b.d_reach_text;
       reachKind = k as ReachKind;
+      reachPicked = true;
       b.d_reach_text = drafts[reachKind];
       reachErr = "";
       render();
@@ -949,7 +954,9 @@ export function createCollectorUi(): TabUi {
       sendConfirm = false;
       compose = null;
       const typed = b.d_reach_text.trim();
-      void openCompose(view?.settings.lastTemplate ?? "", "", reachKind, typed && !reachError(reachKind, typed) ? typed : "");
+      // the template and channel picked last, unless a Reach icon was clicked here: then that icon's channel
+      const kind = reachPicked ? reachKind : "";
+      void openCompose("", "", kind, kind && typed && !reachError(reachKind, typed) ? typed : "");
     });
     on("to_edited", () => renderSend());
     on("edit_show", () => {

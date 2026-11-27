@@ -111,8 +111,11 @@ export interface Settings {
   gapDays: number;
   /** Stop-at count (0 = everything the source gives). */
   target: number;
-  /** The Send message menu opens on the template used last. */
+  /** Send message opens on the template picked (or sent with) last… */
   lastTemplate: string;
+  /** …and on the channel picked last (a Persons › Creators connection id: its kind and its account), when the lead
+   *  has someone there. */
+  lastChannel?: string;
   /** The review bar's "Approve to", the last one picked. */
   approveTo: ApproveTo;
   /** The lists' Sort: followers high → low (the default) or low → high. */
@@ -215,6 +218,7 @@ export function migrate(raw: unknown): CollectorData {
     gapDays: GAP_CHOICES.some((c) => c.value === s.gapDays) ? (s.gapDays as number) : d.settings.gapDays,
     target: t === undefined ? d.settings.target : normalizeTarget(t),
     lastTemplate: typeof s.lastTemplate === "string" ? s.lastTemplate : "",
+    ...(typeof s.lastChannel === "string" && s.lastChannel ? { lastChannel: s.lastChannel } : {}),
     approveTo: APPROVE_TO.includes(s.approveTo as ApproveTo) ? (s.approveTo as ApproveTo) : "list",
     sort: SORT_MODES.includes(s.sort as SortMode) ? (s.sort as SortMode) : "followers-desc",
     platforms: normalizePlatforms(s.platforms),

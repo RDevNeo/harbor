@@ -130,8 +130,11 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   and the account it goes from, or why it can't: not signed in, or "Persons › Creators has no Discord: add one there")
   and the address beside it (editable), then the Subject (email only), the message, and "From igor@… · Creators Gmail"
   with Send… at the bottom; a second step asks "Send it?" (Back / Send now). Another destination keeps what was
-  written; another template fills it again. It opens on the channel asked for (the Reach icon picked), else the saved
-  Reach's, else the first that can send to someone. Sends go through Persons (`persons-bridge.ts`): the lead becomes
+  written; another template fills it again. It **remembers** the template and the channel (the connection, so its
+  account too) picked last, in state.json's settings (`lastTemplate`, `lastChannel`: the PC and the phone share them;
+  `compose?…&remember=1` when the user picked, and every send): it opens on that template (while it exists) and that
+  channel when the lead has a valid address there. A Reach icon clicked in the detail (or the card's Reach icon) wins:
+  its channel, To filled with its value. Otherwise the saved Reach's channel, else the first that can send to someone. Sends go through Persons (`persons-bridge.ts`): the lead becomes
   (or joins) a person in Persons › Creators with that identifier (email, WhatsApp number, Discord ID, Instagram id: an
   Instagram lead's own id, else the handle looked up through Persons' Instagram) and the message is in that chat; a
   Discord ID or Instagram handle sent to becomes their Reach when they have none. The CRM's guards: 30 new emails a

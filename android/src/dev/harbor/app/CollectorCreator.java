@@ -103,12 +103,15 @@ final class CollectorCreator {
             return "whatsapp".equals(k) ? "WhatsApp" : "discord".equals(k) ? "Discord" : "instagram".equals(k) ? "Instagram" : "Email";
         }
 
-        /** GET compose: the message for this template and channel; keep = the typed message stays (a channel switch). */
-        private void load(String template, String channel, boolean keep) {
+        private void load(String template, String channel, boolean keep) { load(template, channel, keep, false); }
+
+        /** GET compose: the message for this template and channel; keep = the typed message stays (a channel switch);
+         *  remember = the user picked it, so the next composer (PC or phone) opens on that template and channel. */
+        private void load(String template, String channel, boolean keep, boolean remember) {
             if (h == null) return;
             final String keepText = keep && text != null ? text.getText().toString() : null;
             final String keepSubject = keep && subject != null ? subject.getText().toString() : null;
-            Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(kind) : "")), r -> {
+            Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(kind) : "") + (remember ? "&remember=1" : "")), r -> {
                 c = r;
                 draw();
                 // the Reach field's value goes into To once, when the composer opens on its channel
@@ -138,7 +141,7 @@ final class CollectorCreator {
                 boolean on = cid.equals(channel());
                 if (on) picked = ch;
                 boolean ok = ch.optBoolean("connected");
-                TextView chip = Ds.chip(a, kindLabel(ch.optString("kind")), on, on ? null : v -> load(template(), cid, true));
+                TextView chip = Ds.chip(a, kindLabel(ch.optString("kind")), on, on ? null : v -> load(template(), cid, true, true));
                 if (!ok) chip.setAlpha(0.45f);
                 chips.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
             }
@@ -190,7 +193,7 @@ final class CollectorCreator {
                 if (!t.optString("description").isEmpty()) col.addView(Ui.subtitle(Ui.text(a, t.optString("description"), 12.5f, Ui.G600)), Ui.fill());
                 r.addView(col, Ui.weight());
                 if (on) r.addView(Ui.icon(a, Ui.I_CHECK, 16, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
-                r.setOnClickListener(on ? null : v -> load(tid, channel(), false));
+                r.setOnClickListener(on ? null : v -> load(tid, channel(), false, true));
                 tl.addView(r, Ui.fill());
             }
             body.addView(tl, Ui.fill());
@@ -480,6 +483,8 @@ final class CollectorCreator {
         private boolean busy;
         private JSONObject d;
         private String kind = "email";
+        /** A Reach kind was tapped in this detail: Send message opens on its channel (else on the one picked last). */
+        private boolean reachPicked;
         private final java.util.Map<String, String> drafts = new java.util.HashMap<>();
         private EditText field, noteField;
         private boolean filling;
@@ -609,6 +614,7 @@ final class CollectorCreator {
             JSONObject dr = r.optJSONObject("drafts");
             if (reset || old == null) {
                 kind = r.optString("reachKind", "email");
+                reachPicked = false;
                 drafts.clear();
                 for (String k : REACH) drafts.put(k, dr == null ? "" : dr.optString(k, ""));
             } else {
@@ -857,6 +863,7 @@ final class CollectorCreator {
                     if (k.equals(kind)) return;
                     if (field != null) drafts.put(kind, field.getText().toString());
                     kind = k;
+                    reachPicked = true;
                     draw();
                 });
                 kinds.addView(b, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(40)), 0, 0, 6, 0));
@@ -874,7 +881,7 @@ final class CollectorCreator {
             if (!saved.isEmpty()) btns.addView(Ui.rowButton(a, "Clear", false, v -> save("")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             btns.addView(new View(a), Ui.spacer());
             // Send message, the same whichever kind is picked: the composer with that channel picked in To
-            btns.addView(Ui.rowButton(a, "Send message", true, v -> a.push(new Compose(a, id, d.optString("name"), kind, field == null ? "" : field.getText().toString()))), Ui.wrap());
+            btns.addView(Ui.rowButton(a, "Send message", true, v -> a.push(new Compose(a, id, d.optString("name"), reachPicked ? kind : "", reachPicked && field != null ? field.getText().toString() : ""))), Ui.wrap());
             c.addView(btns, Ui.margins(Ui.fill(), 0, 8, 0, 0));
         }
 
