@@ -577,10 +577,12 @@ export function attachmentFileName(url: string, name?: string | null): string {
 
 /** A send Discord answered with a captcha: never solved nor retried in Hub; Discord's own app shows it. */
 export const CAPTCHA_SEND = "Discord wants a captcha. Open it in the Discord app.";
+/** A friend request Discord answered with a captcha: their profile opens in Discord's app, where the person adds them. */
+export const CAPTCHA_FRIEND = "Discord wants a captcha: finish adding them in the Discord app.";
 
 /** Errors Discord answers sends with, in the user's words. */
 export const SEND_ERRORS: Readonly<Record<number, string>> = {
-  50007: "Discord blocked it: you’re not friends and share no server. Add friend in Discord first.",
+  50007: "Discord blocked it: you’re not friends and share no server. Add friend first.",
   40002: "Discord wants this account verified first",
   20026: "Discord flagged this account; open Discord",
   40005: "The file is too big for Discord",
@@ -591,6 +593,20 @@ export const SEND_ERRORS: Readonly<Record<number, string>> = {
 export function relationOf(type: unknown): Relation | null {
   return type === 1 ? "friend" : type === 2 ? "blocked" : type === 3 ? "incoming" : type === 4 ? "sent" : null;
 }
+
+/** Errors Discord answers a friend request with, in the user's words. */
+export const FRIEND_ERRORS: Readonly<Record<number, string>> = {
+  80000: "They don’t take friend requests from people they share no server with",
+  80001: "Discord didn’t send it: they don’t take requests from this account",
+  80003: "That’s this account",
+  80004: "Discord doesn’t know that user",
+  80007: "You’re already friends",
+  40002: "Discord wants this account verified first",
+  20026: "Discord flagged this account; open Discord",
+};
+
+/** X-Context-Properties of the web client's Add Friend on a user's profile (base64 JSON). */
+export const FRIEND_CONTEXT = btoa(JSON.stringify({ location: "User Profile" }));
 
 // ---------- the account's files (and Person Hub's session folder names, for the import) ----------
 

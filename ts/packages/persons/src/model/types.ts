@@ -238,3 +238,11 @@ export interface SendResult {
   /** Discord's captcha: the path to open in Discord's app ("/channels/@me/<id>" or "/users/<id>"), where it's sent instead. */
   open?: string;
 }
+
+/** Add friend (Discord): where it stands after; `open` = Discord asked for a captcha, their profile to open in its app. */
+export interface FriendResult {
+  ok: boolean;
+  relation?: Relation;
+  error?: string;
+  open?: string;
+}

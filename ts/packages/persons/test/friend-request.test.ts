@@ -1,12 +1,12 @@
-// A Discord chat's relationship (Add friend in Discord opens the app: no friend request from Hub), a DM Discord refuses
-// (50007) and one it answers with a captcha (never retried, never shown: Open in Discord), against a stand-in Discord
-// (Bun.serve: its HTTP API and a gateway WebSocket) through Persons' service and routes. Nothing reaches Discord.
+// A Discord chat's Add friend, a DM Discord refuses (50007), and captchas on both (never shown, never retried: Discord's
+// app opens instead), against a stand-in Discord (Bun.serve: its HTTP API and a gateway WebSocket) through Persons'
+// service and routes. Nothing reaches Discord.
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDiscord } from "../src/conn/discord.ts";
-import { CAPTCHA_SEND, relationOf, SEND_ERRORS } from "../src/conn/discord-core.ts";
+import { CAPTCHA_FRIEND, CAPTCHA_SEND, relationOf, SEND_ERRORS } from "../src/conn/discord-core.ts";
 import { PersonsRoutes } from "../src/routes.ts";
 import { PersonsService } from "../src/service.ts";
 import { discordLinks, friendButton } from "../../ui/src/tabs/persons/view.ts";
@@ -14,7 +14,7 @@ import { discordLinks, friendButton } from "../../ui/src/tabs/persons/view.ts";
 const ME = "100000000000000001";
 const SPEC = "507955008076251161"; // a stranger: no shared server, not a friend
 const BEA = "100000000000000003"; // a friend
-const CAP = "100000000000000004"; // a DM to them gets Discord's captcha
+const CAP = "100000000000000004"; // a DM or a friend request to them gets Discord's captcha
 const T0 = "2026-11-20T10:00:00.000Z";
 
 type Ws = { send(s: string): void };
@@ -38,8 +38,10 @@ beforeAll(async () => {
       if (p === "/gateway") return Response.json({ url: `ws://127.0.0.1:${server.port}` });
       if (p === "/users/@me/channels") return Response.json({ id: (body as { recipients?: string[] } | null)?.recipients?.includes(CAP) ? "200000000000000008" : "200000000000000009", type: 1 });
       if (p === "/channels/200000000000000009/messages" && req.method === "POST") return Response.json({ message: "Cannot send messages to this user", code: 50007 }, { status: 403 });
-      if (p === "/channels/200000000000000008/messages" && req.method === "POST")
-        return Response.json({ captcha_key: ["captcha-required"], captcha_sitekey: "a9b5fb07-92ff-493f-86fe-352a2803b3df", captcha_service: "hcaptcha", captcha_rqdata: "x", captcha_rqtoken: "y" }, { status: 400 });
+      const captcha = () => Response.json({ captcha_key: ["captcha-required"], captcha_sitekey: "a9b5fb07-92ff-493f-86fe-352a2803b3df", captcha_service: "hcaptcha", captcha_rqdata: "x", captcha_rqtoken: "y" }, { status: 400 });
+      if (p === "/channels/200000000000000008/messages" && req.method === "POST") return captcha();
+      if (p === `/users/@me/relationships/${SPEC}` && req.method === "PUT") return new Response(null, { status: 204 });
+      if (p === `/users/@me/relationships/${CAP}` && req.method === "PUT") return captcha();
       return Response.json({ message: "Unknown", code: 0 }, { status: 404 });
     },
     websocket: {
@@ -78,13 +80,14 @@ const call = async (method: string, path: string[], body: unknown = null) =>
 
 it("maps Discord's relationship types, and the header's button from them", () => {
   expect([1, 2, 3, 4, 5, undefined].map(relationOf)).toEqual(["friend", "blocked", "incoming", "sent", null, null]);
-  expect(friendButton(null)).toBe(""); // Gmail, WhatsApp, signed out
-  expect(friendButton("friend")).toBe("");
-  expect(friendButton("blocked")).toBe("");
-  expect(friendButton("none")).toBe("add");
-  expect(friendButton("incoming")).toBe("accept");
-  expect(friendButton("sent")).toBe("sent");
-  // Add friend in Discord: their profile in Discord's app, discord.com without it
+  expect(friendButton(null, false)).toBe(""); // Gmail, WhatsApp, signed out
+  expect(friendButton("friend", false)).toBe("");
+  expect(friendButton("blocked", false)).toBe("");
+  expect(friendButton("none", false)).toBe("add");
+  expect(friendButton("none", true)).toBe("sending");
+  expect(friendButton("incoming", false)).toBe("accept");
+  expect(friendButton("sent", true)).toBe("sent");
+  // a captcha opens Discord's app (discord.com without it)
   expect(discordLinks(`/users/${SPEC}`)).toEqual({ app: `discord://-/users/${SPEC}`, web: `https://discord.com/users/${SPEC}` });
   expect(discordLinks("/channels/@me/200000000000000008")).toEqual({ app: "discord://-/channels/@me/200000000000000008", web: "https://discord.com/channels/@me/200000000000000008" });
 });
@@ -99,7 +102,7 @@ it("a DM Discord refuses (50007) fails with the reason, kept for click to retry"
   const r = await call("POST", ["chat", "ps", "send"], { section: "stores", text: "oi" });
   expect(r).toMatchObject({ ok: false, error: SEND_ERRORS[50007] });
   expect(r.open).toBeUndefined();
-  expect(SEND_ERRORS[50007]).toContain("Add friend in Discord first");
+  expect(SEND_ERRORS[50007]).toContain("Add friend first");
   const chat = await call("GET", ["chat", "ps"]);
   expect(chat.outgoing).toMatchObject([{ status: "failed", error: SEND_ERRORS[50007], open: null }]);
 });
@@ -117,9 +120,27 @@ it("a DM Discord answers with a captcha fails at once, never retried, with the D
   expect(chat.outgoing).toMatchObject([{ status: "failed", error: CAPTCHA_SEND, open: "/channels/@me/200000000000000008" }]);
 });
 
-it("Hub sends no friend request: there's no friend route and Discord never gets a PUT", async () => {
-  expect(await routes.route({ method: "POST", path: ["v1", "persons", "chat", "ps", "friend"], query: [["section", "stores"]], body: { section: "stores" } })).not.toMatchObject({ body: { ok: true } });
-  expect(asked.filter((a) => a.method === "PUT" || a.path.includes("/relationships"))).toHaveLength(0);
+it("Add friend sends the client's friend request once; the chat then says Request sent", async () => {
+  const r = await call("POST", ["chat", "ps", "friend"], { section: "stores" });
+  expect(r).toEqual({ ok: true, relation: "sent" });
+  const puts = asked.filter((a) => a.method === "PUT");
+  expect(puts).toHaveLength(1);
+  expect(puts[0]).toMatchObject({ path: `/api/v9/users/@me/relationships/${SPEC}`, body: {} });
+  expect(JSON.parse(atob(puts[0]!.context ?? ""))).toEqual({ location: "User Profile" });
+  expect((await call("GET", ["chat", "ps"])).relation).toBe("sent");
+  // a second click asks Discord nothing
+  expect(await call("POST", ["chat", "ps", "friend"], { section: "stores" })).toEqual({ ok: true, relation: "sent" });
+  expect(asked.filter((a) => a.method === "PUT")).toHaveLength(1);
+});
+
+it("Add friend that Discord answers with a captcha: one PUT, no captcha answered, their profile to open in Discord's app", async () => {
+  const before = asked.length;
+  const r = await call("POST", ["chat", "pc", "friend"], { section: "stores" });
+  expect(r).toEqual({ ok: false, error: CAPTCHA_FRIEND, open: `/users/${CAP}` });
+  expect(CAPTCHA_FRIEND).toBe("Discord wants a captcha: finish adding them in the Discord app.");
+  expect(asked.slice(before).filter((a) => a.method === "PUT")).toHaveLength(1);
+  expect(asked.some((a) => a.captcha)).toBe(false);
+  expect((await call("GET", ["chat", "pc"])).relation).toBe("none");
 });
 
 it("the gateway's relationship events move it: accepted = friends, removed = none", async () => {

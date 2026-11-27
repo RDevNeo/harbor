@@ -347,13 +347,13 @@ export type ProposalStateJson = { kind: "waiting" } | { kind: "opening"; started
 export interface ProposalJson { id: string; at: string; messageId: string | null; store: { slug: string; name: string } | null; category: string; subject: string; details: string; brief: Record<string, string>; why: string; from: string; chat: string | null; images: number; state: ProposalStateJson }
 export interface ProposingJson { personId: string; messageId: string; at: string; chat: string | null; error: string | null }
 /**
- * The chat header's friend button from the Discord relationship the gateway reports: "add" (Add friend in Discord),
- * "accept" (they asked), "sent" (disabled Request sent), "" hidden (friends, blocked, not Discord). The click opens
- * their profile in Discord's app: Hub sends no friend request.
+ * The chat header's friend button from the Discord relationship: "add" (Add friend), "accept" (they asked), "sent"
+ * (disabled Request sent), "sending" (the click is on its way), "" hidden (friends, blocked, not Discord).
  */
-export function friendButton(relation: string | null): string {
+export function friendButton(relation: string | null, sending: boolean): string {
   if (relation === null || relation === "friend" || relation === "blocked") return "";
   if (relation === "sent") return "sent";
+  if (sending) return "sending";
   return relation === "incoming" ? "accept" : "add";
 }
 

@@ -1235,6 +1235,37 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
       }
     },
 
+    /**
+     * A friend request, as the client's Add Friend on their profile sends it (PUT /users/@me/relationships/{id}); on an
+     * incoming request it accepts it. Only on the user's click; paced with the messages. A captcha isn't answered nor
+     * retried: `open` is their profile, for Discord's own app.
+     */
+    async addFriend(peerId) {
+      needConnected();
+      const peer = String(peerId);
+      if (!core.isSnowflake(peer)) return { ok: false, error: "Invalid Discord id" };
+      if (peer === me?.id) return { ok: false, error: "That’s this account" };
+      const was = core.relationOf(world.relationships.get(peer)?.type);
+      if (was === "friend" || was === "sent") return { ok: true, relation: was };
+      if (was === "blocked") return { ok: false, error: "You blocked them on Discord" };
+      const wait = pacer.reserve();
+      if (wait) await sleep(wait);
+      try {
+        await api("PUT", `/users/@me/relationships/${peer}`, {}, { tries: 2, extra: { "X-Context-Properties": core.FRIEND_CONTEXT } });
+      } catch (e) {
+        log("friend request failed", e instanceof ApiError ? `${e.status} ${e.code ?? ""}` : errMsg(e));
+        if (e instanceof ApiError && e.captcha) return { ok: false, error: core.CAPTCHA_FRIEND, open: `/users/${peer}` };
+        const code = e instanceof ApiError ? e.code : undefined;
+        return { ok: false, error: (code !== undefined ? core.FRIEND_ERRORS[code] : undefined) ?? errMsg(e) };
+      }
+      // the gateway's RELATIONSHIP_ADD follows; until then the world says what Discord will
+      const now: Relation = was === "incoming" ? "friend" : "sent";
+      world.relationships.set(peer, { type: now === "friend" ? 1 : 4, nickname: world.relationships.get(peer)?.nickname ?? null });
+      if (now === "friend") friends.add(peer);
+      emitRelations([peer]);
+      return { ok: true, relation: now };
+    },
+
     /** Downloads an attachment from Discord's CDN into <persons dir>/files (once); returns the path. */
     async fetchAttachment(url, name) {
       if (!core.isAttachmentUrl(url, customOrigin ? originHost : null)) throw new Error("Not a Discord attachment");

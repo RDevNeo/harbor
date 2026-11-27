@@ -124,6 +124,7 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "read") return this.read(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "unread") return this.unread(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "typing") return this.typing(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "friend") return await this.friend(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "retry") return this.retry(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
@@ -755,8 +756,7 @@ export class PersonsRoutes {
       account: { id: chatKey(picked), conn: conn.id, kind: conn.kind, section: conn.section, label: this.connLabel(cur), to: this.chatLabel(picked, choices), connected: cur.connected },
       accounts: choices.map((x) => ({ id: chatKey(x), conn: x.conn.id, kind: x.conn.kind, label: this.connLabel(x.conn), to: this.chatLabel(x, choices), connected: x.conn.connected })),
       peer: picked.peer,
-      // Discord: where this account stands with them, as the gateway reports it (the header's Add friend in Discord,
-      // which opens their profile in Discord's app); null on the other channels
+      // Discord: where this account stands with them (the header's Add friend); null on the other channels
       relation: conn.kind === "discord" && cur.connected ? (cur.relations?.[picked.peer] ?? "none") : null,
       typing: typing ?? null,
       more: all.length > 0,
@@ -820,6 +820,14 @@ export class PersonsRoutes {
     const r = this.resolve(personId, b);
     if (r) this.s.sendTyping(r.conn.id, r.peer, b.on !== false);
     return ok({ ok: !!r });
+  }
+
+  /** Add friend in a Discord chat's header: a friend request to the person on the chat's connection. */
+  private async friend(personId: string, b: Record<string, unknown>): Promise<Reply> {
+    const r = this.resolve(personId, b);
+    if (!r) return err(404, "no channel");
+    if (r.conn.kind !== "discord") return err(400, "friend requests are Discord's only");
+    return ok(json(await this.s.addFriend(r.conn.id, r.peer)));
   }
 
   /** A failed message: retried or dismissed in the chat it was sent on (`key` is the outgoing item's). */

@@ -1,7 +1,7 @@
 // One connection = one account on one platform in one section (Person Hub's DiscordBridge, shell/main.cjs
 // "ch:conn" calls). Discord, Gmail and WhatsApp all implement it; the service (../service.ts) owns them.
 // Tokens and keys stay inside the implementation: nothing here returns them, and nothing may log them.
-import type { ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, OutgoingFile, SectionId, SendResult } from "../model/types.ts";
+import type { ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, FriendResult, OutgoingFile, SectionId, SendResult } from "../model/types.ts";
 
 export interface ConnMeta {
   /** "stores", "spokpay", "creators-gmail-8ce5c1"… (Person Hub's ids, kept by the migration). */
@@ -42,6 +42,9 @@ export interface Connection extends ConnMeta {
   /** Newest page, or the page before message `before`. */
   history(peer: string, before?: string): Promise<Conversation>;
   /** `subject`: Gmail, starts a new thread. */
+  /** Discord: a friend request (or accepts theirs); only on the user's click. `relation`: where it stands after;
+   *  `open`: Discord asked for a captcha, the path to open in Discord's app instead. */
+  addFriend?(peer: string): Promise<FriendResult>;
   send(peer: string, text: string, files?: OutgoingFile[], replyTo?: string, subject?: string): Promise<SendResult>;
   /** Downloads an attachment into the cache; returns the local file path. */
   fetchAttachment?(url: string, name: string): Promise<string>;

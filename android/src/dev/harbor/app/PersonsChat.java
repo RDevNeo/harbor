@@ -61,6 +61,8 @@ final class PersonsChat {
     private final ChatFlow.DayPill dayPill;
     /** The first render with the chat's messages placed it (where it was left, its unread line, else its end). */
     private boolean positioned;
+    /** Add friend tapped: the friend request is on its way. */
+    private boolean friending;
     /** How many times placeFirst ran (a correction queued before it is let go). */
     private int placed;
     /** The chat is at its end and stays there while its content grows (pictures and AI notes lay out after the first
@@ -634,22 +636,21 @@ final class PersonsChat {
             sw.setOnClickListener(v -> switchAccount(accounts));
             bar.actions.addView(sw, Ui.margins(Ui.wrap(), 4, 0, 4, 0));
         }
-        // Discord, not friends yet: Add friend in Discord opens their profile in Discord's app (a DM to a stranger with no
-        // shared server bounces); Hub sends no friend request. Request sent (from the gateway) waits.
+        // Discord, not friends yet: Add friend (a DM to a stranger with no shared server bounces); Request sent waits
         String rel = PersonsUi.s(data, "relation");
         if (!rel.isEmpty() && !"friend".equals(rel) && !"blocked".equals(rel)) {
             boolean sent = "sent".equals(rel);
-            String label = sent ? "Request sent" : "incoming".equals(rel) ? "Accept friend in Discord" : "Add friend in Discord";
+            String label = sent ? "Request sent" : friending ? "Sending…" : "incoming".equals(rel) ? "Accept friend" : "Add friend";
             LinearLayout fr = Ui.row(a);
             fr.setGravity(Gravity.CENTER_VERTICAL);
             fr.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(12), Ui.dp(6));
             fr.setBackground(Ui.press(Ui.CARD, Ui.LINE, 16));
-            fr.addView(Ui.icon(a, sent ? Ui.I_USER_CHECK : Ui.I_EXTERNAL, 14, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
+            fr.addView(Ui.icon(a, sent ? Ui.I_USER_CHECK : Ui.I_PLUS, 14, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
             TextView ft = Ui.bold(a, label, 13, Ui.FG);
             ft.setPadding(Ui.dp(5), 0, 0, 0);
             fr.addView(ft);
             fr.setContentDescription(label);
-            if (sent) fr.setAlpha(0.5f);
+            if (sent || friending) fr.setAlpha(0.5f);
             else fr.setOnClickListener(v -> addFriend());
             bar.actions.addView(fr, Ui.margins(Ui.wrap(), 4, 0, 4, 0));
         }
@@ -663,12 +664,32 @@ final class PersonsChat {
         } else typingLine.setVisibility(View.GONE);
     }
 
-    /** Add friend in Discord: their profile in Discord's app (the browser's discord.com without it), where the person
-     *  taps Add Friend and Discord shows any captcha itself. Hub sends no friend request. */
+    /** Add friend (Discord): a friend request to the person, sent by the PC; the tap is the user's go-ahead. When
+     *  Discord wants a captcha, Hub shows none: their profile opens in Discord's app, where the person adds them. */
     private void addFriend() {
-        String peer = PersonsUi.s(data, "peer");
-        if (!peer.matches("\\d{15,22}")) return;
-        openInDiscord("/users/" + peer);
+        if (friending || p.hub == null) return;
+        friending = true;
+        header();
+        JSONObject b = PersonsUi.put(new JSONObject(), "section", section);
+        String ac = acctId();
+        if (ac != null) PersonsUi.put(b, "account", ac);
+        String path = base() + "/friend";
+        Ui.bg(a, () -> {
+            try {
+                return p.hub.call("POST", path, b);
+            } catch (Exception e) {
+                return PersonsUi.put(PersonsUi.put(new JSONObject(), "ok", false), "error", Hub.why(e));
+            }
+        }, r -> {
+            friending = false;
+            String where = r.optString("open", "");
+            if (where.startsWith("/")) {
+                Ui.toast(a, r.optString("error", "Discord wants a captcha: finish adding them in the Discord app."));
+                openInDiscord(where);
+            } else if (!r.optBoolean("ok", false)) Ui.toast(a, r.optString("error", "The friend request didn't go"));
+            else Ui.toast(a, "friend".equals(r.optString("relation")) ? "You're friends on Discord now" : "Friend request sent");
+            load(false);
+        });
     }
 
     /** A Discord path ("/users/<id>", "/channels/@me/<id>") opened in Discord's app when it's installed (it takes

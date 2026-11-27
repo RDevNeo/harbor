@@ -101,8 +101,11 @@ A file too large for a JSON body (a video from the phone) goes ahead with `POST 
 the captcha: it fails with "Discord wants a captcha. Open it in the Discord app." and `open`, the path to open in
 Discord's app (`/channels/@me/<channel>`, or `/users/<id>` without a DM yet: `discord://-<open>` on the PC,
 `https://discord.com<open>` on the phone or without the app); the failed item in `outgoing` carries it too.
-Discord chats carry `relation` (friend | sent | incoming | blocked | none, read from the gateway); Add friend in Discord
-opens their profile in Discord's app (`/users/<peer>`), where the person clicks Add Friend: Hub sends no friend request.
+Discord chats carry `relation` (friend | sent | incoming | blocked | none, from the gateway).
+## POST /v1/persons/chat/{personId}/friend { section, account? } → `{ ok, relation?, error?, open? }`
+Discord's Add friend (PUT /users/@me/relationships/{id}, as the client's profile button). A captcha is never shown or
+retried in Hub: it answers `ok: false`, "Discord wants a captcha: finish adding them in the Discord app." and
+`open: "/users/<id>"`, which the PC and the phone open in Discord's app (discord.com without it).
 ## POST /v1/persons/chat/{personId}/read  { section, account? }  → `{ ok }`
 ## POST /v1/persons/chat/{personId}/typing { section, account?, on } → `{ ok }`
 ## POST /v1/persons/chat/{personId}/ai  { section, account?, text, forward?: <message id>, paths?: [file on this PC] } → `{ ok, chat: <hub chat id> }`

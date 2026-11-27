@@ -206,6 +206,8 @@ class PersonsTab {
   private panelOpen = true;
   /** The composer writes to the person's AI (Person Hub's "To: AI | Name" switch), remembered per chat. */
   private aiMode = false;
+  /** Add friend clicked: the request is on its way (the person's id). */
+  private friending: string | null = null;
   private toAi = new Map<string, boolean>();
   private replyTo: { id: string; name: string; text: string } | null = null;
   /** A message forwarded to the AI (Forward to AI): quoted in the AI composer, for the chat it came from. */
@@ -308,7 +310,7 @@ class PersonsTab {
       this.query = q;
       this.render();
     }) as Cb);
-    on("add_friend", () => this.addFriend());
+    on("add_friend", () => void this.addFriend());
     on("close_chat", () => {
       this.keepPlace();
       this.stopAudio();
@@ -736,7 +738,7 @@ class PersonsTab {
     // the chat the composer sends on; with two of a kind (a linked person's other number) it says which
     b.c_account = c.account ? (c.account.to && c.account.to.includes(" · ") ? `${c.account.label} → ${c.account.to.split(" · ").slice(1).join(" · ")}` : c.account.label) : "No channel";
     b.c_accounts = c.accounts.length > 1;
-    b.c_friend = friendButton(c.relation ?? null);
+    b.c_friend = friendButton(c.relation ?? null, this.friending === pp.id);
     b.c_gmail = c.account?.kind === "gmail";
     b.c_connected = !!c.account?.connected;
     b.c_more = c.more;
@@ -1404,19 +1406,32 @@ class PersonsTab {
   }
 
   /**
-   * The header's Add friend in Discord: their profile opens in Discord's app (discord://, else discord.com in the
-   * browser), where the person clicks Add Friend and Discord shows any captcha itself. Hub sends no friend request.
+   * The header's Add friend (Discord): a friend request to the person; the click is the user's go-ahead. When Discord
+   * wants a captcha, Hub shows none and doesn't retry: their profile opens in Discord's app, where the person adds them.
    */
-  private addFriend(): void {
+  private async addFriend(): Promise<void> {
+    const open = this.ui.open;
     const c = this.chat;
-    if (!c || !c.peer || !/^\d{15,22}$/.test(c.peer) || !["add", "accept"].includes(friendButton(c.relation ?? null))) return;
-    this.openInDiscord(`/users/${c.peer}`);
+    if (!open || !c || this.friending || !["add", "accept"].includes(friendButton(c.relation ?? null, false))) return;
+    this.friending = open.id;
+    this.render();
+    const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/friend`, { section: open.section, account: c.account?.id });
+    this.friending = null;
+    const where = typeof r.body.open === "string" && r.body.open.startsWith("/") ? r.body.open : "";
+    if (where) {
+      this.setToast(String(r.body.error ?? "Discord wants a captcha: finish adding them in the Discord app."));
+      this.openInDiscord(where, false);
+    } else if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "The friend request didn't go"));
+    else this.setToast(r.body.relation === "friend" ? "You're friends on Discord now" : "Friend request sent");
+    void this.loadChat(false);
   }
 
-  /** Opens a Discord path in Discord's app (the browser's discord.com without it). */
-  private openInDiscord(path: string): void {
+  /** Opens a Discord path in Discord's app (the browser's discord.com without it); `say`: a toast tells which. */
+  private openInDiscord(path: string, say = true): void {
     const l = discordLinks(path);
-    void osDesktop.openApp(l.app, l.web).then((how) => this.setToast(how === "app" ? "Opened in Discord" : "Opened discord.com in the browser"));
+    void osDesktop.openApp(l.app, l.web).then((how) => {
+      if (say) this.setToast(how === "app" ? "Opened in Discord" : "Opened discord.com in the browser");
+    });
   }
 
   /** The file picker, its failure (no picker on this PC…) said in a toast: media's own toast is shown nowhere here. */
