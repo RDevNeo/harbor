@@ -79,6 +79,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   "All people" row (the head's magnifier opens it) and the connection chips under the section heads. Phone only.
 
 ### Fixed
+- **Phone: a Persons chat no longer reopens at the same spot short of its end.** Opened at its end, a chat was placed
+  before its pictures and AI notes had laid out; they pushed the newest messages below the fold, that spot then
+  counted as "scrolled up" and was kept (and saved on leaving), so every reopen landed there. The chat now sticks to
+  its end while it grows, until the finger scrolls it up: left at the bottom it reopens at the newest message, left
+  scrolled up it reopens exactly there, and the unread line shows only for messages actually unread.
 - **Hub for Android: the Projects drawer shows its list again.** Since the drawer's title got its menu, the head's
   spacer (an empty view with a wrap-content height) took the whole screen's height: the drawer came out black with
   "Projects ⌄" and its buttons in the middle and no projects or chats. Spacers are now 0 tall (`Ui.spacer()`, used by

@@ -60,6 +60,13 @@ final class PersonsChat {
     private final ChatFlow.DayPill dayPill;
     /** The first render with the chat's messages placed it (where it was left, its unread line, else its end). */
     private boolean positioned;
+    /** The chat is at its end and stays there while its content grows (pictures and AI notes lay out after the first
+     *  placement; without this the newest messages ended up below the fold and that spot was kept as "scrolled up").
+     *  Off once the finger scrolls it up; on again at the end. */
+    private boolean stickEnd = true;
+    /** The finger is on the transcript, or let go of it in the last moment (a fling). */
+    private long touchedAt;
+    private boolean touching;
     /** Their messages that came in while scrolled up, the first of them (the "↓" counts them and goes there). */
     private int unseen;
     private String firstUnseen = "";
@@ -116,9 +123,24 @@ final class PersonsChat {
         content = Ui.col(a);
         content.setPadding(0, Ui.dp(8), 0, Ui.dp(8));
         sv.addView(content, new FrameLayout.LayoutParams(-1, -2));
+        sv.setOnTouchListener((v, e) -> {
+            int act = e.getActionMasked();
+            if (act == android.view.MotionEvent.ACTION_DOWN || act == android.view.MotionEvent.ACTION_MOVE) touching = true;
+            else if (act == android.view.MotionEvent.ACTION_UP || act == android.view.MotionEvent.ACTION_CANCEL) touching = false;
+            touchedAt = android.os.SystemClock.uptimeMillis();
+            return false;
+        });
         sv.setOnScrollChangeListener((v, x, y, ox, oy) -> {
             if (y < Ui.dp(120) && y < oy && more && !loadingOlder && !msgs.isEmpty()) loadOlder();
+            // Only the user's own scroll leaves the end (a finger, or its fling); reaching the end sticks again.
+            boolean byUser = touching || android.os.SystemClock.uptimeMillis() - touchedAt < 2_000;
+            if (byUser && positioned) stickEnd = ChatFlow.atEnd(sv, content, Ui.dp(80));
             scrolled(y != oy);
+        });
+        // The content grew or shrank (a picture or an AI note laid out, a message in): at the end it stays there.
+        content.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
+            if (!positioned || !stickEnd || bottom - top == oldBottom - oldTop) return;
+            sv.post(() -> { if (stickEnd) sv.scrollTo(0, Math.max(0, content.getHeight() - sv.getHeight())); });
         });
         // The keyboard (or the composer growing) shrinks the transcript: what was at its bottom stays there.
         sv.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
@@ -652,7 +674,8 @@ final class PersonsChat {
 
     private void render() {
         rows.clear();
-        boolean atBottom = !positioned || toBottom || ChatFlow.atEnd(sv, content, Ui.dp(80));
+        boolean atBottom = !positioned || toBottom || stickEnd || ChatFlow.atEnd(sv, content, Ui.dp(80));
+        if (toBottom) stickEnd = true;
         boolean sent = toBottom;
         toBottom = false;
         // What's at the top of the screen now and how far down: it stays there (older pages above, new ones below).
@@ -842,10 +865,15 @@ final class PersonsChat {
         ChatFlow.Pos was = ChatFlow.place(posKey());
         View at = was != null && !was.end ? rows.get(was.anchor) : null;
         if (unreadLine != null && (was == null || was.end || at == null)) {
+            stickEnd = false;
             sv.scrollTo(0, Math.max(0, unreadLine.getTop() - Ui.dp(24)));
         } else if (at != null) {
+            stickEnd = false;
             sv.scrollTo(0, Math.max(0, at.getTop() - was.off));
-        } else sv.scrollTo(0, content.getHeight());
+        } else {
+            stickEnd = true;
+            sv.scrollTo(0, content.getHeight());
+        }
     }
 
     private String posKey() { return p.hub == null ? pid + "|" + section : p.hub.id + "|" + pid + "|" + section; }
@@ -853,7 +881,7 @@ final class PersonsChat {
     /** Where it's left now: at the end, or the first message on screen and how far down it is. */
     private void savePlace() {
         if (!positioned) return;
-        if (ChatFlow.atEnd(sv, content, Ui.dp(80))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, 0)); return; }
+        if (stickEnd || ChatFlow.atEnd(sv, content, Ui.dp(80))) { ChatFlow.place(posKey(), new ChatFlow.Pos(true, "", 0, 0)); return; }
         int y = sv.getScrollY();
         String best = null;
         int top = Integer.MAX_VALUE;
@@ -890,6 +918,7 @@ final class PersonsChat {
         int end = Math.max(0, content.getHeight() - sv.getHeight());
         int y = first != null && first.getParent() == content ? Math.min(end, Math.max(0, first.getTop() - Ui.dp(24))) : end;
         sv.smoothScrollTo(0, y);
+        stickEnd = y >= end;
         unseen = 0;
         firstUnseen = "";
         jump.count(0);
