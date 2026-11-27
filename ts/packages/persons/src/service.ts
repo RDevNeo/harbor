@@ -5,14 +5,15 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allPeers, chatsFor, KIND_LABEL, peerOf, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
+import { allPeers, chatKey, chatsFor, KIND_LABEL, peerOf, personSections, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
+import { freshIncoming, type IncomingLine } from "./incoming.ts";
 import { contactConflict, personalShares, resolveContact, type ContactKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
-import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen } from "./model/readState.ts";
+import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen, seenOf } from "./model/readState.ts";
 import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, SectionId, SendResult } from "./model/types.ts";
 import type { Connection, ConnFactory, ConnMeta } from "./conn/types.ts";
 import { DataFile, loadConnections, personsDir, saveConnections } from "./store.ts";
@@ -66,6 +67,16 @@ export interface RowInfo {
   typing?: "typing" | "recording";
 }
 
+/** A person just wrote (new messages from them, live: not history, not the user's own). */
+export interface Incoming {
+  person: Person;
+  /** The section the chat is theirs in, and the chat's key (`<connection id>:<peer>`): the API's `section` and `account`. */
+  section: SectionId;
+  account: string;
+  channel: ChannelKind;
+  lines: IncomingLine[];
+}
+
 export interface ServiceOptions {
   dir?: string;
   factories?: Partial<Record<ChannelKind, ConnFactory>>;
@@ -101,6 +112,11 @@ export class PersonsService {
   private timers: ReturnType<typeof setTimeout>[] = [];
   private trackedKey = "";
   private stopped = false;
+  /** Connections whose cached chats are in (track answered): before that every message would look new. */
+  private ready = new Set<string>();
+  /** Message ids already announced as incoming (this run). */
+  private announced = new Set<string>();
+  private incoming = new Set<(m: Incoming) => void>();
   rev = 1;
 
   constructor(private readonly o: ServiceOptions = {}) {
@@ -356,11 +372,13 @@ export class PersonsService {
         this.retrack();
       }
     } else if (ev.type === "messages") {
+      const before = this.slices.get(id)?.convos[ev.peerId];
       this.patch(id, (s) => {
         const t = ev.messages.some((x) => !x.fromMe) && s.typing[ev.peerId] ? without(s.typing, ev.peerId) : s.typing;
         return { ...s, typing: t, convos: { ...s.convos, [ev.peerId]: mergeMessages(s.convos[ev.peerId], ev.messages) } };
       });
       this.wake();
+      if (this.ready.has(id) && this.incoming.size > 0) this.announce(id, ev.peerId, before, ev.messages);
     } else if (ev.type === "typing") {
       this.patch(id, (s) => ({ ...s, typing: ev.until > Date.now() ? { ...s.typing, [ev.peerId]: { kind: ev.kind, until: ev.until } } : without(s.typing, ev.peerId) }));
       if (ev.until > Date.now()) setTimeout(() => this.patch(id, (s) => (s.typing[ev.peerId]?.until === ev.until ? { ...s, typing: without(s.typing, ev.peerId) } : s)), ev.until - Date.now() + 50);
@@ -423,6 +441,7 @@ export class PersonsService {
             for (const [pid, conv] of Object.entries(cached)) n[pid] = mergeMessages(n[pid], conv.messages, conv.channelId);
             return { ...s, convos: n };
           });
+          this.ready.add(m.id);
           this.wake();
         },
         (e) => this.log(`track ${m.id} failed`, errText(e)),
@@ -432,6 +451,38 @@ export class PersonsService {
 
   conn(id: string): Connection | undefined {
     return this.conns.get(id);
+  }
+
+  /** Hears every person's new incoming messages (Hub's phone notifications); returns the unsubscribe. */
+  onIncoming(f: (m: Incoming) => void): () => void {
+    this.incoming.add(f);
+    return () => this.incoming.delete(f);
+  }
+
+  /** A "messages" event's news for whoever in Persons that chat is (freshIncoming), told to onIncoming's listeners. */
+  private announce(connId: string, peer: string, before: Conversation | undefined, msgs: Message[]): void {
+    const m = this.metas.find((x) => x.id === connId);
+    if (!m || !this.data || !msgs.some((x) => !x.fromMe)) return;
+    const views = this.views();
+    const same = (v: string): boolean => (m.kind === "whatsapp" ? v === peer || phoneVariants(v).includes(peer) || phoneVariants(peer).includes(v) : v === peer);
+    for (const p of this.data.people) {
+      const chat = chatsFor(p, views, null).find((c) => c.conn.id === connId && same(c.peer));
+      if (!chat) continue;
+      const lines = freshIncoming(before, msgs, Date.now(), this.announced, seenOf(p, connId, chat.peer));
+      if (!lines.length) return;
+      for (const l of lines) this.announced.add(l.id);
+      if (this.announced.size > 5000) this.announced = new Set([...this.announced].slice(-2500));
+      const section = personSections(p).find((s) => serves(m, s)) ?? (p.carried ?? []).find((s) => serves(m, s)) ?? m.section;
+      const ev: Incoming = { person: p, section, account: chatKey(chat), channel: m.kind, lines };
+      for (const f of [...this.incoming]) {
+        try {
+          f(ev);
+        } catch (e) {
+          this.log("incoming listener failed", errText(e));
+        }
+      }
+      return;
+    }
   }
 
   views(): ConnView[] {

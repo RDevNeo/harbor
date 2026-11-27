@@ -1535,7 +1535,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         const post = engine?.host.notify ?? own.notify;
         post?.(t.id, `${t.id}:${key}`, title, body);
       };
-      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, notify });
+      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, notify, notePerson: (p) => notifier.notePerson(p) });
     } catch (e) {
       console.error(`hub: the ${t.id} tab didn't start: ${e instanceof Error ? e.message : String(e)}`);
     }

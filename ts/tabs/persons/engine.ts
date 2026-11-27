@@ -6,6 +6,8 @@ import { desktop } from "../../packages/os/src/index.ts";
 import { AgentDiscord, AudioService, VoiceQueue, createSocials, createSpokpay, SiteRequestBoard, SiteRequests, FACTORIES, formatAge, formatCount, PersonAi, PersonsRoutes, PersonsService, type Socials } from "../../packages/persons/src/index.ts";
 import { dictate } from "../../packages/media/src/index.ts";
 import { parseSocialUrl, PLATFORM_LABEL, socialHandle } from "../../packages/persons/src/socials.ts";
+import { colorOf } from "../../packages/persons/src/routes.ts";
+import { personLabel } from "../../packages/persons/src/model/data.ts";
 import type { Call, Reply } from "../../packages/net/src/index.ts";
 import type { TabEngine } from "../api.ts";
 import { qrRows } from "../../packages/ui/src/qr.ts";
@@ -88,6 +90,11 @@ export const personsEngine: TabEngine = {
       ctx.changed();
       voice?.kick();
     });
+    // A person wrote: Hub for Android's conversation notification (kind "person", android/PROTOCOL.md "Notifications").
+    const rt = routes;
+    service.onIncoming((m) =>
+      ctx.notePerson?.({ id: m.person.id, name: personLabel(m.person), section: m.section, account: m.account, channel: m.channel, pic: rt.pictureRef(m.person) ?? "", color: colorOf(m.person.id), lines: m.lines }),
+    );
     await service.start();
   },
   async route(call: Call): Promise<Reply | null> {

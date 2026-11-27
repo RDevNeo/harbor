@@ -310,6 +310,54 @@ describe("notify", () => {
     ]);
   });
 
+  test("the phone rings only for a limit hit, a PC gone, an agent that needs you and a person's message", () => {
+    const notes = new Notes();
+    const n = new Notifier({ notes });
+    n.noteLimit({ gid: "g", title: "Fix", home: "" }, "claude", "Claude", false, "resets at 5");
+    n.noteResumed({ gid: "g", title: "Fix" }, "claude2", "Claude 2", "continuing", true);
+    n.post("limit", "warn:claude", "Usage warning", "80%", "", false);
+    n.post("limit", "limit:claude3", "Usage cap reached", "paused", "", false);
+    n.post("pc", "deliver:a.png", "a.png", "saved", "", false);
+    n.post("pc", "providers:me", "Claude Code updated", "", "", false);
+    const pc = (online: boolean) => [{ id: "ts:a", name: "Acer", online }];
+    n.notePeers(pc(true), true);
+    n.notePeers(pc(false), true);
+    const got = notes.since(0)[0].map((x) => [x.key, x.phone]);
+    expect(got).toEqual([
+      ["limit:claude", true],
+      ["limit:claude2", false],
+      ["warn:claude", false],
+      ["limit:claude3", true],
+      ["deliver:a.png", false],
+      ["providers:me", false],
+      ["pc:ts:a", true],
+    ]);
+    // on the wire only when false
+    const wired = notes.since(0)[0].map((x) => (noteJson(x) as { phone?: boolean }).phone);
+    expect(wired).toEqual([undefined, false, false, undefined, false, false, undefined]);
+    expect(parseNotes(notes.since(0)[0].map(noteJson)).map((x) => x.phone)).toEqual(got.map((x) => x[1]));
+  });
+
+  test("a person's messages: one note per burst, each line kept, phones only, not relayed to the mesh", () => {
+    const notes = new Notes();
+    let popped = 0;
+    const desktop = new Desktop({ send: () => (popped++, null) });
+    const n = new Notifier({ notes, desktop });
+    const who = { id: "p_1", name: "Ana Souza", section: "stores", account: "stores:123", channel: "discord", pic: "", color: "#10b981" };
+    n.notePerson({ ...who, lines: [{ id: "m1", text: "Oi Igor!", at: 100 }, { id: "m2", text: "Tudo bem?", at: 101 }] });
+    n.notePerson({ ...who, lines: [{ id: "m3", text: "A loja caiu", at: 102 }] });
+    n.notePerson({ ...who, lines: [] });
+    const [got] = notes.since(0);
+    expect(got.map((x) => [x.kind, x.key, x.title, x.body, x.count])).toEqual([
+      ["person", "person:p_1:m1", "Ana Souza", "Tudo bem?", 1],
+      ["person", "person:p_1:m3", "Ana Souza", "A loja caiu", 1],
+    ]);
+    expect(popped).toBe(0);
+    const wire = JSON.parse(JSON.stringify(noteJson(got[0]!))) as unknown;
+    expect(parseNotes([wire])[0]!.person).toEqual({ ...who, lines: [{ id: "m1", text: "Oi Igor!", at: 100 }, { id: "m2", text: "Tudo bem?", at: 101 }] });
+    expect(notes.ownSince(1)[0]).toEqual([]);
+  });
+
   test("PCs going offline and back", () => {
     const notes = new Notes();
     const n = new Notifier({ notes });

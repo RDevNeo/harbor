@@ -3,7 +3,7 @@
 // routes. The window (packages/ui/src/tabs, in-process through `call`) and Hub for Android (the same paths over the
 // phone API) use the same routes, so a tab's data is shared by the PC and the phone.
 import type { Store } from "../packages/store/src/index.ts";
-import type { Call, Reply } from "../packages/net/src/index.ts";
+import type { Call, NotePerson, Reply } from "../packages/net/src/index.ts";
 
 export interface TabEngineCtx {
   store: Store;
@@ -18,6 +18,8 @@ export interface TabEngineCtx {
   /** Hub's notification for something of this tab (kind = the tab's id, coalesced by `key`): this PC's popup when the
    *  window isn't in front, and the phones' note (Settings › Notifications turns the kind off). */
   notify?(key: string, title: string, body: string): void;
+  /** A person wrote (Persons): the phones' conversation notification (kind "person"), never a desktop popup. */
+  notePerson?(p: NotePerson): void;
 }
 
 export interface TabEngine {
