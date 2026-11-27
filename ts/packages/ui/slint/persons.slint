@@ -92,6 +92,7 @@ export struct PMsg {
     files: string,
     first: bool,
     failed: bool,
+    in-discord: bool, // failed on Discord's captcha: the click's menu opens it in Discord's app
     sending: bool,
     streaming: bool,
     // The Person AI's thread: its answers' parts (markdown blocks and ```reply drafts) and the user's questions.
@@ -188,7 +189,7 @@ export global PersonsBus {
     in property <string> c-channel;
     in property <string> c-account;
     in property <bool> c-accounts; // more than one: the account chip opens a menu
-    in property <string> c-friend; // Discord: "add" | "accept" | "sending" | "sent" (disabled), "" hidden
+    in property <string> c-friend; // Discord: "add" | "accept" | "sent" (disabled), "" hidden
     in property <bool> c-gmail;
     in property <bool> c-connected: true;
     in property <string> c-empty: "No messages yet.";
@@ -378,7 +379,7 @@ export global PersonsBus {
     callback jump-reply(string); // a reply's quote clicked (the replying message's id)
     callback toggle-panel();
     callback account-menu(length, length);
-    callback add-friend(); // the chat header's Add friend (a Discord friend request)
+    callback add-friend(); // the chat header's Add friend in Discord (opens their profile in Discord's app)
     callback msg-menu(string, length, length);
     callback open-file(string, int);
     // A picture of a message (its index): Hub's lightbox, browsing that message's pictures.
@@ -1613,7 +1614,7 @@ component Bubble {
                     }
                     Text {
                         // a failed one says why (Discord's 50007: not friends, no shared server…)
-                        text: root.m.failed ? (root.m.meta != "" ? root.m.meta + " · click to retry" : "Not sent · click to retry") : root.m.sending ? "Sending…" : root.m.meta != "" ? root.m.meta + " · " + root.m.time : root.m.time;
+                        text: root.m.failed ? (root.m.in-discord ? root.m.meta + " · click to open in Discord" : root.m.meta != "" ? root.m.meta + " · click to retry" : "Not sent · click to retry") : root.m.sending ? "Sending…" : root.m.meta != "" ? root.m.meta + " · " + root.m.time : root.m.time;
                         wrap: word-wrap;
                         horizontal-alignment: right;
                         font-size: 10px;
@@ -2531,15 +2532,16 @@ component ChatPane inherits Rectangle {
                     }
                 }
             }
-            // Discord, not friends yet: send a friend request (DMs to strangers with no shared server bounce)
+            // Discord, not friends yet: their profile in Discord's app, where the person adds them (DMs to strangers
+            // with no shared server bounce); Hub sends no friend request
             if PersonsBus.c-friend != "": Btn {
                 y: (parent.height - self.height) / 2;
-                icon: PersonsBus.c-friend == "sent" ? Icons.user-check : Icons.plus;
-                text: PersonsBus.c-friend == "sent" ? "Request sent" : PersonsBus.c-friend == "sending" ? "Sending…" : PersonsBus.c-friend == "accept" ? "Accept friend" : "Add friend";
+                icon: PersonsBus.c-friend == "sent" ? Icons.user-check : Icons.external;
+                text: PersonsBus.c-friend == "sent" ? "Request sent" : PersonsBus.c-friend == "accept" ? "Accept friend in Discord" : "Add friend in Discord";
                 size: BtnSize.xs;
                 variant: Variant.outline;
                 enabled: PersonsBus.c-friend == "add" || PersonsBus.c-friend == "accept";
-                tip: PersonsBus.c-friend == "sent" ? "Your friend request waits for them on Discord" : PersonsBus.c-friend == "accept" ? "They sent you a friend request on Discord" : "Send a friend request on Discord";
+                tip: PersonsBus.c-friend == "sent" ? "Your friend request waits for them on Discord" : PersonsBus.c-friend == "accept" ? "They sent you a friend request: opens their profile in the Discord app" : "Opens their profile in the Discord app, where you click Add Friend";
                 clicked => {
                     PersonsBus.add-friend();
                 }

@@ -420,7 +420,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
         void signedOut("Discord signed this session out", false);
       }
       const j = (json ?? {}) as { captcha_key?: unknown; message?: unknown; code?: unknown };
-      const msg = j.captcha_key ? "Discord asked for a captcha. Send this one from the Discord app." : typeof j.message === "string" ? j.message : `Discord answered HTTP ${res.status}`;
+      const msg = j.captcha_key ? core.CAPTCHA_SEND : typeof j.message === "string" ? j.message : `Discord answered HTTP ${res.status}`;
       throw new ApiError(msg, res.status, typeof j.code === "number" ? j.code : undefined, !!j.captcha_key);
     }
   }
@@ -1214,8 +1214,9 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
       if (text.length > 2000) return { ok: false, error: "Discord messages are at most 2000 characters" };
       const wait = pacer.reserve();
       if (wait) await sleep(wait);
+      let cid: string | null = null;
       try {
-        const cid = await ensureChannel(peer);
+        cid = await ensureChannel(peer);
         const body: Record<string, unknown> = { mobile_network_type: "unknown", content: voice ? "" : text, nonce: core.nowSnowflake(), tts: false, flags: voice ? 8192 : 0 };
         // a reply, as the client sends it (the replied-to message's author is pinged, as in Discord)
         if (replyTo && core.isSnowflake(String(replyTo))) body.message_reference = { channel_id: cid, message_id: String(replyTo) };
@@ -1227,39 +1228,11 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
         ctx.emit({ type: "messages", peerId: peer, messages: [slim] });
         return { ok: true, message: slim };
       } catch (e) {
+        // a captcha is never answered here (nor retried): the person sends it from Discord's own app, which shows it
+        if (e instanceof ApiError && e.captcha) return { ok: false, error: core.CAPTCHA_SEND, open: cid ? `/channels/@me/${cid}` : `/users/${peer}` };
         const code = e instanceof ApiError ? e.code : undefined;
         return { ok: false, error: (code !== undefined ? core.SEND_ERRORS[code] : undefined) ?? errMsg(e) };
       }
-    },
-
-    /**
-     * A friend request, as the client's Add Friend on their profile sends it (PUT /users/@me/relationships/{id}); on an
-     * incoming request it accepts it. Only on the user's click; paced with the messages.
-     */
-    async addFriend(peerId) {
-      needConnected();
-      const peer = String(peerId);
-      if (!core.isSnowflake(peer)) return { ok: false, error: "Invalid Discord id" };
-      if (peer === me?.id) return { ok: false, error: "That’s this account" };
-      const was = core.relationOf(world.relationships.get(peer)?.type);
-      if (was === "friend" || was === "sent") return { ok: true, relation: was };
-      if (was === "blocked") return { ok: false, error: "You blocked them on Discord" };
-      const wait = pacer.reserve();
-      if (wait) await sleep(wait);
-      try {
-        await api("PUT", `/users/@me/relationships/${peer}`, {}, { tries: 2, extra: { "X-Context-Properties": core.FRIEND_CONTEXT } });
-      } catch (e) {
-        log("friend request failed", e instanceof ApiError ? `${e.status} ${e.code ?? ""}` : errMsg(e));
-        if (e instanceof ApiError && e.captcha) return { ok: false, error: "Discord asked for a captcha. Add them from the Discord app." };
-        const code = e instanceof ApiError ? e.code : undefined;
-        return { ok: false, error: (code !== undefined ? core.FRIEND_ERRORS[code] : undefined) ?? errMsg(e) };
-      }
-      // the gateway's RELATIONSHIP_ADD follows; until then the world says what Discord will
-      const now: Relation = was === "incoming" ? "friend" : "sent";
-      world.relationships.set(peer, { type: now === "friend" ? 1 : 4, nickname: world.relationships.get(peer)?.nickname ?? null });
-      if (now === "friend") friends.add(peer);
-      emitRelations([peer]);
-      return { ok: true, relation: now };
     },
 
     /** Downloads an attachment from Discord's CDN into <persons dir>/files (once); returns the path. */

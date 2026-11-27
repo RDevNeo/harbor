@@ -125,7 +125,6 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "unread") return this.unread(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "typing") return this.typing(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "retry") return this.retry(rest[1], obj(c.body));
-        if (m === "POST" && rest[2] === "friend") return await this.friend(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "to-project") return await this.toProject(rest[1], obj(c.body));
@@ -749,14 +748,15 @@ export class PersonsRoutes {
     };
     const typing = typingOf(picked) ?? choices.map(typingOf).find(Boolean);
     const status = headerStatus(conn.kind, this.s.presenceOf(picked.peer), cur.lastSeen[picked.peer], typing);
-    const outgoing = choices.flatMap((ch) => ((this.s.view(ch.conn.id) ?? ch.conn).outgoing[ch.peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })), channel: this.channelJson(ch, choices) })));
+    const outgoing = choices.flatMap((ch) => ((this.s.view(ch.conn.id) ?? ch.conn).outgoing[ch.peer] ?? []).map((o) => ({ key: o.key, text: o.text, status: o.status, error: o.error ?? null, open: o.open ?? null, at: o.at, subject: o.subject ?? null, files: (o.files ?? []).map((f) => ({ name: f.name, type: f.type, size: f.data.length })), channel: this.channelJson(ch, choices) })));
     return ok({
       person: { ...personJson, status: status ? { text: status.text, tone: TONE[status.tone] ?? "muted" } : null },
       // `id` is the chat's key ("<connection>:<who>"): what `account` takes back; `conn` the connection
       account: { id: chatKey(picked), conn: conn.id, kind: conn.kind, section: conn.section, label: this.connLabel(cur), to: this.chatLabel(picked, choices), connected: cur.connected },
       accounts: choices.map((x) => ({ id: chatKey(x), conn: x.conn.id, kind: x.conn.kind, label: this.connLabel(x.conn), to: this.chatLabel(x, choices), connected: x.conn.connected })),
       peer: picked.peer,
-      // Discord: where this account stands with them (the header's Add friend); null on the other channels
+      // Discord: where this account stands with them, as the gateway reports it (the header's Add friend in Discord,
+      // which opens their profile in Discord's app); null on the other channels
       relation: conn.kind === "discord" && cur.connected ? (cur.relations?.[picked.peer] ?? "none") : null,
       typing: typing ?? null,
       more: all.length > 0,
@@ -820,14 +820,6 @@ export class PersonsRoutes {
     const r = this.resolve(personId, b);
     if (r) this.s.sendTyping(r.conn.id, r.peer, b.on !== false);
     return ok({ ok: !!r });
-  }
-
-  /** Add friend in a Discord chat's header: a friend request to the person on the chat's connection. */
-  private async friend(personId: string, b: Record<string, unknown>): Promise<Reply> {
-    const r = this.resolve(personId, b);
-    if (!r) return err(404, "no channel");
-    if (r.conn.kind !== "discord") return err(400, "friend requests are Discord's only");
-    return ok(json(await this.s.addFriend(r.conn.id, r.peer)));
   }
 
   /** A failed message: retried or dismissed in the chat it was sent on (`key` is the outgoing item's). */

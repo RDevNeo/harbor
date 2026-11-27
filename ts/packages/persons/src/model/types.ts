@@ -235,4 +235,6 @@ export interface SendResult {
   ok: boolean;
   message?: Message;
   error?: string;
+  /** Discord's captcha: the path to open in Discord's app ("/channels/@me/<id>" or "/users/<id>"), where it's sent instead. */
+  open?: string;
 }

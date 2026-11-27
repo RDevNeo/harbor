@@ -4,7 +4,7 @@ import * as slint from "slint-ui";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { clipboard, images, picker } from "@harbor/media";
-import { audio as osAudio } from "@harbor/os";
+import { audio as osAudio, desktop as osDesktop } from "@harbor/os";
 import { GLYPHS, type GlyphName } from "@harbor/net";
 import { dataDir } from "@harbor/store";
 import { basename, join } from "node:path";
@@ -18,7 +18,7 @@ import { AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -206,8 +206,6 @@ class PersonsTab {
   private panelOpen = true;
   /** The composer writes to the person's AI (Person Hub's "To: AI | Name" switch), remembered per chat. */
   private aiMode = false;
-  /** Add friend clicked: the request is on its way (the person's id). */
-  private friending: string | null = null;
   private toAi = new Map<string, boolean>();
   private replyTo: { id: string; name: string; text: string } | null = null;
   /** A message forwarded to the AI (Forward to AI): quoted in the AI composer, for the chat it came from. */
@@ -310,7 +308,7 @@ class PersonsTab {
       this.query = q;
       this.render();
     }) as Cb);
-    on("add_friend", () => void this.addFriend());
+    on("add_friend", () => this.addFriend());
     on("close_chat", () => {
       this.keepPlace();
       this.stopAudio();
@@ -738,7 +736,7 @@ class PersonsTab {
     // the chat the composer sends on; with two of a kind (a linked person's other number) it says which
     b.c_account = c.account ? (c.account.to && c.account.to.includes(" · ") ? `${c.account.label} → ${c.account.to.split(" · ").slice(1).join(" · ")}` : c.account.label) : "No channel";
     b.c_accounts = c.accounts.length > 1;
-    b.c_friend = friendButton(c.relation ?? null, this.friending === pp.id);
+    b.c_friend = friendButton(c.relation ?? null);
     b.c_gmail = c.account?.kind === "gmail";
     b.c_connected = !!c.account?.connected;
     b.c_more = c.more;
@@ -1029,6 +1027,7 @@ class PersonsTab {
       files: r.files,
       first: r.first,
       failed: r.failed,
+      in_discord: r.inDiscord,
       sending: r.sending,
       streaming: r.streaming,
       to_ai: r.toAi,
@@ -1404,18 +1403,20 @@ class PersonsTab {
     void this.loadChat(false);
   }
 
-  /** The header's Add friend (Discord): a friend request to the person; the click is the user's go-ahead. */
-  private async addFriend(): Promise<void> {
-    const open = this.ui.open;
+  /**
+   * The header's Add friend in Discord: their profile opens in Discord's app (discord://, else discord.com in the
+   * browser), where the person clicks Add Friend and Discord shows any captcha itself. Hub sends no friend request.
+   */
+  private addFriend(): void {
     const c = this.chat;
-    if (!open || !c || this.friending || !["add", "accept"].includes(friendButton(c.relation ?? null, false))) return;
-    this.friending = open.id;
-    this.render();
-    const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/friend`, { section: open.section, account: c.account?.id });
-    this.friending = null;
-    if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "The friend request didn't go"));
-    else this.setToast(r.body.relation === "friend" ? "You're friends on Discord now" : "Friend request sent");
-    void this.loadChat(false);
+    if (!c || !c.peer || !/^\d{15,22}$/.test(c.peer) || !["add", "accept"].includes(friendButton(c.relation ?? null))) return;
+    this.openInDiscord(`/users/${c.peer}`);
+  }
+
+  /** Opens a Discord path in Discord's app (the browser's discord.com without it). */
+  private openInDiscord(path: string): void {
+    const l = discordLinks(path);
+    void osDesktop.openApp(l.app, l.web).then((how) => this.setToast(how === "app" ? "Opened in Discord" : "Opened discord.com in the browser"));
   }
 
   /** The file picker, its failure (no picker on this PC…) said in a toast: media's own toast is shown nowhere here. */
@@ -2332,7 +2333,10 @@ class PersonsTab {
     if (id.startsWith("oo")) {
       const key = id.slice(1);
       const [retry, dismiss] = failedMenu();
+      // Discord asked for a captcha: Hub never shows it; the DM opens in Discord's app, where the person sends it
+      const where = c.outgoing.find((o) => o.key === key)?.open;
       this.showEntries(x, y, [
+        ...(where ? [{ label: "Open in Discord", icon: "EXTERNAL" as const, run: () => this.openInDiscord(where) }] : []),
         { ...retry!, run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/retry`, { section: open.section, account: c.account?.id, key }) },
         { ...dismiss!, run: () => void this.api("POST", `chat/${encodeURIComponent(open.id)}/retry`, { section: open.section, account: c.account?.id, key, dismiss: true }) },
       ]);

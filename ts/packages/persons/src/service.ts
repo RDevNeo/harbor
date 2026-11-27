@@ -28,6 +28,8 @@ export interface Outgoing {
   subject?: string;
   status: "sending" | "failed";
   error?: string;
+  /** Discord's captcha: where to open it in Discord's app (SendResult.open). */
+  open?: string;
   at: string;
 }
 
@@ -749,7 +751,7 @@ export class PersonsService {
       this.patch(m.id, (s) => ({ ...s, convos: { ...s.convos, [pid]: mergeMessages(s.convos[pid], [msg]) } }));
       this.setOut(m.id, pid, (l) => l.filter((x) => x.key !== key));
     } else if (r.ok) this.setOut(m.id, pid, (l) => l.filter((x) => x.key !== key));
-    else this.setOut(m.id, pid, (l) => l.map((x) => (x.key === key ? { ...x, status: "failed", error: r.error ?? "Not sent" } : x)));
+    else this.setOut(m.id, pid, (l) => l.map((x) => (x.key === key ? { ...x, status: "failed", error: r.error ?? "Not sent", ...(r.open ? { open: r.open } : {}) } : x)));
     if (r.ok) {
       const ev: Sent = { connId: m.id, kind: m.kind, section: m.section, peer: pid, at: new Date().toISOString() };
       for (const f of [...this.sentTo]) {
@@ -792,18 +794,6 @@ export class PersonsService {
     return r;
   }
 
-  /** Discord: sends `peer` a friend request (or accepts theirs) on that connection; on the user's click only. */
-  async addFriend(connId: string, peer: string): Promise<{ ok: boolean; relation?: Relation; error?: string }> {
-    const c = this.conns.get(connId);
-    if (!c?.addFriend) return { ok: false, error: "Friend requests are Discord's only" };
-    if (!this.view(connId)?.connected) return { ok: false, error: "Connect Discord first" };
-    try {
-      return await c.addFriend(peer);
-    } catch (e) {
-      return { ok: false, error: errText(e) };
-    }
-  }
-
   retry(personId: string, connId: string, key: string, peer?: string): void {
     const p = this.person(personId);
     const m = this.metas.find((x) => x.id === connId);
@@ -813,6 +803,7 @@ export class PersonsService {
     if (!item) return;
     const next: Outgoing = { ...item, status: "sending", at: new Date().toISOString() };
     delete next.error;
+    delete next.open;
     this.setOut(m.id, pid, (l) => l.map((x) => (x.key === key ? next : x)));
     void this.deliver(m, pid, key, next);
   }

@@ -38,6 +38,47 @@ export function open(target: string): void {
   }
 }
 
+/** Whether the desktop has an app for `scheme:` links (Linux: xdg-mime's default; Windows: the registry; macOS: unknown, `open` tells). */
+export function hasHandler(scheme: string, p = platform()): Promise<boolean | null> {
+  const query: [string, string[]] | null =
+    p === "linux" ? ["xdg-mime", ["query", "default", `x-scheme-handler/${scheme}`]] : p === "win32" ? ["reg", ["query", `HKCR\\${scheme}`, "/v", "URL Protocol"]] : null;
+  if (!query) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      execFile(query[0], query[1], { encoding: "utf8", timeout: 5_000 }, (e, out) => resolve(!e && String(out).trim() !== ""));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/**
+ * Opens `appUrl` (an app's own link, e.g. discord://…) in the app that takes it, else `webUrl` in the browser: on Linux
+ * and Windows when no app claims the scheme, on macOS when `open` fails. Doesn't wait for the app.
+ */
+export async function openApp(appUrl: string, webUrl: string): Promise<"app" | "web"> {
+  const scheme = appUrl.slice(0, Math.max(0, appUrl.indexOf(":")));
+  const p = platform();
+  if (p === "darwin") {
+    const opened = await new Promise<boolean>((resolve) => {
+      try {
+        execFile("open", [appUrl], { timeout: 10_000 }, (e) => resolve(!e));
+      } catch {
+        resolve(false);
+      }
+    });
+    if (opened) return "app";
+    open(webUrl);
+    return "web";
+  }
+  if (scheme !== "" && (await hasHandler(scheme, p))) {
+    open(appUrl);
+    return "app";
+  }
+  open(webUrl);
+  return "web";
+}
+
 /** The user's Downloads folder: the desktop's own (xdg-user-dir on Linux), unless that is the home itself. */
 export function downloadsDir(env: Env = process.env): string {
   const home = env.HOME ?? homedir();

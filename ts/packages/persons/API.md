@@ -97,7 +97,12 @@ has it, the API's header leaves it out), except for requests Hub opened (the pro
 ## POST /v1/persons/chat/{personId}/send  { section, account?, text, replyTo?, subject?, files?: [{ name, type, data: base64 } | { name, type, upload: id }] }
 A file too large for a JSON body (a video from the phone) goes ahead with `POST /v1/upload?name=` (raw body, up to
 200 MB) and is named here by the `id` that answered (only files of the uploads folder are taken).
-→ `{ ok, message?, error? }`
+→ `{ ok, message?, error?, open? }`. A Discord send that Discord answers with a captcha isn't retried and Hub never shows
+the captcha: it fails with "Discord wants a captcha. Open it in the Discord app." and `open`, the path to open in
+Discord's app (`/channels/@me/<channel>`, or `/users/<id>` without a DM yet: `discord://-<open>` on the PC,
+`https://discord.com<open>` on the phone or without the app); the failed item in `outgoing` carries it too.
+Discord chats carry `relation` (friend | sent | incoming | blocked | none, read from the gateway); Add friend in Discord
+opens their profile in Discord's app (`/users/<peer>`), where the person clicks Add Friend: Hub sends no friend request.
 ## POST /v1/persons/chat/{personId}/read  { section, account? }  → `{ ok }`
 ## POST /v1/persons/chat/{personId}/typing { section, account?, on } → `{ ok }`
 ## POST /v1/persons/chat/{personId}/ai  { section, account?, text, forward?: <message id>, paths?: [file on this PC] } → `{ ok, chat: <hub chat id> }`

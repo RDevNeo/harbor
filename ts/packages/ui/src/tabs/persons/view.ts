@@ -338,7 +338,7 @@ export interface FileJson { name: string; url: string; raw: string; type: string
 /** The chat a message is in (a person's page shows every chat of theirs in one timeline). */
 export interface ChannelJson { key: string; kind: string; label: string }
 export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; forwarded?: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[]; channel?: ChannelJson }
-export interface OutJson { key: string; text: string; status: string; error: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[]; channel?: ChannelJson }
+export interface OutJson { key: string; text: string; status: string; error: string | null; open?: string | null; at: string; subject: string | null; files: { name: string; type: string; size: number }[]; channel?: ChannelJson }
 /** An answer's pieces (the engine's persons aiparts.ts): markdown, and the messages it drafted for the person (```reply). */
 export type AiPartJson = { type: "text"; text: string } | { type: "draft"; text: string };
 export interface AiJson { id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; queued?: boolean; parts?: AiPartJson[]; forwarded?: { from: string; text: string } }
@@ -347,14 +347,19 @@ export type ProposalStateJson = { kind: "waiting" } | { kind: "opening"; started
 export interface ProposalJson { id: string; at: string; messageId: string | null; store: { slug: string; name: string } | null; category: string; subject: string; details: string; brief: Record<string, string>; why: string; from: string; chat: string | null; images: number; state: ProposalStateJson }
 export interface ProposingJson { personId: string; messageId: string; at: string; chat: string | null; error: string | null }
 /**
- * The chat header's friend button from the Discord relationship: "add" (Add friend), "accept" (they asked), "sent"
- * (disabled Request sent), "sending" (the click is on its way), "" hidden (friends, blocked, not Discord).
+ * The chat header's friend button from the Discord relationship the gateway reports: "add" (Add friend in Discord),
+ * "accept" (they asked), "sent" (disabled Request sent), "" hidden (friends, blocked, not Discord). The click opens
+ * their profile in Discord's app: Hub sends no friend request.
  */
-export function friendButton(relation: string | null, sending: boolean): string {
+export function friendButton(relation: string | null): string {
   if (relation === null || relation === "friend" || relation === "blocked") return "";
   if (relation === "sent") return "sent";
-  if (sending) return "sending";
   return relation === "incoming" ? "accept" : "add";
+}
+
+/** A path in Discord ("/users/<id>", "/channels/@me/<id>") as the app's link and the web's, for `desktop.openApp`. */
+export function discordLinks(path: string): { app: string; web: string } {
+  return { app: `discord://-${path}`, web: `https://discord.com${path}` };
 }
 
 export interface ChatJson {
@@ -431,6 +436,8 @@ export interface MsgRow {
   files: string;
   first: boolean;
   failed: boolean;
+  /** Failed on Discord's captcha: the click's menu opens it in Discord's app. */
+  inDiscord: boolean;
   sending: boolean;
   streaming: boolean;
   /** The user's question to the Person AI (kind "out"). */
@@ -508,7 +515,7 @@ export function imageTiles(imgs: readonly { url: string; width: number | null; h
 }
 
 /** An empty chat row of a kind (the fields every PMsg carries). */
-export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null, day: "" });
+export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, inDiscord: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null, day: "" });
 
 /** A turn with the Person AI as its bubble: the user's note ("out", to the AI) or the AI's answer in parts. */
 export function aiRow(a: AiJson): MsgRow {
@@ -602,6 +609,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.sending = o.status === "sending";
     r.files = o.files.map((f) => `${f.name} · ${formatBytes(f.size)}`).join("\n");
     if (o.error) r.meta = o.error;
+    r.inDiscord = r.failed && !!o.open;
     if (marks && o.channel) {
       r.chan = o.channel.kind;
       r.chanLabel = o.channel.label;
