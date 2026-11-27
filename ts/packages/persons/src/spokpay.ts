@@ -65,6 +65,8 @@ export interface ProposalPatch {
   store?: { slug: string; name: string } | null;
   picked?: string[];
   why?: string;
+  /** Who wrote it: the agent's draft replacing the message's (siterequests.ts). */
+  from?: { name: string; chat?: string | null };
 }
 
 export interface Spokpay {
@@ -534,6 +536,7 @@ export function createSpokpay(o: SpokpayOptions): Spokpay {
       p.images = p.images.map((i) => ({ ...i, picked: on.has(i.url) }));
     }
     if (typeof patch?.why === "string") p.why = patch.why.slice(0, core.LIMITS.why);
+    if (patch?.from && typeof patch.from.name === "string") p.from = { name: patch.from.name.slice(0, 80), chat: patch.from.chat == null ? null : String(patch.from.chat) };
     saveBox(b);
     return p;
   }

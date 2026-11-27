@@ -646,7 +646,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   for (const p of c.proposing ?? []) {
     const r = blank("proposing", `q${p.messageId}`);
     r.time = hhmm(p.at);
-    r.card = { title: p.error ? "The SpokPay agent couldn’t draft it" : "The SpokPay agent is drafting a site request…", sub: "", state: p.error ? "failed" : "drafting", note: p.error ?? "", why: "", chat: !!p.chat };
+    r.card = { title: p.error ? "The SpokPay agent couldn’t draft it" : "The SpokPay agent is drafting a site request… (about 10–20 s)", sub: "", state: p.error ? "failed" : "drafting", note: p.error ?? "", why: "", chat: !!p.chat };
     items.push({ at: p.at, row: r });
   }
   items.sort((a, b) => at(a.at) - at(b.at));

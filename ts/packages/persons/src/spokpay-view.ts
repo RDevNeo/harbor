@@ -3,7 +3,7 @@
 // from Person Hub's src/lib/spokpay.ts.
 import type { AppData, Message, Person, Store } from "./model/types.ts";
 import { BRIEF_PARTS, CATEGORIES, LIMITS, STATUS_MOVES } from "./spokpay-core.ts";
-import type { Brief, BriefPart, Category, OwnerStore, ProposalFields, SpStore, SrEvent, SrStatus, StatusMove } from "./spokpay-core.ts";
+import type { Brief, BriefPart, Category, OwnerStore, Proposal, ProposalFields, SpStore, SrEvent, SrStatus, StatusMove } from "./spokpay-core.ts";
 import type { SpLinks } from "./spokpay.ts";
 
 export { STATUS_MOVES };
@@ -221,6 +221,30 @@ export function localDraft(m: Pick<Message, "content">): ProposalFields {
       .find((l) => l.trim())
       ?.trim() ?? "";
   return { category: "website", subject: first.slice(0, LIMITS.subject), details: text.slice(0, LIMITS.summary), brief: { ...emptyBrief(), change: text.slice(0, LIMITS.briefPart) } };
+}
+
+/** A Hub chat's items as the site request agent's answer: its turn still going (or not started), its text, or its error. */
+export function turnReply(b: { items?: { kind: string; text?: string; markdown?: string }[]; running?: boolean; queued?: number }): { done: false } | { done: true; text: string } | { done: true; error: string } {
+  if (b.running || (b.queued ?? 0) > 0) return { done: false };
+  const items = b.items ?? [];
+  const after = items.slice(items.findIndex((c) => c.kind === "user") + 1);
+  const texts = after.filter((c) => c.kind === "text").map((c) => c.markdown ?? c.text ?? "").filter((t) => t.trim());
+  if (texts.length) return { done: true, text: texts.join("\n\n") };
+  // a turn that ended in an error (stopped, the agent couldn't start…) says so on the card instead of polling on
+  const errors = after.filter((c) => c.kind === "error").map((c) => (c.text ?? "").trim()).filter(Boolean);
+  if (errors.length) return { done: true, error: errors[errors.length - 1]! };
+  return { done: false };
+}
+
+/**
+ * The agent's draft arriving for a message whose card was already turned into its own text ("Use the message" while
+ * it drafted): `replace` that proposal with the draft when it still waits as it was made; leave it when the user
+ * edited it (`edited`), opened it (`opened`) or discarded it (`gone`).
+ */
+export function takeOver(p: Pick<Proposal, "state" | "agent" | "shown"> | undefined): "replace" | "edited" | "opened" | "gone" {
+  if (!p || p.state.kind === "discarded") return "gone";
+  if (p.state.kind === "opening" || p.state.kind === "opened") return "opened";
+  return JSON.stringify(p.shown) === JSON.stringify(p.agent) ? "replace" : "edited";
 }
 
 interface Line {

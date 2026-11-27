@@ -74,7 +74,7 @@ export const personsEngine: TabEngine = {
       board.start();
     }
     boardRef = board;
-    const sites = new SiteRequests(spokpay, async (m, p, q, b) => ctx.call(m, p, q, b), () => svc.touch(), (url, name, account) => svc.fetchAttachment(url, name, account));
+    const sites = new SiteRequests(spokpay, async (m, p, q, b) => ctx.call(m, p, q, b), () => svc.touch(), (url, name, account) => svc.fetchAttachment(url, name, account), { log: (...a) => ctx.log(a.map(String).join(" ")) });
     // voice messages: played here (ffmpeg into PipeWire…), transcribed with the composer mic's speech to text
     audio = new AudioService({ dir, changed: () => svc.touch(), log: (...a) => ctx.log(a.map(String).join(" ")), transcribe: (samples) => dictate.local(samples, "auto") });
     // their voice messages transcribed in the background (one at a time, low priority), for the AI and the bubbles

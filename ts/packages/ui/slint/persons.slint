@@ -1785,10 +1785,11 @@ component SiteCard {
                             PersonsBus.card-act(root.m.id, "discard");
                         }
                     }
-                    if root.drafting: Btn {
+                    // only once the agent failed: pressed while it drafts, its draft (~10-20 s away) would be lost
+                    if root.drafting && root.st == "failed": Btn {
                         text: "Use the message";
                         size: BtnSize.xs;
-                        variant: root.st == "failed" ? Variant.primary : Variant.outline;
+                        variant: Variant.primary;
                         tip: "Skip the agent: the message itself becomes the proposal";
                         clicked => {
                             PersonsBus.card-act(root.m.id, "local");

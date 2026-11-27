@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Persons: Open Site Request keeps the SpokPay agent's draft (PC and phone).** While the agent drafts (~10-20 s,
+  the card says so) its card offers only Cancel; "Use the message" shows once the agent failed. Pressing it before
+  (it used to be there all along) threw the agent's draft away and opened the raw message. If an older phone app still
+  sends it while drafting, the engine makes the message's proposal and keeps the agent going: its draft replaces that
+  proposal when it arrives, unless the user edited, opened or discarded it (logged). A turn that ends in an error
+  (stopped, couldn't start) shows it on the card at once instead of polling for 15 minutes; Cancel stops the polling;
+  drops and cancels are logged (`spokpay: site request draft …`).
 - **Collector: approve a lead into Persons › Neobux (PC and phone).** A lead's review bar has four cells: Reject,
   Skip, **Approve** (A or →) and **Neobux** (N). Approve now puts the lead in Approved *and* Persons › Creators;
   Neobux puts it in Approved and Persons › Neobux (the list made when missing). Neither sends anything; both go on to

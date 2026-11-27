@@ -1520,11 +1520,12 @@ final class PersonsChat {
         c.addView(h);
         if (drafting) {
             String err = PersonsUi.s(o, "error");
-            c.addView(Ui.text(a, err.isEmpty() ? "The SpokPay agent is drafting a site request…" : "The SpokPay agent couldn't draft it: " + err, 14, err.isEmpty() ? Ui.G700 : Ui.RED), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+            c.addView(Ui.text(a, err.isEmpty() ? "The SpokPay agent is drafting a site request… (about 10–20 s)" : "The SpokPay agent couldn't draft it: " + err, 14, err.isEmpty() ? Ui.G700 : Ui.RED), Ui.margins(Ui.fill(), 0, 6, 0, 0));
             String mid = PersonsUi.s(o, "messageId");
             LinearLayout acts = Ui.row(a);
-            acts.addView(Ds.chip(a, "Use the message", !err.isEmpty(), v -> cardCall("POST", "/v1/persons/proposing/" + PersonsUi.enc(mid) + "/local", PersonsUi.put(PersonsUi.put(PersonsUi.put(new JSONObject(), "personId", pid), "section", section), "account", acctId()))));
-            acts.addView(Ds.chip(a, err.isEmpty() ? "Cancel" : "Dismiss", false, v -> cardCall("DELETE", "/v1/persons/proposing/" + PersonsUi.enc(mid), null)), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            // "Use the message" only once the agent failed: pressed while it drafts, its draft (~10-20 s away) would be lost
+            if (!err.isEmpty()) acts.addView(Ds.chip(a, "Use the message", true, v -> cardCall("POST", "/v1/persons/proposing/" + PersonsUi.enc(mid) + "/local", PersonsUi.put(PersonsUi.put(PersonsUi.put(new JSONObject(), "personId", pid), "section", section), "account", acctId()))));
+            acts.addView(Ds.chip(a, err.isEmpty() ? "Cancel" : "Dismiss", false, v -> cardCall("DELETE", "/v1/persons/proposing/" + PersonsUi.enc(mid), null)), Ui.margins(Ui.wrap(), err.isEmpty() ? 0 : 8, 0, 0, 0));
             c.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
         } else {
             String id = PersonsUi.s(o, "id");
