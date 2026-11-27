@@ -170,8 +170,6 @@ export interface CaptchaData {
   rect_w: number;
   rect_h: number;
   guild: string;
-  intro: string;
-  cancel_label: string;
 }
 
 /** The newest frame of a chat's captcha card (`detail` of its card is `id`): chatcaptcha.ts fills it. */

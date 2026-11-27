@@ -458,9 +458,6 @@ final class PersonsChat {
         render();
         composer();
         first = false;
-        // a captcha waits in this chat (a message tapped to retry, one from the PC): up on the phone too
-        JSONObject cap = r.optJSONObject("captcha");
-        if (cap != null && !a.isDestroyed()) PersonsCaptcha.open(a, p.hub, base(), section, cap, name());
         JSONObject q = p.person(pid);
         if (!holdUnread && (wasFirst || PersonsUi.info(q, section).optInt("unread") > 0 || !PersonsUi.s(r, "unreadFrom").isEmpty())) markRead();
     }
@@ -683,9 +680,7 @@ final class PersonsChat {
             }
         }, r -> {
             friending = false;
-            // Discord wants a captcha first: solved on the phone, then the PC sends the request again
-            if (r.optJSONObject("captcha") != null) PersonsCaptcha.open(a, p.hub, base(), section, r.optJSONObject("captcha"), name());
-            else if (!r.optBoolean("ok", false)) Ui.toast(a, r.optString("error", "The friend request didn't go"));
+            if (!r.optBoolean("ok", false)) Ui.toast(a, r.optString("error", "The friend request didn't go"));
             else Ui.toast(a, "friend".equals(r.optString("relation")) ? "You're friends on Discord now" : "Friend request sent");
             load(false);
         });
@@ -1880,17 +1875,12 @@ final class PersonsChat {
         String path = base() + "/send";
         Ui.pool.execute(() -> {
             String err = null;
-            JSONObject cap = null;
             try {
                 JSONObject r = p.hub.call("POST", path, b, 90_000);
-                // a captcha first: the message waits on the PC (sending) while it's solved here
-                cap = r.optJSONObject("captcha");
-                if (cap == null && !r.optBoolean("ok", true)) err = r.optString("error", "not sent");
+                if (!r.optBoolean("ok", true)) err = r.optString("error", "not sent");
             } catch (Exception e) { err = Hub.why(e); }
             String fe = err;
-            JSONObject fc = cap;
             Ui.main.post(() -> {
-                if (fc != null && !closed && !a.isDestroyed()) PersonsCaptcha.open(a, p.hub, base(), section, fc, name());
                 if (closed || a.isDestroyed()) {
                     if (fe != null) Ui.toast(a, "Not sent: " + fe);
                     return;

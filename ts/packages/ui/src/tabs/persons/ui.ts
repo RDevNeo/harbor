@@ -18,7 +18,7 @@ import { AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type CaptchaJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -206,8 +206,6 @@ class PersonsTab {
   private panelOpen = true;
   /** The composer writes to the person's AI (Person Hub's "To: AI | Name" switch), remembered per chat. */
   private aiMode = false;
-  /** Discord captchas this window brought up (their ids): a chat read again doesn't bring one up twice. */
-  private readonly captchasShown = new Set<string>();
   /** Add friend clicked: the request is on its way (the person's id). */
   private friending: string | null = null;
   private toAi = new Map<string, boolean>();
@@ -1262,8 +1260,6 @@ class PersonsTab {
     const c = r.body as ChatJson;
     this.chat = c;
     this.render();
-    // a captcha that waits in this chat (a message tapped to retry, one from the phone): up over the window
-    if (c.captcha && !this.captchasShown.has(c.captcha.id)) void this.solveCaptcha(open.id, open.section, c.captcha, c.person.name);
     if (first) this.placeOpened(c);
     // seen: the newest message (as opening it in the official client does), unless it was just marked unread
     const unread = this.person(open.id)?.rows[open.section]?.unread ?? 0;
@@ -1404,43 +1400,7 @@ class PersonsTab {
     this.bus.subject = "";
     this.render();
     const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/send`, body);
-    if (r.body.captcha) void this.solveCaptcha(open.id, open.section, r.body.captcha as CaptchaJson, this.chat?.person.name ?? "them");
-    else if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "Not sent"));
-    void this.loadChat(false);
-  }
-
-  /**
-   * Discord's captcha for a friend request or a message: over the window (a hidden browser shows hCaptcha as Discord
-   * does), the person solves it, and the request Discord held goes again with their answer. Given up: it doesn't go.
-   * When it can't be shown here (no Chrome/Chromium, hCaptcha didn't load), the old advice: do it in Discord's app.
-   */
-  private async solveCaptcha(personId: string, section: string, cap: CaptchaJson, who: string): Promise<void> {
-    if (this.captchasShown.has(cap.id)) return;
-    this.captchasShown.add(cap.id);
-    const friend = cap.what === "friend";
-    const post = (b: Record<string, unknown>) => this.api("POST", `chat/${encodeURIComponent(personId)}/captcha`, { section, account: cap.account, id: cap.id, ...b });
-    const fallback = friend ? "Discord asked for a captcha. Add them from the Discord app." : "Discord asked for a captcha. Send this one from the Discord app.";
-    if (!this.ctx.captcha) {
-      await post({ cancel: true });
-      this.setToast(fallback);
-      return;
-    }
-    const end = await this.ctx.captcha({
-      html: cap.html,
-      url: cap.url,
-      intro: `${friend ? `To add ${who} as a friend` : `To send your message to ${who}`}, Discord wants a person to solve this captcha. Only the captcha takes your clicks; Hub never answers it for you.`,
-      cancel: friend ? "Don't add" : "Don't send",
-      pill: friend ? `Add ${who}` : `Message to ${who}`,
-    });
-    if ("token" in end) {
-      const r = await post({ key: end.token });
-      if (r.body.captcha) return this.solveCaptcha(personId, section, r.body.captcha as CaptchaJson, who);
-      if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? (friend ? "The friend request didn't go" : "Not sent")));
-      else if (friend) this.setToast(this.chat?.relation === "incoming" ? "You're friends on Discord now" : "Friend request sent");
-    } else {
-      await post({ cancel: true });
-      if ("error" in end) this.setToast(fallback);
-    }
+    if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "Not sent"));
     void this.loadChat(false);
   }
 
@@ -1453,8 +1413,7 @@ class PersonsTab {
     this.render();
     const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/friend`, { section: open.section, account: c.account?.id });
     this.friending = null;
-    if (r.body.captcha) void this.solveCaptcha(open.id, open.section, r.body.captcha as CaptchaJson, c.person.name);
-    else if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "The friend request didn't go"));
+    if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "The friend request didn't go"));
     else this.setToast(r.body.relation === "friend" ? "You're friends on Discord now" : "Friend request sent");
     void this.loadChat(false);
   }

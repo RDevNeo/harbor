@@ -1,8 +1,6 @@
 // Hub's top-level tabs, window side. Each tab besides Projects has a TabUi: mounted the first time it's opened, it
 // drives its Slint global (`busOf(ctx.win, "<Name>Bus")`, slint/<id>.slint) and reads and changes its data through
 // `ctx.call` — the same `v1/<id>/…` routes Hub for Android calls over the phone API (ts/tabs/<id>/engine.ts).
-import type { CaptchaEnd, CaptchaJob } from "../hcaptcha.ts";
-
 export interface TabReply {
   status: number;
   body: unknown;
@@ -30,9 +28,6 @@ export interface TabCtx {
   /** The tab's place changed (TabUi.snapshot would say something else): saved a moment later, so a crash or an
    *  update's restart comes back to it. Optional: the window also looks every second. */
   saveSoon?(): void;
-  /** Discord's captcha for the person to solve over the window (hcaptcha.ts): resolves with their token, a give-up,
-   *  or why it couldn't be shown here. One at a time: a new one gives up the one before. */
-  captcha?(job: CaptchaJob): Promise<CaptchaEnd>;
 }
 
 export interface TabUi {

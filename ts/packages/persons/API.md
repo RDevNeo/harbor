@@ -97,18 +97,7 @@ has it, the API's header leaves it out), except for requests Hub opened (the pro
 ## POST /v1/persons/chat/{personId}/send  { section, account?, text, replyTo?, subject?, files?: [{ name, type, data: base64 } | { name, type, upload: id }] }
 A file too large for a JSON body (a video from the phone) goes ahead with `POST /v1/upload?name=` (raw body, up to
 200 MB) and is named here by the `id` that answered (only files of the uploads folder are taken).
-→ `{ ok, message?, error?, captcha? }` (`captcha`: Discord wants one first; the message waits as `sending`, below)
-## POST /v1/persons/chat/{personId}/friend  { section, account? } → `{ ok, relation?, error?, captcha? }`
-Discord's Add friend (PUT /users/@me/relationships/{id}, the profile's X-Context-Properties); on the user's click only.
-## Discord's captcha: the chat's `captcha`, then POST /v1/persons/chat/{personId}/captcha  { section, account, id, key | cancel: true }
-When Discord answers a friend request or a message with an hCaptcha (captcha_key, captcha_sitekey, captcha_rqdata,
-captcha_rqtoken, captcha_session_id), the call waits on the PC (10 minutes at most) and `friend`/`send` answer at once
-with `captcha: { id, what: friend|message, sitekey, rqdata, account, url, html }`; GET chat carries it too (null when
-none waits). The app shows `html` (hCaptcha's widget with Discord's sitekey and rqdata) as `url` (https://discord.com/…:
-the desktop serves it to a hidden Chromium, the phone's WebView loads it with that base URL) and the person solves it.
-`key` (hCaptcha's token) sends the very same request again with X-Captcha-Key, X-Captcha-Rqtoken and
-X-Captcha-Session-Id → that request's `{ ok, error? }`, or `{ ok: false, captcha }` when Discord asks again.
-`cancel` gives it up (the request fails as before). Hub never answers a captcha itself.
+→ `{ ok, message?, error? }`
 ## POST /v1/persons/chat/{personId}/read  { section, account? }  → `{ ok }`
 ## POST /v1/persons/chat/{personId}/typing { section, account?, on } → `{ ok }`
 ## POST /v1/persons/chat/{personId}/ai  { section, account?, text, forward?: <message id>, paths?: [file on this PC] } → `{ ok, chat: <hub chat id> }`
